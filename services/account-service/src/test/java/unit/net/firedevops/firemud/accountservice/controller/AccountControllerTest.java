@@ -1,5 +1,7 @@
 package net.firedevops.firemud.accountservice.controller;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -114,7 +116,10 @@ class AccountControllerTest {
 
   @Test
   void deleteAccountDeniesPlatformAdminBeforeServiceMutation() throws Exception {
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token =
+        jwtUtil.generateToken(
+            ACCOUNT_UUID,
+            Map.of("accountId", ACCOUNT_UUID, "globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -129,7 +134,13 @@ class AccountControllerTest {
   @Test
   void deleteAccountRejectsScopedTenantAdminBecauseFullDeletionIsAccountScoped() throws Exception {
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("7", List.of("tenantAdmin"))));
+        jwtUtil.generateToken(
+            OTHER_ACCOUNT_UUID,
+            Map.of(
+                "accountId",
+                OTHER_ACCOUNT_UUID,
+                "scopedRoles",
+                Map.of("7", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(
@@ -138,6 +149,8 @@ class AccountControllerTest {
         .andExpect(status().isForbidden())
         .andExpect(jsonPath("$.error.code").value("PERMISSION_DENIED"))
         .andExpect(jsonPath("$.error.message").value("Account access required"));
+
+    verifyNoInteractions(accountService);
   }
 
   @Test
@@ -158,15 +171,28 @@ class AccountControllerTest {
   }
 
   @Test
-  void exportAccountRejectsNumericOrDifferentSubjectBeforeIdentityLookup() throws Exception {
-    for (String subject : List.of("42", OTHER_ACCOUNT_UUID)) {
-      String token = jwtUtil.generateToken(subject, Map.of("accountId", subject));
-      mockMvc
-          .perform(
-              get("/accounts/" + ACCOUNT_UUID + "/export")
-                  .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
-          .andExpect(status().isForbidden());
-    }
+  void exportAccountRejectsNumericSubjectBeforeIdentityLookup() throws Exception {
+    String token = jwtUtil.generateToken("42", Map.of("accountId", "42"));
+
+    mockMvc
+        .perform(
+            get("/accounts/" + ACCOUNT_UUID + "/export")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isUnauthorized());
+
+    verifyNoInteractions(accountService);
+  }
+
+  @Test
+  void exportAccountRejectsDifferentSubjectBeforeIdentityLookup() throws Exception {
+    String token =
+        jwtUtil.generateToken(OTHER_ACCOUNT_UUID, Map.of("accountId", OTHER_ACCOUNT_UUID));
+
+    mockMvc
+        .perform(
+            get("/accounts/" + ACCOUNT_UUID + "/export")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isForbidden());
 
     verifyNoInteractions(accountService);
   }
@@ -174,7 +200,9 @@ class AccountControllerTest {
   @Test
   void exportTenantDataFailsClosedWithoutReadingAccountService() throws Exception {
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("7", List.of("moderator"))));
+        jwtUtil.generateToken(
+            ACCOUNT_UUID,
+            Map.of("accountId", ACCOUNT_UUID, "scopedRoles", Map.of("7", List.of("moderator"))));
 
     mockMvc
         .perform(
@@ -188,7 +216,10 @@ class AccountControllerTest {
 
   @Test
   void exportAccountRejectsMalformedAccountIdBeforeDispatch() throws Exception {
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token =
+        jwtUtil.generateToken(
+            ACCOUNT_UUID,
+            Map.of("accountId", ACCOUNT_UUID, "globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -202,7 +233,10 @@ class AccountControllerTest {
 
   @Test
   void exportTenantDataRejectsZeroTenantIdBeforeDispatch() throws Exception {
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token =
+        jwtUtil.generateToken(
+            ACCOUNT_UUID,
+            Map.of("accountId", ACCOUNT_UUID, "globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -233,7 +267,7 @@ class AccountControllerTest {
 
   @Test
   void deleteAccountRejectsZeroAccountIdBeforeDispatch() throws Exception {
-    String token = jwtUtil.generateToken("1", Map.of("accountId", "1"));
+    String token = jwtUtil.generateToken(ACCOUNT_UUID, Map.of("accountId", ACCOUNT_UUID));
 
     mockMvc
         .perform(delete("/accounts/0").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
@@ -289,16 +323,15 @@ class AccountControllerTest {
                     "Recent ordinary reauthentication is required; login-factor changes are unavailable until Account implements its evidence mechanism"));
 
     verify(accountService, never())
-        .updateLoginAuthModes(
-            42L,
-            new UpdateAccountLoginAuthModesRequest(
-                java.util.Set.of(AccountLoginAuthMode.EMAIL_OTP)));
+        .updateLoginAuthModes(anyLong(), any(UpdateAccountLoginAuthModesRequest.class));
   }
 
   @Test
   void updateLoginAuthModesRejectsPlatformAdminBeforeDispatch() throws Exception {
     String token =
-        jwtUtil.generateToken("operator", Map.of("globalRoles", List.of("platformAdmin")));
+        jwtUtil.generateToken(
+            ACCOUNT_UUID,
+            Map.of("accountId", ACCOUNT_UUID, "globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(

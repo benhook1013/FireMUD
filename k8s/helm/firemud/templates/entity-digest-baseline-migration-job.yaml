@@ -74,6 +74,10 @@
 {{- if ne $grpcIdentitySecretName "firemud-grpc-game-design-baseline-migrator" -}}
 {{- fail "grpcIdentitySecretName must be firemud-grpc-game-design-baseline-migrator; shared service identities are not accepted" -}}
 {{- end -}}
+{{- $postgresCredentialSecretName := "firemud-game-design-baseline-reader-db" -}}
+{{- if eq $mode "migrate" -}}
+{{- $postgresCredentialSecretName = "firemud-game-design-baseline-writer-db" -}}
+{{- end -}}
 {{- $readScopeName := printf "%s:%s:%s:%s:%s:%s" $mode $tenantId (toString $versionId) $afterBaselineId (toString $limit) $targetNamespace | sha256sum | trunc 12 -}}
 {{- $jobSuffix := $operationId -}}
 {{- if ne $mode "migrate" -}}
@@ -165,8 +169,8 @@ spec:
             - --spring.grpc.server.enabled=false
             - --firemud.entity-baseline-migration.enabled=true
           env:
-            - name: SPRING_FLYWAY_TABLE
-              value: flyway_schema_history_game_design_service
+            - name: SPRING_FLYWAY_ENABLED
+              value: "false"
             - name: SERVICE_SCHEMA
               value: game_design_service
             - name: FIREMUD_POSTGRES_HOST
@@ -187,13 +191,15 @@ spec:
             - name: FIREMUD_POSTGRES_USER
               valueFrom:
                 secretKeyRef:
-                  name: firemud-secret
+                  name: {{ $postgresCredentialSecretName | quote }}
                   key: FIREMUD_POSTGRES_USER
+                  optional: false
             - name: FIREMUD_POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: firemud-secret
+                  name: {{ $postgresCredentialSecretName | quote }}
                   key: FIREMUD_POSTGRES_PASSWORD
+                  optional: false
             - name: FIREMUD_REDIS_ENABLED
               value: "false"
             - name: FIREMUD_TEMPORAL_ENABLED

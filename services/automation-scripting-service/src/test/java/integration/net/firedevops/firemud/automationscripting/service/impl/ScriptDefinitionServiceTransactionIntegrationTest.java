@@ -1,5 +1,6 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
+import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptEventBindings.SCRIPT_EVENT_BINDINGS;
 import static net.firedevops.firemud.automationscripting.jooq.tables.Scripts.SCRIPTS;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -153,6 +154,54 @@ class ScriptDefinitionServiceTransactionIntegrationTest {
   }
 
   @Test
+  void existingBindingWithMismatchedRetainedBaseIsRejected() {
+    String name = "mismatched-binding-" + UUID.randomUUID();
+    ScriptDefinitionDto initial =
+        updateInTransaction(
+            request(null, name, "{\"value\":1}", List.of(binding("binding-a", "scope-a"))));
+
+    dsl.update(SCRIPT_EVENT_BINDINGS)
+        .set(SCRIPT_EVENT_BINDINGS.BASE_VERSION_ID, 2L)
+        .where(SCRIPT_EVENT_BINDINGS.ID.eq(bindingRowId(name)))
+        .execute();
+
+    assertThatThrownBy(
+            () ->
+                updateInTransaction(
+                    request(
+                        initial.id(),
+                        name,
+                        "{\"value\":2}",
+                        List.of(binding("binding-a", "scope-a")))))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("script_patch_base_version_conflict");
+  }
+
+  @Test
+  void existingBindingWithNullRetainedBaseIsRejected() {
+    String name = "null-binding-base-" + UUID.randomUUID();
+    ScriptDefinitionDto initial =
+        updateInTransaction(
+            request(null, name, "{\"value\":1}", List.of(binding("binding-a", "scope-a"))));
+
+    dsl.update(SCRIPT_EVENT_BINDINGS)
+        .set(SCRIPT_EVENT_BINDINGS.BASE_VERSION_ID, (Long) null)
+        .where(SCRIPT_EVENT_BINDINGS.ID.eq(bindingRowId(name)))
+        .execute();
+
+    assertThatThrownBy(
+            () ->
+                updateInTransaction(
+                    request(
+                        initial.id(),
+                        name,
+                        "{\"value\":2}",
+                        List.of(binding("binding-a", "scope-a")))))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("script_patch_base_version_conflict");
+  }
+
+  @Test
   void concurrentChangedPayloadsRetainOneDefinitionAndMatchingCompleteBindingSet()
       throws Exception {
     String name = "concurrent-" + UUID.randomUUID();
@@ -279,6 +328,19 @@ class ScriptDefinitionServiceTransactionIntegrationTest {
         .stream()
         .map(ScriptEventBinding::getBindingId)
         .toList();
+  }
+
+  private long bindingRowId(String scriptName) {
+    return java.util.Objects.requireNonNull(
+        dsl.select(SCRIPT_EVENT_BINDINGS.ID)
+            .from(SCRIPT_EVENT_BINDINGS)
+            .where(
+                SCRIPT_EVENT_BINDINGS
+                    .TENANT_ID
+                    .eq(TENANT_ID)
+                    .and(SCRIPT_EVENT_BINDINGS.SCRIPT_PATCH_VERSION.eq(VERSION))
+                    .and(SCRIPT_EVENT_BINDINGS.SCRIPT_ID.eq(scriptName)))
+            .fetchOne(SCRIPT_EVENT_BINDINGS.ID));
   }
 
   private static ScriptDefinitionDto request(

@@ -1781,6 +1781,7 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
     BigInteger one = BigInteger.ONE;
     BigInteger now = BigInteger.valueOf(clock.instant().getEpochSecond());
     Map<String, Object> tenantGeneration = Map.of(tenantUuid.toString(), one);
+    Map<String, Object> membershipVersion = Map.of(tenantUuid.toString(), one.toString());
     Map<String, Object> accountSecurityCutoff =
         Map.of(
             "accountAuthorityGeneration", one,
@@ -1842,7 +1843,7 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
     claims.put("connectScopeId", identity.connectScopeId());
     claims.put("requestId", identity.requestId());
     claims.put("authorityTuple", authorityTuple);
-    claims.put("membershipVersion", tenantGeneration);
+    claims.put("membershipVersion", membershipVersion);
     claims.put("replayAdmissionFence", one);
     if (target.playtestLifecycleId() != null) {
       claims.put("playtestLifecycleId", target.playtestLifecycleId().toString());

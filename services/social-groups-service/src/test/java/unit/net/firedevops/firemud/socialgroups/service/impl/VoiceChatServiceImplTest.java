@@ -20,7 +20,8 @@ class VoiceChatServiceImplTest {
 
   @Test
   void createTokenReturnsToken() {
-    VoiceTokenRequestDto request = new VoiceTokenRequestDto(1L, 2L, "guild-1");
+    VoiceTokenRequestDto request =
+        new VoiceTokenRequestDto(1L, "00000000-0000-4000-8000-000000000002", "guild-1");
 
     VoiceTokenDto dto = service.createToken(request);
 

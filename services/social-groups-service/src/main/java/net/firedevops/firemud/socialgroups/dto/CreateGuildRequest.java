@@ -6,6 +6,4 @@ import jakarta.validation.constraints.Positive;
 
 /** Request body for creating a guild. */
 public record CreateGuildRequest(
-    @NotNull @Positive Long tenantId,
-    @NotNull @Positive Long ownerAccountId,
-    @NotBlank String name) {}
+    @NotNull @Positive Long tenantId, @NotBlank String ownerAccountId, @NotBlank String name) {}

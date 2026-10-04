@@ -1,5 +1,8 @@
 package net.firedevops.firemud.loggingadmin.controller;
 
+import static net.firedevops.firemud.loggingadmin.AccountJwtTestTokens.accountToken;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -9,6 +12,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import net.firedevops.firemud.common.GlobalExceptionHandler;
 import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
 import net.firedevops.firemud.common.config.CommonSecurityServletAutoConfiguration;
@@ -28,6 +32,8 @@ import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.web.server.ResponseStatusException;
+import org.yaml.snakeyaml.Yaml;
 
 @WebMvcTest(AdmissionPointerController.class)
 @AutoConfigureMockMvc(addFilters = false)
@@ -61,6 +67,9 @@ class AdmissionPointerControllerTest {
                     2L,
                     7L,
                     3L,
+                    5L,
+                    UUID.fromString("11111111-1111-1111-1111-111111111111"),
+                    UUID.fromString("22222222-2222-2222-2222-222222222222"),
                     true,
                     true,
                     false,
@@ -71,13 +80,79 @@ class AdmissionPointerControllerTest {
                     "req-1",
                     "pvu-1",
                     Instant.parse("2026-04-18T00:00:00Z"))));
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(get("/admission-pointers").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data[0].worldSlug").value("demo"))
-        .andExpect(jsonPath("$.data[0].tenantId").value(2));
+        .andExpect(jsonPath("$.data[0].tenantId").value(2))
+        .andExpect(jsonPath("$.data[0].catalogRevision").value(5))
+        .andExpect(jsonPath("$.data[0].realmId").value("11111111-1111-1111-1111-111111111111"))
+        .andExpect(
+            jsonPath("$.data[0].playableStateNamespaceId")
+                .value("22222222-2222-2222-2222-222222222222"));
+  }
+
+  @Test
+  void listPointersMapsUnavailableCurrentAuthorityToServiceUnavailable() throws Exception {
+    when(admissionPointerService.listPointers())
+        .thenThrow(
+            new ResponseStatusException(
+                org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE,
+                "current pointer authority unavailable"));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(get("/admission-pointers").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isServiceUnavailable())
+        .andExpect(jsonPath("$.error.code").value("SERVICE_UNAVAILABLE"))
+        .andExpect(jsonPath("$.error.message").value("current pointer authority unavailable"));
+  }
+
+  @Test
+  void openApiDocumentsAdmissionPointerReadContracts() throws Exception {
+    Map<?, ?> document;
+    try (var input = getClass().getResourceAsStream("/openapi.yaml")) {
+      assertNotNull(input);
+      document = new Yaml().load(input);
+    }
+
+    Map<?, ?> paths = (Map<?, ?>) document.get("paths");
+    for (String path :
+        List.of(
+            "/admission-pointers",
+            "/admission-pointers/{tenantId}/{worldSlug}/{realmSlug}/audit",
+            "/admission-pointers/runtime-state/{tenantId}/{gameInstanceId}",
+            "/admission-pointers/version-upgrades/{tenantId}/{preparationId}")) {
+      Map<?, ?> admissionPointers = (Map<?, ?>) paths.get(path);
+      Map<?, ?> getOperation = (Map<?, ?>) admissionPointers.get("get");
+      Map<?, ?> responses = (Map<?, ?>) getOperation.get("responses");
+      Map<?, ?> success = (Map<?, ?>) responses.get("200");
+      Map<?, ?> unavailable = (Map<?, ?>) responses.get("503");
+      assertNotNull(unavailable, path + " must document the unavailable response");
+      Map<?, ?> successContent = (Map<?, ?>) success.get("content");
+      Map<?, ?> unavailableContent = (Map<?, ?>) unavailable.get("content");
+      Map<?, ?> successJson = (Map<?, ?>) successContent.get("application/json");
+      Map<?, ?> unavailableJson = (Map<?, ?>) unavailableContent.get("application/json");
+      Map<?, ?> successSchema = (Map<?, ?>) successJson.get("schema");
+      Map<?, ?> unavailableSchema = (Map<?, ?>) unavailableJson.get("schema");
+
+      assertEquals("#/components/schemas/ApiResponseError", unavailableSchema.get("$ref"));
+      assertEquals("object", successSchema.get("type"));
+    }
+
+    Map<?, ?> components = (Map<?, ?>) document.get("components");
+    Map<?, ?> schemas = (Map<?, ?>) components.get("schemas");
+    Map<?, ?> pointer = (Map<?, ?>) schemas.get("AdmissionPointerDto");
+    Map<?, ?> properties = (Map<?, ?>) pointer.get("properties");
+    for (String field :
+        List.of("tenantId", "gameInstanceId", "pointerVersion", "catalogRevision")) {
+      Map<?, ?> fieldSchema = (Map<?, ?>) properties.get(field);
+      assertEquals("integer", fieldSchema.get("type"));
+      assertEquals("int64", fieldSchema.get("format"));
+    }
+    assertEquals(true, ((Map<?, ?>) properties.get("catalogRevision")).get("nullable"));
   }
 
   @Test
@@ -93,6 +168,9 @@ class AdmissionPointerControllerTest {
                     2L,
                     7L,
                     3L,
+                    5L,
+                    UUID.fromString("11111111-1111-1111-1111-111111111111"),
+                    UUID.fromString("22222222-2222-2222-2222-222222222222"),
                     true,
                     true,
                     false,
@@ -104,21 +182,46 @@ class AdmissionPointerControllerTest {
                     "pvu-1",
                     Instant.parse("2026-04-18T00:00:00Z"))));
     SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
             get("/admission-pointers/2/demo/production/audit")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.data[0].pointerVersion").value(3));
+        .andExpect(jsonPath("$.data[0].pointerVersion").value(3))
+        .andExpect(jsonPath("$.data[0].catalogRevision").value(5))
+        .andExpect(jsonPath("$.data[0].realmId").value("11111111-1111-1111-1111-111111111111"))
+        .andExpect(
+            jsonPath("$.data[0].playableStateNamespaceId")
+                .value("22222222-2222-2222-2222-222222222222"));
+  }
+
+  @Test
+  void auditMapsUnavailableAuthorityToServiceUnavailable() throws Exception {
+    when(admissionPointerService.listPointerAudit(2L, "demo", "production"))
+        .thenThrow(
+            new ResponseStatusException(
+                org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE,
+                "admission-pointer audit authority unavailable"));
+    SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            get("/admission-pointers/2/demo/production/audit")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isServiceUnavailable())
+        .andExpect(jsonPath("$.error.code").value("SERVICE_UNAVAILABLE"))
+        .andExpect(
+            jsonPath("$.error.message").value("admission-pointer audit authority unavailable"));
   }
 
   @Test
   void auditRejectsCrossTenantScopedAdmin() throws Exception {
     SessionContext.setContext("user", List.of(), Map.of("8", List.of("tenantAdmin")));
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
+        accountToken(jwtUtil, Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(
@@ -130,7 +233,7 @@ class AdmissionPointerControllerTest {
   @Test
   void auditRejectsMalformedTenantIdBeforeDispatch() throws Exception {
     SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -147,7 +250,7 @@ class AdmissionPointerControllerTest {
   void getRuntimeStateReturnsCanonicalRuntimeState() throws Exception {
     when(admissionPointerService.getRuntimeState(2L, 7L)).thenReturn(runtimeStateDto());
     SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -161,10 +264,31 @@ class AdmissionPointerControllerTest {
   }
 
   @Test
+  void getPreparedVersionUpgradeMapsUnavailableAuthorityToServiceUnavailable() throws Exception {
+    when(admissionPointerService.getPreparedVersionUpgrade(2L, "pvu-1"))
+        .thenThrow(
+            new ResponseStatusException(
+                org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE,
+                "prepared version-upgrade proof authority unavailable"));
+    SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            get("/admission-pointers/version-upgrades/2/pvu-1")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isServiceUnavailable())
+        .andExpect(jsonPath("$.error.code").value("SERVICE_UNAVAILABLE"))
+        .andExpect(
+            jsonPath("$.error.message")
+                .value("prepared version-upgrade proof authority unavailable"));
+  }
+
+  @Test
   void getRuntimeStateRejectsCrossTenantScopedAdmin() throws Exception {
     SessionContext.setContext("user", List.of(), Map.of("8", List.of("tenantAdmin")));
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
+        accountToken(jwtUtil, Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(
@@ -176,7 +300,7 @@ class AdmissionPointerControllerTest {
   @Test
   void getRuntimeStateRejectsZeroGameInstanceIdBeforeDispatch() throws Exception {
     SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -193,7 +317,7 @@ class AdmissionPointerControllerTest {
   void getPreparedVersionUpgradeRejectsCrossTenantScopedAdmin() throws Exception {
     SessionContext.setContext("user", List.of(), Map.of("8", List.of("tenantAdmin")));
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
+        accountToken(jwtUtil, Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(
@@ -207,7 +331,7 @@ class AdmissionPointerControllerTest {
     when(admissionPointerService.validateInstanceCutoverCompatibility(2L, 7L, 9L))
         .thenReturn(cutoverCompatibility());
     SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -223,7 +347,7 @@ class AdmissionPointerControllerTest {
   void validateInstanceCutoverCompatibilityRejectsCrossTenantScopedAdmin() throws Exception {
     SessionContext.setContext("user", List.of(), Map.of("8", List.of("tenantAdmin")));
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
+        accountToken(jwtUtil, Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(
@@ -236,7 +360,7 @@ class AdmissionPointerControllerTest {
   void validateInstanceCutoverCompatibilityRejectsMalformedTargetVersionIdBeforeDispatch()
       throws Exception {
     SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -304,6 +428,9 @@ class AdmissionPointerControllerTest {
                 2L,
                 7L,
                 11L,
+                7L,
+                UUID.fromString("11111111-1111-1111-1111-111111111111"),
+                UUID.fromString("22222222-2222-2222-2222-222222222222"),
                 true,
                 true,
                 false,

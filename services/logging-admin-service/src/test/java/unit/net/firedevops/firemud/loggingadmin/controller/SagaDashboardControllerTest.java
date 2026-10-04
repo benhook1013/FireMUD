@@ -1,5 +1,6 @@
 package net.firedevops.firemud.loggingadmin.controller;
 
+import static net.firedevops.firemud.loggingadmin.AccountJwtTestTokens.accountToken;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -53,8 +54,8 @@ class SagaDashboardControllerTest {
                 .header(
                     HttpHeaders.AUTHORIZATION,
                     "Bearer "
-                        + jwtUtil.generateToken(
-                            "user",
+                        + accountToken(
+                            jwtUtil,
                             java.util.Map.of("globalRoles", java.util.List.of("platformAdmin")))))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data[0].sagaName").value("demo"));
@@ -71,8 +72,8 @@ class SagaDashboardControllerTest {
                 .header(
                     HttpHeaders.AUTHORIZATION,
                     "Bearer "
-                        + jwtUtil.generateToken(
-                            "user",
+                        + accountToken(
+                            jwtUtil,
                             java.util.Map.of("globalRoles", java.util.List.of("platformAdmin")))))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data[0].name").value("step"));
@@ -86,8 +87,8 @@ class SagaDashboardControllerTest {
                 .header(
                     HttpHeaders.AUTHORIZATION,
                     "Bearer "
-                        + jwtUtil.generateToken(
-                            "user",
+                        + accountToken(
+                            jwtUtil,
                             java.util.Map.of("globalRoles", java.util.List.of("platformAdmin")))))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
@@ -104,8 +105,8 @@ class SagaDashboardControllerTest {
                 .header(
                     HttpHeaders.AUTHORIZATION,
                     "Bearer "
-                        + jwtUtil.generateToken(
-                            "user",
+                        + accountToken(
+                            jwtUtil,
                             java.util.Map.of("globalRoles", java.util.List.of("platformAdmin")))))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
@@ -127,8 +128,8 @@ class SagaDashboardControllerTest {
                 .header(
                     HttpHeaders.AUTHORIZATION,
                     "Bearer "
-                        + jwtUtil.generateToken(
-                            "user",
+                        + accountToken(
+                            jwtUtil,
                             java.util.Map.of("globalRoles", java.util.List.of("platformAdmin")))))
         .andExpect(status().isNotFound())
         .andExpect(jsonPath("$.error.code").value("NOT_FOUND"))

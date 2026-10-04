@@ -32,7 +32,7 @@ ALTER TABLE log_events
                         scope = 'tenant'
                         AND tenant_id IS NOT NULL
                         AND tenant_key IS NOT NULL
-                        AND tenant_key = tenant_id
+                        AND tenant_key IN (0, tenant_id)
                     )
                 )
             )
@@ -69,13 +69,10 @@ ALTER TABLE log_events
                     )
                 )
             )
-        );
+        ) /* [jooq ignore start] */ NOT VALID /* [jooq ignore stop] */;
 
-DROP INDEX uq_log_events_account_audit_identity;
-
-CREATE UNIQUE INDEX uq_log_events_account_audit_v1_identity
-    ON log_events (scope, tenant_key, audit_event_id)
-    WHERE audit_event_id IS NOT NULL AND tenant_identity_version = 1;
+ALTER INDEX uq_log_events_account_audit_identity
+    RENAME TO uq_log_events_account_audit_v1_identity;
 
 CREATE UNIQUE INDEX uq_log_events_account_audit_v2_identity
     ON log_events (scope, tenant_uuid, audit_event_id)
@@ -129,13 +126,10 @@ ALTER TABLE account_audit_receipts
                 AND tenant_uuid IS NOT NULL
                 AND tenant_uuid <> '00000000-0000-0000-0000-000000000000'::UUID
             )
-        );
+        ) /* [jooq ignore start] */ NOT VALID /* [jooq ignore stop] */;
 
-DROP INDEX uq_account_audit_receipt_identity;
-
-CREATE UNIQUE INDEX uq_account_audit_receipt_v1_identity
-    ON account_audit_receipts (scope, tenant_key, audit_event_id)
-    WHERE tenant_identity_version = 1;
+ALTER INDEX uq_account_audit_receipt_identity
+    RENAME TO uq_account_audit_receipt_v1_identity;
 
 CREATE UNIQUE INDEX uq_account_audit_receipt_v2_identity
     ON account_audit_receipts (scope, tenant_uuid, audit_event_id)

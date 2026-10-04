@@ -67,6 +67,8 @@ public final class HostedIdentityContract {
   public static final String GRPC_ACCOUNT_ROLE = "grpc-account-service";
   public static final String GRPC_GAME_SESSION_WORKLOAD = "game-session-service";
   public static final String GRPC_GAME_SESSION_ROLE = "grpc-game-session-service";
+  public static final String GRPC_SOCIAL_GROUPS_WORKLOAD = "social-groups-service";
+  public static final String GRPC_SOCIAL_GROUPS_ROLE = "grpc-social-groups-service";
   public static final List<String> GRPC_PUBLICATION_WORKLOADS =
       List.of(
           "game-design-service",
@@ -104,6 +106,7 @@ public final class HostedIdentityContract {
   public static boolean isGrpcWorkloadIdentityRole(String role) {
     return GRPC_ACCOUNT_ROLE.equals(role)
         || GRPC_GAME_SESSION_ROLE.equals(role)
+        || GRPC_SOCIAL_GROUPS_ROLE.equals(role)
         || isGrpcPublicationRole(role);
   }
 

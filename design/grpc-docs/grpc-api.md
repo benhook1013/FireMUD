@@ -450,6 +450,8 @@ for conventions on schema evolution and error handling. See each service's
     - [GetGameSessionPinConvergenceResponse](#game_session-v1-GetGameSessionPinConvergenceResponse)
     - [GetGameplayCommandStatusRequest](#game_session-v1-GetGameplayCommandStatusRequest)
     - [GetGameplayCommandStatusResponse](#game_session-v1-GetGameplayCommandStatusResponse)
+    - [GetInitialAdmissionBindProofRequest](#game_session-v1-GetInitialAdmissionBindProofRequest)
+    - [GetInitialAdmissionBindProofResponse](#game_session-v1-GetInitialAdmissionBindProofResponse)
     - [GetPinnedScriptPatchVersionRequest](#game_session-v1-GetPinnedScriptPatchVersionRequest)
     - [GetPinnedScriptPatchVersionResponse](#game_session-v1-GetPinnedScriptPatchVersionResponse)
     - [GetPreparedVersionUpgradeRequest](#game_session-v1-GetPreparedVersionUpgradeRequest)
@@ -530,6 +532,7 @@ for conventions on schema evolution and error handling. See each service's
     - [AccountRecentPresenceDisposition](#game_session-v1-AccountRecentPresenceDisposition)
     - [CutoverCompatibilityResult](#game_session-v1-CutoverCompatibilityResult)
     - [ExpectedCurrentPin.Kind](#game_session-v1-ExpectedCurrentPin-Kind)
+    - [InitialAdmissionBindOwnerProofOutcome](#game_session-v1-InitialAdmissionBindOwnerProofOutcome)
     - [TickStatus](#game_session-v1-TickStatus)
 
     - [GameSessionControlPlaneService](#game_session-v1-GameSessionControlPlaneService)
@@ -635,6 +638,8 @@ for conventions on schema evolution and error handling. See each service's
     - [TcpProxyService](#tcp_proxy-v1-TcpProxyService)
 
 - [world-management/v1/world_management_service.proto](#world-management_v1_world_management_service-proto)
+    - [AcquireInitialAdmissionBindHoldRequest](#world_management-v1-AcquireInitialAdmissionBindHoldRequest)
+    - [AcquireInitialAdmissionBindHoldResponse](#world_management-v1-AcquireInitialAdmissionBindHoldResponse)
     - [ActivatePreparedWorldInstanceRequest](#world_management-v1-ActivatePreparedWorldInstanceRequest)
     - [ActivatePreparedWorldInstanceResponse](#world_management-v1-ActivatePreparedWorldInstanceResponse)
     - [ApplyRoomAmbientStatePatchRequest](#world_management-v1-ApplyRoomAmbientStatePatchRequest)
@@ -657,6 +662,7 @@ for conventions on schema evolution and error handling. See each service's
     - [GetWorldInstanceLifecycleRequest](#world_management-v1-GetWorldInstanceLifecycleRequest)
     - [GetWorldInstanceLifecycleResponse](#world_management-v1-GetWorldInstanceLifecycleResponse)
     - [HazardAmbientState](#world_management-v1-HazardAmbientState)
+    - [InitialAdmissionBindHold](#world_management-v1-InitialAdmissionBindHold)
     - [ListRoomOccupantsRequest](#world_management-v1-ListRoomOccupantsRequest)
     - [ListRoomOccupantsResponse](#world_management-v1-ListRoomOccupantsResponse)
     - [PingRequest](#world_management-v1-PingRequest)
@@ -684,6 +690,7 @@ for conventions on schema evolution and error handling. See each service's
     - [DoorState](#world_management-v1-DoorState)
     - [EntityTemplateReferenceType](#world_management-v1-EntityTemplateReferenceType)
     - [HazardState](#world_management-v1-HazardState)
+    - [InitialAdmissionBindHoldStatus](#world_management-v1-InitialAdmissionBindHoldStatus)
     - [RoomOccupantType](#world_management-v1-RoomOccupantType)
     - [UpgradeValidationResult](#world_management-v1-UpgradeValidationResult)
     - [WorldDesignAggregateType](#world_management-v1-WorldDesignAggregateType)
@@ -1147,8 +1154,8 @@ exact catalog/pointer evidence. Account re-resolves the target before issuance.
 | account_id | [string](#string) |  |  |
 | tenant_id | [string](#string) |  |  |
 | membership_id | [string](#string) |  |  |
-| membership_version | [int64](#int64) |  |  |
-| membership_authority_generation | [int64](#int64) |  |  |
+| membership_version | [uint64](#uint64) |  |  |
+| membership_authority_generation | [uint64](#uint64) |  |  |
 | replayed | [bool](#bool) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
@@ -1195,6 +1202,7 @@ exact catalog/pointer evidence. Account re-resolves the target before issuance.
 
 ### ListPresenceVisibilityPoliciesRequest
 Internal bounded bulk read used by Social Groups when projecting friend presence.
+Account identities are canonical non-nil UUIDs, never private Account row keys.
 
 
 | Field | Type | Label | Description |
@@ -1257,7 +1265,7 @@ Basic ping response containing a greeting and optional error details.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| account_id | [string](#string) |  |  |
+| account_id | [string](#string) |  | Exact requested Account UUID whose persisted source was verified by Account. |
 | policy | [string](#string) |  |  |
 
 
@@ -1591,6 +1599,8 @@ Basic ping response containing a greeting and optional error details.
 | ----- | ---- | ----- | ----------- |
 | success | [bool](#bool) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| account_id | [string](#string) |  | Successful writes echo the exact persisted Account UUID and tenant selector. |
+| tenant_id | [string](#string) |  |  |
 
 
 
@@ -7937,6 +7947,9 @@ Owner-local legacy source read. This does not attest an Account numeric tenant k
 | occurred_at_ms | [int64](#int64) |  |  |
 | prepared_version_upgrade_id | [string](#string) |  |  |
 | public_production_realm | [bool](#bool) |  |  |
+| catalog_revision | [int64](#int64) | optional |  |
+| realm_id | [string](#string) |  | Empty for historical audit rows that predate durable pointer identity. |
+| playable_state_namespace_id | [string](#string) |  | Empty for historical audit rows that predate durable pointer identity. |
 
 
 
@@ -8072,7 +8085,8 @@ Owner-local legacy source read. This does not attest an Account numeric tenant k
 | actor_principal | [string](#string) |  |  |
 | reason | [string](#string) |  |  |
 | control_plane_request_id | [string](#string) |  |  |
-| expected_pointer_version | [int64](#int64) | optional |  |
+| expected_pointer_version | [int64](#int64) | optional | Existing-row mutations require both expected revisions to match the current row. Creating a missing row is supported only with both fields explicitly present as zero. Optional presence does not enable the currently disabled public mutation RPC or imply valid mutation semantics. |
+| expected_catalog_revision | [int64](#int64) | optional | Must be supplied with expected_pointer_version under the same existing-row or creation rules. |
 
 
 
@@ -8468,6 +8482,67 @@ Owner-local legacy source read. This does not attest an Account numeric tenant k
 
 
 
+<a name="game_session-v1-GetInitialAdmissionBindProofRequest"></a>
+
+### GetInitialAdmissionBindProofRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| hold_id | [string](#string) |  |  |
+| hold_fence | [string](#string) |  |  |
+| tenant_id | [string](#string) |  |  |
+| realm_uuid | [string](#string) |  |  |
+| playable_state_namespace_uuid | [string](#string) |  |  |
+| playable_state_scope | [entity_management.v1.PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| version_id | [string](#string) |  |  |
+| active_lifecycle_epoch | [int64](#int64) |  |  |
+| initial_admission_request_id | [string](#string) |  |  |
+| request_digest | [string](#string) |  |  |
+| expected_no_prior_pointer | [bool](#bool) |  |  |
+| expected_catalog_revision | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-GetInitialAdmissionBindProofResponse"></a>
+
+### GetInitialAdmissionBindProofResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| hold_id | [string](#string) |  | Echoes the complete request tuple so World can reject proof for another hold or target. |
+| hold_fence | [string](#string) |  |  |
+| tenant_id | [string](#string) |  |  |
+| realm_uuid | [string](#string) |  |  |
+| playable_state_namespace_uuid | [string](#string) |  |  |
+| playable_state_scope | [entity_management.v1.PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| version_id | [string](#string) |  |  |
+| active_lifecycle_epoch | [int64](#int64) |  |  |
+| initial_admission_request_id | [string](#string) |  |  |
+| request_digest | [string](#string) |  |  |
+| expected_no_prior_pointer | [bool](#bool) |  |  |
+| expected_catalog_revision | [int64](#int64) |  |  |
+| outcome | [InitialAdmissionBindOwnerProofOutcome](#game_session-v1-InitialAdmissionBindOwnerProofOutcome) |  |  |
+| owner_proof_id | [string](#string) |  |  |
+| pointer_audit_id | [string](#string) |  |  |
+| pointer_version | [int64](#int64) |  |  |
+| pointer_audit_request_digest | [string](#string) |  |  |
+| future_commit_prevented | [bool](#bool) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
 <a name="game_session-v1-GetPinnedScriptPatchVersionRequest"></a>
 
 ### GetPinnedScriptPatchVersionRequest
@@ -8729,6 +8804,11 @@ Owner-local legacy source read. This does not attest an Account numeric tenant k
 
 ### ListAdmissionPointersRequest
 
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_ids | [string](#string) | repeated | Empty requires a global privileged caller for the all-tenant read. Current authority accepts only positive decimal values; UUID-form tenant IDs remain unsupported until owner storage migrates to the canonical UUID-string tenantId. Each current numeric ID must be individually authorized by the forwarded caller context. |
 
 
 
@@ -9925,9 +10005,10 @@ Resume ticks after an authorized maintenance workflow completes.
 | actor_principal | [string](#string) |  |  |
 | reason | [string](#string) |  |  |
 | control_plane_request_id | [string](#string) |  |  |
-| expected_pointer_version | [int64](#int64) | optional |  |
+| expected_pointer_version | [int64](#int64) | optional | Existing-row mutations require both expected revisions to match the current row. Creating a missing row is supported only with both fields explicitly present as zero. Optional presence does not enable the currently disabled public mutation RPC or imply valid mutation semantics. |
 | prepared_version_upgrade_id | [string](#string) |  |  |
 | public_production_realm | [bool](#bool) |  |  |
+| expected_catalog_revision | [int64](#int64) | optional | Must be supplied with expected_pointer_version under the same existing-row or creation rules. |
 
 
 
@@ -10218,6 +10299,23 @@ Resume ticks after an authorized maintenance workflow completes.
 
 
 
+<a name="game_session-v1-InitialAdmissionBindOwnerProofOutcome"></a>
+
+### InitialAdmissionBindOwnerProofOutcome
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| INITIAL_ADMISSION_BIND_OWNER_PROOF_OUTCOME_UNSPECIFIED | 0 |  |
+| INITIAL_ADMISSION_BIND_OWNER_PROOF_OUTCOME_COMMITTED | 1 |  |
+| INITIAL_ADMISSION_BIND_OWNER_PROOF_OUTCOME_ABORTED | 2 |  |
+| INITIAL_ADMISSION_BIND_OWNER_PROOF_OUTCOME_NOT_FOUND | 3 |  |
+| INITIAL_ADMISSION_BIND_OWNER_PROOF_OUTCOME_PENDING | 4 |  |
+| INITIAL_ADMISSION_BIND_OWNER_PROOF_OUTCOME_UNAVAILABLE | 5 |  |
+| INITIAL_ADMISSION_BIND_OWNER_PROOF_OUTCOME_ERROR | 6 |  |
+
+
+
 <a name="game_session-v1-TickStatus"></a>
 
 ### TickStatus
@@ -10246,6 +10344,7 @@ plus scoped tick pause/resume used for rollback safety.
 | GetPinnedScriptPatchVersion | [GetPinnedScriptPatchVersionRequest](#game_session-v1-GetPinnedScriptPatchVersionRequest) | [GetPinnedScriptPatchVersionResponse](#game_session-v1-GetPinnedScriptPatchVersionResponse) |  |
 | GetGameSessionPinConvergence | [GetGameSessionPinConvergenceRequest](#game_session-v1-GetGameSessionPinConvergenceRequest) | [GetGameSessionPinConvergenceResponse](#game_session-v1-GetGameSessionPinConvergenceResponse) |  |
 | GetGameInstanceRuntimeState | [GetGameInstanceRuntimeStateRequest](#game_session-v1-GetGameInstanceRuntimeStateRequest) | [GetGameInstanceRuntimeStateResponse](#game_session-v1-GetGameInstanceRuntimeStateResponse) |  |
+| GetInitialAdmissionBindProof | [GetInitialAdmissionBindProofRequest](#game_session-v1-GetInitialAdmissionBindProofRequest) | [GetInitialAdmissionBindProofResponse](#game_session-v1-GetInitialAdmissionBindProofResponse) | Read exact durable owner proof for a World-owned initial-admission hold. |
 | ValidateBuiltInCommandAlias | [ValidateBuiltInCommandAliasRequest](#game_session-v1-ValidateBuiltInCommandAliasRequest) | [ValidateBuiltInCommandAliasResponse](#game_session-v1-ValidateBuiltInCommandAliasResponse) |  |
 | ListAdmissionPointers | [ListAdmissionPointersRequest](#game_session-v1-ListAdmissionPointersRequest) | [ListAdmissionPointersResponse](#game_session-v1-ListAdmissionPointersResponse) |  |
 | ListAdmissionPointerAudit | [ListAdmissionPointerAuditRequest](#game_session-v1-ListAdmissionPointerAuditRequest) | [ListAdmissionPointerAuditResponse](#game_session-v1-ListAdmissionPointerAuditResponse) |  |
@@ -10348,8 +10447,8 @@ plus scoped tick pause/resume used for rollback safety.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| scope | [AccountAuditScope](#logging_admin-v1-AccountAuditScope) |  |  |
 | tenant_id | [string](#string) |  |  |
+| scope | [AccountAuditScope](#logging_admin-v1-AccountAuditScope) |  |  |
 | audit_event_id | [string](#string) |  |  |
 | producer_service | [string](#string) |  |  |
 | event_type | [string](#string) |  |  |
@@ -10372,16 +10471,18 @@ plus scoped tick pause/resume used for rollback safety.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
+| log_event_id | [string](#string) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 | scope | [AccountAuditScope](#logging_admin-v1-AccountAuditScope) |  |  |
 | tenant_id | [string](#string) |  |  |
 | audit_event_id | [string](#string) |  |  |
 | receipt_id | [string](#string) |  |  |
-| log_event_id | [string](#string) |  |  |
 | schema_version | [int32](#int32) |  |  |
 | payload_digest_version | [int32](#int32) |  |  |
 | payload_digest | [string](#string) |  |  |
 | status | [AccountAuditReceiptStatus](#logging_admin-v1-AccountAuditReceiptStatus) |  |  |
 | outcome | [AccountAuditReceiptOutcome](#logging_admin-v1-AccountAuditReceiptOutcome) |  |  |
+| audit_projection_version | [int32](#int32) |  | Version 1 attests an exact receipt linked atomically to a distinct audit log projection. Zero or unsupported versions cannot verify delivery or historical producer provenance. |
 
 
 
@@ -10524,6 +10625,8 @@ plus scoped tick pause/resume used for rollback safety.
 | payload_digest | [string](#string) |  |  |
 | status | [AccountAuditReceiptStatus](#logging_admin-v1-AccountAuditReceiptStatus) |  |  |
 | outcome | [AccountAuditReceiptOutcome](#logging_admin-v1-AccountAuditReceiptOutcome) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| audit_projection_version | [int32](#int32) |  | Same receipt/projection attestation as CreateLogEventResponse; never payload replay proof. Zero or unsupported versions cannot verify delivery or historical producer provenance. |
 
 
 
@@ -11630,9 +11733,7 @@ to treat the signal as an advisory hint.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| session_id | [string](#string) |  | Optional, client-provided SESSION envelope values (when present on the Telnet connection). These are advisory only; Game Session must validate any tenant/session claims against its own state.
-
-session_id corresponds to the gameplay session identifier already used by the telnet path. Consumers should treat it as opaque. |
+| session_id | [string](#string) |  | Optional proxy-owned hidden metadata derived from the canonical Telnet SESSION envelope. It is not client-supplied player-attach input and is advisory only; Game Session must validate tenant/session claims against its own state. session_id corresponds to the gameplay session identifier used by the Telnet path and consumers should treat it as opaque. |
 | tenant_id | [string](#string) |  |  |
 | proxy_connection_id | [string](#string) |  | Required, server-generated identifier for the Telnet connection. This value is generated by the TCP Proxy on accept and is propagated to the Gateway/Game Session layer as a WebSocket handshake header (for example, X-Proxy-Connection-Id) so Game Session can associate it with an authenticated session. |
 | disconnect_sequence | [uint64](#uint64) |  | Required, monotonically increasing sequence number scoped to proxy_connection_id. This allows Game Session to deduplicate at-least-once delivery (including retries and out-of-order arrivals). |
@@ -11711,7 +11812,7 @@ These RPCs are not exposed through Spring Cloud Gateway and are intended for use
 | Ping | [PingRequest](#tcp_proxy-v1-PingRequest) | [PingResponse](#tcp_proxy-v1-PingResponse) | Simple connectivity check used by operators and tests. |
 | NotifyDisconnect | [NotifyDisconnectRequest](#tcp_proxy-v1-NotifyDisconnectRequest) | [NotifyDisconnectResponse](#tcp_proxy-v1-NotifyDisconnectResponse) | Emits a best-effort, at-least-once lifecycle event whenever a Telnet connection closes.
 
-Semantics and failure expectations: - Events may be delivered more than once; the Game Session Service must treat them as idempotent. - The primary idempotency key is {proxy_connection_id, disconnect_sequence}. - session_id and tenant_id may be omitted when a client does not provide a SESSION envelope. - The proxy does not buffer or replay gameplay commands; it only signals disconnects. Command queues remain owned by Game Session and Redis. - Transport-level failures surface as standard gRPC statuses; logical failures are reported via the ErrorDetail in NotifyDisconnectResponse. - Lost or delayed events must not cause stuck or &#34;ghost&#34; sessions: Game Session is responsible for independently detecting liveness via its own mechanisms (for example, WebSocket/TCP close and Redis timeouts). In the worst case, losing a NotifyDisconnect should only slow down cleanup, not leave players incorrectly logged in or unable to resume. |
+Semantics and failure expectations: - Events may be delivered more than once; the Game Session Service must treat them as idempotent. - The primary idempotency key is {proxy_connection_id, disconnect_sequence}. - session_id and tenant_id may be omitted when the proxy did not receive the canonical Telnet SESSION envelope; when present, they are proxy-owned hidden transport metadata, not player attach input. - The proxy does not buffer or replay gameplay commands; it only signals disconnects. Command queues remain owned by Game Session and Redis. - Transport-level failures surface as standard gRPC statuses; logical failures are reported via the ErrorDetail in NotifyDisconnectResponse. - Lost or delayed events must not cause stuck or &#34;ghost&#34; sessions: Game Session is responsible for independently detecting liveness via its own mechanisms (for example, WebSocket/TCP close and Redis timeouts). In the worst case, losing a NotifyDisconnect should only slow down cleanup, not leave players incorrectly logged in or unable to resume. |
 
 
 
@@ -11721,6 +11822,47 @@ Semantics and failure expectations: - Events may be delivered more than once; th
 <p align="right"><a href="#top">Top</a></p>
 
 ## world-management/v1/world_management_service.proto
+
+
+
+<a name="world_management-v1-AcquireInitialAdmissionBindHoldRequest"></a>
+
+### AcquireInitialAdmissionBindHoldRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| version_id | [string](#string) |  |  |
+| expected_active_lifecycle_epoch | [int64](#int64) |  |  |
+| initial_admission_request_id | [string](#string) |  |  |
+| request_digest | [string](#string) |  |  |
+| realm_uuid | [string](#string) |  |  |
+| playable_state_namespace_uuid | [string](#string) |  |  |
+| playable_state_scope | [entity_management.v1.PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+| expected_no_prior_pointer | [bool](#bool) |  |  |
+| expected_catalog_revision | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-AcquireInitialAdmissionBindHoldResponse"></a>
+
+### AcquireInitialAdmissionBindHoldResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| hold | [InitialAdmissionBindHold](#world_management-v1-InitialAdmissionBindHold) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
 
 
 
@@ -12122,6 +12264,35 @@ Semantics and failure expectations: - Events may be delivered more than once; th
 | ----- | ---- | ----- | ----------- |
 | hazard_id | [string](#string) |  |  |
 | state | [HazardState](#world_management-v1-HazardState) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-InitialAdmissionBindHold"></a>
+
+### InitialAdmissionBindHold
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| hold_id | [string](#string) |  |  |
+| hold_fence | [string](#string) |  |  |
+| tenant_id | [string](#string) |  |  |
+| realm_uuid | [string](#string) |  |  |
+| playable_state_namespace_uuid | [string](#string) |  |  |
+| playable_state_scope | [entity_management.v1.PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| version_id | [string](#string) |  |  |
+| active_lifecycle_epoch | [int64](#int64) |  |  |
+| initial_admission_request_id | [string](#string) |  |  |
+| request_digest | [string](#string) |  |  |
+| expected_no_prior_pointer | [bool](#bool) |  |  |
+| expected_catalog_revision | [int64](#int64) |  |  |
+| status | [InitialAdmissionBindHoldStatus](#world_management-v1-InitialAdmissionBindHoldStatus) |  |  |
+| diagnostic_expires_at_epoch_millis | [int64](#int64) |  |  |
 
 
 
@@ -12607,6 +12778,21 @@ Semantics and failure expectations: - Events may be delivered more than once; th
 
 
 
+<a name="world_management-v1-InitialAdmissionBindHoldStatus"></a>
+
+### InitialAdmissionBindHoldStatus
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| INITIAL_ADMISSION_BIND_HOLD_STATUS_UNSPECIFIED | 0 |  |
+| INITIAL_ADMISSION_BIND_HOLD_STATUS_PENDING | 1 |  |
+| INITIAL_ADMISSION_BIND_HOLD_STATUS_RECONCILIATION_REQUIRED | 2 |  |
+| INITIAL_ADMISSION_BIND_HOLD_STATUS_COMMITTED | 3 |  |
+| INITIAL_ADMISSION_BIND_HOLD_STATUS_ABORTED | 4 |  |
+
+
+
 <a name="world_management-v1-RoomOccupantType"></a>
 
 ### RoomOccupantType
@@ -12738,6 +12924,7 @@ Semantics and failure expectations: - Events may be delivered more than once; th
 | ActivatePreparedWorldInstance | [ActivatePreparedWorldInstanceRequest](#world_management-v1-ActivatePreparedWorldInstanceRequest) | [ActivatePreparedWorldInstanceResponse](#world_management-v1-ActivatePreparedWorldInstanceResponse) |  |
 | FailPreparedWorldInstance | [FailPreparedWorldInstanceRequest](#world_management-v1-FailPreparedWorldInstanceRequest) | [FailPreparedWorldInstanceResponse](#world_management-v1-FailPreparedWorldInstanceResponse) |  |
 | GetWorldInstanceLifecycle | [GetWorldInstanceLifecycleRequest](#world_management-v1-GetWorldInstanceLifecycleRequest) | [GetWorldInstanceLifecycleResponse](#world_management-v1-GetWorldInstanceLifecycleResponse) |  |
+| AcquireInitialAdmissionBindHold | [AcquireInitialAdmissionBindHoldRequest](#world_management-v1-AcquireInitialAdmissionBindHoldRequest) | [AcquireInitialAdmissionBindHoldResponse](#world_management-v1-AcquireInitialAdmissionBindHoldResponse) |  |
 | TerminateWorldInstance | [TerminateWorldInstanceRequest](#world_management-v1-TerminateWorldInstanceRequest) | [TerminateWorldInstanceResponse](#world_management-v1-TerminateWorldInstanceResponse) |  |
 | GetRoom | [GetRoomRequest](#world_management-v1-GetRoomRequest) | [GetRoomResponse](#world_management-v1-GetRoomResponse) |  |
 | GetRoomSnapshot | [GetRoomSnapshotRequest](#world_management-v1-GetRoomSnapshotRequest) | [GetRoomSnapshotResponse](#world_management-v1-GetRoomSnapshotResponse) |  |

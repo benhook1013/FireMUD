@@ -23,11 +23,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.gamesession.v1.QueryAccountPresenceRequest;
 import net.firedevops.firemud.loggingadmin.v1.CreateReportRequest;
 import net.firedevops.firemud.loggingadmin.v1.CreateReportResponse;
 import net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyRequest;
@@ -37,6 +39,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
 
 class SocialInternalGrpcClientAuthTest {
+  private static final String ACCOUNT_ID = "cc51ef2c-9a14-4c56-98bd-af7f8e4c60c1";
+  private static final String FRIEND_ID = "816018fe-bf4b-4946-9bb7-3a7073edc1a8";
   private static final Metadata.Key<String> AUTH_HEADER =
       Metadata.Key.of("Authorization", Metadata.ASCII_STRING_MARSHALLER);
 
@@ -125,10 +129,90 @@ class SocialInternalGrpcClientAuthTest {
             runtimeIdentityProvider());
     client.init();
 
-    assertThatThrownBy(() -> client.reportChatViolation(7L, 42L, "Filtered profanity"))
+    assertThatThrownBy(() -> client.reportChatViolation(7L, ACCOUNT_ID, "Filtered profanity"))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Chat violation report failed: UNAVAILABLE: Report creation unavailable")
         .hasMessageNotContaining("Filtered profanity");
+  }
+
+  @Test
+  void socialRequestsCarryUuidIdentitiesWithoutNumericAliases() throws Exception {
+    CapturingChannel channel = new CapturingChannel();
+    GrpcChannelFactory factory = mock(GrpcChannelFactory.class);
+    when(factory.buildChannel(anyString(), anyInt(), any(), anyBoolean())).thenReturn(channel);
+    LoggingAdminClient reports =
+        new LoggingAdminClient(
+            new ServiceEndpointsProperties(),
+            plaintextGrpcProperties(),
+            factory,
+            jwtUtil,
+            runtimeIdentityProvider());
+    reports.init();
+    reports.reportChatViolation(7L, ACCOUNT_ID, "Filtered profanity");
+    CreateReportRequest report = (CreateReportRequest) channel.lastRequest;
+    assertThat(report.getReporterAccountId()).isEqualTo(ACCOUNT_ID);
+    assertThat(report.getTargetAccountId()).isEqualTo(ACCOUNT_ID);
+    assertThat(report.getTenantId()).isEqualTo("7");
+    assertInternalSocialServiceToken(channel);
+
+    ModerationPolicyClient policies =
+        new ModerationPolicyClient(
+            new ServiceEndpointsProperties(),
+            plaintextGrpcProperties(),
+            factory,
+            jwtUtil,
+            runtimeIdentityProvider());
+    policies.init();
+    policies.evaluateChatSend(7L, ACCOUNT_ID);
+    EvaluateModerationPolicyRequest policy = (EvaluateModerationPolicyRequest) channel.lastRequest;
+    assertThat(policy.getAccountId()).isEqualTo(ACCOUNT_ID);
+    assertThat(policy.getTenantId()).isEqualTo("7");
+    assertInternalSocialServiceToken(channel);
+
+    GameSessionClient presence =
+        new GameSessionClient(
+            new ServiceEndpointsProperties(),
+            plaintextGrpcProperties(),
+            factory,
+            BlockingGrpcStubCustomizer.noop());
+    presence.init();
+    presence.queryAccountPresence(7L, ACCOUNT_ID, List.of(FRIEND_ID));
+    QueryAccountPresenceRequest request = (QueryAccountPresenceRequest) channel.lastRequest;
+    assertThat(request.getViewerAccountId()).isEqualTo(ACCOUNT_ID);
+    assertThat(request.getAccountIdsList()).containsExactly(FRIEND_ID);
+    assertThat(request.getTenantId()).isEqualTo("7");
+  }
+
+  @Test
+  void malformedSocialAccountSelectorsFailBeforeAnyRpc() {
+    ServiceEndpointsProperties endpoints = new ServiceEndpointsProperties();
+    GrpcChannelFactory factory = mock(GrpcChannelFactory.class);
+    LoggingAdminClient reports =
+        new LoggingAdminClient(
+            endpoints, plaintextGrpcProperties(), factory, jwtUtil, runtimeIdentityProvider());
+    ModerationPolicyClient policies =
+        new ModerationPolicyClient(
+            endpoints, plaintextGrpcProperties(), factory, jwtUtil, runtimeIdentityProvider());
+    GameSessionClient presence =
+        new GameSessionClient(
+            endpoints, plaintextGrpcProperties(), factory, BlockingGrpcStubCustomizer.noop());
+    for (String accountId :
+        List.of(
+            "42",
+            "",
+            "00000000-0000-0000-0000-000000000000",
+            ACCOUNT_ID.toUpperCase(java.util.Locale.ROOT),
+            " " + ACCOUNT_ID)) {
+      assertThatThrownBy(() -> reports.reportChatViolation(7L, accountId, "Filtered profanity"))
+          .isInstanceOf(IllegalArgumentException.class);
+      assertThatThrownBy(() -> policies.evaluateChatSend(7L, accountId))
+          .isInstanceOf(IllegalArgumentException.class);
+      assertThatThrownBy(() -> presence.queryAccountPresence(7L, accountId, List.of(FRIEND_ID)))
+          .isInstanceOf(IllegalArgumentException.class);
+      assertThatThrownBy(() -> presence.queryAccountPresence(7L, ACCOUNT_ID, List.of(accountId)))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+    org.mockito.Mockito.verifyNoInteractions(factory);
   }
 
   @Test
@@ -192,6 +276,7 @@ class SocialInternalGrpcClientAuthTest {
 
   private static final class CapturingChannel extends ManagedChannel {
     private String lastAuthorization;
+    private Object lastRequest;
     private final byte[] responseBytes;
 
     private CapturingChannel() {
@@ -229,7 +314,9 @@ class SocialInternalGrpcClientAuthTest {
         public void halfClose() {}
 
         @Override
-        public void sendMessage(ReqT message) {}
+        public void sendMessage(ReqT message) {
+          lastRequest = message;
+        }
       };
     }
 

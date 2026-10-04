@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package world_management.v1;
 
+import "entity-management/v1/entity_management_service.proto";
 import "shared/v1/errors.proto";
 import "shared/v1/instance_refs.proto";
 
@@ -18,6 +19,8 @@ service WorldManagementService {
       returns (FailPreparedWorldInstanceResponse);
   rpc GetWorldInstanceLifecycle(GetWorldInstanceLifecycleRequest)
       returns (GetWorldInstanceLifecycleResponse);
+  rpc AcquireInitialAdmissionBindHold(AcquireInitialAdmissionBindHoldRequest)
+      returns (AcquireInitialAdmissionBindHoldResponse);
   rpc TerminateWorldInstance(TerminateWorldInstanceRequest)
       returns (TerminateWorldInstanceResponse);
   rpc GetRoom(GetRoomRequest) returns (GetRoomResponse);
@@ -173,6 +176,51 @@ message GetWorldInstanceLifecycleRequest {
 
 message GetWorldInstanceLifecycleResponse {
   WorldInstanceLifecycleSnapshot world_instance = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message AcquireInitialAdmissionBindHoldRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string version_id = 3;
+  int64 expected_active_lifecycle_epoch = 4;
+  string initial_admission_request_id = 5;
+  string request_digest = 6;
+  string realm_uuid = 7;
+  string playable_state_namespace_uuid = 8;
+  entity_management.v1.PlayableStateScope playable_state_scope = 9;
+  bool expected_no_prior_pointer = 10;
+  int64 expected_catalog_revision = 11;
+}
+
+enum InitialAdmissionBindHoldStatus {
+  INITIAL_ADMISSION_BIND_HOLD_STATUS_UNSPECIFIED = 0;
+  INITIAL_ADMISSION_BIND_HOLD_STATUS_PENDING = 1;
+  INITIAL_ADMISSION_BIND_HOLD_STATUS_RECONCILIATION_REQUIRED = 2;
+  INITIAL_ADMISSION_BIND_HOLD_STATUS_COMMITTED = 3;
+  INITIAL_ADMISSION_BIND_HOLD_STATUS_ABORTED = 4;
+}
+
+message InitialAdmissionBindHold {
+  string hold_id = 1;
+  string hold_fence = 2;
+  string tenant_id = 3;
+  string realm_uuid = 4;
+  string playable_state_namespace_uuid = 5;
+  entity_management.v1.PlayableStateScope playable_state_scope = 6;
+  string game_instance_id = 7;
+  string version_id = 8;
+  int64 active_lifecycle_epoch = 9;
+  string initial_admission_request_id = 10;
+  string request_digest = 11;
+  bool expected_no_prior_pointer = 12;
+  int64 expected_catalog_revision = 13;
+  InitialAdmissionBindHoldStatus status = 14;
+  int64 diagnostic_expires_at_epoch_millis = 15;
+}
+
+message AcquireInitialAdmissionBindHoldResponse {
+  InitialAdmissionBindHold hold = 1;
   shared.v1.ErrorDetail error = 2;
 }
 

@@ -9,6 +9,7 @@ import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.security.GrpcClientAuth;
+import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyRequest;
 import net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyResponse;
@@ -61,11 +62,12 @@ public class ModerationPolicyClient
         runtimeIdentityProvider.getIfAvailable());
   }
 
-  public EvaluateModerationPolicyResponse evaluateChatSend(long tenantId, long accountId) {
+  public EvaluateModerationPolicyResponse evaluateChatSend(long tenantId, String accountId) {
+    JwtClaims.requireAccountId(accountId, "accountId");
     EvaluateModerationPolicyRequest request =
         EvaluateModerationPolicyRequest.newBuilder()
             .setTenantId(Long.toString(tenantId))
-            .setAccountId(Long.toString(accountId))
+            .setAccountId(accountId)
             .setScope(SCOPE_CHAT_SEND)
             .build();
     return stub().evaluateModerationPolicy(request);

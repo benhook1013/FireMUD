@@ -107,6 +107,9 @@ public class FriendsCommandHandler {
 
   private TextCommandInterpretationResult handleList(
       SessionContext context, FriendListFilter filter, String rawCommandText) {
+    if (!isPlayerSafeFilter(filter)) {
+      return friendFilterUnavailable();
+    }
     ListFriendsResponse response =
         filter == FriendListFilter.ALL
             ? socialGroupsClient.listFriends(context.tenantId(), context.accountId())
@@ -133,6 +136,19 @@ public class FriendsCommandHandler {
     publishCommandEvent(context, rawCommandText);
     return new TextCommandInterpretationResult(
         CommandEnqueueResult.success(), List.of(PlayerOutput.view(view)));
+  }
+
+  private TextCommandInterpretationResult friendFilterUnavailable() {
+    return new TextCommandInterpretationResult(
+        CommandEnqueueResult.failure("FRIEND_PRESENCE_UNAVAILABLE", "Friend presence unavailable"),
+        List.of(PlayerOutput.error("FRIEND_PRESENCE_UNAVAILABLE", "Friend presence unavailable")));
+  }
+
+  private boolean isPlayerSafeFilter(FriendListFilter filter) {
+    return switch (filter) {
+      case OFFLINE, PUBLIC, FRIENDS_ONLY, PRIVATE, SHARED, ISOLATED, UNSPECIFIED_SCOPE -> false;
+      default -> true;
+    };
   }
 
   private TextCommandInterpretationResult handleAdd(
@@ -266,19 +282,7 @@ public class FriendsCommandHandler {
         CommandEnqueueResult.success(),
         List.of(
             PlayerOutput.view(
-                new FriendRosterSummaryViewOutput(
-                    response.getSummary().getTotalCount(),
-                    response.getSummary().getOnlineCount(),
-                    response.getSummary().getOfflineCount(),
-                    response.getSummary().getRecentCount(),
-                    response.getSummary().getPublicCount(),
-                    response.getSummary().getFriendsOnlyCount(),
-                    response.getSummary().getPrivateCount()
-                        + response.getSummary().getHiddenStaffCount()
-                        + response.getSummary().getUnspecifiedVisibilityCount(),
-                    response.getSummary().getSharedCount(),
-                    response.getSummary().getIsolatedCount(),
-                    response.getSummary().getUnspecifiedScopeCount()))));
+                new FriendRosterSummaryViewOutput(response.getSummary().getTotalCount()))));
   }
 
   private TextCommandInterpretationResult handleVisibilityView(
@@ -416,16 +420,12 @@ public class FriendsCommandHandler {
                   return toEntry(ordinal, entry);
                 })
             .toList();
-    boolean canonicalFiltered =
-        filter == FriendListFilter.ALL
-            || response.getFilter() == mapRosterFilter(filter)
-            || response.getMatchCount() > 0
-            || response.getTotalCount() > 0;
+    // Filtering must use the final disclosed projection, not backend membership in a filter.
+    // A redacted subject must not reveal online/recent state through its inclusion alone.
     List<FriendPresenceViewOutput.Entry> mapped =
-        canonicalFiltered ? allEntries : allEntries.stream().filter(filter::matches).toList();
+        allEntries.stream().filter(filter::matches).toList();
     int totalCount = response.getTotalCount() > 0 ? response.getTotalCount() : allEntries.size();
-    int matchCount = response.getMatchCount() > 0 ? response.getMatchCount() : mapped.size();
-    return new FriendPresenceViewOutput(filter.name(), totalCount, matchCount, mapped);
+    return new FriendPresenceViewOutput(filter.name(), totalCount, mapped);
   }
 
   private FriendPresenceViewOutput.Entry toEntry(int ordinal, FriendRosterEntry entry) {
@@ -444,13 +444,13 @@ public class FriendsCommandHandler {
         entry.getCreatedAtMs() > 0 ? entry.getCreatedAtMs() : null,
         characterName != null ? characterName : "Friend #" + friendAccountId,
         presence.getOnline(),
-        blankToNull(presence.getWorldSlug()),
-        blankToNull(presence.getWorldDisplayName()),
-        blankToNull(presence.getRealmSlug()),
-        blankToNull(presence.getRealmDisplayName()),
+        null,
+        null,
+        null,
+        null,
         characterName,
-        playableStateScope(presence.getPlayableStateScope()),
-        presence.getPointerVersion() > 0 ? presence.getPointerVersion() : null,
+        null,
+        null,
         activityState(presence.getActivityState()),
         presence.getLastSeenAtMs() > 0 ? presence.getLastSeenAtMs() : null,
         visibilityPolicy(presence.getVisibilityPolicy()));
@@ -523,14 +523,6 @@ public class FriendsCommandHandler {
     return value == null || value.isBlank() ? null : value;
   }
 
-  private String playableStateScope(PlayableStateScope scope) {
-    return switch (scope) {
-      case PLAYABLE_STATE_SCOPE_SHARED -> "SHARED";
-      case PLAYABLE_STATE_SCOPE_ISOLATED -> "ISOLATED";
-      default -> null;
-    };
-  }
-
   private String visibilityPolicy(
       net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy visibilityPolicy) {
     return switch (visibilityPolicy) {
@@ -591,7 +583,7 @@ public class FriendsCommandHandler {
               "INVALID",
               FriendListFilter.ALL,
               null,
-              "FRIENDS [ADD|REMOVE|SHOW|SUMMARY|VISIBILITY|ONLINE|OFFLINE|RECENT|PUBLIC|FRIENDS_ONLY|PRIVATE|SHARED|ISOLATED|UNSPECIFIED_SCOPE]");
+              "FRIENDS [ADD|REMOVE|SHOW|SUMMARY|VISIBILITY|ONLINE|RECENT|SHARED|ISOLATED]");
     };
   }
 

@@ -29,6 +29,7 @@ command -v openssl >/dev/null 2>&1 || {
 
 python3 - <<'PY' "$ROOT_DIR"
 import contextlib
+import http.server
 import io
 import json
 import socket
@@ -112,6 +113,15 @@ class FakeReadinessResponse:
         return self.body
 
 
+class FakeReadinessOpener:
+    def __init__(self, response):
+        self.response = response
+
+    def open(self, _url, timeout):
+        assert timeout == 1
+        return self.response
+
+
 for status, body, expected in (
     (200, b'{"status":"UP"}', True),
     (204, b'{"status":"UP"}', True),
@@ -125,10 +135,52 @@ for status, body, expected in (
 ):
     with patch.object(
         smoke_common.urllib.request,
-        "urlopen",
-        return_value=FakeReadinessResponse(status, body),
+        "build_opener",
+        return_value=FakeReadinessOpener(FakeReadinessResponse(status, body)),
     ):
         assert smoke_common.http_readiness_up("https://example.test/readiness", 1) is expected
+
+
+class ReadinessRedirectHandler(http.server.BaseHTTPRequestHandler):
+    requested_paths = []
+
+    def do_GET(self):
+        self.requested_paths.append(self.path)
+        if self.path == "/actuator/health/readiness":
+            self.send_response(302)
+            self.send_header("Location", "/actuator/health/liveness")
+            self.end_headers()
+            return
+        if self.path == "/actuator/health/liveness":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"status":"UP"}')
+            return
+        self.send_error(404)
+
+    def log_message(self, _format, *_args):
+        pass
+
+
+readiness_server = http.server.ThreadingHTTPServer(
+    ("127.0.0.1", 0), ReadinessRedirectHandler
+)
+readiness_server.timeout = 1
+readiness_thread = threading.Thread(target=readiness_server.serve_forever, daemon=True)
+ReadinessRedirectHandler.requested_paths.clear()
+readiness_thread.start()
+try:
+    readiness_url = (
+        f"http://127.0.0.1:{readiness_server.server_port}/actuator/health/readiness"
+    )
+    assert smoke_common.http_readiness_up(readiness_url, 1) is False
+    assert ReadinessRedirectHandler.requested_paths == ["/actuator/health/readiness"]
+finally:
+    readiness_server.shutdown()
+    readiness_server.server_close()
+    readiness_thread.join(timeout=2)
+assert not readiness_thread.is_alive()
 
 assert smoke_common.telnet_look_room_id(
     "OK LOOK\n\x1b[32mRoom: \x1b[0mStart (ID: room-123)\nShort: A room\n"

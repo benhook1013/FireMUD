@@ -16,6 +16,7 @@ import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
+import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.loggingadmin.dto.AccountAuditReceiptDto;
@@ -62,6 +63,14 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
       justification = "MeterRegistry is thread-safe and only stored")
   private final MeterRegistry meterRegistry;
 
+  public LoggingAdminGrpcService(
+      LogQueryService logQueryService,
+      LogEventService logEventService,
+      ModerationService moderationService,
+      MeterRegistry meterRegistry) {
+    this(logQueryService, logEventService, moderationService, meterRegistry, null);
+  }
+
   @Autowired
   public LoggingAdminGrpcService(
       LogQueryService logQueryService,
@@ -74,14 +83,6 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
     this.moderationService = moderationService;
     this.meterRegistry = meterRegistry;
     this.workloadNamespace = workloadNamespace;
-  }
-
-  LoggingAdminGrpcService(
-      LogQueryService logQueryService,
-      LogEventService logEventService,
-      ModerationService moderationService,
-      MeterRegistry meterRegistry) {
-    this(logQueryService, logEventService, moderationService, meterRegistry, "");
   }
 
   @Override
@@ -210,30 +211,15 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
       CreateLogEventRequest request, StreamObserver<CreateLogEventResponse> responseObserver) {
     try {
       requireAccountAuditCaller("CreateLogEvent");
-      AccountAuditReceiptDto receipt = logEventService.createLogEvent(toAuditRequest(request));
-      CreateLogEventResponse response = toCreateLogEventResponse(receipt);
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
       responseObserver.onError(
           Status.PERMISSION_DENIED.withDescription(ex.getMessage()).asRuntimeException());
-    } catch (IllegalArgumentException ex) {
-      responseObserver.onError(
-          Status.INVALID_ARGUMENT.withDescription(ex.getMessage()).asRuntimeException());
-    } catch (AuditStorageUnavailableException ex) {
-      responseObserver.onError(
-          Status.UNAVAILABLE.withDescription(ex.getMessage()).asRuntimeException());
-    } catch (DataAccessException | TransactionException ex) {
-      logger.warn("CreateLogEvent transaction is unavailable: {}", ex.getClass().getSimpleName());
-      responseObserver.onError(
-          Status.UNAVAILABLE
-              .withDescription("Account audit ingress storage is unavailable")
-              .asRuntimeException());
-    } catch (Exception ex) {
-      logger.error("CreateLogEvent failed before producing an audit receipt", ex);
-      responseObserver.onError(
-          Status.INTERNAL.withDescription("Account audit ingress failed").asRuntimeException());
+      return;
     }
+    responseObserver.onError(
+        Status.UNAVAILABLE
+            .withDescription("Account audit ingress is unavailable")
+            .asRuntimeException());
   }
 
   @Override
@@ -272,23 +258,6 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
               .withDescription("Account audit receipt read failed")
               .asRuntimeException());
     }
-  }
-
-  private static net.firedevops.firemud.loggingadmin.dto.CreateLogEventRequest toAuditRequest(
-      CreateLogEventRequest request) {
-    return toAuditRequest(
-        request.getScope(),
-        request.getTenantIdentityVersion(),
-        request.getTenantId(),
-        request.getTenantUuid(),
-        request.getAuditEventId(),
-        request.getProducerService(),
-        request.getEventType(),
-        request.hasOccurredAt() ? request.getOccurredAt() : null,
-        request.getSchemaVersion(),
-        request.getPayload(),
-        request.getPayloadDigestVersion(),
-        request.getPayloadDigest());
   }
 
   private static net.firedevops.firemud.loggingadmin.dto.CreateLogEventRequest toAuditRequest(
@@ -405,7 +374,7 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
     return tenantUuid;
   }
 
-  private static CreateLogEventResponse toCreateLogEventResponse(AccountAuditReceiptDto receipt) {
+  static CreateLogEventResponse toCreateLogEventResponse(AccountAuditReceiptDto receipt) {
     return CreateLogEventResponse.newBuilder()
         .setScope(toProtoScope(receipt.scope()))
         .setTenantId(receipt.tenantId() == null ? "" : receipt.tenantId().toString())
@@ -419,6 +388,7 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
         .setTenantUuid(receipt.tenantUuid() == null ? "" : receipt.tenantUuid().toString())
         .setStatus(toProtoStatus(receipt.status()))
         .setOutcome(toProtoOutcome(receipt.outcome()))
+        .setAuditProjectionVersion(1)
         .build();
   }
 
@@ -437,6 +407,7 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
         .setTenantUuid(receipt.tenantUuid() == null ? "" : receipt.tenantUuid().toString())
         .setStatus(toProtoStatus(receipt.status()))
         .setOutcome(toProtoOutcome(receipt.outcome()))
+        .setAuditProjectionVersion(1)
         .build();
   }
 
@@ -491,7 +462,7 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
     try {
       AdminRoleGuard.requireAdminRole();
       RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId");
-      RequestIdValidation.requirePositiveLong(request.getAccountId(), "accountId");
+      JwtClaims.requireAccountId(request.getAccountId(), "accountId");
       RequestIdValidation.requirePositiveLong(request.getSessionId(), "sessionId");
       ApplyModerationActionResponse response =
           ApplyModerationActionResponse.newBuilder()
@@ -555,7 +526,7 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
       var decision =
           moderationService.evaluatePolicy(
               RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
-              RequestIdValidation.requirePositiveLong(request.getAccountId(), "accountId"),
+              UUID.fromString(JwtClaims.requireAccountId(request.getAccountId(), "accountId")),
               request.getScope());
       EvaluateModerationPolicyResponse.Builder response =
           EvaluateModerationPolicyResponse.newBuilder()
@@ -623,12 +594,11 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
     GrpcPeerIdentity peerIdentity = GrpcPeerIdentity.current();
     if (allowedServices == null
         || peerIdentity == null
+        || !allowedServices.contains(peerIdentity.service())
         || workloadNamespace == null
         || workloadNamespace.isBlank()
-        || !allowedServices.contains(peerIdentity.service())
-        || !peerIdentity
-            .uri()
-            .equals("spiffe://firemud/ns/" + workloadNamespace + "/sa/account-service")) {
+        || !("spiffe://firemud/ns/" + workloadNamespace + "/sa/" + ACCOUNT_SERVICE)
+            .equals(peerIdentity.uri())) {
       throw new AdminAuthorizationException(
           methodName + " requires an allowlisted account-service mTLS peer");
     }

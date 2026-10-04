@@ -96,6 +96,7 @@ class LoggingAdminClientAuditTest {
                 .setPayloadDigest(envelope.payloadDigest())
                 .setStatus(AccountAuditReceiptStatus.ACCOUNT_AUDIT_RECEIPT_STATUS_COMMITTED)
                 .setOutcome(AccountAuditReceiptOutcome.ACCOUNT_AUDIT_RECEIPT_OUTCOME_ACCEPTED)
+                .setAuditProjectionVersion(1)
                 .build());
     LoggingAdminClient client = newClient(stub);
 
@@ -126,6 +127,7 @@ class LoggingAdminClientAuditTest {
                 .setPayloadDigest(envelope.payloadDigest())
                 .setStatus(AccountAuditReceiptStatus.ACCOUNT_AUDIT_RECEIPT_STATUS_COMMITTED)
                 .setOutcome(AccountAuditReceiptOutcome.ACCOUNT_AUDIT_RECEIPT_OUTCOME_ACCEPTED)
+                .setAuditProjectionVersion(1)
                 .build());
     LoggingAdminClient client = newClient(stub);
 
@@ -261,6 +263,7 @@ class LoggingAdminClientAuditTest {
         .setPayloadDigest(envelope.payloadDigest())
         .setStatus(AccountAuditReceiptStatus.ACCOUNT_AUDIT_RECEIPT_STATUS_COMMITTED)
         .setOutcome(AccountAuditReceiptOutcome.ACCOUNT_AUDIT_RECEIPT_OUTCOME_DUPLICATE)
+        .setAuditProjectionVersion(1)
         .build();
   }
 
@@ -278,6 +281,7 @@ class LoggingAdminClientAuditTest {
         .setPayloadDigest(envelope.payloadDigest())
         .setStatus(AccountAuditReceiptStatus.ACCOUNT_AUDIT_RECEIPT_STATUS_COMMITTED)
         .setOutcome(AccountAuditReceiptOutcome.ACCOUNT_AUDIT_RECEIPT_OUTCOME_ACCEPTED)
+        .setAuditProjectionVersion(1)
         .build();
   }
 }

@@ -46,6 +46,7 @@ class GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest {
   private static final String NAMESPACE = "canonical-closed-pointer-it";
   private static final long RETAINED_TENANT_ID = 917L;
   private static final long RETAINED_INSTANCE_ID = 501L;
+  private static final long RETAINED_CATALOG_REVISION = 7L;
   private static final UUID RETAINED_REALM_ID = uuid(801);
   private static final UUID RETAINED_NAMESPACE_ID = uuid(802);
   private static final UUID NIL_UUID = new UUID(0L, 0L);
@@ -81,9 +82,102 @@ class GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest {
         .isEqualTo(created.catalog.tenantId());
     assertThat(pointer.get("realm_id", UUID.class)).isEqualTo(created.catalog.realmId());
     assertThat(pointer.get("playable_state_namespace_id", UUID.class)).isNull();
+    assertThat(pointer.get("catalog_revision", Long.class)).isEqualTo(1L);
     assertThat(pointer.get("admission_state", String.class)).isEqualTo("CLOSED");
     assertThat(pointer.get("world_display_name", String.class)).isNull();
     assertThat(pointer.get("character_creation_policy", String.class)).isNull();
+
+    Record event =
+        fixture.required(
+            "SELECT tenant_id, game_instance_id, realm_id, playable_state_namespace_id, "
+                + "catalog_revision, admission_state FROM gameplay_admission_pointer_event "
+                + "WHERE representation_version = 2");
+    assertThat(event.get("tenant_id", Long.class)).isNull();
+    assertThat(event.get("game_instance_id", Long.class)).isNull();
+    assertThat(event.get("realm_id", UUID.class)).isEqualTo(created.catalog.realmId());
+    assertThat(event.get("playable_state_namespace_id", UUID.class)).isNull();
+    assertThat(event.get("catalog_revision", Long.class)).isEqualTo(1L);
+    assertThat(event.get("admission_state", String.class)).isEqualTo("CLOSED");
+  }
+
+  @Test
+  void canonicalClosedRowsRejectNumericRuntimeAndNamespaceAliasesWithoutGrowingEvidence() {
+    Fixture fixture = fixture(true);
+    CreateCanonicalClosedAdmissionPointerRequest request =
+        fixture.createCatalog(uuid(30), uuid(40), "shape actor", "shape reason");
+    CanonicalRealmCatalogSnapshot catalog =
+        fixture
+            .catalogRepository
+            .readByRequest(NAMESPACE, request.catalogCreationRequestId())
+            .orElseThrow();
+    String insertCanonicalPointer =
+        "INSERT INTO gameplay_admission_pointer ("
+            + "world_slug, realm_slug, world_display_name, realm_display_name, tenant_id, "
+            + "game_instance_id, pointer_version, visible, requires_character_selection, "
+            + "state_scope, character_creation_policy, last_updated_by, last_update_reason, "
+            + "created_at, updated_at, public_production_realm, catalog_revision, realm_id, "
+            + "playable_state_namespace_id, representation_version, target_namespace, "
+            + "canonical_tenant_id, admission_state) "
+            + "SELECT catalog.world_slug, catalog.realm_slug, NULL, NULL, ?, ?, 1, NULL, NULL, "
+            + "NULL, NULL, NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL, "
+            + "catalog.catalog_revision, catalog.realm_id, ?, 2, catalog.target_namespace, "
+            + "catalog.canonical_tenant_id, 'CLOSED' "
+            + "FROM game_session_canonical_realm_catalog catalog "
+            + "WHERE catalog.target_namespace = ? AND catalog.creation_request_id = ?";
+
+    assertThatThrownBy(
+            () ->
+                fixture.dsl.execute(
+                    insertCanonicalPointer,
+                    RETAINED_TENANT_ID,
+                    RETAINED_INSTANCE_ID,
+                    null,
+                    NAMESPACE,
+                    request.catalogCreationRequestId()))
+        .satisfies(
+            failure ->
+                assertPostgresCheckViolation(
+                    failure, "chk_gameplay_admission_pointer_representation"));
+    assertThatThrownBy(
+            () ->
+                fixture.dsl.execute(
+                    insertCanonicalPointer,
+                    null,
+                    null,
+                    catalog.playableStateNamespaceId(),
+                    NAMESPACE,
+                    request.catalogCreationRequestId()))
+        .satisfies(
+            failure ->
+                assertPostgresCheckViolation(
+                    failure, "chk_gameplay_admission_pointer_representation"));
+
+    assertThat(fixture.count("gameplay_admission_pointer")).isEqualTo(1L);
+    assertThat(fixture.count("gameplay_admission_pointer_event")).isEqualTo(1L);
+    assertThat(fixture.count("game_session_canonical_realm_catalog")).isEqualTo(1L);
+    assertThat(fixture.count("game_session_canonical_closed_admission_pointer_request")).isZero();
+    assertThat(fixture.pointerRepository.readByRequest(NAMESPACE, request.requestId())).isEmpty();
+    assertThat(
+            fixture.catalogRepository.readByRequest(NAMESPACE, request.catalogCreationRequestId()))
+        .contains(catalog);
+    assertThat(
+            fixture
+                .required(
+                    "SELECT (to_jsonb(pointer) - 'representation_version' - 'target_namespace' "
+                        + "- 'canonical_tenant_id' - 'admission_state')::text AS row_json "
+                        + "FROM gameplay_admission_pointer pointer WHERE id = ?",
+                    fixture.retainedPointerId)
+                .get("row_json", String.class))
+        .isEqualTo(fixture.retainedPointerBeforeV13);
+    assertThat(
+            fixture
+                .required(
+                    "SELECT (to_jsonb(event) - 'representation_version' - 'target_namespace' "
+                        + "- 'canonical_tenant_id' - 'admission_state')::text AS row_json "
+                        + "FROM gameplay_admission_pointer_event event WHERE id = ?",
+                    fixture.retainedEventId)
+                .get("row_json", String.class))
+        .isEqualTo(fixture.retainedEventBeforeV13);
   }
 
   @Test
@@ -468,7 +562,7 @@ class GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest {
         .hasSize(1)
         .allSatisfy(pointer -> assertThat(pointer.getTenantId()).isEqualTo(RETAINED_TENANT_ID));
     assertThat(
-            fixture.eventRepository.findByTenantIdAndWorldSlugAndRealmSlugOrderByOccurredAtDesc(
+            fixture.eventRepository.findByTenantIdAndWorldSlugAndRealmSlugOrderByIdDesc(
                 RETAINED_TENANT_ID, "legacy-world", "legacy-realm"))
         .hasSize(1)
         .first()
@@ -502,32 +596,38 @@ class GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest {
             fixture
                 .required(
                     "SELECT (to_jsonb(event) - 'representation_version' - 'target_namespace' "
-                        + "- 'canonical_tenant_id' - 'realm_id' - 'catalog_revision' "
-                        + "- 'admission_state')::text AS row_json "
+                        + "- 'canonical_tenant_id' - 'admission_state')::text AS row_json "
                         + "FROM gameplay_admission_pointer_event event WHERE id = ?",
                     fixture.retainedEventId)
                 .get("row_json", String.class))
         .isEqualTo(fixture.retainedEventBeforeV13);
     Record retainedPointer =
         fixture.required(
-            "SELECT representation_version, target_namespace, canonical_tenant_id, admission_state "
+            "SELECT representation_version, target_namespace, canonical_tenant_id, "
+                + "catalog_revision, admission_state "
                 + "FROM gameplay_admission_pointer WHERE id = ?",
             fixture.retainedPointerId);
     assertThat(retainedPointer.get("representation_version", Integer.class)).isEqualTo(1);
     assertThat(retainedPointer.get("target_namespace", String.class)).isNull();
     assertThat(retainedPointer.get("canonical_tenant_id", UUID.class)).isNull();
+    assertThat(retainedPointer.get("catalog_revision", Long.class))
+        .isEqualTo(RETAINED_CATALOG_REVISION);
     assertThat(retainedPointer.get("admission_state", String.class)).isNull();
     Record retainedEvent =
         fixture.required(
             "SELECT representation_version, target_namespace, canonical_tenant_id, realm_id, "
-                + "catalog_revision, admission_state FROM gameplay_admission_pointer_event "
+                + "playable_state_namespace_id, catalog_revision, admission_state "
+                + "FROM gameplay_admission_pointer_event "
                 + "WHERE id = ?",
             fixture.retainedEventId);
     assertThat(retainedEvent.get("representation_version", Integer.class)).isEqualTo(1);
     assertThat(retainedEvent.get("target_namespace", String.class)).isNull();
     assertThat(retainedEvent.get("canonical_tenant_id", UUID.class)).isNull();
-    assertThat(retainedEvent.get("realm_id", UUID.class)).isNull();
-    assertThat(retainedEvent.get("catalog_revision", Long.class)).isNull();
+    assertThat(retainedEvent.get("realm_id", UUID.class)).isEqualTo(RETAINED_REALM_ID);
+    assertThat(retainedEvent.get("playable_state_namespace_id", UUID.class))
+        .isEqualTo(RETAINED_NAMESPACE_ID);
+    assertThat(retainedEvent.get("catalog_revision", Long.class))
+        .isEqualTo(RETAINED_CATALOG_REVISION);
     assertThat(retainedEvent.get("admission_state", String.class)).isNull();
 
     assertThatThrownBy(
@@ -597,6 +697,17 @@ class GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest {
     return null;
   }
 
+  private static void assertPostgresCheckViolation(Throwable failure, String constraintName) {
+    Throwable cause = failure;
+    while (cause.getCause() != null && cause.getCause() != cause) {
+      cause = cause.getCause();
+    }
+    assertThat(cause).isInstanceOf(java.sql.SQLException.class);
+    java.sql.SQLException postgresFailure = (java.sql.SQLException) cause;
+    assertThat(postgresFailure.getSQLState()).isEqualTo("23514");
+    assertThat(postgresFailure.getMessage()).contains(constraintName);
+  }
+
   private Fixture fixture(boolean seedRetained) {
     String schema = "gs_canonical_closed_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
@@ -627,11 +738,14 @@ class GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest {
               + "(world_slug, world_display_name, realm_slug, realm_display_name, tenant_id, "
               + "game_instance_id, pointer_version, visible, requires_character_selection, "
               + "state_scope, character_creation_policy, last_updated_by, last_update_reason, "
-              + "public_production_realm, realm_id, playable_state_namespace_id) "
+              + "public_production_realm, catalog_revision, realm_id, "
+              + "playable_state_namespace_id) "
               + "VALUES ('legacy-world', 'Legacy World', 'legacy-realm', 'Legacy Realm', ?, ?, "
-              + "1, true, false, 'SHARED', 'ALLOW_NEW', 'fixture', 'retained evidence', true, ?, ?)",
+              + "1, true, false, 'SHARED', 'ALLOW_NEW', 'fixture', 'retained evidence', true, "
+              + "?, ?, ?)",
           RETAINED_TENANT_ID,
           RETAINED_INSTANCE_ID,
+          RETAINED_CATALOG_REVISION,
           RETAINED_REALM_ID,
           RETAINED_NAMESPACE_ID);
       retainedPointerId =
@@ -660,12 +774,16 @@ class GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest {
               + "(world_slug, realm_slug, world_display_name, realm_display_name, tenant_id, "
               + "game_instance_id, pointer_version, visible, requires_character_selection, "
               + "state_scope, character_creation_policy, actor_principal, reason, "
-              + "control_plane_request_id, occurred_at, public_production_realm) "
+              + "control_plane_request_id, occurred_at, public_production_realm, "
+              + "catalog_revision, realm_id, playable_state_namespace_id) "
               + "VALUES ('legacy-world', 'legacy-realm', 'Legacy World', 'Legacy Realm', ?, ?, "
               + "1, true, false, 'SHARED', 'ALLOW_NEW', 'fixture', 'retained event', "
-              + "'legacy-request', CURRENT_TIMESTAMP, true)",
+              + "'legacy-request', CURRENT_TIMESTAMP, true, ?, ?, ?)",
           RETAINED_TENANT_ID,
-          RETAINED_INSTANCE_ID);
+          RETAINED_INSTANCE_ID,
+          RETAINED_CATALOG_REVISION,
+          RETAINED_REALM_ID,
+          RETAINED_NAMESPACE_ID);
       retainedEventId =
           java.util.Objects.requireNonNull(
                   initialDsl.fetchOne(

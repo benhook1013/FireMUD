@@ -16,6 +16,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 class GrpcJwtAuthInterceptorTest {
+  private static final String ACCOUNT_ID = "018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a";
   private JwtUtil jwtUtil;
   private AuthTokenInterceptor interceptor;
 
@@ -35,7 +36,9 @@ class GrpcJwtAuthInterceptorTest {
 
   @Test
   void allowsValidToken() {
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token =
+        jwtUtil.generateToken(
+            ACCOUNT_ID, Map.of("accountId", ACCOUNT_ID, "globalRoles", List.of("platformAdmin")));
     TestServerCall call = new TestServerCall();
     Metadata headers = new Metadata();
     headers.put(

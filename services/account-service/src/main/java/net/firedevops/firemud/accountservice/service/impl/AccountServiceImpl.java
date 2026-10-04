@@ -112,15 +112,18 @@ import net.firedevops.firemud.common.security.JwtAuthProperties;
 import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import org.jooq.exception.ConfigurationException;
+import org.jooq.exception.DataAccessException;
 import org.jooq.exception.IntegrityConstraintViolationException;
+import org.jooq.exception.MappingException;
 import org.slf4j.Logger;
-import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionException;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -477,23 +480,46 @@ public class AccountServiceImpl implements AccountService {
   @Timed(value = "account.bootstrap_worlds")
   public List<BootstrapWorldDto> listBootstrapWorlds(String bootstrapToken) {
     BootstrapContext bootstrapContext = requireBootstrapContext(bootstrapToken);
+    Map<Long, RuntimeEntitlementsDto> discoveryEntitlementMemo = new HashMap<>();
     return gameSessionClient.listGameplayWorlds().stream()
-        .filter(world -> hasAdmissibleRealm(bootstrapContext, world.getWorldSlug()))
+        .filter(
+            world ->
+                hasAdmissibleRealm(
+                    bootstrapContext, world.getWorldSlug(), discoveryEntitlementMemo))
         .map(world -> new BootstrapWorldDto(world.getWorldSlug(), world.getDisplayName()))
         .toList();
   }
 
   @Override
-  @Transactional
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
   @Timed(value = "account.bootstrap_realms")
   public List<BootstrapRealmDto> listBootstrapRealms(String bootstrapToken, String worldSlug) {
     BootstrapContext bootstrapContext = requireBootstrapContext(bootstrapToken);
+    Map<Long, RuntimeEntitlementsDto> discoveryEntitlementMemo = new HashMap<>();
     Instant evaluatedAt = Instant.now();
     Instant expiresAt = evaluatedAt.plusMillis(tokenProperties.getConnectScopeExpirationMs());
-    return gameSessionClient.listGameplayRealms(worldSlug).stream()
-        .map(this::readRuntimeRealmTarget)
-        .map(realm -> requireRealmTarget(realm.tenantId(), realm.worldSlug(), realm.realmSlug()))
-        .filter(realm -> isRealmAdmissible(bootstrapContext, realm))
+    final List<RuntimeRealmTarget> admissibleRealms;
+    try {
+      admissibleRealms =
+          listAdmissibleRuntimeRealmTargets(bootstrapContext, worldSlug, discoveryEntitlementMemo);
+    } catch (AuthenticationException ex) {
+      throw ex;
+    } catch (RuntimeException ex) {
+      throw admissionPointerUnavailable(ex);
+    }
+    return admissibleRealms.stream()
+        .map(
+            discovered -> {
+              RuntimeRealmTarget current =
+                  requireRealmTarget(
+                      discovered.tenantId(), discovered.worldSlug(), discovered.realmSlug());
+              if (!sameRuntimeRealmAuthority(discovered, current)) {
+                throw admissionPointerUnavailable(
+                    new IllegalStateException(
+                        "Public realm authority changed during bootstrap discovery"));
+              }
+              return current;
+            })
         .map(
             realm ->
                 new BootstrapRealmDto(
@@ -504,6 +530,9 @@ public class AccountServiceImpl implements AccountService {
                     realm.tenantId(),
                     realm.gameInstanceId(),
                     realm.pointerVersion(),
+                    realm.catalogRevision(),
+                    realm.playableStateNamespaceId(),
+                    toPlayableStateScope(realm).name(),
                     realm.requiresCharacterSelection(),
                     realm.stateScope(),
                     realm.characterCreationPolicy(),
@@ -562,17 +591,19 @@ public class AccountServiceImpl implements AccountService {
       throw new AuthenticationException(
           "CONNECT_CONTEXT_INVALID", "Bootstrap caller binding is missing", ex);
     }
+    requireAuthenticationEligible(requireAccount(caller.accountId()));
     return joinPublicProductionForTrustedCaller(caller.accountId(), callerBinding, null, request);
   }
 
   @Override
-  @Transactional
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
   @Timed(value = "account.direct_text_connect_scope")
   public DirectTextJoinScope issueDirectTextConnectScope(
       DirectTextCallerContext caller, DirectTextJoinTarget target) {
     if (caller == null
         || target == null
         || caller.accountId() <= 0L
+        || !StringUtils.hasText(caller.requestId())
         || caller.tenantId() != target.tenantId()
         || !caller.realmId().equals(target.realmId())
         || caller.gameInstanceId() != target.gameInstanceId()
@@ -596,6 +627,12 @@ public class AccountServiceImpl implements AccountService {
         || current.catalogRevision() != target.catalogRevision()
         || current.pointerVersion() != target.pointerVersion()) {
       throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
+    }
+    RuntimeEntitlementsDto entitlements =
+        getTenantEntitlementsForRuntime(current.tenantId(), caller.requestId());
+    if (!entitlements.gameplayAvailable()) {
+      throw new AuthenticationException(
+          "TENANT_BILLING_BLOCKED", "Gameplay is not available for this tenant");
     }
     Instant evaluatedAt = Instant.now();
     Instant expiresAt = evaluatedAt.plusMillis(tokenProperties.getConnectScopeExpirationMs());
@@ -637,6 +674,10 @@ public class AccountServiceImpl implements AccountService {
         || !StringUtils.hasText(request.requestId())) {
       throw new AuthenticationException("CONNECT_SCOPE_INVALID", INVALID_CONNECT_SCOPE_MESSAGE);
     }
+    if (request.requestId().length() > JoinPublicProductionRequest.MAX_REQUEST_ID_LENGTH) {
+      throw new AuthenticationException(
+          "INVALID_ARGUMENT", "JOIN requestId exceeds the maximum length");
+    }
     String requestId = request.requestId();
     String scopeTokenHash = AccountJoinDigest.tokenHash(request.connectScopeId());
     Optional<JoinOperation> existing = accountJoinOperationRepository.find(requestId);
@@ -666,6 +707,10 @@ public class AccountServiceImpl implements AccountService {
       } catch (RuntimeException ex) {
         Optional<JoinOperation> claimReadback = safeFindJoinOperation(requestId);
         if (claimReadback.isEmpty()) {
+          if (connectScopeEvidenceIsMissing(request.connectScopeId())) {
+            throw new AuthenticationException(
+                "CONNECT_SCOPE_INVALID", "JOIN scope evidence is unavailable", ex);
+          }
           throw new AuthenticationException(
               "AUTH_UNAVAILABLE", "JOIN request claim is uncertain; retry the same request", ex);
         }
@@ -688,14 +733,20 @@ public class AccountServiceImpl implements AccountService {
                 () ->
                     new AuthenticationException(
                         "AUTH_UNAVAILABLE", "JOIN request claim is not yet readable"));
-    if ("PENDING".equals(beforeAttempt.status())) {
+    if ("PENDING".equals(beforeAttempt.status()) && !isConnectScopeExpired(retained)) {
       try {
         // A first JOIN consumes a previously committed positive absence baseline; creating it
         // inside the JOIN transaction would never make that baseline durable while absent.
         joinTransactionTemplate.execute(
             transactionStatus -> {
+              if (isConnectScopeExpired(retained)) {
+                return null;
+              }
               membershipAuthorityEventProducer.preparePairAuthorityForJoin(
                   accountId, retained.tenantId());
+              if (isConnectScopeExpired(retained)) {
+                transactionStatus.setRollbackOnly();
+              }
               return null;
             });
       } catch (RuntimeException unavailablePairAuthority) {
@@ -708,8 +759,14 @@ public class AccountServiceImpl implements AccountService {
     }
 
     try {
-      return joinTransactionTemplate.execute(
-          transactionStatus -> executeJoinAttempt(accountId, callerBinding, requestId, retained));
+      JoinAttemptOutcome outcome =
+          joinTransactionTemplate.execute(
+              transactionStatus ->
+                  executeJoinAttempt(accountId, callerBinding, requestId, retained));
+      if (outcome.terminalOperation() != null) {
+        return replayTerminalJoinSafely(outcome.terminalOperation(), callerBinding, retained);
+      }
+      return outcome.result();
     } catch (AuthenticationException ex) {
       if ("IDEMPOTENCY_CONFLICT".equals(ex.getCode())) {
         throw ex;
@@ -722,8 +779,7 @@ public class AccountServiceImpl implements AccountService {
         JoinOperation operation = outcomeReadback.orElseThrow();
         requireMatchingJoinIntent(operation, requestId, callerBinding, retained);
         if (!"PENDING".equals(operation.status())) {
-          requireCommittedOutcomeEventReadback(operation);
-          return resultFromJoinOperation(operation, true);
+          return replayTerminalJoinSafely(operation, callerBinding, retained);
         }
         recordJoinAttemptFailureAfterRollback(requestId, "AUTH_UNAVAILABLE");
       }
@@ -732,7 +788,7 @@ public class AccountServiceImpl implements AccountService {
     }
   }
 
-  private JoinPublicProductionResult executeJoinAttempt(
+  private JoinAttemptOutcome executeJoinAttempt(
       long accountId, String callerBinding, String requestId, VerifiedJoinScope scope) {
     accountJoinOperationRepository.lockAccount(accountId);
     JoinOperation operation =
@@ -742,16 +798,25 @@ public class AccountServiceImpl implements AccountService {
     requireMatchingJoinIntent(operation, requestId, callerBinding, scope);
 
     if (!"PENDING".equals(operation.status())) {
-      return replayJoinOperation(operation, callerBinding, scope);
+      return JoinAttemptOutcome.terminal(operation);
     }
+    return JoinAttemptOutcome.result(
+        executePendingJoinAttempt(accountId, callerBinding, requestId, scope, operation));
+  }
 
+  private JoinPublicProductionResult executePendingJoinAttempt(
+      long accountId,
+      String callerBinding,
+      String requestId,
+      VerifiedJoinScope scope,
+      JoinOperation operation) {
     if (isConnectScopeExpired(scope)) {
       accountJoinOperationRepository.recordAttemptFailure(
           requestId, "NOT_EVALUATED", "AUTH_UNAVAILABLE");
       return pendingJoinFailure(scope, "AUTH_UNAVAILABLE");
     }
 
-    JoinEvaluation evaluation = evaluateJoin(scope);
+    JoinEvaluation evaluation = evaluateJoin(scope, false);
     if (evaluation.failureCode() != null) {
       if (isRetryableJoinAuthorityFailure(evaluation)) {
         accountJoinOperationRepository.recordAttemptFailure(
@@ -786,7 +851,7 @@ public class AccountServiceImpl implements AccountService {
       return failedJoin(requestId, scope, "PUBLIC_PRODUCTION_ADMISSION_DENIED");
     }
 
-    JoinEvaluation commitEvaluation = evaluateJoin(scope);
+    JoinEvaluation commitEvaluation = evaluateJoin(scope, true);
     if (commitEvaluation.failureCode() != null) {
       if (isRetryableJoinAuthorityFailure(commitEvaluation)) {
         accountJoinOperationRepository.recordAttemptFailure(
@@ -819,6 +884,11 @@ public class AccountServiceImpl implements AccountService {
         accountTenantMembershipRepository
             .findByAccountIdAndTenantId(accountId, scope.tenantId())
             .orElse(null);
+    if (isConnectScopeExpired(scope)) {
+      accountJoinOperationRepository.recordAttemptFailure(
+          requestId, "NOT_EVALUATED", "AUTH_UNAVAILABLE");
+      return pendingJoinFailure(scope, "AUTH_UNAVAILABLE");
+    }
     boolean transitioned = false;
     String membershipTransitionType = null;
     if (membership == null) {
@@ -985,6 +1055,74 @@ public class AccountServiceImpl implements AccountService {
 
   private JoinPublicProductionResult pendingJoinFailure(
       VerifiedJoinScope scope, String outcomeCode) {
+    return joinRetryFailure(scope, outcomeCode);
+  }
+
+  private JoinPublicProductionResult replayTerminalJoin(
+      JoinOperation operation, String callerBinding, VerifiedJoinScope scope) {
+    if (isConnectScopeExpired(scope)) {
+      return joinRetryFailure(scope, "CONNECT_SCOPE_INVALID");
+    }
+
+    boolean replayUnboundFailure =
+        "FAILED".equals(operation.status()) && operation.requestDigest() == null;
+
+    JoinEvaluation evaluation;
+    try {
+      evaluation = evaluateJoin(scope);
+    } catch (RuntimeException ex) {
+      return joinRetryFailure(scope, "AUTH_UNAVAILABLE");
+    }
+    if (evaluation.failureCode() != null) {
+      if (isRetryableJoinAuthorityFailure(evaluation)) {
+        return joinRetryFailure(scope, "AUTH_UNAVAILABLE");
+      }
+      return joinRetryFailure(scope, evaluation.failureCode());
+    }
+    if (!"AVAILABLE".equals(evaluation.authorityAvailability())
+        || evaluation.allowPublicJoin() == null
+        || evaluation.entitlementVersion() == null) {
+      return joinRetryFailure(scope, "AUTH_UNAVAILABLE");
+    }
+    if (replayUnboundFailure) {
+      return resultFromJoinOperation(operation, true);
+    }
+
+    String currentRequestDigest =
+        AccountJoinDigest.request(
+            scope, callerBinding, evaluation.allowPublicJoin(), evaluation.entitlementVersion());
+    if (!Integer.valueOf(1).equals(operation.requestDigestVersion())
+        || operation.requestDigest() == null
+        || operation.allowPublicJoin() == null
+        || !operation.allowPublicJoin().equals(evaluation.allowPublicJoin())
+        || operation.entitlementVersion() == null
+        || !operation.entitlementVersion().equals(evaluation.entitlementVersion())
+        || !operation.requestDigest().equals(currentRequestDigest)
+        || ("COMMITTED".equals(operation.status())
+            && (!evaluation.gameplayAvailable() || !evaluation.allowPublicJoin()))) {
+      return joinRetryFailure(scope, "IDEMPOTENCY_CONFLICT");
+    }
+    return resultFromJoinOperation(operation, true);
+  }
+
+  private JoinPublicProductionResult replayTerminalJoinSafely(
+      JoinOperation operation, String callerBinding, VerifiedJoinScope scope) {
+    // Expired caller scope cannot authorize outcome replay or a fresh policy check. Leave the
+    // durable operation untouched; reconciliation remains responsible for readback-only recovery.
+    if (isConnectScopeExpired(scope)) {
+      return joinRetryFailure(scope, "CONNECT_SCOPE_INVALID");
+    }
+    try {
+      requireCommittedOutcomeEventReadback(operation);
+      return replayTerminalJoin(operation, callerBinding, scope);
+    } catch (AuthenticationException readbackFailure) {
+      return joinRetryFailure(scope, readbackFailure.getCode());
+    } catch (RuntimeException policyCheckFailure) {
+      return joinRetryFailure(scope, "AUTH_UNAVAILABLE");
+    }
+  }
+
+  private JoinPublicProductionResult joinRetryFailure(VerifiedJoinScope scope, String outcomeCode) {
     return new JoinPublicProductionResult(
         false, outcomeCode, scope.accountId(), scope.tenantId(), 0L, 0L, 0L, false);
   }
@@ -1011,6 +1149,14 @@ public class AccountServiceImpl implements AccountService {
             () ->
                 new AuthenticationException(
                     "CONNECT_SCOPE_INVALID", "JOIN scope evidence is unavailable"));
+  }
+
+  private boolean connectScopeEvidenceIsMissing(String connectScopeId) {
+    try {
+      return accountConnectScopeRepository.find(connectScopeId).isEmpty();
+    } catch (RuntimeException ex) {
+      return false;
+    }
   }
 
   private void validateSignedJoinScope(
@@ -1050,30 +1196,6 @@ public class AccountServiceImpl implements AccountService {
     }
   }
 
-  private JoinPublicProductionResult replayJoinOperation(
-      JoinOperation operation, String callerBinding, VerifiedJoinScope scope) {
-    if (operation.requestDigest() != null) {
-      JoinEvaluation evaluation = evaluateJoin(scope);
-      if (evaluation.failureCode() != null) {
-        throw new AuthenticationException(
-            evaluation.failureCode(), "Current JOIN authority could not be revalidated");
-      }
-      if (!"AVAILABLE".equals(evaluation.authorityAvailability())) {
-        throw new AuthenticationException(
-            "ENTITLEMENT_UNAVAILABLE", "Current JOIN policy could not be revalidated");
-      }
-      String currentDigest =
-          AccountJoinDigest.request(
-              scope, callerBinding, evaluation.allowPublicJoin(), evaluation.entitlementVersion());
-      if (!Integer.valueOf(1).equals(operation.requestDigestVersion())
-          || !operation.requestDigest().equals(currentDigest)) {
-        throw new AuthenticationException("IDEMPOTENCY_CONFLICT", "JOIN request digest changed");
-      }
-    }
-    requireCommittedOutcomeEventReadback(operation);
-    return resultFromJoinOperation(operation, true);
-  }
-
   private void requireCommittedOutcomeEventReadback(JoinOperation operation) {
     if ("COMMITTED".equals(operation.status())
         && ("JOINED".equals(operation.outcome()) || "ALREADY_ACTIVE".equals(operation.outcome()))) {
@@ -1107,7 +1229,7 @@ public class AccountServiceImpl implements AccountService {
     if (exception instanceof AuthenticationException authenticationException) {
       return "AUTH_UNAVAILABLE".equals(authenticationException.getCode());
     }
-    return exception instanceof DataAccessException
+    return exception instanceof org.springframework.dao.DataAccessException
         || exception instanceof TransactionException
         || exception instanceof org.jooq.exception.DataAccessException
         || exception instanceof java.sql.SQLException;
@@ -1216,6 +1338,10 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private JoinEvaluation evaluateJoin(VerifiedJoinScope scope) {
+    return evaluateJoin(scope, true);
+  }
+
+  private JoinEvaluation evaluateJoin(VerifiedJoinScope scope, boolean lockEntitlement) {
     UUID accountUuid = requirePersistedAccountUuid(requireAccount(scope.accountId()));
     return evaluateJoin(
         new ConnectScopeContext(
@@ -1231,10 +1357,11 @@ public class AccountServiceImpl implements AccountService {
             scope.catalogRevision(),
             scope.pointerVersion(),
             Instant.parse(scope.evaluatedAt()),
-            Instant.parse(scope.connectScopeExpiresAt())));
+            Instant.parse(scope.connectScopeExpiresAt())),
+        lockEntitlement);
   }
 
-  private JoinEvaluation evaluateJoin(ConnectScopeContext scope) {
+  private JoinEvaluation evaluateJoin(ConnectScopeContext scope, boolean lockEntitlement) {
     RuntimeRealmTarget target;
     try {
       target = requireCurrentConnectScopeTarget(scope);
@@ -1250,7 +1377,7 @@ public class AccountServiceImpl implements AccountService {
           "NOT_EVALUATED", null, null, false, "PUBLIC_PRODUCTION_ADMISSION_DENIED");
     }
     try {
-      RuntimeEntitlementsDto entitlement = lockedJoinEntitlement(scope.tenantId());
+      RuntimeEntitlementsDto entitlement = joinEntitlement(scope.tenantId(), lockEntitlement);
       return new JoinEvaluation(
           "AVAILABLE",
           entitlement.allowPublicJoin(),
@@ -1272,9 +1399,22 @@ public class AccountServiceImpl implements AccountService {
       boolean gameplayAvailable,
       String failureCode) {}
 
-  private RuntimeEntitlementsDto lockedJoinEntitlement(long tenantId) {
+  private record JoinAttemptOutcome(
+      JoinPublicProductionResult result, JoinOperation terminalOperation) {
+    private static JoinAttemptOutcome result(JoinPublicProductionResult result) {
+      return new JoinAttemptOutcome(result, null);
+    }
+
+    private static JoinAttemptOutcome terminal(JoinOperation operation) {
+      return new JoinAttemptOutcome(null, operation);
+    }
+  }
+
+  private RuntimeEntitlementsDto joinEntitlement(long tenantId, boolean lockSubscription) {
     List<net.firedevops.firemud.accountservice.entity.Subscription> rows =
-        subscriptionRepository.findByTenantIdForUpdate(tenantId);
+        lockSubscription
+            ? subscriptionRepository.findByTenantIdForUpdate(tenantId)
+            : subscriptionRepository.findByTenantId(tenantId);
     if (rows.size() != 1) {
       throw new AuthenticationException(
           "ENTITLEMENT_UNAVAILABLE", "Tenant entitlement authority is missing or ambiguous");
@@ -1311,6 +1451,7 @@ public class AccountServiceImpl implements AccountService {
     if (cachedReplay.isPresent()) {
       var replay = cachedReplay.orElseThrow();
       if (replay.success()) {
+        requireCurrentConnectTokenEligibility(bootstrapContext, scopeContext, request, true);
         throw new AuthenticationException(
             "AUTH_UNAVAILABLE",
             "The stored connect token lacks the complete Account-signed selected-target authority contract");
@@ -1347,7 +1488,37 @@ public class AccountServiceImpl implements AccountService {
       BootstrapContext bootstrapContext,
       ConnectScopeContext scopeContext,
       ConnectTokenRequest request) {
+    RuntimeRealmTarget realm =
+        requireCurrentConnectTokenEligibility(bootstrapContext, scopeContext, request, false);
+    if (!isPublicProductionRealm(realm)
+        && !hasRealmAccessGrant(
+            bootstrapContext.accountId(),
+            scopeContext.tenantId(),
+            scopeContext.worldSlug(),
+            scopeContext.realmSlug())) {
+      throw new AuthenticationException(
+          "REALM_ACCESS_DENIED",
+          "The selected non-public realm does not have an active access grant");
+    }
+
+    throw new AuthenticationException(
+        "AUTH_UNAVAILABLE",
+        "Account lacks the one-snapshot complete authority tuple, exact membership map, replay fence, and selected realm namespace/lifecycle evidence required to issue a gameplay-connect token");
+  }
+
+  private RuntimeRealmTarget requireCurrentConnectTokenEligibility(
+      BootstrapContext bootstrapContext,
+      ConnectScopeContext scopeContext,
+      ConnectTokenRequest request,
+      boolean cachedSuccessReplay) {
     RuntimeRealmTarget realm = requireCurrentConnectScopeTarget(scopeContext);
+    boolean publicProductionRealm = isPublicProductionRealm(realm);
+    if (cachedSuccessReplay && !publicProductionRealm) {
+      throw new AuthenticationException(
+          "REALM_ACCESS_DENIED",
+          "The selected non-public realm does not have an active access grant");
+    }
+
     RuntimeEntitlementsDto entitlements =
         getTenantEntitlementsForRuntime(scopeContext.tenantId(), request.requestId());
     if (!entitlements.gameplayAvailable()) {
@@ -1364,12 +1535,9 @@ public class AccountServiceImpl implements AccountService {
       throw new AuthenticationException(
           "CONNECT_TOKEN_REJECTED", "Membership authority requires reconciliation");
     }
-    if (membership.membershipExists() && "INACTIVE".equals(membership.membershipLifecycleState())) {
-      if (!isPublicProductionRealm(realm)) {
-        throw new AuthenticationException(
-            "NON_PUBLIC_ENROLLMENT_REQUIRED",
-            "Existing game membership is required for this non-public realm");
-      }
+    if (membership.membershipExists()
+        && "INACTIVE".equals(membership.membershipLifecycleState())
+        && publicProductionRealm) {
       if (!entitlements.allowPublicJoin()) {
         throw new AuthenticationException(
             "PUBLIC_PRODUCTION_ADMISSION_DENIED",
@@ -1377,6 +1545,10 @@ public class AccountServiceImpl implements AccountService {
       }
       throw new AuthenticationException(
           "JOIN_REQUIRED", "Join the selected world before requesting a connect token");
+    }
+    if (membership.membershipExists() && "INACTIVE".equals(membership.membershipLifecycleState())) {
+      throw new AuthenticationException(
+          "CONNECT_TOKEN_REJECTED", "Gameplay admission is not allowed for this account");
     }
     if (membership.membershipExists() && !membership.gameplayAdmissionAllowed()) {
       throw new AuthenticationException(
@@ -1384,7 +1556,7 @@ public class AccountServiceImpl implements AccountService {
     }
 
     if (!membership.membershipExists()) {
-      if (!isPublicProductionRealm(realm)) {
+      if (!publicProductionRealm) {
         throw new AuthenticationException(
             "NON_PUBLIC_ENROLLMENT_REQUIRED",
             "Existing game membership is required for this non-public realm");
@@ -1397,21 +1569,7 @@ public class AccountServiceImpl implements AccountService {
       throw new AuthenticationException(
           "JOIN_REQUIRED", "Join the selected world before requesting a connect token");
     }
-
-    if (!isPublicProductionRealm(realm)
-        && !hasRealmAccessGrant(
-            bootstrapContext.accountId(),
-            scopeContext.tenantId(),
-            scopeContext.worldSlug(),
-            scopeContext.realmSlug())) {
-      throw new AuthenticationException(
-          "REALM_ACCESS_DENIED",
-          "The selected non-public realm does not have an active access grant");
-    }
-
-    throw new AuthenticationException(
-        "AUTH_UNAVAILABLE",
-        "Account lacks the one-snapshot complete authority tuple, exact membership map, replay fence, and selected realm namespace/lifecycle evidence required to issue a gameplay-connect token");
+    return realm;
   }
 
   @Override
@@ -1477,9 +1635,18 @@ public class AccountServiceImpl implements AccountService {
   @Transactional(readOnly = true)
   @Timed(value = "account.runtime_entitlements")
   public RuntimeEntitlementsDto getTenantEntitlementsForRuntime(Long tenantId, String requestId) {
-    List<net.firedevops.firemud.accountservice.entity.Subscription> subscriptions =
-        subscriptionRepository.findByTenantId(tenantId);
-    if (subscriptions.size() != 1) {
+    List<net.firedevops.firemud.accountservice.entity.Subscription> subscriptions;
+    try {
+      subscriptions = subscriptionRepository.findByTenantId(tenantId);
+    } catch (MappingException | ConfigurationException ex) {
+      throw ex;
+    } catch (DataAccessException | org.springframework.dao.DataAccessException ex) {
+      throw new AuthenticationException(
+          "ENTITLEMENT_UNAVAILABLE",
+          "Tenant entitlement authority is unavailable; retry later",
+          ex);
+    }
+    if (subscriptions == null || subscriptions.size() != 1) {
       throw new AuthenticationException(
           "ENTITLEMENT_UNAVAILABLE",
           "Tenant entitlement authority is missing or ambiguous; retry later");
@@ -1489,6 +1656,10 @@ public class AccountServiceImpl implements AccountService {
     boolean gameplayAvailable = isGameplayAvailableStatus(subscription.getStatus());
     boolean allowPublicJoin = isPublicJoinAllowedStatus(subscription.getStatus());
     long version = subscription.getEntitlementVersion();
+    if (version <= 0L) {
+      throw new AuthenticationException(
+          "ENTITLEMENT_UNAVAILABLE", "Tenant entitlement version is invalid; retry later");
+    }
     return new RuntimeEntitlementsDto(
         tenantId, gameplayAvailable, allowPublicJoin, version, version, Instant.now().toString());
   }
@@ -1521,7 +1692,14 @@ public class AccountServiceImpl implements AccountService {
       String worldSlug,
       String realmSlug) {
     RuntimeRealmTarget realm = requireRealmTarget(expectedTenantId, worldSlug, realmSlug);
-    if (!isRealmAdmissible(bootstrapContext, realm)) {
+    if (!hasRealmAdmissionAccess(bootstrapContext, realm)) {
+      throw new AuthenticationException(
+          "ADMISSION_POINTER_UNAVAILABLE",
+          "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry");
+    }
+    RuntimeEntitlementsDto entitlements =
+        getTenantEntitlementsForRuntime(realm.tenantId(), "bootstrap-selected-target");
+    if (!entitlements.gameplayAvailable()) {
       throw new AuthenticationException(
           "ADMISSION_POINTER_UNAVAILABLE",
           "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry");
@@ -1533,10 +1711,9 @@ public class AccountServiceImpl implements AccountService {
       Long expectedTenantId, String worldSlug, String realmSlug) {
     try {
       List<RuntimeRealmTarget> candidates =
-          gameSessionClient.listGameplayRealms(worldSlug).stream()
-              .filter(realm -> java.util.Objects.equals(worldSlug, realm.getWorldSlug()))
-              .filter(realm -> java.util.Objects.equals(realmSlug, realm.getRealmSlug()))
-              .map(this::readRuntimeRealmTarget)
+          listRuntimeRealmTargets(worldSlug, realmSlug).stream()
+              .filter(realm -> java.util.Objects.equals(worldSlug, realm.worldSlug()))
+              .filter(realm -> java.util.Objects.equals(realmSlug, realm.realmSlug()))
               .filter(realm -> expectedTenantId == null || realm.tenantId() == expectedTenantId)
               .toList();
       if (candidates.size() != 1) {
@@ -1562,25 +1739,160 @@ public class AccountServiceImpl implements AccountService {
             "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry");
       }
       return realm;
-    } catch (IllegalArgumentException | IllegalStateException ex) {
-      throw new AuthenticationException(
-          "ADMISSION_POINTER_UNAVAILABLE",
-          "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry",
-          ex);
+    } catch (AuthenticationException ex) {
+      throw ex;
+    } catch (RuntimeException ex) {
+      throw admissionPointerUnavailable(ex);
     }
   }
 
-  private boolean hasAdmissibleRealm(BootstrapContext bootstrapContext, String worldSlug) {
+  private boolean hasAdmissibleRealm(
+      BootstrapContext bootstrapContext,
+      String worldSlug,
+      Map<Long, RuntimeEntitlementsDto> discoveryEntitlementMemo) {
     try {
-      return gameSessionClient.listGameplayRealms(worldSlug).stream()
-          .map(this::readRuntimeRealmTarget)
-          .anyMatch(realm -> isRealmAdmissible(bootstrapContext, realm));
+      return !listAdmissibleRuntimeRealmTargets(
+              bootstrapContext, worldSlug, discoveryEntitlementMemo)
+          .isEmpty();
     } catch (IllegalStateException ex) {
       return false;
     }
   }
 
-  private boolean isRealmAdmissible(BootstrapContext bootstrapContext, RuntimeRealmTarget realm) {
+  private List<RuntimeRealmTarget> listAdmissibleRuntimeRealmTargets(
+      BootstrapContext bootstrapContext,
+      String worldSlug,
+      Map<Long, RuntimeEntitlementsDto> discoveryEntitlementMemo) {
+    List<net.firedevops.firemud.gamesession.v1.GameplayRealm> realms =
+        gameSessionClient.listGameplayRealms(worldSlug);
+    if (realms == null) {
+      throw new IllegalStateException("Gameplay realm discovery returned no authority");
+    }
+    List<RuntimeRealmTarget> targets =
+        realms.stream()
+            .map(realm -> readReachableDiscoveryRealm(bootstrapContext, realm))
+            .flatMap(Optional::stream)
+            .toList();
+    validatePublicRealmCardinality(targets);
+    return targets.stream()
+        .filter(
+            realm -> isDiscoveryRealmAdmissible(bootstrapContext, realm, discoveryEntitlementMemo))
+        .toList();
+  }
+
+  private List<RuntimeRealmTarget> listRuntimeRealmTargets(
+      String worldSlug, String selectedRealmSlug) {
+    try {
+      List<net.firedevops.firemud.gamesession.v1.GameplayRealm> realms =
+          gameSessionClient.listGameplayRealms(worldSlug);
+      if (realms == null) {
+        throw new IllegalStateException("Gameplay realm discovery returned no authority");
+      }
+      var realmStream = realms.stream();
+      if (selectedRealmSlug != null) {
+        realmStream =
+            realmStream.filter(
+                realm ->
+                    realm != null
+                        && java.util.Objects.equals(selectedRealmSlug, realm.getRealmSlug()));
+      }
+      List<RuntimeRealmTarget> targets = realmStream.map(this::readRuntimeRealmTarget).toList();
+      validatePublicRealmCardinality(targets);
+      return targets;
+    } catch (AuthenticationException ex) {
+      throw ex;
+    } catch (RuntimeException ex) {
+      throw admissionPointerUnavailable(ex);
+    }
+  }
+
+  private void validatePublicRealmCardinality(List<RuntimeRealmTarget> realms) {
+    // The RPC is world-local: zero local public realms may be a valid private-only world when the
+    // tenant's public realm is in another world. Game Session owns the tenant-global zero check;
+    // Account can defensively reject only duplicate visible public targets returned here.
+    Map<Long, Long> visiblePublicRealmCounts =
+        realms.stream()
+            .filter(this::isPublicProductionRealm)
+            .collect(
+                java.util.stream.Collectors.groupingBy(
+                    RuntimeRealmTarget::tenantId, java.util.stream.Collectors.counting()));
+    if (realms.stream()
+        .map(RuntimeRealmTarget::tenantId)
+        .distinct()
+        .anyMatch(tenantId -> visiblePublicRealmCounts.getOrDefault(tenantId, 0L) > 1L)) {
+      throw admissionPointerUnavailable(
+          new IllegalStateException("Public production realm authority is ambiguous"));
+    }
+  }
+
+  private Optional<RuntimeRealmTarget> readReachableDiscoveryRealm(
+      BootstrapContext bootstrapContext,
+      net.firedevops.firemud.gamesession.v1.GameplayRealm realm) {
+    if (realm == null) {
+      throw admissionPointerUnavailable(
+          new IllegalArgumentException("Gameplay realm discovery returned a null realm"));
+    }
+    final RuntimeRealmTarget target;
+    try {
+      target = readRuntimeRealmTarget(realm);
+    } catch (IllegalArgumentException ex) {
+      if (isMalformedRealmReachable(bootstrapContext, realm)) {
+        throw admissionPointerUnavailable(ex);
+      }
+      return Optional.empty();
+    }
+    return Optional.of(target);
+  }
+
+  private boolean isMalformedRealmReachable(
+      BootstrapContext bootstrapContext,
+      net.firedevops.firemud.gamesession.v1.GameplayRealm realm) {
+    if (realm.getVisible() && realm.getPublicProductionRealm()) {
+      return true;
+    }
+
+    final long tenantId;
+    try {
+      tenantId = requirePositiveLong(realm.getTenantId(), "tenantId");
+    } catch (IllegalArgumentException ex) {
+      return false;
+    }
+    if (accountTenantMembershipRepository
+        .findByAccountIdAndTenantId(bootstrapContext.accountId(), tenantId)
+        .filter(AccountTenantMembership::isGameplayAdmissionAllowed)
+        .isEmpty()) {
+      return false;
+    }
+    if (!hasRealmAccessGrant(
+        bootstrapContext.accountId(), tenantId, realm.getWorldSlug(), realm.getRealmSlug())) {
+      return false;
+    }
+    return true;
+  }
+
+  private AuthenticationException admissionPointerUnavailable(Throwable cause) {
+    return new AuthenticationException(
+        "ADMISSION_POINTER_UNAVAILABLE",
+        "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry",
+        cause);
+  }
+
+  private boolean isDiscoveryRealmAdmissible(
+      BootstrapContext bootstrapContext,
+      RuntimeRealmTarget realm,
+      Map<Long, RuntimeEntitlementsDto> discoveryEntitlementMemo) {
+    if (!hasRealmAdmissionAccess(bootstrapContext, realm)) {
+      return false;
+    }
+    RuntimeEntitlementsDto entitlements =
+        discoveryEntitlementMemo.computeIfAbsent(
+            realm.tenantId(),
+            tenantId -> getTenantEntitlementsForRuntime(tenantId, "bootstrap-discovery"));
+    return entitlements.gameplayAvailable();
+  }
+
+  private boolean hasRealmAdmissionAccess(
+      BootstrapContext bootstrapContext, RuntimeRealmTarget realm) {
     long tenantId = realm.tenantId();
     boolean publicProductionRealm = isPublicProductionRealm(realm);
     Optional<AccountTenantMembership> membership =
@@ -1600,13 +1912,28 @@ public class AccountServiceImpl implements AccountService {
         return false;
       }
     }
-    RuntimeEntitlementsDto entitlements =
-        getTenantEntitlementsForRuntime(tenantId, "bootstrap-discovery");
-    return entitlements.gameplayAvailable();
+    return true;
   }
 
   private boolean isPublicProductionRealm(RuntimeRealmTarget realm) {
     return realm.visible() && realm.publicProductionRealm();
+  }
+
+  private boolean sameRuntimeRealmAuthority(
+      RuntimeRealmTarget expected, RuntimeRealmTarget actual) {
+    return expected.tenantId() == actual.tenantId()
+        && expected.realmId().equals(actual.realmId())
+        && expected.playableStateNamespaceId().equals(actual.playableStateNamespaceId())
+        && expected.gameInstanceId() == actual.gameInstanceId()
+        && expected.worldSlug().equals(actual.worldSlug())
+        && expected.realmSlug().equals(actual.realmSlug())
+        && expected.pointerVersion() == actual.pointerVersion()
+        && expected.catalogRevision() == actual.catalogRevision()
+        && expected.visible() == actual.visible()
+        && expected.publicProductionRealm() == actual.publicProductionRealm()
+        && expected.stateScope().equals(actual.stateScope())
+        && expected.characterCreationPolicy().equals(actual.characterCreationPolicy())
+        && expected.requiresCharacterSelection() == actual.requiresCharacterSelection();
   }
 
   private String mintConnectScopeId(
@@ -1817,6 +2144,16 @@ public class AccountServiceImpl implements AccountService {
     Optional<AccountTenantMembership> maybeMembership =
         accountTenantMembershipRepository.findByAccountIdAndTenantId(
             bootstrapContext.accountId(), currentRealm.tenantId());
+    if (maybeMembership.isPresent()
+        && "INACTIVE".equals(maybeMembership.orElseThrow().getLifecycleState())
+        && publicProductionRealm) {
+      if (!entitlements.allowPublicJoin()) {
+        throw new AuthenticationException(
+            "PUBLIC_PRODUCTION_ADMISSION_DENIED",
+            "Public joining is not allowed for the selected game");
+      }
+      throw new AuthenticationException("JOIN_REQUIRED", JOIN_REQUIRED_CHARACTERS_MESSAGE);
+    }
     if (maybeMembership.isPresent()
         && (!maybeMembership.orElseThrow().isGameplayAdmissionAllowed()
             || "INACTIVE".equals(maybeMembership.orElseThrow().getLifecycleState()))) {
@@ -2076,22 +2413,71 @@ public class AccountServiceImpl implements AccountService {
   @Override
   @Transactional(readOnly = true)
   @Timed(value = "account.list_presence_visibility_policies")
-  public Map<Long, ProfilePresenceVisibilityPolicy> listPresenceVisibilityPolicies(
-      Long tenantId, List<Long> accountIds) {
-    if (accountIds == null || accountIds.isEmpty()) {
+  public Map<String, ProfilePresenceVisibilityPolicy> listPresenceVisibilityPolicies(
+      Long tenantId, List<String> accountUuids) {
+    if (tenantId == null || tenantId <= 0L) {
+      throw new IllegalArgumentException("tenantId must be positive");
+    }
+    if (accountUuids == null || accountUuids.isEmpty()) {
       return Map.of();
     }
-    return profileRepository.findByTenantIdAndAccountIds(tenantId, accountIds).stream()
-        .filter(
-            profile ->
-                profile.getAccount() != null
-                    && profile.getAccount().getId() != null
-                    && profile.getPresenceVisibilityPolicy() != null)
-        .collect(
-            java.util.stream.Collectors.toUnmodifiableMap(
-                profile -> profile.getAccount().getId(),
-                profile -> profile.getPresenceVisibilityPolicy(),
-                (left, right) -> left));
+    List<String> canonicalAccountUuids =
+        accountUuids.stream()
+            .map(this::requireProfileAccountUuid)
+            .map(UUID::toString)
+            .distinct()
+            .toList();
+
+    Map<Long, String> accountUuidsByStorageId = new HashMap<>();
+    List<Long> accountStorageIds = new java.util.ArrayList<>();
+    for (String canonicalAccountUuid : canonicalAccountUuids) {
+      UUID accountUuid = UUID.fromString(canonicalAccountUuid);
+      Account account = accountRepository.findByAccountUuid(accountUuid).orElse(null);
+      if (account == null) {
+        continue;
+      }
+      requireAuthenticationPersistedIdentity(account);
+      if (!accountUuid.equals(account.getAccountUuid())) {
+        throw new IllegalStateException(
+            "Account UUID readback did not match the requested persisted identity");
+      }
+
+      Long accountStorageId = account.getId();
+      String priorAccountUuid =
+          accountUuidsByStorageId.putIfAbsent(accountStorageId, canonicalAccountUuid);
+      if (priorAccountUuid != null && !priorAccountUuid.equals(canonicalAccountUuid)) {
+        throw new IllegalStateException(
+            "Account UUID lookup returned a conflicting private storage row");
+      }
+      if (accountTenantMembershipRepository.existsByAccountIdAndTenantId(
+          accountStorageId, tenantId)) {
+        accountStorageIds.add(accountStorageId);
+      } else {
+        accountUuidsByStorageId.remove(accountStorageId);
+      }
+    }
+
+    if (accountStorageIds.isEmpty()) {
+      return Map.of();
+    }
+
+    Map<String, ProfilePresenceVisibilityPolicy> policies = new HashMap<>();
+    for (Profile profile :
+        profileRepository.findByTenantIdAndAccountIds(tenantId, accountStorageIds)) {
+      Long profileAccountId = profile.getAccount() == null ? null : profile.getAccount().getId();
+      String accountUuid = accountUuidsByStorageId.get(profileAccountId);
+      if (accountUuid == null) {
+        throw new IllegalStateException(
+            "Profile source does not match a requested persisted Account identity");
+      }
+      requireProfileBelongsTo(profile, profileAccountId, tenantId);
+      if (profile.getPresenceVisibilityPolicy() != null
+          && policies.putIfAbsent(accountUuid, profile.getPresenceVisibilityPolicy()) != null) {
+        throw new IllegalStateException(
+            "Multiple profile rows matched one persisted Account identity");
+      }
+    }
+    return Map.copyOf(policies);
   }
 
   @Override
@@ -2844,7 +3230,9 @@ public class AccountServiceImpl implements AccountService {
     try {
       delivery.run();
     } catch (RuntimeException ex) {
-      logger.warn("Recovery email delivery failed");
+      // Keep the public recovery response neutral and do not log the recipient, token, or SMTP
+      // exception message; the exception class is enough to identify the failing dependency.
+      logger.warn("Recovery email delivery failed; cause={}", ex.getClass().getSimpleName());
     }
   }
 
@@ -3002,9 +3390,8 @@ public class AccountServiceImpl implements AccountService {
     long tenantId = requirePositiveLong(tenantIdText, "tenantId");
     UUID realmId = requireCanonicalRealmId(realmIdText);
     long gameInstanceId = requirePositiveLong(gameInstanceIdText, "gameInstanceId");
-    if (!StringUtils.hasText(playableStateNamespaceId)) {
-      throw new IllegalArgumentException("playableStateNamespaceId is required");
-    }
+    String canonicalPlayableStateNamespaceId =
+        requireCanonicalPlayableStateNamespaceId(playableStateNamespaceId);
     if (catalogRevision <= 0) {
       throw new IllegalArgumentException("catalogRevision must be positive");
     }
@@ -3023,7 +3410,7 @@ public class AccountServiceImpl implements AccountService {
     return new RuntimeRealmTarget(
         tenantId,
         realmId,
-        playableStateNamespaceId,
+        canonicalPlayableStateNamespaceId,
         gameInstanceId,
         worldSlug,
         realmSlug,
@@ -3063,6 +3450,21 @@ public class AccountServiceImpl implements AccountService {
       return realmId;
     } catch (IllegalArgumentException ex) {
       throw new IllegalArgumentException("realmId must be a canonical UUID", ex);
+    }
+  }
+
+  private String requireCanonicalPlayableStateNamespaceId(String value) {
+    if (!StringUtils.hasText(value)) {
+      throw new IllegalArgumentException("playableStateNamespaceId is required");
+    }
+    try {
+      UUID namespaceId = UUID.fromString(value);
+      if (!namespaceId.toString().equals(value)) {
+        throw new IllegalArgumentException("playableStateNamespaceId must be a canonical UUID");
+      }
+      return value;
+    } catch (IllegalArgumentException ex) {
+      throw new IllegalArgumentException("playableStateNamespaceId must be a canonical UUID", ex);
     }
   }
 

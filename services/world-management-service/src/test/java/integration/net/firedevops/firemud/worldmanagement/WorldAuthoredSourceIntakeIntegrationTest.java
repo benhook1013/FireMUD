@@ -9,6 +9,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
@@ -30,6 +31,7 @@ import net.firedevops.firemud.worldmanagement.client.GameSessionClient;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeReceipt;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeRepository;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.MigrationInfo;
 import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
 import org.jooq.exception.DataAccessException;
@@ -131,6 +133,7 @@ class WorldAuthoredSourceIntakeIntegrationTest {
   }
 
   @Autowired private WorldAuthoredSourceIntakeRepository repository;
+  @Autowired private Flyway flyway;
   @Autowired private DSLContext dsl;
   @Autowired private PlatformTransactionManager transactionManager;
 
@@ -141,6 +144,9 @@ class WorldAuthoredSourceIntakeIntegrationTest {
 
   @Test
   void persistsCompleteFreshReceiptAndReusesExactTenantAssociationAcrossWorlds() {
+    assertThat(Arrays.stream(flyway.info().applied()).map(MigrationInfo::getScript).toList())
+        .containsSubsequence(
+            "V23__initial_admission_bind_hold.sql", "V23.1__world_authored_source_intake.sql");
     long existingLegacyTenantKey =
         8_000_000_000L + ThreadLocalRandom.current().nextLong(1_000_000L);
     Long legacyRegionId =
@@ -578,10 +584,10 @@ class WorldAuthoredSourceIntakeIntegrationTest {
     long legacyTenantKey = canonicalTenantKey + 1L;
 
     try {
-      migrateFixture(schema, MigrationVersion.fromVersion("23"));
+      migrateFixture(schema, MigrationVersion.fromVersion("23.1"));
       long canonicalRegionId =
           seedCanonicalRegionBeforeGuard(schema, canonicalTenantId, canonicalTenantKey);
-      migrateFixture(schema, null);
+      migrateFixture(schema, MigrationVersion.fromVersion("24"));
 
       try (Connection connection = fixtureConnection(schema)) {
         assertProtectedReservationTriggerCatalog(connection);
@@ -873,7 +879,7 @@ class WorldAuthoredSourceIntakeIntegrationTest {
       String schema, UUID canonicalTenantId, long canonicalTenantKey) throws SQLException {
     try (Connection connection = fixtureConnection(schema);
         Statement controls = connection.createStatement()) {
-      // Test-only bypass in this isolated V23 schema; restore triggers before applying V24.
+      // Test-only bypass in this isolated V23.1 schema; restore triggers before applying V24.
       controls.execute("SET session_replication_role = replica");
       try {
         String tenantSlug = tenantSlug(canonicalTenantId);

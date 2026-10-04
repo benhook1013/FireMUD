@@ -1,5 +1,6 @@
 package net.firedevops.firemud.loggingadmin.controller;
 
+import static net.firedevops.firemud.loggingadmin.AccountJwtTestTokens.accountToken;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -45,7 +46,7 @@ class RemoteFollowupControllerTest {
   void getRemoteFollowupReturnsCanonicalRow() throws Exception {
     when(remoteFollowupService.getRemoteFollowup(2L, "rf-1")).thenReturn(remoteFollowupDto());
     SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -61,7 +62,7 @@ class RemoteFollowupControllerTest {
   void getRemoteFollowupRejectsCrossTenantScopedAdmin() throws Exception {
     SessionContext.setContext("user", List.of(), Map.of("8", List.of("tenantAdmin")));
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
+        accountToken(jwtUtil, Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(
@@ -74,7 +75,7 @@ class RemoteFollowupControllerTest {
   @Test
   void getRemoteFollowupRejectsMalformedTenantIdBeforeDispatch() throws Exception {
     SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -101,7 +102,7 @@ class RemoteFollowupControllerTest {
                         && Integer.valueOf(10).equals(request.getLimit()))))
         .thenReturn(List.of(remoteFollowupDto()));
     SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -124,7 +125,7 @@ class RemoteFollowupControllerTest {
   void listRemoteFollowupsRejectsCrossTenantScopedAdmin() throws Exception {
     SessionContext.setContext("user", List.of(), Map.of("8", List.of("tenantAdmin")));
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
+        accountToken(jwtUtil, Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(get("/remote-followups/2").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
@@ -136,7 +137,7 @@ class RemoteFollowupControllerTest {
   @Test
   void listRemoteFollowupsRejectsZeroTenantIdBeforeDispatch() throws Exception {
     SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(get("/remote-followups/0").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
@@ -150,7 +151,7 @@ class RemoteFollowupControllerTest {
   @Test
   void listRemoteFollowupsRejectsZeroPointerVersionBeforeDispatch() throws Exception {
     SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
     when(remoteFollowupService.listRemoteFollowups(
             org.mockito.ArgumentMatchers.eq(2L), org.mockito.ArgumentMatchers.any()))
         .thenThrow(new IllegalArgumentException("pointerVersion must be positive"));

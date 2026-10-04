@@ -3,6 +3,7 @@ package net.firedevops.firemud.loggingadmin.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -45,7 +46,6 @@ import net.firedevops.firemud.loggingadmin.service.LogQueryService;
 import net.firedevops.firemud.loggingadmin.service.ModerationService;
 import net.firedevops.firemud.loggingadmin.v1.AccountAuditScope;
 import net.firedevops.firemud.loggingadmin.v1.CreateLogEventRequest;
-import net.firedevops.firemud.loggingadmin.v1.CreateLogEventResponse;
 import net.firedevops.firemud.loggingadmin.v1.LoggingAdminServiceGrpc;
 import net.firedevops.firemud.loggingadmin.v1.ReadLogEventReceiptRequest;
 import net.firedevops.firemud.loggingadmin.v1.ReadLogEventReceiptResponse;
@@ -113,10 +113,7 @@ class AccountAuditCanonicalIdentityMtlsTest {
   @BeforeEach
   void startPhysicalReceiver() throws Exception {
     logEventService = mock(LogEventService.class);
-    when(logEventService.createLogEvent(any()))
-        .thenAnswer(
-            invocation ->
-                receipt(invocation.getArgument(0), "create", AccountAuditReceiptOutcome.ACCEPTED));
+    // The exact-peer Create gate stays unavailable; Read returns an offline mock receipt fixture.
     when(logEventService.readLogEventReceipt(any()))
         .thenAnswer(
             invocation ->
@@ -153,53 +150,43 @@ class AccountAuditCanonicalIdentityMtlsTest {
   }
 
   @Test
-  void validAccountCanonicalUuidCreateAndReadEchoExactIdentityOverSocketMtls() throws Exception {
+  void canonicalUuidCreateIsUnavailableAndReadEchoesExactIdentityOverSocketMtls() throws Exception {
     ManagedChannel channel = channel(pki.accountCertificate(), null);
     try {
       LoggingAdminServiceGrpc.LoggingAdminServiceBlockingStub stub = stub(channel);
       CreateLogEventRequest createRequest = request(2, "", TENANT_UUID.toString());
       ReadLogEventReceiptRequest readRequest = readRequest(createRequest);
 
-      CreateLogEventResponse created = stub.createLogEvent(createRequest);
+      assertAccountAuditCreateUnavailable(() -> stub.createLogEvent(createRequest));
       ReadLogEventReceiptResponse read = stub.readLogEventReceipt(readRequest);
 
-      assertThat(created.getTenantIdentityVersion()).isEqualTo(2);
-      assertThat(created.getTenantUuid()).isEqualTo(TENANT_UUID.toString());
-      assertThat(created.getTenantId()).isEmpty();
-      assertThat(read.getTenantIdentityVersion()).isEqualTo(2);
-      assertThat(read.getTenantUuid()).isEqualTo(TENANT_UUID.toString());
-      assertThat(read.getTenantId()).isEmpty();
-      assertServiceSawIdentity(2, null, TENANT_UUID);
+      assertMockSeededReceiptEvidence(read, readRequest);
+      assertReadServiceSawIdentity(2, null, TENANT_UUID);
     } finally {
       stopChannel(channel);
     }
   }
 
   @Test
-  void retainedV1NumericCreateAndReadEchoExplicitIdentityOverSocketMtls() throws Exception {
+  void retainedV1NumericCreateIsUnavailableAndReadEchoesIdentityOverSocketMtls() throws Exception {
     ManagedChannel channel = channel(pki.accountCertificate(), null);
     try {
       LoggingAdminServiceGrpc.LoggingAdminServiceBlockingStub stub = stub(channel);
       CreateLogEventRequest createRequest = request(1, "42", "");
       ReadLogEventReceiptRequest readRequest = readRequest(createRequest);
 
-      CreateLogEventResponse created = stub.createLogEvent(createRequest);
+      assertAccountAuditCreateUnavailable(() -> stub.createLogEvent(createRequest));
       ReadLogEventReceiptResponse read = stub.readLogEventReceipt(readRequest);
 
-      assertThat(created.getTenantIdentityVersion()).isEqualTo(1);
-      assertThat(created.getTenantId()).isEqualTo("42");
-      assertThat(created.getTenantUuid()).isEmpty();
-      assertThat(read.getTenantIdentityVersion()).isEqualTo(1);
-      assertThat(read.getTenantId()).isEqualTo("42");
-      assertThat(read.getTenantUuid()).isEmpty();
-      assertServiceSawIdentity(1, 42L, null);
+      assertMockSeededReceiptEvidence(read, readRequest);
+      assertReadServiceSawIdentity(1, 42L, null);
     } finally {
       stopChannel(channel);
     }
   }
 
   @Test
-  void retainedV1PlatformCreateAndReadEchoExplicitIdentityOverSocketMtls() throws Exception {
+  void retainedV1PlatformCreateIsUnavailableAndReadEchoesIdentityOverSocketMtls() throws Exception {
     ManagedChannel channel = channel(pki.accountCertificate(), null);
     try {
       LoggingAdminServiceGrpc.LoggingAdminServiceBlockingStub stub = stub(channel);
@@ -207,16 +194,11 @@ class AccountAuditCanonicalIdentityMtlsTest {
           request(AccountAuditScope.ACCOUNT_AUDIT_SCOPE_PLATFORM, 1, "", "");
       ReadLogEventReceiptRequest readRequest = readRequest(createRequest);
 
-      CreateLogEventResponse created = stub.createLogEvent(createRequest);
+      assertAccountAuditCreateUnavailable(() -> stub.createLogEvent(createRequest));
       ReadLogEventReceiptResponse read = stub.readLogEventReceipt(readRequest);
 
-      assertThat(created.getTenantIdentityVersion()).isEqualTo(1);
-      assertThat(created.getTenantId()).isEmpty();
-      assertThat(created.getTenantUuid()).isEmpty();
-      assertThat(read.getTenantIdentityVersion()).isEqualTo(1);
-      assertThat(read.getTenantId()).isEmpty();
-      assertThat(read.getTenantUuid()).isEmpty();
-      assertServiceSawIdentity(1, null, null);
+      assertMockSeededReceiptEvidence(read, readRequest);
+      assertReadServiceSawIdentity(1, null, null);
     } finally {
       stopChannel(channel);
     }
@@ -262,7 +244,7 @@ class AccountAuditCanonicalIdentityMtlsTest {
   }
 
   @Test
-  void mixedAndUnknownTenantIdentityFailBeforeLogEventServiceInvocation() throws Exception {
+  void createGatePrecedesIdentityValidationAndReadRejectsMalformedIdentity() throws Exception {
     ManagedChannel channel = channel(pki.accountCertificate(), null);
     try {
       LoggingAdminServiceGrpc.LoggingAdminServiceBlockingStub stub = stub(channel);
@@ -270,13 +252,13 @@ class AccountAuditCanonicalIdentityMtlsTest {
       CreateLogEventRequest unknownVersion = request(3, "", TENANT_UUID.toString());
       CreateLogEventRequest unsetVersion = request(0, "", "");
 
-      assertApplicationDeniedAsInvalidArgument(() -> stub.createLogEvent(mixedV1));
+      assertAccountAuditCreateUnavailable(() -> stub.createLogEvent(mixedV1));
       assertApplicationDeniedAsInvalidArgument(
           () -> stub.readLogEventReceipt(readRequest(mixedV1)));
-      assertApplicationDeniedAsInvalidArgument(() -> stub.createLogEvent(unknownVersion));
+      assertAccountAuditCreateUnavailable(() -> stub.createLogEvent(unknownVersion));
       assertApplicationDeniedAsInvalidArgument(
           () -> stub.readLogEventReceipt(readRequest(unknownVersion)));
-      assertApplicationDeniedAsInvalidArgument(() -> stub.createLogEvent(unsetVersion));
+      assertAccountAuditCreateUnavailable(() -> stub.createLogEvent(unsetVersion));
       assertApplicationDeniedAsInvalidArgument(
           () -> stub.readLogEventReceipt(readRequest(unsetVersion)));
     } finally {
@@ -334,18 +316,41 @@ class AccountAuditCanonicalIdentityMtlsTest {
     assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT);
   }
 
-  private void assertServiceSawIdentity(int version, Long tenantId, UUID tenantUuid) {
-    ArgumentCaptor<net.firedevops.firemud.loggingadmin.dto.CreateLogEventRequest> createCaptor =
-        ArgumentCaptor.forClass(
-            net.firedevops.firemud.loggingadmin.dto.CreateLogEventRequest.class);
+  private static void assertAccountAuditCreateUnavailable(Runnable call) {
+    Throwable failure = catchFailure(call);
+    assertThat(failure).isInstanceOf(StatusRuntimeException.class);
+    assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(Status.Code.UNAVAILABLE);
+  }
+
+  private static void assertMockSeededReceiptEvidence(
+      ReadLogEventReceiptResponse receipt, ReadLogEventReceiptRequest request) {
+    assertThat(receipt.getScope()).isEqualTo(request.getScope());
+    assertThat(receipt.getTenantIdentityVersion()).isEqualTo(request.getTenantIdentityVersion());
+    assertThat(receipt.getTenantId()).isEqualTo(request.getTenantId());
+    assertThat(receipt.getTenantUuid()).isEqualTo(request.getTenantUuid());
+    assertThat(receipt.getAuditEventId()).isEqualTo(request.getAuditEventId());
+    assertThat(receipt.getReceiptId()).isEqualTo("read-receipt");
+    assertThat(receipt.getLogEventId()).isEqualTo("731");
+    assertThat(receipt.getSchemaVersion()).isEqualTo(request.getSchemaVersion());
+    assertThat(receipt.getPayloadDigestVersion()).isEqualTo(request.getPayloadDigestVersion());
+    assertThat(receipt.getPayloadDigest()).isEqualTo(request.getPayloadDigest());
+    assertThat(receipt.getStatus())
+        .isEqualTo(
+            net.firedevops.firemud.loggingadmin.v1.AccountAuditReceiptStatus
+                .ACCOUNT_AUDIT_RECEIPT_STATUS_COMMITTED);
+    assertThat(receipt.getOutcome())
+        .isEqualTo(
+            net.firedevops.firemud.loggingadmin.v1.AccountAuditReceiptOutcome
+                .ACCOUNT_AUDIT_RECEIPT_OUTCOME_DUPLICATE);
+    assertThat(receipt.getAuditProjectionVersion()).isEqualTo(1);
+  }
+
+  private void assertReadServiceSawIdentity(int version, Long tenantId, UUID tenantUuid) {
     ArgumentCaptor<net.firedevops.firemud.loggingadmin.dto.CreateLogEventRequest> readCaptor =
         ArgumentCaptor.forClass(
             net.firedevops.firemud.loggingadmin.dto.CreateLogEventRequest.class);
-    verify(logEventService).createLogEvent(createCaptor.capture());
+    verify(logEventService, never()).createLogEvent(any());
     verify(logEventService).readLogEventReceipt(readCaptor.capture());
-    assertThat(createCaptor.getValue().tenantIdentityVersion()).isEqualTo(version);
-    assertThat(createCaptor.getValue().tenantId()).isEqualTo(tenantId);
-    assertThat(createCaptor.getValue().tenantUuid()).isEqualTo(tenantUuid);
     assertThat(readCaptor.getValue().tenantIdentityVersion()).isEqualTo(version);
     assertThat(readCaptor.getValue().tenantId()).isEqualTo(tenantId);
     assertThat(readCaptor.getValue().tenantUuid()).isEqualTo(tenantUuid);
