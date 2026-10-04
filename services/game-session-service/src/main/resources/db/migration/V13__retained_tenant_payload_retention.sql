@@ -44,7 +44,7 @@ CREATE TABLE game_session_retained_tenant_association_payload (
             AND game_session_projection_digest IS NOT NULL
             AND game_session_projection_digest ~ '^sha256:[0-9a-f]{64}$')
     ),
-    CONSTRAINT chk_gs_retained_tenant_association_payload_approval_operation_id CHECK (
+    CONSTRAINT chk_gs_retained_assoc_payload_approval_operation_id CHECK (
         approval_operation_id <> '00000000-0000-0000-0000-000000000000'::UUID
     ),
     CONSTRAINT chk_gs_retained_tenant_association_payload_digests CHECK (

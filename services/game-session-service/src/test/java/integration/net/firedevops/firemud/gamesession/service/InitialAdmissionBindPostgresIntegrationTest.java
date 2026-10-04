@@ -46,8 +46,9 @@ class InitialAdmissionBindPostgresIntegrationTest {
 
   @Test
   void initialAdmissionLedgerCommitsPointerAuditAndAttemptTogetherAndReadbackFailsClosed() {
-    DriverManagerDataSource dataSource = dataSource();
-    Flyway.configure().dataSource(dataSource).locations(MIGRATION_LOCATION).load().migrate();
+    String schema = schemaName();
+    DriverManagerDataSource dataSource = dataSource(schema);
+    migrate(dataSource, schema);
     DSLContext dsl =
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
     TransactionTemplate transactionTemplate =
@@ -160,8 +161,9 @@ class InitialAdmissionBindPostgresIntegrationTest {
 
   @Test
   void publishedSnapshotBindsWithoutCreatingOrReadingAV9FixtureCatalog() {
-    DriverManagerDataSource dataSource = dataSource();
-    Flyway.configure().dataSource(dataSource).locations(MIGRATION_LOCATION).load().migrate();
+    String schema = schemaName();
+    DriverManagerDataSource dataSource = dataSource(schema);
+    migrate(dataSource, schema);
     DSLContext dsl =
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
     TransactionTemplate transactionTemplate =
@@ -214,6 +216,7 @@ class InitialAdmissionBindPostgresIntegrationTest {
                 810L, "published-launch-v1", 77L, "prb:41:902:77", 4L));
 
     assertThat(dsl.fetchCount(DSL.table("gameplay_initial_admission_bind_catalog"))).isZero();
+    var attempt = transactionTemplate.execute(status -> service.beginIntent(request));
     assertThatThrownBy(
             () ->
                 transactionTemplate.execute(
@@ -235,7 +238,6 @@ class InitialAdmissionBindPostgresIntegrationTest {
     assertThat(dsl.fetchCount(DSL.table("gameplay_admission_pointer"))).isZero();
     assertThat(dsl.fetchCount(DSL.table("gameplay_admission_pointer_event"))).isZero();
 
-    var attempt = transactionTemplate.execute(status -> service.beginIntent(request));
     assertThat(attempt.catalogSourceKind()).isEqualTo("V14_PUBLISHED");
     assertThat(attempt.tenantId()).isEqualTo(41L);
     assertThat(attempt.canonicalTenantId()).isEqualTo(CANONICAL_TENANT_ID);
@@ -263,6 +265,7 @@ class InitialAdmissionBindPostgresIntegrationTest {
     var proof = transactionTemplate.execute(status -> service.commit(binding));
     assertThat(proof.outcome()).isEqualTo(InitialAdmissionBindOwnerProof.Outcome.COMMITTED);
     assertThat(proof.pointerAuditRequestDigest()).isEqualTo(digest);
+    assertThat(dsl.fetchCount(DSL.table("gameplay_initial_admission_bind_catalog"))).isZero();
     assertThat(
             dsl.fetchOne(
                     "SELECT character_creation_policy, requires_character_selection, state_scope "
@@ -279,13 +282,29 @@ class InitialAdmissionBindPostgresIntegrationTest {
     assertThat(dsl.fetchCount(DSL.table("gameplay_admission_pointer_event"))).isEqualTo(1);
   }
 
-  private static DriverManagerDataSource dataSource() {
+  private static String schemaName() {
+    return "gs_initial_admission_bind_" + UUID.randomUUID().toString().replace("-", "");
+  }
+
+  private static DriverManagerDataSource dataSource(String schema) {
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
     dataSource.setDriverClassName("org.postgresql.Driver");
     dataSource.setUrl(postgres.getJdbcUrl());
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
+    dataSource.setSchema(schema);
     return dataSource;
+  }
+
+  private static void migrate(DriverManagerDataSource dataSource, String schema) {
+    Flyway.configure()
+        .dataSource(dataSource)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .table("flyway_schema_history")
+        .locations(MIGRATION_LOCATION)
+        .load()
+        .migrate();
   }
 
   private static GameInstance gameInstance() {

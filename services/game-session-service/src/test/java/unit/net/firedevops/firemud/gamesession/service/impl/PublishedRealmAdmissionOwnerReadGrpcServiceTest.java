@@ -12,7 +12,6 @@ import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.publication.PublishedRealmEntryPolicyEvidence;
@@ -22,6 +21,7 @@ import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamesession.service.PublishedRealmAdmissionOwnerReadProof;
 import net.firedevops.firemud.gamesession.service.PublishedRealmAdmissionOwnerReadRequest;
 import net.firedevops.firemud.gamesession.service.PublishedRealmAdmissionOwnerReadService;
+import net.firedevops.firemud.gamesession.service.impl.GameSessionControlPlaneGrpcService;
 import net.firedevops.firemud.gamesession.v1.GetPublishedRealmAdmissionOwnerReadRequest;
 import net.firedevops.firemud.gamesession.v1.GetPublishedRealmAdmissionOwnerReadResponse;
 import net.firedevops.firemud.gamesession.v1.PublishedRealmAdmissionAttemptStatus;
@@ -38,8 +38,7 @@ class PublishedRealmAdmissionOwnerReadGrpcServiceTest {
   private static final UUID REALM_ID = UUID.fromString("33333333-3333-4333-8333-333333333333");
   private static final UUID PLAYABLE_STATE_NAMESPACE_ID =
       UUID.fromString("44444444-4444-4444-8444-444444444444");
-  private static final UUID ATTEMPT_ID =
-      UUID.fromString("55555555-5555-4555-8555-555555555555");
+  private static final UUID ATTEMPT_ID = UUID.fromString("55555555-5555-4555-8555-555555555555");
   private static final String REQUEST_ID = "88888888-8888-4888-8888-888888888888";
   private static final String REQUEST_DIGEST = "a".repeat(64);
   private static final long GAME_SESSION_TENANT_ID = 70123L;

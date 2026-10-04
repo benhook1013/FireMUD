@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -299,9 +300,6 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
     if (revisions.isEmpty()) {
       return List.of();
     }
-    if (revisions.size() > PublishedRealmEntryPolicySetEvidence.MAX_POLICIES) {
-      throw new IllegalStateException("Realm-entry policy set exceeds the v1 complete-read bound");
-    }
     if (version.scriptOnly()) {
       throw new IllegalStateException("Script-only publication cannot freeze realm-entry policy");
     }
@@ -309,10 +307,8 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
       throw new IllegalStateException("Realm-entry policy requires an exact owner version");
     }
 
-    Set<String> selectorPairs = new HashSet<>();
-    Set<String> realmSlugs = new HashSet<>();
-    List<RealmEntryPolicySource> sources = new java.util.ArrayList<>();
-    int visiblePublicProductionCount = 0;
+    Map<Long, Revision> sourcesById = new HashMap<>();
+    Map<PolicySelector, RealmEntryPolicySource> latestBySelector = new HashMap<>();
     for (Revision revision : revisions) {
       if (revision == null
           || revision.getId() == null
@@ -323,24 +319,60 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
         throw new IllegalStateException(
             "Realm-entry policy source revision is outside its owner scope");
       }
-      RealmEntryPolicy policy = RealmEntryPolicy.parse(revision.getData(), objectMapper);
-      String pair = policy.worldSlug() + "\u0000" + policy.realmSlug();
-      if (!selectorPairs.add(pair)) {
-        throw new IllegalStateException("Duplicate published realm-entry policy selector");
+
+      Revision priorSource = sourcesById.putIfAbsent(revision.getId(), revision);
+      if (priorSource != null) {
+        if (!samePolicySource(priorSource, revision)) {
+          throw new IllegalStateException(
+              "Conflicting realm-entry policy sources share a revision ID");
+        }
+        continue;
       }
+
+      RealmEntryPolicy policy = RealmEntryPolicy.parse(revision.getData(), objectMapper);
+      PolicySelector selector = new PolicySelector(policy.worldSlug(), policy.realmSlug());
+      RealmEntryPolicySource previous = latestBySelector.get(selector);
+      if (previous == null || revision.getId() > previous.revision().getId()) {
+        latestBySelector.put(selector, new RealmEntryPolicySource(revision, policy));
+      }
+    }
+
+    List<RealmEntryPolicySource> sources =
+        latestBySelector.values().stream()
+            .sorted(
+                Comparator.comparing((RealmEntryPolicySource source) -> source.policy().worldSlug())
+                    .thenComparing(source -> source.policy().realmSlug()))
+            .toList();
+    if (sources.size() > PublishedRealmEntryPolicySetEvidence.MAX_POLICIES) {
+      throw new IllegalStateException("Realm-entry policy set exceeds the v1 complete-read bound");
+    }
+    Set<String> realmSlugs = new HashSet<>();
+    int visiblePublicProductionCount = 0;
+    for (RealmEntryPolicySource source : sources) {
+      RealmEntryPolicy policy = source.policy();
       if (!realmSlugs.add(policy.realmSlug())) {
         throw new IllegalStateException("Duplicate published realm-entry policy realm slug");
       }
       if (policy.visible() && policy.publicProduction()) {
         visiblePublicProductionCount++;
       }
-      sources.add(new RealmEntryPolicySource(revision, policy));
     }
     if (visiblePublicProductionCount != 1) {
       throw new IllegalStateException(
           "Realm-entry policy set must contain exactly one visible publicProduction realm");
     }
     return List.copyOf(sources);
+  }
+
+  private boolean samePolicySource(Revision left, Revision right) {
+    return Objects.equals(left.getId(), right.getId())
+        && Objects.equals(left.getTenantId(), right.getTenantId())
+        && Objects.equals(left.getVersionId(), right.getVersionId())
+        && Objects.equals(left.getAuthorAccountId(), right.getAuthorAccountId())
+        && Objects.equals(left.getRevisionKind(), right.getRevisionKind())
+        && Objects.equals(left.getLogicalRevisionId(), right.getLogicalRevisionId())
+        && Objects.equals(left.getData(), right.getData())
+        && Objects.equals(left.getCreatedAt(), right.getCreatedAt());
   }
 
   private void freezeRealmEntryPolicies(
@@ -449,6 +481,8 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
   }
 
   private record RealmEntryPolicySource(Revision revision, RealmEntryPolicy policy) {}
+
+  private record PolicySelector(String worldSlug, String realmSlug) {}
 
   private record PolicyOwnerContext(
       GameTenantIdentity tenantIdentity,

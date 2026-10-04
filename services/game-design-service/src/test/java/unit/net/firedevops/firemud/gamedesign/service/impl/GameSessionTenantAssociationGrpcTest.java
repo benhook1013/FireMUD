@@ -9,6 +9,7 @@ import com.google.protobuf.UnknownFieldSet;
 import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import java.sql.SQLException;
 import java.util.Base64;
 import java.util.HashSet;
 import java.util.Optional;
@@ -26,6 +27,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.boot.env.YamlPropertySourceLoader;
 import org.springframework.core.env.PropertySource;
 import org.springframework.core.io.FileSystemResource;
+import org.springframework.dao.DataAccessResourceFailureException;
 
 class GameSessionTenantAssociationGrpcTest {
   private static final UUID OPERATION = UUID.fromString("11111111-1111-4111-8111-111111111111");
@@ -132,17 +134,36 @@ class GameSessionTenantAssociationGrpcTest {
   }
 
   @Test
-  void absentContradictoryAndUnavailableEvidenceNeverReturnsPartialContent() {
+  void absentContradictoryAndUnexpectedStorageEvidenceNeverReturnsPartialContent() {
     when(repository.read(OPERATION, TENANT, 41L, "test"))
         .thenReturn(Optional.empty())
         .thenThrow(new IllegalStateException("contradictory stored evidence"))
-        .thenThrow(new org.jooq.exception.DataAccessException("storage unavailable"));
+        .thenThrow(new org.jooq.exception.DataAccessException("non-connection storage failure"))
+        .thenThrow(new UnsupportedOperationException("unexpected repository failure"));
     assertThat(call(request(), GAME_SESSION).error).isEqualTo(Status.Code.NOT_FOUND);
     assertThat(call(request(), GAME_SESSION).error).isEqualTo(Status.Code.FAILED_PRECONDITION);
-    Observer unavailable = call(request(), GAME_SESSION);
-    assertThat(unavailable.error).isEqualTo(Status.Code.UNAVAILABLE);
-    assertThat(unavailable.value).isNull();
-    assertThat(unavailable.completed).isFalse();
+    for (int index = 0; index < 2; index++) {
+      Observer internal = call(request(), GAME_SESSION);
+      assertThat(internal.error).isEqualTo(Status.Code.INTERNAL);
+      assertThat(internal.value).isNull();
+      assertThat(internal.completed).isFalse();
+    }
+  }
+
+  @Test
+  void mapsUnavailableAssociationStorageFailuresWithoutReturningPartialContent() {
+    when(repository.read(OPERATION, TENANT, 41L, "test"))
+        .thenThrow(new DataAccessResourceFailureException("unavailable"))
+        .thenThrow(
+            new org.jooq.exception.DataAccessException(
+                "connection failure", new SQLException("database unavailable", "08006")));
+
+    for (int index = 0; index < 2; index++) {
+      Observer unavailable = call(request(), GAME_SESSION);
+      assertThat(unavailable.error).isEqualTo(Status.Code.UNAVAILABLE);
+      assertThat(unavailable.value).isNull();
+      assertThat(unavailable.completed).isFalse();
+    }
   }
 
   @Test

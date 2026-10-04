@@ -183,6 +183,96 @@ class PublishedRealmCatalogRepositoryIntegrationTest {
     assertThat(fixture.dsl().fetchCount(ADMISSION_POINTER)).isEqualTo(originalPointerCount);
   }
 
+  @Test
+  void persistedSnapshotOrdersAsciiPunctuationByWorldThenRealmSlug() {
+    Fixture fixture = fixture();
+    fixture.seedAssociation(TENANT_ID, CANONICAL_TENANT_ID, 501L, "source-game-501");
+
+    PublishedRealmEntryPolicySetEvidence policySet =
+        punctuationEvidenceSet(CANONICAL_TENANT_ID, 501L, "source-game-501");
+    PublishedRealmCatalogSnapshot snapshot = fixture.materialize(TENANT_ID, policySet);
+    PublishedRealmCatalogSnapshot readback =
+        fixture
+            .repository
+            .findPublishedSnapshot(NAMESPACE, TENANT_ID, snapshot.catalogRevision())
+            .orElseThrow();
+
+    assertThat(readback.entries())
+        .extracting(
+            entry ->
+                entry.policyEvidence().policy().worldSlug()
+                    + "/"
+                    + entry.policyEvidence().policy().realmSlug())
+        .containsExactly("a-b/x-z", "a0/x-a", "a0/x0");
+  }
+
+  private static PublishedRealmEntryPolicySetEvidence punctuationEvidenceSet(
+      UUID canonicalTenantId, long sourceGameRowId, String sourceGameTenantKey) {
+    long versionId = 300L;
+    int versionNumber = 1;
+    String workflow = WORKFLOW + ":" + versionId;
+    String manifest = "manifest-" + versionId;
+    String releaseIdentity =
+        PublishedRealmEntryPolicyEvidence.releaseBundleIdentity(
+            canonicalTenantId, versionId, workflow, manifest, JSON);
+    List<PublishedRealmEntryPolicyEvidence> policies =
+        List.of(
+            evidence(
+                canonicalTenantId,
+                sourceGameRowId,
+                sourceGameTenantKey,
+                versionId,
+                versionNumber,
+                workflow,
+                manifest,
+                releaseIdentity,
+                "x-a",
+                "Punctuation",
+                true,
+                false,
+                "SHARED",
+                "a0"),
+            evidence(
+                canonicalTenantId,
+                sourceGameRowId,
+                sourceGameTenantKey,
+                versionId,
+                versionNumber,
+                workflow,
+                manifest,
+                releaseIdentity,
+                "x0",
+                "Punctuation",
+                true,
+                false,
+                "SHARED",
+                "a0"),
+            evidence(
+                canonicalTenantId,
+                sourceGameRowId,
+                sourceGameTenantKey,
+                versionId,
+                versionNumber,
+                workflow,
+                manifest,
+                releaseIdentity,
+                "x-z",
+                "Punctuation",
+                true,
+                true,
+                "SHARED",
+                "a-b"));
+    return PublishedRealmEntryPolicySetEvidence.create(
+        canonicalTenantId,
+        versionId,
+        versionNumber,
+        releaseIdentity,
+        workflow,
+        manifest,
+        policies,
+        JSON);
+  }
+
   private static PublishedRealmEntryPolicySetEvidence evidenceSet(
       UUID canonicalTenantId,
       long sourceGameRowId,
@@ -382,29 +472,18 @@ class PublishedRealmCatalogRepositoryIntegrationTest {
         long tenantId, UUID canonicalTenantId, long sourceGameRowId, String sourceGameTenantKey) {
       dsl.execute(
           "INSERT INTO game_session_retained_tenant_association "
-              + "(operation_id, approval_schema_version, target_namespace, association_request_id, "
-              + "request_digest, approval_operation_id, signer_key_id, approved_by, "
-              + "approval_reference, signed_at, legacy_game_session_tenant_id, canonical_tenant_id, "
-              + "source_game_row_id, source_game_tenant_key, provenance_kind, "
-              + "game_session_evidence_digest, approval_manifest_digest, approval_signature, "
-              + "snapshot_canonical_json, snapshot_evidence_digest, receipt_digest) "
-              + "VALUES (?, 1, ?, ?, ?, ?, 'fixture-key', 'fixture-owner', 'fixture-approval', "
-              + "'2026-01-01T00:00:00Z', ?, ?, ?, ?, ?, ?, ?, ?, '{}', ?, ?)",
+              + "(operation_id, target_namespace, association_request_id, "
+              + "legacy_game_session_tenant_id, canonical_tenant_id, source_game_row_id, "
+              + "source_game_tenant_key, provenance_kind, captured_at, terminal_outcome) "
+              + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, clock_timestamp(), 'ASSOCIATED')",
           UUID.randomUUID(),
           NAMESPACE,
-          UUID.randomUUID(),
-          DIGEST,
           UUID.randomUUID(),
           tenantId,
           canonicalTenantId,
           sourceGameRowId,
           sourceGameTenantKey,
-          PROVENANCE_KIND,
-          DIGEST,
-          DIGEST,
-          SIGNATURE,
-          DIGEST,
-          DIGEST);
+          PROVENANCE_KIND);
     }
   }
 }

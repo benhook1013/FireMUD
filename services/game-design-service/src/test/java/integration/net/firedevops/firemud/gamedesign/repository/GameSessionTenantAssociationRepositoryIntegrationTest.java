@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.Signature;
+import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 import java.util.Map;
 import java.util.Objects;
@@ -57,8 +58,6 @@ class GameSessionTenantAssociationRepositoryIntegrationTest {
       DSL.field(DSL.name("description"), String.class);
   private static final org.jooq.Field<UUID> OPERATION_ID =
       DSL.field(DSL.name("operation_id"), UUID.class);
-  private static final org.jooq.Field<String> APPROVED_BY =
-      DSL.field(DSL.name("approved_by"), String.class);
 
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
@@ -423,7 +422,9 @@ class GameSessionTenantAssociationRepositoryIntegrationTest {
                 fixture
                     .dsl()
                     .update(ASSOCIATIONS)
-                    .set(APPROVED_BY, "changed-owner")
+                    .set(
+                        DSL.field(DSL.name("source_game_tenant_key"), String.class),
+                        "changed-owner")
                     .where(OPERATION_ID.eq(receipt.manifest().operationId()))
                     .execute())
         .isInstanceOf(DataAccessException.class)
@@ -451,14 +452,7 @@ class GameSessionTenantAssociationRepositoryIntegrationTest {
                     .dsl()
                     .insertInto(ASSOCIATIONS)
                     .set(OPERATION_ID, uuid(81))
-                    .set(DSL.field(DSL.name("schema_version"), Integer.class), 1)
                     .set(DSL.field(DSL.name("target_namespace"), String.class), NAMESPACE)
-                    .set(DSL.field(DSL.name("signer_key_id"), String.class), SIGNER_KEY_ID)
-                    .set(DSL.field(DSL.name("approved_by"), String.class), "owner@example.test")
-                    .set(
-                        DSL.field(DSL.name("approval_reference"), String.class),
-                        "source-contradiction-test")
-                    .set(DSL.field(DSL.name("signed_at"), String.class), "2026-10-01T00:00:00Z")
                     .set(DSL.field(DSL.name("legacy_game_session_tenant_id"), Long.class), 981L)
                     .set(
                         DSL.field(DSL.name("canonical_tenant_id"), UUID.class),
@@ -470,13 +464,6 @@ class GameSessionTenantAssociationRepositoryIntegrationTest {
                         DSL.field(DSL.name("source_game_tenant_key"), String.class),
                         "contradictory-source-key")
                     .set(DSL.field(DSL.name("provenance_kind"), String.class), "NEW_GAME_ROW")
-                    .set(
-                        DSL.field(DSL.name("game_session_evidence_digest"), String.class),
-                        GAME_SESSION_EVIDENCE_DIGEST)
-                    .set(
-                        DSL.field(DSL.name("manifest_digest"), String.class),
-                        receipt.manifestDigest())
-                    .set(DSL.field(DSL.name("signature"), String.class), receipt.ed25519Signature())
                     .execute())
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("does not match its Game Design row");
@@ -766,7 +753,8 @@ class GameSessionTenantAssociationRepositoryIntegrationTest {
         long sourceGameRowId,
         String sourceGameTenantKey,
         String provenanceKind) {
-      java.time.Instant sourceCapturedAt = java.time.Instant.now().minusSeconds(2);
+      java.time.Instant sourceCapturedAt =
+          java.time.Instant.now().minusSeconds(2).truncatedTo(ChronoUnit.MICROS);
       return new GameSessionTenantAssociationEvidence(
           2,
           operationId,

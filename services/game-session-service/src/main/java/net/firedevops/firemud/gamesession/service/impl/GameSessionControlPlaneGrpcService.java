@@ -49,10 +49,10 @@ import net.firedevops.firemud.gamesession.v1.GetInitialAdmissionBindProofRequest
 import net.firedevops.firemud.gamesession.v1.GetInitialAdmissionBindProofResponse;
 import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionRequest;
 import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionResponse;
-import net.firedevops.firemud.gamesession.v1.GetPublishedRealmAdmissionOwnerReadRequest;
-import net.firedevops.firemud.gamesession.v1.GetPublishedRealmAdmissionOwnerReadResponse;
 import net.firedevops.firemud.gamesession.v1.GetPreparedVersionUpgradeRequest;
 import net.firedevops.firemud.gamesession.v1.GetPreparedVersionUpgradeResponse;
+import net.firedevops.firemud.gamesession.v1.GetPublishedRealmAdmissionOwnerReadRequest;
+import net.firedevops.firemud.gamesession.v1.GetPublishedRealmAdmissionOwnerReadResponse;
 import net.firedevops.firemud.gamesession.v1.GetRemoteCommandCoordinatorRequest;
 import net.firedevops.firemud.gamesession.v1.GetRemoteCommandCoordinatorResponse;
 import net.firedevops.firemud.gamesession.v1.GetRemoteFollowupRequest;
@@ -76,8 +76,8 @@ import net.firedevops.firemud.gamesession.v1.PauseTicksForScopeRequest;
 import net.firedevops.firemud.gamesession.v1.PauseTicksForScopeResponse;
 import net.firedevops.firemud.gamesession.v1.PrepareVersionUpgradeRequest;
 import net.firedevops.firemud.gamesession.v1.PrepareVersionUpgradeResponse;
-import net.firedevops.firemud.gamesession.v1.PublishedRealmAdmissionOwnerReadEvidence;
 import net.firedevops.firemud.gamesession.v1.PublishedRealmAdmissionAttemptStatus;
+import net.firedevops.firemud.gamesession.v1.PublishedRealmAdmissionOwnerReadEvidence;
 import net.firedevops.firemud.gamesession.v1.PurgeQueuedTickCommandsForPluginVersionRequest;
 import net.firedevops.firemud.gamesession.v1.PurgeQueuedTickCommandsForPluginVersionResponse;
 import net.firedevops.firemud.gamesession.v1.PurgeQueuedTickCommandsForScriptPatchRequest;
@@ -129,7 +129,8 @@ public final class GameSessionControlPlaneGrpcService
   private InitialAdmissionBindOwnerProofReader initialAdmissionBindOwnerProofReader;
   private InitialAdmissionBindOwnerReadWorkloadGuard initialAdmissionBindOwnerReadWorkloadGuard;
   private PublishedRealmAdmissionOwnerReadService publishedRealmAdmissionOwnerReadService;
-  private PublishedRealmAdmissionOwnerReadWorkloadGuard publishedRealmAdmissionOwnerReadWorkloadGuard;
+  private PublishedRealmAdmissionOwnerReadWorkloadGuard
+      publishedRealmAdmissionOwnerReadWorkloadGuard;
 
   private static final Pattern SHA_256 = Pattern.compile("[0-9a-f]{64}");
   private static final int MAX_PUBLISHED_REALM_ADMISSION_OWNER_READ_REQUEST_BYTES = 512;
@@ -596,8 +597,7 @@ public final class GameSessionControlPlaneGrpcService
         .setPointerAuditRequestId(proof.initialAdmissionRequestId())
         .setPointerAuditRequestDigest(proof.requestDigest())
         .setInitialAdmissionAttemptStatus(
-            PublishedRealmAdmissionAttemptStatus
-                .PUBLISHED_REALM_ADMISSION_ATTEMPT_STATUS_COMMITTED)
+            PublishedRealmAdmissionAttemptStatus.PUBLISHED_REALM_ADMISSION_ATTEMPT_STATUS_COMMITTED)
         .build();
   }
 

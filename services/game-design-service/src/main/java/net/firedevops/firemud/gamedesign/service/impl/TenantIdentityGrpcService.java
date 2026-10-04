@@ -32,6 +32,7 @@ import org.jooq.exception.DataAccessException;
 import org.jooq.exception.TooManyRowsException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.TransientDataAccessException;
 import org.springframework.grpc.server.service.GrpcService;
 import tools.jackson.databind.ObjectMapper;
 
@@ -95,7 +96,7 @@ public class TenantIdentityGrpcService
               .withDescription("Game Design tenant identity provenance is ambiguous or invalid")
               .asRuntimeException());
       return;
-    } catch (DataAccessResourceFailureException ex) {
+    } catch (DataAccessResourceFailureException | TransientDataAccessException ex) {
       responseObserver.onError(
           Status.UNAVAILABLE
               .withDescription("Game Design tenant identity is temporarily unavailable")
@@ -205,10 +206,27 @@ public class TenantIdentityGrpcService
               .withDescription("Retained Game Session association evidence is inconsistent")
               .asRuntimeException());
       return;
-    } catch (DataAccessException ex) {
+    } catch (DataAccessResourceFailureException | TransientDataAccessException ex) {
       responseObserver.onError(
           Status.UNAVAILABLE
               .withDescription("Retained Game Session association could not be read")
+              .asRuntimeException());
+      return;
+    } catch (DataAccessException ex) {
+      Status.Code code =
+          hasConnectionFailureSqlState(ex) ? Status.Code.UNAVAILABLE : Status.Code.INTERNAL;
+      responseObserver.onError(
+          Status.fromCode(code)
+              .withDescription(
+                  code == Status.Code.UNAVAILABLE
+                      ? "Retained Game Session association could not be read"
+                      : "Retained Game Session association evidence could not be read")
+              .asRuntimeException());
+      return;
+    } catch (RuntimeException ex) {
+      responseObserver.onError(
+          Status.INTERNAL
+              .withDescription("Retained Game Session association evidence could not be read")
               .asRuntimeException());
       return;
     }
@@ -305,7 +323,7 @@ public class TenantIdentityGrpcService
               .withDescription("Published realm-entry policy evidence is inconsistent")
               .asRuntimeException());
       return;
-    } catch (DataAccessResourceFailureException ex) {
+    } catch (DataAccessResourceFailureException | TransientDataAccessException ex) {
       responseObserver.onError(
           Status.UNAVAILABLE
               .withDescription("Published realm-entry policy is temporarily unavailable")
@@ -398,7 +416,7 @@ public class TenantIdentityGrpcService
                   "Complete published realm-entry policy set is inconsistent or unsupported")
               .asRuntimeException());
       return;
-    } catch (DataAccessResourceFailureException ex) {
+    } catch (DataAccessResourceFailureException | TransientDataAccessException ex) {
       responseObserver.onError(
           Status.UNAVAILABLE
               .withDescription("Published realm-entry policy set is temporarily unavailable")

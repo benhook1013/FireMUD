@@ -31,6 +31,7 @@ import net.firedevops.firemud.gamedesign.v1.ResolveRuntimeTenantIdentityResponse
 import org.jooq.exception.TooManyRowsException;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.QueryTimeoutException;
 import tools.jackson.databind.ObjectMapper;
 
 class TenantIdentityGrpcServiceTest {
@@ -173,6 +174,19 @@ class TenantIdentityGrpcServiceTest {
   void mapsUnavailableOwnerReadWithoutReturningPartialEvidence() {
     when(repository.findRuntimeTenantIdentityByCanonicalTenantId(TENANT_ID))
         .thenThrow(new DataAccessResourceFailureException("unavailable"));
+
+    TestObserver observer =
+        call(request(TENANT_ID.toString(), REQUEST_ID.toString()), GAME_SESSION_URI);
+
+    assertThat(status(observer)).isEqualTo(Status.Code.UNAVAILABLE);
+    assertThat(observer.value).isNull();
+    assertThat(observer.completed).isFalse();
+  }
+
+  @Test
+  void mapsQueryTimeoutOwnerReadToUnavailableWithoutReturningPartialEvidence() {
+    when(repository.findRuntimeTenantIdentityByCanonicalTenantId(TENANT_ID))
+        .thenThrow(new QueryTimeoutException("query timed out"));
 
     TestObserver observer =
         call(request(TENANT_ID.toString(), REQUEST_ID.toString()), GAME_SESSION_URI);

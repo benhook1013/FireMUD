@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.service;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepository;
 import org.jooq.DSLContext;
 import org.slf4j.Logger;
@@ -23,6 +24,10 @@ public class GameSessionRetainedTenantPayloadRetentionJob {
 
   private final DSLContext dsl;
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification =
+          "The Spring-managed DSLContext is intentionally shared for owner transactions.")
   public GameSessionRetainedTenantPayloadRetentionJob(DSLContext dsl) {
     this.dsl = dsl;
   }

@@ -9,6 +9,7 @@ import java.util.Map;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.gamesession.service.impl.PublishedRealmAdmissionOwnerReadWorkloadGuard;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -52,9 +53,7 @@ class PublishedRealmAdmissionOwnerReadWorkloadGuardTest {
     assertDenied(
         () ->
             runAsPeer(
-                ENTITY_SERVICE,
-                "other-namespace",
-                guard::requireEntityManagementOwnerReadCaller));
+                ENTITY_SERVICE, "other-namespace", guard::requireEntityManagementOwnerReadCaller));
     assertDenied(() -> guard.requireEntityManagementOwnerReadCaller());
     assertDenied(
         () ->
@@ -79,11 +78,7 @@ class PublishedRealmAdmissionOwnerReadWorkloadGuardTest {
     SessionContext.setContext("account", List.of("player"), Map.of());
 
     assertDenied(
-        () ->
-            runAsPeer(
-                ENTITY_SERVICE,
-                NAMESPACE,
-                guard::requireEntityManagementOwnerReadCaller));
+        () -> runAsPeer(ENTITY_SERVICE, NAMESPACE, guard::requireEntityManagementOwnerReadCaller));
   }
 
   private static void assertDenied(Runnable action) {

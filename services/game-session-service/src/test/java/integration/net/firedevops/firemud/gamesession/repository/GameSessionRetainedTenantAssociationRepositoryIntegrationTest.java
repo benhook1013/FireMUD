@@ -151,7 +151,7 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
     fixture.insertAssociationMapping(payloadOperationId, uuid(935), uuid(936), 934L);
     assertThatThrownBy(() -> fixture.insertExpiredPayload(payloadOperationId, nilUuid))
         .isInstanceOf(DataAccessException.class)
-        .hasMessageContaining("chk_gs_retained_tenant_association_payload_approval_operation_id");
+        .hasMessageContaining("chk_gs_retained_assoc_payload_approval_operation_id");
   }
 
   @Test
@@ -546,7 +546,7 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
     assertCheckViolation(
         () ->
             fixture.dsl.execute(
-                "UPDATE game_session_retained_tenant_association SET approved_by = ? "
+                "UPDATE game_session_retained_tenant_association SET source_game_tenant_key = ? "
                     + "WHERE operation_id = ?",
                 "changed",
                 operationId));

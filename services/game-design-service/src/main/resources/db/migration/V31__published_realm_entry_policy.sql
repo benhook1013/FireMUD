@@ -13,7 +13,7 @@ CREATE TABLE published_realm_entry_policy (
     source_revision_id BIGINT NOT NULL REFERENCES revision(id),
     release_bundle_identity VARCHAR(71) NOT NULL
         CHECK (release_bundle_identity ~ '^sha256:[0-9a-f]{64}$'),
-    publish_workflow_id VARCHAR(64) NOT NULL CHECK (publish_workflow_id <> ''),
+    publish_workflow_id VARCHAR(1024) NOT NULL CHECK (publish_workflow_id <> ''),
     manifest_hash VARCHAR(128) NOT NULL CHECK (manifest_hash <> ''),
     world_slug VARCHAR(64) NOT NULL
         CHECK (world_slug ~ '^[a-z0-9]+(-[a-z0-9]+)*$'),

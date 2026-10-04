@@ -3,6 +3,7 @@ package integration.net.firedevops.firemud.gamedesign.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.Statement;
 import java.util.Map;
@@ -167,7 +168,9 @@ class GameTenantIdentityRepositoryIntegrationTest {
             .defaultSchema(SERVICE_SCHEMA)
             .table(FLYWAY_TABLE)
             .placeholders(Map.of("serviceSchema", SERVICE_SCHEMA))
-            .locations("classpath:db/migration");
+            .locations(
+                "filesystem:"
+                    + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize());
     if (target != null) {
       configuration.target(target);
     }

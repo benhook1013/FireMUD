@@ -1,6 +1,5 @@
 package net.firedevops.firemud.gamedesign.maintenance;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -17,9 +16,6 @@ import org.springframework.transaction.annotation.Transactional;
     name = "firemud.retained-tenant.payload-retention.enabled",
     havingValue = "true",
     matchIfMissing = true)
-@SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification = "Injected repository is an owner-local Spring-managed collaborator.")
 public class GameSessionTenantAssociationPayloadRetentionJob {
   private static final Logger LOG =
       LoggerFactory.getLogger(GameSessionTenantAssociationPayloadRetentionJob.class);

@@ -369,7 +369,7 @@ public class InitialAdmissionBindCatalogRepository {
                     .eq(namespace)
                     .and(TENANT_ID.eq(tenantId))
                     .and(CATALOG_REVISION.eq(revision)))
-            .orderBy(WORLD_SLUG.asc(), REALM_SLUG.asc())
+            .orderBy(WORLD_SLUG.collate("C").asc(), REALM_SLUG.collate("C").asc())
             .fetch();
     if (rows.size() != policyCount || rows.isEmpty() || rows.size() > 128) {
       throw new IllegalStateException(

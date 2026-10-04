@@ -182,11 +182,14 @@ class PublishedReleaseBundleServiceImplTest {
   }
 
   @Test
-  void createFullVersionBundleRejectsWrongTenantVersionSourceAndDuplicateSelectors() {
+  void createFullVersionBundleRejectsInvalidHistoricalSourceBeforeNormalizing() {
     when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.empty());
     when(revisionRepository.findByTenantIdAndVersionIdAndRevisionKindOrderByIdAsc(
             "tenant-1", 7L, RealmEntryPolicy.REVISION_KIND))
-        .thenReturn(List.of(policyRevision(21L, "tenant-2", 7L, VALID_REALM_ENTRY_POLICY)));
+        .thenReturn(
+            List.of(
+                policyRevision(21L, "tenant-2", 7L, VALID_REALM_ENTRY_POLICY),
+                policyRevision(22L, "tenant-1", 7L, VALID_REALM_ENTRY_POLICY)));
 
     assertThrows(
         IllegalStateException.class,
@@ -199,12 +202,18 @@ class PublishedReleaseBundleServiceImplTest {
                 List.of()));
     verify(repository, never()).save(any(PublishedReleaseBundle.class));
 
+    verify(gameRepository, never()).findRuntimeTenantIdentityByTenantKey("tenant-1");
+  }
+
+  @Test
+  void createFullVersionBundleRejectsConflictingSourcesWithTheSameRevisionId() {
+    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.empty());
     when(revisionRepository.findByTenantIdAndVersionIdAndRevisionKindOrderByIdAsc(
             "tenant-1", 7L, RealmEntryPolicy.REVISION_KIND))
         .thenReturn(
             List.of(
                 policyRevision(21L, "tenant-1", 7L, VALID_REALM_ENTRY_POLICY),
-                policyRevision(22L, "tenant-1", 7L, VALID_REALM_ENTRY_POLICY)));
+                policyRevision(21L, "tenant-1", 7L, policyJson("main", false, false))));
     assertThrows(
         IllegalStateException.class,
         () ->
@@ -215,6 +224,128 @@ class PublishedReleaseBundleServiceImplTest {
                 "genrev-1",
                 List.of()));
     verify(gameRepository, never()).findRuntimeTenantIdentityByTenantKey("tenant-1");
+    verify(repository, never()).save(any(PublishedReleaseBundle.class));
+  }
+
+  @Test
+  void createFullVersionBundleUsesLatestPolicyForEachSelectorAndItsWorkflowIdentity() {
+    String longWorkflowId = "w".repeat(900);
+    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.empty());
+    when(revisionRepository.findByTenantIdAndVersionIdAndRevisionKindOrderByIdAsc(
+            "tenant-1", 7L, RealmEntryPolicy.REVISION_KIND))
+        .thenReturn(
+            List.of(
+                policyRevision(21L, "tenant-1", 7L, VALID_REALM_ENTRY_POLICY),
+                policyRevision(22L, "tenant-1", 7L, policyJson("main", false, false)),
+                policyRevision(23L, "tenant-1", 7L, policyJson("side", true, true))));
+    when(gameRepository.findRuntimeTenantIdentityByTenantKey("tenant-1"))
+        .thenReturn(Optional.of(tenantIdentity("tenant-1")));
+    when(repository.save(any(PublishedReleaseBundle.class)))
+        .thenAnswer(
+            invocation -> {
+              PublishedReleaseBundle entity = invocation.getArgument(0);
+              entity.setId(11L);
+              return entity;
+            });
+
+    service.createFullVersionBundle(
+        version(),
+        longWorkflowId,
+        new ExportedAssetManifest("abc123", List.of("manifest.json")),
+        "genrev-1",
+        List.of());
+
+    org.mockito.ArgumentCaptor<PublishedReleaseBundle> bundleCaptor =
+        org.mockito.ArgumentCaptor.forClass(PublishedReleaseBundle.class);
+    verify(repository).save(bundleCaptor.capture());
+    assertEquals(longWorkflowId, bundleCaptor.getValue().getPublishWorkflowId());
+
+    org.mockito.ArgumentCaptor<PublishedRealmEntryPolicy> policyCaptor =
+        org.mockito.ArgumentCaptor.forClass(PublishedRealmEntryPolicy.class);
+    verify(realmEntryPolicyRepository, org.mockito.Mockito.times(2)).insert(policyCaptor.capture());
+    assertEquals(
+        List.of(22L, 23L),
+        policyCaptor.getAllValues().stream()
+            .map(PublishedRealmEntryPolicy::sourceRevisionId)
+            .sorted()
+            .toList());
+    assertEquals(
+        List.of("main", "side"),
+        policyCaptor.getAllValues().stream()
+            .map(PublishedRealmEntryPolicy::realmSlug)
+            .sorted()
+            .toList());
+    assertEquals(
+        List.of(longWorkflowId, longWorkflowId),
+        policyCaptor.getAllValues().stream()
+            .map(PublishedRealmEntryPolicy::publishWorkflowId)
+            .toList());
+  }
+
+  @Test
+  void createFullVersionBundleBoundsEffectivePoliciesRatherThanRevisionHistory() {
+    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.empty());
+    List<Revision> history =
+        java.util.stream.IntStream.range(0, PublishedRealmEntryPolicySetEvidence.MAX_POLICIES + 1)
+            .mapToObj(
+                index -> policyRevision(21L + index, "tenant-1", 7L, VALID_REALM_ENTRY_POLICY))
+            .toList();
+    when(revisionRepository.findByTenantIdAndVersionIdAndRevisionKindOrderByIdAsc(
+            "tenant-1", 7L, RealmEntryPolicy.REVISION_KIND))
+        .thenReturn(history);
+    when(gameRepository.findRuntimeTenantIdentityByTenantKey("tenant-1"))
+        .thenReturn(Optional.of(tenantIdentity("tenant-1")));
+    when(repository.save(any(PublishedReleaseBundle.class)))
+        .thenAnswer(
+            invocation -> {
+              PublishedReleaseBundle entity = invocation.getArgument(0);
+              entity.setId(11L);
+              return entity;
+            });
+
+    service.createFullVersionBundle(
+        version(),
+        "workflow-1",
+        new ExportedAssetManifest("abc123", List.of("manifest.json")),
+        "genrev-1",
+        List.of());
+
+    org.mockito.ArgumentCaptor<PublishedRealmEntryPolicy> policyCaptor =
+        org.mockito.ArgumentCaptor.forClass(PublishedRealmEntryPolicy.class);
+    verify(realmEntryPolicyRepository).insert(policyCaptor.capture());
+    assertEquals(
+        21L + PublishedRealmEntryPolicySetEvidence.MAX_POLICIES,
+        policyCaptor.getValue().sourceRevisionId());
+  }
+
+  @Test
+  void createFullVersionBundleRejectsMoreThanTheEffectivePolicyBound() {
+    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.empty());
+    List<Revision> policies =
+        java.util.stream.IntStream.range(0, PublishedRealmEntryPolicySetEvidence.MAX_POLICIES + 1)
+            .mapToObj(
+                index ->
+                    policyRevision(
+                        21L + index,
+                        "tenant-1",
+                        7L,
+                        policyJson("realm-" + index, index == 0, index == 0)))
+            .toList();
+    when(revisionRepository.findByTenantIdAndVersionIdAndRevisionKindOrderByIdAsc(
+            "tenant-1", 7L, RealmEntryPolicy.REVISION_KIND))
+        .thenReturn(policies);
+
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            service.createFullVersionBundle(
+                version(),
+                "workflow-1",
+                new ExportedAssetManifest("abc123", List.of("manifest.json")),
+                "genrev-1",
+                List.of()));
+    verify(repository, never()).save(any(PublishedReleaseBundle.class));
+    verify(realmEntryPolicyRepository, never()).insert(any(PublishedRealmEntryPolicy.class));
   }
 
   @Test
@@ -590,6 +721,19 @@ class PublishedReleaseBundleServiceImplTest {
     revision.setRevisionKind(RealmEntryPolicy.REVISION_KIND);
     revision.setData(data);
     return revision;
+  }
+
+  private static String policyJson(String realmSlug, boolean visible, boolean publicProduction) {
+    return "{\"schemaVersion\":1,\"worldSlug\":\"earth\",\"worldDisplayName\":\"Earth\","
+        + "\"realmSlug\":\""
+        + realmSlug
+        + "\",\"realmDisplayName\":\""
+        + realmSlug
+        + "\",\"visible\":"
+        + visible
+        + ",\"publicProduction\":"
+        + publicProduction
+        + ",\"stateScope\":\"SHARED\",\"entryPolicy\":\"PRESEEDED_ONLY\"}";
   }
 
   private static GameTenantIdentity tenantIdentity(String tenantKey) {

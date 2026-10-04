@@ -1,6 +1,5 @@
 package net.firedevops.firemud.gamesession.service;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
@@ -24,11 +23,6 @@ import tools.jackson.databind.ObjectMapper;
  * Internal, non-startup owner path that composes a complete Game Design policy set with the
  * committed local tenant association before Game Session materializes its immutable catalog.
  */
-@SuppressFBWarnings(
-    value = "CT_CONSTRUCTOR_THROW",
-    justification =
-        "The workload namespace and collaborators are validated before use; this internal owner"
-            + " service is intentionally not a startup or public admission trigger.")
 @Service
 @Lazy
 public final class PublishedRealmCatalogOwnerService {
