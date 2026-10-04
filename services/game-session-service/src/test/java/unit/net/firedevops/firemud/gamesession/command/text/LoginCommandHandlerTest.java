@@ -1888,6 +1888,8 @@ class LoginCommandHandlerTest {
     inOrder.verify(sessionContextService).save(saved.capture());
     assertEquals(22L, saved.getValue().tenantId());
     assertEquals(77L, saved.getValue().accountId());
+    assertEquals("first-party:77", saved.getValue().loginName());
+    assertNull(saved.getValue().jwt());
     assertEquals(0L, saved.getValue().characterId());
     assertEquals(0L, saved.getValue().gameInstanceId());
     assertEquals(1L, saved.getValue().bootstrapGameInstanceId());

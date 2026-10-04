@@ -897,6 +897,11 @@ public class PlayCommandHandler {
       String requestId) {
     Optional<ErrorDetail> maybeError = extractError(response.getError());
     if (maybeError.isPresent()) {
+      if ("FAILED_PRECONDITION".equalsIgnoreCase(maybeError.orElseThrow().getCode())) {
+        return Optional.of(
+            authorityUnavailableFailure(
+                tenantTag, Long.toString(selectedRealm.gameInstanceId()), requestedCharacterId));
+      }
       if (!isAuthorityUnavailable(maybeError.orElseThrow())) {
         return Optional.of(
             worldAccessDeniedFailure(

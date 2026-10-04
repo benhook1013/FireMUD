@@ -2131,6 +2131,20 @@ class GameplayWorldCatalogTest {
   }
 
   @Test
+  void numericPublicWorldSelectorIsRejectedBeforeReadingWorldAuthority() {
+    AtomicInteger supplierCalls = new AtomicInteger();
+    GameplayWorldCatalog catalog =
+        GameplayWorldCatalog.forWorldSupplier(
+            () -> {
+              supplierCalls.incrementAndGet();
+              throw new AssertionError("numeric selectors must not read world authority");
+            });
+
+    assertThat(catalog.resolvePublicWorld("1")).isEmpty();
+    assertThat(supplierCalls).hasValue(0);
+  }
+
+  @Test
   void resolvesWorldFromOneListSnapshotWithoutReinterpretingItsOrdinal() {
     AtomicInteger supplierCalls = new AtomicInteger();
     GameplayWorldCatalog catalog =

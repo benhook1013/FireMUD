@@ -165,10 +165,10 @@ public final class GameplayWorldCatalog {
     if (selector == null || selector.isBlank()) {
       return Optional.empty();
     }
-    List<WorldView> worlds = publicVisibleWorlds();
     if (isOrdinalSelector(selector)) {
       return Optional.empty();
     }
+    List<WorldView> worlds = publicVisibleWorlds();
     String normalized = selector.trim().toLowerCase(Locale.ROOT);
     List<WorldView> matches =
         worlds.stream()
