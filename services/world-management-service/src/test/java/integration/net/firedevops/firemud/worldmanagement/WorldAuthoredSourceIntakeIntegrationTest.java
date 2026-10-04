@@ -224,6 +224,197 @@ class WorldAuthoredSourceIntakeIntegrationTest {
   }
 
   @Test
+  void readBySourceReturnsExactCommittedReceiptOnRepeatedCallsWithoutGrowth() {
+    UUID tenant = UUID.randomUUID();
+    AuthoredWorldSourceEvidence source =
+        source(tenant, tenantSlug(tenant), "source-read-world", sourceRowId(tenant), "Source Read");
+    WorldAuthoredSourceIntakeReceipt receipt = accept(UUID.randomUUID(), source);
+    long intakeCount = countRows("world_authored_source_intake");
+    long associationCount = countRows("world_authored_source_tenant_association");
+    long reservationCount = countRows("world_authored_source_tenant_key_reservation");
+
+    assertThat(
+            repository.readBySource(
+                NAMESPACE,
+                source.canonicalTenantId(),
+                source.worldSlug(),
+                source.operationId(),
+                source.evidenceDigest()))
+        .contains(receipt);
+    assertThat(
+            repository.readBySource(
+                NAMESPACE,
+                source.canonicalTenantId(),
+                source.worldSlug(),
+                source.operationId(),
+                source.evidenceDigest()))
+        .contains(receipt);
+    assertThat(countRows("world_authored_source_intake")).isEqualTo(intakeCount);
+    assertThat(countRows("world_authored_source_tenant_association")).isEqualTo(associationCount);
+    assertThat(countRows("world_authored_source_tenant_key_reservation"))
+        .isEqualTo(reservationCount);
+  }
+
+  @Test
+  void readBySourceRejectsAnyChangedBindingAndRetainedOrUnmappedEvidence() {
+    UUID tenant = UUID.randomUUID();
+    String tenantSlug = tenantSlug(tenant);
+    long sourceRowId = sourceRowId(tenant);
+    AuthoredWorldSourceEvidence source =
+        source(tenant, tenantSlug, "source-binding-world", sourceRowId, "Source Binding");
+    accept(UUID.randomUUID(), source);
+
+    assertThat(
+            repository.readBySource(
+                "other-namespace",
+                tenant,
+                source.worldSlug(),
+                source.operationId(),
+                source.evidenceDigest()))
+        .isEmpty();
+    assertThat(
+            repository.readBySource(
+                NAMESPACE,
+                UUID.randomUUID(),
+                source.worldSlug(),
+                source.operationId(),
+                source.evidenceDigest()))
+        .isEmpty();
+    assertThat(
+            repository.readBySource(
+                NAMESPACE,
+                tenant,
+                "another-world",
+                source.operationId(),
+                source.evidenceDigest()))
+        .isEmpty();
+    assertThat(
+            repository.readBySource(
+                NAMESPACE,
+                tenant,
+                source.worldSlug(),
+                UUID.randomUUID(),
+                source.evidenceDigest()))
+        .isEmpty();
+    assertThat(
+            repository.readBySource(
+                NAMESPACE,
+                tenant,
+                source.worldSlug(),
+                source.operationId(),
+                "sha256:" + "0".repeat(64)))
+        .isEmpty();
+
+    AuthoredWorldSourceEvidence retainedSource =
+        source(
+            tenant, tenantSlug, "retained-world", sourceRowId, "Retained", "RETAINED_GAME_V30");
+    assertThat(
+            repository.readBySource(
+                NAMESPACE,
+                retainedSource.canonicalTenantId(),
+                retainedSource.worldSlug(),
+                retainedSource.operationId(),
+                retainedSource.evidenceDigest()))
+        .isEmpty();
+    assertThat(
+            repository.readBySource(
+                NAMESPACE,
+                UUID.randomUUID(),
+                "unmapped-world",
+                UUID.randomUUID(),
+                source.evidenceDigest()))
+        .isEmpty();
+  }
+
+  @Test
+  void readBySourceRejectsMalformedBinding() {
+    UUID tenant = UUID.randomUUID();
+    AuthoredWorldSourceEvidence source =
+        source(
+            tenant, tenantSlug(tenant), "malformed-read-world", sourceRowId(tenant), "Malformed");
+    UUID nilUuid = new UUID(0L, 0L);
+
+    assertThatThrownBy(
+            () ->
+                repository.readBySource(
+                    "FireMud",
+                    tenant,
+                    source.worldSlug(),
+                    source.operationId(),
+                    source.evidenceDigest()))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                repository.readBySource(
+                    NAMESPACE,
+                    nilUuid,
+                    source.worldSlug(),
+                    source.operationId(),
+                    source.evidenceDigest()))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                repository.readBySource(
+                    NAMESPACE,
+                    tenant,
+                    "Malformed-World",
+                    source.operationId(),
+                    source.evidenceDigest()))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                repository.readBySource(
+                    NAMESPACE,
+                    tenant,
+                    source.worldSlug(),
+                    nilUuid,
+                    source.evidenceDigest()))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                repository.readBySource(
+                    NAMESPACE, tenant, source.worldSlug(), source.operationId(), "sha256:BAD"))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void readBySourceDoesNotExposeUncommittedOwnerEvidence() {
+    UUID tenant = UUID.randomUUID();
+    UUID requestId = UUID.randomUUID();
+    AuthoredWorldSourceEvidence source =
+        source(
+            tenant,
+            tenantSlug(tenant),
+            "uncommitted-read-world",
+            sourceRowId(tenant),
+            "Uncommitted");
+    TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
+
+    transactionTemplate.execute(
+        status -> {
+          repository.acceptFresh(NAMESPACE, requestId, source);
+          assertThat(
+                  repository.readBySource(
+                      NAMESPACE,
+                      tenant,
+                      source.worldSlug(),
+                      source.operationId(),
+                      source.evidenceDigest()))
+              .isEmpty();
+          return null;
+        });
+
+    assertThat(
+            repository.readBySource(
+                NAMESPACE,
+                tenant,
+                source.worldSlug(),
+                source.operationId(),
+                source.evidenceDigest()))
+        .contains(repository.read(NAMESPACE, requestId).orElseThrow());
+  }
+
+  @Test
   void deniesRetainedEvidenceAndChangedRequestOrTenantScopeBeforeAddingClaims() {
     UUID tenant = UUID.randomUUID();
     String tenantSlug = tenantSlug(tenant);
@@ -967,6 +1158,13 @@ class WorldAuthoredSourceIntakeIntegrationTest {
 
   private java.util.Optional<WorldAuthoredSourceIntakeReceipt> read(UUID requestId) {
     return repository.read(NAMESPACE, requestId);
+  }
+
+  private long countRows(String tableName) {
+    return Objects.requireNonNull(
+            dsl.fetchOne("SELECT COUNT(*) FROM " + tableName),
+            "table row count query returned no row")
+        .get(0, Long.class);
   }
 
   private long countForCanonicalTenant(UUID tenantId) {
