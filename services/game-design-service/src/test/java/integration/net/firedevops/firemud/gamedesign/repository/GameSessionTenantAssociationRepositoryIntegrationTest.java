@@ -451,7 +451,8 @@ class GameSessionTenantAssociationRepositoryIntegrationTest {
                     .dsl()
                     .execute(
                         "TRUNCATE game_design_game_session_tenant_association_operations, "
-                            + "game_design_game_session_tenant_association_payload"))
+                            + "game_design_game_session_tenant_association_payload, "
+                            + "game_design_game_session_tenant_association_legal_hold"))
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("evidence is immutable");
 

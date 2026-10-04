@@ -568,12 +568,16 @@ public class InitialAdmissionBindCatalogRepository {
     if (previous != null) {
       RealmEntryPolicy.StateScope previousScope;
       NamespaceResolution previousResolution;
+      String previousScopeValue = previous.get(STATE_SCOPE);
+      String previousResolutionValue = previous.get(NAMESPACE_RESOLUTION);
+      if (previousScopeValue == null || previousResolutionValue == null) {
+        throw new IllegalStateException(
+            "PUBLISHED_REALM_CATALOG_NAMESPACE_INVALID: prior namespace state is unsupported");
+      }
       try {
-        previousScope =
-            RealmEntryPolicy.StateScope.valueOf(Objects.requireNonNull(previous.get(STATE_SCOPE)));
-        previousResolution =
-            NamespaceResolution.valueOf(Objects.requireNonNull(previous.get(NAMESPACE_RESOLUTION)));
-      } catch (IllegalArgumentException | NullPointerException exception) {
+        previousScope = RealmEntryPolicy.StateScope.valueOf(previousScopeValue);
+        previousResolution = NamespaceResolution.valueOf(previousResolutionValue);
+      } catch (IllegalArgumentException exception) {
         throw new IllegalStateException(
             "PUBLISHED_REALM_CATALOG_NAMESPACE_INVALID: prior namespace state is unsupported",
             exception);
