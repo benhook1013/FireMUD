@@ -1891,9 +1891,7 @@ class AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest {
     claims.put("connectScopeId", identity.connectScopeId());
     claims.put("requestId", identity.requestId());
     claims.put("authorityTuple", authorityTupleClaims(membershipSnapshot.authorityTuple()));
-    claims.put(
-        "membershipVersion",
-        jsonCounterMap(membershipSnapshot.membershipBaseline().membershipVersion()));
+    claims.put("membershipVersion", membershipSnapshot.membershipBaseline().membershipVersion());
     // This is a synthetic replay-admission fixture value, not Account's separate capture fence.
     claims.put("replayAdmissionFence", BigInteger.valueOf(9_001L));
     return Map.copyOf(claims);
