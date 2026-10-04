@@ -856,6 +856,50 @@ class RetainedActorIdentityIntegrationTest {
         .hasMessageContaining("entity playable-state namespace identity is immutable");
   }
 
+  @Test
+  void characterUpdateRequiresExactTenantAndPreservesOwnerResolvedRowOnMismatch() {
+    UUID characterUuid = UUID.fromString("40000000-0000-4000-8000-000000000010");
+    long actorId =
+        insertActor(
+            "Tenant-owned actor",
+            characterUuid,
+            ACCOUNT_UUID,
+            TENANT_UUID,
+            NAMESPACE_UUID,
+            PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+            "shared-live",
+            "OWNER_RESOLVED",
+            null,
+            ACCOUNT_ID,
+            TENANT_ID);
+
+    Character crossTenantUpdate =
+        characterRepository.findByIdAndTenantId(actorId, TENANT_ID).orElseThrow();
+    int originalVersion = crossTenantUpdate.getVersion();
+    int originalExperience = crossTenantUpdate.getExperience();
+    crossTenantUpdate.setTenantId(TENANT_ID + 1);
+    crossTenantUpdate.setName("Cross-tenant overwrite");
+    crossTenantUpdate.setExperience(originalExperience + 99);
+
+    assertThatThrownBy(() -> characterRepository.save(crossTenantUpdate))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("CHARACTER_IDENTITY_NOT_OWNER_RESOLVED");
+
+    Character unchanged = characterRepository.findByIdAndTenantId(actorId, TENANT_ID).orElseThrow();
+    assertThat(unchanged.getTenantId()).isEqualTo(TENANT_ID);
+    assertThat(unchanged.getName()).isEqualTo("Tenant-owned actor");
+    assertThat(unchanged.getExperience()).isEqualTo(originalExperience);
+    assertThat(unchanged.getVersion()).isEqualTo(originalVersion);
+
+    Character validUpdate =
+        characterRepository.findByIdAndTenantId(actorId, TENANT_ID).orElseThrow();
+    validUpdate.setName("Tenant-owned actor updated");
+    Character saved = characterRepository.save(validUpdate);
+    assertThat(saved.getTenantId()).isEqualTo(TENANT_ID);
+    assertThat(saved.getName()).isEqualTo("Tenant-owned actor updated");
+    assertThat(saved.getVersion()).isEqualTo(originalVersion + 1);
+  }
+
   private long insertActor(
       String name,
       UUID characterUuid,
