@@ -87,7 +87,7 @@ class GameSessionRetainedTenantSnapshotRepositoryIntegrationTest {
 
     GameSessionRetainedTenantSnapshot snapshot = fixture.capture();
     JsonNode root = JSON.readTree(snapshot.canonicalJson());
-    assertThat(root.get("schemaVersion").intValue()).isEqualTo(3);
+    assertThat(root.get("schemaVersion").intValue()).isEqualTo(4);
     assertThat(root.get("targetNamespace").textValue()).isEqualTo(NAMESPACE);
     assertThat(root.get("legacyGameSessionTenantId").textValue()).isEqualTo(TENANT_ID);
     assertThat(textValues(root.get("instances"), "id")).containsExactly("2", "10", "20");
@@ -108,7 +108,12 @@ class GameSessionRetainedTenantSnapshotRepositoryIntegrationTest {
     assertThat(root.get("backfillIssues").size()).isZero();
     assertThat(
             GameSessionRetainedTenantSnapshot.fromCanonicalJson(
-                NAMESPACE, TENANT_ID, snapshot.canonicalJson(), snapshot.evidenceDigest()))
+                NAMESPACE,
+                TENANT_ID,
+                snapshot.capturedAt(),
+                snapshot.canonicalJson(),
+                snapshot.evidenceDigest(),
+                snapshot.projectionDigest()))
         .isEqualTo(snapshot);
 
     TransactionTemplate readOnly = new TransactionTemplate(fixture.transactionManager);
@@ -179,7 +184,12 @@ class GameSessionRetainedTenantSnapshotRepositoryIntegrationTest {
     assertThat(newNumericOwner.has("owner_account_uuid")).isFalse();
     assertThat(
             GameSessionRetainedTenantSnapshot.fromCanonicalJson(
-                NAMESPACE, TENANT_ID, snapshot.canonicalJson(), snapshot.evidenceDigest()))
+                NAMESPACE,
+                TENANT_ID,
+                snapshot.capturedAt(),
+                snapshot.canonicalJson(),
+                snapshot.evidenceDigest(),
+                snapshot.projectionDigest()))
         .isEqualTo(snapshot);
 
     fixture.dsl.execute("UPDATE game_instances SET owner_account_id = ? WHERE id = ?", 90011L, 10L);

@@ -200,12 +200,14 @@ public final class GameDesignRuntimeTenantIdentityClient
               manifest.getApprovedBy(),
               manifest.getApprovalReference(),
               manifest.getSignedAt(),
+              manifest.getSourceCapturedAt(),
               manifest.getLegacyGameSessionTenantId(),
               parseCanonicalNonNilUuid(
                   manifest.getCanonicalTenantId(), "manifest canonical tenant ID"),
               manifest.getSourceGameRowId(),
               manifest.getSourceGameTenantKey(),
               manifest.getProvenanceKind(),
+              manifest.getGameSessionProjectionDigest(),
               manifest.getGameSessionEvidenceDigest());
     } catch (IllegalArgumentException exception) {
       throw new IllegalStateException(

@@ -4,6 +4,7 @@ import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.HexFormat;
@@ -21,16 +22,19 @@ public record GameSessionTenantAssociationEvidence(
     String approvedBy,
     String approvalReference,
     String signedAt,
+    String sourceCapturedAt,
     String legacyGameSessionTenantId,
     UUID canonicalTenantId,
     String sourceGameRowId,
     String sourceGameTenantKey,
     String provenanceKind,
+    String gameSessionProjectionDigest,
     String gameSessionEvidenceDigest) {
-  private static final String DOMAIN = "game-design/game-session-retained-tenant-association/v1";
-  private static final int SCHEMA_VERSION = 1;
+  private static final String DOMAIN = "game-design/game-session-retained-tenant-association/v2";
+  private static final int SCHEMA_VERSION = 2;
   private static final UUID NIL_UUID = new UUID(0L, 0L);
   private static final Pattern SHA256 = Pattern.compile("sha256:[0-9a-f]{64}");
+  public static final Duration RAW_RETENTION = Duration.ofDays(30);
 
   public GameSessionTenantAssociationEvidence {
     if (schemaVersion != SCHEMA_VERSION) {
@@ -43,6 +47,10 @@ public record GameSessionTenantAssociationEvidence(
     requireLabel(approvedBy, 256, "approvedBy");
     requireLabel(approvalReference, 512, "approvalReference");
     requireCanonicalInstant(signedAt);
+    requireCanonicalInstant(sourceCapturedAt);
+    if (Instant.parse(sourceCapturedAt).isAfter(Instant.parse(signedAt))) {
+      throw new IllegalArgumentException("sourceCapturedAt may not follow signedAt");
+    }
     requirePositiveBigintText(legacyGameSessionTenantId, "legacyGameSessionTenantId");
     requireNonNil(canonicalTenantId, "canonicalTenantId");
     requirePositiveBigintText(sourceGameRowId, "sourceGameRowId");
@@ -50,9 +58,9 @@ public record GameSessionTenantAssociationEvidence(
     if (!"NEW_GAME_ROW".equals(provenanceKind) && !"RETAINED_GAME_V29".equals(provenanceKind)) {
       throw new IllegalArgumentException("Game Design tenant provenance kind is not recognized");
     }
-    if (!isDigest(gameSessionEvidenceDigest)) {
+    if (!isDigest(gameSessionProjectionDigest) || !isDigest(gameSessionEvidenceDigest)) {
       throw new IllegalArgumentException(
-          "gameSessionEvidenceDigest must be a lowercase SHA-256 digest");
+          "Game Session evidence digests must be lowercase SHA-256 digests");
     }
   }
 
@@ -67,11 +75,13 @@ public record GameSessionTenantAssociationEvidence(
     writeSegment(output, approvedBy);
     writeSegment(output, approvalReference);
     writeSegment(output, signedAt);
+    writeSegment(output, sourceCapturedAt);
     writeSegment(output, legacyGameSessionTenantId);
     writeSegment(output, canonicalTenantId.toString());
     writeSegment(output, sourceGameRowId);
     writeSegment(output, sourceGameTenantKey);
     writeSegment(output, provenanceKind);
+    writeSegment(output, gameSessionProjectionDigest);
     writeSegment(output, gameSessionEvidenceDigest);
     return output.toByteArray();
   }
@@ -94,6 +104,15 @@ public record GameSessionTenantAssociationEvidence(
   /** Returns the Game Design source row key as its exact positive PostgreSQL BIGINT value. */
   public long sourceGameRowIdValue() {
     return Long.parseLong(sourceGameRowId);
+  }
+
+  /** The immutable expiry boundary is always measured from the original owner capture. */
+  public Instant rawExpiresAt() {
+    return Instant.parse(sourceCapturedAt).plus(RAW_RETENTION);
+  }
+
+  public boolean rawExpiredAt(Instant now) {
+    return !Objects.requireNonNull(now, "now").isBefore(rawExpiresAt());
   }
 
   private static void writeSegment(ByteArrayOutputStream output, String value) {

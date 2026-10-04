@@ -136,6 +136,119 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
   }
 
   @Test
+  void unverifiedLegalHoldWritesFailClosedAndCleanupPreservesMinimalAntiReassignmentProof() {
+    Fixture fixture = fixture();
+    UUID heldOperation = uuid(920);
+    UUID releasedOperation = uuid(921);
+    UUID heldCanonical = uuid(922);
+    UUID releasedCanonical = uuid(923);
+    fixture.insertExpiredMapping(heldOperation, uuid(924), heldCanonical, 920L);
+    fixture.insertExpiredMapping(releasedOperation, uuid(925), releasedCanonical, 921L);
+
+    assertThatThrownBy(() -> fixture.insertHold(heldOperation, "ACCOUNT_MAPPING"))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("authenticated owner authorization boundary");
+    assertThatThrownBy(() -> fixture.insertHold(heldOperation, "RAW_PAYLOAD"))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("authenticated owner authorization boundary");
+    assertThatThrownBy(() -> fixture.insertInvalidScopeHold(heldOperation))
+        .isInstanceOf(DataAccessException.class);
+    UUID activeHoldId = fixture.insertActiveHold(heldOperation, uuid(926));
+    UUID releasedHoldId = fixture.insertActiveHold(releasedOperation, uuid(927));
+    assertThatThrownBy(() -> fixture.releaseHold(releasedHoldId))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("authenticated owner authorization boundary");
+    fixture.releaseHoldForRetentionTest(releasedHoldId);
+    assertThatThrownBy(() -> fixture.deleteHold(releasedHoldId))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("finite policy-controlled expiry");
+
+    assertThat(fixture.repository.purgeExpiredRawPayloads()).isEqualTo(1);
+    assertThat(fixture.payloadExists(releasedOperation)).isFalse();
+    assertThat(fixture.payloadExists(heldOperation)).isTrue();
+    assertThat(
+            fixture.dsl.fetchOne(
+                    "SELECT 1 FROM game_session_retained_tenant_association_legal_hold "
+                        + "WHERE hold_id = ? AND operation_id = ? "
+                        + "AND hold_scope = 'RAW_PAYLOAD' AND reason_code = 'LITIGATION' "
+                        + "AND released_at IS NOT NULL "
+                        + "AND released_by = 'fixture-authenticated-owner' "
+                        + "AND release_reference = 'release-927'",
+                    releasedHoldId,
+                    releasedOperation)
+                != null)
+        .isTrue();
+    assertThat(fixture.repository.purgeExpiredRawPayloads()).isZero();
+    fixture.releaseHoldForRetentionTest(activeHoldId);
+    assertThat(fixture.repository.purgeExpiredRawPayloads()).isEqualTo(1);
+    assertThat(fixture.payloadExists(heldOperation)).isFalse();
+    assertThat(
+            fixture.dsl.fetchOne(
+                    "SELECT 1 FROM game_session_retained_tenant_association_legal_hold "
+                        + "WHERE hold_id = ? AND operation_id = ? "
+                        + "AND released_at IS NOT NULL AND release_reference = 'release-927'",
+                    activeHoldId,
+                    heldOperation)
+                != null)
+        .isTrue();
+    assertThat(fixture.repository.readMinimalAssociation(NAMESPACE, heldCanonical))
+        .hasValueSatisfying(
+            identity -> {
+              assertThat(identity.canonicalTenantId()).isEqualTo(heldCanonical);
+              assertThat(identity.legacyGameSessionTenantId()).isEqualTo(920L);
+              assertThat(identity.sourceGameRowId()).isEqualTo(501L);
+              assertThat(identity.provenanceKind()).isEqualTo("RETAINED_GAME_V29");
+            });
+    assertThat(fixture.repository.readMinimalAssociation(NAMESPACE, releasedCanonical))
+        .hasValueSatisfying(
+            identity -> assertThat(identity.legacyGameSessionTenantId()).isEqualTo(921L));
+    assertThatThrownBy(
+            () -> fixture.repository.read(heldOperation, uuid(924), heldCanonical, 920L, NAMESPACE))
+        .isInstanceOf(InvalidAssociationEvidenceException.class);
+    GameSessionRetainedTenantSnapshot staleCapture =
+        fixture
+            .capture(920L)
+            .withCapturedAt(
+                java.time.Instant.now().minus(java.time.Duration.ofDays(31)).toString());
+    LegacyGameSessionTenantAssociationReceipt staleRetry =
+        fixture.approval(uuid(928), heldCanonical, 920L, staleCapture);
+    assertThatThrownBy(() -> fixture.register(uuid(924), staleRetry))
+        .isInstanceOf(InvalidAssociationEvidenceException.class);
+    assertThat(fixture.payloadExists(heldOperation)).isFalse();
+    fixture.restoreExpiredPayload(releasedOperation);
+    assertThatThrownBy(
+            () ->
+                fixture.repository.read(
+                    releasedOperation, uuid(925), releasedCanonical, 921L, NAMESPACE))
+        .isInstanceOf(InvalidAssociationEvidenceException.class)
+        .hasMessageContaining("expired");
+    assertThat(fixture.repository.purgeExpiredRawPayloads()).isEqualTo(1);
+    assertThat(fixture.repository.readMinimalAssociation(NAMESPACE, uuid(926))).isEmpty();
+  }
+
+  @Test
+  void expiredUnverifiedApprovalCannotBeRegisteredAndRequiresFreshCapture() {
+    Fixture fixture = fixture();
+    fixture.seedInstance(42L, 420L, "runtime-42");
+    GameSessionRetainedTenantSnapshot current = fixture.capture(42L);
+    GameSessionRetainedTenantSnapshot expired =
+        current.withCapturedAt(
+            java.time.Instant.now().minus(java.time.Duration.ofDays(31)).toString());
+    LegacyGameSessionTenantAssociationReceipt oldApproval =
+        fixture.approval(uuid(930), uuid(931), 42L, expired);
+
+    assertThatThrownBy(() -> fixture.register(uuid(932), oldApproval))
+        .isInstanceOf(InvalidAssociationEvidenceException.class)
+        .hasMessageContaining("expired");
+    assertThat(fixture.storedRequestCount(uuid(932))).isZero();
+
+    GameSessionRetainedTenantSnapshot recaptured = fixture.capture(42L);
+    LegacyGameSessionTenantAssociationReceipt freshApproval =
+        fixture.approval(uuid(933), uuid(931), 42L, recaptured);
+    assertThat(fixture.register(uuid(934), freshApproval).snapshot()).isEqualTo(recaptured);
+  }
+
+  @Test
   void changedRequestAndOneToOneClaimConflictsLeaveNoPartialRows() {
     Fixture fixture = fixture();
     fixture.seedInstance(42L, 420L, "runtime-42");
@@ -503,6 +616,145 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
       GameSessionRetainedTenantSnapshotRepository snapshotRepository,
       GameSessionRetainedTenantAssociationRepository repository,
       TransactionTemplate transactions) {
+    void insertExpiredMapping(
+        UUID operationId, UUID requestId, UUID canonicalTenantId, long legacyTenantId) {
+      dsl.execute(
+          "INSERT INTO game_session_retained_tenant_association ("
+              + "operation_id, target_namespace, association_request_id, "
+              + "legacy_game_session_tenant_id, canonical_tenant_id, source_game_row_id, "
+              + "source_game_tenant_key, provenance_kind, captured_at, terminal_outcome) "
+              + "VALUES (?, ?, ?, ?, ?, 501, 'source-game-501', 'RETAINED_GAME_V29', "
+              + "clock_timestamp() - INTERVAL '31 days', 'ASSOCIATED')",
+          operationId,
+          NAMESPACE,
+          requestId,
+          legacyTenantId,
+          canonicalTenantId);
+      insertExpiredPayload(operationId);
+    }
+
+    void restoreExpiredPayload(UUID operationId) {
+      insertExpiredPayload(operationId);
+    }
+
+    private void insertExpiredPayload(UUID operationId) {
+      dsl.execute(
+          "INSERT INTO game_session_retained_tenant_association_payload ("
+              + "operation_id, request_digest, approval_operation_id, approval_schema_version, "
+              + "signer_key_id, approved_by, approval_reference, signed_at, "
+              + "game_session_projection_digest, game_session_evidence_digest, "
+              + "approval_manifest_digest, approval_signature, snapshot_canonical_json, "
+              + "snapshot_evidence_digest, receipt_digest) VALUES (?, ?, ?, 2, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          operationId,
+          "sha256:" + "a".repeat(64),
+          UUID.randomUUID(),
+          "fixture-owner-key",
+          "owner-reviewer",
+          "approval-" + operationId,
+          java.time.Instant.now().toString(),
+          "sha256:" + "b".repeat(64),
+          "sha256:" + "c".repeat(64),
+          "sha256:" + "d".repeat(64),
+          Base64.getEncoder().encodeToString(new byte[64]),
+          "{}",
+          "sha256:" + "e".repeat(64),
+          "sha256:" + "f".repeat(64));
+    }
+
+    void insertHold(UUID operationId, String scope) {
+      dsl.execute(
+          "INSERT INTO game_session_retained_tenant_association_legal_hold ("
+              + "hold_id, operation_id, hold_scope, reason_code, case_reference, "
+              + "authorization_id, authorized_principal, authorized_at, review_at) "
+              + "VALUES (?, ?, ?, 'LITIGATION', 'case-2026-001', ?, 'owner-admin', "
+              + "clock_timestamp(), clock_timestamp() + INTERVAL '30 days')",
+          uuid(927),
+          operationId,
+          scope,
+          uuid(928));
+    }
+
+    UUID insertActiveHold(UUID operationId, UUID holdId) {
+      // Seed governed state only to prove expiry blockers; application writes remain denied.
+      withHoldInsertTriggerDisabled(
+          () ->
+              dsl.execute(
+                  "INSERT INTO game_session_retained_tenant_association_legal_hold ("
+                      + "hold_id, operation_id, hold_scope, reason_code, case_reference, "
+                      + "authorization_id, authorized_principal, authorized_at, review_at) "
+                      + "VALUES (?, ?, 'RAW_PAYLOAD', 'LITIGATION', 'test-case-927', ?, "
+                      + "'fixture-authenticated-owner', clock_timestamp() - INTERVAL '2 days', "
+                      + "clock_timestamp() + INTERVAL '30 days')",
+                  holdId,
+                  operationId,
+                  uuid(928)));
+      return holdId;
+    }
+
+    void insertInvalidScopeHold(UUID operationId) {
+      withHoldInsertTriggerDisabled(
+          () ->
+              dsl.execute(
+                  "INSERT INTO game_session_retained_tenant_association_legal_hold ("
+                      + "hold_id, operation_id, hold_scope, reason_code, case_reference, "
+                      + "authorization_id, authorized_principal, authorized_at, review_at) "
+                      + "VALUES (?, ?, 'ACCOUNT_MAPPING', 'LITIGATION', 'bad-scope', ?, "
+                      + "'fixture-authenticated-owner', clock_timestamp(), "
+                      + "clock_timestamp() + INTERVAL '30 days')",
+                  uuid(929),
+                  operationId,
+                  uuid(930)));
+    }
+
+    void releaseHold(UUID holdId) {
+      dsl.execute(
+          "UPDATE game_session_retained_tenant_association_legal_hold "
+              + "SET released_at = clock_timestamp(), released_by = 'fixture-authenticated-owner', "
+              + "release_reference = 'release-927' WHERE hold_id = ?",
+          holdId);
+    }
+
+    void deleteHold(UUID holdId) {
+      dsl.execute(
+          "DELETE FROM game_session_retained_tenant_association_legal_hold WHERE hold_id = ?",
+          holdId);
+    }
+
+    void releaseHoldForRetentionTest(UUID holdId) {
+      // This fixture bypasses auth solely to prove release-triggered raw erasure.
+      dsl.execute(
+          "ALTER TABLE game_session_retained_tenant_association_legal_hold "
+              + "DISABLE TRIGGER game_session_retained_tenant_hold_release_only");
+      try {
+        releaseHold(holdId);
+      } finally {
+        dsl.execute(
+            "ALTER TABLE game_session_retained_tenant_association_legal_hold "
+                + "ENABLE TRIGGER game_session_retained_tenant_hold_release_only");
+      }
+    }
+
+    private void withHoldInsertTriggerDisabled(Runnable insert) {
+      dsl.execute(
+          "ALTER TABLE game_session_retained_tenant_association_legal_hold "
+              + "DISABLE TRIGGER game_session_retained_tenant_hold_authentication_required");
+      try {
+        insert.run();
+      } finally {
+        dsl.execute(
+            "ALTER TABLE game_session_retained_tenant_association_legal_hold "
+                + "ENABLE TRIGGER game_session_retained_tenant_hold_authentication_required");
+      }
+    }
+
+    boolean payloadExists(UUID operationId) {
+      return dsl.fetchOne(
+              "SELECT 1 FROM game_session_retained_tenant_association_payload "
+                  + "WHERE operation_id = ?",
+              operationId)
+          != null;
+    }
+
     void seedInstance(long tenantId, long instanceId, String runtimeVersion) {
       dsl.execute(
           "INSERT INTO game_instances "
@@ -543,18 +795,20 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
         String evidenceDigest) {
       GameSessionTenantAssociationEvidence evidence =
           new GameSessionTenantAssociationEvidence(
-              1,
+              2,
               approvalOperationId,
               NAMESPACE,
               "fixture-owner-key",
               "owner-reviewer",
               "approval-" + approvalOperationId,
-              "2026-01-01T00:00:00Z",
+              java.time.Instant.parse(snapshot.capturedAt()).plusSeconds(1).toString(),
+              snapshot.capturedAt(),
               Long.toString(legacyTenantId),
               canonicalTenantId,
               "501",
               "source-game-501",
               "RETAINED_GAME_V29",
+              snapshot.projectionDigest(),
               evidenceDigest);
       String signature = Base64.getEncoder().encodeToString(new byte[64]);
       return new LegacyGameSessionTenantAssociationReceipt(

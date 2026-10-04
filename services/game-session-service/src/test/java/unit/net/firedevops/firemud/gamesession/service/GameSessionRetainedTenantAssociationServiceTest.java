@@ -240,18 +240,20 @@ class GameSessionRetainedTenantAssociationServiceTest {
       String namespace, UUID operationId, UUID canonicalTenantId, long legacyKey) {
     GameSessionTenantAssociationEvidence evidence =
         new GameSessionTenantAssociationEvidence(
-            1,
+            2,
             operationId,
             namespace,
             "fixture-key",
             "approved-by-test",
             "approval-reference-1",
             "2026-01-01T00:00:00Z",
+            "2025-12-31T23:00:00Z",
             Long.toString(legacyKey),
             canonicalTenantId,
             "501",
             "source-game-501",
             "RETAINED_GAME_V29",
+            "sha256:" + "b".repeat(64),
             "sha256:" + "a".repeat(64));
     String signature = Base64.getEncoder().encodeToString(new byte[64]);
     return new LegacyGameSessionTenantAssociationReceipt(

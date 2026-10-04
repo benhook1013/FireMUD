@@ -18,22 +18,24 @@ class GameSessionTenantAssociationEvidenceTest {
 
     assertThat(new String(evidence.preimage(), java.nio.charset.StandardCharsets.UTF_8))
         .isEqualTo(
-            "55:game-design/game-session-retained-tenant-association/v1"
-                + "1:1"
+            "55:game-design/game-session-retained-tenant-association/v2"
+                + "1:2"
                 + "36:11111111-1111-4111-8111-111111111111"
                 + "7:firemud"
                 + "14:owner-key-2026"
                 + "10:owner 🧙"
                 + "17:review café-🐉"
                 + "20:2026-10-01T00:00:00Z"
+                + "20:2026-09-30T00:00:00Z"
                 + "16:9007199254740993"
                 + "36:22222222-2222-4222-8222-222222222222"
                 + "2:42"
                 + "18:legacy-game-key-42"
                 + "17:RETAINED_GAME_V29"
+                + "71:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
                 + "71:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     assertThat(evidence.manifestDigest())
-        .isEqualTo("sha256:8dbc7e33a24d4e6d577a381276df0a9b0168b78363749a37f05cc76f0e9c152c");
+        .isEqualTo("sha256:1d9feea3a8f6daefd7ff1a3789989a9d5f4d0794e9bc9dbefe2f4d9e61788c46");
   }
 
   @Test
@@ -55,7 +57,7 @@ class GameSessionTenantAssociationEvidenceTest {
       assertThat(changed.preimage()).isNotEqualTo(source.preimage());
       assertThat(changed.manifestDigest()).isNotEqualTo(source.manifestDigest());
     }
-    assertThatThrownBy(() -> copyWithSchemaVersion(source, 2))
+    assertThatThrownBy(() -> copyWithSchemaVersion(source, 1))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("schema version");
   }
@@ -64,18 +66,20 @@ class GameSessionTenantAssociationEvidenceTest {
   void preservesApprovalTextExactlyAndRequiresCanonicalUtcInstant() {
     GameSessionTenantAssociationEvidence spaced =
         new GameSessionTenantAssociationEvidence(
-            1,
+            2,
             OPERATION_ID,
             "firemud",
             "owner-key-2026",
             " owner ",
             " reference ",
             "2026-10-01T00:00:00Z",
+            "2026-09-30T00:00:00Z",
             "41",
             TENANT_ID,
             "42",
             " legacy-game-key ",
             "RETAINED_GAME_V29",
+            "sha256:" + "b".repeat(64),
             GAME_SESSION_DIGEST);
     assertThat(spaced.approvedBy()).isEqualTo(" owner ");
     assertThat(spaced.approvalReference()).isEqualTo(" reference ");
@@ -84,6 +88,17 @@ class GameSessionTenantAssociationEvidenceTest {
     assertInvalid(() -> copySignedAt(evidence(), "2026-10-01T00:00:00+00:00"));
     assertInvalid(() -> copySignedAt(evidence(), "2026-10-01T00:00:00.000Z"));
     assertInvalid(() -> copySignedAt(evidence(), "not-an-instant"));
+    assertInvalid(() -> copySourceCapturedAt(evidence(), "2026-10-01T00:00:00.000000001Z"));
+    assertInvalid(() -> copySourceCapturedAt(evidence(), "2026-09-30T00:00:00+00:00"));
+  }
+
+  @Test
+  void expiresRawEvidenceAtTheExactThirtyDayCaptureBoundary() {
+    GameSessionTenantAssociationEvidence source = evidence();
+
+    assertThat(source.rawExpiredAt(Instant.parse("2026-10-29T23:59:59.999999999Z"))).isFalse();
+    assertThat(source.rawExpiredAt(Instant.parse("2026-10-30T00:00:00Z"))).isTrue();
+    assertThat(source.rawExpiresAt()).isEqualTo(Instant.parse("2026-10-30T00:00:00Z"));
   }
 
   @Test
@@ -135,18 +150,20 @@ class GameSessionTenantAssociationEvidenceTest {
 
   private static GameSessionTenantAssociationEvidence evidence() {
     return new GameSessionTenantAssociationEvidence(
-        1,
+        2,
         OPERATION_ID,
         "firemud",
         "owner-key-2026",
         "owner 🧙",
         "review café-🐉",
         Instant.parse("2026-10-01T00:00:00Z").toString(),
+        Instant.parse("2026-09-30T00:00:00Z").toString(),
         "9007199254740993",
         TENANT_ID,
         "42",
         "legacy-game-key-42",
         "RETAINED_GAME_V29",
+        "sha256:" + "b".repeat(64),
         GAME_SESSION_DIGEST);
   }
 
@@ -206,6 +223,26 @@ class GameSessionTenantAssociationEvidenceTest {
         source.sourceGameRowId(),
         source.sourceGameTenantKey(),
         source.provenanceKind(),
+        source.gameSessionEvidenceDigest());
+  }
+
+  private static GameSessionTenantAssociationEvidence copySourceCapturedAt(
+      GameSessionTenantAssociationEvidence source, String sourceCapturedAt) {
+    return new GameSessionTenantAssociationEvidence(
+        source.schemaVersion(),
+        source.operationId(),
+        source.targetNamespace(),
+        source.signerKeyId(),
+        source.approvedBy(),
+        source.approvalReference(),
+        source.signedAt(),
+        sourceCapturedAt,
+        source.legacyGameSessionTenantId(),
+        source.canonicalTenantId(),
+        source.sourceGameRowId(),
+        source.sourceGameTenantKey(),
+        source.provenanceKind(),
+        source.gameSessionProjectionDigest(),
         source.gameSessionEvidenceDigest());
   }
 
@@ -356,11 +393,13 @@ class GameSessionTenantAssociationEvidenceTest {
         approvedBy,
         approvalReference,
         signedAt,
+        source.sourceCapturedAt(),
         legacyGameSessionTenantId,
         canonicalTenantId,
         sourceGameRowId,
         sourceGameTenantKey,
         provenanceKind,
+        source.gameSessionProjectionDigest(),
         gameSessionEvidenceDigest);
   }
 
@@ -383,6 +422,7 @@ class GameSessionTenantAssociationEvidenceTest {
             source, source.operationId(), UUID.fromString("33333333-3333-4333-8333-333333333333")),
         copyIds(source, source.legacyGameSessionTenantId(), "43"),
         copyWithSourceKey(source, "another-source-key"),
+        copySourceCapturedAt(source, "2026-09-29T00:00:00Z"),
         copyWithProvenance(source, "NEW_GAME_ROW"),
         copyWithEvidenceDigest(source, "sha256:" + "b".repeat(64)));
   }

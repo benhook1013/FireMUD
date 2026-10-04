@@ -51,12 +51,15 @@ message GameSessionTenantAssociationManifestEvidence {
   string approved_by = 5;
   string approval_reference = 6;
   string signed_at = 7;
+  // Database-generated time of the closed Game Session source snapshot.
+  string source_captured_at = 14;
   string legacy_game_session_tenant_id = 8;
   string canonical_tenant_id = 9;
   string source_game_row_id = 10;
   string source_game_tenant_key = 11;
   string provenance_kind = 12;
   string game_session_evidence_digest = 13;
+  string game_session_projection_digest = 15;
 }
 
 message ResolveLegacyGameSessionTenantAssociationResponse {

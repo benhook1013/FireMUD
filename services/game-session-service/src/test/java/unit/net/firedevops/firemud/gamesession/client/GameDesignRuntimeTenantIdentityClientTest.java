@@ -467,18 +467,20 @@ class GameDesignRuntimeTenantIdentityClientTest {
   private static GameSessionTenantAssociationEvidence associationEvidenceWith(
       UUID operationId, String namespace, String retainedTenantKey, UUID canonicalTenantId) {
     return new GameSessionTenantAssociationEvidence(
-        1,
+        2,
         operationId,
         namespace,
         "owner-key-1",
         "owner@example.test",
         "approval-2026-09",
         "2026-09-30T12:00:00Z",
+        "2026-09-30T11:00:00Z",
         retainedTenantKey,
         canonicalTenantId,
         "91",
         SOURCE_KEY,
         "RETAINED_GAME_V29",
+        "sha256:" + "b".repeat(64),
         ASSOCIATION_SOURCE_DIGEST);
   }
 
@@ -497,12 +499,14 @@ class GameDesignRuntimeTenantIdentityClientTest {
             .setApprovedBy(evidence.approvedBy())
             .setApprovalReference(evidence.approvalReference())
             .setSignedAt(evidence.signedAt())
+            .setSourceCapturedAt(evidence.sourceCapturedAt())
             .setLegacyGameSessionTenantId(evidence.legacyGameSessionTenantId())
             .setCanonicalTenantId(evidence.canonicalTenantId().toString())
             .setSourceGameRowId(evidence.sourceGameRowId())
             .setSourceGameTenantKey(evidence.sourceGameTenantKey())
             .setProvenanceKind(evidence.provenanceKind())
             .setGameSessionEvidenceDigest(evidence.gameSessionEvidenceDigest())
+            .setGameSessionProjectionDigest(evidence.gameSessionProjectionDigest())
             .build();
     return ResolveLegacyGameSessionTenantAssociationResponse.newBuilder()
         .setRequestId(REQUEST_ID.toString())

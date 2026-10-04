@@ -102,6 +102,103 @@ class GameSessionTenantAssociationRepositoryIntegrationTest {
   }
 
   @Test
+  void unverifiedLegalHoldWritesFailClosedAndCleanupPreservesImmutableAssociationClaim()
+      throws Exception {
+    Fixture fixture = fixtureWithFreshAndRetainedSources();
+    UUID operationId = uuid(915);
+    long legacyTenantId = 915L;
+    GameTenantIdentity source = fixture.freshSource();
+    fixture.insertExpiredAssociation(operationId, legacyTenantId, source);
+    fixture.insertRawPayload(operationId);
+
+    assertThatThrownBy(() -> fixture.insertLegalHold(operationId))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("authenticated owner authorization boundary");
+
+    assertThatThrownBy(() -> fixture.insertInvalidScopeLegalHold(operationId))
+        .isInstanceOf(DataAccessException.class);
+    UUID holdId = fixture.insertActiveLegalHold(operationId);
+    assertThat(fixture.repository().purgeExpiredRawPayloads()).isZero();
+    assertThat(
+            fixture
+                    .dsl()
+                    .fetchOne(
+                        "SELECT 1 FROM game_design_game_session_tenant_association_payload "
+                            + "WHERE operation_id = ?",
+                        operationId)
+                != null)
+        .isTrue();
+    assertThatThrownBy(() -> fixture.releaseLegalHold(holdId))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("authenticated owner authorization boundary");
+    fixture.releaseLegalHoldForRetentionTest(holdId);
+    assertThatThrownBy(() -> fixture.deleteLegalHold(holdId))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("finite policy-controlled expiry");
+    assertThat(fixture.repository().purgeExpiredRawPayloads()).isEqualTo(1);
+    assertThat(
+            fixture
+                    .dsl()
+                    .fetchOne(
+                        "SELECT 1 FROM game_design_game_session_tenant_association_payload "
+                            + "WHERE operation_id = ?",
+                        operationId)
+                != null)
+        .isFalse();
+    assertThat(
+            fixture
+                    .dsl()
+                    .fetchOne(
+                        "SELECT 1 FROM game_design_game_session_tenant_association_operations "
+                            + "WHERE operation_id = ? AND captured_at IS NOT NULL",
+                        operationId)
+                != null)
+        .isTrue();
+    assertThat(
+            fixture
+                    .dsl()
+                    .fetchOne(
+                        "SELECT 1 FROM game_design_game_session_tenant_association_legal_hold "
+                            + "WHERE hold_id = ? AND operation_id = ? AND hold_scope = 'RAW_PAYLOAD' "
+                            + "AND reason_code = 'REGULATORY' AND released_at IS NOT NULL "
+                            + "AND released_by = 'fixture-authenticated-owner' "
+                            + "AND release_reference = 'release-case-915'",
+                        holdId,
+                        operationId)
+                != null)
+        .isTrue();
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .repository()
+                    .read(operationId, source.canonicalTenantId(), legacyTenantId, NAMESPACE))
+        .isInstanceOf(
+            GameSessionTenantAssociationRepository.InvalidAssociationEvidenceException.class);
+    fixture.insertRawPayload(operationId);
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .repository()
+                    .read(operationId, source.canonicalTenantId(), legacyTenantId, NAMESPACE))
+        .isInstanceOf(
+            GameSessionTenantAssociationRepository.InvalidAssociationEvidenceException.class)
+        .hasMessageContaining("expired");
+    assertThat(fixture.repository().purgeExpiredRawPayloads()).isEqualTo(1);
+    assertThatThrownBy(() -> fixture.insertLegalHold(operationId))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("authenticated owner authorization boundary");
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .dsl()
+                    .execute(
+                        "DELETE FROM game_design_game_session_tenant_association_operations "
+                            + "WHERE operation_id = ?",
+                        operationId))
+        .isInstanceOf(DataAccessException.class);
+  }
+
+  @Test
   void changedSignedFieldUnderSameOperationConflictsWithoutReplacingReceipt() throws Exception {
     Fixture fixture = fixtureWithFreshAndRetainedSources();
     Signed original = fixture.signed(fixture.freshSource(), 920L, uuid(20));
@@ -469,11 +566,13 @@ class GameSessionTenantAssociationRepositoryIntegrationTest {
         original.approvedBy(),
         approvalReference,
         original.signedAt(),
+        original.sourceCapturedAt(),
         original.legacyGameSessionTenantId(),
         original.canonicalTenantId(),
         original.sourceGameRowId(),
         original.sourceGameTenantKey(),
         original.provenanceKind(),
+        original.gameSessionProjectionDigest(),
         original.gameSessionEvidenceDigest());
   }
 
@@ -501,6 +600,134 @@ class GameSessionTenantAssociationRepositoryIntegrationTest {
       Map<String, String> trustedKeys,
       GameTenantIdentity retainedSource,
       GameTenantIdentity freshSource) {
+    void insertExpiredAssociation(
+        UUID operationId, long legacyTenantId, GameTenantIdentity source) {
+      dsl()
+          .execute(
+              "INSERT INTO game_design_game_session_tenant_association_operations ("
+                  + "operation_id, target_namespace, legacy_game_session_tenant_id, "
+                  + "canonical_tenant_id, source_game_row_id, source_game_tenant_key, "
+                  + "provenance_kind, captured_at, terminal_outcome) "
+                  + "VALUES (?, ?, ?, ?, ?, ?, ?, clock_timestamp() - INTERVAL '31 days', 'ASSOCIATED')",
+              operationId,
+              NAMESPACE,
+              legacyTenantId,
+              source.canonicalTenantId(),
+              source.sourceGameId(),
+              source.sourceLegacyTenantId(),
+              source.provenanceKind().name());
+    }
+
+    void insertRawPayload(UUID operationId) {
+      dsl()
+          .execute(
+              "INSERT INTO game_design_game_session_tenant_association_payload ("
+                  + "operation_id, schema_version, signer_key_id, approved_by, approval_reference, "
+                  + "signed_at, game_session_projection_digest, game_session_evidence_digest, "
+                  + "manifest_digest, signature) VALUES (?, 2, 'owner-key', 'owner', 'case', ?, ?, ?, ?, ?)",
+              operationId,
+              java.time.Instant.now().toString(),
+              "sha256:" + "a".repeat(64),
+              "sha256:" + "b".repeat(64),
+              "sha256:" + "c".repeat(64),
+              Base64.getEncoder().encodeToString(new byte[64]));
+    }
+
+    void insertLegalHold(UUID operationId) {
+      dsl()
+          .execute(
+              "INSERT INTO game_design_game_session_tenant_association_legal_hold ("
+                  + "hold_id, operation_id, hold_scope, reason_code, case_reference, "
+                  + "authorization_id, authorized_principal, authorized_at, review_at) "
+                  + "VALUES (?, ?, 'RAW_PAYLOAD', 'REGULATORY', 'case-2026-002', ?, "
+                  + "'owner-admin', clock_timestamp(), clock_timestamp() + INTERVAL '30 days')",
+              UUID.randomUUID(),
+              operationId,
+              UUID.randomUUID());
+    }
+
+    UUID insertActiveLegalHold(UUID operationId) {
+      UUID holdId = UUID.randomUUID();
+      // Seed governed state only to prove expiry blockers; application writes remain denied.
+      withHoldInsertTriggerDisabled(
+          () ->
+              dsl()
+                  .execute(
+                      "INSERT INTO game_design_game_session_tenant_association_legal_hold ("
+                          + "hold_id, operation_id, hold_scope, reason_code, case_reference, "
+                          + "authorization_id, authorized_principal, authorized_at, review_at) "
+                          + "VALUES (?, ?, 'RAW_PAYLOAD', 'REGULATORY', 'test-case-915', ?, "
+                          + "'fixture-authenticated-owner', clock_timestamp() - INTERVAL '2 days', "
+                          + "clock_timestamp() + INTERVAL '30 days')",
+                      holdId,
+                      operationId,
+                      UUID.randomUUID()));
+      return holdId;
+    }
+
+    void insertInvalidScopeLegalHold(UUID operationId) {
+      withHoldInsertTriggerDisabled(
+          () ->
+              dsl()
+                  .execute(
+                      "INSERT INTO game_design_game_session_tenant_association_legal_hold ("
+                          + "hold_id, operation_id, hold_scope, reason_code, case_reference, "
+                          + "authorization_id, authorized_principal, authorized_at, review_at) "
+                          + "VALUES (?, ?, 'ACCOUNT_MAPPING', 'REGULATORY', 'bad-scope', ?, "
+                          + "'fixture-authenticated-owner', clock_timestamp(), "
+                          + "clock_timestamp() + INTERVAL '30 days')",
+                      UUID.randomUUID(),
+                      operationId,
+                      UUID.randomUUID()));
+    }
+
+    void releaseLegalHold(UUID holdId) {
+      dsl()
+          .execute(
+              "UPDATE game_design_game_session_tenant_association_legal_hold "
+                  + "SET released_at = clock_timestamp(), released_by = 'fixture-authenticated-owner', "
+                  + "release_reference = 'release-case-915' WHERE hold_id = ?",
+              holdId);
+    }
+
+    void deleteLegalHold(UUID holdId) {
+      dsl()
+          .execute(
+              "DELETE FROM game_design_game_session_tenant_association_legal_hold WHERE hold_id = ?",
+              holdId);
+    }
+
+    void releaseLegalHoldForRetentionTest(UUID holdId) {
+      // This fixture bypasses auth solely to prove release-triggered raw erasure.
+      dsl()
+          .execute(
+              "ALTER TABLE game_design_game_session_tenant_association_legal_hold "
+                  + "DISABLE TRIGGER gd_game_session_tenant_hold_release_only");
+      try {
+        releaseLegalHold(holdId);
+      } finally {
+        dsl()
+            .execute(
+                "ALTER TABLE game_design_game_session_tenant_association_legal_hold "
+                    + "ENABLE TRIGGER gd_game_session_tenant_hold_release_only");
+      }
+    }
+
+    private void withHoldInsertTriggerDisabled(Runnable insert) {
+      dsl()
+          .execute(
+              "ALTER TABLE game_design_game_session_tenant_association_legal_hold "
+                  + "DISABLE TRIGGER gd_game_session_tenant_hold_authentication_required");
+      try {
+        insert.run();
+      } finally {
+        dsl()
+            .execute(
+                "ALTER TABLE game_design_game_session_tenant_association_legal_hold "
+                    + "ENABLE TRIGGER gd_game_session_tenant_hold_authentication_required");
+      }
+    }
+
     Signed signed(GameTenantIdentity source, long retainedGameSessionTenantId, UUID operationId)
         throws Exception {
       return sign(
@@ -520,19 +747,22 @@ class GameSessionTenantAssociationRepositoryIntegrationTest {
         long sourceGameRowId,
         String sourceGameTenantKey,
         String provenanceKind) {
+      java.time.Instant sourceCapturedAt = java.time.Instant.now().minusSeconds(2);
       return new GameSessionTenantAssociationEvidence(
-          1,
+          2,
           operationId,
           NAMESPACE,
           SIGNER_KEY_ID,
           "approved-owner@example.test",
           "retained-session-audit-" + operationId,
-          "2026-10-01T00:00:00Z",
+          sourceCapturedAt.plusSeconds(1).toString(),
+          sourceCapturedAt.toString(),
           Long.toString(retainedGameSessionTenantId),
           canonicalTenantId,
           Long.toString(sourceGameRowId),
           sourceGameTenantKey,
           provenanceKind,
+          "sha256:" + "b".repeat(64),
           GAME_SESSION_EVIDENCE_DIGEST);
     }
 

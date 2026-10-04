@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.sql.Connection;
+import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Function;
@@ -58,8 +60,19 @@ public class GameSessionRetainedTenantSnapshotRepository {
           "Game Session retained tenant has an unresolved admission-pointer identity backfill issue");
     }
 
+    Record capturedAtRow = dsl.fetchOne("SELECT clock_timestamp() AS captured_at");
+    OffsetDateTime capturedAtValue =
+        capturedAtRow == null ? null : capturedAtRow.get("captured_at", OffsetDateTime.class);
+    if (capturedAtValue == null) {
+      throw new IllegalStateException("Database capture time is unavailable");
+    }
+    String capturedAt =
+        Instant.ofEpochSecond(
+                capturedAtValue.toInstant().getEpochSecond(), capturedAtValue.toInstant().getNano())
+            .toString();
+
     ObjectNode envelope = JSON.createObjectNode();
-    envelope.put("schemaVersion", 3);
+    envelope.put("schemaVersion", 4);
     envelope.put("targetNamespace", targetNamespace);
     envelope.put("legacyGameSessionTenantId", legacyGameSessionTenantId);
     envelope.set("instances", readInstances(tenantId));
@@ -69,7 +82,7 @@ public class GameSessionRetainedTenantSnapshotRepository {
     envelope.set("pointerEvents", readPointerEvents(tenantId));
     envelope.set("preparedUpgrades", readPreparedUpgrades(tenantId));
     return GameSessionRetainedTenantSnapshot.fromProjection(
-        targetNamespace, legacyGameSessionTenantId, envelope);
+        targetNamespace, legacyGameSessionTenantId, capturedAt, envelope);
   }
 
   private void requireOwnerTransaction() {

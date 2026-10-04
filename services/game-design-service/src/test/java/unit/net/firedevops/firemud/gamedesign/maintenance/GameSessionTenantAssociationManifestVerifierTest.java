@@ -51,7 +51,7 @@ class GameSessionTenantAssociationManifestVerifierTest {
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("signature is invalid");
     }
-    assertThatThrownBy(() -> copyWithSchemaVersion(manifest, 2))
+    assertThatThrownBy(() -> copyWithSchemaVersion(manifest, 1))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("schema version");
   }
@@ -181,18 +181,20 @@ class GameSessionTenantAssociationManifestVerifierTest {
 
   private static GameSessionTenantAssociationEvidence evidence() {
     return new GameSessionTenantAssociationEvidence(
-        1,
+        2,
         UUID.fromString("11111111-1111-4111-8111-111111111111"),
         "firemud",
         "owner-key-2026",
         "owner 🧙",
         "review café-🐉",
         Instant.parse("2026-10-01T00:00:00Z").toString(),
+        Instant.parse("2026-09-30T00:00:00Z").toString(),
         "9007199254740993",
         UUID.fromString("22222222-2222-4222-8222-222222222222"),
         "42",
         "legacy-game-key-42",
         "RETAINED_GAME_V29",
+        "sha256:" + "b".repeat(64),
         "sha256:" + "a".repeat(64));
   }
 
@@ -205,6 +207,7 @@ class GameSessionTenantAssociationManifestVerifierTest {
         copyWithApproval(source, "another owner", source.approvalReference()),
         copyWithApproval(source, source.approvedBy(), "another-review-reference"),
         copyWithSignedAt(source, "2026-10-01T00:00:01Z"),
+        copyWithSourceCapturedAt(source, "2026-09-29T00:00:00Z"),
         copyWithOperationId(source, UUID.fromString("33333333-3333-4333-8333-333333333333")),
         copyWithTenantId(source, UUID.fromString("33333333-3333-4333-8333-333333333333")),
         copy(source, source.legacyGameSessionTenantId(), "43"),
@@ -459,12 +462,34 @@ class GameSessionTenantAssociationManifestVerifierTest {
         approvedBy,
         approvalReference,
         signedAt,
+        source.sourceCapturedAt(),
         legacyGameSessionTenantId,
         canonicalTenantId,
         sourceGameRowId,
         sourceGameTenantKey,
         provenanceKind,
+        source.gameSessionProjectionDigest(),
         gameSessionEvidenceDigest);
+  }
+
+  private static GameSessionTenantAssociationEvidence copyWithSourceCapturedAt(
+      GameSessionTenantAssociationEvidence source, String sourceCapturedAt) {
+    return new GameSessionTenantAssociationEvidence(
+        source.schemaVersion(),
+        source.operationId(),
+        source.targetNamespace(),
+        source.signerKeyId(),
+        source.approvedBy(),
+        source.approvalReference(),
+        source.signedAt(),
+        sourceCapturedAt,
+        source.legacyGameSessionTenantId(),
+        source.canonicalTenantId(),
+        source.sourceGameRowId(),
+        source.sourceGameTenantKey(),
+        source.provenanceKind(),
+        source.gameSessionProjectionDigest(),
+        source.gameSessionEvidenceDigest());
   }
 
   private static GameSessionTenantAssociationEvidence copyWithProvenance(

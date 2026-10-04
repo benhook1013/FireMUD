@@ -20,10 +20,11 @@ class GameSessionRetainedTenantSnapshotTest {
   private static final ObjectMapper JSON = new ObjectMapper();
   private static final String NAMESPACE = "retained-snapshot-test";
   private static final String TENANT_ID = "7";
+  private static final String CAPTURED_AT = "2026-10-01T00:00:00Z";
   private static final String SNAPSHOT_DIGEST_DOMAIN =
-      "game-session/retained-tenant-identity-snapshot/v3";
+      "game-session/retained-tenant-identity-snapshot/v4";
   private static final String SNAPSHOT_DIGEST =
-      "sha256:79d78d5af138e7261f63696a2ccc2b8f5ceadc4f0e139c348238873e74bda5c4";
+      "sha256:8e2db4a01553d67f1f21fb347c2c715a16404465a9342056810ebd48d6cef226";
   private static final String IRRELEVANT_DIGEST = "sha256:" + "0".repeat(64);
 
   @Test
@@ -31,10 +32,16 @@ class GameSessionRetainedTenantSnapshotTest {
     String canonicalJson = snapshotJson("Café 🐉");
     GameSessionRetainedTenantSnapshot snapshot =
         GameSessionRetainedTenantSnapshot.fromCanonicalJson(
-            NAMESPACE, TENANT_ID, canonicalJson, expectedDigest(canonicalJson));
+            NAMESPACE,
+            TENANT_ID,
+            CAPTURED_AT,
+            canonicalJson,
+            expectedDigest(canonicalJson),
+            expectedProjectionDigest(canonicalJson));
 
     assertThat(snapshot.canonicalJson())
-        .startsWith("{\"backfillIssues\":[],\"instances\":[")
+        .startsWith(
+            "{\"backfillIssues\":[],\"capturedAt\":\"2026-10-01T00:00:00Z\",\"instances\":[")
         .contains("\"runtime_version\":\"Café 🐉\"")
         .contains("\"row_version\":\"9223372036854775807\"");
     assertThat(snapshot.canonicalJson().indexOf("\"id\":\"2\""))
@@ -43,17 +50,36 @@ class GameSessionRetainedTenantSnapshotTest {
     assertThat(snapshot.evidenceDigest()).isEqualTo(expectedDigest(canonicalJson));
     assertThat(
             GameSessionRetainedTenantSnapshot.fromCanonicalJson(
-                NAMESPACE, TENANT_ID, snapshot.canonicalJson(), snapshot.evidenceDigest()))
+                NAMESPACE,
+                TENANT_ID,
+                CAPTURED_AT,
+                snapshot.canonicalJson(),
+                snapshot.evidenceDigest(),
+                snapshot.projectionDigest()))
         .isEqualTo(snapshot);
 
     GameSessionRetainedTenantSnapshot changed =
         GameSessionRetainedTenantSnapshot.fromCanonicalJson(
-            NAMESPACE, TENANT_ID, snapshotJson("Café 🐲"), expectedDigest(snapshotJson("Café 🐲")));
+            NAMESPACE,
+            TENANT_ID,
+            CAPTURED_AT,
+            snapshotJson("Café 🐲"),
+            expectedDigest(snapshotJson("Café 🐲")),
+            expectedProjectionDigest(snapshotJson("Café 🐲")));
     assertThat(changed.evidenceDigest()).isNotEqualTo(snapshot.evidenceDigest());
+    GameSessionRetainedTenantSnapshot sourceBoundCapture =
+        snapshot.withCapturedAt("2026-09-30T00:00:00Z");
+    assertThat(sourceBoundCapture.evidenceDigest()).isNotEqualTo(snapshot.evidenceDigest());
+    assertThat(sourceBoundCapture.projectionDigest()).isEqualTo(snapshot.projectionDigest());
     assertThatThrownBy(
             () ->
                 GameSessionRetainedTenantSnapshot.fromCanonicalJson(
-                    NAMESPACE, TENANT_ID, snapshot.canonicalJson(), IRRELEVANT_DIGEST))
+                    NAMESPACE,
+                    TENANT_ID,
+                    CAPTURED_AT,
+                    snapshot.canonicalJson(),
+                    IRRELEVANT_DIGEST,
+                    snapshot.projectionDigest()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("digest");
   }
@@ -86,7 +112,7 @@ class GameSessionRetainedTenantSnapshotTest {
   }
 
   @Test
-  void rejectsMissingOwnerFieldAndIncompatibleV2SnapshotReceipts() {
+  void rejectsMissingOwnerFieldAndIncompatibleV3SnapshotReceipts() {
     ObjectNode missingSlot = envelopeWithInstances("runtime");
     ((ObjectNode) missingSlot.withArray("instances").get(0)).remove("owner_account_id");
     assertThatThrownBy(() -> revalidate(missingSlot))
@@ -94,10 +120,10 @@ class GameSessionRetainedTenantSnapshotTest {
         .hasMessageContaining("missing or undeclared fields");
 
     ObjectNode oldSchema = envelopeWithInstances("runtime");
-    oldSchema.put("schemaVersion", 2);
+    oldSchema.put("schemaVersion", 3);
     assertThatThrownBy(() -> revalidate(oldSchema))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("schemaVersion must be integer 3");
+        .hasMessageContaining("schemaVersion must be integer 4");
 
     ObjectNode nullOwner = envelopeWithInstances("runtime");
     ((ObjectNode) nullOwner.withArray("instances").get(0)).putNull("owner_account_id");
@@ -154,7 +180,12 @@ class GameSessionRetainedTenantSnapshotTest {
     assertThatThrownBy(
             () ->
                 GameSessionRetainedTenantSnapshot.fromCanonicalJson(
-                    NAMESPACE, TENANT_ID, duplicateMemberJson, SNAPSHOT_DIGEST))
+                    NAMESPACE,
+                    TENANT_ID,
+                    CAPTURED_AT,
+                    duplicateMemberJson,
+                    SNAPSHOT_DIGEST,
+                    IRRELEVANT_DIGEST))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("malformed");
   }
@@ -165,26 +196,41 @@ class GameSessionRetainedTenantSnapshotTest {
     assertThatThrownBy(
             () ->
                 GameSessionRetainedTenantSnapshot.fromCanonicalJson(
-                    "Invalid-Namespace", TENANT_ID, valid, IRRELEVANT_DIGEST))
+                    "Invalid-Namespace",
+                    TENANT_ID,
+                    CAPTURED_AT,
+                    valid,
+                    IRRELEVANT_DIGEST,
+                    IRRELEVANT_DIGEST))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("canonical DNS label");
     assertThatThrownBy(
             () ->
                 GameSessionRetainedTenantSnapshot.fromCanonicalJson(
-                    NAMESPACE, "07", valid, IRRELEVANT_DIGEST))
+                    NAMESPACE, "07", CAPTURED_AT, valid, IRRELEVANT_DIGEST, IRRELEVANT_DIGEST))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("canonical decimal");
     assertThatThrownBy(
             () ->
                 GameSessionRetainedTenantSnapshot.fromCanonicalJson(
-                    NAMESPACE, "9223372036854775808", valid, IRRELEVANT_DIGEST))
+                    NAMESPACE,
+                    "9223372036854775808",
+                    CAPTURED_AT,
+                    valid,
+                    IRRELEVANT_DIGEST,
+                    IRRELEVANT_DIGEST))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("positive BIGINT");
   }
 
   private static GameSessionRetainedTenantSnapshot revalidate(ObjectNode projection) {
     return GameSessionRetainedTenantSnapshot.fromCanonicalJson(
-        NAMESPACE, TENANT_ID, canonicalJson(projection), IRRELEVANT_DIGEST);
+        NAMESPACE,
+        TENANT_ID,
+        CAPTURED_AT,
+        canonicalJson(projection),
+        IRRELEVANT_DIGEST,
+        IRRELEVANT_DIGEST);
   }
 
   private static String snapshotJson(String runtimeVersion) {
@@ -203,8 +249,9 @@ class GameSessionRetainedTenantSnapshotTest {
   private static ObjectNode envelope() {
     ObjectNode envelope = JSON.createObjectNode();
     envelope.put("targetNamespace", NAMESPACE);
-    envelope.put("schemaVersion", 3);
+    envelope.put("schemaVersion", 4);
     envelope.put("legacyGameSessionTenantId", TENANT_ID);
+    envelope.put("capturedAt", CAPTURED_AT);
     envelope.set("instances", JSON.createArrayNode());
     envelope.set("pointers", JSON.createArrayNode());
     envelope.set("sharedNamespaces", JSON.createArrayNode());
@@ -267,7 +314,12 @@ class GameSessionRetainedTenantSnapshotTest {
   private static GameSessionRetainedTenantSnapshot snapshot(ObjectNode projection) {
     String canonicalJson = canonicalJson(projection);
     return GameSessionRetainedTenantSnapshot.fromCanonicalJson(
-        NAMESPACE, TENANT_ID, canonicalJson, expectedDigest(canonicalJson));
+        NAMESPACE,
+        TENANT_ID,
+        CAPTURED_AT,
+        canonicalJson,
+        expectedDigest(canonicalJson),
+        expectedProjectionDigest(canonicalJson));
   }
 
   private static String expectedDigest(String canonicalJson) {
@@ -278,6 +330,19 @@ class GameSessionRetainedTenantSnapshotTest {
       return "sha256:" + HexFormat.of().formatHex(hash.digest());
     } catch (NoSuchAlgorithmException exception) {
       throw new AssertionError("SHA-256 unavailable for snapshot test vector", exception);
+    }
+  }
+
+  private static String expectedProjectionDigest(String canonicalJson) {
+    try {
+      ObjectNode projection = (ObjectNode) JSON.readTree(canonicalJson);
+      projection.remove("capturedAt");
+      MessageDigest hash = MessageDigest.getInstance("SHA-256");
+      updateFrame(hash, "game-session/retained-tenant-identity-projection/v4");
+      updateFrame(hash, canonicalJson(projection));
+      return "sha256:" + HexFormat.of().formatHex(hash.digest());
+    } catch (IOException | NoSuchAlgorithmException exception) {
+      throw new AssertionError("Unable to calculate source projection digest", exception);
     }
   }
 

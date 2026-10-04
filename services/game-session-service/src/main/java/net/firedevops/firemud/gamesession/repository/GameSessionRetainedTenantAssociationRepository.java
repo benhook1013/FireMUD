@@ -5,6 +5,9 @@ import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.Objects;
@@ -16,6 +19,7 @@ import net.firedevops.firemud.gamesession.client.GameDesignRuntimeTenantIdentity
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record;
+import org.jooq.SelectJoinStep;
 import org.jooq.Table;
 import org.jooq.impl.DSL;
 import org.springframework.transaction.annotation.Propagation;
@@ -35,7 +39,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
         "Owner collaborators and namespace are validated before use; construction performs no"
             + " database or network I/O and the caller explicitly owns local activation.")
 public class GameSessionRetainedTenantAssociationRepository {
-  private static final int SCHEMA_VERSION = 1;
+  private static final int SCHEMA_VERSION = 2;
   private static final int SIGNATURE_BYTES = 64;
   private static final UUID NIL_UUID = new UUID(0L, 0L);
   private static final String REQUEST_DOMAIN =
@@ -45,23 +49,26 @@ public class GameSessionRetainedTenantAssociationRepository {
 
   private static final Table<?> ASSOCIATION =
       DSL.table(DSL.name("game_session_retained_tenant_association"));
+  private static final Table<?> ASSOCIATION_PAYLOAD =
+      DSL.table(DSL.name("game_session_retained_tenant_association_payload"));
   private static final Field<UUID> OPERATION_ID = DSL.field(DSL.name("operation_id"), UUID.class);
+  private static final Field<UUID> ASSOCIATION_OPERATION_ID =
+      DSL.field(DSL.name("game_session_retained_tenant_association", "operation_id"), UUID.class);
+  private static final Field<UUID> PAYLOAD_OPERATION_ID = payloadField("operation_id", UUID.class);
   private static final Field<Integer> APPROVAL_SCHEMA_VERSION =
-      DSL.field(DSL.name("approval_schema_version"), Integer.class);
+      payloadField("approval_schema_version", Integer.class);
   private static final Field<String> TARGET_NAMESPACE =
       DSL.field(DSL.name("target_namespace"), String.class);
   private static final Field<UUID> ASSOCIATION_REQUEST_ID =
       DSL.field(DSL.name("association_request_id"), UUID.class);
-  private static final Field<String> REQUEST_DIGEST =
-      DSL.field(DSL.name("request_digest"), String.class);
+  private static final Field<String> REQUEST_DIGEST = payloadField("request_digest", String.class);
   private static final Field<UUID> APPROVAL_OPERATION_ID =
-      DSL.field(DSL.name("approval_operation_id"), UUID.class);
-  private static final Field<String> SIGNER_KEY_ID =
-      DSL.field(DSL.name("signer_key_id"), String.class);
-  private static final Field<String> APPROVED_BY = DSL.field(DSL.name("approved_by"), String.class);
+      payloadField("approval_operation_id", UUID.class);
+  private static final Field<String> SIGNER_KEY_ID = payloadField("signer_key_id", String.class);
+  private static final Field<String> APPROVED_BY = payloadField("approved_by", String.class);
   private static final Field<String> APPROVAL_REFERENCE =
-      DSL.field(DSL.name("approval_reference"), String.class);
-  private static final Field<String> SIGNED_AT = DSL.field(DSL.name("signed_at"), String.class);
+      payloadField("approval_reference", String.class);
+  private static final Field<String> SIGNED_AT = payloadField("signed_at", String.class);
   private static final Field<Long> LEGACY_GAME_SESSION_TENANT_ID =
       DSL.field(DSL.name("legacy_game_session_tenant_id"), Long.class);
   private static final Field<UUID> CANONICAL_TENANT_ID =
@@ -72,18 +79,23 @@ public class GameSessionRetainedTenantAssociationRepository {
       DSL.field(DSL.name("source_game_tenant_key"), String.class);
   private static final Field<String> PROVENANCE_KIND =
       DSL.field(DSL.name("provenance_kind"), String.class);
+  private static final Field<OffsetDateTime> CAPTURED_AT =
+      DSL.field(DSL.name("captured_at"), OffsetDateTime.class);
+  private static final Field<String> TERMINAL_OUTCOME =
+      DSL.field(DSL.name("terminal_outcome"), String.class);
   private static final Field<String> GAME_SESSION_EVIDENCE_DIGEST =
-      DSL.field(DSL.name("game_session_evidence_digest"), String.class);
+      payloadField("game_session_evidence_digest", String.class);
+  private static final Field<String> GAME_SESSION_PROJECTION_DIGEST =
+      payloadField("game_session_projection_digest", String.class);
   private static final Field<String> APPROVAL_MANIFEST_DIGEST =
-      DSL.field(DSL.name("approval_manifest_digest"), String.class);
+      payloadField("approval_manifest_digest", String.class);
   private static final Field<String> APPROVAL_SIGNATURE =
-      DSL.field(DSL.name("approval_signature"), String.class);
+      payloadField("approval_signature", String.class);
   private static final Field<String> SNAPSHOT_CANONICAL_JSON =
-      DSL.field(DSL.name("snapshot_canonical_json"), String.class);
+      payloadField("snapshot_canonical_json", String.class);
   private static final Field<String> SNAPSHOT_EVIDENCE_DIGEST =
-      DSL.field(DSL.name("snapshot_evidence_digest"), String.class);
-  private static final Field<String> RECEIPT_DIGEST =
-      DSL.field(DSL.name("receipt_digest"), String.class);
+      payloadField("snapshot_evidence_digest", String.class);
+  private static final Field<String> RECEIPT_DIGEST = payloadField("receipt_digest", String.class);
 
   private final DSLContext dsl;
   private final GameSessionRetainedTenantSnapshotRepository snapshotRepository;
@@ -131,42 +143,68 @@ public class GameSessionRetainedTenantAssociationRepository {
 
     GameSessionRetainedTenantSnapshot snapshot =
         snapshotRepository.capture(workloadNamespace, evidence.legacyGameSessionTenantId());
-    requireSnapshotMatchesApproval(snapshot, evidence);
+    requireCaptureStillUsable(evidence.sourceCapturedAt());
+    GameSessionRetainedTenantSnapshot sourceBoundSnapshot =
+        snapshot.withCapturedAt(evidence.sourceCapturedAt());
+    requireSnapshotMatchesApproval(snapshot, sourceBoundSnapshot, evidence);
 
     UUID localOperationId = UUID.randomUUID();
     String receiptDigest =
         receiptDigest(
-            localOperationId, requestDigest, approval.manifestDigest(), snapshot.evidenceDigest());
+            localOperationId,
+            requestDigest,
+            approval.manifestDigest(),
+            sourceBoundSnapshot.evidenceDigest());
     int inserted =
         dsl.insertInto(ASSOCIATION)
             .set(OPERATION_ID, localOperationId)
-            .set(APPROVAL_SCHEMA_VERSION, evidence.schemaVersion())
             .set(TARGET_NAMESPACE, workloadNamespace)
             .set(ASSOCIATION_REQUEST_ID, associationRequestId)
-            .set(REQUEST_DIGEST, requestDigest)
-            .set(APPROVAL_OPERATION_ID, evidence.operationId())
-            .set(SIGNER_KEY_ID, evidence.signerKeyId())
-            .set(APPROVED_BY, evidence.approvedBy())
-            .set(APPROVAL_REFERENCE, evidence.approvalReference())
-            .set(SIGNED_AT, evidence.signedAt())
             .set(LEGACY_GAME_SESSION_TENANT_ID, evidence.legacyGameSessionTenantIdValue())
             .set(CANONICAL_TENANT_ID, evidence.canonicalTenantId())
             .set(SOURCE_GAME_ROW_ID, evidence.sourceGameRowIdValue())
             .set(SOURCE_GAME_TENANT_KEY, evidence.sourceGameTenantKey())
             .set(PROVENANCE_KIND, evidence.provenanceKind())
-            .set(GAME_SESSION_EVIDENCE_DIGEST, evidence.gameSessionEvidenceDigest())
-            .set(APPROVAL_MANIFEST_DIGEST, approval.manifestDigest())
-            .set(APPROVAL_SIGNATURE, approval.signature())
-            .set(SNAPSHOT_CANONICAL_JSON, snapshot.canonicalJson())
-            .set(SNAPSHOT_EVIDENCE_DIGEST, snapshot.evidenceDigest())
-            .set(RECEIPT_DIGEST, receiptDigest)
+            .set(
+                CAPTURED_AT,
+                OffsetDateTime.ofInstant(
+                    Instant.parse(evidence.sourceCapturedAt()), ZoneOffset.UTC))
+            .set(TERMINAL_OUTCOME, "ASSOCIATED")
             .onConflictDoNothing()
             .execute();
+
+    Record claimed = findByOperationId(localOperationId);
+    if (claimed != null) {
+      dsl.execute(
+          "INSERT INTO game_session_retained_tenant_association_payload ("
+              + "operation_id, request_digest, approval_operation_id, approval_schema_version, "
+              + "signer_key_id, approved_by, approval_reference, signed_at, "
+              + "game_session_projection_digest, game_session_evidence_digest, "
+              + "approval_manifest_digest, approval_signature, snapshot_canonical_json, "
+              + "snapshot_evidence_digest, receipt_digest) "
+              + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          localOperationId,
+          requestDigest,
+          evidence.operationId(),
+          evidence.schemaVersion(),
+          evidence.signerKeyId(),
+          evidence.approvedBy(),
+          evidence.approvalReference(),
+          evidence.signedAt(),
+          evidence.gameSessionProjectionDigest(),
+          evidence.gameSessionEvidenceDigest(),
+          approval.manifestDigest(),
+          approval.signature(),
+          sourceBoundSnapshot.canonicalJson(),
+          sourceBoundSnapshot.evidenceDigest(),
+          receiptDigest);
+    }
 
     Record byLocalOperation = findByOperationId(localOperationId);
     if (byLocalOperation != null) {
       AssociationReceipt stored = toValidatedReceipt(byLocalOperation);
-      requireExactInsertedReceipt(stored, associationRequestId, requestDigest, approval, snapshot);
+      requireExactInsertedReceipt(
+          stored, associationRequestId, requestDigest, approval, sourceBoundSnapshot);
       return stored;
     }
 
@@ -227,6 +265,69 @@ public class GameSessionRetainedTenantAssociationRepository {
     return Optional.empty();
   }
 
+  /**
+   * Reads only the immutable canonical-to-retained tenant mapping and its source provenance. This
+   * proof remains available after the purpose-bound snapshot and approval payload expire.
+   */
+  @Transactional(propagation = Propagation.NOT_SUPPORTED, readOnly = true)
+  public Optional<RetainedTenantAssociationIdentity> readMinimalAssociation(
+      String exactNamespace, UUID canonicalTenantId) {
+    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new IllegalStateException(
+          "Retained tenant identity read requires a committed owner read");
+    }
+    requireNonNil(canonicalTenantId, "canonicalTenantId");
+    requireNamespace(exactNamespace);
+    if (!workloadNamespace.equals(exactNamespace)) {
+      throw new IllegalArgumentException(
+          "exactNamespace must match the configured Game Session workload namespace");
+    }
+
+    Record row = findByCanonicalTenant(exactNamespace, canonicalTenantId);
+    if (row == null) {
+      return Optional.empty();
+    }
+    try {
+      return Optional.of(
+          new RetainedTenantAssociationIdentity(
+              exactNamespace,
+              canonicalTenantId,
+              Objects.requireNonNull(row.get(LEGACY_GAME_SESSION_TENANT_ID)),
+              Objects.requireNonNull(row.get(SOURCE_GAME_ROW_ID)),
+              Objects.requireNonNull(row.get(SOURCE_GAME_TENANT_KEY)),
+              Objects.requireNonNull(row.get(PROVENANCE_KIND))));
+    } catch (RuntimeException exception) {
+      throw new InvalidAssociationEvidenceException(
+          "Persisted retained tenant identity is invalid", exception);
+    }
+  }
+
+  /** Deletes one bounded batch of expired raw snapshots and approval payloads. */
+  public int purgeExpiredRawPayloads() {
+    return purgeExpiredRawPayloads(dsl);
+  }
+
+  /** Executes one bounded payload purge using the caller's owner transaction. */
+  public static int purgeExpiredRawPayloads(DSLContext dsl) {
+    Objects.requireNonNull(dsl, "dsl must not be null");
+    return dsl.execute(
+        "WITH expired AS ("
+            + " SELECT payload.operation_id"
+            + " FROM game_session_retained_tenant_association_payload payload"
+            + " JOIN game_session_retained_tenant_association association"
+            + "   ON association.operation_id = payload.operation_id"
+            + " WHERE association.terminal_outcome = 'ASSOCIATED'"
+            + "   AND (association.captured_at IS NULL"
+            + "        OR association.captured_at <= clock_timestamp() - INTERVAL '30 days')"
+            + "   AND NOT EXISTS (SELECT 1"
+            + "       FROM game_session_retained_tenant_association_legal_hold hold"
+            + "       WHERE hold.operation_id = payload.operation_id AND hold.released_at IS NULL)"
+            + " ORDER BY association.captured_at NULLS FIRST, payload.operation_id"
+            + " LIMIT 100 FOR UPDATE OF payload SKIP LOCKED"
+            + ") DELETE FROM game_session_retained_tenant_association_payload payload"
+            + " USING expired WHERE payload.operation_id = expired.operation_id");
+  }
+
   private AssociationReceipt requireExactRetry(
       Record row,
       UUID associationRequestId,
@@ -263,7 +364,7 @@ public class GameSessionRetainedTenantAssociationRepository {
 
   private AssociationReceipt toValidatedReceipt(Record row) {
     try {
-      UUID localOperationId = Objects.requireNonNull(row.get(OPERATION_ID));
+      UUID localOperationId = Objects.requireNonNull(row.get(ASSOCIATION_OPERATION_ID));
       UUID associationRequestId = Objects.requireNonNull(row.get(ASSOCIATION_REQUEST_ID));
       String namespace = Objects.requireNonNull(row.get(TARGET_NAMESPACE));
       if (!Integer.valueOf(SCHEMA_VERSION).equals(row.get(APPROVAL_SCHEMA_VERSION))) {
@@ -279,12 +380,15 @@ public class GameSessionRetainedTenantAssociationRepository {
               Objects.requireNonNull(row.get(APPROVED_BY)),
               Objects.requireNonNull(row.get(APPROVAL_REFERENCE)),
               Objects.requireNonNull(row.get(SIGNED_AT)),
+              captureInstant(row),
               Long.toString(Objects.requireNonNull(row.get(LEGACY_GAME_SESSION_TENANT_ID))),
               Objects.requireNonNull(row.get(CANONICAL_TENANT_ID)),
               Long.toString(Objects.requireNonNull(row.get(SOURCE_GAME_ROW_ID))),
               Objects.requireNonNull(row.get(SOURCE_GAME_TENANT_KEY)),
               Objects.requireNonNull(row.get(PROVENANCE_KIND)),
+              Objects.requireNonNull(row.get(GAME_SESSION_PROJECTION_DIGEST)),
               Objects.requireNonNull(row.get(GAME_SESSION_EVIDENCE_DIGEST)));
+      requireCaptureStillUsable(evidence.sourceCapturedAt());
       String manifestDigest = Objects.requireNonNull(row.get(APPROVAL_MANIFEST_DIGEST));
       String signature = Objects.requireNonNull(row.get(APPROVAL_SIGNATURE));
       requireSignatureShape(signature);
@@ -297,9 +401,11 @@ public class GameSessionRetainedTenantAssociationRepository {
           new GameSessionRetainedTenantSnapshot(
               namespace,
               evidence.legacyGameSessionTenantId(),
+              evidence.sourceCapturedAt(),
               Objects.requireNonNull(row.get(SNAPSHOT_CANONICAL_JSON)),
-              Objects.requireNonNull(row.get(SNAPSHOT_EVIDENCE_DIGEST)));
-      requireSnapshotMatchesApproval(snapshot, evidence);
+              Objects.requireNonNull(row.get(SNAPSHOT_EVIDENCE_DIGEST)),
+              evidence.gameSessionProjectionDigest());
+      requireSnapshotMatchesApproval(snapshot, snapshot, evidence);
 
       String requestDigest = Objects.requireNonNull(row.get(REQUEST_DIGEST));
       if (!requestDigest.equals(
@@ -350,11 +456,13 @@ public class GameSessionRetainedTenantAssociationRepository {
               source.approvedBy(),
               source.approvalReference(),
               source.signedAt(),
+              source.sourceCapturedAt(),
               source.legacyGameSessionTenantId(),
               source.canonicalTenantId(),
               source.sourceGameRowId(),
               source.sourceGameTenantKey(),
               source.provenanceKind(),
+              source.gameSessionProjectionDigest(),
               source.gameSessionEvidenceDigest());
     } catch (RuntimeException exception) {
       throw new InvalidAssociationEvidenceException(
@@ -371,13 +479,29 @@ public class GameSessionRetainedTenantAssociationRepository {
   }
 
   private void requireSnapshotMatchesApproval(
-      GameSessionRetainedTenantSnapshot snapshot, GameSessionTenantAssociationEvidence evidence) {
-    if (snapshot == null
-        || !workloadNamespace.equals(snapshot.targetNamespace())
-        || !evidence.legacyGameSessionTenantId().equals(snapshot.legacyGameSessionTenantId())
-        || !evidence.gameSessionEvidenceDigest().equals(snapshot.evidenceDigest())) {
+      GameSessionRetainedTenantSnapshot currentSnapshot,
+      GameSessionRetainedTenantSnapshot sourceBoundSnapshot,
+      GameSessionTenantAssociationEvidence evidence) {
+    if (currentSnapshot == null
+        || sourceBoundSnapshot == null
+        || !workloadNamespace.equals(currentSnapshot.targetNamespace())
+        || !evidence.legacyGameSessionTenantId().equals(currentSnapshot.legacyGameSessionTenantId())
+        || !evidence.gameSessionProjectionDigest().equals(currentSnapshot.projectionDigest())
+        || !evidence.sourceCapturedAt().equals(sourceBoundSnapshot.capturedAt())
+        || !evidence.gameSessionEvidenceDigest().equals(sourceBoundSnapshot.evidenceDigest())) {
       throw new InvalidAssociationEvidenceException(
           "Retained Game Session snapshot does not match the approved owner evidence");
+    }
+  }
+
+  private void requireCaptureStillUsable(String capturedAt) {
+    Record expiry =
+        dsl.fetchOne(
+            "SELECT clock_timestamp() >= (?::timestamptz + INTERVAL '30 days') AS expired",
+            capturedAt);
+    if (expiry == null || Boolean.TRUE.equals(expiry.get("expired", Boolean.class))) {
+      throw new InvalidAssociationEvidenceException(
+          "Retained-tenant approval payload is expired and must be recaptured");
     }
   }
 
@@ -403,15 +527,22 @@ public class GameSessionRetainedTenantAssociationRepository {
   }
 
   private Record findByOperationId(UUID operationId) {
-    return dsl.selectFrom(ASSOCIATION)
-        .where(OPERATION_ID.eq(operationId).and(TARGET_NAMESPACE.eq(workloadNamespace)))
+    return selectCompleteAssociation()
+        .where(ASSOCIATION_OPERATION_ID.eq(operationId).and(TARGET_NAMESPACE.eq(workloadNamespace)))
         .fetchOne();
   }
 
   private Record findByRequest(String namespace, UUID requestId) {
-    return dsl.selectFrom(ASSOCIATION)
+    return selectCompleteAssociation()
         .where(TARGET_NAMESPACE.eq(namespace).and(ASSOCIATION_REQUEST_ID.eq(requestId)))
         .fetchOne();
+  }
+
+  private SelectJoinStep<Record> selectCompleteAssociation() {
+    return dsl.select(ASSOCIATION.asterisk(), ASSOCIATION_PAYLOAD.asterisk())
+        .from(ASSOCIATION)
+        .leftJoin(ASSOCIATION_PAYLOAD)
+        .on(ASSOCIATION_OPERATION_ID.eq(PAYLOAD_OPERATION_ID));
   }
 
   private Record findByCanonicalTenant(String namespace, UUID tenantId) {
@@ -430,6 +561,19 @@ public class GameSessionRetainedTenantAssociationRepository {
       String exactNamespace, UUID associationRequestId, String manifestDigest, String signature) {
     return framedDigest(
         REQUEST_DOMAIN, exactNamespace, associationRequestId.toString(), manifestDigest, signature);
+  }
+
+  private static <T> Field<T> payloadField(String name, Class<T> type) {
+    return DSL.field(DSL.name("game_session_retained_tenant_association_payload", name), type);
+  }
+
+  private static String captureInstant(Record row) {
+    OffsetDateTime capturedAt = row.get(CAPTURED_AT);
+    if (capturedAt == null) {
+      throw new InvalidAssociationEvidenceException(
+          "Retained-tenant evidence has no authoritative source capture time");
+    }
+    return capturedAt.toInstant().toString();
   }
 
   private static String receiptDigest(
@@ -511,6 +655,28 @@ public class GameSessionRetainedTenantAssociationRepository {
       String approvalSignature,
       GameSessionRetainedTenantSnapshot snapshot,
       String receiptDigest) {}
+
+  /** Minimal immutable proof consumed by owner-local tenant identity readers. */
+  public record RetainedTenantAssociationIdentity(
+      String targetNamespace,
+      UUID canonicalTenantId,
+      long legacyGameSessionTenantId,
+      long sourceGameRowId,
+      String sourceGameTenantKey,
+      String provenanceKind) {
+    public RetainedTenantAssociationIdentity {
+      requireNamespace(targetNamespace);
+      requireNonNil(canonicalTenantId, "canonicalTenantId");
+      requirePositive(legacyGameSessionTenantId, "legacyGameSessionTenantId");
+      requirePositive(sourceGameRowId, "sourceGameRowId");
+      if (sourceGameTenantKey == null || sourceGameTenantKey.isBlank()) {
+        throw new IllegalArgumentException("sourceGameTenantKey is required");
+      }
+      if (!"NEW_GAME_ROW".equals(provenanceKind) && !"RETAINED_GAME_V29".equals(provenanceKind)) {
+        throw new IllegalArgumentException("provenanceKind is not recognized");
+      }
+    }
+  }
 
   public static class AssociationConflictException extends RuntimeException {
     public AssociationConflictException(String message) {

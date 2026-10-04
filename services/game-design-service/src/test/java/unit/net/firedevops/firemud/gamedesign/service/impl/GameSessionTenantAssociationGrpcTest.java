@@ -110,13 +110,14 @@ class GameSessionTenantAssociationGrpcTest {
     assertThat(observer.completed).isTrue();
     assertThat(observer.value.getRequestId()).isEqualTo(READ_REQUEST);
     var manifest = observer.value.getManifest();
-    assertThat(manifest.getSchemaVersion()).isEqualTo(1);
+    assertThat(manifest.getSchemaVersion()).isEqualTo(2);
     assertThat(manifest.getOperationId()).isEqualTo(OPERATION.toString());
     assertThat(manifest.getTargetNamespace()).isEqualTo("test");
     assertThat(manifest.getSignerKeyId()).isEqualTo(evidence.signerKeyId());
     assertThat(manifest.getApprovedBy()).isEqualTo(evidence.approvedBy());
     assertThat(manifest.getApprovalReference()).isEqualTo(evidence.approvalReference());
     assertThat(manifest.getSignedAt()).isEqualTo(evidence.signedAt());
+    assertThat(manifest.getSourceCapturedAt()).isEqualTo(evidence.sourceCapturedAt());
     assertThat(manifest.getLegacyGameSessionTenantId()).isEqualTo("41");
     assertThat(manifest.getCanonicalTenantId()).isEqualTo(TENANT.toString());
     assertThat(manifest.getSourceGameRowId()).isEqualTo(evidence.sourceGameRowId());
@@ -124,6 +125,8 @@ class GameSessionTenantAssociationGrpcTest {
     assertThat(manifest.getProvenanceKind()).isEqualTo(evidence.provenanceKind());
     assertThat(manifest.getGameSessionEvidenceDigest())
         .isEqualTo(evidence.gameSessionEvidenceDigest());
+    assertThat(manifest.getGameSessionProjectionDigest())
+        .isEqualTo(evidence.gameSessionProjectionDigest());
     assertThat(observer.value.getManifestDigest()).isEqualTo(evidence.manifestDigest());
     assertThat(observer.value.getEd25519Signature()).isEqualTo(signature);
   }
@@ -196,18 +199,20 @@ class GameSessionTenantAssociationGrpcTest {
 
   private GameSessionTenantAssociationEvidence evidence() {
     return new GameSessionTenantAssociationEvidence(
-        1,
+        2,
         OPERATION,
         "test",
         "owner-key",
         "owner",
         "approval-41",
         "2026-10-01T00:00:00Z",
+        "2026-09-30T00:00:00Z",
         "41",
         TENANT,
         "7",
         "source-key",
         "RETAINED_GAME_V29",
+        "sha256:" + "b".repeat(64),
         "sha256:" + "a".repeat(64));
   }
 
@@ -222,11 +227,13 @@ class GameSessionTenantAssociationGrpcTest {
         source.approvedBy(),
         source.approvalReference(),
         source.signedAt(),
+        source.sourceCapturedAt(),
         legacyKey,
         tenant,
         source.sourceGameRowId(),
         source.sourceGameTenantKey(),
         source.provenanceKind(),
+        source.gameSessionProjectionDigest(),
         source.gameSessionEvidenceDigest());
   }
 

@@ -11,6 +11,8 @@ import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.DateTimeException;
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.Iterator;
@@ -24,9 +26,13 @@ import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 public record GameSessionRetainedTenantSnapshot(
     String targetNamespace,
     String legacyGameSessionTenantId,
+    String capturedAt,
     String canonicalJson,
-    String evidenceDigest) {
-  private static final String DIGEST_DOMAIN = "game-session/retained-tenant-identity-snapshot/v3";
+    String evidenceDigest,
+    String projectionDigest) {
+  private static final String DIGEST_DOMAIN = "game-session/retained-tenant-identity-snapshot/v4";
+  private static final String PROJECTION_DIGEST_DOMAIN =
+      "game-session/retained-tenant-identity-projection/v4";
   private static final Pattern CANONICAL_DECIMAL =
       Pattern.compile("(?:0|[1-9][0-9]*|-[1-9][0-9]*)");
   private static final Pattern CANONICAL_UUID =
@@ -44,6 +50,7 @@ public record GameSessionRetainedTenantSnapshot(
           "schemaVersion",
           "targetNamespace",
           "legacyGameSessionTenantId",
+          "capturedAt",
           "instances",
           "pointers",
           "sharedNamespaces",
@@ -145,10 +152,16 @@ public record GameSessionRetainedTenantSnapshot(
     if (evidenceDigest == null || !SHA256.matcher(evidenceDigest).matches()) {
       throw new IllegalArgumentException("A canonical SHA-256 digest is required");
     }
-    validateCanonicalSnapshot(targetNamespace, legacyGameSessionTenantId, canonicalJson);
+    validateCanonicalSnapshot(
+        targetNamespace, legacyGameSessionTenantId, capturedAt, canonicalJson);
     String expectedDigest = digest(canonicalJson);
     if (!expectedDigest.equals(evidenceDigest)) {
       throw new IllegalArgumentException("Retained-tenant snapshot digest does not match its JSON");
+    }
+    String expectedProjectionDigest = projectionDigest(canonicalJson);
+    if (!expectedProjectionDigest.equals(projectionDigest)) {
+      throw new IllegalArgumentException(
+          "Retained-tenant snapshot projection digest does not match its JSON");
     }
   }
 
@@ -156,21 +169,62 @@ public record GameSessionRetainedTenantSnapshot(
   public static GameSessionRetainedTenantSnapshot fromCanonicalJson(
       String targetNamespace,
       String legacyGameSessionTenantId,
+      String capturedAt,
       String canonicalJson,
-      String evidenceDigest) {
+      String evidenceDigest,
+      String projectionDigest) {
     return new GameSessionRetainedTenantSnapshot(
-        targetNamespace, legacyGameSessionTenantId, canonicalJson, evidenceDigest);
+        targetNamespace,
+        legacyGameSessionTenantId,
+        capturedAt,
+        canonicalJson,
+        evidenceDigest,
+        projectionDigest);
   }
 
   static GameSessionRetainedTenantSnapshot fromProjection(
-      String targetNamespace, String legacyGameSessionTenantId, ObjectNode projection) {
+      String targetNamespace,
+      String legacyGameSessionTenantId,
+      String capturedAt,
+      ObjectNode projection) {
     validateIdentity(targetNamespace, legacyGameSessionTenantId);
+    requireCanonicalInstant(capturedAt);
     if (projection == null) {
       throw new IllegalArgumentException("projection must not be null");
     }
+    projection.put("capturedAt", capturedAt);
     String canonicalJson = canonicalize(projection);
     return new GameSessionRetainedTenantSnapshot(
-        targetNamespace, legacyGameSessionTenantId, canonicalJson, digest(canonicalJson));
+        targetNamespace,
+        legacyGameSessionTenantId,
+        capturedAt,
+        canonicalJson,
+        digest(canonicalJson),
+        projectionDigest(canonicalJson));
+  }
+
+  /** Rebinds unchanged source rows to the timestamp authenticated by the owner approval. */
+  public GameSessionRetainedTenantSnapshot withCapturedAt(String sourceCapturedAt) {
+    requireCanonicalInstant(sourceCapturedAt);
+    if (Instant.parse(sourceCapturedAt).isAfter(Instant.parse(capturedAt))) {
+      throw new IllegalArgumentException("Approved source capture time is in the future");
+    }
+    try {
+      JsonNode parsed = JSON.readTree(canonicalJson);
+      ObjectNode projection = (ObjectNode) parsed;
+      projection.put("capturedAt", sourceCapturedAt);
+      String reboundJson = canonicalize(projection);
+      return new GameSessionRetainedTenantSnapshot(
+          targetNamespace,
+          legacyGameSessionTenantId,
+          sourceCapturedAt,
+          reboundJson,
+          digest(reboundJson),
+          projectionDigest(reboundJson));
+    } catch (IOException exception) {
+      throw new IllegalStateException(
+          "Validated retained-tenant snapshot became unreadable", exception);
+    }
   }
 
   static void validateIdentity(String targetNamespace, String legacyGameSessionTenantId) {
@@ -195,7 +249,11 @@ public record GameSessionRetainedTenantSnapshot(
   }
 
   private static void validateCanonicalSnapshot(
-      String targetNamespace, String legacyGameSessionTenantId, String canonicalJson) {
+      String targetNamespace,
+      String legacyGameSessionTenantId,
+      String capturedAt,
+      String canonicalJson) {
+    requireCanonicalInstant(capturedAt);
     final JsonNode envelope;
     final byte[] canonicalBytes;
     try {
@@ -216,11 +274,12 @@ public record GameSessionRetainedTenantSnapshot(
     if (schemaVersion == null
         || !schemaVersion.isIntegralNumber()
         || !schemaVersion.canConvertToInt()
-        || schemaVersion.intValue() != 3) {
-      throw new IllegalArgumentException("snapshot.schemaVersion must be integer 3");
+        || schemaVersion.intValue() != 4) {
+      throw new IllegalArgumentException("snapshot.schemaVersion must be integer 4");
     }
     requireExactText(object, "targetNamespace", targetNamespace, "snapshot");
     requireExactText(object, "legacyGameSessionTenantId", legacyGameSessionTenantId, "snapshot");
+    requireExactText(object, "capturedAt", capturedAt, "snapshot");
 
     JsonNode instances = requireArray(object, "instances", "snapshot");
     JsonNode pointers = requireArray(object, "pointers", "snapshot");
@@ -465,7 +524,7 @@ public record GameSessionRetainedTenantSnapshot(
       String field = fields.next();
       if (!expected.contains(field)) {
         throw new IllegalArgumentException(
-            path + "." + field + " is not declared by schema version 3");
+            path + "." + field + " is not declared by schema version 4");
       }
     }
     for (String field : expected) {
@@ -516,6 +575,42 @@ public record GameSessionRetainedTenantSnapshot(
       return "sha256:" + HexFormat.of().formatHex(hash.digest());
     } catch (NoSuchAlgorithmException exception) {
       throw new IllegalStateException("SHA-256 is unavailable", exception);
+    }
+  }
+
+  private static String projectionDigest(String canonicalJson) {
+    try {
+      JsonNode parsed = JSON.readTree(canonicalJson);
+      ObjectNode projection = (ObjectNode) parsed;
+      projection.remove("capturedAt");
+      return digestWithDomain(PROJECTION_DIGEST_DOMAIN, canonicalize(projection));
+    } catch (IOException exception) {
+      throw new IllegalArgumentException("Retained-tenant snapshot JSON is malformed", exception);
+    }
+  }
+
+  private static String digestWithDomain(String domain, String value) {
+    try {
+      MessageDigest hash = MessageDigest.getInstance("SHA-256");
+      updateFrame(hash, domain);
+      updateFrame(hash, value);
+      return "sha256:" + HexFormat.of().formatHex(hash.digest());
+    } catch (NoSuchAlgorithmException exception) {
+      throw new IllegalStateException("SHA-256 is unavailable", exception);
+    }
+  }
+
+  private static void requireCanonicalInstant(String value) {
+    if (value == null) {
+      throw new IllegalArgumentException("capturedAt must be canonical UTC Instant text");
+    }
+    try {
+      if (!Instant.parse(value).toString().equals(value)) {
+        throw new IllegalArgumentException("capturedAt must be canonical UTC Instant text");
+      }
+    } catch (DateTimeException exception) {
+      throw new IllegalArgumentException(
+          "capturedAt must be canonical UTC Instant text", exception);
     }
   }
 

@@ -106,11 +106,13 @@ public class GameSessionRetainedTenantAssociationService {
               received.approvedBy(),
               received.approvalReference(),
               received.signedAt(),
+              received.sourceCapturedAt(),
               received.legacyGameSessionTenantId(),
               received.canonicalTenantId(),
               received.sourceGameRowId(),
               received.sourceGameTenantKey(),
               received.provenanceKind(),
+              received.gameSessionProjectionDigest(),
               received.gameSessionEvidenceDigest());
     } catch (RuntimeException exception) {
       throw new IllegalStateException(
