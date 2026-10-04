@@ -21,6 +21,7 @@ import net.firedevops.firemud.gamesession.entity.PublishedRealmCatalogSnapshot;
 import net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepository.RetainedTenantAssociationIdentity;
 import net.firedevops.firemud.gamesession.repository.InitialAdmissionBindCatalogRepository;
+import net.firedevops.firemud.gamesession.service.PublishedRealmCatalogOwnerService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -68,8 +69,7 @@ class PublishedRealmCatalogOwnerServiceTest {
   void rejectsInvocationInsideActualTransactionBeforeAnyOwnerRead() {
     TransactionSynchronizationManager.setActualTransactionActive(true);
 
-    assertThatThrownBy(
-            () -> service.materializePublishedSnapshot(CANONICAL_TENANT_ID, VERSION_ID))
+    assertThatThrownBy(() -> service.materializePublishedSnapshot(CANONICAL_TENANT_ID, VERSION_ID))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("before the local catalog transaction starts");
 
@@ -106,8 +106,7 @@ class PublishedRealmCatalogOwnerServiceTest {
           .isInstanceOf(IllegalStateException.class);
     }
 
-    verify(associationRepository, times(3))
-        .readMinimalAssociation(NAMESPACE, CANONICAL_TENANT_ID);
+    verify(associationRepository, times(3)).readMinimalAssociation(NAMESPACE, CANONICAL_TENANT_ID);
     verifyNoInteractions(gameDesignClient, catalogRepository, transactionManager);
   }
 
@@ -123,9 +122,8 @@ class PublishedRealmCatalogOwnerServiceTest {
             PROVENANCE_KIND);
     when(associationRepository.readMinimalAssociation(NAMESPACE, CANONICAL_TENANT_ID))
         .thenReturn(Optional.of(association));
-    when(
-            gameDesignClient.listPublishedRealmEntryPolicies(
-                CANONICAL_TENANT_ID.toString(), VERSION_ID))
+    when(gameDesignClient.listPublishedRealmEntryPolicies(
+            CANONICAL_TENANT_ID.toString(), VERSION_ID))
         .thenReturn(
             policySet(
                 CANONICAL_TENANT_ID,
@@ -133,8 +131,7 @@ class PublishedRealmCatalogOwnerServiceTest {
                 SOURCE_GAME_TENANT_KEY,
                 PROVENANCE_KIND));
 
-    assertThatThrownBy(
-            () -> service.materializePublishedSnapshot(CANONICAL_TENANT_ID, VERSION_ID))
+    assertThatThrownBy(() -> service.materializePublishedSnapshot(CANONICAL_TENANT_ID, VERSION_ID))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("PUBLISHED_REALM_CATALOG_SOURCE_MISMATCH");
 
@@ -154,17 +151,12 @@ class PublishedRealmCatalogOwnerServiceTest {
             SOURCE_GAME_TENANT_KEY,
             PROVENANCE_KIND);
     PublishedRealmEntryPolicySetEvidence policySet =
-        policySet(
-            CANONICAL_TENANT_ID,
-            SOURCE_GAME_ROW_ID,
-            SOURCE_GAME_TENANT_KEY,
-            PROVENANCE_KIND);
+        policySet(CANONICAL_TENANT_ID, SOURCE_GAME_ROW_ID, SOURCE_GAME_TENANT_KEY, PROVENANCE_KIND);
     PublishedRealmCatalogSnapshot snapshot = mock(PublishedRealmCatalogSnapshot.class);
     when(associationRepository.readMinimalAssociation(NAMESPACE, CANONICAL_TENANT_ID))
         .thenReturn(Optional.of(association));
-    when(
-            gameDesignClient.listPublishedRealmEntryPolicies(
-                CANONICAL_TENANT_ID.toString(), VERSION_ID))
+    when(gameDesignClient.listPublishedRealmEntryPolicies(
+            CANONICAL_TENANT_ID.toString(), VERSION_ID))
         .thenReturn(policySet);
     when(transactionManager.getTransaction(any(TransactionDefinition.class)))
         .thenReturn(new SimpleTransactionStatus());

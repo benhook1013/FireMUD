@@ -680,11 +680,7 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
     }
 
     void insertExpiredPayload(UUID operationId, UUID approvalOperationId) {
-      insertExpiredPayload(
-          operationId,
-          approvalOperationId,
-          2,
-          "sha256:" + "b".repeat(64));
+      insertExpiredPayload(operationId, approvalOperationId, 2, "sha256:" + "b".repeat(64));
     }
 
     void insertExpiredPayload(

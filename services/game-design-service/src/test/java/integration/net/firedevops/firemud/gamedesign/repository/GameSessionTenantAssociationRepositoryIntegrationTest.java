@@ -102,7 +102,7 @@ class GameSessionTenantAssociationRepositoryIntegrationTest {
   }
 
   @Test
-  void v2PayloadRequiresProjectionDigestWhileHistoricalV1MayOmitIt() {
+  void v2PayloadRequiresProjectionDigestWhileHistoricalV1MayOmitIt() throws Exception {
     Fixture fixture = fixtureWithFreshAndRetainedSources();
     UUID v1OperationId = uuid(910);
     fixture.insertExpiredAssociation(v1OperationId, 910L, fixture.retainedSource());
