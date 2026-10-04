@@ -926,7 +926,8 @@ class RetainedActorIdentityIntegrationTest {
             .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
             .schemas(migrationSchema)
             .defaultSchema(migrationSchema)
-            .locations("classpath:db/migration");
+            .locations("classpath:db/migration")
+            .placeholders(Map.of("serviceSchema", migrationSchema));
     configuration
         .getConfigurationExtension(PostgreSQLConfigurationExtension.class)
         .setTransactionalLock(false);
