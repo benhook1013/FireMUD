@@ -25,6 +25,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
+import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource;
+import org.springframework.transaction.interceptor.TransactionProxyFactoryBean;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -166,8 +168,8 @@ class InitialAdmissionBindPostgresIntegrationTest {
     migrate(dataSource, schema);
     DSLContext dsl =
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
-    TransactionTemplate transactionTemplate =
-        new TransactionTemplate(new DataSourceTransactionManager(dataSource));
+    DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
+    TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
     GameInstanceRepository gameInstanceRepository = new GameInstanceRepository(dsl);
     GameInstance runtime = gameInstance();
     runtime.setLaunchDescriptorId("published-launch-v1");
@@ -179,18 +181,27 @@ class InitialAdmissionBindPostgresIntegrationTest {
     seedAssociation(dsl, 41L, CANONICAL_TENANT_ID, 731L, "source-game-key-not-local-id");
     InitialAdmissionBindCatalogRepository catalogRepository =
         new InitialAdmissionBindCatalogRepository(dsl);
+    InitialAdmissionBindCatalogRepository transactionalCatalogRepository =
+        transactionalRepository(catalogRepository, transactionManager);
     PublishedRealmEntryPolicySetEvidence policySet = publishedPolicySet();
     var snapshot =
         transactionTemplate.execute(
-            status ->
-                catalogRepository.materializePublishedSnapshot(
-                    PUBLISHED_NAMESPACE,
-                    41L,
-                    CANONICAL_TENANT_ID,
-                    731L,
-                    "source-game-key-not-local-id",
-                    "NEW_GAME_ROW",
-                    policySet));
+            status -> {
+              var materialized =
+                  catalogRepository.materializePublishedSnapshot(
+                      PUBLISHED_NAMESPACE,
+                      41L,
+                      CANONICAL_TENANT_ID,
+                      731L,
+                      "source-game-key-not-local-id",
+                      "NEW_GAME_ROW",
+                      policySet);
+              assertThat(
+                      transactionalCatalogRepository.findPublishedSnapshot(
+                          PUBLISHED_NAMESPACE, 41L, materialized.catalogRevision()))
+                  .contains(materialized);
+              return materialized;
+            });
     var entry = Objects.requireNonNull(snapshot).entries().getFirst();
     DatabaseInitialAdmissionBindOwnerService service =
         new DatabaseInitialAdmissionBindOwnerService(
@@ -217,6 +228,23 @@ class InitialAdmissionBindPostgresIntegrationTest {
 
     assertThat(dsl.fetchCount(DSL.table("gameplay_initial_admission_bind_catalog"))).isZero();
     var attempt = transactionTemplate.execute(status -> service.beginIntent(request));
+    assertThatThrownBy(
+            () ->
+                transactionTemplate.execute(
+                    status ->
+                        dsl.execute(
+                            "UPDATE gameplay_initial_admission_bind_attempt "
+                                + "SET playable_state_namespace_id = ? WHERE attempt_id = ?",
+                            UUID.randomUUID(),
+                            attempt.attemptId())))
+        .isInstanceOf(RuntimeException.class);
+    assertThat(
+            dsl.fetchOne(
+                    "SELECT playable_state_namespace_id "
+                        + "FROM gameplay_initial_admission_bind_attempt WHERE attempt_id = ?",
+                    attempt.attemptId())
+                .get("playable_state_namespace_id", UUID.class))
+        .isEqualTo(entry.playableStateNamespaceId());
     assertThatThrownBy(
             () ->
                 transactionTemplate.execute(
@@ -305,6 +333,18 @@ class InitialAdmissionBindPostgresIntegrationTest {
         .locations(MIGRATION_LOCATION)
         .load()
         .migrate();
+  }
+
+  private static InitialAdmissionBindCatalogRepository transactionalRepository(
+      InitialAdmissionBindCatalogRepository target,
+      DataSourceTransactionManager transactionManager) {
+    TransactionProxyFactoryBean proxyFactory = new TransactionProxyFactoryBean();
+    proxyFactory.setTransactionManager(transactionManager);
+    proxyFactory.setTransactionAttributeSource(new AnnotationTransactionAttributeSource());
+    proxyFactory.setTarget(target);
+    proxyFactory.setProxyTargetClass(true);
+    proxyFactory.afterPropertiesSet();
+    return (InitialAdmissionBindCatalogRepository) proxyFactory.getObject();
   }
 
   private static GameInstance gameInstance() {

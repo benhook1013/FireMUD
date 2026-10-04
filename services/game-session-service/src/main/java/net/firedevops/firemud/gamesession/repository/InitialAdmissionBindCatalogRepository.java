@@ -213,7 +213,7 @@ public class InitialAdmissionBindCatalogRepository {
   }
 
   /** Reads the exact immutable published snapshot referenced by a catalog revision. */
-  @Transactional(readOnly = true, propagation = Propagation.NOT_SUPPORTED)
+  @Transactional(readOnly = true, propagation = Propagation.SUPPORTS)
   public Optional<PublishedRealmCatalogSnapshot> findPublishedSnapshot(
       String exactNamespace, long tenantId, long catalogRevision) {
     if (exactNamespace == null

@@ -46,8 +46,8 @@ public record GameSessionTenantAssociationEvidence(
     requireLabel(signerKeyId, 128, "signerKeyId");
     requireLabel(approvedBy, 256, "approvedBy");
     requireLabel(approvalReference, 512, "approvalReference");
-    requireCanonicalInstant(signedAt);
-    requireCanonicalInstant(sourceCapturedAt);
+    requireCanonicalInstant(signedAt, "signedAt");
+    requireCanonicalInstant(sourceCapturedAt, "sourceCapturedAt");
     if (Instant.parse(sourceCapturedAt).isAfter(Instant.parse(signedAt))) {
       throw new IllegalArgumentException("sourceCapturedAt may not follow signedAt");
     }
@@ -144,14 +144,17 @@ public record GameSessionTenantAssociationEvidence(
     }
   }
 
-  private static void requireCanonicalInstant(String value) {
-    Objects.requireNonNull(value, "signedAt");
+  private static void requireCanonicalInstant(String value, String label) {
+    Objects.requireNonNull(value, label);
     try {
       if (!Instant.parse(value).toString().equals(value)) {
-        throw new IllegalArgumentException("signedAt must be canonical UTC Instant text");
+        throw new IllegalArgumentException(label + " must be canonical UTC Instant text");
+      }
+      if (Instant.parse(value).getNano() % 1_000 != 0) {
+        throw new IllegalArgumentException(label + " must have microsecond precision");
       }
     } catch (DateTimeParseException exception) {
-      throw new IllegalArgumentException("signedAt must be canonical UTC Instant text", exception);
+      throw new IllegalArgumentException(label + " must be canonical UTC Instant text", exception);
     }
   }
 

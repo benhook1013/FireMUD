@@ -371,7 +371,7 @@ class InitialAdmissionOwnerReadAuthWiringTest {
                             "game-session-application",
                             new FileSystemResource("src/main/resources/application.yml"))
                         .get(0);
-                context.getEnvironment().getPropertySources().addLast(application);
+                context.getEnvironment().getPropertySources().addFirst(application);
                 if (productionProfile) {
                   PropertySource<?> production =
                       loader
@@ -379,17 +379,26 @@ class InitialAdmissionOwnerReadAuthWiringTest {
                               "game-session-production",
                               new FileSystemResource("src/main/resources/application-prod.yml"))
                           .get(0);
-                  context.getEnvironment().getPropertySources().addLast(production);
+                  context
+                      .getEnvironment()
+                      .getPropertySources()
+                      .addBefore("game-session-application", production);
                 }
               } catch (IOException exception) {
                 throw new IllegalStateException(
                     "Could not load Game Session auth config", exception);
               }
             })
-        .withPropertyValues("firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234")
+        .withPropertyValues(
+            "firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234",
+            productionProfile ? "GAME_TICK_DURATION_MS=2500" : "GAME_TICK_DURATION_MS=1000")
         .run(
             context -> {
               assertThat(context).hasSingleBean(AuthTokenInterceptor.class);
+              if (productionProfile) {
+                assertThat(context.getEnvironment().getProperty("game.tick-duration-ms"))
+                    .isEqualTo("2500");
+              }
               assertThat(context.getBean(GrpcAuthProperties.class).getPublicMethods())
                   .containsExactly(PING_METHOD, INITIAL_METHOD, PUBLISHED_METHOD);
               action.accept(context.getBean(AuthTokenInterceptor.class));

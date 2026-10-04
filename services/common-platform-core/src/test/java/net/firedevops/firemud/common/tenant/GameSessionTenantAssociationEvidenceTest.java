@@ -93,6 +93,22 @@ class GameSessionTenantAssociationEvidenceTest {
   }
 
   @Test
+  void requiresCanonicalUtcMicrosecondPrecisionForBothEvidenceInstants() {
+    GameSessionTenantAssociationEvidence source = evidence();
+
+    assertThat(copySignedAt(source, "2026-10-01T00:00:00.123456Z").signedAt())
+        .isEqualTo("2026-10-01T00:00:00.123456Z");
+    assertThat(copySourceCapturedAt(source, "2026-09-30T00:00:00.123456Z").sourceCapturedAt())
+        .isEqualTo("2026-09-30T00:00:00.123456Z");
+    assertThatThrownBy(() -> copySignedAt(source, "2026-10-01T00:00:00.123456001Z"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("signedAt must have microsecond precision");
+    assertThatThrownBy(() -> copySourceCapturedAt(source, "2026-09-30T00:00:00.123456001Z"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("sourceCapturedAt must have microsecond precision");
+  }
+
+  @Test
   void expiresRawEvidenceAtTheExactThirtyDayCaptureBoundary() {
     GameSessionTenantAssociationEvidence source = evidence();
 

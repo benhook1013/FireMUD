@@ -4,6 +4,11 @@ ALTER TABLE gameplay_published_realm_catalog_snapshot
     ADD CONSTRAINT uq_gs_published_realm_catalog_snapshot_bind_identity
         UNIQUE (target_namespace, tenant_id, catalog_revision, canonical_tenant_id, version_id);
 
+ALTER TABLE gameplay_published_realm_catalog_entry
+    ADD CONSTRAINT uq_gs_published_realm_catalog_entry_bind_identity
+        UNIQUE (target_namespace, tenant_id, catalog_revision, realm_id,
+                playable_state_namespace_id);
+
 ALTER TABLE gameplay_initial_admission_bind_attempt
     ADD COLUMN catalog_source_kind character varying(16) NOT NULL DEFAULT 'V9_FIXTURE',
     ADD COLUMN fixture_catalog_realm_id uuid,
@@ -32,9 +37,11 @@ ALTER TABLE gameplay_initial_admission_bind_attempt
         REFERENCES gameplay_published_realm_catalog_snapshot
             (target_namespace, tenant_id, catalog_revision, canonical_tenant_id, version_id),
     ADD CONSTRAINT gameplay_initial_admission_bind_attempt_published_entry_fk
-        FOREIGN KEY (published_target_namespace, tenant_id, catalog_revision, realm_id)
+        FOREIGN KEY (published_target_namespace, tenant_id, catalog_revision, realm_id,
+                     playable_state_namespace_id)
         REFERENCES gameplay_published_realm_catalog_entry
-            (target_namespace, tenant_id, catalog_revision, realm_id),
+            (target_namespace, tenant_id, catalog_revision, realm_id,
+             playable_state_namespace_id),
     ADD CONSTRAINT gameplay_initial_admission_bind_attempt_catalog_source_shape
         CHECK (
             (catalog_source_kind = 'V9_FIXTURE'
