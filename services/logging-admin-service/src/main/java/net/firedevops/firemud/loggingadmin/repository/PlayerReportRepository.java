@@ -6,7 +6,6 @@ import static net.firedevops.firemud.loggingadmin.jooq.tables.PlayerReports.PLAY
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.Optional;
-import java.util.UUID;
 import net.firedevops.firemud.loggingadmin.entity.PlayerReport;
 import net.firedevops.firemud.loggingadmin.jooq.tables.records.PlayerReportsRecord;
 import org.jooq.DSLContext;
@@ -29,7 +28,7 @@ public class PlayerReportRepository {
   }
 
   public Optional<PlayerReport> findFirstByTenantIdAndReporterAccountIdAndTargetAccountIdAndType(
-      Long tenantId, UUID reporterAccountId, UUID targetAccountId, String type) {
+      Long tenantId, Long reporterAccountId, Long targetAccountId, String type) {
     return dsl.selectFrom(PLAYER_REPORTS)
         .where(
             PLAYER_REPORTS

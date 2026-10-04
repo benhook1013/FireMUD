@@ -6,7 +6,6 @@ import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
-import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.loggingadmin.v1.CreateReportRequest;
@@ -39,10 +38,9 @@ public class ReportGrpcService extends ReportServiceGrpc.ReportServiceImplBase {
     try {
       requireSocialGroupsInternalService();
       RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId");
-      JwtClaims.requireAccountId(request.getReporterAccountId(), "reporterAccountId");
-      if (!request.getTargetAccountId().isEmpty()) {
-        JwtClaims.requireAccountId(request.getTargetAccountId(), "targetAccountId");
-      }
+      RequestIdValidation.requirePositiveLong(request.getReporterAccountId(), "reporterAccountId");
+      RequestIdValidation.parseOptionalPositiveLong(
+          request.getTargetAccountId(), "targetAccountId");
       CreateReportResponse response =
           CreateReportResponse.newBuilder()
               .setError(

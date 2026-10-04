@@ -11,9 +11,6 @@ import net.firedevops.firemud.loggingadmin.repository.PlayerReportRepository;
 import org.junit.jupiter.api.Test;
 
 class ReportServiceImplTest {
-  private static final String REPORTER_UUID = "550e8400-e29b-41d4-a716-446655440000";
-  private static final String TARGET_UUID = "6ba7b810-9dad-41d1-80b4-00c04fd430c8";
-
   @Test
   void createReportFailsClosedWithoutTouchingPlayerReportsRepository() {
     PlayerReportRepository repository = mock(PlayerReportRepository.class);
@@ -23,9 +20,7 @@ class ReportServiceImplTest {
     UnsupportedOperationException exception =
         assertThrows(
             UnsupportedOperationException.class,
-            () ->
-                service.createReport(
-                    new CreateReportRequest(1L, REPORTER_UUID, TARGET_UUID, "BUG", "bad")));
+            () -> service.createReport(new CreateReportRequest(1L, 2L, 3L, "BUG", "bad")));
 
     assertEquals(
         "Report creation is unavailable until the shared mutation gate is implemented",

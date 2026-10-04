@@ -16,9 +16,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 class ReportGrpcServiceTest {
-  private static final String REPORTER_UUID = "550e8400-e29b-41d4-a716-446655440000";
-  private static final String TARGET_UUID = "6ba7b810-9dad-41d1-80b4-00c04fd430c8";
-
   @AfterEach
   void tearDown() {
     SessionContext.clear();
@@ -35,8 +32,8 @@ class ReportGrpcServiceTest {
     service.createReport(
         CreateReportRequest.newBuilder()
             .setTenantId("1")
-            .setReporterAccountId(REPORTER_UUID)
-            .setTargetAccountId(TARGET_UUID)
+            .setReporterAccountId("2")
+            .setTargetAccountId("3")
             .setType("BUG")
             .setDescription("bad")
             .build(),
@@ -73,8 +70,8 @@ class ReportGrpcServiceTest {
     service.createReport(
         CreateReportRequest.newBuilder()
             .setTenantId("1")
-            .setReporterAccountId(REPORTER_UUID)
-            .setTargetAccountId(TARGET_UUID)
+            .setReporterAccountId("2")
+            .setTargetAccountId("3")
             .setType("BUG")
             .setDescription("bad")
             .build(),
@@ -98,7 +95,42 @@ class ReportGrpcServiceTest {
   }
 
   @Test
-  void createReportRejectsNumericReporterAccountIdBeforeDispatch() {
+  void createReportRejectsZeroReporterAccountIdBeforeDispatch() {
+    SessionContext.setContext(
+        "", List.of(), Map.of(), true, "social-groups-service", "test-instance");
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    ReportGrpcService service = new ReportGrpcService(meterRegistry);
+
+    AtomicReference<CreateReportResponse> ref = new AtomicReference<>();
+    service.createReport(
+        CreateReportRequest.newBuilder()
+            .setTenantId("1")
+            .setReporterAccountId("0")
+            .setType("BUG")
+            .setDescription("bad")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(CreateReportResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("reporterAccountId must be positive", ref.get().getError().getMessage());
+  }
+
+  @Test
+  void createReportRejectsZeroTargetAccountIdBeforeDispatch() {
     SessionContext.setContext(
         "", List.of(), Map.of(), true, "social-groups-service", "test-instance");
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
@@ -109,6 +141,7 @@ class ReportGrpcServiceTest {
         CreateReportRequest.newBuilder()
             .setTenantId("1")
             .setReporterAccountId("2")
+            .setTargetAccountId("0")
             .setType("BUG")
             .setDescription("bad")
             .build(),
@@ -129,43 +162,7 @@ class ReportGrpcServiceTest {
 
     assertNotNull(ref.get());
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
-    assertEquals("Malformed claim: reporterAccountId", ref.get().getError().getMessage());
-  }
-
-  @Test
-  void createReportRejectsNilTargetAccountIdBeforeDispatch() {
-    SessionContext.setContext(
-        "", List.of(), Map.of(), true, "social-groups-service", "test-instance");
-    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    ReportGrpcService service = new ReportGrpcService(meterRegistry);
-
-    AtomicReference<CreateReportResponse> ref = new AtomicReference<>();
-    service.createReport(
-        CreateReportRequest.newBuilder()
-            .setTenantId("1")
-            .setReporterAccountId(REPORTER_UUID)
-            .setTargetAccountId("00000000-0000-0000-0000-000000000000")
-            .setType("BUG")
-            .setDescription("bad")
-            .build(),
-        new StreamObserver<>() {
-          @Override
-          public void onNext(CreateReportResponse value) {
-            ref.set(value);
-          }
-
-          @Override
-          public void onError(Throwable t) {
-            fail(t);
-          }
-
-          @Override
-          public void onCompleted() {}
-        });
-
-    assertNotNull(ref.get());
-    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
-    assertEquals("Invalid claim: targetAccountId", ref.get().getError().getMessage());
+    assertEquals("targetAccountId must be positive", ref.get().getError().getMessage());
   }
 
   @Test
@@ -177,7 +174,7 @@ class ReportGrpcServiceTest {
     service.createReport(
         CreateReportRequest.newBuilder()
             .setTenantId("1")
-            .setReporterAccountId(REPORTER_UUID)
+            .setReporterAccountId("2")
             .setType("BUG")
             .setDescription("bad")
             .build(),
@@ -209,7 +206,7 @@ class ReportGrpcServiceTest {
     service.createReport(
         CreateReportRequest.newBuilder()
             .setTenantId("1")
-            .setReporterAccountId(REPORTER_UUID)
+            .setReporterAccountId("2")
             .setType("BUG")
             .setDescription("bad")
             .build(),
@@ -242,7 +239,7 @@ class ReportGrpcServiceTest {
     service.createReport(
         CreateReportRequest.newBuilder()
             .setTenantId("1")
-            .setReporterAccountId(REPORTER_UUID)
+            .setReporterAccountId("2")
             .setType("BUG")
             .setDescription("bad")
             .build(),

@@ -69,8 +69,6 @@ import org.springframework.boot.autoconfigure.context.ConfigurationPropertiesAut
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
 class LoggingAdminGrpcServiceAuthTest {
-  private static final String ACCOUNT_UUID = "550e8400-e29b-41d4-a716-446655440000";
-
   @AfterEach
   void tearDown() {
     SessionContext.clear();
@@ -571,7 +569,7 @@ class LoggingAdminGrpcServiceAuthTest {
     service.applyModerationAction(
         ApplyModerationActionRequest.newBuilder()
             .setTenantId("1")
-            .setAccountId(ACCOUNT_UUID)
+            .setAccountId("2")
             .setSessionId("0")
             .setAction("ban")
             .setReason("bad")
@@ -611,7 +609,7 @@ class LoggingAdminGrpcServiceAuthTest {
     service.applyModerationAction(
         ApplyModerationActionRequest.newBuilder()
             .setTenantId("1")
-            .setAccountId(ACCOUNT_UUID)
+            .setAccountId("2")
             .setSessionId("9")
             .setAction("ban")
             .setReason("bad")
@@ -673,7 +671,7 @@ class LoggingAdminGrpcServiceAuthTest {
     assertNotNull(ref.get());
     assertFalse(ref.get().getAllowed());
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
-    assertEquals("Malformed claim: accountId", ref.get().getError().getMessage());
+    assertEquals("accountId must be positive", ref.get().getError().getMessage());
     verifyNoInteractions(moderationService);
   }
 
@@ -682,7 +680,7 @@ class LoggingAdminGrpcServiceAuthTest {
     SessionContext.setContext(
         "", List.of(), Map.of(), true, "game-session-service", "test-instance");
     ModerationService moderationService = Mockito.mock(ModerationService.class);
-    when(moderationService.evaluatePolicy(1L, UUID.fromString(ACCOUNT_UUID), "CHAT_SEND"))
+    when(moderationService.evaluatePolicy(1L, 2L, "CHAT_SEND"))
         .thenReturn(new ModerationPolicyDecisionDto(true, "", "allowed", null));
     LoggingAdminGrpcService service =
         new LoggingAdminGrpcService(
@@ -695,7 +693,7 @@ class LoggingAdminGrpcServiceAuthTest {
     service.evaluateModerationPolicy(
         EvaluateModerationPolicyRequest.newBuilder()
             .setTenantId("1")
-            .setAccountId(ACCOUNT_UUID)
+            .setAccountId("2")
             .setScope("CHAT_SEND")
             .build(),
         new StreamObserver<>() {
@@ -714,7 +712,7 @@ class LoggingAdminGrpcServiceAuthTest {
     assertNotNull(ref.get());
     assertFalse(ref.get().hasError());
     assertEquals(true, ref.get().getAllowed());
-    verify(moderationService).evaluatePolicy(1L, UUID.fromString(ACCOUNT_UUID), "CHAT_SEND");
+    verify(moderationService).evaluatePolicy(1L, 2L, "CHAT_SEND");
   }
 
   @Test
@@ -722,7 +720,7 @@ class LoggingAdminGrpcServiceAuthTest {
     SessionContext.setContext(
         "", List.of(), Map.of(), true, "social-groups-service", "test-instance");
     ModerationService moderationService = Mockito.mock(ModerationService.class);
-    when(moderationService.evaluatePolicy(1L, UUID.fromString(ACCOUNT_UUID), "CHAT_SEND"))
+    when(moderationService.evaluatePolicy(1L, 2L, "CHAT_SEND"))
         .thenReturn(new ModerationPolicyDecisionDto(true, "", "allowed", null));
     LoggingAdminGrpcService service =
         new LoggingAdminGrpcService(
@@ -735,7 +733,7 @@ class LoggingAdminGrpcServiceAuthTest {
     service.evaluateModerationPolicy(
         EvaluateModerationPolicyRequest.newBuilder()
             .setTenantId("1")
-            .setAccountId(ACCOUNT_UUID)
+            .setAccountId("2")
             .setScope("CHAT_SEND")
             .build(),
         new StreamObserver<>() {
@@ -754,7 +752,7 @@ class LoggingAdminGrpcServiceAuthTest {
     assertNotNull(ref.get());
     assertFalse(ref.get().hasError());
     assertEquals(true, ref.get().getAllowed());
-    verify(moderationService).evaluatePolicy(1L, UUID.fromString(ACCOUNT_UUID), "CHAT_SEND");
+    verify(moderationService).evaluatePolicy(1L, 2L, "CHAT_SEND");
   }
 
   @Test
@@ -772,7 +770,7 @@ class LoggingAdminGrpcServiceAuthTest {
     service.evaluateModerationPolicy(
         EvaluateModerationPolicyRequest.newBuilder()
             .setTenantId("1")
-            .setAccountId(ACCOUNT_UUID)
+            .setAccountId("2")
             .setScope("CHAT_SEND")
             .build(),
         new StreamObserver<>() {
@@ -808,7 +806,7 @@ class LoggingAdminGrpcServiceAuthTest {
     service.evaluateModerationPolicy(
         EvaluateModerationPolicyRequest.newBuilder()
             .setTenantId("1")
-            .setAccountId(ACCOUNT_UUID)
+            .setAccountId("2")
             .setScope("CHAT_SEND")
             .build(),
         new StreamObserver<>() {
@@ -844,7 +842,7 @@ class LoggingAdminGrpcServiceAuthTest {
     service.evaluateModerationPolicy(
         EvaluateModerationPolicyRequest.newBuilder()
             .setTenantId("1")
-            .setAccountId(ACCOUNT_UUID)
+            .setAccountId("2")
             .setScope("CHAT_SEND")
             .build(),
         new StreamObserver<>() {
@@ -880,7 +878,7 @@ class LoggingAdminGrpcServiceAuthTest {
     service.evaluateModerationPolicy(
         EvaluateModerationPolicyRequest.newBuilder()
             .setTenantId("1")
-            .setAccountId(ACCOUNT_UUID)
+            .setAccountId("2")
             .setScope("CHAT_SEND")
             .build(),
         new StreamObserver<>() {

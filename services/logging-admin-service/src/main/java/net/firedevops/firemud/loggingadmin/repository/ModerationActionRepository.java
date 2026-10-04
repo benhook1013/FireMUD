@@ -8,7 +8,6 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
-import java.util.UUID;
 import net.firedevops.firemud.loggingadmin.entity.ModerationAction;
 import net.firedevops.firemud.loggingadmin.jooq.tables.records.ModerationActionsRecord;
 import org.jooq.DSLContext;
@@ -32,7 +31,7 @@ public class ModerationActionRepository {
   }
 
   public Optional<ModerationAction> findFirstByTenantIdAndAccountIdAndActionAndReason(
-      Long tenantId, UUID accountId, String action, String reason) {
+      Long tenantId, Long accountId, String action, String reason) {
     return dsl.selectFrom(MODERATION_ACTIONS)
         .where(
             MODERATION_ACTIONS
@@ -47,7 +46,7 @@ public class ModerationActionRepository {
   }
 
   public List<ModerationAction> findActivePolicyActions(
-      Long tenantId, UUID accountId, List<String> actions, Instant now) {
+      Long tenantId, Long accountId, List<String> actions, Instant now) {
     return dsl.selectFrom(MODERATION_ACTIONS)
         .where(
             MODERATION_ACTIONS
