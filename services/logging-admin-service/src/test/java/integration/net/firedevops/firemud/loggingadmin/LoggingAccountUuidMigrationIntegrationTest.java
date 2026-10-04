@@ -35,6 +35,10 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @SuppressWarnings("resource")
 class LoggingAccountUuidMigrationIntegrationTest {
   private static final String MIGRATION_LOCATION = "classpath:db/migration";
+  private static final List<String> EXPECTED_LATEST_MIGRATION_VERSIONS =
+      List.of("1", "2", "3", "3.1", "4", "5", "6", "1000", "1001", "1002");
+  private static final List<String> EXPECTED_MIGRATION_VERSIONS_THROUGH_V5 =
+      List.of("1", "2", "3", "3.1", "4", "5");
 
   @Container
   static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
@@ -54,7 +58,8 @@ class LoggingAccountUuidMigrationIntegrationTest {
     assertThat(columnType(schema, "player_reports", "id")).isEqualTo("int8");
     assertThat(columnType(schema, "log_events", "account_id")).isEqualTo("int8");
     // Runtime discovery includes Saga migrations V1000–V1002 after service migration V6.
-    assertThat(history(schema)).hasSize(9);
+    assertThat(historyVersions(schema))
+        .containsExactlyElementsOf(EXPECTED_LATEST_MIGRATION_VERSIONS);
   }
 
   @Test
@@ -79,7 +84,8 @@ class LoggingAccountUuidMigrationIntegrationTest {
                 schema, "SELECT account_id FROM log_events WHERE message = 'preserve generic log'"))
         .isEqualTo(42L);
     // The fixture applies the same Saga migrations as the full runtime discovery.
-    assertThat(history(schema)).hasSize(9);
+    assertThat(historyVersions(schema))
+        .containsExactlyElementsOf(EXPECTED_LATEST_MIGRATION_VERSIONS);
   }
 
   @Test
@@ -186,7 +192,8 @@ class LoggingAccountUuidMigrationIntegrationTest {
           assertThrows(ExecutionException.class, () -> migration.get(10, TimeUnit.SECONDS));
       assertThat(failure).hasStackTraceContaining("Account-owned recovery is required");
       assertThat(history(schema)).isEqualTo(historyBefore);
-      assertThat(history(schema)).hasSize(5);
+      assertThat(historyVersions(schema))
+          .containsExactlyElementsOf(EXPECTED_MIGRATION_VERSIONS_THROUGH_V5);
       assertThat(columnType(schema, "moderation_actions", "account_id")).isEqualTo("int8");
       assertThat(scalarLong(schema, "SELECT count(*) FROM moderation_actions")).isEqualTo(1L);
       assertThat(
@@ -282,6 +289,10 @@ class LoggingAccountUuidMigrationIntegrationTest {
       }
     }
     return entries;
+  }
+
+  private static List<String> historyVersions(String schema) throws SQLException {
+    return history(schema).stream().map(entry -> entry.substring(0, entry.indexOf(':'))).toList();
   }
 
   private static List<String> rows(String schema, String table) throws SQLException {
