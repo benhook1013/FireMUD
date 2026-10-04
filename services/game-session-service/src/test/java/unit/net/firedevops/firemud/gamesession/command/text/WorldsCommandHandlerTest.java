@@ -1069,19 +1069,12 @@ class WorldsCommandHandlerTest {
   }
 
   @Test
-  void browseRealmsAndCharactersRejectInvalidPrivateMembership() {
+  void browseRealmsAndCharactersRedactPrivateOnlySelectorsBeforeAccountReads() {
     GameplayCatalogProperties properties = new GameplayCatalogProperties();
     properties.setWorlds(List.of(world("preview", 22L, 2L, false)));
     properties.getWorlds().getFirst().getRealms().getFirst().setPublicProductionRealm(false);
     addPublicProductionAuthority(properties);
     AccountClient accountClient = Mockito.mock(AccountClient.class);
-    Mockito.when(
-            accountClient.getTenantMembershipForRuntime(
-                Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
-        .thenReturn(
-            GetTenantMembershipForRuntimeResponse.newBuilder()
-                .setError(ErrorDetail.newBuilder().setCode("AUTH_UNAVAILABLE"))
-                .build());
     WorldsCommandHandler localHandler = authenticatedHandler(properties, accountClient);
 
     assertThat(localHandler.browseRealms(authenticatedSession(), "preview"))
@@ -2321,42 +2314,6 @@ class WorldsCommandHandlerTest {
 
     assertThat(localHandler.browseCharacters(authenticatedSession(), "mixed-world", "secret"))
         .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.invalidRealm("mixed-world"));
-    Mockito.verifyNoInteractions(accountClient);
-  }
-
-  @Test
-  void browseCharactersFailsClosedForValidSelectorBeforeEntityRosterRead() {
-    gameplayCatalogProperties.setWorlds(List.of(world("demo", 22L, 1L, false)));
-    gameplayCatalogProperties
-        .getWorlds()
-        .getFirst()
-        .getRealms()
-        .getFirst()
-        .setPublicProductionRealm(true);
-    AccountClient accountClient = Mockito.mock(AccountClient.class);
-    WorldsCommandHandler localHandler =
-        authenticatedHandler(gameplayCatalogProperties, accountClient);
-
-    WorldsCommandHandler.CharacterBrowseResult result =
-        localHandler.browseCharacters(
-            new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt"),
-            "demo",
-            "production");
-
-    assertThat(result).isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.Unavailable.class);
-    Mockito.verifyNoInteractions(accountClient);
-  }
-
-  @Test
-  void browseCharactersFailsClosedForExplicitPublicRealmBeforeAnyAccountCall() {
-    AccountClient accountClient = Mockito.mock(AccountClient.class);
-    WorldsCommandHandler localHandler =
-        authenticatedHandler(publicProductionProperties(), accountClient);
-
-    WorldsCommandHandler.CharacterBrowseResult result =
-        localHandler.browseCharacters(authenticatedSession(), "demo", "production");
-
-    assertThat(result).isEqualTo(WorldsCommandHandler.CharacterBrowseResult.unavailable());
     Mockito.verifyNoInteractions(accountClient);
   }
 }

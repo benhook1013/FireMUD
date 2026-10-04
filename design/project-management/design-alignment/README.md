@@ -141,7 +141,7 @@ Document owns required pre-v1 corrections in their canonical domain unless anoth
 
 ## Current Work Sequence
 
-1. Preserve the earlier section reviews, PRs, fixes, and accepted findings; reclassify any section with required pre-v1 implementation or essential proof still open as provisional.
+1. Preserve the earlier section reviews, PRs, fixes, and accepted findings; reclassify any section with required pre-v1 implementation or essential proof still open, or without a convincing whole-section review, as provisional.
 2. Reconcile known findings and live implementation trackers with current code. Decide and dependency-order required pre-v1 work, deliberate later work, and already-resolved rows; bring consequential scope choices to Overseer with a recommendation.
 3. Implement required behavior and its producer/consumer prerequisites in coherent owner PRs. Prepare each section with a short design-authority check, then use the paired whole-section assessment defined by the [plan](./whole-corpus-authority-review-plan.md#implementation-and-review-method) when its implementation state can support closure.
 4. Revisit every provisional section as dependencies advance, repeating the return sweep until the final section gates are satisfied. Then reconcile owner/secondary/tracker consistency and validate the complete corpus.
