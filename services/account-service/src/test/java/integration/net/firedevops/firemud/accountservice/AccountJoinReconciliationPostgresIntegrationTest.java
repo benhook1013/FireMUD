@@ -74,7 +74,7 @@ class AccountJoinReconciliationPostgresIntegrationTest {
   private static final UUID REALM_ID = UUID.fromString("a825f7ef-0ea3-4e8c-bf7c-a20242b4c931");
   private static final String WORLD_SLUG = "join-reconciliation-world";
   private static final String REALM_SLUG = "production";
-  private static final String NAMESPACE_ID = "join-reconciliation-namespace";
+  private static final String NAMESPACE_ID = "9f1c6889-9e41-4d5d-86fb-8c75fc401a31";
   private static final long GAME_INSTANCE_ID = 73L;
   private static final long CATALOG_REVISION = 29L;
   private static final long POINTER_VERSION = 11L;
