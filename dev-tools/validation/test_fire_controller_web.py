@@ -215,6 +215,10 @@ class FireControllerWebTest(unittest.TestCase):
         )
         self.assertEqual("&lt;script&gt;", web._time_metadata("<script>"))
         self.assertEqual("2026-10-04T08:47:13", web._time_metadata("2026-10-04T08:47:13"))
+        self.assertEqual(
+            "9999-12-31T23:59:59Z",
+            web._time_metadata("9999-12-31T23:59:59Z"),
+        )
 
     def test_public_inline_markdown_keeps_http_links_and_omits_private_targets(self):
         rendered = web.render_public_inline(

@@ -370,12 +370,12 @@ def _time_metadata(value) -> str:
     timestamp = str(value or "")
     try:
         parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            return html.escape(timestamp, quote=True)
+        local = parsed.astimezone(_LOCAL_TIMEZONE)
+        display = local.strftime("%d %b %Y %H:%M %Z").lstrip("0")
     except (ValueError, OverflowError):
         return html.escape(timestamp, quote=True)
-    if parsed.tzinfo is None:
-        return html.escape(timestamp, quote=True)
-    local = parsed.astimezone(_LOCAL_TIMEZONE)
-    display = local.strftime("%d %b %Y %H:%M %Z").lstrip("0")
     return f'<time datetime="{html.escape(timestamp, quote=True)}">{html.escape(display, quote=True)}</time>'
 
 
