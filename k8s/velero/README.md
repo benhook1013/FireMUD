@@ -36,16 +36,9 @@ kubectl apply -f verify-backups-cronjob.yaml -n firemud
 
 The CronJob leaves the optional `PG_DUMP_BUCKET` check disabled by default. An approved environment-specific projection must provide the bucket and its credentials together; credentials are never bundled into the verifier image. CI image smoke proves the image contents and offline client commands, while a live cluster backup-list result remains unrun deployment proof.
 
-The checked-in Terraform Helm release is pinned to the verified VMware Tanzu Velero chart `12.2.0`, released 2026-09-16. Its default `appVersion` is Velero `1.18.2`, while the explicit repository authority and Terraform image override pin Velero `1.18.3`. The `VELERO_VERSION` and `VELERO_IMAGE_DIGEST` authority, the Velero stage in `docker/backup-verifier.Dockerfile`, and the Terraform server image projection must stay aligned. The CronJob's `backup-verifier` digest is independently promoted from its exact CI-smoked image and is intentionally not rewritten by this Velero updater transaction. Update those three Velero projections with the canonical transaction, supplying the chart version explicitly:
+The checked-in Terraform Helm release pins the VMware Tanzu Velero chart and overrides its server image with an exact tag and immutable digest. The verifier Dockerfile also pins its Velero stage by tag and digest. Renovate groups those native Docker and Terraform updates with the exact `VELERO_VERSION` used by the manual restore workflow, while leaving the independently promoted `backup-verifier` CronJob digest unchanged. The workflow downloads the matching Velero release `CHECKSUM` file and verifies the exact Linux archive before installing the CLI. A grouped dependency PR can contain only the projections with available updates; the authority contract still requires every present image projection to retain an immutable digest and the server and verifier image tags to match the CLI version.
 
-```bash
-python3 dev-tools/maintenance/update-workflow-tool.py velero <velero-version> \
-  --velero-dockerfile docker/backup-verifier.Dockerfile \
-  --terraform-file k8s/terraform-production/main.tf \
-  --velero-chart-version <chart-version> --image-evidence-file <path>
-```
-
-The explicit chart argument is required because Helm chart versions and Velero app versions are independent. This updates repository plans and pre-release manifests only; it does not claim that a live production deployment changed.
+Helm chart versions remain independent from Velero app versions. Renovate discovers the chart through the Terraform `helm_release` and includes an available chart update in the same dependency group. These changes update repository plans and pre-release manifests only; they do not claim that a live production deployment changed.
 
 ## Local Backup with MinIO
 

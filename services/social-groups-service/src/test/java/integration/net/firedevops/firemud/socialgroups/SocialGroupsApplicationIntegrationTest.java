@@ -68,6 +68,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
     })
 @Import(NoGrpcServerTestConfiguration.class)
 class SocialGroupsApplicationIntegrationTest {
+  private static final String ACCOUNT_UUID = "c41744c9-285e-4ed0-9fb4-0f0acb7a0123";
   private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
   private static final JwtUtil JWT_UTIL =
       new JwtUtil("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 3600000L);
@@ -141,7 +142,8 @@ class SocialGroupsApplicationIntegrationTest {
   void pingEndpointReturnsPong() throws Exception {
     String token =
         JWT_UTIL.generateToken(
-            "social-groups-test", Map.of("globalRoles", List.of("platformAdmin")));
+            ACCOUNT_UUID,
+            Map.of("accountId", ACCOUNT_UUID, "globalRoles", List.of("platformAdmin")));
     HttpRequest request =
         HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/ping"))
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
@@ -154,7 +156,7 @@ class SocialGroupsApplicationIntegrationTest {
 
   @Test
   void friendRosterRejectsMalformedTenantIdAsInvalidArgument() throws Exception {
-    String token = privilegedAccountToken(2L);
+    String token = privilegedAccountToken();
 
     HttpResponse<String> response =
         send(authedGet(token, "http://localhost:" + port + "/friends?tenantId=bad&accountId=2"));
@@ -166,7 +168,7 @@ class SocialGroupsApplicationIntegrationTest {
 
   @Test
   void friendRosterRejectsMalformedFilterAsInvalidArgument() throws Exception {
-    String token = privilegedAccountToken(2L);
+    String token = privilegedAccountToken();
 
     HttpResponse<String> response =
         send(
@@ -201,7 +203,7 @@ class SocialGroupsApplicationIntegrationTest {
 
   @Test
   void friendRosterAndPresenceEndpointsReturnCanonicalEmbeddedPresence() throws Exception {
-    String token = privilegedAccountToken(2L);
+    String token = privilegedAccountToken();
     HttpResponse<String> addResponse =
         send(
             HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/friends"))
@@ -278,7 +280,7 @@ class SocialGroupsApplicationIntegrationTest {
 
   @Test
   void friendRosterEndpointFallsBackToOfflineWhenPresenceIsUnavailable() throws Exception {
-    String token = privilegedAccountToken(2L);
+    String token = privilegedAccountToken();
     send(
         HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/friends"))
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
@@ -304,7 +306,7 @@ class SocialGroupsApplicationIntegrationTest {
 
   @Test
   void friendRosterEndpointSupportsCanonicalOnlineFilter() throws Exception {
-    String token = privilegedAccountToken(2L);
+    String token = privilegedAccountToken();
     send(
         HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/friends"))
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
@@ -353,7 +355,7 @@ class SocialGroupsApplicationIntegrationTest {
 
   @Test
   void friendRosterEndpointSupportsCanonicalSharedScopeFilter() throws Exception {
-    String token = privilegedAccountToken(2L);
+    String token = privilegedAccountToken();
     send(
         HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/friends"))
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
@@ -414,7 +416,7 @@ class SocialGroupsApplicationIntegrationTest {
 
   @Test
   void friendRosterSummaryEndpointReturnsCanonicalCounts() throws Exception {
-    String token = privilegedAccountToken(2L);
+    String token = privilegedAccountToken();
     send(
         HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/friends"))
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
@@ -470,7 +472,7 @@ class SocialGroupsApplicationIntegrationTest {
 
   @Test
   void friendEndpointsRequireReciprocalActiveLinksWithinRequestedTenant() throws Exception {
-    String token = privilegedAccountToken(2L);
+    String token = privilegedAccountToken();
     saveFriendLink(1L, 2L, 3L, "active");
     saveFriendLink(1L, 2L, 4L, "active");
     saveFriendLink(1L, 4L, 2L, "inactive");
@@ -548,7 +550,7 @@ class SocialGroupsApplicationIntegrationTest {
 
   @Test
   void addFriendIsIdempotentForExistingActiveAccountLink() throws Exception {
-    String token = privilegedAccountToken(2L);
+    String token = privilegedAccountToken();
     HttpRequest request =
         HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/friends"))
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
@@ -582,7 +584,7 @@ class SocialGroupsApplicationIntegrationTest {
 
   @Test
   void addFriendRejectsSelfLink() throws Exception {
-    String token = privilegedAccountToken(2L);
+    String token = privilegedAccountToken();
     HttpResponse<String> response =
         send(
             HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/friends"))
@@ -603,7 +605,7 @@ class SocialGroupsApplicationIntegrationTest {
 
   @Test
   void removeFriendDeletesExistingActiveAccountLinkAndIsIdempotent() throws Exception {
-    String token = privilegedAccountToken(2L);
+    String token = privilegedAccountToken();
     HttpRequest addRequest =
         HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/friends"))
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
@@ -640,7 +642,7 @@ class SocialGroupsApplicationIntegrationTest {
 
   @Test
   void removeFriendByOrdinalDeletesCanonicalRosterEntry() throws Exception {
-    String token = privilegedAccountToken(2L);
+    String token = privilegedAccountToken();
     send(
         HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/friends"))
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
@@ -671,7 +673,7 @@ class SocialGroupsApplicationIntegrationTest {
 
   @Test
   void friendVisibilityEndpointsExposeCanonicalPolicyReadAndWrite() throws Exception {
-    String token = privilegedAccountToken(2L);
+    String token = privilegedAccountToken();
 
     HttpResponse<String> getResponse =
         send(
@@ -732,11 +734,11 @@ class SocialGroupsApplicationIntegrationTest {
     accountFriendLinkRepository.save(link);
   }
 
-  private static String privilegedAccountToken(long accountId) {
+  private static String privilegedAccountToken() {
     return JWT_UTIL.generateToken(
-        Long.toString(accountId),
+        ACCOUNT_UUID,
         Map.of(
-            "accountId", Long.toString(accountId),
+            "accountId", ACCOUNT_UUID,
             "globalRoles", List.of("platformAdmin"),
             "scopedRoles", Map.of("1", List.of("tenantAdmin"))));
   }

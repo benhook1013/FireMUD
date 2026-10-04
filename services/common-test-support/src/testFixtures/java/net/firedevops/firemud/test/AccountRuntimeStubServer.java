@@ -132,6 +132,11 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
   public void denyGameplayAdmission() {
     setMembershipExists(true);
     setGameplayAdmissionAllowed(false);
+  }
+
+  public void setMembershipInactive() {
+    setMembershipExists(true);
+    setGameplayAdmissionAllowed(false);
     membershipLifecycleState.set("INACTIVE");
   }
 
@@ -156,6 +161,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     allowPublicJoin.set(true);
     realmAccessGranted.set(true);
     profilesByAccountUuid.clear();
+    connectScopesById.clear();
   }
 
   @Override
@@ -189,18 +195,30 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     String lifecycle = membershipLifecycleState.get();
     boolean admitted = gameplayAdmissionAllowed.get();
     GetTenantMembershipForRuntimeResponse response;
-    if (exists && admitted && "ACTIVE".equals(lifecycle)) {
+    if (exists && "ACTIVE".equals(lifecycle)) {
       response =
           completeMembershipSnapshot(
-              accountUuid, tenantSelector, request.getPlayerContext().getRequestId(), lifecycle);
+              accountUuid,
+              tenantSelector,
+              request.getPlayerContext().getRequestId(),
+              lifecycle,
+              admitted);
     } else if (exists && !admitted && "INACTIVE".equals(lifecycle)) {
       response =
           completeMembershipSnapshot(
-              accountUuid, tenantSelector, request.getPlayerContext().getRequestId(), lifecycle);
+              accountUuid,
+              tenantSelector,
+              request.getPlayerContext().getRequestId(),
+              lifecycle,
+              false);
     } else if (!exists && !admitted && "MISSING".equals(lifecycle)) {
       response =
           completeMembershipSnapshot(
-              accountUuid, tenantSelector, request.getPlayerContext().getRequestId(), lifecycle);
+              accountUuid,
+              tenantSelector,
+              request.getPlayerContext().getRequestId(),
+              lifecycle,
+              false);
     } else {
       response =
           GetTenantMembershipForRuntimeResponse.newBuilder()
@@ -220,9 +238,13 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
   }
 
   private static GetTenantMembershipForRuntimeResponse completeMembershipSnapshot(
-      String accountUuid, String tenantSelector, String requestId, String lifecycle) {
+      String accountUuid,
+      String tenantSelector,
+      String requestId,
+      String lifecycle,
+      boolean admitted) {
     boolean exists = !"MISSING".equals(lifecycle);
-    boolean admitted = "ACTIVE".equals(lifecycle);
+    List<String> roles = "ACTIVE".equals(lifecycle) ? List.of("player") : List.of();
     String tenantUuid = syntheticTenantUuid(tenantSelector);
     String membershipStream =
         AUTHORITY_STREAM_PREFIX + "membership/" + accountUuid + "/" + tenantUuid;
@@ -266,9 +288,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
             .setIssuanceFence("1")
             .addAllOutboxCheckpoints(checkpoints)
             .setEvaluatedAt(Instant.now().toString());
-    if (admitted) {
-      response.addRoles("player");
-    }
+    response.addAllRoles(roles);
     if (exists) {
       MembershipAuthorityEventV1Codec.MembershipEvent event =
           MembershipAuthorityEventV1Codec.seal(
@@ -295,7 +315,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
                           "membershipAuthorityGeneration", Map.of(tenantUuid, "1"),
                           "privateRealmGrantVersions", List.of())),
                   Map.entry("issuanceFence", "1"),
-                  Map.entry("roles", admitted ? List.of("player") : List.of()),
+                  Map.entry("roles", roles),
                   Map.entry("gameplayAdmissionAllowed", admitted),
                   Map.entry("callerBoundAuthorityInvalidated", false)));
       response.addOutboxSourceEvidence(
@@ -381,9 +401,11 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
       IssueDirectTextConnectScopeRequest request,
       StreamObserver<IssueDirectTextConnectScopeResponse> responseObserver) {
     PlayerExecutionContext caller = request.getPlayerContext();
-    if (caller.getAccountId().isBlank()
+    if (!isCanonicalNonNilUuid(caller.getAccountId())
         || caller.getTenantId().isBlank()
         || caller.getRealmId().isBlank()
+        || caller.getSessionId().isBlank()
+        || caller.getRequestId().isBlank()
         || caller.getGameInstanceId().isBlank()
         || caller.getPlayableStateNamespaceId().isBlank()
         || caller.getPlayableStateScope().isBlank()
@@ -394,6 +416,12 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
         || request.getRealmSlug().isBlank()
         || request.getPlayableStateNamespaceId().isBlank()
         || request.getPlayableStateScope().isBlank()
+        || request.getCatalogRevision() <= 0
+        || request.getPointerVersion() <= 0
+        || !isCanonicalUuid(caller.getRealmId())
+        || !isCanonicalUuid(request.getRealmId())
+        || !isCanonicalUuid(caller.getPlayableStateNamespaceId())
+        || !isCanonicalUuid(request.getPlayableStateNamespaceId())
         || !caller.getTenantId().equals(request.getTenantId())
         || !caller.getRealmId().equals(request.getRealmId())
         || !caller.getGameInstanceId().equals(request.getGameInstanceId())
@@ -413,6 +441,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
           scopeId,
           new StubConnectScope(
               caller.getAccountId(),
+              caller.getSessionId(),
               request.getTenantId(),
               request.getRealmId(),
               request.getGameInstanceId(),
@@ -428,6 +457,25 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     responseObserver.onCompleted();
   }
 
+  private static boolean isCanonicalUuid(String value) {
+    if (value == null || value.isBlank()) {
+      return false;
+    }
+    try {
+      return UUID.fromString(value).toString().equals(value);
+    } catch (IllegalArgumentException ex) {
+      return false;
+    }
+  }
+
+  private static boolean isCanonicalNonNilUuid(String value) {
+    if (!isCanonicalUuid(value)) {
+      return false;
+    }
+    UUID parsed = UUID.fromString(value);
+    return parsed.getMostSignificantBits() != 0L || parsed.getLeastSignificantBits() != 0L;
+  }
+
   @Override
   public void joinPublicProductionMembership(
       JoinPublicProductionMembershipRequest request,
@@ -437,11 +485,13 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     if (request.getConnectScopeId().isBlank()
         || request.getRequestId().isBlank()
         || !request.getRequestId().equals(caller.getRequestId())
-        || caller.getAccountId().isBlank()
+        || !isCanonicalNonNilUuid(caller.getAccountId())
         || caller.getTenantId().isBlank()
+        || caller.getSessionId().isBlank()
         || scope == null
         || !scope.expiresAt().isAfter(Instant.now())
         || !scope.accountId().equals(caller.getAccountId())
+        || !scope.sessionId().equals(caller.getSessionId())
         || !scope.tenantId().equals(caller.getTenantId())
         || !scope.realmId().equals(caller.getRealmId())
         || !scope.gameInstanceId().equals(caller.getGameInstanceId())
@@ -464,6 +514,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     } else {
       membershipExists.set(true);
       gameplayAdmissionAllowed.set(true);
+      membershipLifecycleState.set("ACTIVE");
       responseObserver.onNext(
           JoinPublicProductionMembershipResponse.newBuilder()
               .setSuccess(true)
@@ -547,6 +598,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
 
   private record StubConnectScope(
       String accountId,
+      String sessionId,
       String tenantId,
       String realmId,
       String gameInstanceId,

@@ -1883,21 +1883,26 @@ class PreviewArtifactCertificateIdentityModeTest(unittest.TestCase):
             for name, spec in self.validator.EXPECTED_INTERNAL_NETWORK_POLICY_SPECS.items()
         ]
         if mode == "hosted-controller":
-            documents.append(
-                self._policy_document(
-                    "account-service-controller-ingress",
-                    {
-                        "podSelector": {"matchLabels": {"app": "account-service"}},
-                        "policyTypes": ["Ingress"],
-                        "ingress": [
-                            {
-                                "from": [controller_from],
-                                "ports": [{"protocol": "TCP", "port": 6565}],
-                            }
-                        ],
-                    },
+            for workload in (
+                "account-service",
+                "game-session-service",
+                "social-groups-service",
+            ):
+                documents.append(
+                    self._policy_document(
+                        f"{workload}-controller-ingress",
+                        {
+                            "podSelector": {"matchLabels": {"app": workload}},
+                            "policyTypes": ["Ingress"],
+                            "ingress": [
+                                {
+                                    "from": [controller_from],
+                                    "ports": [{"protocol": "TCP", "port": 6565}],
+                                }
+                            ],
+                        },
+                    )
                 )
-            )
         documents.extend(
             [
                 self._policy_document(
@@ -2048,23 +2053,70 @@ class PreviewArtifactCertificateIdentityModeTest(unittest.TestCase):
     def test_mode_specific_policy_sets_and_rules_are_closed(self):
         hosted = self._policy_documents("hosted-controller")
         standalone = self._policy_documents("standalone")
-        with self.assertRaisesRegex(ValueError, "runtime NetworkPolicy set is not closed"):
-            self.validator.validate_network_policies(
-                standalone
-                + [
-                    self._policy_document(
-                        "account-service-controller-ingress", {}
+        for workload in (
+            "account-service",
+            "game-session-service",
+            "social-groups-service",
+        ):
+            with self.subTest(mode="standalone", workload=workload), self.assertRaisesRegex(
+                ValueError, "runtime NetworkPolicy set is not closed"
+            ):
+                self.validator.validate_network_policies(
+                    standalone
+                    + [
+                        self._policy_document(
+                            f"{workload}-controller-ingress", {}
+                        )
+                    ],
+                    "standalone",
+                )
+        for workload in (
+            "account-service",
+            "game-session-service",
+            "social-groups-service",
+        ):
+            missing_policy = [
+                document
+                for document in hosted
+                if document["metadata"]["name"]
+                != f"{workload}-controller-ingress"
+            ]
+            with self.subTest(mode="hosted-controller", missing=workload), self.assertRaisesRegex(
+                ValueError, "runtime NetworkPolicy set is not closed"
+            ):
+                self.validator.validate_network_policies(
+                    missing_policy, "hosted-controller"
+                )
+
+        for workload in (
+            "account-service",
+            "game-session-service",
+            "social-groups-service",
+        ):
+            for field, value, message in (
+                (
+                    "podSelector",
+                    {"matchLabels": {"app": f"{workload}-other"}},
+                    "selects an unsafe workload",
+                ),
+                ("policyTypes", ["Ingress", "Egress"], "must only govern ingress"),
+                ("ingress", [], "has an unsafe exception"),
+            ):
+                with self.subTest(
+                    mode="hosted-controller", workload=workload, field=field
+                ):
+                    malformed = copy.deepcopy(hosted)
+                    policy = next(
+                        document
+                        for document in malformed
+                        if document["metadata"]["name"]
+                        == f"{workload}-controller-ingress"
                     )
-                ],
-                "standalone",
-            )
-        missing_account = [
-            document
-            for document in hosted
-            if document["metadata"]["name"] != "account-service-controller-ingress"
-        ]
-        with self.assertRaisesRegex(ValueError, "runtime NetworkPolicy set is not closed"):
-            self.validator.validate_network_policies(missing_account, "hosted-controller")
+                    policy["spec"][field] = value
+                    with self.assertRaisesRegex(ValueError, message):
+                        self.validator.validate_network_policies(
+                            malformed, "hosted-controller"
+                        )
 
         for mode in ("standalone", "hosted-controller"):
             with self.subTest(mode=mode, case="missing gateway egress"):
@@ -2916,6 +2968,22 @@ class PreviewArtifactFrontendValidationTest(unittest.TestCase):
                             }
                         },
                     }
+                ),
+            ),
+            (
+                "published assets routed through gateway",
+                lambda ingress: ingress["spec"]["rules"][0]["http"]["paths"].insert(
+                    -1,
+                    {
+                        "path": "/assets",
+                        "pathType": "Prefix",
+                        "backend": {
+                            "service": {
+                                "name": "spring-cloud-gateway",
+                                "port": {"number": 80},
+                            }
+                        },
+                    },
                 ),
             ),
         )

@@ -106,7 +106,7 @@ class CommunicationWebSocketCrossServiceTest {
   }
 
   @Test
-  void websocketPlayDeniesBeforeReadingEntityRosterWhenAccountAdmissionIsDenied() throws Exception {
+  void websocketPlayRejectsContradictoryActiveMembershipBeforeEntityRosterRead() throws Exception {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
     STACK.accountStub().denyGameplayAdmission();
@@ -119,10 +119,35 @@ class CommunicationWebSocketCrossServiceTest {
             GameplayWebSocketScenarios.demoAdmission(READY_LOOK_TEXT),
             client ->
                 client.awaitMatching(
-                    response -> response.startsWith("ERROR JOIN_REQUIRED"),
-                    "Account admission denial before Entity roster lookup"))) {
+                    response -> response.startsWith("ERROR AUTH_UNAVAILABLE"),
+                    "Contradictory active membership before Entity roster lookup"))) {
       assertThat(scenario.driver().responses())
-          .anyMatch(response -> response.startsWith("ERROR JOIN_REQUIRED"));
+          .anyMatch(response -> response.startsWith("ERROR AUTH_UNAVAILABLE"))
+          .noneMatch(response -> response.startsWith("ERROR JOIN_REQUIRED"));
+    }
+
+    assertThat(entityStub().lastListCharactersByAccountRequest()).isEmpty();
+  }
+
+  @Test
+  void websocketPlayRequiresJoinForFreshMissingMembershipBeforeEntityRosterRead() throws Exception {
+    ensureTestServicesStarted();
+    long sessionId = prepareGameInstance();
+    STACK.accountStub().setMembershipExists(false);
+
+    try (GameplayWebSocketScenarios.LoginThenPlayScenario scenario =
+        GameplayWebSocketScenarios.loginThenAttemptPlay(
+            GameplayWebSocketScenarios.proxyGatewayDriverFactory(
+                gameSessionWebSocketUrl(), COMMAND_WAIT, TENANT_ID, sessionId),
+            "missing-membership-play-" + sessionId,
+            GameplayWebSocketScenarios.demoAdmission(READY_LOOK_TEXT),
+            client ->
+                client.awaitMatching(
+                    response -> response.startsWith("ERROR JOIN_REQUIRED"),
+                    "Fresh missing membership before Entity roster lookup"))) {
+      assertThat(scenario.driver().responses())
+          .anyMatch(response -> response.startsWith("ERROR JOIN_REQUIRED"))
+          .noneMatch(response -> response.startsWith("ERROR WORLD_ACCESS_DENIED"));
     }
 
     assertThat(entityStub().lastListCharactersByAccountRequest()).isEmpty();
@@ -205,18 +230,22 @@ class CommunicationWebSocketCrossServiceTest {
 
     List<String> responses =
         runCommunicationSequence(
-            sessionId,
-            "FRIENDS",
-            "Sora [acct #" + SORA_ACCOUNT_UUID + "] - online in Demo World / Live Realm (idle)");
+            sessionId, "FRIENDS", "Sora [acct #" + SORA_ACCOUNT_UUID + "] - online (idle)");
 
     assertThat(responses).hasSizeGreaterThanOrEqualTo(3);
     assertThat(responses)
         .anyMatch(
             response ->
-                response.contains(
-                    "Sora [acct #"
-                        + SORA_ACCOUNT_UUID
-                        + "] - online in Demo World / Live Realm (idle)"));
+                response.contains("Sora [acct #" + SORA_ACCOUNT_UUID + "] - online (idle)"));
+    assertThat(responses)
+        .noneMatch(
+            response ->
+                response.contains("private-playtest")
+                    || response.contains("Private Playtest World")
+                    || response.contains("staff-preview")
+                    || response.contains("Staff Preview Realm")
+                    || response.contains("shared")
+                    || response.contains("Pointer version"));
     GameplaySocialAssertions.assertListFriendsRequest(
         socialStub().lastFriendsRequest(), Long.toString(TENANT_ID), ACCOUNT_UUID);
   }
@@ -230,19 +259,14 @@ class CommunicationWebSocketCrossServiceTest {
         runCommunicationSequence(
             sessionId,
             "FRIENDS ONLINE",
-            "Friends ONLINE [1/1]:\n"
-                + "1) Sora [acct #"
-                + SORA_ACCOUNT_UUID
-                + "] - online in Demo World / Live Realm (idle)");
+            "Friends ONLINE:\n" + "1) Sora [acct #" + SORA_ACCOUNT_UUID + "] - online (idle)");
 
     assertThat(responses)
         .anyMatch(
             response ->
-                response.contains("Friends ONLINE [1/1]:")
+                response.contains("Friends ONLINE:\n")
                     && response.contains(
-                        "1) Sora [acct #"
-                            + SORA_ACCOUNT_UUID
-                            + "] - online in Demo World / Live Realm (idle)"));
+                        "1) Sora [acct #" + SORA_ACCOUNT_UUID + "] - online (idle)"));
     GameplaySocialAssertions.assertListFriendsRequest(
         socialStub().lastFriendsRequest(),
         Long.toString(TENANT_ID),
@@ -251,32 +275,25 @@ class CommunicationWebSocketCrossServiceTest {
   }
 
   @Test
-  void websocketFriendsSharedFiltersCanonicalRoster() throws Exception {
+  void websocketLocationScopeFiltersFailClosedWithoutSocialQuery() throws Exception {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
 
-    List<String> responses =
-        runCommunicationSequence(
-            sessionId,
-            "FRIENDS SHARED",
-            "Friends SHARED [1/1]:\n"
-                + "1) Sora [acct #"
-                + SORA_ACCOUNT_UUID
-                + "] - online in Demo World / Live Realm (idle)");
+    for (String filter : List.of("SHARED", "ISOLATED")) {
+      List<String> responses =
+          runCommunicationSequence(
+              sessionId,
+              "FRIENDS " + filter,
+              "ERROR FRIEND_PRESENCE_UNAVAILABLE Friend presence unavailable");
 
-    assertThat(responses)
-        .anyMatch(
-            response ->
-                response.contains("Friends SHARED [1/1]:")
-                    && response.contains(
-                        "1) Sora [acct #"
-                            + SORA_ACCOUNT_UUID
-                            + "] - online in Demo World / Live Realm (idle)"));
-    GameplaySocialAssertions.assertListFriendsRequest(
-        socialStub().lastFriendsRequest(),
-        Long.toString(TENANT_ID),
-        ACCOUNT_UUID,
-        net.firedevops.firemud.socialgroups.v1.FriendRosterFilter.FRIEND_ROSTER_FILTER_SHARED);
+      assertThat(responses)
+          .anyMatch(
+              response ->
+                  response.contains(
+                      "ERROR FRIEND_PRESENCE_UNAVAILABLE Friend presence unavailable"));
+      assertThat(responses).noneMatch(response -> response.contains("Friends " + filter + ":"));
+    }
+    assertThat(socialStub().lastFriendsRequest()).isEmpty();
   }
 
   @Test
@@ -288,17 +305,12 @@ class CommunicationWebSocketCrossServiceTest {
     sessionId = prepareGameInstance();
     List<String> responses =
         runCommunicationSequence(
-            sessionId,
-            "FRIENDS",
-            "Sora [acct #" + SORA_ACCOUNT_UUID + "] - online in Demo World / Live Realm (idle)");
+            sessionId, "FRIENDS", "Sora [acct #" + SORA_ACCOUNT_UUID + "] - online (idle)");
 
     assertThat(responses)
         .anyMatch(
             response ->
-                response.contains(
-                    "Sora [acct #"
-                        + SORA_ACCOUNT_UUID
-                        + "] - online in Demo World / Live Realm (idle)"));
+                response.contains("Sora [acct #" + SORA_ACCOUNT_UUID + "] - online (idle)"));
   }
 
   @Test
@@ -407,10 +419,20 @@ class CommunicationWebSocketCrossServiceTest {
 
     try (GameplayWebSocketDriver client =
         openReadySessionClient(sessionId, "friends-show-detail-conn")) {
+      int baseline = client.responses().size();
       client.send("FRIENDS SHOW #1");
       client.awaitContains("Friend Sora [acct #" + SORA_ACCOUNT_UUID + "]");
-      client.awaitContains("Presence: online in Demo World / Live Realm (idle)");
+      client.awaitContains("Presence: online (idle)");
       client.awaitContains("Roster entry: #1");
+      assertThat(client.responses().subList(baseline, client.responses().size()))
+          .noneMatch(
+              response ->
+                  response.contains("private-playtest")
+                      || response.contains("Private Playtest World")
+                      || response.contains("staff-preview")
+                      || response.contains("Staff Preview Realm")
+                      || response.contains("shared")
+                      || response.contains("Pointer version"));
     }
 
     GameplaySocialAssertions.assertGetFriendByOrdinalRequest(
@@ -425,11 +447,13 @@ class CommunicationWebSocketCrossServiceTest {
     try (GameplayWebSocketDriver client =
         openReadySessionClient(sessionId, "friends-summary-conn")) {
       client.send("FRIENDS SUMMARY");
-      client.awaitContains("Friend roster summary:");
-      client.awaitContains("Linked: 1");
-      client.awaitContains("Online: 1");
-      client.awaitContains("Offline: 0");
-      client.awaitContains("Recent offline: 0");
+      String summary =
+          client.awaitResponseMatching(
+              response -> response.contains("Friend roster summary:"),
+              "friend roster summary response");
+      assertThat(summary)
+          .contains("Linked: 1")
+          .doesNotContain("Online:", "Offline:", "Recent offline:");
     }
 
     GameplaySocialAssertions.assertFriendRosterSummaryRequest(
@@ -460,6 +484,77 @@ class CommunicationWebSocketCrossServiceTest {
   }
 
   @Test
+  void websocketFirstPartyBareLoginFailsClosedWithoutAdmission() throws Exception {
+    ensureTestServicesStarted();
+    long sessionId = prepareGameInstance();
+    int authenticateRequestCount = STACK.accountStub().capturedAuthenticateRequests().size();
+    var previousCharacterLookup = entityStub().lastListCharactersByAccountRequest();
+    java.util.Map<String, Object> connectClaims =
+        java.util.Map.of(
+            "accountId",
+            ACCOUNT_UUID,
+            "tenantId",
+            Long.toString(TENANT_ID),
+            "worldSlug",
+            "demo",
+            "realmSlug",
+            "production",
+            "gameInstanceId",
+            Long.toString(DEMO_WORLD_INSTANCE_ID),
+            "pointerVersion",
+            "1",
+            "connectScopeId",
+            "scope-first-party-" + sessionId,
+            "connectTokenJti",
+            "jti-first-party-" + sessionId,
+            "connectRequestId",
+            "request-first-party-" + sessionId,
+            "gatewayRequestId",
+            "gateway-first-party-" + sessionId);
+
+    try (GameplayWebSocketDriver client =
+        GameplayWebSocketDriver.connectFirstPartyWeb(
+            gameSessionWebSocketUrl(),
+            COMMAND_WAIT,
+            Long.toString(sessionId),
+            "stub-secret-key-for-tests-1234567890",
+            ACCOUNT_UUID,
+            connectClaims)) {
+      int baseline = client.responses().size();
+      client.send("LOGIN");
+      var login =
+          net.firedevops.firemud.gamesession.testsupport.GameplayStructuredCommandAssertions
+              .awaitStructuredCommand(client, baseline, "LOGIN");
+      assertThat(login.path("accepted").asBoolean()).isFalse();
+      assertThat(login.path("errorCode").asText()).isEqualTo("AUTH_UNAVAILABLE");
+
+      baseline = client.responses().size();
+      client.send("PLAY demo");
+      var play =
+          net.firedevops.firemud.gamesession.testsupport.GameplayStructuredCommandAssertions
+              .awaitStructuredCommand(client, baseline, "PLAY");
+      assertThat(play.path("accepted").asBoolean()).isFalse();
+      assertThat(play.path("errorCode").asText()).isEqualTo("LOGIN_REQUIRED");
+    }
+
+    assertThat(STACK.accountStub().capturedAuthenticateRequests())
+        .hasSize(authenticateRequestCount);
+    assertThat(
+            gameSession()
+                .bean(net.firedevops.firemud.gamesession.service.SessionContextService.class)
+                .findByTenantAndSessionId(TENANT_ID, sessionId))
+        .satisfies(
+            saved ->
+                saved.ifPresent(
+                    context -> {
+                      assertThat(context.accountId()).isNull();
+                      assertThat(context.hasAccountIdentity()).isFalse();
+                    }));
+    assertThat(entityStub().lastListCharactersByAccountRequest())
+        .isEqualTo(previousCharacterLookup);
+  }
+
+  @Test
   void websocketWhisperPushesTargetAndObserverViewsToLiveRecipients() throws Exception {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
@@ -469,7 +564,7 @@ class CommunicationWebSocketCrossServiceTest {
             GameplayWebSocketScenarios.proxyGatewayDriverFactory(
                 gameSessionWebSocketUrl(), COMMAND_WAIT, TENANT_ID, sessionId),
             "actor-conn",
-            GameplayWebSocketScenarios.demoAdmission(READY_LOOK_TEXT),
+            GameplayWebSocketScenarios.demoAdmission("Emberline", READY_LOOK_TEXT),
             "target-conn",
             namedAdmission(SORA_EMAIL, "Sora"),
             "observer-conn",
@@ -640,6 +735,7 @@ class CommunicationWebSocketCrossServiceTest {
       STACK =
           GameplayCrossServiceStack.defaultDemoBuilder(POSTGRES, REDIS, ACCOUNT_UUID)
               .mapAccountUuid("sora@example.com", SORA_ACCOUNT_UUID)
+              .mapAccountUuid("nyx@example.com", NYX_ACCOUNT_UUID)
               .withInitialRoomEntities(ChatTestFixtures.sampleEntities())
               .withSocialEnabled(true)
               .withInitialFriendPresenceResponse(
@@ -656,10 +752,11 @@ class CommunicationWebSocketCrossServiceTest {
                               .setVisibilityPolicy(
                                   FriendPresenceVisibilityPolicy
                                       .FRIEND_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY)
-                              .setWorldSlug("demo")
-                              .setWorldDisplayName("Demo World")
-                              .setRealmSlug("production")
-                              .setRealmDisplayName("Live Realm")
+                              .setWorldSlug("private-playtest")
+                              .setWorldDisplayName("Private Playtest World")
+                              .setRealmSlug("staff-preview")
+                              .setRealmDisplayName("Staff Preview Realm")
+                              .setPointerVersion(941L)
                               .setActivityState(
                                   FriendPresenceActivityState
                                       .FRIEND_PRESENCE_ACTIVITY_STATE_AUTO_AFK)

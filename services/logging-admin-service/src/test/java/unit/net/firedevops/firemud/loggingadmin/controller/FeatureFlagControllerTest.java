@@ -1,5 +1,6 @@
 package net.firedevops.firemud.loggingadmin.controller;
 
+import static net.firedevops.firemud.loggingadmin.AccountJwtTestTokens.accountToken;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -47,7 +48,7 @@ class FeatureFlagControllerTest {
   @Test
   void toggleRejectsAuthorizedCallerWhileMutationGateIsUnavailable() throws Exception {
     ToggleFeatureFlagRequest request = new ToggleFeatureFlagRequest(1L, "demo", true);
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -68,7 +69,7 @@ class FeatureFlagControllerTest {
   void toggleRejectsCrossTenantScopedAdmin() throws Exception {
     ToggleFeatureFlagRequest request = new ToggleFeatureFlagRequest(1L, "demo", true);
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
+        accountToken(jwtUtil, Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(
@@ -82,7 +83,7 @@ class FeatureFlagControllerTest {
   @Test
   void toggleRejectsZeroTenantIdBeforeDispatch() throws Exception {
     ToggleFeatureFlagRequest request = new ToggleFeatureFlagRequest(0L, "demo", true);
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(

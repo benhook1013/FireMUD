@@ -20,40 +20,42 @@ runs:
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
       with:
         path: ${{ runner.temp }}/firemud-helm/v${{ steps.versions.outputs.helm-version }}/helm.tar.gz
-        key: firemud-helm-${{ runner.os }}-${{ runner.arch }}-v${{ steps.versions.outputs.helm-version }}-${{ steps.versions.outputs.helm-linux-amd64-sha256 }}
+        key: firemud-helm-${{ runner.os }}-${{ runner.arch }}-v${{ steps.versions.outputs.helm-version }}
 
     - name: Install pinned Helm
       shell: bash
       env:
         HELM_VERSION: v${{ steps.versions.outputs.helm-version }}
-        HELM_SHA256: ${{ steps.versions.outputs.helm-linux-amd64-sha256 }}
       run: |
         set -euo pipefail
 
         helm_version="${HELM_VERSION:?}"
-        helm_sha256="${HELM_SHA256:?}"
         helm_root="${RUNNER_TEMP:?}/firemud-helm/${helm_version}"
         archive_path="${helm_root}/helm.tar.gz"
         extraction_dir="${helm_root}/extracted"
         install_dir="${helm_root}/bin"
+        checksum_path="${helm_root}/helm.tar.gz.sha256sum"
+        expected_archive_name="helm-${helm_version}-linux-amd64.tar.gz"
 
         mkdir -p -- "$helm_root" "$install_dir"
-        if [[ ! -f "$archive_path" ]] \
-          || ! printf '%s  %s\n' "$helm_sha256" "$archive_path" \
-            | sha256sum --check --status; then
+        curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \
+          "https://get.helm.sh/${expected_archive_name}.sha256sum" \
+          -o "$checksum_path"
+        if [[ ! -f "$archive_path" ]] || ! dev-tools/maintenance/verify-publisher-checksum.sh \
+          manifest "$checksum_path" "$archive_path" "$expected_archive_name"; then
           temporary_archive="$(mktemp -- "${helm_root}/helm.tar.gz.XXXXXX")"
           trap 'rm -f -- "$temporary_archive"' EXIT
           curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \
-            "https://get.helm.sh/helm-${helm_version}-linux-amd64.tar.gz" \
+            "https://get.helm.sh/${expected_archive_name}" \
             -o "$temporary_archive"
-          printf '%s  %s\n' "$helm_sha256" "$temporary_archive" \
-            | sha256sum --check --status
+          dev-tools/maintenance/verify-publisher-checksum.sh \
+            manifest "$checksum_path" "$temporary_archive" "$expected_archive_name"
           mv -fT -- "$temporary_archive" "$archive_path"
           trap - EXIT
         fi
         # Revalidate the canonical archive after either cache restore or download before extraction.
-        printf '%s  %s\n' "$helm_sha256" "$archive_path" \
-          | sha256sum --check --status
+        dev-tools/maintenance/verify-publisher-checksum.sh \
+          manifest "$checksum_path" "$archive_path" "$expected_archive_name"
         rm -rf -- "$extraction_dir"
         mkdir -p -- "$extraction_dir"
         tar -xzf "$archive_path" -C "$extraction_dir" -- linux-amd64/helm

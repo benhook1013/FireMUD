@@ -80,7 +80,6 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
             "INVALID_TEMPLATE_CONFIGURATION: controlPlaneRequestId already resolved with different inputs");
       }
       requireReadyScriptPatch(requestedScriptPatchVersion);
-      requireReadyScriptPatch(template.getDefaultScriptPatchVersion());
       requireReadyScriptPatch(existing.get().getScriptPatchVersion());
       return toDto(existing.get());
     }

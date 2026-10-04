@@ -68,14 +68,11 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
               "RUNTIME_SCOPE_MISMATCH",
               "GetAutomationPinConvergence failed: runtime_scope_mismatch");
         }
-        if (isSemanticUnpinned(runtimeState)) {
-          scheduleInstanceService.reconcileObservedRuntimeState(
-              tenantId, gameInstanceId, runtimeState);
-          return new PinConvergenceLookup(
-              Optional.of(toUnpinnedSummary(tenantId, gameInstanceId, runtimeState, now)), "", "");
-        }
-        if (!acceptObservation(existing.orElse(null), runtimeState)) {
-          return existing
+        repository.lockPinProjectionScope(tenantId, gameInstanceId);
+        Optional<ScriptPatchPinProjection> current =
+            repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId);
+        if (!acceptObservation(current.orElse(null), runtimeState)) {
+          return current
               .map(value -> new PinConvergenceLookup(Optional.of(toSummary(value, now)), "", ""))
               .orElseGet(
                   () ->
@@ -85,6 +82,12 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
                           "GetAutomationPinConvergence failed: invalid_runtime_pin_tuple"));
         }
         if (!hasPositiveScriptPinEpoch(runtimeState)) {
+          if (hasLegacyPositivePinProjection(current.orElse(null))) {
+            return new PinConvergenceLookup(
+                Optional.empty(),
+                "PIN_PROJECTION_CONFLICT",
+                "GetAutomationPinConvergence failed: unpinned_runtime_conflicts_with_legacy_pin_projection");
+          }
           scheduleInstanceService.reconcileObservedRuntimeState(
               tenantId, gameInstanceId, runtimeState);
           return new PinConvergenceLookup(
@@ -92,7 +95,7 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
         }
         ScriptPatchPinProjection refreshed =
             saveObservation(
-                existing.orElseGet(ScriptPatchPinProjection::new),
+                current.orElseGet(ScriptPatchPinProjection::new),
                 tenantId,
                 gameInstanceId,
                 runtimeState,
@@ -125,13 +128,10 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
     if (!runtimeStateMatchesScope(tenantId, gameInstanceId, runtimeState)) {
       return;
     }
-    if (isSemanticUnpinned(runtimeState)) {
-      scheduleInstanceService.reconcileObservedRuntimeState(tenantId, gameInstanceId, runtimeState);
-      return;
-    }
     if (!hasPositiveScriptPinEpoch(runtimeState)) {
       return;
     }
+    repository.lockPinProjectionScope(tenantId, gameInstanceId);
     Optional<ScriptPatchPinProjection> existing =
         repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId);
     if (!acceptObservation(existing.orElse(null), runtimeState)) {
@@ -156,14 +156,6 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
 
   private static boolean hasPositiveScriptPinEpoch(GameInstanceRuntimeState runtimeState) {
     return runtimeState != null && runtimeState.getScriptPinEpoch() > 0;
-  }
-
-  private static boolean isSemanticUnpinned(GameInstanceRuntimeState runtimeState) {
-    return runtimeState != null
-        && runtimeState.getScriptPinEpoch() == 0
-        && runtimeState.getPinnedScriptPatchVersion().isBlank()
-        && runtimeState.getScriptPatchPinnedControlPlaneRequestId().isBlank()
-        && runtimeState.getPinnedScriptPatchBaseVersionId() == 0L;
   }
 
   /**
@@ -265,6 +257,12 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
   private static boolean isLegacyProjection(ScriptPatchPinProjection projection) {
     Long epoch = projection.getScriptPinEpoch();
     return epoch == null || epoch == 0L;
+  }
+
+  private static boolean hasLegacyPositivePinProjection(ScriptPatchPinProjection projection) {
+    return projection != null
+        && isLegacyProjection(projection)
+        && !blankToEmpty(projection.getObservedPinnedScriptPatchVersion()).isBlank();
   }
 
   private ScriptPatchPinProjection saveObservation(

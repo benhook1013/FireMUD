@@ -75,6 +75,92 @@ def require_failure(case, override, expected_fragment):
         )
 
 
+def assert_database_identity(job, expected_secret_name, mode):
+    container = job.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [])[0]
+    if container.get("envFrom"):
+        raise SystemExit(f"{mode} Job must not import a broad service environment")
+    env = {entry["name"]: entry for entry in container.get("env", [])}
+    for name in ("FIREMUD_POSTGRES_USER", "FIREMUD_POSTGRES_PASSWORD"):
+        ref = env.get(name, {}).get("valueFrom", {}).get("secretKeyRef", {})
+        if ref.get("name") != expected_secret_name:
+            raise SystemExit(f"{mode} Job must use {expected_secret_name} for {name}")
+        if ref.get("key") != name:
+            raise SystemExit(f"{mode} Job must use the exact {name} Secret key")
+        if ref.get("optional") is not False:
+            raise SystemExit(f"{mode} Job must require its {name} Secret key")
+    if env.get("SPRING_FLYWAY_ENABLED", {}).get("value") != "false":
+        raise SystemExit(f"{mode} Job must disable Flyway")
+
+    def contains_shared_secret(value):
+        if isinstance(value, dict):
+            if value.get("name") == "firemud-secret" or value.get("secretName") == "firemud-secret":
+                return True
+            return any(contains_shared_secret(child) for child in value.values())
+        if isinstance(value, list):
+            return any(contains_shared_secret(child) for child in value)
+        return False
+
+    if contains_shared_secret(job):
+        raise SystemExit(f"{mode} Job must not reference shared firemud-secret")
+
+
+EXPECTED_MIGRATOR_POLICY_SPEC = {
+    "podSelector": {
+        "matchLabels": {
+            "app": "game-design-baseline-migrator",
+            "firemud.dev/workload": "game-design-baseline-migrator",
+        }
+    },
+    "policyTypes": ["Ingress", "Egress"],
+    "ingress": [],
+    "egress": [
+        {
+            "to": [
+                {
+                    "namespaceSelector": {
+                        "matchLabels": {"kubernetes.io/metadata.name": "kube-system"}
+                    },
+                    "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}},
+                }
+            ],
+            "ports": [
+                {"protocol": "UDP", "port": 53},
+                {"protocol": "TCP", "port": 53},
+            ],
+        },
+        {
+            "to": [{"podSelector": {"matchLabels": {"app": "postgres"}}}],
+            "ports": [{"protocol": "TCP", "port": 5432}],
+        },
+        {
+            "to": [
+                {"podSelector": {"matchLabels": {"app": "entity-management-service"}}}
+            ],
+            "ports": [{"protocol": "TCP", "port": 6565}],
+        },
+    ],
+}
+
+
+def validate_migrator_network_policy(policy):
+    if policy.get("spec") != EXPECTED_MIGRATOR_POLICY_SPEC:
+        raise ValueError(
+            "migration NetworkPolicy must exactly select the dedicated pods and allow "
+            "only kube-dns UDP/TCP 53, same-namespace postgres TCP 5432, and "
+            "same-namespace Entity Management TCP 6565"
+        )
+
+
+def assert_migrator_policy_rejected(case, mutate):
+    fixture = copy.deepcopy(policy)
+    mutate(fixture["spec"])
+    try:
+        validate_migrator_network_policy(fixture)
+    except ValueError:
+        return
+    raise SystemExit(f"migration NetworkPolicy validator accepted invalid fixture: {case}")
+
+
 disabled = render("migration-disabled")
 if disabled.returncode != 0:
     raise SystemExit(f"disabled chart render failed: {disabled.stderr}")
@@ -121,6 +207,7 @@ job_name = "game-design-baseline-migrator-entity-v1-to-v2-pr123-v42"
 job = by_kind_name.get(("Job", job_name))
 if job is None:
     raise SystemExit("enabled configuration did not render the operation-scoped Job")
+assert_database_identity(job, "firemud-game-design-baseline-writer-db", "migrate")
 if by_kind_name.get(("ServiceAccount", "game-design-baseline-migrator"), {}).get(
     "automountServiceAccountToken"
 ) is not False:
@@ -197,13 +284,6 @@ for name in (
     if "fieldRef" not in env.get(name, {}).get("valueFrom", {}):
         raise SystemExit(f"Job must derive {name} from downward API identity")
 for name in (
-    "FIREMUD_POSTGRES_USER",
-    "FIREMUD_POSTGRES_PASSWORD",
-):
-    secret_ref = env.get(name, {}).get("valueFrom", {}).get("secretKeyRef", {})
-    if secret_ref.get("name") != "firemud-secret":
-        raise SystemExit(f"Job database credential {name} is not secret-projected")
-for name in (
     "FIREMUD_POSTGRES_HOST",
     "FIREMUD_POSTGRES_PORT",
     "FIREMUD_POSTGRES_DB",
@@ -234,27 +314,74 @@ if source.get("items", [{}])[0].get("path") != "expected-source.json":
 policy = by_kind_name.get(("NetworkPolicy", "game-design-baseline-migrator"))
 if policy is None:
     raise SystemExit("enabled configuration did not render the isolated migration policy")
-policy_spec = policy.get("spec", {})
-if policy_spec.get("podSelector", {}).get("matchLabels") != {
-    "app": "game-design-baseline-migrator",
-    "firemud.dev/workload": "game-design-baseline-migrator",
-}:
-    raise SystemExit("migration NetworkPolicy does not select only the dedicated Job pods")
-if policy_spec.get("ingress") != []:
-    raise SystemExit("migration Job must not accept inbound connections")
-allowed = {
-    (
-        rule.get("to", [{}])[0].get("podSelector", {}).get("matchLabels", {}).get("app"),
-        rule.get("ports", [{}])[0].get("port"),
-    )
-    for rule in policy_spec.get("egress", [])
-    if rule.get("to")
-}
-if ("postgres", 5432) not in allowed or ("entity-management-service", 6565) not in allowed:
-    raise SystemExit("migration Job egress must include only the required DB and Entity ports")
-for app, port in allowed:
-    if (app, port) not in {("postgres", 5432), ("entity-management-service", 6565), (None, 53)}:
-        raise SystemExit(f"migration Job has unrelated egress permission: {(app, port)}")
+try:
+    validate_migrator_network_policy(policy)
+except ValueError as error:
+    raise SystemExit(str(error))
+
+assert_migrator_policy_rejected(
+    "extra-second-peer",
+    lambda spec: spec["egress"][1]["to"].append(
+        {"podSelector": {"matchLabels": {"app": "unrelated"}}}
+    ),
+)
+assert_migrator_policy_rejected(
+    "extra-second-port",
+    lambda spec: spec["egress"][1]["ports"].append(
+        {"protocol": "TCP", "port": 5433}
+    ),
+)
+assert_migrator_policy_rejected(
+    "rule-without-peer",
+    lambda spec: spec["egress"].append({"ports": [{"protocol": "TCP", "port": 1}]}),
+)
+assert_migrator_policy_rejected(
+    "empty-policy-selector", lambda spec: spec.update(podSelector={})
+)
+assert_migrator_policy_rejected(
+    "missing-migrator-workload-label",
+    lambda spec: spec["podSelector"]["matchLabels"].pop("firemud.dev/workload"),
+)
+assert_migrator_policy_rejected(
+    "empty-peer-selector",
+    lambda spec: spec["egress"].append(
+        {"to": [{"podSelector": {}}], "ports": [{"protocol": "TCP", "port": 1}]}
+    ),
+)
+assert_migrator_policy_rejected(
+    "wildcard-namespace-selector",
+    lambda spec: spec["egress"][0]["to"][0].update(namespaceSelector={}),
+)
+assert_migrator_policy_rejected(
+    "wrong-dns-namespace",
+    lambda spec: spec["egress"][0]["to"][0]["namespaceSelector"]["matchLabels"].update(
+        {"kubernetes.io/metadata.name": "default"}
+    ),
+)
+assert_migrator_policy_rejected(
+    "wrong-dns-pod-selector",
+    lambda spec: spec["egress"][0]["to"][0]["podSelector"]["matchLabels"].update(
+        {"k8s-app": "not-dns"}
+    ),
+)
+assert_migrator_policy_rejected(
+    "wrong-protocol",
+    lambda spec: spec["egress"][0]["ports"][0].update(protocol="TCP"),
+)
+assert_migrator_policy_rejected(
+    "extra-end-port",
+    lambda spec: spec["egress"][1]["ports"][0].update(endPort=5434),
+)
+assert_migrator_policy_rejected(
+    "ip-block-peer",
+    lambda spec: spec["egress"][1]["to"].append(
+        {"ipBlock": {"cidr": "0.0.0.0/0"}}
+    ),
+)
+assert_migrator_policy_rejected(
+    "missing-egress-isolation",
+    lambda spec: spec.update(policyTypes=["Ingress"]),
+)
 
 for case, mutation, fragment in (
     (
@@ -306,6 +433,7 @@ preflight_docs = documents(preflight_result.stdout)
 preflight_job = next(
     item for item in preflight_docs if item.get("kind") == "Job" and item.get("metadata", {}).get("name", "").startswith("game-design-baseline-migrator-preflight-")
 )
+assert_database_identity(preflight_job, "firemud-game-design-baseline-reader-db", "preflight")
 if any(volume.get("name") == "expected-source" for volume in preflight_job["spec"]["template"]["spec"].get("volumes", [])):
     raise SystemExit("read-only preflight unexpectedly requires or mounts an expected-source tuple")
 
@@ -326,6 +454,7 @@ enumerate_docs = documents(enumerate_result.stdout)
 enumerate_job = next(
     item for item in enumerate_docs if item.get("kind") == "Job" and "-enumerate-" in item.get("metadata", {}).get("name", "")
 )
+assert_database_identity(enumerate_job, "firemud-game-design-baseline-reader-db", "enumerate")
 enumerate_env = {
     entry["name"]: entry
     for entry in enumerate_job["spec"]["template"]["spec"]["containers"][0].get("env", [])

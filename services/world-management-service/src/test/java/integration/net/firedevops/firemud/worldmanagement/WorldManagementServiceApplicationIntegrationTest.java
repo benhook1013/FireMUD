@@ -23,6 +23,7 @@ import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
 import net.firedevops.firemud.worldmanagement.client.GameSessionClient;
+import net.firedevops.firemud.worldmanagement.client.GrpcGameSessionInitialAdmissionBindProofClient;
 import net.firedevops.firemud.worldmanagement.entity.WorldEvent;
 import net.firedevops.firemud.worldmanagement.repository.WorldEventRepository;
 import org.jooq.DSLContext;
@@ -74,6 +75,7 @@ class WorldManagementServiceApplicationIntegrationTest {
   @Autowired private PlatformTransactionManager transactionManager;
 
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
+  @MockitoBean private GrpcGameSessionInitialAdmissionBindProofClient bindProofClient;
   @MockitoBean private GameDesignClient gameDesignClient;
   @MockitoBean private GameSessionClient gameSessionClient;
   @MockitoBean private EntityManagementClient entityManagementClient;
@@ -86,8 +88,7 @@ class WorldManagementServiceApplicationIntegrationTest {
 
   @Test
   void listRegionsRejectsMalformedTenantIdWithInvalidArgumentEnvelope() throws Exception {
-    String token =
-        jwtUtil.generateToken("operator", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = operatorToken();
     HttpRequest request =
         HttpRequest.newBuilder(
                 URI.create("http://localhost:" + port + "/regions?tenantId=bad-tenant"))
@@ -104,8 +105,7 @@ class WorldManagementServiceApplicationIntegrationTest {
 
   @Test
   void moveRegionRejectsMalformedShardIdWithInvalidArgumentEnvelope() throws Exception {
-    String token =
-        jwtUtil.generateToken("operator", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = operatorToken();
     HttpRequest request =
         HttpRequest.newBuilder(
                 URI.create("http://localhost:" + port + "/regions/4/move?tenantId=1&shardId=bad"))
@@ -122,8 +122,7 @@ class WorldManagementServiceApplicationIntegrationTest {
 
   @Test
   void saveRuleRejectsMalformedBodyWithInvalidArgumentEnvelope() throws Exception {
-    String token =
-        jwtUtil.generateToken("operator", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = operatorToken();
     HttpRequest request =
         HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/generation/rules"))
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
@@ -298,5 +297,11 @@ class WorldManagementServiceApplicationIntegrationTest {
         .set(WORLD_EVENT.EXECUTE_AT, executeAt)
         .returning(WORLD_EVENT.ID)
         .fetchOne(WORLD_EVENT.ID);
+  }
+
+  private String operatorToken() {
+    String accountId = "018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a";
+    return jwtUtil.generateToken(
+        accountId, Map.of("accountId", accountId, "globalRoles", List.of("platformAdmin")));
   }
 }

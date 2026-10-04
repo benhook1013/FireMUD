@@ -8,6 +8,61 @@ This document collects the Account Service operational behavior, readiness model
 - `liveness` is process-local only.
 - `readiness` is truthful local readiness for the currently implemented authentication/account slice and must fail when the service cannot safely satisfy new authentication traffic with its required local persistence/session infrastructure.
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
+- Expired connect-scope cleanup requires PostgreSQL 16 or later because its deletion predicate uses `pg_input_is_valid`; local Docker Compose and Account integration-test containers use PostgreSQL 16. Keep the guarded delete predicate and do not add a pre-16 compatibility query.
+
+### V26 membership migration preflight
+
+Before applying [V26](../../../../services/account-service/src/main/resources/db/migration/V26__global_registration_join_evidence.sql) to a populated target, take an authoritative read-only inventory of `account_tenant_membership` and its account/tenant identities. The migration retains each original `gameplay_admission_allowed` value in `account_legacy_membership_sources.original_gameplay_admission_allowed` as provenance; it is not current player intent or admission authority. V26 quarantines legacy memberships as `LEGACY_UNVERIFIED` and disables admission. Do not restore access from the retained boolean; membership authority and explicit reconciliation remain owned by [Account Runtime and Data](./runtime-and-data.md#membership-and-entitlement-authority).
+
+Quiesce Account mutations and block new admission throughout inventory, migration, and readback so the preflight cannot race with another writer. If that quiescence cannot be proved, do not apply V26. Run these read-only queries before V26 and retain their output with the deployment record:
+
+```sql
+SELECT COUNT(*) AS membership_rows,
+       COUNT(*) FILTER (WHERE gameplay_admission_allowed) AS legacy_admitting_rows
+FROM account_tenant_membership;
+
+SELECT m.id AS membership_id,
+       m.account_id,
+       m.tenant_id,
+       a.tenant_id AS account_legacy_tenant_id,
+       m.gameplay_admission_allowed AS original_gameplay_admission_allowed
+FROM account_tenant_membership AS m
+LEFT JOIN accounts AS a ON a.id = m.account_id
+ORDER BY m.tenant_id, m.account_id, m.id;
+```
+
+Treat rows as run-owned demo data only when an independent deployment/run record proves that ownership; do not infer it from identifiers, account names, or the legacy boolean. If any real memberships exist, keep deployment and gameplay traffic closed pending explicit owner-validated reconciliation. [TestDataSeeder](../../../../services/account-service/src/main/java/net/firedevops/firemud/accountservice/data/TestDataSeeder.java) is for explicitly run-owned local smoke data and must not be enabled in production. The current stage has no live target inventory or production reconciliation proof; this preflight is not activation approval.
+
+After V26 and before any explicitly enabled non-production demo seed, use read-only readback to verify each retained source has its quarantined membership row:
+
+```sql
+SELECT COUNT(membership.id) AS membership_rows,
+       (SELECT COUNT(*) FROM account_legacy_membership_sources) AS source_rows,
+       COUNT(*) FILTER (WHERE legacy_source.membership_id IS NULL) AS rows_without_source,
+       COUNT(*) FILTER (
+           WHERE membership.lifecycle_state <> 'LEGACY_UNVERIFIED'
+              OR membership.authority_provenance <> 'LEGACY_UNVERIFIED'
+              OR membership.gameplay_admission_allowed
+       ) AS rows_not_quarantined
+FROM account_tenant_membership AS membership
+LEFT JOIN account_legacy_membership_sources AS legacy_source
+    ON legacy_source.membership_id = membership.id;
+
+SELECT legacy_source.membership_id,
+       legacy_source.account_id,
+       legacy_source.tenant_id,
+       legacy_source.original_gameplay_admission_allowed,
+       legacy_source.matches_account_legacy_tenant,
+       legacy_source.disposition,
+       legacy_source.captured_at,
+       membership.lifecycle_state,
+       membership.authority_provenance,
+       membership.gameplay_admission_allowed
+FROM account_legacy_membership_sources AS legacy_source
+JOIN account_tenant_membership AS membership
+    ON membership.id = legacy_source.membership_id
+ORDER BY legacy_source.tenant_id, legacy_source.account_id, legacy_source.membership_id;
+```
 
 ### Legacy tenant association import
 
@@ -15,19 +70,27 @@ This document collects the Account Service operational behavior, readiness model
 
 An operator first runs `evidence` for an exact positive retained numeric key in a listener-free Account job using the dedicated `account-tenant-migrator` certificate and service account. Missing or conflicting V26 source rows fail closed. The digest goes into the [Game Design approved manifest](../game-design-service/operations.md#legacy-tenant-association-migration), not into an inferred key match. After Game Design applies and reads back the signed operation, the operator runs Account `import` for the same key. That mode calls Game Design with the exact migrator mTLS identity, validates its owner response and the current V26 digest, and commits the immutable local mapping. Ordinary Account service identity cannot call this import read; the migrator cannot call the separate former-key read. An exact retry is event-free; changed owner or Account evidence is a conflict.
 
+Deploy and independently verify the required Account schema through the normal reviewed deployment boundary, never through this Job: `evidence` needs its retained V26 source tables, and `import` additionally needs V30 association storage. Neither mode runs Flyway; the rendered Job explicitly disables it for every mode, and one-shot startup requires the effective `spring.flyway.enabled` property to be explicitly `false` before refreshing the Spring context. Missing, true, or invalid values refuse startup before bean initialization; ordinary service startup retains its normal Flyway behavior. Missing required tables or evidence fail the affected operation rather than triggering automatic schema repair.
+
+Each mode requires its own fixed database Secret and authenticated PostgreSQL role: `evidence` uses `firemud-account-tenant-evidence-db` as `firemud_account_tenant_evidence`, and `import` uses `firemud-account-tenant-import-db` as `firemud_account_tenant_import`. Both roles may connect only to the selected database and use `account_service`; the evidence role receives only `SELECT` on the queried columns of `account_legacy_tenant_sources`, `account_legacy_membership_sources`, and `account_legacy_profile_sources`. The import role receives those same source reads plus only the required `SELECT` and `INSERT` on queried association columns in `account_approved_legacy_tenant_associations`. Neither mode needs `UPDATE`, `DELETE`, sequence, DDL, or lock-function privileges. These credentials are separately provisioned operator inputs, not shared bootstrap, application, or baseline credentials; a missing mode Secret must fail closed, with no optional fallback or chart-created credential. This follows the [Secret Delivery Boundary](../../system-architecture-security.md#secret-delivery-boundary) and [per-service migration ownership](../../system-architecture-database-migrations.md#per-service-organization).
+
+Before enabling the ordinary-disabled Job, the trusted database operator must provision each role without `SUPERUSER`, `CREATEDB`, `CREATEROLE`, `REPLICATION`, or `BYPASSRLS`, ensure it is not `INHERIT` and has no inherited role memberships, and grant no application-object ownership or unrelated-schema access. Independently read back effective memberships, required grants and prohibited grants, and verify that each Secret-authenticated connection is the exact expected role. Retire the scoped role and Secret after the operation and its recovery window. A rendered Job, Helm check, or role-name assertion is not live grant, Secret-authentication, or PostgreSQL readback proof.
+
 When this Job is enabled, Account's scheduling configuration is absent so audit delivery, JOIN reconciliation, and credential cleanup cannot run in the migration process. The runner also fails before owner evidence or import if a `ScheduledAnnotationBeanPostProcessor` is present.
 
 The chart's `previewStack.tenantAssociationMigration.account` values are disabled by default. From a trusted operator revision, supply the exact namespace, a reviewed immutable Account image digest, mode (`evidence` or `import`), positive numeric key, and stable run ID; do not leave the Job enabled for ordinary upgrades. The dedicated `firemud-grpc-account-tenant-migrator` Secret must be issued and verified explicitly using `ensure-standalone-transport-certificates.sh --account-tenant-migrator` and `--verify-account-tenant-migrator` before enabling the Job. The Secret is stable and reused, not requested on every deployment; the Job has no Kubernetes API token, no ingress, and only DNS/Postgres egress plus Game Design gRPC for `import`. A rendered Job or successful completion alone is not database or served-mTLS proof. Retain the operation/readback evidence privately, disable the Job after use, and retire the exact certificate and Secret through the trusted operator boundary. Live Job, PostgreSQL, cross-service, and membership consumer proof remain open; an import cannot be treated as a JOIN, a sequence-zero stream checkpoint, or a working runtime membership RPC.
 
 ## Saga Participation
 
-The Account audit handoff is a mandatory owner-local durable-outbox target, not a compensated Saga step. Global registration creates only global account/security state and emits a platform-scoped audit with no `tenantId` from that transaction; tenant-scoped profile and membership operations are separate and use the exact committed `tenantId`. Explicit `JoinPublicProductionMembership` emits its separate tenant-scoped audit from the membership transaction. The target contract also requires global `account_security_lock`, `platform_access_ban`, recovery, and suspicious-activity audits to use platform scope and omit `tenantId`; those producers are not yet converged to the current outbox path. Producer consequences are defined in [Account Runtime and Data](./runtime-and-data.md#architecture-and-runtime-notes), while the normative ingress, envelope, receipt, readback, retention, and authorization contract is owned by [Logging & Admin API Contracts](../logging-admin-service/api-contracts.md#account-audit-ingress-and-receipt). **Current local implementation:** registration and successful explicit JOIN append immutable audit envelopes to Account's SQL outbox in the same local transaction as their owner-state writes. A delivery job sends the unchanged envelope to Logging & Admin and marks it complete only after matching receipt evidence; failed or ambiguous delivery leaves the event pending for retry with the same identity. Logging & Admin locally implements receipt persistence, deduplication, exact payload digest checking, and receipt readback. This status does not claim PostgreSQL runtime proof or direct text-client end-to-end proof. Durable recovery/reconciliation of a JOIN operation left `PENDING` after an unknown database commit outcome remains open under the Overseer decision and ADR 0025. These audit paths are not Account Saga steps. No Account workflow is currently authorized as a `common-saga` adopter in this document or tracker; existing `accountCreation` and `purchase` `SagaRunner` calls are unclassified implementation drift. Any future Account Saga must first satisfy the explicit owner, boundary, negative-case, and focused-proof classification in [Transaction Strategies](../../system-architecture-transactions.md#mandatory-workflow-adopter-classification).
+The Account audit handoff is a mandatory owner-local durable-outbox target, not a compensated Saga step. Global registration creates only global account/security state and emits a platform-scoped audit with no `tenantId` from that transaction; tenant-scoped profile and membership operations are separate and use the exact committed `tenantId`. Explicit `JoinPublicProductionMembership` emits its separate tenant-scoped audit from the membership transaction. The target contract also requires global `account_security_lock`, `platform_access_ban`, recovery, and suspicious-activity audits to use platform scope and omit `tenantId`; those producers are not yet converged to the current outbox path. Producer consequences are defined in [Account Runtime and Data](./runtime-and-data.md#architecture-and-runtime-notes), while the normative ingress, envelope, receipt, readback, retention, and authorization contract is owned by [Logging & Admin API Contracts](../logging-admin-service/api-contracts.md#account-audit-ingress-and-receipt). **Current local implementation:** registration and successful explicit JOIN append immutable audit envelopes to Account's SQL outbox in the same local transaction as their owner-state writes. Account's delivery method remains directly callable for offline fixture proof but is no longer automatically scheduled. The live Logging & Admin `CreateLogEvent` RPC returns non-OK `UNAVAILABLE` after exact Account workload authentication and before storage, so new and outstanding Account outbox rows remain `PENDING` in the production path while retention/cleanup proof is open. The composed Logging & Admin child provides the typed receipt receiver, durable persistence/deduplication, exact payload-digest validation, bounded projection, and readback at its own service boundary; positive behavior remains offline fixture proof, and live `CreateLogEvent` writes are gated pending retention/cleanup implementation and proof. This local producer status does not claim PostgreSQL runtime proof or direct text-client end-to-end proof. Durable recovery/reconciliation of a JOIN operation left `PENDING` after an unknown database commit outcome remains open under the Overseer decision and ADR 0025, with recovery ownership assigned to #2848. These audit paths are not Account Saga steps. No Account workflow is currently authorized as a `common-saga` adopter in this document or tracker; existing `accountCreation` and `purchase` `SagaRunner` calls are unclassified implementation drift. Any future Account Saga must first satisfy the explicit owner, boundary, negative-case, and focused-proof classification in [Transaction Strategies](../../system-architecture-transactions.md#mandatory-workflow-adopter-classification).
 
 The current `PurchaseWorkflowService` implementation for one-time payments and donations is non-exposed, unsupported provider-mutating drift, not a V1 product path or entitlement authority. It currently enters the shared runner to create a payment intent, record the transaction with the Logging & Admin Service, and refund through compensation if the log step fails. The target Account containment boundary requires every generic purchase or donation entry point to reject before entering that runner or making any Stripe call; no supported V1 flow may invoke it. Current V1 remains the hosting-billing boundary in [ADR 0143](../../decisions/adr-0143-stripe-v1-hosting-billing-and-deferred-creator-monetization.md), while the future marketplace direction in [ADR 0179](../../decisions/adr-0179-firemud-managed-creator-commerce-boundary.md) remains deferred and must be implemented and proved separately.
 
 ## Metrics and Tracing
 
 Prometheus scrapes metrics from `/actuator/prometheus`. Service methods expose `account.*`, `payment.*`, `notification.*`, and `session.*` timers via `@Timed` annotations. OpenTelemetry spans are exported to the collector service so traces can be viewed in Jaeger. No additional configuration is required when running via `./gradlew bootRun` as the default properties target `http://otel-collector:4317`.
+
+Expired connect-scope cleanup exposes `account.connect_scopes.cleanup.deleted` for deleted rows, `account.connect_scopes.cleanup.failure` for failed runs, the `account.connect_scopes.cleanup` timer, and `account.connect_scopes.cleanup.cap_saturation` for runs in which all five batches return the configured full batch size. The job can process at most five times the batch size per scheduled invocation. With fixed delay, the effective start-to-start period is the configured interval plus the prior run's execution time, so long runs reduce how often cleanup can run. Tune the batch size and interval against measured expired, unreferenced scope insertion load. Cap saturation signals cleanup pressure, not an exact backlog count.
 
 ## Integration Test Notes
 

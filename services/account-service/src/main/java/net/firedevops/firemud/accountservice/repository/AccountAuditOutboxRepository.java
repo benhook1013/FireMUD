@@ -6,13 +6,16 @@ import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupp
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.dto.AccountAuditDigest;
 import net.firedevops.firemud.accountservice.dto.AccountAuditEnvelope;
 import net.firedevops.firemud.accountservice.jooq.tables.records.AccountAuditOutboxRecord;
 import org.jooq.DSLContext;
+import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -44,6 +47,7 @@ public class AccountAuditOutboxRepository {
     row.setProducerService("account-service");
     row.setEventType(eventType);
     row.setOccurredAt(toLocalDateTime(occurredAt));
+    row.setNextAttemptAt(toLocalDateTime(occurredAt));
     row.setSchemaVersion(1);
     row.setPayloadDigestVersion(1);
     row.setPayloadDigest(digest);
@@ -54,17 +58,23 @@ public class AccountAuditOutboxRepository {
     return toEnvelope(row);
   }
 
-  public List<AccountAuditEnvelope> pending(int limit) {
+  public List<AccountAuditEnvelope> pending(int limit, Instant dueBeforeOrAt) {
     return dsl.selectFrom(ACCOUNT_AUDIT_OUTBOX)
-        .where(ACCOUNT_AUDIT_OUTBOX.DELIVERY_STATUS.eq("PENDING"))
-        .orderBy(ACCOUNT_AUDIT_OUTBOX.CREATED_AT.asc(), ACCOUNT_AUDIT_OUTBOX.AUDIT_EVENT_ID.asc())
+        .where(
+            ACCOUNT_AUDIT_OUTBOX
+                .DELIVERY_STATUS
+                .eq("PENDING")
+                .and(ACCOUNT_AUDIT_OUTBOX.NEXT_ATTEMPT_AT.le(toLocalDateTime(dueBeforeOrAt))))
+        .orderBy(
+            ACCOUNT_AUDIT_OUTBOX.NEXT_ATTEMPT_AT.asc(),
+            ACCOUNT_AUDIT_OUTBOX.CREATED_AT.asc(),
+            ACCOUNT_AUDIT_OUTBOX.AUDIT_EVENT_ID.asc())
         .limit(limit)
         .fetch(this::toEnvelope);
   }
 
   /** Locks one exact Account JOIN transition envelope for transaction-local reconciliation. */
-  public Optional<AccountAuditEnvelope> findJoinEnvelopeForUpdate(
-      UUID auditEventId, long tenantId) {
+  public Optional<JoinAuditEvidence> findJoinEnvelopeForUpdate(UUID auditEventId, long tenantId) {
     if (auditEventId == null || tenantId <= 0) {
       throw new IllegalArgumentException("JOIN audit identity and tenant are required");
     }
@@ -78,7 +88,14 @@ public class AccountAuditOutboxRepository {
                 .and(ACCOUNT_AUDIT_OUTBOX.PRODUCER_SERVICE.eq("account-service"))
                 .and(ACCOUNT_AUDIT_OUTBOX.EVENT_TYPE.eq("ACCOUNT_JOINED_PUBLIC_PRODUCTION")))
         .forUpdate()
-        .fetchOptional(this::toEnvelope);
+        .fetchOptional(
+            row ->
+                new JoinAuditEvidence(
+                    toEnvelope(row),
+                    row.getDeliveryStatus(),
+                    row.getReceiverAuditProjectionVersion(),
+                    row.getReceiverReceiptId(),
+                    row.getReceiverLogEventId()));
   }
 
   /** Locks one exact Account LEFT envelope for same-owner-transaction retry proof. */
@@ -103,12 +120,21 @@ public class AccountAuditOutboxRepository {
 
   public void markDelivered(
       UUID auditEventId, String receiptId, String logEventId, boolean minimized) {
+    if (auditEventId == null
+        || receiptId == null
+        || receiptId.isBlank()
+        || logEventId == null
+        || logEventId.isBlank()) {
+      throw new IllegalArgumentException("Verified audit delivery requires nonblank identity");
+    }
     var update =
         dsl.update(ACCOUNT_AUDIT_OUTBOX)
             .set(ACCOUNT_AUDIT_OUTBOX.RECEIVER_RECEIPT_ID, receiptId)
             .set(ACCOUNT_AUDIT_OUTBOX.RECEIVER_LOG_EVENT_ID, logEventId)
+            .set(ACCOUNT_AUDIT_OUTBOX.RECEIVER_AUDIT_PROJECTION_VERSION, 1)
             .set(ACCOUNT_AUDIT_OUTBOX.DELIVERY_STATUS, minimized ? "MINIMIZED" : "COMMITTED")
-            .set(ACCOUNT_AUDIT_OUTBOX.LAST_ATTEMPT_AT, toLocalDateTime(Instant.now()));
+            .set(ACCOUNT_AUDIT_OUTBOX.LAST_ATTEMPT_AT, toLocalDateTime(Instant.now()))
+            .set(ACCOUNT_AUDIT_OUTBOX.NEXT_ATTEMPT_AT, (LocalDateTime) null);
     if (minimized) {
       update.set(ACCOUNT_AUDIT_OUTBOX.PAYLOAD, (String) null);
     }
@@ -120,15 +146,40 @@ public class AccountAuditOutboxRepository {
                     .eq(auditEventId)
                     .and(ACCOUNT_AUDIT_OUTBOX.DELIVERY_STATUS.eq("PENDING")))
             .execute();
+    if (changed == 0) {
+      AccountAuditOutboxRecord durableRow =
+          dsl.selectFrom(ACCOUNT_AUDIT_OUTBOX)
+              .where(ACCOUNT_AUDIT_OUTBOX.AUDIT_EVENT_ID.eq(auditEventId))
+              .fetchOne();
+      String expectedStatus = minimized ? "MINIMIZED" : "COMMITTED";
+      if (durableRow != null
+          && expectedStatus.equals(durableRow.getDeliveryStatus())
+          && Objects.equals(receiptId, durableRow.getReceiverReceiptId())
+          && Objects.equals(logEventId, durableRow.getReceiverLogEventId())) {
+        return;
+      }
+    }
     if (changed != 1) {
       throw new IllegalStateException("Audit delivery state changed concurrently");
     }
   }
 
   public void recordAttempt(UUID auditEventId) {
+    LocalDateTime attemptedAt = toLocalDateTime(Instant.now());
     dsl.update(ACCOUNT_AUDIT_OUTBOX)
-        .set(ACCOUNT_AUDIT_OUTBOX.LAST_ATTEMPT_AT, toLocalDateTime(Instant.now()))
-        .where(ACCOUNT_AUDIT_OUTBOX.AUDIT_EVENT_ID.eq(auditEventId))
+        .set(ACCOUNT_AUDIT_OUTBOX.ATTEMPT_COUNT, ACCOUNT_AUDIT_OUTBOX.ATTEMPT_COUNT.plus(1))
+        .set(ACCOUNT_AUDIT_OUTBOX.LAST_ATTEMPT_AT, attemptedAt)
+        .set(
+            ACCOUNT_AUDIT_OUTBOX.NEXT_ATTEMPT_AT,
+            DSL.field(
+                "CAST({0} AS TIMESTAMP) + make_interval(secs => "
+                    + "LEAST(300, (5 * POWER(2, LEAST({1}, 6)))::INTEGER))",
+                LocalDateTime.class, DSL.val(attemptedAt), ACCOUNT_AUDIT_OUTBOX.ATTEMPT_COUNT))
+        .where(
+            ACCOUNT_AUDIT_OUTBOX
+                .AUDIT_EVENT_ID
+                .eq(auditEventId)
+                .and(ACCOUNT_AUDIT_OUTBOX.DELIVERY_STATUS.eq("PENDING")))
         .execute();
   }
 
@@ -144,5 +195,16 @@ public class AccountAuditOutboxRepository {
         row.getPayloadDigestVersion(),
         row.getPayloadDigest(),
         row.getPayload());
+  }
+
+  public record JoinAuditEvidence(
+      AccountAuditEnvelope envelope,
+      String deliveryStatus,
+      Integer auditProjectionVersion,
+      String receiptId,
+      String projectionId) {
+    public JoinAuditEvidence {
+      Objects.requireNonNull(envelope, "envelope");
+    }
   }
 }

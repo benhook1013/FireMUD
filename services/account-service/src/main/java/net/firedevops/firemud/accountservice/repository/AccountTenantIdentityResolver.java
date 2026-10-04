@@ -61,7 +61,7 @@ public class AccountTenantIdentityResolver {
 
   /**
    * Resolves an exact canonical tenant UUID only through its approved retained association and
-   * current source-evidence digest. Fresh UUIDs are resolved by their separate V38 repository.
+   * current source-evidence digest. Fresh UUIDs are resolved by their separate V38.1 repository.
    */
   @Transactional(propagation = Propagation.MANDATORY)
   public ApprovedAssociation resolve(UUID canonicalTenantId) {

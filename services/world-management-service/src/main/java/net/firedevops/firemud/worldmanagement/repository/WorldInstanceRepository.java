@@ -32,6 +32,33 @@ public class WorldInstanceRepository {
         .fetchOptional(this::toEntity);
   }
 
+  public Optional<WorldInstance> findByTenantIdAndGameInstanceIdForUpdate(
+      Long tenantId, Long gameInstanceId) {
+    return dsl.selectFrom(WORLD_INSTANCE)
+        .where(
+            WORLD_INSTANCE
+                .TENANT_ID
+                .eq(tenantId)
+                .and(WORLD_INSTANCE.GAME_INSTANCE_ID.eq(gameInstanceId)))
+        .forUpdate()
+        .fetchOptional(this::toEntity);
+  }
+
+  public boolean hasNonterminalInitialAdmissionBindHold(Long tenantId, Long gameInstanceId) {
+    Record result =
+        dsl.fetchOne(
+            "SELECT EXISTS (SELECT 1 FROM initial_admission_bind_hold "
+                + "WHERE tenant_id = ? AND game_instance_id = ? "
+                + "AND status IN ('PENDING', 'RECONCILIATION_REQUIRED'))",
+            tenantId,
+            gameInstanceId);
+    if (result == null) {
+      throw new IllegalStateException(
+          "INITIAL_ADMISSION_BIND_HOLD_LOOKUP_FAILED: lifecycle hold lookup returned no row");
+    }
+    return Boolean.TRUE.equals(result.get(0, Boolean.class));
+  }
+
   public Optional<WorldInstance> findById(Long id) {
     return dsl.selectFrom(WORLD_INSTANCE)
         .where(WORLD_INSTANCE.ID.eq(id))

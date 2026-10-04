@@ -384,7 +384,12 @@ class AccountApplicationIntegrationTest {
   void exportAccountRejectsMalformedAccountIdWithInvalidArgumentEnvelope() throws Exception {
     String token =
         jwtUtil.generateToken(
-            "operator", java.util.Map.of("globalRoles", java.util.List.of("platformAdmin")));
+            "018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a",
+            java.util.Map.of(
+                "accountId",
+                "018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a",
+                "globalRoles",
+                java.util.List.of("platformAdmin")));
     HttpRequest request =
         HttpRequest.newBuilder(
                 URI.create("http://localhost:" + port + "/accounts/not-a-number/export"))
@@ -402,7 +407,8 @@ class AccountApplicationIntegrationTest {
 
   @Test
   void linkExternalRouteIsUnavailableWithAuthenticatedRequest() throws Exception {
-    String token = jwtUtil.generateToken("2", java.util.Map.of("accountId", "2"));
+    String accountId = "018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a";
+    String token = jwtUtil.generateToken(accountId, java.util.Map.of("accountId", accountId));
     HttpRequest request =
         HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/accounts/2/external"))
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
@@ -417,6 +423,8 @@ class AccountApplicationIntegrationTest {
     HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
 
     assertThat(response.statusCode()).isEqualTo(404);
+    assertThat(response.body()).contains("\"status\":\"ERROR\"");
+    assertThat(response.body()).contains("\"code\":\"NOT_FOUND\"");
   }
 
   @Test

@@ -52,6 +52,63 @@ with tempfile.TemporaryDirectory() as directory:
         if result.returncode == 0 or fragment not in result.stderr:
             raise SystemExit(f"{name} did not fail closed with {fragment}: {result.stderr}")
 
+    def require_flyway_disabled(args, workload):
+        expected = "--spring.flyway.enabled=false"
+        flyway_args = [arg for arg in args if arg.startswith("--spring.flyway.enabled=")]
+        if flyway_args != [expected]:
+            raise SystemExit(f"{workload} Job must disable Flyway explicitly, found {flyway_args}")
+
+    def require_flyway_guard_negative_proof(args, workload):
+        for invalid_args in (
+            [arg for arg in args if arg != "--spring.flyway.enabled=false"],
+            ["--spring.flyway.enabled=true" if arg == "--spring.flyway.enabled=false" else arg for arg in args],
+        ):
+            try:
+                require_flyway_disabled(invalid_args, workload)
+            except SystemExit:
+                continue
+            raise SystemExit(f"{workload} Flyway check accepted a missing or enabled property")
+
+    database_secrets = {
+        ("account", "evidence"): "firemud-account-tenant-evidence-db",
+        ("account", "import"): "firemud-account-tenant-import-db",
+        ("game-design", "preflight"): "firemud-game-design-tenant-preflight-db",
+        ("game-design", "apply"): "firemud-game-design-tenant-apply-db",
+    }
+
+    def require_database_credentials(container, service, mode):
+        if container.get("envFrom"):
+            raise SystemExit("migration must not import an unrestricted credential bundle")
+        expected_secret = database_secrets[(service, mode)]
+        for key in ("FIREMUD_POSTGRES_USER", "FIREMUD_POSTGRES_PASSWORD"):
+            entries = [entry for entry in container["env"] if entry["name"] == key]
+            expected = {
+                "name": key,
+                "valueFrom": {
+                    "secretKeyRef": {"name": expected_secret, "key": key, "optional": False},
+                },
+            }
+            if entries != [expected]:
+                raise SystemExit(f"{service}/{mode} must require its dedicated {key} Secret key")
+
+    def require_database_guard_negative_proof(container, service, mode):
+        for replacement in (
+            {"name": "firemud-secret", "key": "FIREMUD_POSTGRES_USER", "optional": False},
+            {"name": "firemud-game-design-baseline-writer-db", "key": "FIREMUD_POSTGRES_USER", "optional": False},
+            {"name": database_secrets[(service, mode)], "key": "PASSWORD", "optional": False},
+            {"name": database_secrets[(service, mode)], "key": "FIREMUD_POSTGRES_USER", "optional": True},
+            {"name": database_secrets[(service, mode)], "key": "FIREMUD_POSTGRES_USER"},
+            None,
+        ):
+            invalid = copy.deepcopy(container)
+            credential = next(entry for entry in invalid["env"] if entry["name"] == "FIREMUD_POSTGRES_USER")
+            credential["valueFrom"]["secretKeyRef"] = replacement
+            try:
+                require_database_credentials(invalid, service, mode)
+            except SystemExit:
+                continue
+            raise SystemExit(f"{service}/{mode} credential guard accepted {replacement}")
+
     disabled = render("tenant-migration-disabled")
     if disabled.returncode:
         raise SystemExit(disabled.stderr)
@@ -63,59 +120,78 @@ with tempfile.TemporaryDirectory() as directory:
     ):
         raise SystemExit("ordinary release rendered tenant-migration resources")
 
-    migration = {
-        "previewStack": {
-            "tenantAssociationMigration": {
-                "gameDesign": {
-                    "enabled": True,
-                    "mode": "apply",
-                    "targetNamespace": "pr-123",
-                    "runId": "approved-42",
-                    "image": f"ghcr.io/benhook1013/game-design-service@sha256:{sha}",
-                    "signedManifestSecretName": "tenant-manifest-approved-42",
-                    "trustedKeysSecretName": "tenant-owner-public-keys",
-                },
-                "account": {
-                    "enabled": True,
-                    "mode": "import",
-                    "targetNamespace": "pr-123",
-                    "runId": "approved-42",
-                    "image": f"ghcr.io/benhook1013/account-service@sha256:{sha}",
-                    "legacyTenantId": "41",
+    def migration_for(game_design_mode, account_mode):
+        return {
+            "previewStack": {
+                "tenantAssociationMigration": {
+                    "gameDesign": {
+                        "enabled": True,
+                        "mode": game_design_mode,
+                        "targetNamespace": "pr-123",
+                        "runId": "approved-42",
+                        "image": f"ghcr.io/benhook1013/game-design-service@sha256:{sha}",
+                        "signedManifestSecretName": "tenant-manifest-approved-42",
+                        "trustedKeysSecretName": "tenant-owner-public-keys",
+                    },
+                    "account": {
+                        "enabled": True,
+                        "mode": account_mode,
+                        "targetNamespace": "pr-123",
+                        "runId": "approved-42",
+                        "image": f"ghcr.io/benhook1013/account-service@sha256:{sha}",
+                        "legacyTenantId": "41",
+                    },
                 },
             }
         }
-    }
-    enabled = render("tenant-migration-enabled", migration)
-    if enabled.returncode:
-        raise SystemExit(enabled.stderr)
-    by_kind_name = {
-        (item.get("kind"), item.get("metadata", {}).get("name")): item
-        for item in documents(enabled.stdout)
-    }
-    for service, mode in (("game-design", "apply"), ("account", "import")):
-        workload = f"{service}-tenant-migrator"
-        job = by_kind_name[("Job", f"{service}-tenant-{mode}-approved-42")]
-        pod = job["spec"]["template"]["spec"]
-        if pod["serviceAccountName"] != workload or pod["automountServiceAccountToken"] is not False:
-            raise SystemExit(f"{workload} Job did not bind the dedicated tokenless service account")
-        if by_kind_name[("ServiceAccount", workload)]["automountServiceAccountToken"] is not False:
-            raise SystemExit(f"{workload} service account mounts an API token")
-        secret = next(volume["secret"]["secretName"] for volume in pod["volumes"] if volume["name"] == "grpc-identity")
-        if secret != f"firemud-grpc-{workload}":
-            raise SystemExit(f"{workload} reused an ordinary service certificate")
-        policy = by_kind_name[("NetworkPolicy", workload)]["spec"]
-        if policy["ingress"] != [] or set(policy["policyTypes"]) != {"Ingress", "Egress"}:
-            raise SystemExit(f"{workload} has an unexpected ingress allowance")
-        destination_apps = {
-            selector["podSelector"]["matchLabels"]["app"]
-            for rule in policy["egress"]
-            for selector in rule["to"]
-            if "podSelector" in selector and "app" in selector["podSelector"].get("matchLabels", {})
+
+    def validate_rendered_jobs(name, migration, modes):
+        result = render(name, migration)
+        if result.returncode:
+            raise SystemExit(result.stderr)
+        by_kind_name = {
+            (item.get("kind"), item.get("metadata", {}).get("name")): item
+            for item in documents(result.stdout)
         }
-        expected = {"postgres"} | ({"game-design-service"} if service == "account" else set())
-        if destination_apps != expected:
-            raise SystemExit(f"{workload} egress targets differ: {destination_apps}")
+        for service, mode in modes:
+            workload = f"{service}-tenant-migrator"
+            job = by_kind_name[("Job", f"{service}-tenant-{mode}-approved-42")]
+            pod = job["spec"]["template"]["spec"]
+            if pod["serviceAccountName"] != workload or pod["automountServiceAccountToken"] is not False:
+                raise SystemExit(f"{workload} Job did not bind the dedicated tokenless service account")
+            if by_kind_name[("ServiceAccount", workload)]["automountServiceAccountToken"] is not False:
+                raise SystemExit(f"{workload} service account mounts an API token")
+            secret = next(volume["secret"]["secretName"] for volume in pod["volumes"] if volume["name"] == "grpc-identity")
+            if secret != f"firemud-grpc-{workload}":
+                raise SystemExit(f"{workload} reused an ordinary service certificate")
+            require_flyway_disabled(pod["containers"][0]["args"], workload)
+            require_flyway_guard_negative_proof(pod["containers"][0]["args"], workload)
+            require_database_credentials(pod["containers"][0], service, mode)
+            require_database_guard_negative_proof(pod["containers"][0], service, mode)
+            policy = by_kind_name[("NetworkPolicy", workload)]["spec"]
+            if policy["ingress"] != [] or set(policy["policyTypes"]) != {"Ingress", "Egress"}:
+                raise SystemExit(f"{workload} has an unexpected ingress allowance")
+            destination_apps = {
+                selector["podSelector"]["matchLabels"]["app"]
+                for rule in policy["egress"]
+                for selector in rule["to"]
+                if "podSelector" in selector and "app" in selector["podSelector"].get("matchLabels", {})
+            }
+            expected = {"postgres"} | ({"game-design-service"} if service == "account" and mode == "import" else set())
+            if destination_apps != expected:
+                raise SystemExit(f"{workload} egress targets differ: {destination_apps}")
+
+    validate_rendered_jobs(
+        "tenant-migration-read-only",
+        migration_for("preflight", "evidence"),
+        (("game-design", "preflight"), ("account", "evidence")),
+    )
+    migration = migration_for("apply", "import")
+    validate_rendered_jobs(
+        "tenant-migration-writing",
+        migration,
+        (("game-design", "apply"), ("account", "import")),
+    )
 
     wrong_namespace = copy.deepcopy(migration)
     wrong_namespace["previewStack"]["tenantAssociationMigration"]["account"]["targetNamespace"] = "pr-999"

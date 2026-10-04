@@ -26,4 +26,9 @@ public class GameInstance {
   private Long legacyOwnerAccountId;
   private String status;
   private Long rowVersion;
+  private String runOwnedStartRequestId;
+  private String runOwnedStartRequestDigest;
+  private String runOwnedStartPublishedReleaseBundleRef;
+  private Long runOwnedStartPreparingEpoch;
+  private Long runOwnedStartActiveEpoch;
 }

@@ -16,6 +16,7 @@ import static org.mockito.Mockito.when;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
@@ -29,6 +30,7 @@ import net.firedevops.firemud.gamesession.presentation.ErrorOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.service.DirectTextConnectScopeSessionStore;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
@@ -55,6 +57,12 @@ class LoginCommandHandlerTest {
   private static final String ACCOUNT_77 = "774f987b-6650-4d04-8e0f-441867c17923";
   private static final String ACCOUNT_99 = "998a7412-13c4-4dbc-86d9-8f40aee3c6f1";
   private static final String OWNER_ACCOUNT_UUID = "123e4567-e89b-12d3-a456-426614174000";
+  private static final String SECOND_GAME_OWNER_ACCOUNT_UUID =
+      "723c126e-4159-493b-ad15-36a67d673031";
+  private static final String THIRD_GAME_OWNER_ACCOUNT_UUID =
+      "b651d5ad-21d0-47af-9558-0c07a42bd903";
+  private static final String DIFFERENT_GAME_OWNER_ACCOUNT_UUID =
+      "f8217bf3-511a-4dfb-9bd9-3d085a6f86da";
 
   private final GameInstanceRepository gameInstanceRepository =
       Mockito.mock(GameInstanceRepository.class);
@@ -391,9 +399,9 @@ class LoginCommandHandlerTest {
             null,
             "en-NZ",
             1L,
-            "shell-world",
-            "shell-realm",
-            7L,
+            "demo",
+            "production",
+            1L,
             "SHARED",
             "shell-scope",
             "shell-request");
@@ -431,8 +439,8 @@ class LoginCommandHandlerTest {
     assertNull(shell.accountId());
     assertNull(shell.jwt());
     assertEquals(1L, shell.bootstrapGameInstanceId());
-    assertEquals("shell-world", shell.worldSlug());
-    assertEquals("shell-realm", shell.realmSlug());
+    assertEquals("demo", shell.worldSlug());
+    assertEquals("production", shell.realmSlug());
     assertEquals("shell-scope", shell.connectScopeId());
     assertEquals("shell-request", shell.connectRequestId());
     assertEquals(OWNER_ACCOUNT_UUID, instance.getOwnerAccountId());
@@ -446,7 +454,7 @@ class LoginCommandHandlerTest {
   }
 
   @Test
-  void bareLoginForDifferentVerifiedSubjectClearsOldAccountBeforeReturningUnavailable() {
+  void bareLoginRejectsDifferentVerifiedSubjectWithoutClearingPersistedAccount() {
     TextCommand loginCommand = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
     SessionContext accountA = staleGameplayContext(1L);
     stubMutableSessionContext(accountA);
@@ -464,40 +472,25 @@ class LoginCommandHandlerTest {
             "gateway-account-b");
     when(firstPartyConnectContextRegistry.find(1L))
         .thenReturn(Optional.of(verifiedAccountBContext));
-    GameInstance instance = buildInstance(2L, 33L, OWNER_ACCOUNT_UUID);
-    when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance));
-    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(33L, 2L))
-        .thenReturn(List.of(pointer("demo", "production", 33L, 2L, 1L)));
-
     LoginCommandHandlingResult result = handler.handle("1", loginCommand, false);
 
     assertFalse(result.commandResult().accepted());
-    assertEquals("AUTH_UNAVAILABLE", result.commandResult().errorCode());
-    ArgumentCaptor<SessionContext> savedContext = ArgumentCaptor.forClass(SessionContext.class);
-    verify(sessionContextService).save(savedContext.capture());
-    SessionContext accountBShell = savedContext.getValue();
-    assertEquals(33L, accountBShell.tenantId());
-    assertNull(accountBShell.accountId());
-    assertNull(accountBShell.loginName());
-    assertNull(accountBShell.jwt());
-    assertFalse(accountBShell.hasGameplayBinding());
-    assertEquals(2L, accountBShell.bootstrapGameInstanceId());
-    assertEquals("demo", accountBShell.worldSlug());
-    assertEquals("production", accountBShell.realmSlug());
-    assertEquals(1L, accountBShell.pointerVersion());
-    assertNull(accountBShell.playableStateScope());
-    assertEquals("scope-account-b", accountBShell.connectScopeId());
-    assertEquals("request-account-b", accountBShell.connectRequestId());
-    verify(gameplayPresenceLifecycleService).clearGameplayBinding(accountA, "LOGIN_FAILED");
-    verify(firstPartyConnectContextRegistry, never()).unregister(anyLong());
-    assertEquals(Optional.of(verifiedAccountBContext), firstPartyConnectContextRegistry.find(1L));
-
-    PlayCommandHandlingResult playResult =
-        createPlayCommandHandler()
-            .handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
-
-    assertFalse(playResult.commandResult().accepted());
-    assertEquals("LOGIN_REQUIRED", playResult.commandResult().errorCode());
+    assertEquals("CONNECT_CONTEXT_INVALID", result.commandResult().errorCode());
+    verify(firstPartyConnectContextRegistry).unregister(1L);
+    verify(sessionContextService, never()).save(any(SessionContext.class));
+    verify(gameplayPresenceLifecycleService, never())
+        .clearGameplayBinding(any(SessionContext.class), anyString());
+    verify(gameInstanceRepository, never()).findById(anyLong());
+    verify(gameplayAdmissionPointerAuthorityService, never()).listByRuntimeTarget(33L, 2L);
+    assertEquals(ACCOUNT_77, accountA.accountId());
+    assertEquals(22L, accountA.tenantId());
+    assertEquals(AUTH_TOKEN, accountA.jwt());
+    assertTrue(accountA.hasGameplayBinding());
+    assertEquals(88L, accountA.characterId());
+    assertEquals(1L, accountA.gameInstanceId());
+    assertEquals("R-2045", accountA.roomInstanceId());
+    assertEquals("scope-stale", accountA.connectScopeId());
+    assertEquals("req-stale", accountA.connectRequestId());
   }
 
   @Test
@@ -587,14 +580,45 @@ class LoginCommandHandlerTest {
   }
 
   @Test
-  void credentialLoginPreservesBootstrapTargetButDropsSubjectBoundConnectScope() {
-    TextCommand command =
+  void credentialLoginAsDifferentAccountInvalidatesFirstPartyContextBeforeBareLogin() {
+    TextCommand bareLogin = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
+    TextCommand credentialLogin =
         new TextCommand(
             TextCommandType.LOGIN,
             List.of("other@example.com", "swordfish"),
             "LOGIN other@example.com swordfish");
     GameInstance instance = buildInstance(1L, 22L, OWNER_ACCOUNT_UUID);
-    stubSessionContext(
+    FirstPartyConnectContext accountAContext =
+        new FirstPartyConnectContext(
+            ACCOUNT_77,
+            22L,
+            "demo",
+            "production",
+            1L,
+            1L,
+            "scope-1",
+            "jti-1",
+            "req-1",
+            "gateway-1");
+    AtomicBoolean accountAContextRegistered = new AtomicBoolean(true);
+    List<String> registryEvents = new java.util.ArrayList<>();
+    Mockito.doAnswer(
+            invocation -> {
+              boolean registered = accountAContextRegistered.get();
+              registryEvents.add(registered ? "find-account-a" : "find-empty");
+              return registered ? Optional.of(accountAContext) : Optional.empty();
+            })
+        .when(firstPartyConnectContextRegistry)
+        .find(1L);
+    Mockito.doAnswer(
+            invocation -> {
+              registryEvents.add("unregister");
+              accountAContextRegistered.set(false);
+              return null;
+            })
+        .when(firstPartyConnectContextRegistry)
+        .unregister(1L);
+    stubMutableSessionContext(
         new SessionContext(
             1L,
             22L,
@@ -621,22 +645,84 @@ class LoginCommandHandlerTest {
                 .setAccountId(ACCOUNT_99)
                 .build());
 
-    LoginCommandHandlingResult result = handler.handle("1", command, false);
+    LoginCommandHandlingResult firstPartyResult = handler.handle("1", bareLogin, false);
+    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 1L))
+        .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 3L)));
+    LoginCommandHandlingResult credentialResult = handler.handle("1", credentialLogin, false);
+    LoginCommandHandlingResult subsequentBareResult = handler.handle("1", bareLogin, false);
 
-    assertTrue(result.commandResult().accepted());
+    assertFalse(firstPartyResult.commandResult().accepted());
+    assertEquals("AUTH_UNAVAILABLE", firstPartyResult.commandResult().errorCode());
+    assertTrue(credentialResult.commandResult().accepted());
+    assertFalse(subsequentBareResult.commandResult().accepted());
+    assertEquals(
+        LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_CODE,
+        subsequentBareResult.commandResult().errorCode());
+    verify(firstPartyConnectContextRegistry).unregister(1L);
+    assertEquals(
+        List.of("find-account-a", "find-account-a", "unregister", "find-empty"), registryEvents);
     ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
-    verify(sessionContextService).save(captor.capture());
-    SessionContext saved = captor.getValue();
-    assertEquals(ACCOUNT_99, saved.accountId());
-    assertEquals(1L, saved.bootstrapGameInstanceId());
-    assertEquals("demo", saved.worldSlug());
-    assertEquals("production", saved.realmSlug());
-    assertEquals(3L, saved.pointerVersion());
-    assertEquals("SHARED", saved.playableStateScope());
-    assertNull(saved.connectScopeId());
-    assertNull(saved.connectRequestId());
-    assertEquals(0L, saved.characterId());
-    assertEquals(0L, saved.gameInstanceId());
+    verify(sessionContextService, Mockito.times(2)).save(captor.capture());
+    List<SessionContext> savedContexts = captor.getAllValues();
+    SessionContext credentialContext = savedContexts.get(0);
+    assertEquals(ACCOUNT_99, credentialContext.accountId());
+    assertEquals(1L, credentialContext.bootstrapGameInstanceId());
+    assertEquals("demo", credentialContext.worldSlug());
+    assertEquals("production", credentialContext.realmSlug());
+    assertEquals(3L, credentialContext.pointerVersion());
+    assertEquals("SHARED", credentialContext.playableStateScope());
+    assertNull(credentialContext.connectScopeId());
+    assertNull(credentialContext.connectRequestId());
+    assertEquals(0L, credentialContext.characterId());
+    assertEquals(0L, credentialContext.gameInstanceId());
+
+    SessionContext unsupportedLoginShell = savedContexts.get(1);
+    assertFalse(unsupportedLoginShell.hasAccountIdentity());
+    assertNull(unsupportedLoginShell.accountId());
+    assertNull(unsupportedLoginShell.loginName());
+    assertNull(unsupportedLoginShell.jwt());
+    assertEquals(22L, unsupportedLoginShell.tenantId());
+    assertEquals("en-NZ", unsupportedLoginShell.localeTag());
+    assertEquals(1L, unsupportedLoginShell.bootstrapGameInstanceId());
+    assertEquals("demo", unsupportedLoginShell.worldSlug());
+    assertEquals("production", unsupportedLoginShell.realmSlug());
+    assertEquals(3L, unsupportedLoginShell.pointerVersion());
+    assertNull(unsupportedLoginShell.playableStateScope());
+    assertNull(unsupportedLoginShell.connectScopeId());
+    assertNull(unsupportedLoginShell.connectRequestId());
+    assertEquals(0L, unsupportedLoginShell.characterId());
+    assertEquals(0L, unsupportedLoginShell.gameInstanceId());
+    assertNull(unsupportedLoginShell.roomInstanceId());
+  }
+
+  @Test
+  void staleFirstPartyRegistryCannotReplacePersistedCredentialIdentity() {
+    SessionContext credentialIdentity =
+        new SessionContext(1L, 22L, ACCOUNT_77, "demo@example.com", 0L, null, 0L, "mock-jwt");
+    stubSessionContext(credentialIdentity);
+    when(firstPartyConnectContextRegistry.find(1L))
+        .thenReturn(
+            Optional.of(
+                new FirstPartyConnectContext(
+                    ACCOUNT_99,
+                    22L,
+                    "demo",
+                    "production",
+                    1L,
+                    1L,
+                    "scope-1",
+                    "jti-1",
+                    "req-1",
+                    "gateway-1")));
+
+    LoginCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN"), false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("CONNECT_CONTEXT_INVALID", result.commandResult().errorCode());
+    verify(firstPartyConnectContextRegistry).unregister(1L);
+    verify(sessionContextService, never()).save(any(SessionContext.class));
+    verify(gameInstanceRepository, never()).findById(anyLong());
   }
 
   @Test
@@ -1061,6 +1147,179 @@ class LoginCommandHandlerTest {
   }
 
   @Test
+  void loginAsDifferentAccountClearsCrossTenantProjectedPresenceBeforeSaving() {
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("other@example.com", "swordfish"),
+            "LOGIN other@example.com swordfish");
+    GameInstance instance = buildInstance(1L, 23L, SECOND_GAME_OWNER_ACCOUNT_UUID);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    when(accountClient.authenticate(anyString(), anyString()))
+        .thenReturn(
+            AuthenticateResponse.newBuilder()
+                .setAuthToken(AUTH_TOKEN)
+                .setAccountId(ACCOUNT_99)
+                .build());
+    SessionContext existing =
+        new SessionContext(
+            1L,
+            22L,
+            ACCOUNT_77,
+            "demo@example.com",
+            88L,
+            "Sora",
+            1L,
+            "R-2045",
+            "old-jwt",
+            "en-NZ",
+            1L,
+            "demo",
+            "production",
+            1L,
+            "SHARED",
+            "scope-live",
+            "req-live");
+    stubSessionContext(existing);
+
+    handler.handle("1", command, false);
+
+    ArgumentCaptor<SessionContext> savedContext = ArgumentCaptor.forClass(SessionContext.class);
+    InOrder inOrder = Mockito.inOrder(gameplayPresenceLifecycleService, sessionContextService);
+    inOrder
+        .verify(gameplayPresenceLifecycleService)
+        .clearGameplayBinding(existing, "LOGIN_ACCOUNT_CHANGED");
+    inOrder.verify(sessionContextService).save(savedContext.capture());
+    assertEquals(22L, existing.tenantId());
+    assertEquals(23L, savedContext.getValue().tenantId());
+    assertEquals(ACCOUNT_99, savedContext.getValue().accountId());
+    assertEquals(0L, savedContext.getValue().characterId());
+    assertEquals(0L, savedContext.getValue().gameInstanceId());
+  }
+
+  @Test
+  void loginAsDifferentAccountClearsCrossTenantPresenceAfterProjectionNormalization() {
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("other@example.com", "swordfish"),
+            "LOGIN other@example.com swordfish");
+    GameInstance instance = buildInstance(1L, 23L, SECOND_GAME_OWNER_ACCOUNT_UUID);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    when(accountClient.authenticate(anyString(), anyString()))
+        .thenReturn(
+            AuthenticateResponse.newBuilder()
+                .setAuthToken(AUTH_TOKEN)
+                .setAccountId(ACCOUNT_99)
+                .build());
+    stubSessionContext(staleGameplayContext(0L));
+
+    handler.handle("1", command, false);
+
+    ArgumentCaptor<SessionContext> clearedContext = ArgumentCaptor.forClass(SessionContext.class);
+    ArgumentCaptor<SessionContext> savedContext = ArgumentCaptor.forClass(SessionContext.class);
+    InOrder inOrder = Mockito.inOrder(gameplayPresenceLifecycleService, sessionContextService);
+    inOrder
+        .verify(gameplayPresenceLifecycleService)
+        .clearGameplayBinding(clearedContext.capture(), eq("LOGIN_ACCOUNT_CHANGED"));
+    inOrder.verify(sessionContextService).save(savedContext.capture());
+    assertEquals(22L, clearedContext.getValue().tenantId());
+    assertEquals(ACCOUNT_77, clearedContext.getValue().accountId());
+    assertFalse(clearedContext.getValue().hasGameplayBinding());
+    assertEquals(23L, savedContext.getValue().tenantId());
+    assertEquals(ACCOUNT_99, savedContext.getValue().accountId());
+    assertEquals(0L, savedContext.getValue().characterId());
+    assertEquals(0L, savedContext.getValue().gameInstanceId());
+  }
+
+  @Test
+  void loginAsSameAccountClearsCrossTenantPresenceBeforeSaving() {
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+    GameInstance instance = buildInstance(1L, 23L, SECOND_GAME_OWNER_ACCOUNT_UUID);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    when(accountClient.authenticate(anyString(), anyString()))
+        .thenReturn(
+            AuthenticateResponse.newBuilder()
+                .setAuthToken(AUTH_TOKEN)
+                .setAccountId(ACCOUNT_77)
+                .build());
+    SessionContext existing =
+        new SessionContext(
+            1L,
+            22L,
+            ACCOUNT_77,
+            "demo@example.com",
+            88L,
+            "Sora",
+            1L,
+            "R-2045",
+            "old-jwt",
+            "en-NZ",
+            1L,
+            "demo",
+            "production",
+            1L,
+            "SHARED",
+            "scope-live",
+            "req-live");
+    stubSessionContext(existing);
+
+    handler.handle("1", command, false);
+
+    ArgumentCaptor<SessionContext> savedContext = ArgumentCaptor.forClass(SessionContext.class);
+    InOrder inOrder = Mockito.inOrder(gameplayPresenceLifecycleService, sessionContextService);
+    inOrder
+        .verify(gameplayPresenceLifecycleService)
+        .clearGameplayBinding(existing, "LOGIN_TENANT_CHANGED");
+    inOrder.verify(sessionContextService).save(savedContext.capture());
+    assertEquals(22L, existing.tenantId());
+    assertEquals(ACCOUNT_77, existing.accountId());
+    assertEquals(23L, savedContext.getValue().tenantId());
+    assertEquals(ACCOUNT_77, savedContext.getValue().accountId());
+    assertEquals(0L, savedContext.getValue().characterId());
+    assertEquals(0L, savedContext.getValue().gameInstanceId());
+  }
+
+  @Test
+  void loginAsSameAccountClearsCrossTenantPresenceAfterProjectionNormalization() {
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+    GameInstance instance = buildInstance(1L, 23L, SECOND_GAME_OWNER_ACCOUNT_UUID);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    when(accountClient.authenticate(anyString(), anyString()))
+        .thenReturn(
+            AuthenticateResponse.newBuilder()
+                .setAuthToken(AUTH_TOKEN)
+                .setAccountId(ACCOUNT_77)
+                .build());
+    stubSessionContext(staleGameplayContext(0L));
+
+    handler.handle("1", command, false);
+
+    ArgumentCaptor<SessionContext> clearedContext = ArgumentCaptor.forClass(SessionContext.class);
+    ArgumentCaptor<SessionContext> savedContext = ArgumentCaptor.forClass(SessionContext.class);
+    InOrder inOrder = Mockito.inOrder(gameplayPresenceLifecycleService, sessionContextService);
+    inOrder
+        .verify(gameplayPresenceLifecycleService)
+        .clearGameplayBinding(clearedContext.capture(), eq("LOGIN_TENANT_CHANGED"));
+    inOrder.verify(sessionContextService).save(savedContext.capture());
+    assertEquals(22L, clearedContext.getValue().tenantId());
+    assertEquals(ACCOUNT_77, clearedContext.getValue().accountId());
+    assertFalse(clearedContext.getValue().hasGameplayBinding());
+    assertEquals(23L, savedContext.getValue().tenantId());
+    assertEquals(ACCOUNT_77, savedContext.getValue().accountId());
+    assertEquals(0L, savedContext.getValue().characterId());
+    assertEquals(0L, savedContext.getValue().gameInstanceId());
+  }
+
+  @Test
   void reloginAsDifferentAccountClearsExistingGameplayBinding() {
     TextCommand command =
         new TextCommand(
@@ -1123,7 +1382,7 @@ class LoginCommandHandlerTest {
   }
 
   @Test
-  void verifiedConnectForDifferentTenantClearsPriorGameplayBindingWithoutPromotingAccount() {
+  void verifiedConnectForDifferentAccountPreservesPriorGameplayBinding() {
     TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
     SessionContext prior =
         new SessionContext(
@@ -1161,32 +1420,27 @@ class LoginCommandHandlerTest {
                     "jti-1",
                     "new-request",
                     "gateway-1")));
-    when(gameInstanceRepository.findById(1L))
-        .thenReturn(Optional.of(buildInstance(1L, 22L, OWNER_ACCOUNT_UUID)));
-
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
     assertFalse(result.commandResult().accepted());
-    assertEquals("AUTH_UNAVAILABLE", result.commandResult().errorCode());
+    assertEquals("CONNECT_CONTEXT_INVALID", result.commandResult().errorCode());
     verify(accountClient, never()).authenticate(anyString(), anyString());
-    ArgumentCaptor<SessionContext> saved = ArgumentCaptor.forClass(SessionContext.class);
-    InOrder inOrder = Mockito.inOrder(gameplayPresenceLifecycleService, sessionContextService);
-    inOrder.verify(gameplayPresenceLifecycleService).clearGameplayBinding(prior, "LOGIN_FAILED");
-    inOrder.verify(sessionContextService).save(saved.capture());
-    assertEquals(22L, saved.getValue().tenantId());
-    assertNull(saved.getValue().accountId());
-    assertEquals(0L, saved.getValue().characterId());
-    assertEquals(0L, saved.getValue().gameInstanceId());
-    assertEquals("demo", saved.getValue().worldSlug());
-    assertEquals("production", saved.getValue().realmSlug());
-    assertEquals("new-scope", saved.getValue().connectScopeId());
-
-    PlayCommandHandlingResult playResult =
-        createPlayCommandHandler()
-            .handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
-
-    assertFalse(playResult.commandResult().accepted());
-    assertEquals("LOGIN_REQUIRED", playResult.commandResult().errorCode());
+    verify(firstPartyConnectContextRegistry).unregister(1L);
+    verify(sessionContextService, never()).save(any(SessionContext.class));
+    verify(gameplayPresenceLifecycleService, never())
+        .clearGameplayBinding(any(SessionContext.class), anyString());
+    verify(gameInstanceRepository, never()).findById(anyLong());
+    verify(gameplayAdmissionPointerAuthorityService, never()).listByRuntimeTarget(22L, 1L);
+    assertEquals(ACCOUNT_77, prior.accountId());
+    assertEquals(33L, prior.tenantId());
+    assertEquals("old@example.com", prior.loginName());
+    assertEquals("old-jwt", prior.jwt());
+    assertTrue(prior.hasGameplayBinding());
+    assertEquals(88L, prior.characterId());
+    assertEquals(2L, prior.gameInstanceId());
+    assertEquals("R-2045", prior.roomInstanceId());
+    assertEquals("old-scope", prior.connectScopeId());
+    assertEquals("old-request", prior.connectRequestId());
   }
 
   @Test
@@ -1745,7 +1999,8 @@ class LoginCommandHandlerTest {
         firstPartyConnectContextRegistry,
         gameplayPresenceLifecycleService,
         Mockito.mock(ScriptEventPublisher.class),
-        meterRegistry);
+        meterRegistry,
+        DirectTextConnectScopeSessionStore.inMemoryForTest());
   }
 
   private static String joinedOutputText(List<PlayerOutput> outputs) {
@@ -1841,6 +2096,16 @@ class LoginCommandHandlerTest {
       long pointerVersion,
       String expectedConnectScopeId,
       String expectedConnectRequestId) {
+    assertClearedSessionContext(
+        context, pointerVersion, expectedConnectScopeId, expectedConnectRequestId, "en-NZ");
+  }
+
+  private static void assertClearedSessionContext(
+      SessionContext context,
+      long pointerVersion,
+      String expectedConnectScopeId,
+      String expectedConnectRequestId,
+      String expectedLocaleTag) {
     assertEquals(1L, context.sessionId());
     assertEquals(22L, context.tenantId());
     assertNull(context.accountId());
@@ -1850,7 +2115,7 @@ class LoginCommandHandlerTest {
     assertEquals(0L, context.gameInstanceId());
     assertNull(context.roomInstanceId());
     assertNull(context.jwt());
-    assertEquals("en-NZ", context.localeTag());
+    assertEquals(expectedLocaleTag, context.localeTag());
     assertEquals(1L, context.bootstrapGameInstanceId());
     if (pointerVersion > 0) {
       assertEquals("demo", context.worldSlug());
@@ -1875,5 +2140,183 @@ class LoginCommandHandlerTest {
         .thenReturn(Optional.of(context));
     when(sessionContextService.findByTenantAndSessionId(context.tenantId(), context.sessionId()))
         .thenReturn(Optional.of(context));
+  }
+
+  @Test
+  void credentialLoginPreservesCurrentBootstrapTargetButDropsSubjectBoundConnectScope() {
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("other@example.com", "swordfish"),
+            "LOGIN other@example.com swordfish");
+    GameInstance instance = buildInstance(1L, 22L, THIRD_GAME_OWNER_ACCOUNT_UUID);
+    stubSessionContext(
+        new SessionContext(
+            1L,
+            22L,
+            null,
+            null,
+            0L,
+            null,
+            0L,
+            null,
+            null,
+            "en-NZ",
+            1L,
+            "demo",
+            "production",
+            3L,
+            "SHARED",
+            "subject-99-scope",
+            "subject-99-request"));
+    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 1L))
+        .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 3L)));
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    when(accountClient.authenticate("other@example.com", "swordfish"))
+        .thenReturn(
+            AuthenticateResponse.newBuilder()
+                .setAuthToken(AUTH_TOKEN)
+                .setAccountId(ACCOUNT_99)
+                .build());
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertTrue(result.commandResult().accepted());
+    ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
+    verify(sessionContextService).save(captor.capture());
+    SessionContext saved = captor.getValue();
+    assertEquals(ACCOUNT_99, saved.accountId());
+    assertEquals(1L, saved.bootstrapGameInstanceId());
+    assertEquals("demo", saved.worldSlug());
+    assertEquals("production", saved.realmSlug());
+    assertEquals(3L, saved.pointerVersion());
+    assertEquals("SHARED", saved.playableStateScope());
+    assertNull(saved.connectScopeId());
+    assertNull(saved.connectRequestId());
+    assertEquals(0L, saved.characterId());
+    assertEquals(0L, saved.gameInstanceId());
+  }
+
+  @Test
+  void credentialLoginDropsStaleBootstrapTargetAndSubjectBoundConnectScope() {
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("other@example.com", "swordfish"),
+            "LOGIN other@example.com swordfish");
+    GameInstance instance = buildInstance(1L, 22L, THIRD_GAME_OWNER_ACCOUNT_UUID);
+    stubSessionContext(
+        new SessionContext(
+            1L,
+            22L,
+            null,
+            null,
+            0L,
+            null,
+            0L,
+            null,
+            null,
+            "en-NZ",
+            1L,
+            "demo",
+            "production",
+            3L,
+            "SHARED",
+            "subject-99-scope",
+            "subject-99-request"));
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    when(accountClient.authenticate("other@example.com", "swordfish"))
+        .thenReturn(
+            AuthenticateResponse.newBuilder()
+                .setAuthToken(AUTH_TOKEN)
+                .setAccountId(ACCOUNT_99)
+                .build());
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertTrue(result.commandResult().accepted());
+    ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
+    verify(sessionContextService).save(captor.capture());
+    SessionContext saved = captor.getValue();
+    assertEquals(ACCOUNT_99, saved.accountId());
+    assertEquals(1L, saved.bootstrapGameInstanceId());
+    assertNull(saved.worldSlug());
+    assertNull(saved.realmSlug());
+    assertEquals(0L, saved.pointerVersion());
+    assertNull(saved.playableStateScope());
+    assertNull(saved.connectScopeId());
+    assertNull(saved.connectRequestId());
+    assertEquals(0L, saved.characterId());
+    assertEquals(0L, saved.gameInstanceId());
+  }
+
+  @Test
+  void verifiedConnectForDifferentTenantClearsPriorBindingWithoutReusingItsBootstrapState() {
+    TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
+    SessionContext prior =
+        new SessionContext(
+            1L,
+            33L,
+            ACCOUNT_77,
+            "old@example.com",
+            88L,
+            "Sora",
+            2L,
+            "R-2045",
+            "old-jwt",
+            "en-NZ",
+            2L,
+            "old-world",
+            "old-realm",
+            1L,
+            "SHARED",
+            "old-scope",
+            "old-request");
+    stubSessionContext(prior);
+    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(33L, 2L))
+        .thenReturn(List.of(pointer("old-world", "old-realm", 33L, 2L, 1L)));
+    when(firstPartyConnectContextRegistry.find(1L))
+        .thenReturn(
+            Optional.of(
+                new FirstPartyConnectContext(
+                    ACCOUNT_77,
+                    22L,
+                    "demo",
+                    "production",
+                    1L,
+                    1L,
+                    "new-scope",
+                    "jti-1",
+                    "new-request",
+                    "gateway-1")));
+    when(gameInstanceRepository.findById(1L))
+        .thenReturn(Optional.of(buildInstance(1L, 22L, DIFFERENT_GAME_OWNER_ACCOUNT_UUID)));
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("AUTH_UNAVAILABLE", result.commandResult().errorCode());
+    verify(accountClient, never()).authenticate(anyString(), anyString());
+    ArgumentCaptor<SessionContext> saved = ArgumentCaptor.forClass(SessionContext.class);
+    InOrder inOrder = Mockito.inOrder(gameplayPresenceLifecycleService, sessionContextService);
+    inOrder.verify(gameplayPresenceLifecycleService).clearGameplayBinding(prior, "LOGIN_FAILED");
+    inOrder.verify(sessionContextService).save(saved.capture());
+    SessionContext freshTenantShell = saved.getValue();
+    assertEquals(22L, freshTenantShell.tenantId());
+    assertNull(freshTenantShell.accountId());
+    assertNull(freshTenantShell.loginName());
+    assertEquals(0L, freshTenantShell.characterId());
+    assertNull(freshTenantShell.characterName());
+    assertEquals(0L, freshTenantShell.gameInstanceId());
+    assertNull(freshTenantShell.roomInstanceId());
+    assertNull(freshTenantShell.jwt());
+    assertEquals("en-NZ", freshTenantShell.localeTag());
+    assertEquals(1L, freshTenantShell.bootstrapGameInstanceId());
+    assertEquals("demo", freshTenantShell.worldSlug());
+    assertEquals("production", freshTenantShell.realmSlug());
+    assertEquals(1L, freshTenantShell.pointerVersion());
+    assertNull(freshTenantShell.playableStateScope());
+    assertEquals("new-scope", freshTenantShell.connectScopeId());
+    assertEquals("new-request", freshTenantShell.connectRequestId());
   }
 }

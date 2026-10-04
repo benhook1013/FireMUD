@@ -746,7 +746,9 @@ class AutomationGameplayCommandAdmissionSupportTest {
 
     assertFalse(result.accepted());
     assertEquals("RUNTIME_PAUSED", result.admissionOutcome());
+    assertEquals("auto-paused", result.commandId());
     assertEquals("runtime_paused", result.errorCode());
+    assertEquals("ACCEPTED", existing.getExecutionOutcome());
     verifyNoTickEnqueue(tickService);
   }
 
@@ -785,7 +787,9 @@ class AutomationGameplayCommandAdmissionSupportTest {
     assertFalse(result.accepted());
     assertEquals("RETRY_QUEUED", result.admissionOutcome());
     assertEquals("UNAVAILABLE", result.errorCode());
+    assertEquals("Runtime ownership is temporarily unavailable", result.errorMessage());
     assertEquals("auto-owner-read-failed", result.commandId());
+    assertEquals("ACCEPTED", existing.getExecutionOutcome());
     verify(gameplayCommandRepository, never()).insertIfAbsentByIdempotencyIdentity(any());
     verifyNoTickEnqueue(tickService);
   }
@@ -830,7 +834,9 @@ class AutomationGameplayCommandAdmissionSupportTest {
 
     assertFalse(result.accepted());
     assertEquals("STALE_TIMELINE", result.admissionOutcome());
+    assertEquals("rfcmd-remote-accepted", result.commandId());
     assertEquals("stale_region_epoch", result.errorCode());
+    assertEquals("ACCEPTED", existing.getExecutionOutcome());
     verifyNoTickEnqueue(tickService);
     verify(pointerAuthority, org.mockito.Mockito.never()).listByRuntimeTarget(anyLong(), anyLong());
   }
