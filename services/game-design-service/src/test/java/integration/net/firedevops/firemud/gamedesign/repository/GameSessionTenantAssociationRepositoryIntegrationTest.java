@@ -444,6 +444,15 @@ class GameSessionTenantAssociationRepositoryIntegrationTest {
                     .dsl()
                     .execute("TRUNCATE game_design_game_session_tenant_association_operations"))
         .isInstanceOf(DataAccessException.class)
+        .hasStackTraceContaining("cannot truncate a table referenced in a foreign key constraint");
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .dsl()
+                    .execute(
+                        "TRUNCATE game_design_game_session_tenant_association_operations, "
+                            + "game_design_game_session_tenant_association_payload"))
+        .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("evidence is immutable");
 
     assertThatThrownBy(
@@ -482,7 +491,7 @@ class GameSessionTenantAssociationRepositoryIntegrationTest {
   private Fixture fixtureWithFreshAndRetainedSources() throws Exception {
     String schema = "game_design_gs_assoc_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = dataSource(schema);
-    migrate(dataSource, schema, MigrationVersion.fromVersion("29"));
+    migrate(dataSource, schema, MigrationVersion.fromVersion("28"));
     DSLContext legacyDsl =
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
     Long retainedGameId =
@@ -632,7 +641,7 @@ class GameSessionTenantAssociationRepositoryIntegrationTest {
                   + "manifest_digest, signature) VALUES (?, ?, 'owner-key', 'owner', 'case', ?, ?, ?, ?, ?)",
               operationId,
               schemaVersion,
-              java.time.Instant.now().toString(),
+              java.time.Instant.now().truncatedTo(ChronoUnit.MICROS).toString(),
               projectionDigest,
               "sha256:" + "b".repeat(64),
               "sha256:" + "c".repeat(64),

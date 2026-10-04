@@ -184,6 +184,128 @@ class PublishedRealmCatalogRepositoryIntegrationTest {
   }
 
   @Test
+  void scopeTransitionsResolveOnlyTheCurrentTenantSharedNamespaceAndKeepPriorSnapshotsImmutable() {
+    Fixture fixture = fixture();
+    fixture.seedAssociation(TENANT_ID, CANONICAL_TENANT_ID, 501L, "source-game-501");
+
+    PublishedRealmCatalogSnapshot sharedBeforeIsolation =
+        fixture.materialize(
+            TENANT_ID,
+            evidenceSet(CANONICAL_TENANT_ID, 501L, "source-game-501", 110L, 1, "Main", "SHARED"));
+    UUID tenantSharedNamespace =
+        sharedBeforeIsolation.entries().stream()
+            .filter(entry -> entry.policyEvidence().policy().realmSlug().equals("side"))
+            .findFirst()
+            .orElseThrow()
+            .requirePlayableStateNamespaceId();
+
+    PublishedRealmCatalogSnapshot isolatedTransition =
+        fixture.materialize(
+            TENANT_ID,
+            evidenceSet(CANONICAL_TENANT_ID, 501L, "source-game-501", 111L, 2, "Main", "ISOLATED"));
+    var isolatedSide =
+        isolatedTransition.entries().stream()
+            .filter(entry -> entry.policyEvidence().policy().realmSlug().equals("side"))
+            .findFirst()
+            .orElseThrow();
+    assertThat(isolatedSide.namespaceResolution())
+        .isEqualTo(NamespaceResolution.AWAITING_LIFECYCLE_PROOF);
+    assertThat(isolatedSide.playableStateNamespaceId()).isNull();
+
+    PublishedRealmCatalogSnapshot sharedAfterIsolation =
+        fixture.materialize(
+            TENANT_ID,
+            evidenceSet(CANONICAL_TENANT_ID, 501L, "source-game-501", 112L, 3, "Main", "SHARED"));
+    var sharedSideAfterIsolation =
+        sharedAfterIsolation.entries().stream()
+            .filter(entry -> entry.policyEvidence().policy().realmSlug().equals("side"))
+            .findFirst()
+            .orElseThrow();
+    assertThat(sharedSideAfterIsolation.namespaceResolution())
+        .isEqualTo(NamespaceResolution.RESOLVED);
+    assertThat(sharedSideAfterIsolation.requirePlayableStateNamespaceId())
+        .isEqualTo(tenantSharedNamespace);
+
+    fixture.seedAssociation(OTHER_TENANT_ID, OTHER_CANONICAL_TENANT_ID, 502L, "source-game-502");
+    PublishedRealmCatalogSnapshot initiallyIsolated =
+        fixture.materialize(
+            OTHER_TENANT_ID,
+            evidenceSet(
+                OTHER_CANONICAL_TENANT_ID, 502L, "source-game-502", 210L, 1, "Main", "ISOLATED"));
+    var initiallyIsolatedSide =
+        initiallyIsolated.entries().stream()
+            .filter(entry -> entry.policyEvidence().policy().realmSlug().equals("side"))
+            .findFirst()
+            .orElseThrow();
+    assertThat(initiallyIsolatedSide.namespaceResolution())
+        .isEqualTo(NamespaceResolution.AWAITING_LIFECYCLE_PROOF);
+    assertThat(initiallyIsolatedSide.playableStateNamespaceId()).isNull();
+
+    PublishedRealmCatalogSnapshot isolatedThenShared =
+        fixture.materialize(
+            OTHER_TENANT_ID,
+            evidenceSet(
+                OTHER_CANONICAL_TENANT_ID, 502L, "source-game-502", 211L, 2, "Main", "SHARED"));
+    UUID otherTenantSharedNamespace =
+        isolatedThenShared.entries().stream()
+            .filter(entry -> entry.policyEvidence().policy().realmSlug().equals("main"))
+            .findFirst()
+            .orElseThrow()
+            .requirePlayableStateNamespaceId();
+    var isolatedThenSharedSide =
+        isolatedThenShared.entries().stream()
+            .filter(entry -> entry.policyEvidence().policy().realmSlug().equals("side"))
+            .findFirst()
+            .orElseThrow();
+    assertThat(isolatedThenSharedSide.namespaceResolution())
+        .isEqualTo(NamespaceResolution.RESOLVED);
+    assertThat(isolatedThenSharedSide.requirePlayableStateNamespaceId())
+        .isEqualTo(otherTenantSharedNamespace)
+        .isNotEqualTo(tenantSharedNamespace);
+
+    var storedSharedBeforeIsolation =
+        fixture
+            .repository
+            .findPublishedSnapshot(NAMESPACE, TENANT_ID, 1L)
+            .orElseThrow()
+            .entries()
+            .stream()
+            .filter(entry -> entry.policyEvidence().policy().realmSlug().equals("side"))
+            .findFirst()
+            .orElseThrow();
+    var storedIsolatedTransition =
+        fixture
+            .repository
+            .findPublishedSnapshot(NAMESPACE, TENANT_ID, 2L)
+            .orElseThrow()
+            .entries()
+            .stream()
+            .filter(entry -> entry.policyEvidence().policy().realmSlug().equals("side"))
+            .findFirst()
+            .orElseThrow();
+    var storedInitiallyIsolated =
+        fixture
+            .repository
+            .findPublishedSnapshot(NAMESPACE, OTHER_TENANT_ID, 1L)
+            .orElseThrow()
+            .entries()
+            .stream()
+            .filter(entry -> entry.policyEvidence().policy().realmSlug().equals("side"))
+            .findFirst()
+            .orElseThrow();
+    assertThat(storedSharedBeforeIsolation.namespaceResolution())
+        .isEqualTo(NamespaceResolution.RESOLVED);
+    assertThat(storedSharedBeforeIsolation.requirePlayableStateNamespaceId())
+        .isEqualTo(tenantSharedNamespace);
+    assertThat(storedIsolatedTransition.namespaceResolution())
+        .isEqualTo(NamespaceResolution.AWAITING_LIFECYCLE_PROOF);
+    assertThat(storedIsolatedTransition.playableStateNamespaceId()).isNull();
+    assertThat(storedInitiallyIsolated.namespaceResolution())
+        .isEqualTo(NamespaceResolution.AWAITING_LIFECYCLE_PROOF);
+    assertThat(storedInitiallyIsolated.playableStateNamespaceId()).isNull();
+  }
+
+  @Test
   void persistedSnapshotOrdersAsciiPunctuationByWorldThenRealmSlug() {
     Fixture fixture = fixture();
     fixture.seedAssociation(TENANT_ID, CANONICAL_TENANT_ID, 501L, "source-game-501");
@@ -475,7 +597,7 @@ class PublishedRealmCatalogRepositoryIntegrationTest {
               + "(operation_id, target_namespace, association_request_id, "
               + "legacy_game_session_tenant_id, canonical_tenant_id, source_game_row_id, "
               + "source_game_tenant_key, provenance_kind, captured_at, terminal_outcome) "
-              + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, clock_timestamp(), 'ASSOCIATED')",
+              + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 'ASSOCIATED')",
           UUID.randomUUID(),
           NAMESPACE,
           UUID.randomUUID(),

@@ -871,8 +871,10 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
 
     Record storedByRequest(UUID associationRequestId) {
       return dsl.fetchOne(
-          "SELECT * FROM game_session_retained_tenant_association "
-              + "WHERE target_namespace = ? AND association_request_id = ?",
+          "SELECT association.*, payload.approval_manifest_digest, payload.approval_signature "
+              + "FROM game_session_retained_tenant_association association "
+              + "JOIN game_session_retained_tenant_association_payload payload USING (operation_id) "
+              + "WHERE association.target_namespace = ? AND association.association_request_id = ?",
           NAMESPACE,
           associationRequestId);
     }

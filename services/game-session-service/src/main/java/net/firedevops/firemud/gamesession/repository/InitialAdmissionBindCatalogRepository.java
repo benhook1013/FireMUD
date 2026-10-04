@@ -566,27 +566,51 @@ public class InitialAdmissionBindCatalogRepository {
             .fetchOne();
     RealmEntryPolicy policy = evidence.policy();
     if (previous != null) {
-      String previousScope = Objects.requireNonNull(previous.get(STATE_SCOPE));
+      RealmEntryPolicy.StateScope previousScope;
       NamespaceResolution previousResolution;
       try {
+        previousScope =
+            RealmEntryPolicy.StateScope.valueOf(Objects.requireNonNull(previous.get(STATE_SCOPE)));
         previousResolution =
             NamespaceResolution.valueOf(Objects.requireNonNull(previous.get(NAMESPACE_RESOLUTION)));
-      } catch (IllegalArgumentException exception) {
+      } catch (IllegalArgumentException | NullPointerException exception) {
         throw new IllegalStateException(
             "PUBLISHED_REALM_CATALOG_NAMESPACE_INVALID: prior namespace state is unsupported",
             exception);
       }
-      if (!previousScope.equals(policy.stateScope().name())
-          || previousResolution != NamespaceResolution.RESOLVED
-          || policy.stateScope() != RealmEntryPolicy.StateScope.SHARED) {
+
+      UUID previousNamespace = previous.get(PLAYABLE_STATE_NAMESPACE_ID);
+      if (!canonicalTenantId.equals(previous.get(CANONICAL_TENANT_ID))
+          || (previousResolution == NamespaceResolution.RESOLVED
+              && (previousScope != RealmEntryPolicy.StateScope.SHARED
+                  || previousNamespace == null
+                  || previousNamespace.equals(NIL_UUID)))
+          || (previousResolution == NamespaceResolution.AWAITING_LIFECYCLE_PROOF
+              && previousNamespace != null)) {
+        throw new IllegalStateException(
+            "PUBLISHED_REALM_CATALOG_NAMESPACE_INVALID: prior namespace proof is inconsistent");
+      }
+
+      if (previousScope == RealmEntryPolicy.StateScope.SHARED
+          && previousResolution == NamespaceResolution.RESOLVED
+          && !previousNamespace.equals(
+              getOrCreateCanonicalTenantSharedNamespace(exactNamespace, canonicalTenantId))) {
+        throw new IllegalStateException(
+            "PUBLISHED_REALM_CATALOG_NAMESPACE_INVALID: prior shared namespace differs from tenant authority");
+      }
+
+      if (policy.stateScope() != RealmEntryPolicy.StateScope.SHARED) {
         return new NamespaceAssignment(null, NamespaceResolution.AWAITING_LIFECYCLE_PROOF);
       }
-      UUID previousNamespace = Objects.requireNonNull(previous.get(PLAYABLE_STATE_NAMESPACE_ID));
-      if (previousNamespace.equals(NIL_UUID)) {
-        throw new IllegalStateException(
-            "PUBLISHED_REALM_CATALOG_NAMESPACE_INVALID: prior namespace is nil");
+
+      if (previousScope == RealmEntryPolicy.StateScope.SHARED
+          && previousResolution == NamespaceResolution.RESOLVED) {
+        return new NamespaceAssignment(previousNamespace, NamespaceResolution.RESOLVED);
       }
-      return new NamespaceAssignment(previousNamespace, NamespaceResolution.RESOLVED);
+
+      return new NamespaceAssignment(
+          getOrCreateCanonicalTenantSharedNamespace(exactNamespace, canonicalTenantId),
+          NamespaceResolution.RESOLVED);
     }
 
     if (policy.stateScope() != RealmEntryPolicy.StateScope.SHARED) {
