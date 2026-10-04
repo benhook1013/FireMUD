@@ -1,6 +1,5 @@
 package net.firedevops.firemud.entitymanagement.controller;
 
-import jakarta.validation.Valid;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.common.ErrorDetail;
 import net.firedevops.firemud.entitymanagement.dto.CraftingRecipeDto;
@@ -13,8 +12,7 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/crafting/recipes")
 public class CraftingController {
   @PostMapping
-  public ResponseEntity<ApiResponse<CraftingRecipeDto>> create(
-      @Valid @RequestBody CraftingRecipeDto dto) {
+  public ResponseEntity<ApiResponse<CraftingRecipeDto>> create() {
     return unavailable();
   }
 

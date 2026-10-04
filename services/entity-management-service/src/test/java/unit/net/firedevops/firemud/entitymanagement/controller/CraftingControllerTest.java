@@ -60,4 +60,20 @@ class CraftingControllerTest {
         .andExpect(status().isNotImplemented())
         .andExpect(jsonPath("$.error.code").value("CRAFTING_UNAVAILABLE"));
   }
+
+  @Test
+  void createReturnsUnavailableWhenBodyIsMissing() throws Exception {
+    mockMvc
+        .perform(post("/crafting/recipes"))
+        .andExpect(status().isNotImplemented())
+        .andExpect(jsonPath("$.error.code").value("CRAFTING_UNAVAILABLE"));
+  }
+
+  @Test
+  void createReturnsUnavailableWhenBodyIsMalformed() throws Exception {
+    mockMvc
+        .perform(post("/crafting/recipes").contentType(MediaType.APPLICATION_JSON).content("{"))
+        .andExpect(status().isNotImplemented())
+        .andExpect(jsonPath("$.error.code").value("CRAFTING_UNAVAILABLE"));
+  }
 }
