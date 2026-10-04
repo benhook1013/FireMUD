@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import java.sql.SQLException;
@@ -36,6 +37,9 @@ import tools.jackson.databind.ObjectMapper;
 
 /** Authenticated read of Game Design's own retained tenant identity provenance. */
 @GrpcService
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "The injected Jackson 3 ObjectMapper is an immutable configured collaborator.")
 public class TenantIdentityGrpcService
     extends TenantIdentityServiceGrpc.TenantIdentityServiceImplBase {
   private final GameRepository gameRepository;
