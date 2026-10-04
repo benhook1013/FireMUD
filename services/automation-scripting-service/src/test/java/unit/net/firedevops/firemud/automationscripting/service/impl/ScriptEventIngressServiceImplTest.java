@@ -3288,7 +3288,8 @@ class ScriptEventIngressServiceImplTest {
     ScriptEventBindingRepository bindingRepository =
         Mockito.mock(ScriptEventBindingRepository.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
-    ScriptEventAuditRepository eventAuditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptEventAuditRepository eventAuditRepository =
+        Mockito.mock(ScriptEventAuditRepository.class);
     ScriptEventIngressService service =
         new ScriptEventIngressServiceImpl(
             repository,
@@ -3333,7 +3334,7 @@ class ScriptEventIngressServiceImplTest {
     ArgumentCaptor<ScriptEventIngressAudit> auditCaptor =
         ArgumentCaptor.forClass(ScriptEventIngressAudit.class);
     verify(repository).save(auditCaptor.capture());
-    assertThat(auditCaptor.getValue().getAdmitted()).isFalse();
+    assertThat(auditCaptor.getValue().isAdmitted()).isFalse();
     assertThat(auditCaptor.getValue().getAdmissionOutcome())
         .isEqualTo(
             TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_EVENT_REGISTRY_REJECTED.name());
