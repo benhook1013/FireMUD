@@ -28,6 +28,8 @@ Current script-patch publication also fails closed before finalization. Game Des
 
 ### History and Provenance Across Services
 
+Under [ADR 0020](../../decisions/adr-0020-scoped-domain-and-operational-identifiers.md), Game Design persists the opaque, non-nil UUID `versionId` separately from its private numeric `version.id`, bound immutably to the exact Version row and its canonical tenant/source-game tuple. Retained versions without an owner-persisted mapping remain unmapped and fail closed; their logical IDs are never derived from numeric keys.
+
 The Game Design Service is the canonical history store for world and entity
 content even though domain services own the runtime templates:
 

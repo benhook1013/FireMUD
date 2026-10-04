@@ -6,6 +6,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import net.firedevops.firemud.common.config.PostgresProperties;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
@@ -15,6 +16,7 @@ import org.jooq.Record;
 import org.jooq.Table;
 import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 @SuppressFBWarnings(
@@ -24,8 +26,40 @@ public class VersionRepository {
   private static final String ENTITY_DIGEST_BASELINE_MIGRATION_VERSION_LOCK_FUNCTION_NAME =
       "lock_version_for_entity_digest_baseline_migration";
   private static final Table<?> VERSION_TABLE = DSL.table(DSL.name("version"));
+  private static final Table<?> GAME_TABLE = DSL.table(DSL.name("game"));
   private static final Field<Long> ID = DSL.field(DSL.name("id"), Long.class);
   private static final Field<String> TENANT_ID = DSL.field(DSL.name("tenant_id"), String.class);
+  private static final Field<UUID> CANONICAL_VERSION_ID =
+      DSL.field(DSL.name("canonical_version_id"), UUID.class);
+  private static final Field<UUID> CANONICAL_TENANT_ID =
+      DSL.field(DSL.name("canonical_tenant_id"), UUID.class);
+  private static final Field<Long> IDENTITY_SOURCE_GAME_ROW_ID =
+      DSL.field(DSL.name("identity_source_game_row_id"), Long.class);
+  private static final Field<String> IDENTITY_SOURCE_GAME_TENANT_KEY =
+      DSL.field(DSL.name("identity_source_game_tenant_key"), String.class);
+  private static final Field<String> IDENTITY_SOURCE_PROVENANCE_KIND =
+      DSL.field(DSL.name("identity_source_provenance_kind"), String.class);
+  private static final Field<String> VERSION_TENANT_ID =
+      DSL.field(DSL.name("version", "tenant_id"), String.class);
+  private static final Field<UUID> VERSION_CANONICAL_TENANT_ID =
+      DSL.field(DSL.name("version", "canonical_tenant_id"), UUID.class);
+  private static final Field<Long> VERSION_IDENTITY_SOURCE_GAME_ROW_ID =
+      DSL.field(DSL.name("version", "identity_source_game_row_id"), Long.class);
+  private static final Field<String> VERSION_IDENTITY_SOURCE_GAME_TENANT_KEY =
+      DSL.field(DSL.name("version", "identity_source_game_tenant_key"), String.class);
+  private static final Field<String> VERSION_IDENTITY_SOURCE_PROVENANCE_KIND =
+      DSL.field(DSL.name("version", "identity_source_provenance_kind"), String.class);
+  private static final Field<Long> GAME_ID = DSL.field(DSL.name("game", "id"), Long.class);
+  private static final Field<String> GAME_TENANT_ID =
+      DSL.field(DSL.name("game", "tenant_id"), String.class);
+  private static final Field<UUID> GAME_CANONICAL_TENANT_ID =
+      DSL.field(DSL.name("game", "canonical_tenant_id"), UUID.class);
+  private static final Field<String> GAME_TENANT_PROVENANCE_KIND =
+      DSL.field(DSL.name("game", "tenant_identity_provenance_kind"), String.class);
+  private static final Field<Long> GAME_TENANT_SOURCE_GAME_ID =
+      DSL.field(DSL.name("game", "tenant_identity_source_game_id"), Long.class);
+  private static final Field<String> GAME_TENANT_SOURCE_LEGACY_KEY =
+      DSL.field(DSL.name("game", "tenant_identity_source_legacy_tenant_id"), String.class);
   private static final Field<Integer> VERSION_NUMBER =
       DSL.field(DSL.name("version_number"), Integer.class);
   private static final Field<String> VERSION_STATE =
@@ -43,6 +77,7 @@ public class VersionRepository {
       DSL.field(DSL.name("created_at"), Timestamp.class);
   private static final Field<Timestamp> UPDATED_AT =
       DSL.field(DSL.name("updated_at"), Timestamp.class);
+  private static final UUID NIL_UUID = new UUID(0L, 0L);
 
   private final DSLContext dsl;
   private final String postgresSchema;
@@ -118,6 +153,48 @@ public class VersionRepository {
                     + "(?, ?)",
                 tenantId,
                 id)
+            .fetchOne(this::toEntityWithoutCanonicalIdentity));
+  }
+
+  /**
+   * Resolves only a canonical version UUID whose persisted tenant/source provenance still matches
+   * the exact Game Design owner row. Numeric Version IDs remain private to owner-local callers.
+   */
+  public Optional<Version> findByCanonicalTenantIdAndCanonicalVersionId(
+      UUID canonicalTenantId, UUID canonicalVersionId) {
+    if (canonicalTenantId == null
+        || canonicalVersionId == null
+        || canonicalTenantId.equals(NIL_UUID)
+        || canonicalVersionId.equals(NIL_UUID)) {
+      return Optional.empty();
+    }
+
+    return Optional.ofNullable(
+        dsl.selectFrom(VERSION_TABLE)
+            .where(
+                CANONICAL_VERSION_ID
+                    .eq(canonicalVersionId)
+                    .and(CANONICAL_TENANT_ID.eq(canonicalTenantId))
+                    .and(
+                        DSL.exists(
+                            DSL.selectOne()
+                                .from(GAME_TABLE)
+                                .where(
+                                    GAME_ID
+                                        .eq(VERSION_IDENTITY_SOURCE_GAME_ROW_ID)
+                                        .and(
+                                            GAME_TENANT_ID.eq(
+                                                VERSION_IDENTITY_SOURCE_GAME_TENANT_KEY))
+                                        .and(GAME_TENANT_ID.eq(VERSION_TENANT_ID))
+                                        .and(
+                                            GAME_CANONICAL_TENANT_ID.eq(
+                                                VERSION_CANONICAL_TENANT_ID))
+                                        .and(
+                                            GAME_TENANT_PROVENANCE_KIND.eq(
+                                                VERSION_IDENTITY_SOURCE_PROVENANCE_KIND))
+                                        .and(GAME_TENANT_SOURCE_GAME_ID.eq(GAME_ID))
+                                        .and(
+                                            GAME_TENANT_SOURCE_LEGACY_KEY.eq(GAME_TENANT_ID)))))))
             .fetchOne(this::toEntity));
   }
 
@@ -177,16 +254,24 @@ public class VersionRepository {
     return dsl.fetchCount(VERSION_TABLE);
   }
 
+  @Transactional
   public Version save(Version version) {
     LocalDateTime createdAt =
         version.getCreatedAt() == null ? LocalDateTime.now() : version.getCreatedAt();
     LocalDateTime updatedAt =
         version.getUpdatedAt() == null ? LocalDateTime.now() : version.getUpdatedAt();
     if (version.getId() == null) {
+      VersionSource source = findExactGameSource(version.getTenantId());
+      UUID canonicalVersionId = newNonNilUuid();
       Record record =
           Objects.requireNonNull(
               dsl.insertInto(VERSION_TABLE)
                   .set(TENANT_ID, version.getTenantId())
+                  .set(CANONICAL_VERSION_ID, canonicalVersionId)
+                  .set(CANONICAL_TENANT_ID, source.canonicalTenantId())
+                  .set(IDENTITY_SOURCE_GAME_ROW_ID, source.sourceGameRowId())
+                  .set(IDENTITY_SOURCE_GAME_TENANT_KEY, source.sourceGameTenantKey())
+                  .set(IDENTITY_SOURCE_PROVENANCE_KIND, source.provenanceKind())
                   .set(VERSION_NUMBER, version.getVersionNumber())
                   .set(VERSION_STATE, version.getVersionState().name())
                   .set(VERSION_STATE_EPOCH, version.getVersionStateEpoch())
@@ -199,6 +284,11 @@ public class VersionRepository {
                   .returning(
                       ID,
                       TENANT_ID,
+                      CANONICAL_VERSION_ID,
+                      CANONICAL_TENANT_ID,
+                      IDENTITY_SOURCE_GAME_ROW_ID,
+                      IDENTITY_SOURCE_GAME_TENANT_KEY,
+                      IDENTITY_SOURCE_PROVENANCE_KIND,
                       VERSION_NUMBER,
                       VERSION_STATE,
                       VERSION_STATE_EPOCH,
@@ -209,7 +299,10 @@ public class VersionRepository {
                       CREATED_AT,
                       UPDATED_AT)
                   .fetchOne());
-      return toEntity(record);
+      Version inserted = toEntity(record);
+      Version persisted = findById(inserted.getId()).orElseThrow();
+      requireIssuedIdentityReadback(persisted, inserted.getTenantId(), canonicalVersionId, source);
+      return persisted;
     }
     dsl.update(VERSION_TABLE)
         .set(TENANT_ID, version.getTenantId())
@@ -234,9 +327,25 @@ public class VersionRepository {
   }
 
   private Version toEntity(Record record) {
+    return toEntity(record, true);
+  }
+
+  /** The restricted baseline-lock function intentionally returns only its historical projection. */
+  private Version toEntityWithoutCanonicalIdentity(Record record) {
+    return toEntity(record, false);
+  }
+
+  private Version toEntity(Record record, boolean includeCanonicalIdentity) {
     Version version = new Version();
     version.setId(record.get(ID));
     version.setTenantId(record.get(TENANT_ID));
+    if (includeCanonicalIdentity) {
+      version.setCanonicalVersionId(record.get(CANONICAL_VERSION_ID));
+      version.setCanonicalTenantId(record.get(CANONICAL_TENANT_ID));
+      version.setIdentitySourceGameRowId(record.get(IDENTITY_SOURCE_GAME_ROW_ID));
+      version.setIdentitySourceGameTenantKey(record.get(IDENTITY_SOURCE_GAME_TENANT_KEY));
+      version.setIdentitySourceProvenanceKind(record.get(IDENTITY_SOURCE_PROVENANCE_KIND));
+    }
     version.setVersionNumber(record.get(VERSION_NUMBER));
     String versionState = record.get(VERSION_STATE);
     version.setVersionState(
@@ -254,4 +363,75 @@ public class VersionRepository {
     version.setUpdatedAt(updatedAt == null ? null : updatedAt.toLocalDateTime());
     return version;
   }
+
+  private VersionSource findExactGameSource(String tenantId) {
+    if (tenantId == null || tenantId.isBlank()) {
+      throw new IllegalStateException(
+          "New Version requires an exact Game Design source tenant key");
+    }
+    Record source =
+        dsl.select(
+                GAME_ID,
+                GAME_TENANT_ID,
+                GAME_CANONICAL_TENANT_ID,
+                GAME_TENANT_PROVENANCE_KIND,
+                GAME_TENANT_SOURCE_GAME_ID,
+                GAME_TENANT_SOURCE_LEGACY_KEY)
+            .from(GAME_TABLE)
+            .where(GAME_TENANT_ID.eq(tenantId))
+            .fetchOne();
+    if (source == null) {
+      throw new IllegalStateException("New Version tenant has no exact Game Design source row");
+    }
+
+    Long sourceGameRowId = source.get(GAME_ID);
+    String sourceGameTenantKey = source.get(GAME_TENANT_ID);
+    UUID canonicalTenantId = source.get(GAME_CANONICAL_TENANT_ID);
+    String provenanceKind = source.get(GAME_TENANT_PROVENANCE_KIND);
+    Long tenantSourceGameRowId = source.get(GAME_TENANT_SOURCE_GAME_ID);
+    String tenantSourceGameTenantKey = source.get(GAME_TENANT_SOURCE_LEGACY_KEY);
+    if (sourceGameRowId == null
+        || sourceGameRowId <= 0
+        || !tenantId.equals(sourceGameTenantKey)
+        || canonicalTenantId == null
+        || canonicalTenantId.equals(NIL_UUID)
+        || provenanceKind == null
+        || !("NEW_GAME_ROW".equals(provenanceKind)
+            || "RETAINED_GAME_V30".equals(provenanceKind))
+        || !sourceGameRowId.equals(tenantSourceGameRowId)
+        || !tenantId.equals(tenantSourceGameTenantKey)) {
+      throw new IllegalStateException(
+          "New Version tenant source provenance is incomplete or invalid");
+    }
+    return new VersionSource(
+        canonicalTenantId, sourceGameRowId, sourceGameTenantKey, provenanceKind);
+  }
+
+  private void requireIssuedIdentityReadback(
+      Version persisted, String requestedTenantKey, UUID canonicalVersionId, VersionSource source) {
+    if (persisted.getId() == null
+        || persisted.getId() <= 0
+        || !requestedTenantKey.equals(persisted.getTenantId())
+        || !canonicalVersionId.equals(persisted.getCanonicalVersionId())
+        || !source.canonicalTenantId().equals(persisted.getCanonicalTenantId())
+        || !source.sourceGameRowId().equals(persisted.getIdentitySourceGameRowId())
+        || !source.sourceGameTenantKey().equals(persisted.getIdentitySourceGameTenantKey())
+        || !source.provenanceKind().equals(persisted.getIdentitySourceProvenanceKind())) {
+      throw new IllegalStateException("Persisted Version identity did not match owner issuance");
+    }
+  }
+
+  private UUID newNonNilUuid() {
+    UUID uuid;
+    do {
+      uuid = UUID.randomUUID();
+    } while (NIL_UUID.equals(uuid));
+    return uuid;
+  }
+
+  private record VersionSource(
+      UUID canonicalTenantId,
+      Long sourceGameRowId,
+      String sourceGameTenantKey,
+      String provenanceKind) {}
 }

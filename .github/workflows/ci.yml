@@ -952,16 +952,24 @@ jobs:
             --tests net.firedevops.firemud.gamedesign.service.EntityDigestBaselineMigrationIntegrationTest \
             --tests integration.net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepositoryIntegrationTest \
             --tests integration.net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepositoryIntegrationTest \
+            --tests integration.net.firedevops.firemud.gamedesign.repository.VersionCanonicalIdentityIntegrationTest \
             -PfullCheck --no-build-cache --no-configuration-cache
           bash dev-tools/validation/inspect-test-results.sh \
             --strict \
             --require-suite integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest \
+            --require-suite integration.net.firedevops.firemud.gamedesign.repository.VersionCanonicalIdentityIntegrationTest \
             --require-suite net.firedevops.firemud.gamedesign.service.EntityDigestBaselineMigrationIntegrationTest \
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest#appliesAuditedAssociationForFreshAndRetainedGameSources()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest#versionLockRepositoryUsesConfiguredIsolatedOwnerSchema()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest#concurrentExactFirstWritersReturnOneImmutableReceipt()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest#ownerRollbackLeavesNoClaimAndLostAcknowledgementRetryReadsExactReceipt()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest#databaseRejectsAssociationUpdatesDeletesTruncatesAndContradictorySourceInsert()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.VersionCanonicalIdentityIntegrationTest#v35_1PreservesRetainedVersionHistoryAndLeavesIdentityUnmapped()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.VersionCanonicalIdentityIntegrationTest#savePersistsAndReadsBackFreshCanonicalIdentityAcrossUpdate()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.VersionCanonicalIdentityIntegrationTest#newVersionIdentityUsesExactRetainedGameSourceProvenance()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.VersionCanonicalIdentityIntegrationTest#canonicalLookupRejectsWrongTenantMissingAndNilIdsWithoutMutation()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.VersionCanonicalIdentityIntegrationTest#databaseRejectsIdentityMutationNilIdentityAndMismatchedSource()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.VersionCanonicalIdentityIntegrationTest#canonicalIdentityRejectsTruncateWhileUnmappedRetainedVersionRemainsDeletable()' \
             --require-case 'net.firedevops.firemud.gamedesign.service.EntityDigestBaselineMigrationIntegrationTest#exactRetryReadsCommittedEvidenceWithoutCallingEntityAgain()' \
             --require-case 'net.firedevops.firemud.gamedesign.service.EntityDigestBaselineMigrationIntegrationTest#databaseMigrationRolesHaveOnlyTheirDirectTablePrivileges()' \
             game-design-service
@@ -1199,7 +1207,9 @@ jobs:
         with:
           name: game-design-owner-migration-proof-${{ github.sha }}
           # Gradle may shorten long report filenames; strict verification binds suite/class names.
-          path: services/game-design-service/build/test-results/integrationTest/*.xml
+          path: |
+            services/game-design-service/build/test-results/integrationTest/*.xml
+            services/game-design-service/build/test-results/integrationTest/TEST-*VersionCanonicalIdentityIntegrationTest.xml
           if-no-files-found: error
 
       - name: Run Game Session authored-world intake PostgreSQL component proof

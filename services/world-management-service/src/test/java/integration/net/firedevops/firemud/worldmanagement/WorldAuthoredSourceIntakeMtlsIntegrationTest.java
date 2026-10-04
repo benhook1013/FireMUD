@@ -55,6 +55,7 @@ import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec.C
 import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec.IntakeRequest;
 import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec.ReadRequest;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
+import net.firedevops.firemud.worldmanagement.client.GrpcGameSessionInitialAdmissionBindProofClient;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeGrpcService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeReceipt;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeRepository;
@@ -121,6 +122,9 @@ class WorldAuthoredSourceIntakeMtlsIntegrationTest {
   @Autowired private PlatformTransactionManager transactionManager;
 
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
+
+  @MockitoBean(enforceOverride = true)
+  private GrpcGameSessionInitialAdmissionBindProofClient bindProofClient;
 
   @MockitoBean
   private net.firedevops.firemud.worldmanagement.client.GameDesignClient gameDesignClient;

@@ -1471,14 +1471,9 @@ class AccountRepositoryIntegrationTest {
                 + schema
                 + ".account_connect_scope_records s WHERE scope_token_hash = ?",
             scopeTokenHash);
-    String outboxProjection =
-        "(to_jsonb(o) - 'receiver_audit_projection_version' - 'tenant_identity_version' "
-            + "- 'tenant_uuid')::text";
     String outboxBefore =
         jsonRow(
-            "SELECT "
-                + outboxProjection
-                + " FROM "
+            "SELECT to_jsonb(o)::text FROM "
                 + schema
                 + ".account_audit_outbox o WHERE audit_event_id = ?",
             auditEventId);
@@ -1734,7 +1729,8 @@ class AccountRepositoryIntegrationTest {
     }
     assertThat(
             jsonRow(
-                "SELECT (to_jsonb(o) - 'tenant_identity_version' - 'tenant_uuid')::text FROM "
+                "SELECT (to_jsonb(o) - 'receiver_audit_projection_version' "
+                    + "- 'tenant_identity_version' - 'tenant_uuid')::text FROM "
                     + schema
                     + ".account_audit_outbox o WHERE audit_event_id = ?",
                 auditEventId))
