@@ -1081,26 +1081,7 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private RuntimeEntitlementsDto joinEntitlement(long tenantId, boolean lockSubscription) {
-    List<net.firedevops.firemud.accountservice.entity.Subscription> rows =
-        lockSubscription
-            ? subscriptionRepository.findByTenantIdForUpdate(tenantId)
-            : subscriptionRepository.findByTenantId(tenantId);
-    if (rows.size() != 1) {
-      throw new AuthenticationException(
-          "ENTITLEMENT_UNAVAILABLE", "Tenant entitlement authority is missing or ambiguous");
-    }
-    var subscription = rows.getFirst();
-    if (subscription.getEntitlementVersion() <= 0L) {
-      throw new AuthenticationException(
-          "ENTITLEMENT_UNAVAILABLE", "Entitlement version is missing");
-    }
-    return new RuntimeEntitlementsDto(
-        tenantId,
-        isGameplayAvailableStatus(subscription.getStatus()),
-        isPublicJoinAllowedStatus(subscription.getStatus()),
-        subscription.getEntitlementVersion(),
-        subscription.getEntitlementVersion(),
-        Instant.now().toString());
+    return readTenantEntitlements(tenantId, lockSubscription);
   }
 
   @Override
@@ -1378,9 +1359,16 @@ public class AccountServiceImpl implements AccountService {
   @Transactional(readOnly = true)
   @Timed(value = "account.runtime_entitlements")
   public RuntimeEntitlementsDto getTenantEntitlementsForRuntime(Long tenantId, String requestId) {
+    return readTenantEntitlements(tenantId, false);
+  }
+
+  private RuntimeEntitlementsDto readTenantEntitlements(long tenantId, boolean lockSubscription) {
     List<net.firedevops.firemud.accountservice.entity.Subscription> subscriptions;
     try {
-      subscriptions = subscriptionRepository.findByTenantId(tenantId);
+      subscriptions =
+          lockSubscription
+              ? subscriptionRepository.findByTenantIdForUpdate(tenantId)
+              : subscriptionRepository.findByTenantId(tenantId);
     } catch (MappingException | ConfigurationException ex) {
       throw ex;
     } catch (DataAccessException | org.springframework.dao.DataAccessException ex) {
@@ -1389,7 +1377,7 @@ public class AccountServiceImpl implements AccountService {
           "Tenant entitlement authority is unavailable; retry later",
           ex);
     }
-    if (subscriptions == null || subscriptions.size() != 1) {
+    if (subscriptions == null || subscriptions.size() != 1 || subscriptions.getFirst() == null) {
       throw new AuthenticationException(
           "ENTITLEMENT_UNAVAILABLE",
           "Tenant entitlement authority is missing or ambiguous; retry later");

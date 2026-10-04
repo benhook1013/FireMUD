@@ -641,8 +641,8 @@ class AccountServiceImplTest {
   }
 
   @ParameterizedTest
-  @CsvSource({"false", "true"})
-  void missingOrAmbiguousEntitlementRetainsUnavailableJoinReceipt(boolean ambiguous) {
+  @ValueSource(strings = {"missing", "ambiguous", "null-list", "null-row"})
+  void missingOrInvalidEntitlementRetainsUnavailableJoinReceipt(String rowsKind) {
     Account account = new Account();
     account.setId(11L);
     account.setUsername("demo");
@@ -675,12 +675,15 @@ class AccountServiceImplTest {
     retainJoinEvidence(retainedScope, retainedOperation);
     String connectScopeId =
         service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+    java.util.List<Subscription> unavailableRows =
+        switch (rowsKind) {
+          case "ambiguous" -> java.util.List.of(new Subscription(), new Subscription());
+          case "null-list" -> null;
+          case "null-row" -> java.util.Arrays.asList((Subscription) null);
+          default -> java.util.List.of();
+        };
     when(subscriptionRepository.findByTenantId(7L))
-        .thenReturn(
-            ambiguous
-                ? java.util.List.of(new Subscription(), new Subscription())
-                : java.util.List.of(),
-            java.util.List.of(recovered));
+        .thenReturn(unavailableRows, java.util.List.of(recovered));
     when(subscriptionRepository.findByTenantIdForUpdate(7L))
         .thenReturn(java.util.List.of(recovered));
     JoinPublicProductionRequest request =
@@ -721,6 +724,73 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.contains("join-unavailable-1"));
     org.mockito.Mockito.verify(subscriptionRepository, org.mockito.Mockito.times(1))
         .findByTenantIdForUpdate(7L);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {"jooq-data-access", "spring-data-access", "jooq-mapping", "jooq-configuration"})
+  void joinClassifiesLockedEntitlementReadFailuresWithoutCommittingMembership(String failureType) {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(sessionService.isAccountSessionActive(
+            org.mockito.ArgumentMatchers.eq(11L), org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(true);
+    Subscription active = new Subscription();
+    active.setId(22L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    active.setEntitlementVersion(1L);
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
+    RuntimeException cause =
+        switch (failureType) {
+          case "jooq-data-access" ->
+              new org.jooq.exception.DataAccessException("subscription store unavailable");
+          case "spring-data-access" ->
+              new DataAccessResourceFailureException("subscription store unavailable");
+          default -> unexpectedEntitlementFailure(failureType);
+        };
+    when(subscriptionRepository.findByTenantIdForUpdate(7L)).thenThrow(cause);
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.empty());
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    AtomicReference<VerifiedJoinScope> retainedScope = new AtomicReference<>();
+    AtomicReference<AccountJoinOperationRepository.JoinOperation> retainedOperation =
+        new AtomicReference<>();
+    retainJoinEvidence(retainedScope, retainedOperation);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+
+    JoinPublicProductionRequest request =
+        new JoinPublicProductionRequest(connectScopeId, "join-locked-entitlement-1");
+    String expectedCode;
+    if (failureType.endsWith("data-access")) {
+      JoinPublicProductionResult result =
+          service.joinPublicProduction(bootstrap.bootstrapToken(), request);
+      assertFalse(result.success());
+      expectedCode = "ENTITLEMENT_UNAVAILABLE";
+      assertEquals(expectedCode, result.outcomeCode());
+    } else {
+      AuthenticationException propagated =
+          assertThrows(
+              AuthenticationException.class,
+              () -> service.joinPublicProduction(bootstrap.bootstrapToken(), request));
+      expectedCode = "AUTH_UNAVAILABLE";
+      assertEquals(expectedCode, propagated.getCode());
+      assertSame(cause, propagated.getCause());
+    }
+    assertEquals("PENDING", retainedOperation.get().status());
+    assertNull(retainedOperation.get().outcome());
+    assertEquals(expectedCode, retainedOperation.get().lastAttemptFailureCode());
+    verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
+        .save(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
+    verifyNoInteractions(accountAuditOutboxRepository);
+    org.mockito.Mockito.verify(subscriptionRepository).findByTenantIdForUpdate(7L);
   }
 
   @Test
@@ -889,7 +959,7 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void joinPublicProductionRejectsPreexistingAmbiguousPublicRealmBeforeMembershipCommit() {
+  void joinPublicProductionKeepsPendingWhenLateDuplicateMakesPublicRealmAmbiguous() {
     Account account = new Account();
     account.setId(11L);
     account.setUsername("demo");
@@ -1131,7 +1201,7 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void joinIntentCommitsSeparatelyWhenPolicyTransactionRollsBack() {
+  void joinIntentCommitsSeparatelyWhenEntitlementReadIsUnavailable() {
     Account account = new Account();
     account.setId(11L);
     account.setUsername("demo");
@@ -1152,23 +1222,21 @@ class AccountServiceImplTest {
     when(subscriptionRepository.findByTenantId(7L))
         .thenThrow(new org.jooq.exception.DataAccessException("entitlement storage unavailable"));
 
-    AuthenticationException unavailable =
-        assertThrows(
-            AuthenticationException.class,
-            () ->
-                service.joinPublicProduction(
-                    bootstrap.bootstrapToken(),
-                    new JoinPublicProductionRequest(connectScopeId, "join-txn-boundary-1")));
+    JoinPublicProductionResult unavailable =
+        service.joinPublicProduction(
+            bootstrap.bootstrapToken(),
+            new JoinPublicProductionRequest(connectScopeId, "join-txn-boundary-1"));
 
-    assertEquals("AUTH_UNAVAILABLE", unavailable.getCode());
+    assertFalse(unavailable.success());
+    assertEquals("ENTITLEMENT_UNAVAILABLE", unavailable.outcomeCode());
     assertEquals("PENDING", retainedOperation.get().status());
     assertEquals(null, retainedOperation.get().outcome());
     assertNotNull(retainedOperation.get().intentDigest());
     assertEquals(null, retainedOperation.get().requestDigest());
-    assertEquals("AUTH_UNAVAILABLE", retainedOperation.get().lastAttemptFailureCode());
+    assertEquals("ENTITLEMENT_UNAVAILABLE", retainedOperation.get().lastAttemptFailureCode());
     org.mockito.Mockito.verify(transactionManager, org.mockito.Mockito.times(2))
         .commit(org.mockito.ArgumentMatchers.any());
-    org.mockito.Mockito.verify(transactionManager, org.mockito.Mockito.times(1))
+    org.mockito.Mockito.verify(transactionManager, org.mockito.Mockito.never())
         .rollback(org.mockito.ArgumentMatchers.any());
     org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
         .save(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
@@ -3241,6 +3309,21 @@ class AccountServiceImplTest {
         assertThrows(
             AuthenticationException.class,
             () -> service.getTenantEntitlementsForRuntime(7L, "req-ambiguous-entitlement"));
+
+    assertEquals("ENTITLEMENT_UNAVAILABLE", exception.getCode());
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"null-list", "null-row"})
+  void getTenantEntitlementsForRuntimeTreatsNullSubscriptionReadAsUnavailable(String rowsKind) {
+    java.util.List<Subscription> rows =
+        "null-list".equals(rowsKind) ? null : java.util.Arrays.asList((Subscription) null);
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(rows);
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.getTenantEntitlementsForRuntime(7L, "req-null-entitlement"));
 
     assertEquals("ENTITLEMENT_UNAVAILABLE", exception.getCode());
   }

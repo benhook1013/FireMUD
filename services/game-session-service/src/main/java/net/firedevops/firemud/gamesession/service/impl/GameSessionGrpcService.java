@@ -742,7 +742,7 @@ public final class GameSessionGrpcService
             "Authoritative gameplay pointer list is unavailable");
       }
       return pointerSnapshots;
-    } catch (DataAccessException ex) {
+    } catch (DataAccessException | org.springframework.dao.DataAccessException ex) {
       throw new GameplayWorldCatalog.AuthorityPointerReadUnavailableException(
           "Authoritative gameplay pointer list is unavailable", ex);
     }
@@ -758,7 +758,7 @@ public final class GameSessionGrpcService
             "Authoritative tenant gameplay pointer list is unavailable");
       }
       return pointerSnapshots;
-    } catch (DataAccessException ex) {
+    } catch (DataAccessException | org.springframework.dao.DataAccessException ex) {
       throw new GameplayWorldCatalog.AuthorityPointerReadUnavailableException(
           "Authoritative tenant gameplay pointer list is unavailable", ex);
     }

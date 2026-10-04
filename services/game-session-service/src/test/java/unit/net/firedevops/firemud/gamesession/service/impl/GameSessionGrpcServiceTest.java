@@ -27,7 +27,6 @@ import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDispositi
 import net.firedevops.firemud.gamesession.service.FeatureFlagService;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
-import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerMutation;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.IpConnectionLimiter;
 import net.firedevops.firemud.gamesession.service.PingService;
@@ -64,6 +63,7 @@ import org.jooq.exception.DataAccessException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+import org.springframework.dao.DataAccessResourceFailureException;
 
 class GameSessionGrpcServiceTest {
   @AfterEach
@@ -557,6 +557,22 @@ class GameSessionGrpcServiceTest {
   }
 
   @Test
+  void listGameplayWorldsReturnsAuthUnavailableWhenSpringPointerReadFails() {
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    Mockito.when(pointerAuthorityService.listPointers())
+        .thenThrow(new DataAccessResourceFailureException("pointer store unavailable"));
+    GameSessionGrpcService service = catalogService(pointerAuthorityService);
+
+    ListGameplayWorldsResponse response = listGameplayWorlds(service);
+
+    assertEquals("AUTH_UNAVAILABLE", response.getError().getCode());
+    assertEquals(0, response.getWorldsCount());
+    Mockito.verify(pointerAuthorityService, Mockito.times(1)).listPointers();
+    Mockito.verify(pointerAuthorityService, Mockito.never()).upsertPointer(Mockito.any());
+  }
+
+  @Test
   void publicGrpcDiscoveryOmitsVisiblePrivateAndPrivateOnlyRealms() {
     GameplayAdmissionPointerAuthorityService pointerAuthorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
@@ -873,6 +889,22 @@ class GameSessionGrpcServiceTest {
     Mockito.verify(pointerAuthorityService, Mockito.never()).listPointers();
     Mockito.verify(pointerAuthorityService, Mockito.never())
         .findPointer(Mockito.anyLong(), Mockito.anyString(), Mockito.anyString());
+  }
+
+  @Test
+  void getAdmissionPointerReturnsAuthUnavailableWhenSpringTenantPointerReadFails() {
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    Mockito.when(pointerAuthorityService.listPointersByTenant(7L))
+        .thenThrow(new DataAccessResourceFailureException("pointer store unavailable"));
+    GameSessionGrpcService service = catalogService(pointerAuthorityService);
+
+    GetAdmissionPointerResponse response = getAdmissionPointer(service, "7", "demo", "production");
+
+    assertEquals("AUTH_UNAVAILABLE", response.getError().getCode());
+    assertFalse(response.hasAdmissionPointer());
+    Mockito.verify(pointerAuthorityService, Mockito.times(1)).listPointersByTenant(7L);
+    Mockito.verify(pointerAuthorityService, Mockito.never()).upsertPointer(Mockito.any());
   }
 
   @Test
@@ -1775,31 +1807,6 @@ class GameSessionGrpcServiceTest {
     Mockito.verify(pointerAuthorityService, Mockito.never()).listPointers();
     Mockito.verify(pointerAuthorityService, Mockito.never())
         .findPointer(Mockito.anyLong(), Mockito.anyString(), Mockito.anyString());
-  }
-
-  private static GameplayAdmissionPointerMutation pointerMutation(
-      long gameInstanceId,
-      boolean publicProductionRealm,
-      Long expectedPointerVersion,
-      Long expectedCatalogRevision) {
-    return new GameplayAdmissionPointerMutation(
-        "demo",
-        "Demo World",
-        "production",
-        "Live Realm",
-        7L,
-        gameInstanceId,
-        true,
-        publicProductionRealm,
-        false,
-        "SHARED",
-        "ALLOW_NEW",
-        "test",
-        "catalog revision test",
-        "catalog-revision-test-" + expectedPointerVersion,
-        expectedPointerVersion,
-        expectedCatalogRevision,
-        null);
   }
 
   @Test
