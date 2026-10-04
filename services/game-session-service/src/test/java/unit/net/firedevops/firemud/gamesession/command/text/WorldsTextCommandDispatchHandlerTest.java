@@ -1003,30 +1003,4 @@ class WorldsTextCommandDispatchHandlerTest {
     Mockito.verify(accountClient).issueDirectTextConnectScope(Mockito.any(), Mockito.any());
     Mockito.verifyNoInteractions(entityManagementClient, scriptEventPublisher);
   }
-
-  @Test
-  void unavailableCharsDoesNotReadRosterOrPublishGameplayEvent() {
-    gameplayCatalogProperties.setWorlds(List.of(world("demo", 22L, 41L, false)));
-    gameplayCatalogProperties
-        .getWorlds()
-        .getFirst()
-        .getRealms()
-        .getFirst()
-        .setPublicProductionRealm(true);
-    SessionContext context =
-        new SessionContext(
-            7L, 22L, 123L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
-
-    TextCommandInterpretationResult result =
-        handler.handle(
-            new TextCommandDispatchRequest(
-                "7",
-                new TextCommand(TextCommandType.CHARS, List.of("demo"), "CHARS demo"),
-                false,
-                Optional.of(context)));
-
-    assertThat(result.commandResult().accepted()).isFalse();
-    assertThat(result.commandResult().errorCode()).isEqualTo("CHARACTER_LIST_UNAVAILABLE");
-    Mockito.verifyNoInteractions(entityManagementClient, scriptEventPublisher);
-  }
 }

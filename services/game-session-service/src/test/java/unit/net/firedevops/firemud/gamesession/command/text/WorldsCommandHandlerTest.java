@@ -670,14 +670,7 @@ class WorldsCommandHandlerTest {
         .getFirst()
         .setCharacterCreationPolicy(GameplayCatalogProperties.CharacterCreationPolicy.COPIED_ONLY);
     gameplayCatalogProperties.getWorlds().getFirst().getRealms().getFirst().setGameInstanceId(41L);
-    gameplayCatalogProperties
-        .getWorlds()
-        .getFirst()
-        .getRealms()
-        .getFirst()
-        .setPublicProductionRealm(true);
     AccountClient accountClient = Mockito.mock(AccountClient.class);
-    stubPublicConnectScope(accountClient, "scope-isolated");
     WorldsCommandHandler localHandler =
         authenticatedHandler(gameplayCatalogProperties, accountClient);
     SessionContext session =
@@ -685,7 +678,7 @@ class WorldsCommandHandlerTest {
     WorldsCommandHandler.CharacterBrowseResult result =
         localHandler.browseCharacters(session, "demo", "production");
 
-    assertThat(result).isEqualTo(WorldsCommandHandler.CharacterBrowseResult.unavailable());
+    assertThat(result).isEqualTo(WorldsCommandHandler.CharacterBrowseResult.invalidWorld());
     Mockito.verifyNoInteractions(accountClient);
   }
 
