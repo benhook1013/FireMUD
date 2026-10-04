@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-This decision is not implemented. Game Session `PLAY` no longer synthesizes an actor ID or trusts a name-only lookup: its current handler selects a persisted Entity account-roster row after admission checks. That roster read is not yet namespace-qualified, and Account runtime admission reads remain disabled pending typed caller/target authority, so this is containment rather than a working actor-entry path. Direct-text `CHARS` is unavailable before the unsafe unqualified roster read. Fixed RPG-oriented fields, published entry-policy resolution, versioned descriptors/templates, policy-specific zero/one/many handling, and fork-local identity proof remain gaps.
+This decision is not implemented. Game Session `PLAY` no longer synthesizes an actor ID or trusts a name-only lookup, and its local handler contains persisted account-roster selection code. The shared `EntityManagementClient.listCharactersByAccount` currently returns `CHARACTER_LIST_UNAVAILABLE` without issuing an Entity RPC, so runtime actor selection is unavailable. Namespace-qualified roster access and Account runtime admission reads remain unavailable pending typed caller/target authority; this is containment rather than a working actor-entry path. Direct-text `CHARS` is unavailable before the unsafe unqualified roster read. Fixed RPG-oriented fields, published entry-policy resolution, versioned descriptors/templates, policy-specific zero/one/many handling, and fork-local identity proof remain gaps.
 
 ## Decision Record
 
