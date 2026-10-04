@@ -8,6 +8,7 @@ import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.entitymanagement.entity.ActorActiveCondition;
@@ -867,21 +868,24 @@ class RetainedActorIdentityIntegrationTest {
       String quarantineReason,
       long legacyAccountId,
       long legacyTenantId) {
-    return jdbcTemplate.queryForObject(
-        "INSERT INTO characters (account_id, name, tenant_id, playable_state_key, character_uuid, account_uuid, tenant_uuid, playable_state_namespace_id, playable_state_scope, actor_identity_status, actor_identity_quarantine_reason) "
-            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
-        Long.class,
-        legacyAccountId,
-        name,
-        legacyTenantId,
-        legacyStateKey,
-        characterUuid,
-        accountUuid,
-        tenantUuid,
-        namespaceUuid,
-        scope == null ? null : scope.name(),
-        status,
-        quarantineReason);
+    Long actorId =
+        jdbcTemplate.queryForObject(
+            "INSERT INTO characters (account_id, name, tenant_id, playable_state_key, character_uuid, account_uuid, tenant_uuid, playable_state_namespace_id, playable_state_scope, actor_identity_status, actor_identity_quarantine_reason) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+            Long.class,
+            legacyAccountId,
+            name,
+            legacyTenantId,
+            legacyStateKey,
+            characterUuid,
+            accountUuid,
+            tenantUuid,
+            namespaceUuid,
+            scope == null ? null : scope.name(),
+            status,
+            quarantineReason);
+    return Objects.requireNonNull(
+        actorId, "Character INSERT ... RETURNING id must return the inserted actor ID");
   }
 
   private void insertItemInstance(

@@ -5,6 +5,7 @@ import static net.firedevops.firemud.entitymanagement.jooq.Tables.CHARACTERS;
 import static net.firedevops.firemud.entitymanagement.jooq.Tables.CHARACTER_FRIEND;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.entitymanagement.entity.CharacterFriend;
 import net.firedevops.firemud.entitymanagement.entity.CharacterFriendKey;
@@ -56,6 +57,9 @@ public class CharacterFriendRepository {
   }
 
   public CharacterFriend save(CharacterFriend entity) {
+    if (Objects.equals(entity.getId().getCharacterId(), entity.getId().getFriendId())) {
+      throw new IllegalStateException("FRIEND_SELF_RELATIONSHIP_NOT_ALLOWED");
+    }
     long ownerResolvedCount =
         dsl.fetchCount(
             CHARACTERS,
