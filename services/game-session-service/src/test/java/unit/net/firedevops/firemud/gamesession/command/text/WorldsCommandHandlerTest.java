@@ -1030,7 +1030,7 @@ class WorldsCommandHandlerTest {
   }
 
   @Test
-  void freshBoundSnapshotKeepsPrivateSelectionRetryableWithoutLegacyAuthority() {
+  void freshBoundPrivateSelectionFailsClosedWithAuthUnavailableBeforeAccountAccess() {
     GameplayWorldCatalog.WorldView world =
         mixedWorld(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
     GameplayWorldCatalog catalog = snapshotCatalog(world);
@@ -1048,14 +1048,6 @@ class WorldsCommandHandlerTest {
         List.of(),
         Instant.now());
     AccountClient accountClient = Mockito.mock(AccountClient.class);
-    Mockito.when(
-            accountClient.getRealmAccessGrantForRuntime(
-                Mockito.anyString(),
-                Mockito.anyString(),
-                Mockito.anyString(),
-                Mockito.anyString(),
-                Mockito.anyString()))
-        .thenReturn(grant("demo", "preview", true));
     WorldsCommandHandler localHandler =
         new WorldsCommandHandler(catalog, accountClient, scopeStore);
 

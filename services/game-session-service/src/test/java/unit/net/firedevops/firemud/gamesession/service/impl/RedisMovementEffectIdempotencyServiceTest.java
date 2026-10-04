@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
+import static net.firedevops.firemud.gamesession.service.impl.SessionContextSerializationTestSupport.serialize;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -11,9 +12,6 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import java.io.ByteArrayOutputStream;
-import java.io.ObjectOutputStream;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import net.firedevops.firemud.gamesession.service.MovementEffectIdempotencyService.MoveEffectApplyResult;
@@ -226,13 +224,5 @@ class RedisMovementEffectIdempotencyServiceTest {
         context.playableStateScope(),
         context.connectScopeId(),
         context.connectRequestId());
-  }
-
-  private String serialize(SessionContext context) throws Exception {
-    ByteArrayOutputStream output = new ByteArrayOutputStream();
-    try (ObjectOutputStream objectOutput = new ObjectOutputStream(output)) {
-      objectOutput.writeObject(context);
-    }
-    return output.toString(StandardCharsets.ISO_8859_1);
   }
 }

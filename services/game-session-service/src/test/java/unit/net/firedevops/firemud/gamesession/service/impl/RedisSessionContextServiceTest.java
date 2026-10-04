@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
+import static net.firedevops.firemud.gamesession.service.impl.SessionContextSerializationTestSupport.serialize;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -8,9 +9,6 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import java.io.ByteArrayOutputStream;
-import java.io.ObjectOutputStream;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
@@ -164,13 +162,5 @@ class RedisSessionContextServiceTest {
 
     verify(valueOperations).set("sessionctx:10:1:context", context.withoutJwt(), TTL);
     assertEquals("fr", context.localeTag());
-  }
-
-  private String serialize(SessionContext context) throws Exception {
-    ByteArrayOutputStream output = new ByteArrayOutputStream();
-    try (ObjectOutputStream objectOutput = new ObjectOutputStream(output)) {
-      objectOutput.writeObject(context);
-    }
-    return output.toString(StandardCharsets.ISO_8859_1);
   }
 }
