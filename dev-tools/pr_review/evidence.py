@@ -19,8 +19,8 @@ if TYPE_CHECKING:
 
 CHECKPOINT_HEADING = re.compile(
     r"^(?P<bold>\*\*)?(?P<correction>Correction — )?(?P<type>Hosted|CLI): "
-    r"(?P<raw_found>[0-9]+) found / (?P<accepted>[0-9]+) accepted"
-    r"(?: / (?P<routed>[0-9]+) routed)?"
+    r"(?P<raw_found>[0-9]+) (?i:found) / (?P<accepted>[0-9]+) (?i:accepted)"
+    r"(?: / (?P<routed>[0-9]+) (?i:routed))?"
     r"(?(bold)\*\*|)(?P<suffix>.*)$"
 )
 CHECKPOINT_SUFFIX = re.compile(
@@ -120,7 +120,7 @@ def format_checkpoint_counts(found: int, accepted: int, routed: int) -> str:
     values = (found, accepted, routed)
     if any(type(value) is not int or value < 0 for value in values) or accepted + routed > found:
         raise ValueError("checkpoint counts must be non-negative and accepted plus routed cannot exceed found")
-    return f"{found} found / {accepted} accepted / {routed} routed"
+    return f"{found} Found / {accepted} Accepted / {routed} Routed"
 
 
 def _visible_duration_seconds(value: str) -> int | None:

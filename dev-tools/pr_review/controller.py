@@ -4634,6 +4634,170 @@ class ReviewController:
             return {"status": "recorded", "decision": decision, "route": selected.to_dict()}
         return {"status": selected.status, "route": selected.to_dict()}
 
+    @staticmethod
+    def _review_progress_view(
+        allocation: ReviewAllocation | None,
+        view: Mapping[str, Any],
+        history: Sequence[Any],
+        status: str,
+        *,
+        pending_findings: bool = False,
+        checked: bool = True,
+    ) -> dict[str, Any]:
+        """Present existing policy/counters separately from request preparation."""
+        minimum = view.get("minimum_additional_completed")
+        maximum = view.get("maximum_additional_completed")
+        if allocation is not None:
+            default_one = (
+                allocation.min_additional_completed is None
+                and allocation.max_additional_completed is None
+                and allocation.stop_basis is None
+            )
+            minimum = 1 if default_one else allocation.min_additional_completed
+            maximum = 1 if default_one else allocation.max_additional_completed
+        counters_checked = checked and view.get("status") != "INVALID"
+        completed = view.get("completed_count") if counters_checked else None
+        in_flight = view.get("in_flight") if counters_checked else None
+        slots = view.get("remaining") if counters_checked else None
+        required_remaining = max(0, minimum - completed) if minimum is not None and completed is not None else None
+        maximum_remaining = max(0, maximum - completed) if maximum is not None and completed is not None else None
+        allocation_status = view.get("status")
+        if not checked and allocation is not None and allocation_status in {
+            "CAP_AUDITED_STOP", "CAP_TAPERED", "HANDED_OFF"
+        } and (
+            view.get("minimum_additional_completed") != minimum
+            or view.get("maximum_additional_completed") != maximum
+            or view.get("reopens_taper") != allocation.reopens_taper
+            or view.get("baseline_checkpoint") != allocation.baseline_checkpoint
+            or view.get("promised_head") != allocation.head
+        ):
+            # A prior closed view cannot satisfy a replacement allocation.
+            allocation_status = "NOT_CHECKED"
+        rule_kind = "required" if minimum and (maximum == minimum or required_remaining != 0) else (
+            "maximum" if maximum is not None else "normal_taper"
+        )
+        description = "Remaining rounds include any running or reserved round."
+        if maximum is not None and maximum != minimum:
+            description += " Normal taper may finish before the maximum after any required minimum is met."
+
+        def rounds(number: int) -> str:
+            return f"{number} round{'s' if number != 1 else ''}"
+
+        if rule_kind == "required":
+            label = (
+                f"{required_remaining} required round{'s' if required_remaining != 1 else ''} remaining"
+                if required_remaining is not None else f"{minimum} required round{'s' if minimum != 1 else ''} configured"
+            )
+            if maximum is not None and maximum != minimum:
+                label += (
+                    f" · Maximum {rounds(maximum_remaining)} remaining"
+                    if maximum_remaining is not None else f" · Maximum {rounds(maximum)} configured"
+                )
+        elif rule_kind == "maximum":
+            label = (
+                f"Maximum {rounds(maximum_remaining)} remaining"
+                if maximum_remaining is not None else f"Maximum {rounds(maximum)} configured"
+            )
+        else:
+            label = "Normal taper"
+
+        if not checked and (
+            status not in {"COMPLETE", "HUMAN_STOPPED"}
+            or (allocation is not None and allocation_status not in {
+                "STOPPED", "CAP_AUDITED_STOP", "CAP_TAPERED", "HANDED_OFF"
+            })
+        ):
+            status = "NOT_CHECKED"
+        progress_label = {
+            "READY": "Needs review", "MISSING_EVIDENCE": "Needs review",
+            "COMPLETE": "Review complete", "HELD": "Pending adjudication",
+            "RATE_LIMITED": "Cooldown active", "UNSTABLE": "Evidence unclear",
+            "OVER_CEILING": "File limit", "JUDGMENT_REQUIRED": "Needs decision",
+            "NOT_CHECKED": "Progress not checked", "UNKNOWN": "Progress not checked",
+        }.get(status, "Progress not checked")
+        active = checked and any(
+            _field(item, "active_review") is True
+            or (_field(item, "active_reservation") is True
+                and _field(item, "reason") == HOSTED_ACTIVE_RESPONSE_REASON)
+            for item in history
+        )
+        reserved = checked and any(_field(item, "active_reservation") is True for item in history)
+        if allocation_status == "STOPPED":
+            rule_kind, label = "human_stop", "Human stop"
+            status, progress_label = "HUMAN_STOPPED", "Stopped"
+        elif checked and pending_findings:
+            status, progress_label = "PENDING_FIXES", "Pending fixes"
+        elif checked and allocation_status in {
+            "CAP_FINDINGS_PENDING", "CAP_TAPERED_PENDING", "CAP_EXHAUSTED_PENDING", "EXHAUSTED_PENDING"
+        }:
+            status, progress_label = "JUDGMENT_REQUIRED", "Pending adjudication"
+            if view.get("taper_complete") is True:
+                label = "Taper met" + (f" · Maximum {rounds(maximum)}" if maximum is not None else "")
+        elif checked and allocation_status == "INVALID":
+            status, progress_label = "UNSTABLE", "Evidence unclear"
+        elif allocation_status in {"CAP_AUDITED_STOP", "CAP_TAPERED", "HANDED_OFF"}:
+            status, progress_label = "COMPLETE", "Review complete"
+            if allocation_status == "CAP_TAPERED":
+                label = "Taper met" + (f" · Maximum {rounds(maximum)}" if maximum is not None else "")
+            elif minimum and minimum == maximum:
+                label = "Required rounds complete"
+            else:
+                label = "Maximum reached" if maximum is not None else "Review complete"
+        elif status == "COMPLETE":
+            label = "Taper met" + (f" · Maximum {rounds(maximum)}" if maximum is not None else "")
+        elif maximum_remaining == 0:
+            label = "Required rounds complete" if minimum == maximum else "Maximum reached"
+            if status in {"READY", "MISSING_EVIDENCE"}:
+                progress_label = "Needs stop decision"
+        elif minimum and required_remaining == 0 and maximum is None:
+            label = "Required rounds complete · Normal taper"
+        if active or reserved:
+            status, progress_label = "HELD", "Reviewing" if active else "Request reserved"
+        return {
+            "status": status,
+            "label": progress_label,
+            "rule": {
+                "kind": rule_kind, "label": label, "description": description,
+                "minimum": minimum, "maximum": maximum, "completed": completed,
+                "required_remaining": required_remaining, "maximum_remaining": maximum_remaining,
+                "in_flight": in_flight, "request_slots_remaining": slots,
+            },
+        }
+
+    @staticmethod
+    def _present_review_turns(report: Mapping[str, Any]) -> None:
+        """Use the already selected channel fronts; never select a display target."""
+        targets = report.get("review_fronts", {})
+        for row in report.get("prs", []):
+            for channel, progress in row.get("review_progress", {}).items():
+                target = targets.get(channel, {})
+                if progress.pop("waiting_for_pr", None) is not None and progress.get("label") == "Waiting turn":
+                    progress["label"] = "Needs review"
+                if (
+                    target.get("pr") == row["pr"]
+                    and progress.get("status") in {"READY", "MISSING_EVIDENCE"}
+                    and target.get("status") in {
+                        "HELD", "JUDGMENT_REQUIRED", "RATE_LIMITED", "UNSTABLE", "OVER_CEILING"
+                    }
+                ):
+                    # Typed request blockers already owned by the selector.
+                    # Ancestry statuses deliberately remain request-only.
+                    progress["status"] = target["status"]
+                    progress["label"] = {
+                        "HELD": "Review held", "JUDGMENT_REQUIRED": "Needs decision",
+                        "RATE_LIMITED": "Cooldown active", "UNSTABLE": "Evidence unclear",
+                        "OVER_CEILING": "File limit",
+                    }[target["status"]]
+                if (
+                    progress.get("status") in {"READY", "MISSING_EVIDENCE"}
+                    and progress.get("label") == "Needs review"
+                    and target.get("pr") is not None
+                    and target["pr"] != row["pr"]
+                    and target.get("status") != "UNKNOWN"
+                ):
+                    progress["label"] = "Waiting turn"
+                    progress["waiting_for_pr"] = target["pr"]
+
     def _status_from_state(
         self,
         state: ReviewState,
@@ -4658,6 +4822,7 @@ class ReviewController:
             }
             if review_target_prs is not None:
                 report["review_targets"] = self._empty_review_targets(state)
+                report["review_fronts"] = self._empty_review_targets(state)
             return report
         refresh_prs = evidence_prs
         selected_live_identities = live_identities
@@ -4739,13 +4904,22 @@ class ReviewController:
             item = live[pr]
             reconciliation_status = reconciliation.status_for(pr)
             channel_status: dict[str, str] = {}
+            progress_views: dict[str, Any] = {}
+            pending_by_channel = {
+                channel: {
+                    index for index, value in enumerate(histories[channel][pr])
+                    if self._accepted_findings_pending(value, item.head)
+                }
+                for channel in (policy.Channel.HOSTED, policy.Channel.CLI)
+            }
             for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
                 channel_reconciliation = reconciliation.status_for(pr, channel.value)
+                allocation = state.allocations.get(f"{pr}:{channel.value}")
+                allocation_view = allocations[channel].get(pr, {})
+                taper_history = None
                 if allocations[channel].get(pr, {}).get("status") == "STOPPED":
                     channel_status[channel.value] = policy.ReviewStatus.HUMAN_STOPPED.value
                 else:
-                    taper_history = None
-                    allocation = state.allocations.get(f"{pr}:{channel.value}")
                     bounded_snapshot = bounded_evidence_cache.get((pr, channel.value))
                     if (
                         allocation is not None
@@ -4787,11 +4961,27 @@ class ReviewController:
                             else policy.ReviewStatus.UNRECONCILED
                         )
                     channel_status[channel.value] = projected_status.value
+                # Request evidence and statuses remain untouched. Only this
+                # presentation copy omits ancestry preparation flags.
+                progress_evidence = [
+                    dataclasses.replace(policy.Evidence.from_value(value), parent_moved=False, unreconciled=False)
+                    for value in histories[channel][pr]
+                ]
+                progress_status = policy.completion_status(
+                    state, channel, progress_evidence, taper_history=taper_history,
+                    allocation_reopened=_allocation_reopens_selection(allocation_view),
+                )
+                progress_views[channel.value] = self._review_progress_view(
+                    allocation, allocation_view, histories[channel][pr], progress_status.value,
+                    pending_findings=bool(pending_by_channel[channel]),
+                    checked=evidence_prs is None or pr in evidence_prs,
+                )
             values.append(
                 {
                     "pr": pr,
                     "head": item.head,
                     "base": item.base_ref,
+                    "pr_base_oid": item.base_tip,
                     "parent": reconciliation.links[pr].identity,
                     "parent_head": reconciliation.links[pr].parent_head,
                     "state": item.state,
@@ -4801,6 +4991,7 @@ class ReviewController:
                     "reconciliation": reconciliation_status.value,
                     "reason": reconciliation.reasons.get(pr, ""),
                     "channels": channel_status,
+                    "review_progress": progress_views,
                     "review_obligations": {
                         channel.value: [
                             _field(value, "reason")
@@ -4826,7 +5017,7 @@ class ReviewController:
                                     )
                                 )
                                 or str(_field(value, "checkpoint") or "").startswith("pending-capture:")
-                                or self._accepted_findings_pending(value, item.head)
+                                or index in pending_by_channel[channel]
                             )
                         ]
                         for channel in (policy.Channel.HOSTED, policy.Channel.CLI)
@@ -4870,6 +5061,13 @@ class ReviewController:
                 stop_audit_cache=stop_audit_cache,
                 history_cache=history_cache,
             )
+            # PR-level queue selection survives request-only identity warnings.
+            # Keep a separate snapshot; neither presentation nor later request
+            # invalidation may select a replacement or change policy admission.
+            report["review_fronts"] = {
+                channel: dict(target) for channel, target in report["review_targets"].items()
+            }
+        self._present_review_turns(report)
         return report
 
     @staticmethod
@@ -4902,6 +5100,7 @@ class ReviewController:
                 "pr": pr,
                 "head": None,
                 "base": None,
+                "pr_base_oid": None,
                 "parent": None,
                 "parent_head": None,
                 "state": "UNKNOWN",
@@ -4936,6 +5135,7 @@ class ReviewController:
             },
             "prs": prs,
             "review_targets": ReviewController._unknown_review_targets(reason),
+            "review_fronts": ReviewController._unknown_review_targets(reason),
             "legacy_transitions": [item.to_dict() for item in state.legacy_transitions],
         }
 
@@ -5030,6 +5230,7 @@ class ReviewController:
                 "detail_window": {"unmerged_limit": 4, "batch_status": "complete", "deep_prs": []},
                 "prs": [],
                 "review_targets": self._empty_review_targets(state),
+                "review_fronts": self._empty_review_targets(state),
                 "legacy_transitions": [item.to_dict() for item in state.legacy_transitions],
             }
 
@@ -5193,12 +5394,16 @@ class ReviewController:
         if not scoped_prs and deep_error is None:
             # The configured stack may contain only merged PRs; policy selection
             # then has no live candidate and returns its canonical no-target result.
-            scoped_report = {"review_targets": self._empty_review_targets(state)}
+            scoped_report = {
+                "review_targets": self._empty_review_targets(state),
+                "review_fronts": self._empty_review_targets(state),
+            }
 
         deep_by_pr = {
             item.get("pr"): item for item in (scoped_report or {}).get("prs", []) if isinstance(item, Mapping)
         }
         mismatch: set[int] = set(remote_affected)
+        lifecycle_mismatch: set[int] = set()
         for pr in scoped_prs:
             if pr not in deep_prs:
                 continue
@@ -5206,12 +5411,14 @@ class ReviewController:
             if detailed is None:
                 continue
             item = batch_live[pr]
+            if detailed.get("state") != item.state or detailed.get("merged") != item.merged:
+                lifecycle_mismatch.add(pr)
             if (
                 not isinstance(detailed.get("head"), str)
                 or detailed["head"].casefold() != item.head.casefold()
                 or detailed.get("base") != item.base_ref
-                or not isinstance(detailed.get("parent_head"), str)
-                or detailed["parent_head"].casefold() != item.base_tip.casefold()
+                or not isinstance(detailed.get("pr_base_oid"), str)
+                or detailed["pr_base_oid"].casefold() != item.base_tip.casefold()
                 or detailed.get("state") != item.state
                 or detailed.get("merged") != item.merged
             ):
@@ -5224,18 +5431,14 @@ class ReviewController:
                     mismatch.add(pr)
                     changed = True
 
+        # A retained PR base OID may differ from the current parent tip in
+        # both reads. Canonical reconciliation already reports that condition;
+        # only an inconsistent snapshot invalidates this display selection.
         changed_target_pr = next(
             (
                 pr
                 for pr in target_scan_prs
                 if pr in mismatch
-                or (
-                    batch_live[pr].state == "OPEN"
-                    and (
-                        batch_live[pr].base_ref != links[pr].parent_ref
-                        or batch_live[pr].base_tip.casefold() != links[pr].parent_head.casefold()
-                    )
-                )
                 or (pr not in deep_by_pr and self._saved_identity_moved(state, pr, batch_live[pr], links[pr]))
             ),
             None,
@@ -5267,7 +5470,7 @@ class ReviewController:
                         "evidence_last_checked_at": None,
                     }
                 )
-                if pr in mismatch or batch_topology_moved:
+                if pr in mismatch:
                     row["reconciliation"] = "UNRECONCILED"
                     row["reason"] = (
                         "remote parent or head branch changed during deep reconciliation"
@@ -5303,6 +5506,14 @@ class ReviewController:
                     row["channels"] = row_channels
                     row["allocations"] = row_allocations
                     row["evidence_status"] = "stale"
+                    row["review_progress"] = {
+                        channel: self._review_progress_view(
+                            state.allocations.get(f"{pr}:{channel}"),
+                            row_allocations.get(channel, {}), [],
+                            row_channels.get(channel, "NOT_CHECKED"), checked=False,
+                        )
+                        for channel in (policy.Channel.HOSTED.value, policy.Channel.CLI.value)
+                    }
                 values.append(row)
                 continue
 
@@ -5348,6 +5559,7 @@ class ReviewController:
                     "pr": pr,
                     "head": item.head,
                     "base": item.base_ref,
+                    "pr_base_oid": item.base_tip,
                     "parent": parent.identity,
                     "parent_head": parent.parent_head,
                     "state": item.state,
@@ -5358,6 +5570,13 @@ class ReviewController:
                     "reason": reason,
                     "channels": channels,
                     "review_activity": {},
+                    "review_progress": {
+                        channel: self._review_progress_view(
+                            state.allocations.get(f"{pr}:{channel}"),
+                            allocations.get(channel, {}), [], channels[channel], checked=False,
+                        )
+                        for channel in (policy.Channel.HOSTED.value, policy.Channel.CLI.value)
+                    },
                     "allocations": allocations,
                     "incoming_routes": [
                         route.to_dict() for route in state.routes if route.status == "open" and route.target_pr == pr
@@ -5396,10 +5615,16 @@ class ReviewController:
             },
             "prs": values,
             "review_targets": (scoped_report or {}).get("review_targets", self._empty_review_targets(state)),
+            "review_fronts": (scoped_report or {}).get(
+                "review_fronts", self._unknown_review_targets("review policy selection is unavailable")
+            ),
             "legacy_transitions": [item.to_dict() for item in state.legacy_transitions],
         }
         if deep_error is not None:
             report["review_targets"] = self._unknown_review_targets(
+                f"deep review evidence is unavailable: {deep_error}"
+            )
+            report["review_fronts"] = self._unknown_review_targets(
                 f"deep review evidence is unavailable: {deep_error}"
             )
         elif remote_recheck_error is not None:
@@ -5432,6 +5657,20 @@ class ReviewController:
                 else:
                     stable_targets[channel] = unknown_targets[channel]
             report["review_targets"] = stable_targets
+        if lifecycle_mismatch:
+            # Opening/closing/merging a PR can change queue membership. Unlike
+            # request-only ancestry movement, that makes the logical choice
+            # uncertain from this inconsistent snapshot; never reselect here.
+            positions = {pr: index for index, pr in enumerate(state.ordered_prs)}
+            changed_position = min(positions[pr] for pr in lifecycle_mismatch)
+            unknown_fronts = self._unknown_review_targets(
+                "live PR lifecycle changed between batch overview and deep reconciliation"
+            )
+            for channel, front in report["review_fronts"].items():
+                selected_position = positions.get(front.get("pr"))
+                if selected_position is None or selected_position >= changed_position:
+                    report["review_fronts"][channel] = unknown_fronts[channel]
+        self._present_review_turns(report)
         return report
 
     def resolve_cli_target(self, expected_pr: int | None = None) -> ReviewTarget:
