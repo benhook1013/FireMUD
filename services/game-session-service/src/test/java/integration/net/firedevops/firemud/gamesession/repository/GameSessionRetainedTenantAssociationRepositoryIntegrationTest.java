@@ -136,6 +136,28 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
   }
 
   @Test
+  void migrationPreservesNonNilAssociationAndApprovalOperationIdsAfterPayloadSplit() {
+    Fixture fixture = fixture();
+    UUID nilUuid = new UUID(0L, 0L);
+
+    assertThatThrownBy(
+            () -> fixture.insertAssociationMapping(nilUuid, uuid(930), uuid(931), 930L))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("chk_gs_retained_tenant_association_operation_ids");
+    assertThatThrownBy(
+            () -> fixture.insertAssociationMapping(uuid(932), nilUuid, uuid(933), 932L))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("chk_gs_retained_tenant_association_operation_ids");
+
+    UUID payloadOperationId = uuid(934);
+    fixture.insertAssociationMapping(payloadOperationId, uuid(935), uuid(936), 934L);
+    assertThatThrownBy(() -> fixture.insertExpiredPayload(payloadOperationId, nilUuid))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining(
+            "chk_gs_retained_tenant_association_payload_approval_operation_id");
+  }
+
+  @Test
   void unverifiedLegalHoldWritesFailClosedAndCleanupPreservesMinimalAntiReassignmentProof() {
     Fixture fixture = fixture();
     UUID heldOperation = uuid(920);
@@ -618,6 +640,12 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
       TransactionTemplate transactions) {
     void insertExpiredMapping(
         UUID operationId, UUID requestId, UUID canonicalTenantId, long legacyTenantId) {
+      insertAssociationMapping(operationId, requestId, canonicalTenantId, legacyTenantId);
+      insertExpiredPayload(operationId);
+    }
+
+    void insertAssociationMapping(
+        UUID operationId, UUID requestId, UUID canonicalTenantId, long legacyTenantId) {
       dsl.execute(
           "INSERT INTO game_session_retained_tenant_association ("
               + "operation_id, target_namespace, association_request_id, "
@@ -630,7 +658,6 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
           requestId,
           legacyTenantId,
           canonicalTenantId);
-      insertExpiredPayload(operationId);
     }
 
     void restoreExpiredPayload(UUID operationId) {
@@ -638,6 +665,10 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
     }
 
     private void insertExpiredPayload(UUID operationId) {
+      insertExpiredPayload(operationId, UUID.randomUUID());
+    }
+
+    void insertExpiredPayload(UUID operationId, UUID approvalOperationId) {
       dsl.execute(
           "INSERT INTO game_session_retained_tenant_association_payload ("
               + "operation_id, request_digest, approval_operation_id, approval_schema_version, "
@@ -647,7 +678,7 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
               + "snapshot_evidence_digest, receipt_digest) VALUES (?, ?, ?, 2, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           operationId,
           "sha256:" + "a".repeat(64),
-          UUID.randomUUID(),
+          approvalOperationId,
           "fixture-owner-key",
           "owner-reviewer",
           "approval-" + operationId,

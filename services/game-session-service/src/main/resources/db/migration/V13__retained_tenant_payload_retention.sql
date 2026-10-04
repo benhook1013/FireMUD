@@ -43,6 +43,9 @@ CREATE TABLE game_session_retained_tenant_association_payload (
         OR (approval_schema_version = 2
             AND game_session_projection_digest ~ '^sha256:[0-9a-f]{64}$')
     ),
+    CONSTRAINT chk_gs_retained_tenant_association_payload_approval_operation_id CHECK (
+        approval_operation_id <> '00000000-0000-0000-0000-000000000000'::UUID
+    ),
     CONSTRAINT chk_gs_retained_tenant_association_payload_digests CHECK (
         request_digest ~ '^sha256:[0-9a-f]{64}$'
         AND game_session_evidence_digest ~ '^sha256:[0-9a-f]{64}$'
@@ -129,6 +132,12 @@ ALTER TABLE game_session_retained_tenant_association
     DROP COLUMN snapshot_evidence_digest;
 ALTER TABLE game_session_retained_tenant_association
     DROP COLUMN receipt_digest;
+
+ALTER TABLE game_session_retained_tenant_association
+    ADD CONSTRAINT chk_gs_retained_tenant_association_operation_ids CHECK (
+        operation_id <> '00000000-0000-0000-0000-000000000000'::UUID
+        AND association_request_id <> '00000000-0000-0000-0000-000000000000'::UUID
+    );
 
 ALTER TABLE game_session_retained_tenant_association
     ADD CONSTRAINT chk_gs_retained_tenant_association_capture_time CHECK (

@@ -372,18 +372,23 @@ class GameDesignRuntimeTenantIdentityClientTest {
             manifest.toBuilder().setApprovedBy("other-approver").build(),
             manifest.toBuilder().setApprovalReference("other-reference").build(),
             manifest.toBuilder().setSignedAt("2026-09-30T12:01:00Z").build(),
+            manifest.toBuilder().setSourceCapturedAt("2026-09-30T11:00:01Z").build(),
             manifest.toBuilder().setLegacyGameSessionTenantId("24").build(),
             manifest.toBuilder().setCanonicalTenantId(REQUEST_ID.toString()).build(),
             manifest.toBuilder().setSourceGameRowId("92").build(),
             manifest.toBuilder().setSourceGameTenantKey("game-design-tenant-92").build(),
             manifest.toBuilder().setProvenanceKind("NEW_GAME_ROW").build(),
+            manifest
+                .toBuilder()
+                .setGameSessionProjectionDigest("sha256:" + "c".repeat(64))
+                .build(),
             manifest.toBuilder().setGameSessionEvidenceDigest("sha256:" + "b".repeat(64)).build());
 
     for (GameSessionTenantAssociationManifestEvidence changed : changedManifests) {
       assertAssociationRejected(valid.toBuilder().setManifest(changed).build(), "manifest digest");
     }
     assertAssociationRejected(
-        valid.toBuilder().setManifest(manifest.toBuilder().setSchemaVersion(2).build()).build(),
+        valid.toBuilder().setManifest(manifest.toBuilder().setSchemaVersion(3).build()).build(),
         "manifest is invalid");
   }
 
