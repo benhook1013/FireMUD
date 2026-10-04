@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.config.PostgresProperties;
 import net.firedevops.firemud.gamedesign.entity.Game;
@@ -460,13 +461,21 @@ class VersionCanonicalIdentityIntegrationTest {
   }
 
   private String versionXmin(DSLContext dsl, Long versionId) {
-    return dsl.fetchOne("SELECT xmin::text AS xmin FROM version WHERE id = ?", versionId)
-        .get("xmin", String.class);
+    var row =
+        Objects.requireNonNull(
+            dsl.fetchOne("SELECT xmin::text AS xmin FROM version WHERE id = ?", versionId),
+            "Version xmin query returned no row");
+    return Objects.requireNonNull(
+        row.get("xmin", String.class), "Version xmin readback returned null");
   }
 
   private String gameXmin(DSLContext dsl, Long gameId) {
-    return dsl.fetchOne("SELECT xmin::text AS xmin FROM game WHERE id = ?", gameId)
-        .get("xmin", String.class);
+    var row =
+        Objects.requireNonNull(
+            dsl.fetchOne("SELECT xmin::text AS xmin FROM game WHERE id = ?", gameId),
+            "Game xmin query returned no row");
+    return Objects.requireNonNull(
+        row.get("xmin", String.class), "Game xmin readback returned null");
   }
 
   private Version version(Game game) {
