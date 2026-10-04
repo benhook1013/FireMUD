@@ -249,6 +249,7 @@ public interface ScriptWorkItemService {
       String pluginVersionId,
       String eventType,
       String scriptPatchVersion,
+      long scriptPatchBaseVersionId,
       long scriptPinEpoch,
       String scriptPinControlPlaneRequestId,
       String scriptEventId,
@@ -282,6 +283,13 @@ public interface ScriptWorkItemService {
       String rejectionReason,
       String failureReason,
       long failureGeneration) {
+    public ReplayItemResult {
+      workItemId = workItemId == null ? "" : workItemId;
+      outcome = outcome == null ? "" : outcome;
+      rejectionReason = rejectionReason == null ? "" : rejectionReason;
+      failureReason = failureReason == null ? "" : failureReason;
+    }
+
     public ReplayItemResult(
         String workItemId, String outcome, String rejectionReason, long failureGeneration) {
       this(workItemId, outcome, rejectionReason, "", failureGeneration);

@@ -4,7 +4,9 @@ import static net.firedevops.firemud.accountservice.jooq.Tables.ACCOUNT_CONNECT_
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Objects;
 import java.util.Optional;
@@ -33,6 +35,29 @@ public class AccountConnectScopeRepository {
   private static final Pattern UTC_RFC3339 =
       Pattern.compile(
           "([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})(?:\\.([0-9]+))?Z");
+
+  private static final String DELETE_EXPIRED_UNREFERENCED_SQL =
+      "DELETE FROM account_connect_scope_records scope "
+          + "WHERE scope.ctid IN ("
+          + "  SELECT candidate.ctid "
+          + "  FROM account_connect_scope_records candidate "
+          + "  WHERE CASE "
+          + "    WHEN candidate.connect_scope_expires_at ~ "
+          + "      '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$' "
+          + "      AND pg_input_is_valid(candidate.connect_scope_expires_at, "
+          + "          'timestamp with time zone') "
+          + "    THEN candidate.connect_scope_expires_at::timestamptz <= CAST(? AS timestamptz) "
+          + "    ELSE FALSE "
+          + "  END "
+          + "  AND candidate.scope_digest_version = 1 "
+          + "  AND NOT EXISTS ("
+          + "    SELECT 1 FROM account_join_operations operation "
+          + "    WHERE operation.scope_token_hash = candidate.scope_token_hash"
+          + "  ) "
+          + "  ORDER BY candidate.account_id, candidate.scope_token_hash "
+          + "  LIMIT ? "
+          + "  FOR UPDATE OF candidate SKIP LOCKED"
+          + ")";
 
   private final DSLContext dsl;
   private final AccountRepository accounts;
@@ -478,6 +503,24 @@ public class AccountConnectScopeRepository {
         record.get(ACCOUNT_CONNECT_SCOPE_RECORDS.EVALUATED_AT),
         record.get(ACCOUNT_CONNECT_SCOPE_RECORDS.CONNECT_SCOPE_EXPIRES_AT),
         record.get(ACCOUNT_CONNECT_SCOPE_RECORDS.SNAPSHOT_DIGEST));
+  }
+
+  /**
+   * Deletes a bounded batch of expired scopes only when no JOIN receipt references them. Malformed
+   * expiry values are retained. The database FK from JOIN receipts is the concurrent insert fence
+   * for the anti-join predicate.
+   */
+  public int deleteExpiredUnreferenced(Instant capturedNow, int batchSize) {
+    if (capturedNow == null) {
+      throw new IllegalArgumentException("Captured cleanup time is required");
+    }
+    if (batchSize <= 0) {
+      throw new IllegalArgumentException("Cleanup batch size must be positive");
+    }
+    return dsl.execute(
+        DELETE_EXPIRED_UNREFERENCED_SQL,
+        OffsetDateTime.ofInstant(capturedNow, ZoneOffset.UTC),
+        batchSize);
   }
 
   private VerifiedJoinScope toScope(Record record, String connectScopeId) {

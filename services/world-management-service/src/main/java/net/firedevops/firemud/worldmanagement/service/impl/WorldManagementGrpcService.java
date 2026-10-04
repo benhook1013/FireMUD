@@ -13,18 +13,24 @@ import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
 import net.firedevops.firemud.common.security.PublicationReadGuard;
 import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
+import net.firedevops.firemud.worldmanagement.dto.InitialAdmissionBindHoldDto;
+import net.firedevops.firemud.worldmanagement.dto.InitialAdmissionBindHoldRequest;
 import net.firedevops.firemud.worldmanagement.dto.PreparedWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto.RoomExitSnapshotDto;
 import net.firedevops.firemud.worldmanagement.dto.RuntimeRoomDto;
 import net.firedevops.firemud.worldmanagement.dto.WorldDesignMutationRequestDto;
+import net.firedevops.firemud.worldmanagement.service.InitialAdmissionBindHoldService;
 import net.firedevops.firemud.worldmanagement.service.PingService;
 import net.firedevops.firemud.worldmanagement.service.RoomService;
 import net.firedevops.firemud.worldmanagement.service.WorldDesignMutationService;
 import net.firedevops.firemud.worldmanagement.service.WorldDraftDesignDigestService;
 import net.firedevops.firemud.worldmanagement.service.WorldInstanceActivationService;
 import net.firedevops.firemud.worldmanagement.service.WorldUpgradeValidationService;
+import net.firedevops.firemud.worldmanagement.v1.AcquireInitialAdmissionBindHoldRequest;
+import net.firedevops.firemud.worldmanagement.v1.AcquireInitialAdmissionBindHoldResponse;
 import net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceResponse;
 import net.firedevops.firemud.worldmanagement.v1.ApplyWorldDesignMutationRequest;
@@ -43,6 +49,7 @@ import net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotRequest;
 import net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotResponse;
 import net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleRequest;
 import net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleResponse;
+import net.firedevops.firemud.worldmanagement.v1.InitialAdmissionBindHoldStatus;
 import net.firedevops.firemud.worldmanagement.v1.PingRequest;
 import net.firedevops.firemud.worldmanagement.v1.PingResponse;
 import net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceRequest;
@@ -88,6 +95,8 @@ public class WorldManagementGrpcService
   private final MeterRegistry meterRegistry;
   private final ObjectMapper objectMapper;
   private final PublicationReadGuard publicationReadGuard;
+  private InitialAdmissionBindHoldService initialAdmissionBindHoldService;
+  private InitialAdmissionBindWorkloadGuard initialAdmissionBindWorkloadGuard;
 
   private WorldManagementGrpcService(
       PublicationReadGuard publicationReadGuard,
@@ -135,6 +144,15 @@ public class WorldManagementGrpcService
         gameplaySessionAttestationService,
         meterRegistry,
         objectMapper);
+  }
+
+  @Autowired
+  public void configureInitialAdmissionBindHoldBoundary(
+      InitialAdmissionBindHoldService holdService,
+      @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace) {
+    this.initialAdmissionBindHoldService = holdService;
+    this.initialAdmissionBindWorkloadGuard =
+        new InitialAdmissionBindWorkloadGuard(workloadNamespace);
   }
 
   public WorldManagementGrpcService(
@@ -287,6 +305,59 @@ public class WorldManagementGrpcService
     } catch (Exception ex) {
       builder.setError(
           GrpcAppErrors.internal(meterRegistry, logger, "GetWorldInstanceLifecycle", ex));
+    }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "worldGrpc.acquireInitialAdmissionBindHold")
+  public void acquireInitialAdmissionBindHold(
+      AcquireInitialAdmissionBindHoldRequest request,
+      StreamObserver<AcquireInitialAdmissionBindHoldResponse> responseObserver) {
+    AcquireInitialAdmissionBindHoldResponse.Builder builder =
+        AcquireInitialAdmissionBindHoldResponse.newBuilder();
+    try {
+      if (initialAdmissionBindHoldService == null || initialAdmissionBindWorkloadGuard == null) {
+        throw new AdminAuthorizationException(
+            "Initial admission hold authorization is not configured");
+      }
+      initialAdmissionBindWorkloadGuard.requireGameSessionAcquireCaller();
+      var hold =
+          initialAdmissionBindHoldService.acquire(
+              new InitialAdmissionBindHoldRequest(
+                  RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
+                  RequestIdValidation.requirePositiveLong(
+                      request.getGameInstanceId(), "gameInstanceId"),
+                  RequestIdValidation.requirePositiveLong(request.getVersionId(), "versionId"),
+                  request.getExpectedActiveLifecycleEpoch(),
+                  request.getInitialAdmissionRequestId(),
+                  request.getRequestDigest(),
+                  request.getRealmUuid(),
+                  request.getPlayableStateNamespaceUuid(),
+                  normalizePlayableStateScope(request.getPlayableStateScope()),
+                  request.getExpectedNoPriorPointer(),
+                  request.getExpectedCatalogRevision()));
+      builder.setHold(toProto(hold));
+    } catch (AdminAuthorizationException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "AcquireInitialAdmissionBindHold",
+              "PERMISSION_DENIED",
+              ex.getMessage()));
+    } catch (IllegalArgumentException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "AcquireInitialAdmissionBindHold",
+              errorCodeFor(ex),
+              errorMessageFor(ex)));
+    } catch (Exception ex) {
+      builder.setError(
+          GrpcAppErrors.internal(meterRegistry, logger, "AcquireInitialAdmissionBindHold", ex));
     }
     responseObserver.onNext(builder.build());
     responseObserver.onCompleted();
@@ -675,6 +746,57 @@ public class WorldManagementGrpcService
         .setWorkflowStatus(snapshot.workflowStatus() == null ? "" : snapshot.workflowStatus())
         .setWorkflowFamily(snapshot.workflowFamily() == null ? "" : snapshot.workflowFamily())
         .build();
+  }
+
+  private net.firedevops.firemud.worldmanagement.v1.InitialAdmissionBindHold toProto(
+      InitialAdmissionBindHoldDto hold) {
+    return net.firedevops.firemud.worldmanagement.v1.InitialAdmissionBindHold.newBuilder()
+        .setHoldId(hold.holdId())
+        .setHoldFence(hold.holdFence())
+        .setTenantId(Long.toString(hold.tenantId()))
+        .setRealmUuid(hold.realmUuid())
+        .setPlayableStateNamespaceUuid(hold.playableStateNamespaceUuid())
+        .setPlayableStateScope(toProtoPlayableStateScope(hold.playableStateScope()))
+        .setGameInstanceId(Long.toString(hold.gameInstanceId()))
+        .setVersionId(Long.toString(hold.versionId()))
+        .setActiveLifecycleEpoch(hold.activeLifecycleEpoch())
+        .setInitialAdmissionRequestId(hold.initialAdmissionRequestId())
+        .setRequestDigest(hold.requestDigest())
+        .setExpectedNoPriorPointer(hold.expectedNoPriorPointer())
+        .setExpectedCatalogRevision(hold.expectedCatalogRevision())
+        .setStatus(toProtoInitialAdmissionBindStatus(hold.status()))
+        .setDiagnosticExpiresAtEpochMillis(hold.diagnosticExpiresAt().toEpochMilli())
+        .build();
+  }
+
+  private String normalizePlayableStateScope(PlayableStateScope scope) {
+    return switch (scope) {
+      case PLAYABLE_STATE_SCOPE_SHARED -> "SHARED";
+      case PLAYABLE_STATE_SCOPE_ISOLATED -> "ISOLATED";
+      default ->
+          throw new IllegalArgumentException(
+              "INVALID_ARGUMENT: playableStateScope must be SHARED or ISOLATED");
+    };
+  }
+
+  private PlayableStateScope toProtoPlayableStateScope(String scope) {
+    return switch (scope) {
+      case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+      case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
+      default -> throw new IllegalStateException("Unsupported persisted playable state scope");
+    };
+  }
+
+  private InitialAdmissionBindHoldStatus toProtoInitialAdmissionBindStatus(String status) {
+    return switch (status) {
+      case "PENDING" -> InitialAdmissionBindHoldStatus.INITIAL_ADMISSION_BIND_HOLD_STATUS_PENDING;
+      case "RECONCILIATION_REQUIRED" ->
+          InitialAdmissionBindHoldStatus.INITIAL_ADMISSION_BIND_HOLD_STATUS_RECONCILIATION_REQUIRED;
+      case "COMMITTED" ->
+          InitialAdmissionBindHoldStatus.INITIAL_ADMISSION_BIND_HOLD_STATUS_COMMITTED;
+      case "ABORTED" -> InitialAdmissionBindHoldStatus.INITIAL_ADMISSION_BIND_HOLD_STATUS_ABORTED;
+      default -> InitialAdmissionBindHoldStatus.INITIAL_ADMISSION_BIND_HOLD_STATUS_UNSPECIFIED;
+    };
   }
 
   private WorldInstanceLifecycleStatus toProtoStatus(String status) {

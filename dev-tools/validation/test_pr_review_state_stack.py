@@ -85,9 +85,7 @@ class ReviewStateStackTest(unittest.TestCase):
         self.assertEqual(FindingRoute.from_dict(serialized).target_history, ())
 
         for malformed in (None, "2879", {"target": 2879}, 2879):
-            with self.subTest(target_history=malformed), self.assertRaisesRegex(
-                StateError, "outside its schema"
-            ):
+            with self.subTest(target_history=malformed), self.assertRaisesRegex(StateError, "outside its schema"):
                 FindingRoute.from_dict({**route.to_dict(), "target_history": malformed})
 
     def test_open_route_merge_deduplicates_observations_and_rejects_conflicting_targets(self):
@@ -182,6 +180,27 @@ class ReviewStateStackTest(unittest.TestCase):
         self.assertEqual(restored, allocation)
         self.assertIsNone(restored.baseline_checkpoint)
         self.assertEqual(restored.min_additional_completed, 2)
+
+    def test_human_allowance_roundtrips_unavailable_git_audit_facts(self):
+        allocation = ReviewAllocation(
+            pr=2827,
+            channel="cli",
+            head="a" * 40,
+            parent_identity="develop",
+            parent_head="b" * 40,
+            merge_base=None,
+            patch_id=None,
+            baseline_checkpoints=(),
+            reason="human requires exactly two more completed reviews",
+            min_additional_completed=2,
+            max_additional_completed=2,
+        )
+        self.assertEqual(ReviewAllocation.from_dict(allocation.to_dict()), allocation)
+        for changed in ({"max_additional_completed": 3}, {"min_additional_completed": None}):
+            with self.subTest(changed=changed):
+                restored = ReviewAllocation.from_dict({**allocation.to_dict(), **changed})
+                self.assertIsNone(restored.merge_base)
+                self.assertIsNone(restored.patch_id)
 
     def test_bounded_review_allocation_rejects_missing_baseline_or_invalid_cap(self):
         base = {
@@ -405,6 +424,43 @@ class ReviewStateStackTest(unittest.TestCase):
             self.assertNotIn("base_tip", json.dumps(document))
             self.assertNotIn("evidence", json.dumps(document))
 
+    def test_json_store_reads_direct_human_stop_but_refuses_to_write_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "firemud" / "pr-review-stack.json"
+            path.parent.mkdir(parents=True)
+            allocation = ReviewAllocation(
+                pr=2849,
+                channel="hosted",
+                head="a" * 40,
+                parent_identity="develop",
+                parent_head="b" * 40,
+                merge_base="c" * 40,
+                patch_id="current-patch",
+                baseline_checkpoints=(),
+                reason="human stopped further review discovery",
+                stop_basis="direct_human",
+                stop_checkpoint="review-2849",
+                stop_reviewed_head="d" * 40,
+                stop_reviewed_patch_id="reviewed-patch",
+                stop_head="a" * 40,
+                stop_parent_identity="develop",
+                stop_parent_head="b" * 40,
+                stop_merge_base=None,
+                stop_patch_id="current-patch",
+                stop_reason="human stopped further review discovery",
+            )
+            state = ReviewState(ordered_prs=(2849,), allocations={"2849:hosted": allocation})
+            path.write_text(json.dumps(state.to_dict()), encoding="utf-8")
+            store = StateStore(path)
+            original_bytes = path.read_bytes()
+
+            self.assertEqual(store.load(), state)
+            with self.assertRaisesRegex(StateError, "requires compatible SQLite"):
+                store.update(lambda _current: state)
+
+            self.assertEqual(path.read_bytes(), original_bytes)
+            self.assertEqual(list(path.parent.glob(f".{path.name}.*")), [])
+
     def test_legacy_transition_round_trips_exact_anchor_and_fingerprints(self):
         transition = LegacyEvidenceTransition(
             2818,
@@ -443,8 +499,11 @@ class ReviewStateStackTest(unittest.TestCase):
             {"summary_dispositions": [{}]},
         )
         for malformed in malformed_states:
-            with self.subTest(malformed=malformed), self.assertRaisesRegex(
-                StateError, "(policy overrides|policy override records|malformed private records)"
+            with (
+                self.subTest(malformed=malformed),
+                self.assertRaisesRegex(
+                    StateError, "(policy overrides|policy override records|malformed private records)"
+                ),
             ):
                 ReviewState.from_dict({"schema_version": 1, **malformed})
 
@@ -578,7 +637,9 @@ class ReviewStateStackTest(unittest.TestCase):
             ReviewState(
                 routes=(legacy_route,),
                 summary_dispositions=(dataclasses.replace(disposition, route_ids=(legacy_route.route_id,)),),
-            ).routes[0].source_finding,
+            )
+            .routes[0]
+            .source_finding,
             "outside_diff:2:workitem-base",
         )
 
@@ -705,11 +766,11 @@ class ReviewStateStackTest(unittest.TestCase):
         self.assertEqual(completion_status(state, Channel.CLI, (matching,)), ReviewStatus.COMPLETE)
         legacy = ReviewState(
             ordered_prs=(1,),
-            policy_overrides={
-                "1:cli": PolicyOverride(cli_zero_useful=1, head="h", checkpoint="c", reason="legacy")
-            },
+            policy_overrides={"1:cli": PolicyOverride(cli_zero_useful=1, head="h", checkpoint="c", reason="legacy")},
         )
-        self.assertEqual(completion_status(legacy, Channel.CLI, (dataclasses.replace(current, patch_id=None),)), ReviewStatus.READY)
+        self.assertEqual(
+            completion_status(legacy, Channel.CLI, (dataclasses.replace(current, patch_id=None),)), ReviewStatus.READY
+        )
 
     def test_git_common_dir_bounds_subprocess_and_translates_timeout(self):
         timeout = state_module.subprocess.TimeoutExpired("git rev-parse --git-common-dir", 30)
@@ -984,12 +1045,24 @@ class ReviewStateStackTest(unittest.TestCase):
         state = ReviewState(ordered_prs=(1,))
         history = (
             Evidence(
-                1, "old", "c1", completed=True, attributable=True, anchored=True,
-                corrected_state=True, lineage_proven_to_next=True,
+                1,
+                "old",
+                "c1",
+                completed=True,
+                attributable=True,
+                anchored=True,
+                corrected_state=True,
+                lineage_proven_to_next=True,
             ),
             Evidence(
-                1, "old", "c2", completed=True, attributable=True, anchored=True,
-                corrected_state=True, lineage_proven_to_next=True,
+                1,
+                "old",
+                "c2",
+                completed=True,
+                attributable=True,
+                anchored=True,
+                corrected_state=True,
+                lineage_proven_to_next=True,
             ),
             Evidence(1, "new", "c3", completed=True, attributable=True, anchored=True, corrected_state=True),
         )
@@ -1005,15 +1078,15 @@ class ReviewStateStackTest(unittest.TestCase):
         )
         self.assertEqual(
             completion_status(state, Channel.CLI, old_history, reconciliation=ReconciliationStatus.PATCH_CHANGED),
-            ReviewStatus.JUDGMENT_REQUIRED,
+            ReviewStatus.COMPLETE,
         )
         self.assertEqual(
             completion_status(state, Channel.CLI, old_history, reconciliation=ReconciliationStatus.PARENT_MOVED),
-            ReviewStatus.PARENT_MOVED,
+            ReviewStatus.COMPLETE,
         )
         self.assertEqual(
             completion_status(state, Channel.CLI, old_history, reconciliation=ReconciliationStatus.EQUIVALENT_HISTORY),
-            ReviewStatus.JUDGMENT_REQUIRED,
+            ReviewStatus.COMPLETE,
         )
 
     def test_cli_taper_can_persist_on_a_proven_descendant_candidate_but_not_an_unproven_one(self):
@@ -1033,7 +1106,7 @@ class ReviewStateStackTest(unittest.TestCase):
         )
         self.assertEqual(
             completion_status(state, Channel.CLI, history, reconciliation=ReconciliationStatus.PATCH_CHANGED),
-            ReviewStatus.JUDGMENT_REQUIRED,
+            ReviewStatus.COMPLETE,
         )
         uncorrected_latest = dataclasses.replace(history[-1], corrected_state=False)
         self.assertTrue(taper_satisfied(Channel.CLI, (*history[:-1], uncorrected_latest), 3))
@@ -1078,7 +1151,7 @@ class ReviewStateStackTest(unittest.TestCase):
                 (dry_hosted,),
                 reconciliation=ReconciliationStatus.PATCH_CHANGED,
             ),
-            ReviewStatus.JUDGMENT_REQUIRED,
+            ReviewStatus.COMPLETE,
         )
 
         useful_hosted = dataclasses.replace(dry_hosted, checkpoint="hosted-useful", accepted=1, raw=1)
@@ -1112,6 +1185,41 @@ class ReviewStateStackTest(unittest.TestCase):
         self.assertFalse(taper_satisfied(Channel.CLI, history, 3))
         self.assertEqual(completion_status(ReviewState(ordered_prs=(1,)), Channel.CLI, history), ReviewStatus.READY)
 
+    def test_unanchored_or_uncorrected_accepted_result_resets_taper_streak(self):
+        dry_before = tuple(
+            Evidence(1, "h", f"before-{index}", completed=True, attributable=True, anchored=True, corrected_state=True)
+            for index in range(2)
+        )
+        dry_after = Evidence(1, "h", "after", completed=True, attributable=True, anchored=True, corrected_state=True)
+        accepted_variants = (
+            Evidence(
+                1,
+                "h",
+                "accepted-unanchored",
+                completed=True,
+                attributable=True,
+                anchored=False,
+                corrected_state=True,
+                accepted=1,
+            ),
+            Evidence(
+                1,
+                "h",
+                "accepted-uncorrected",
+                completed=True,
+                attributable=True,
+                anchored=True,
+                corrected_state=False,
+                accepted=1,
+            ),
+        )
+
+        self.assertTrue(taper_satisfied(Channel.CLI, (*dry_before, dry_after), 3))
+        for accepted in accepted_variants:
+            with self.subTest(checkpoint=accepted.checkpoint):
+                history = (*dry_before, accepted, dry_after)
+                self.assertFalse(taper_satisfied(Channel.CLI, history, 3))
+
     def test_completed_taper_survives_later_fixes_and_review_identity_changes(self):
         state = ReviewState(ordered_prs=(1,))
         dry_rounds = tuple(
@@ -1139,25 +1247,27 @@ class ReviewStateStackTest(unittest.TestCase):
         history = (*dry_rounds, later_fix)
 
         self.assertTrue(taper_satisfied(Channel.CLI, history, 3))
-        held = select_review_target(
+        decision = select_review_target(
             state,
             Channel.CLI,
             (1,),
             {1: history},
             reconciliation_by_pr={1: ReconciliationStatus.PATCH_CHANGED},
         )
-        self.assertEqual(held.status, ReviewStatus.JUDGMENT_REQUIRED)
-        self.assertTrue(held.to_dict()["taper_complete"])
+        self.assertEqual(decision.status, ReviewStatus.COMPLETE)
+        self.assertIsNone(decision.target)
+        self.assertTrue(decision.to_dict()["taper_complete"])
 
-        topology_held = select_review_target(
+        topology_decision = select_review_target(
             state,
             Channel.CLI,
             (1,),
             {1: history},
             reconciliation_by_pr={1: ReconciliationStatus.PARENT_MOVED},
         )
-        self.assertEqual(topology_held.status, ReviewStatus.PARENT_MOVED)
-        self.assertTrue(topology_held.to_dict()["taper_complete"])
+        self.assertEqual(topology_decision.status, ReviewStatus.COMPLETE)
+        self.assertIsNone(topology_decision.target)
+        self.assertTrue(topology_decision.to_dict()["taper_complete"])
 
         hosted_dry = Evidence(
             1,
@@ -1238,7 +1348,7 @@ class ReviewStateStackTest(unittest.TestCase):
         three_fresh_dry = (*two_fresh_dry, dataclasses.replace(first_fresh_dry, checkpoint="fresh-dry-3"))
         self.assertTrue(taper_satisfied_for_state(state, Channel.CLI, three_fresh_dry))
 
-    def test_latest_exact_judgment_resolves_changed_patch_identity_hold(self):
+    def test_latest_exact_reopen_reopens_taper_while_retain_preserves_it(self):
         history = (
             Evidence(
                 1,
@@ -1279,14 +1389,11 @@ class ReviewStateStackTest(unittest.TestCase):
                         self.assertEqual(decision.status, ReviewStatus.READY)
                         self.assertEqual(decision.target, 1)
                         self.assertFalse(decision.to_dict()["taper_complete"])
-                    elif reconciliation == ReconciliationStatus.PATCH_CHANGED:
-                        self.assertEqual(decision.status, ReviewStatus.READY)
-                        self.assertEqual(decision.target, 1)
                     else:
                         self.assertEqual(decision.status, ReviewStatus.COMPLETE)
                         self.assertIsNone(decision.target)
 
-    def test_cli_streak_break_includes_newer_round_and_keeps_hosted_policy_unchanged(self):
+    def test_cli_taper_counts_across_heads_despite_identity_marker(self):
         history = (
             Evidence(1, "old", "c1", completed=True, attributable=True, anchored=True, corrected_state=True),
             Evidence(1, "old", "c2", completed=True, attributable=True, anchored=True, corrected_state=True),
@@ -1302,11 +1409,14 @@ class ReviewStateStackTest(unittest.TestCase):
             ),
             Evidence(1, "new", "c4", completed=True, attributable=True, anchored=True, corrected_state=True),
         )
-        self.assertFalse(taper_satisfied(Channel.CLI, history, 3))
+        self.assertTrue(taper_satisfied(Channel.CLI, history, 3))
         self.assertTrue(
             taper_satisfied(
                 Channel.CLI,
-                (*history, Evidence(1, "new", "c5", completed=True, attributable=True, anchored=True, corrected_state=True)),
+                (
+                    *history,
+                    Evidence(1, "new", "c5", completed=True, attributable=True, anchored=True, corrected_state=True),
+                ),
                 3,
             )
         )
@@ -1325,7 +1435,7 @@ class ReviewStateStackTest(unittest.TestCase):
         )
         self.assertTrue(taper_satisfied(Channel.HOSTED, hosted_history, 3))
 
-    def test_cli_prior_uncorrected_rounds_require_proven_links_to_the_current_review(self):
+    def test_cli_prior_uncorrected_rounds_count_without_proven_links(self):
         history = (
             Evidence(
                 1,
@@ -1360,7 +1470,7 @@ class ReviewStateStackTest(unittest.TestCase):
             history[1],
             history[2],
         )
-        self.assertFalse(taper_satisfied(Channel.CLI, unproven_history, 3))
+        self.assertTrue(taper_satisfied(Channel.CLI, unproven_history, 3))
 
     def test_non_counting_and_unattributable_rounds_cannot_fill_cross_head_taper(self):
         first = Evidence(1, "old", "c1", completed=True, attributable=True, anchored=True, corrected_state=True)
@@ -1411,6 +1521,69 @@ class ReviewStateStackTest(unittest.TestCase):
         held_capture = dataclasses.replace(old_pending_capture, held=True)
         self.assertEqual(completion_status(state, Channel.CLI, (*reviews, held_capture)), ReviewStatus.HELD)
 
+    def test_completed_taper_survives_request_only_topology_warnings(self):
+        state = ReviewState(ordered_prs=(1,))
+        reviews = tuple(
+            Evidence(
+                1,
+                "old-parent",
+                f"review-{index}",
+                completed=True,
+                attributable=True,
+                anchored=True,
+                corrected_state=True,
+            )
+            for index in range(3)
+        )
+        moved = (*reviews, Evidence(1, "current", "old-parent-warning", parent_moved=True))
+
+        self.assertEqual(
+            completion_status(state, Channel.CLI, moved, reconciliation=ReconciliationStatus.PARENT_MOVED),
+            ReviewStatus.COMPLETE,
+        )
+        self.assertEqual(
+            select_review_target(
+                state,
+                Channel.CLI,
+                (1,),
+                {1: moved},
+                reconciliation_by_pr={1: ReconciliationStatus.PARENT_MOVED},
+            ).status,
+            ReviewStatus.COMPLETE,
+        )
+        rate_limited = (*reviews, Evidence(1, "current", "cooldown", rate_limited=True))
+        self.assertEqual(completion_status(state, Channel.CLI, rate_limited), ReviewStatus.COMPLETE)
+        active = (*moved, Evidence(1, "current", "active", active_review=True))
+        self.assertEqual(completion_status(state, Channel.CLI, active), ReviewStatus.HELD)
+
+    def test_incomplete_or_reopened_taper_does_not_hide_cooldown_or_active_work(self):
+        one_dry = Evidence(
+            1,
+            "reviewed",
+            "one-dry",
+            completed=True,
+            attributable=True,
+            anchored=True,
+            corrected_state=True,
+        )
+        cooldown = Evidence(1, "current", "cooldown", rate_limited=True)
+        state = ReviewState(ordered_prs=(1,))
+        self.assertEqual(completion_status(state, Channel.CLI, (one_dry, cooldown)), ReviewStatus.RATE_LIMITED)
+
+        reviews = tuple(
+            dataclasses.replace(one_dry, checkpoint=f"review-{index}", patch_id="review-patch")
+            for index in range(3)
+        )
+        reopened = ReviewState(
+            ordered_prs=(1,),
+            judgments=(
+                Judgment(1, "cli", "reopen", "reviewed", "review-2", "fresh review required", "review-patch"),
+            ),
+        )
+        active = Evidence(1, "current", "active", active_review=True)
+        self.assertEqual(completion_status(reopened, Channel.CLI, (*reviews, active)), ReviewStatus.HELD)
+        self.assertEqual(completion_status(reopened, Channel.CLI, (*reviews, cooldown)), ReviewStatus.RATE_LIMITED)
+
     def test_readable_historical_evidence_without_modern_anchor_cannot_taper(self):
         history = tuple(
             Evidence(1, "h", f"legacy-{index}", completed=True, attributable=True, anchored=False) for index in range(3)
@@ -1438,9 +1611,7 @@ class ReviewStateStackTest(unittest.TestCase):
         self.assertEqual(select_review_target(state, Channel.CLI, (1,), {1: history}).status, ReviewStatus.READY)
 
     def test_non_counting_history_does_not_hide_reconciliation_blockers(self):
-        history = (
-            Evidence(1, "h", "legacy", completed=True, attributable=True, non_counting=True),
-        )
+        history = (Evidence(1, "h", "legacy", completed=True, attributable=True, non_counting=True),)
         state = ReviewState(ordered_prs=(1,))
 
         self.assertEqual(
@@ -1489,7 +1660,7 @@ class ReviewStateStackTest(unittest.TestCase):
         )
         self.assertFalse(taper_satisfied(Channel.CLI, (correction,), 3))
 
-    def test_cross_channel_change_requires_exact_bound_judgment_and_provisional_never_tapers(self):
+    def test_completed_taper_skips_cross_channel_identity_and_provisional_never_tapers(self):
         evidence = tuple(
             Evidence(
                 1,
@@ -1504,12 +1675,13 @@ class ReviewStateStackTest(unittest.TestCase):
             for i in range(3)
         )
         state = ReviewState(ordered_prs=(1,))
-        target = select_review_target(state, Channel.CLI, (1,), {1: evidence}, other_channel_heads={1: "old"})
-        self.assertEqual(target.status, ReviewStatus.JUDGMENT_REQUIRED)
+        target = select_review_target(state, Channel.CLI, (1,), {1: evidence})
+        self.assertEqual(target.status, ReviewStatus.COMPLETE)
+        self.assertIsNone(target.target)
         judged = ReviewState(
             ordered_prs=(1,), judgments=(Judgment(1, "cli", "retain", "h", "c2", "retain exact checkpoint", "p"),)
         )
-        target = select_review_target(judged, Channel.CLI, (1,), {1: evidence}, other_channel_heads={1: "old"})
+        target = select_review_target(judged, Channel.CLI, (1,), {1: evidence})
         self.assertEqual(target.status, ReviewStatus.COMPLETE)
         provisional = tuple(
             Evidence(1, "p", f"p{i}", anchored=True, completed=True, attributable=True, provisional=True)
@@ -1520,7 +1692,7 @@ class ReviewStateStackTest(unittest.TestCase):
         self.assertFalse(target.provisional)
         self.assertFalse(taper_satisfied(Channel.CLI, provisional, 3))
 
-    def test_newer_same_head_provisional_evidence_holds_selection_without_erasing_taper(self):
+    def test_newer_legacy_provisional_observation_does_not_reopen_taper(self):
         reviewed = tuple(
             Evidence(
                 1,
@@ -1545,13 +1717,13 @@ class ReviewStateStackTest(unittest.TestCase):
         )
         history = (*reviewed, provisional)
         state = ReviewState(ordered_prs=(1,))
-        self.assertEqual(completion_status(state, Channel.CLI, history), ReviewStatus.READY)
+        self.assertEqual(completion_status(state, Channel.CLI, history), ReviewStatus.COMPLETE)
         target = select_review_target(state, Channel.CLI, (1,), {1: history})
-        self.assertEqual(target.status, ReviewStatus.PROVISIONAL)
-        self.assertTrue(target.provisional)
+        self.assertEqual(target.status, ReviewStatus.COMPLETE)
+        self.assertFalse(target.provisional)
         self.assertTrue(taper_satisfied(Channel.CLI, history, 3))
 
-    def test_provisional_history_does_not_override_equivalent_history_judgment(self):
+    def test_provisional_history_does_not_reopen_completed_equivalent_history_taper(self):
         reviewed = tuple(
             Evidence(
                 1,
@@ -1586,7 +1758,7 @@ class ReviewStateStackTest(unittest.TestCase):
                 history,
                 reconciliation=ReconciliationStatus.EQUIVALENT_HISTORY,
             ),
-            ReviewStatus.JUDGMENT_REQUIRED,
+            ReviewStatus.COMPLETE,
         )
         target = select_review_target(
             state,
@@ -1595,7 +1767,8 @@ class ReviewStateStackTest(unittest.TestCase):
             {1: history},
             reconciliation_by_pr={1: ReconciliationStatus.EQUIVALENT_HISTORY},
         )
-        self.assertEqual(target.status, ReviewStatus.JUDGMENT_REQUIRED)
+        self.assertEqual(target.status, ReviewStatus.COMPLETE)
+        self.assertIsNone(target.target)
 
         judged = ReviewState(
             ordered_prs=(1,),
@@ -1611,7 +1784,7 @@ class ReviewStateStackTest(unittest.TestCase):
             ReviewStatus.COMPLETE,
         )
 
-    def test_equivalent_history_retain_does_not_count_an_older_patch(self):
+    def test_equivalent_history_taper_counts_results_across_patches(self):
         history = (
             Evidence(
                 1,
@@ -1655,7 +1828,7 @@ class ReviewStateStackTest(unittest.TestCase):
                 history,
                 reconciliation=ReconciliationStatus.EQUIVALENT_HISTORY,
             ),
-            ReviewStatus.READY,
+            ReviewStatus.COMPLETE,
         )
 
     def test_all_provisional_history_is_ready_after_reconciliation(self):
@@ -1683,7 +1856,7 @@ class ReviewStateStackTest(unittest.TestCase):
         self.assertEqual(target.status, ReviewStatus.READY)
         self.assertFalse(target.provisional)
 
-    def test_judgment_cannot_apply_to_another_pr_with_same_head_and_checkpoint(self):
+    def test_completed_taper_skips_cross_pr_judgment_identity_gate(self):
         patch_id = "shared-patch"
         history = tuple(
             Evidence(
@@ -1707,9 +1880,9 @@ class ReviewStateStackTest(unittest.TestCase):
             Channel.CLI,
             (2,),
             {2: history},
-            other_channel_heads={2: "old"},
         )
-        self.assertEqual(target.status, ReviewStatus.JUDGMENT_REQUIRED)
+        self.assertEqual(target.status, ReviewStatus.COMPLETE)
+        self.assertIsNone(target.target)
 
         correctly_bound = dataclasses.replace(
             state,
@@ -1720,9 +1893,28 @@ class ReviewStateStackTest(unittest.TestCase):
             Channel.CLI,
             (2,),
             {2: history},
-            other_channel_heads={2: "old"},
         )
         self.assertEqual(target.status, ReviewStatus.COMPLETE)
+
+    def test_incomplete_channel_remains_selected_before_later_completed_taper(self):
+        incomplete = tuple(
+            Evidence(1, "h1", f"c{i}", anchored=True, completed=True, attributable=True, corrected_state=True)
+            for i in range(2)
+        )
+        complete = tuple(
+            Evidence(2, "h2", f"d{i}", anchored=True, completed=True, attributable=True, corrected_state=True)
+            for i in range(3)
+        )
+        target = select_review_target(
+            ReviewState(ordered_prs=(1, 2)),
+            Channel.CLI,
+            (1, 2),
+            {1: incomplete, 2: complete},
+        )
+
+        self.assertEqual(target.target, 1)
+        self.assertEqual(target.status, ReviewStatus.READY)
+        self.assertFalse(target.to_dict()["taper_complete"])
 
 
 if __name__ == "__main__":

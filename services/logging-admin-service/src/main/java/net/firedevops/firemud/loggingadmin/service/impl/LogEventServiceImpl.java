@@ -50,7 +50,7 @@ public class LogEventServiceImpl implements LogEventService {
     try {
       AccountAuditReceiptInsertResult result =
           repository.insertIfAbsent(request, UUID.randomUUID());
-      return receiptOutcome(result.receipt(), request, result.inserted());
+      return receiptOutcome(result.receipt(), request, result.inserted(), true);
     } catch (DataAccessException ex) {
       logger.warn("Account audit receipt write is unavailable: {}", ex.getClass().getSimpleName());
       throw new AuditStorageUnavailableException(ex);
@@ -60,11 +60,15 @@ public class LogEventServiceImpl implements LogEventService {
   @Override
   @Transactional(readOnly = true)
   public AccountAuditReceiptDto readLogEventReceipt(CreateLogEventRequest request) {
-    validateEnvelope(request);
+    validateEnvelopeMetadata(request);
+    boolean payloadSupplied = payloadSuppliedForRead(request);
+    if (payloadSupplied) {
+      validateExactPayload(request);
+    }
     try {
       AccountAuditReceipt receipt =
           repository.findByIdentity(request).orElseThrow(AuditReceiptNotFoundException::new);
-      return receiptOutcome(receipt, request, false);
+      return receiptOutcome(receipt, request, false, payloadSupplied);
     } catch (AuditReceiptNotFoundException ex) {
       throw ex;
     } catch (DataAccessException ex) {
@@ -74,7 +78,10 @@ public class LogEventServiceImpl implements LogEventService {
   }
 
   private static AccountAuditReceiptDto receiptOutcome(
-      AccountAuditReceipt receipt, CreateLogEventRequest request, boolean inserted) {
+      AccountAuditReceipt receipt,
+      CreateLogEventRequest request,
+      boolean inserted,
+      boolean payloadSupplied) {
     if (inserted) {
       return toDto(
           receipt, AccountAuditReceiptStatus.COMMITTED, AccountAuditReceiptOutcome.ACCEPTED);
@@ -92,6 +99,12 @@ public class LogEventServiceImpl implements LogEventService {
     if (retainedPayload == null) {
       return toDto(
           receipt, AccountAuditReceiptStatus.MINIMIZED, AccountAuditReceiptOutcome.NON_REPLAYABLE);
+    }
+    if (!payloadSupplied) {
+      return toDto(
+          receipt,
+          AccountAuditReceiptStatus.CONFLICT,
+          AccountAuditReceiptOutcome.IDEMPOTENCY_CONFLICT);
     }
     if (!Arrays.equals(retainedPayload, request.payload().toByteArray())) {
       return toDto(
@@ -150,6 +163,11 @@ public class LogEventServiceImpl implements LogEventService {
   }
 
   private static void validateEnvelope(CreateLogEventRequest request) {
+    validateEnvelopeMetadata(request);
+    validateExactPayload(request);
+  }
+
+  private static void validateEnvelopeMetadata(CreateLogEventRequest request) {
     if (request == null
         || request.scope() == null
         || request.auditEventId() == null
@@ -197,12 +215,23 @@ public class LogEventServiceImpl implements LogEventService {
     if (!request.payloadDigest().matches("sha256:[0-9a-f]{64}")) {
       throw new IllegalArgumentException("payloadDigest must be lowercase sha256 hex");
     }
+  }
+
+  private static void validateExactPayload(CreateLogEventRequest request) {
     byte[] payloadBytes = request.payload().toByteArray();
     validateUtf8(payloadBytes);
     String computedDigest = SHA_256_PREFIX + sha256Hex(payloadBytes);
     if (!computedDigest.equals(request.payloadDigest())) {
       throw new IllegalArgumentException("payloadDigest does not match the exact payload bytes");
     }
+  }
+
+  private static boolean payloadSuppliedForRead(CreateLogEventRequest request) {
+    if (!request.payload().isEmpty()) {
+      return true;
+    }
+    String emptyPayloadDigest = SHA_256_PREFIX + sha256Hex(new byte[0]);
+    return emptyPayloadDigest.equals(request.payloadDigest());
   }
 
   private static boolean isCanonicalUuid(String value) {

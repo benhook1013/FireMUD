@@ -66,7 +66,12 @@ class EntityManagementApplicationIntegrationTest {
       throws Exception {
     String token =
         JWT_UTIL.generateToken(
-            "entity-test", Map.of("globalRoles", java.util.List.of("platformAdmin")));
+            "018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a",
+            Map.of(
+                "accountId",
+                "018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a",
+                "globalRoles",
+                java.util.List.of("platformAdmin")));
     HttpRequest request =
         HttpRequest.newBuilder(
                 URI.create(

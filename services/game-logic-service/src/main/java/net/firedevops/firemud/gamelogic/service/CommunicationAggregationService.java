@@ -6,10 +6,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.TreeSet;
-import java.util.UUID;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.common.settings.EffectiveCommandCapabilitiesSettingsResolver;
 import net.firedevops.firemud.common.settings.PlayerCommandCapability;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
@@ -60,7 +60,7 @@ public class CommunicationAggregationService {
       String validatedAccountId = parseCanonicalAccountId(request.getAccountId());
       if (validatedAccountId == null) {
         return errorResponse(
-            builder, "INVALID_ARGUMENT", "account_id must be a canonical non-nil UUID");
+            builder, "INVALID_ARGUMENT", "account_id must be a canonical non-nil Account UUID");
       }
 
       if (tenantId != null && !isSocialCapabilityEnabled(tenantId, gameInstanceId)) {
@@ -398,15 +398,8 @@ public class CommunicationAggregationService {
   }
 
   private String parseCanonicalAccountId(String accountId) {
-    if (accountId == null || accountId.isBlank()) {
-      return null;
-    }
     try {
-      UUID parsed = UUID.fromString(accountId);
-      if (parsed.equals(new UUID(0L, 0L)) || !parsed.toString().equals(accountId)) {
-        return null;
-      }
-      return accountId;
+      return JwtClaims.requireAccountId(accountId, "account_id");
     } catch (IllegalArgumentException ignored) {
       return null;
     }

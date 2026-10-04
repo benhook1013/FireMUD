@@ -468,7 +468,7 @@ class GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest {
         .hasSize(1)
         .allSatisfy(pointer -> assertThat(pointer.getTenantId()).isEqualTo(RETAINED_TENANT_ID));
     assertThat(
-            fixture.eventRepository.findByTenantIdAndWorldSlugAndRealmSlugOrderByOccurredAtDesc(
+            fixture.eventRepository.findByTenantIdAndWorldSlugAndRealmSlugOrderByIdDesc(
                 RETAINED_TENANT_ID, "legacy-world", "legacy-realm"))
         .hasSize(1)
         .first()

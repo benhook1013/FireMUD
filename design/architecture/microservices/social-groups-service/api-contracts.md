@@ -14,6 +14,8 @@ The target chat write contract derives `senderAccountId` from authenticated call
 
 ## Implementation Status
 
+Account selectors in the Social REST/gRPC boundary are canonical non-nil UUID strings, carried unchanged to Account and Game Session; tenant, guild, private row, character, and runtime instance selectors are distinct identities. Profile reads and successful updates require an exact Account UUID and tenant readback. This local convergence does not enable removed Gateway routes or close the broader relationship, replay, or moderation gaps below. Cutover and proof limits are recorded in the [player-experience tracker](../../../project-management/implementation-tracking/player-experience-commands-and-communication.md#current-status).
+
 The friend-presence slice currently implements non-pageable friend-roster and presence reads over tenant-scoped mutually accepted reciprocal links whose two directed rows are both `active`; that is implementation status, not the target relationship authority. The player-facing Gateway `/api/social/friends` route is removed/unavailable because the current endpoint path has no directional block-state model or block revalidation. The direct service-local implementation remains available for direct-service and future non-edge use and retains reciprocal-active filtering, but it does not claim the target player-facing safety boundary. The target distinguishes tenant-free account-pair relationships from separate tenant-local records and binds each group to one declared membership subject type. One-way links, inactive reciprocal links, and links stored under another tenant are not endpoint-visible; focused integration proof covers those boundaries in [SocialGroupsApplicationIntegrationTest.java](../../../../services/social-groups-service/src/test/java/integration/net/firedevops/firemud/socialgroups/SocialGroupsApplicationIntegrationTest.java). It does not create snapshots, continuations, or paginated bulk pages. Snapshot-bound continuation, continuation-time relationship and block revalidation, bounded paginated bulk reads, and the failure-precedence contract below remain target behavior; this document does not claim that the current implementation or existing tests prove those target obligations.
 
 The current chat writer paths remain internal/non-player-safe: the Gateway `/api/social/chat` edge route is removed/unavailable, while service-local `/chat` and gRPC `SendMessage` still use the request-body `senderAccountId` with the Social access guard. The synchronous `EvaluateModerationPolicy` read at `CHAT_SEND` remains the current Logging & Admin hot-path compatibility seam and is consumed only after a cache/replay miss. Replay storage and lookup remain tenant/effect-only and occur before that policy check, with no authenticated-caller or full request-digest binding. The duplicate-effect catch also queries after a unique violation in the same outer transaction, so PostgreSQL transaction-abort/rollback-only behavior is not a reliable replay result; conflict-safe insert or isolated transaction handling and real concurrent proof remain required. Owner-local restriction state, essential notices, independent stacking, expiry/reordering, appeal handling, and the target gate are not yet implemented or proved; these writers therefore remain nonconformant to the target contract above.
@@ -55,7 +57,7 @@ Current internal/non-player-safe chat request (the Gateway `/api/social/chat` ed
 curl -X POST http://localhost:8080/chat \
   -H 'Authorization: Bearer <access-token>' \
   -H 'Content-Type: application/json' \
-  -d '{"tenantId":7,"senderAccountId":100,"content":"hello"}'
+  -d '{"tenantId":7,"senderAccountId":"550e8400-e29b-41d4-a716-446655440000","content":"hello"}'
 ```
 
 Example voice-token request:
@@ -64,7 +66,7 @@ Example voice-token request:
 curl -X POST http://localhost:8080/voice/token \
   -H 'Authorization: Bearer <access-token>' \
   -H 'Content-Type: application/json' \
-  -d '{"tenantId":7,"accountId":100,"channelId":"guild-10"}'
+  -d '{"tenantId":7,"accountId":"550e8400-e29b-41d4-a716-446655440000","channelId":"guild-10"}'
 ```
 
 ## gRPC APIs

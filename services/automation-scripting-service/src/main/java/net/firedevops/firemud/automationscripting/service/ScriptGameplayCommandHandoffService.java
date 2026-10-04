@@ -3,6 +3,9 @@ package net.firedevops.firemud.automationscripting.service;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 
 public interface ScriptGameplayCommandHandoffService {
+  /** Bounded internal classification for preparation failure before durable child intent exists. */
+  String OUTCOME_PREPARATION_UNAVAILABLE = "PREPARATION_UNAVAILABLE";
+
   HandoffResult handoff(ScriptWorkItem workItem, EmittedCommand command);
 
   /** Records a command that was fenced before any external handoff was attempted. */

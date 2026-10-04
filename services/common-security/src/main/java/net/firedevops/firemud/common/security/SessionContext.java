@@ -107,16 +107,17 @@ public final class SessionContext {
   }
 
   /**
-   * Returns the current account id when present.
+   * Returns the current canonical account UUID when present.
    *
-   * <p>Blank or missing claims return {@code null}. Malformed or non-positive claims fail closed.
+   * <p>Blank or missing claims return {@code null}. Malformed, nil, or noncanonical claims fail
+   * closed.
    */
-  public static Long currentAccountIdOrNull() {
+  public static String currentAccountIdOrNull() {
     ClaimsData data = currentData();
     if (data == null || data.accountId == null || data.accountId.isBlank()) {
       return null;
     }
-    return JwtClaims.requireLong(data.accountId, "accountId", false);
+    return JwtClaims.requireAccountId(data.accountId, "accountId");
   }
 
   /** Throws 403 when the current caller cannot act on the provided tenant. */
@@ -129,25 +130,25 @@ public final class SessionContext {
     }
   }
 
-  /** Returns whether the current caller matches the provided account id. */
-  public static boolean isCurrentAccount(Long accountId) {
-    if (accountId == null || accountId <= 0L) {
+  /** Returns whether the current caller exactly matches the provided canonical account UUID. */
+  public static boolean isCurrentAccount(String accountId) {
+    if (accountId == null || accountId.isBlank()) {
       return false;
     }
     try {
-      return currentAccountId() == accountId;
+      return currentAccountId().equals(JwtClaims.requireAccountId(accountId, "accountId"));
     } catch (IllegalArgumentException ex) {
       return false;
     }
   }
 
   /** Returns whether the current caller can act on the provided tenant-owned account surface. */
-  public static boolean hasAccountAccess(Long tenantId, Long accountId) {
+  public static boolean hasAccountAccess(Long tenantId, String accountId) {
     return isCurrentAccount(accountId) || hasTenantAccess(tenantId);
   }
 
   /** Throws 403 when the current caller cannot act on the provided account surface. */
-  public static void requireAccountAccess(Long tenantId, Long accountId) {
+  public static void requireAccountAccess(Long tenantId, String accountId) {
     if (!hasAccountAccess(tenantId, accountId)) {
       throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Account access required");
     }
@@ -173,12 +174,12 @@ public final class SessionContext {
     return data.globalRoles.contains("platformAdmin") || data.globalRoles.contains("moderator");
   }
 
-  private static long currentAccountId() {
+  private static String currentAccountId() {
     ClaimsData data = currentData();
     if (data == null || data.accountId == null || data.accountId.isBlank()) {
       throw new IllegalArgumentException("accountId is required");
     }
-    return JwtClaims.requireLong(data.accountId, "accountId", false);
+    return JwtClaims.requireAccountId(data.accountId, "accountId");
   }
 
   static Context grpcContextWith(SessionClaims claims) {

@@ -571,9 +571,17 @@ public class TenantIdentityGrpcService
               .withDescription("Retained Game Session association evidence is inconsistent")
               .asRuntimeException());
       return;
-    } catch (DataAccessException | DataAccessResourceFailureException ex) {
+    } catch (DataAccessResourceFailureException ex) {
       responseObserver.onError(
           Status.UNAVAILABLE
+              .withDescription("Retained Game Session association could not be read")
+              .asRuntimeException());
+      return;
+    } catch (DataAccessException ex) {
+      Status.Code code =
+          hasConnectionFailureSqlState(ex) ? Status.Code.UNAVAILABLE : Status.Code.INTERNAL;
+      responseObserver.onError(
+          Status.fromCode(code)
               .withDescription("Retained Game Session association could not be read")
               .asRuntimeException());
       return;

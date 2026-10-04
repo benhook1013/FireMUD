@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.sql.SQLException;
+import java.util.Arrays;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -21,6 +22,8 @@ import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
 import net.firedevops.firemud.worldmanagement.client.GameSessionClient;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeReceipt;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeRepository;
+import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.MigrationInfo;
 import org.jooq.DSLContext;
 import org.jooq.exception.DataAccessException;
 import org.junit.jupiter.api.Test;
@@ -103,6 +106,7 @@ class WorldAuthoredSourceIntakeIntegrationTest {
   }
 
   @Autowired private WorldAuthoredSourceIntakeRepository repository;
+  @Autowired private Flyway flyway;
   @Autowired private DSLContext dsl;
   @Autowired private PlatformTransactionManager transactionManager;
 
@@ -113,6 +117,9 @@ class WorldAuthoredSourceIntakeIntegrationTest {
 
   @Test
   void persistsCompleteFreshReceiptAndReusesExactTenantAssociationAcrossWorlds() {
+    assertThat(Arrays.stream(flyway.info().applied()).map(MigrationInfo::getScript).toList())
+        .containsSubsequence(
+            "V23__initial_admission_bind_hold.sql", "V23.1__world_authored_source_intake.sql");
     long existingLegacyTenantKey =
         8_000_000_000L + ThreadLocalRandom.current().nextLong(1_000_000L);
     Long legacyRegionId =

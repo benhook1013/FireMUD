@@ -2,6 +2,8 @@ package net.firedevops.firemud.automationscripting.repository;
 
 import static net.firedevops.firemud.automationscripting.jooq.tables.AutomationAdmissionRequestHistory.AUTOMATION_ADMISSION_REQUEST_HISTORY;
 import static net.firedevops.firemud.automationscripting.jooq.tables.AutomationAdmissionStates.AUTOMATION_ADMISSION_STATES;
+import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptDeadLetterReplayRequests.SCRIPT_DEAD_LETTER_REPLAY_REQUESTS;
+import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptDeadLetterReplayResults.SCRIPT_DEAD_LETTER_REPLAY_RESULTS;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptEventAudit.SCRIPT_EVENT_AUDIT;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptEventIngressAudit.SCRIPT_EVENT_INGRESS_AUDIT;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptHandoffEvents.SCRIPT_HANDOFF_EVENTS;
@@ -16,6 +18,7 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -65,12 +68,14 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
 
   private DSLContext dsl;
   private ScriptEventIngressAuditRepository ingressRepository;
+  private ScriptDeadLetterReplayRepository replayRepository;
   private ScriptWorkItemRepository workItemRepository;
   private ScriptEventAuditRepository eventAuditRepository;
   private ScriptHandoffEventRepository handoffRepository;
   private ScriptPatchPinProjectionRepository pinProjectionRepository;
   private ScriptScheduleInstanceRepository scheduleInstanceRepository;
   private ExecutorService executor;
+  private String upgradeSchema;
 
   @BeforeAll
   void setUpRepositories() {
@@ -84,6 +89,7 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
 
     dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
     ingressRepository = new ScriptEventIngressAuditRepository(dsl);
+    replayRepository = new ScriptDeadLetterReplayRepository(dsl);
     workItemRepository = new ScriptWorkItemRepository(dsl);
     eventAuditRepository = new ScriptEventAuditRepository(dsl);
     handoffRepository = new ScriptHandoffEventRepository(dsl);
@@ -94,7 +100,8 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
   @BeforeEach
   void cleanTables() {
     dsl.execute(
-        "TRUNCATE TABLE automation_admission_request_history, automation_admission_states,"
+        "TRUNCATE TABLE script_dead_letter_replay_results, script_dead_letter_replay_requests,"
+            + " automation_admission_request_history, automation_admission_states,"
             + " script_patch_pin_projections, script_schedule_instances, script_event_audit, script_handoff_events,"
             + " script_work_items,"
             + " script_event_ingress_audit RESTART IDENTITY CASCADE");
@@ -104,32 +111,184 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
   @AfterEach
   void stopExecutor() {
     executor.shutdownNow();
+    String schemaToDrop = upgradeSchema;
+    upgradeSchema = null;
+    if (schemaToDrop != null) {
+      String validatedSchema = requireUpgradeSchemaName(schemaToDrop);
+      DSL.using(dataSource(null), SQLDialect.POSTGRES)
+          .execute("DROP SCHEMA IF EXISTS \"" + validatedSchema + "\" CASCADE");
+    }
   }
 
   @Test
-  void flywayV4EvolvesV3EligibilityWithoutLosingReplayEvidence() {
+  void flywayV4PreservesV3WorkItemsAndPersistsReplayEvidence() {
+    upgradeSchema = "automation_v4_upgrade_" + UUID.randomUUID().toString().replace("-", "");
+    DriverManagerDataSource upgradeDataSource = dataSource(upgradeSchema);
+    Flyway.configure()
+        .dataSource(upgradeDataSource)
+        .locations(MIGRATION_LOCATION)
+        .schemas(upgradeSchema)
+        .defaultSchema(upgradeSchema)
+        .target("3.2")
+        .load()
+        .migrate();
+    DSLContext upgradeDsl = DSL.using(upgradeDataSource, SQLDialect.POSTGRES);
+
     assertThat(
-            dsl.fetchValue(
-                "SELECT is_nullable FROM information_schema.columns"
-                    + " WHERE table_schema = 'public' AND table_name = 'script_work_items'"
-                    + " AND column_name = 'next_eligible_at'",
+            upgradeDsl.fetchValue(
+                "SELECT version FROM flyway_schema_history WHERE success ORDER BY installed_rank DESC LIMIT 1",
                 String.class))
-        .isEqualTo("YES");
+        .isEqualTo("3.2");
+    Long deadLetteredWorkItemId =
+        upgradeDsl
+            .fetchSingle(
+                "INSERT INTO script_work_items (tenant_id, game_instance_id, region_id, region_epoch, "
+                    + "entity_id, script_id, event_type, event_schema_version, script_patch_version, "
+                    + "script_event_id, source_service, trigger_mode, status, cancel_reason, "
+                    + "created_at, updated_at, next_eligible_at) "
+                    + "VALUES ('tenant-v3-retained', 'instance-1', 'region-1', 12, 'entity-1', "
+                    + "'script-1', 'onCommand', 'v1', 'patch-1', 'event-dead-lettered', "
+                    + "'game-session-service', 'EVENT', 'DEAD_LETTERED', 'retained_failure', "
+                    + "'2026-09-30 12:00:00', '2026-09-30 12:01:00', '2026-09-30 12:02:00') "
+                    + "RETURNING id")
+            .get(0, Long.class);
+    Long pendingWorkItemId =
+        upgradeDsl
+            .fetchSingle(
+                "INSERT INTO script_work_items (tenant_id, game_instance_id, region_id, region_epoch, "
+                    + "entity_id, script_id, event_type, event_schema_version, script_patch_version, "
+                    + "script_event_id, source_service, trigger_mode, status, created_at, updated_at, "
+                    + "next_eligible_at) "
+                    + "VALUES ('tenant-v3-retained', 'instance-1', 'region-1', 12, 'entity-1', "
+                    + "'script-1', 'onCommand', 'v1', 'patch-1', 'event-pending', "
+                    + "'game-session-service', 'EVENT', 'PENDING_EVALUATION', '2026-09-30 12:00:00', "
+                    + "'2026-09-30 12:01:00', '2035-01-02 03:04:05') RETURNING id")
+            .get(0, Long.class);
+    var retainedRowsBeforeV4 =
+        upgradeDsl.fetch(
+            "SELECT id, tenant_id, status, next_eligible_at, cancel_reason, created_at, updated_at "
+                + "FROM script_work_items ORDER BY id");
+
+    Flyway.configure()
+        .dataSource(upgradeDataSource)
+        .locations(MIGRATION_LOCATION)
+        .schemas(upgradeSchema)
+        .defaultSchema(upgradeSchema)
+        .load()
+        .migrate();
+
     assertThat(
-            dsl.fetchValue(
-                "SELECT count(*) FROM pg_indexes WHERE schemaname = 'public'"
+            upgradeDsl
+                .fetchSingle(
+                    "SELECT is_nullable FROM information_schema.columns"
+                        + " WHERE table_schema = ? AND table_name = 'script_work_items'"
+                        + " AND column_name = 'next_eligible_at'",
+                    upgradeSchema)
+                .get(0, String.class))
+        .isEqualTo("YES");
+    String eligibilityIndex =
+        upgradeDsl
+            .fetchSingle(
+                "SELECT indexdef FROM pg_indexes WHERE schemaname = '"
+                    + upgradeSchema
+                    + "'"
                     + " AND tablename = 'script_work_items'"
-                    + " AND indexname = 'idx_script_work_items_status_eligible_created'",
-                Long.class))
+                    + " AND indexname = 'idx_script_work_items_status_eligible_created'")
+            .get("indexdef", String.class);
+    assertThat(eligibilityIndex).contains("(status, next_eligible_at, created_at, id)");
+    assertThat(
+            upgradeDsl.fetch(
+                "SELECT id, tenant_id, status, next_eligible_at, cancel_reason, created_at, updated_at "
+                    + "FROM script_work_items ORDER BY id"))
+        .isEqualTo(retainedRowsBeforeV4);
+    assertThat(
+            upgradeDsl
+                .fetchSingle(
+                    "SELECT failure_generation FROM script_work_items WHERE id = ?",
+                    deadLetteredWorkItemId)
+                .get(0, Long.class))
         .isEqualTo(1L);
     assertThat(
-            dsl.fetchValue(
-                "SELECT count(*) FROM information_schema.tables"
-                    + " WHERE table_schema = 'public'"
-                    + " AND table_name IN ('script_dead_letter_replay_requests',"
-                    + " 'script_dead_letter_replay_results')",
-                Long.class))
+            upgradeDsl
+                .fetchSingle(
+                    "SELECT next_eligible_at FROM script_work_items WHERE id = ?",
+                    pendingWorkItemId)
+                .get(0, java.time.LocalDateTime.class))
+        .isEqualTo(java.time.LocalDateTime.parse("2035-01-02T03:04:05"));
+    upgradeDsl.execute(
+        "UPDATE script_work_items SET next_eligible_at = NULL WHERE id = ?", pendingWorkItemId);
+    assertThat(
+            upgradeDsl
+                .fetchSingle(
+                    "SELECT next_eligible_at FROM script_work_items WHERE id = ?",
+                    pendingWorkItemId)
+                .get(0, java.time.LocalDateTime.class))
+        .isNull();
+
+    Long replayRequestId =
+        upgradeDsl
+            .fetchSingle(
+                "INSERT INTO script_dead_letter_replay_requests (tenant_id, control_plane_request_id, "
+                    + "request_fingerprint, status, replayed_count, rejected_count) "
+                    + "VALUES ('tenant-v3-retained', 'request-44', ?, 'COMPLETED', 1, 0) RETURNING id",
+                REQUEST_DIGEST)
+            .get(0, Long.class);
+    upgradeDsl.execute(
+        "INSERT INTO script_dead_letter_replay_results (tenant_id, replay_request_id, "
+            + "requested_work_item_id, work_item_id, outcome, original_failure_stage, "
+            + "original_failure_reason, failure_generation) "
+            + "VALUES ('tenant-v3-retained', ?, ?, ?, 'REPLAYED', 'DSL_EVAL', "
+            + "'retained_failure', 1)",
+        replayRequestId,
+        deadLetteredWorkItemId,
+        deadLetteredWorkItemId);
+
+    assertThat(
+            upgradeDsl
+                .fetchSingle(
+                    "SELECT control_plane_request_id FROM script_dead_letter_replay_requests "
+                        + "WHERE tenant_id = 'tenant-v3-retained' AND id = ?",
+                    replayRequestId)
+                .get(0, String.class))
+        .isEqualTo("request-44");
+    assertThat(
+            upgradeDsl
+                .fetchSingle(
+                    "SELECT original_failure_reason FROM script_dead_letter_replay_results "
+                        + "WHERE replay_request_id = ? AND requested_work_item_id = ?",
+                    replayRequestId,
+                    deadLetteredWorkItemId)
+                .get(0, String.class))
+        .isEqualTo("retained_failure");
+    assertThat(
+            upgradeDsl
+                .fetchSingle(
+                    "SELECT count(*) FROM information_schema.tables WHERE table_schema = ? "
+                        + "AND table_name IN ('script_dead_letter_replay_requests', "
+                        + "'script_dead_letter_replay_results')",
+                    upgradeSchema)
+                .get(0, Long.class))
         .isEqualTo(2L);
+  }
+
+  private DriverManagerDataSource dataSource(String schemaName) {
+    DriverManagerDataSource dataSource = new DriverManagerDataSource();
+    dataSource.setDriverClassName(postgres.getDriverClassName());
+    String baseUrl = postgres.getJdbcUrl();
+    dataSource.setUrl(
+        schemaName == null
+            ? baseUrl
+            : baseUrl + (baseUrl.contains("?") ? "&" : "?") + "currentSchema=" + schemaName);
+    dataSource.setUsername(postgres.getUsername());
+    dataSource.setPassword(postgres.getPassword());
+    return dataSource;
+  }
+
+  private static String requireUpgradeSchemaName(String schemaName) {
+    if (!schemaName.matches("automation_v4_upgrade_[0-9a-f]{32}")) {
+      throw new IllegalStateException("Unexpected isolated upgrade schema name");
+    }
+    return schemaName;
   }
 
   @Test
@@ -344,6 +503,164 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
               assertThat(item.getPluginId()).isEmpty();
               assertThat(item.getPluginVersionId()).isEmpty();
             });
+  }
+
+  @Test
+  void replayRequestsRoundTripPerTenantAndResultsHydrateRetainedFailureEvidence() {
+    Instant now = Instant.parse("2026-08-01T00:00:00Z");
+    ScriptDeadLetterReplayRepository.ReplayRequest tenantA =
+        replayRepository.insertOrGet(
+            "tenant-replay-a",
+            "replay-request-shared",
+            REQUEST_DIGEST,
+            "operator-a",
+            "retry-evaluation",
+            now);
+    ScriptDeadLetterReplayRepository.ReplayRequest tenantB =
+        replayRepository.insertOrGet(
+            "tenant-replay-b",
+            "replay-request-shared",
+            "b".repeat(64),
+            "operator-b",
+            "retry-evaluation",
+            now);
+
+    assertThat(tenantA.id()).isNotEqualTo(tenantB.id());
+    assertThat(replayRepository.findRequest("tenant-replay-a", "replay-request-shared"))
+        .contains(tenantA);
+    assertThat(replayRepository.findRequest("tenant-replay-b", "replay-request-shared"))
+        .contains(tenantB);
+    assertThat(replayRepository.findRequest("tenant-replay-other", "replay-request-shared"))
+        .isEmpty();
+
+    replayRepository.saveResult(
+        "tenant-replay-a",
+        tenantA.id(),
+        9001L,
+        null,
+        "rejected",
+        "not_found_or_not_owned",
+        "",
+        2L,
+        4L,
+        5L,
+        3L,
+        "DSL_EVAL",
+        "sandbox_error",
+        now);
+
+    assertThat(replayRepository.findResults("tenant-replay-a", tenantA.id()))
+        .singleElement()
+        .satisfies(
+            result -> {
+              assertThat(result.requestedWorkItemId()).isEqualTo(9001L);
+              assertThat(result.workItemId()).isNull();
+              assertThat(result.outcome()).isEqualTo("rejected");
+              assertThat(result.rejectionReason()).isEqualTo("not_found_or_not_owned");
+              assertThat(result.failureReason()).isEmpty();
+              assertThat(result.scriptPinEpoch()).isEqualTo(2L);
+              assertThat(result.pluginActivationEpoch()).isEqualTo(4L);
+              assertThat(result.lifecycleRevision()).isEqualTo(5L);
+              assertThat(result.failureGeneration()).isEqualTo(3L);
+              assertThat(result.originalFailureStage()).isEqualTo("DSL_EVAL");
+              assertThat(result.originalFailureReason()).isEqualTo("sandbox_error");
+            });
+    assertThat(replayRepository.findResults("tenant-replay-b", tenantB.id())).isEmpty();
+    assertThat(
+            dsl.fetchValue(
+                SCRIPT_DEAD_LETTER_REPLAY_RESULTS.TENANT_ID,
+                SCRIPT_DEAD_LETTER_REPLAY_RESULTS.REPLAY_REQUEST_ID.eq(tenantA.id())))
+        .isEqualTo("tenant-replay-a");
+  }
+
+  @Test
+  void replayRequestAndResultRetentionHoldsRequireTheOwningTenant() {
+    Instant holdUntil = Instant.parse("2026-09-01T00:00:00Z");
+    Instant now = Instant.parse("2026-08-01T00:00:00Z");
+    ScriptDeadLetterReplayRepository.ReplayRequest tenantA =
+        replayRepository.insertOrGet(
+            "tenant-hold-a",
+            "replay-request-shared",
+            REQUEST_DIGEST,
+            "operator-a",
+            "retention-review",
+            now);
+    ScriptDeadLetterReplayRepository.ReplayRequest tenantB =
+        replayRepository.insertOrGet(
+            "tenant-hold-b",
+            "replay-request-shared",
+            "b".repeat(64),
+            "operator-b",
+            "retention-review",
+            now);
+
+    replayRepository.saveResult(
+        "tenant-hold-a",
+        tenantA.id(),
+        9101L,
+        null,
+        "rejected",
+        "not_found_or_not_owned",
+        "",
+        0L,
+        0L,
+        0L,
+        1L,
+        now);
+    replayRepository.saveResult(
+        "tenant-hold-b",
+        tenantB.id(),
+        9102L,
+        null,
+        "rejected",
+        "not_found_or_not_owned",
+        "",
+        0L,
+        0L,
+        0L,
+        1L,
+        now);
+    long resultAId =
+        dsl.fetchValue(
+            SCRIPT_DEAD_LETTER_REPLAY_RESULTS.ID,
+            SCRIPT_DEAD_LETTER_REPLAY_RESULTS.REPLAY_REQUEST_ID.eq(tenantA.id()));
+    long resultBId =
+        dsl.fetchValue(
+            SCRIPT_DEAD_LETTER_REPLAY_RESULTS.ID,
+            SCRIPT_DEAD_LETTER_REPLAY_RESULTS.REPLAY_REQUEST_ID.eq(tenantB.id()));
+
+    assertThat(replayRepository.setRequestRetentionHold("tenant-hold-a", tenantA.id(), holdUntil))
+        .isTrue();
+    assertThat(replayRepository.setRequestRetentionHold("tenant-hold-b", tenantA.id(), holdUntil))
+        .isFalse();
+    assertThat(
+            dsl.fetchValue(
+                SCRIPT_DEAD_LETTER_REPLAY_REQUESTS.RETENTION_HOLD_UNTIL,
+                SCRIPT_DEAD_LETTER_REPLAY_REQUESTS.ID.eq(tenantA.id())))
+        .isEqualTo(holdUntil.atOffset(ZoneOffset.UTC));
+    assertThat(
+            dsl.fetchValue(
+                SCRIPT_DEAD_LETTER_REPLAY_REQUESTS.RETENTION_HOLD_UNTIL,
+                SCRIPT_DEAD_LETTER_REPLAY_REQUESTS.ID.eq(tenantB.id())))
+        .isNull();
+    assertThat(replayRepository.setRequestRetentionHold("tenant-hold-a", tenantA.id(), null))
+        .isTrue();
+
+    assertThat(replayRepository.setResultRetentionHold("tenant-hold-a", resultAId, holdUntil))
+        .isTrue();
+    assertThat(replayRepository.setResultRetentionHold("tenant-hold-b", resultAId, holdUntil))
+        .isFalse();
+    assertThat(
+            dsl.fetchValue(
+                SCRIPT_DEAD_LETTER_REPLAY_RESULTS.RETENTION_HOLD_UNTIL,
+                SCRIPT_DEAD_LETTER_REPLAY_RESULTS.ID.eq(resultAId)))
+        .isEqualTo(holdUntil.atOffset(ZoneOffset.UTC));
+    assertThat(
+            dsl.fetchValue(
+                SCRIPT_DEAD_LETTER_REPLAY_RESULTS.RETENTION_HOLD_UNTIL,
+                SCRIPT_DEAD_LETTER_REPLAY_RESULTS.ID.eq(resultBId)))
+        .isNull();
+    assertThat(replayRepository.setResultRetentionHold("tenant-hold-a", resultAId, null)).isTrue();
   }
 
   @Test
@@ -937,6 +1254,237 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
   }
 
   @Test
+  void retentionAndParentCleanupSerializeParentBeforeChildWithoutDeadlock() throws Exception {
+    ScriptWorkItem parent = workItemRepository.save(retainedWorkItem());
+    handoffRepository.save(retainedHandoff(parent.getId()));
+    Instant cutoff = Instant.parse("2021-01-01T00:00:00Z");
+    Instant now = Instant.parse("2021-01-02T00:00:00Z");
+
+    DSLContext parentCleanupDsl = newDsl("automation-retention-parent-cleanup-race-");
+    DSLContext handoffCleanupDsl = newDsl("automation-retention-handoff-cleanup-race-");
+    CountDownLatch ready = new CountDownLatch(2);
+    CountDownLatch start = new CountDownLatch(1);
+    try {
+      Future<Long> parentCleanup =
+          executor.submit(
+              () ->
+                  parentCleanupDsl.transactionResult(
+                      configuration -> {
+                        ready.countDown();
+                        await(start);
+                        return new ScriptWorkItemRepository(configuration.dsl())
+                            .deleteByStatusAndUpdatedAtBefore("HANDED_OFF", now);
+                      }));
+      Future<Long> handoffCleanup =
+          executor.submit(
+              () ->
+                  handoffCleanupDsl.transactionResult(
+                      configuration -> {
+                        ready.countDown();
+                        await(start);
+                        return new ScriptHandoffEventRepository(configuration.dsl())
+                            .deleteExpiredRetentionEvidence(cutoff, now);
+                      }));
+
+      assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+      start.countDown();
+      assertThat(get(parentCleanup)).isBetween(0L, 1L);
+      assertThat(get(handoffCleanup)).isBetween(0L, 1L);
+    } finally {
+      start.countDown();
+    }
+    assertThat(dsl.fetchCount(SCRIPT_WORK_ITEMS)).isZero();
+    assertThat(dsl.fetchCount(SCRIPT_HANDOFF_EVENTS)).isZero();
+  }
+
+  @Test
+  void retentionRechecksSiblingHoldCommittedAfterCandidateSnapshot() throws Exception {
+    ScriptWorkItem parent = workItemRepository.save(retainedWorkItem());
+    ScriptHandoffEvent candidate = retainedHandoff(parent.getId());
+    candidate.setEventId("retention-sibling-hold-candidate");
+    handoffRepository.save(candidate);
+    ScriptHandoffEvent sibling = retainedHandoff(parent.getId());
+    sibling.setEventId("retention-sibling-hold-sibling");
+    sibling.setCommandOrdinal(1);
+    sibling.setAutomationDispatchId("retention-sibling-hold-dispatch");
+    long siblingId = handoffRepository.save(sibling).getId();
+
+    Instant cutoff = Instant.parse("2021-01-01T00:00:00Z");
+    Instant now = Instant.parse("2021-01-02T00:00:00Z");
+    CountDownLatch holdStarted = new CountDownLatch(1);
+    CountDownLatch releaseHold = new CountDownLatch(1);
+    DSLContext holdDsl = newDsl("automation-retention-sibling-hold-" + System.nanoTime());
+    Future<Void> hold =
+        executor.submit(
+            () ->
+                holdDsl.transactionResult(
+                    configuration -> {
+                      configuration
+                          .dsl()
+                          .update(SCRIPT_HANDOFF_EVENTS)
+                          .set(
+                              SCRIPT_HANDOFF_EVENTS.RETENTION_HOLD_UNTIL,
+                              now.plusSeconds(60).atOffset(ZoneOffset.UTC))
+                          .where(SCRIPT_HANDOFF_EVENTS.ID.eq(siblingId))
+                          .execute();
+                      holdStarted.countDown();
+                      await(releaseHold);
+                      return null;
+                    }));
+    assertThat(holdStarted.await(5, TimeUnit.SECONDS)).isTrue();
+
+    AtomicLong cleanupBackendPid = new AtomicLong();
+    CountDownLatch cleanupStarted = new CountDownLatch(1);
+    DSLContext cleanupDsl = newDsl("automation-retention-sibling-cleanup-" + System.nanoTime());
+    Future<Long> cleanup =
+        executor.submit(
+            () ->
+                cleanupDsl.transactionResult(
+                    configuration -> {
+                      DSLContext transactionDsl = configuration.dsl();
+                      cleanupBackendPid.set(currentBackendPid(transactionDsl));
+                      cleanupStarted.countDown();
+                      return new ScriptHandoffEventRepository(transactionDsl)
+                          .deleteExpiredRetentionEvidence(cutoff, now);
+                    }));
+    assertThat(cleanupStarted.await(5, TimeUnit.SECONDS)).isTrue();
+    awaitPostgresLockWait(cleanupBackendPid.get());
+    releaseHold.countDown();
+
+    assertThat(get(hold)).isNull();
+    assertThat(get(cleanup)).isZero();
+    assertThat(dsl.fetchCount(SCRIPT_HANDOFF_EVENTS)).isEqualTo(2);
+  }
+
+  @Test
+  void retentionRechecksReplayReceiptCommittedAfterCandidateSnapshot() throws Exception {
+    ScriptWorkItem parent = workItemRepository.save(retainedWorkItem());
+    ScriptHandoffEvent handoff = retainedHandoff(parent.getId());
+    handoff.setEventId("retention-replay-receipt-candidate");
+    handoffRepository.save(handoff);
+    ScriptDeadLetterReplayRepository.ReplayRequest request =
+        replayRepository.insertOrGet(
+            "tenant-1",
+            "retention-replay-receipt-request",
+            REQUEST_DIGEST,
+            "operator-retention",
+            "retention-race",
+            OLD);
+
+    Instant cutoff = Instant.parse("2021-01-01T00:00:00Z");
+    Instant now = Instant.parse("2021-01-02T00:00:00Z");
+    CountDownLatch receiptStarted = new CountDownLatch(1);
+    CountDownLatch releaseReceipt = new CountDownLatch(1);
+    DSLContext receiptDsl = newDsl("automation-retention-receipt-" + System.nanoTime());
+    Future<Void> receipt =
+        executor.submit(
+            () ->
+                receiptDsl.transactionResult(
+                    configuration -> {
+                      new ScriptDeadLetterReplayRepository(configuration.dsl())
+                          .saveResult(
+                              "tenant-1",
+                              request.id(),
+                              parent.getId(),
+                              parent.getId(),
+                              "rejected",
+                              "retention-race",
+                              "",
+                              2L,
+                              0L,
+                              0L,
+                              1L,
+                              now);
+                      receiptStarted.countDown();
+                      await(releaseReceipt);
+                      return null;
+                    }));
+    assertThat(receiptStarted.await(5, TimeUnit.SECONDS)).isTrue();
+
+    AtomicLong cleanupBackendPid = new AtomicLong();
+    CountDownLatch cleanupStarted = new CountDownLatch(1);
+    DSLContext cleanupDsl = newDsl("automation-retention-receipt-cleanup-" + System.nanoTime());
+    Future<Long> cleanup =
+        executor.submit(
+            () ->
+                cleanupDsl.transactionResult(
+                    configuration -> {
+                      DSLContext transactionDsl = configuration.dsl();
+                      cleanupBackendPid.set(currentBackendPid(transactionDsl));
+                      cleanupStarted.countDown();
+                      return new ScriptHandoffEventRepository(transactionDsl)
+                          .deleteExpiredRetentionEvidence(cutoff, now);
+                    }));
+    assertThat(cleanupStarted.await(5, TimeUnit.SECONDS)).isTrue();
+    awaitPostgresLockWait(cleanupBackendPid.get());
+    releaseReceipt.countDown();
+
+    assertThat(get(receipt)).isNull();
+    assertThat(get(cleanup)).isZero();
+    assertThat(dsl.fetchCount(SCRIPT_HANDOFF_EVENTS)).isEqualTo(1);
+    assertThat(
+            dsl.fetchCount(
+                SCRIPT_DEAD_LETTER_REPLAY_RESULTS,
+                SCRIPT_DEAD_LETTER_REPLAY_RESULTS.WORK_ITEM_ID.eq(parent.getId())))
+        .isEqualTo(1);
+  }
+
+  @Test
+  void retentionRechecksParentStatusCommittedAfterCandidateSnapshot() throws Exception {
+    ScriptWorkItem parent = workItemRepository.save(retainedWorkItem());
+    ScriptHandoffEvent handoff = retainedHandoff(parent.getId());
+    handoff.setEventId("retention-parent-status-candidate");
+    handoffRepository.save(handoff);
+
+    Instant cutoff = Instant.parse("2021-01-01T00:00:00Z");
+    Instant now = Instant.parse("2021-01-02T00:00:00Z");
+    CountDownLatch statusStarted = new CountDownLatch(1);
+    CountDownLatch releaseStatus = new CountDownLatch(1);
+    DSLContext statusDsl = newDsl("automation-retention-parent-status-" + System.nanoTime());
+    Future<Void> status =
+        executor.submit(
+            () ->
+                statusDsl.transactionResult(
+                    configuration -> {
+                      configuration
+                          .dsl()
+                          .update(SCRIPT_WORK_ITEMS)
+                          .set(SCRIPT_WORK_ITEMS.STATUS, "DEAD_LETTERED")
+                          .where(SCRIPT_WORK_ITEMS.ID.eq(parent.getId()))
+                          .execute();
+                      statusStarted.countDown();
+                      await(releaseStatus);
+                      return null;
+                    }));
+    assertThat(statusStarted.await(5, TimeUnit.SECONDS)).isTrue();
+
+    AtomicLong cleanupBackendPid = new AtomicLong();
+    CountDownLatch cleanupStarted = new CountDownLatch(1);
+    DSLContext cleanupDsl = newDsl("automation-retention-status-cleanup-" + System.nanoTime());
+    Future<Long> cleanup =
+        executor.submit(
+            () ->
+                cleanupDsl.transactionResult(
+                    configuration -> {
+                      DSLContext transactionDsl = configuration.dsl();
+                      cleanupBackendPid.set(currentBackendPid(transactionDsl));
+                      cleanupStarted.countDown();
+                      return new ScriptHandoffEventRepository(transactionDsl)
+                          .deleteExpiredRetentionEvidence(cutoff, now);
+                    }));
+    assertThat(cleanupStarted.await(5, TimeUnit.SECONDS)).isTrue();
+    awaitPostgresLockWait(cleanupBackendPid.get());
+    releaseStatus.countDown();
+
+    assertThat(get(status)).isNull();
+    assertThat(get(cleanup)).isZero();
+    assertThat(dsl.fetchCount(SCRIPT_WORK_ITEMS)).isEqualTo(1);
+    assertThat(dsl.fetchCount(SCRIPT_HANDOFF_EVENTS)).isEqualTo(1);
+    assertThat(dsl.fetchValue(SCRIPT_WORK_ITEMS.STATUS, SCRIPT_WORK_ITEMS.ID.eq(parent.getId())))
+        .isEqualTo("DEAD_LETTERED");
+  }
+
+  @Test
   void deadLetterAgeRetentionLeavesParentWhenChildOutcomeIsIncomplete() {
     ScriptWorkItem parent = workItemRepository.save(deadLetteredWorkItem("dead-letter-age"));
     ScriptHandoffEvent handoff = retainedHandoff(parent.getId());
@@ -948,6 +1496,41 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
         .isZero();
     assertThat(dsl.fetchCount(SCRIPT_WORK_ITEMS)).isEqualTo(1);
     assertThat(dsl.fetchCount(SCRIPT_HANDOFF_EVENTS)).isEqualTo(1);
+  }
+
+  @Test
+  void retainedReplayReceiptIsCountedAndContinuesToBlockAgedParentDeletion() {
+    ScriptWorkItem parent = workItemRepository.save(retainedWorkItem());
+    ScriptDeadLetterReplayRepository.ReplayRequest request =
+        replayRepository.insertOrGet(
+            "tenant-1", "retained-parent-replay", REQUEST_DIGEST, "operator", "retry", OLD);
+    replayRepository.saveResult(
+        "tenant-1",
+        request.id(),
+        parent.getId(),
+        parent.getId(),
+        "rejected",
+        "retained-result",
+        "",
+        2L,
+        0L,
+        0L,
+        1L,
+        OLD);
+
+    assertThat(
+            workItemRepository.countTerminalRowsBlockedByReplayReceipts(
+                "HANDED_OFF", Instant.now()))
+        .isEqualTo(1L);
+    assertThat(workItemRepository.deleteByStatusAndUpdatedAtBefore("HANDED_OFF", Instant.now()))
+        .isZero();
+    assertThat(dsl.fetchExists(SCRIPT_WORK_ITEMS, SCRIPT_WORK_ITEMS.ID.eq(parent.getId())))
+        .isTrue();
+    assertThat(
+            dsl.fetchCount(
+                SCRIPT_DEAD_LETTER_REPLAY_RESULTS,
+                SCRIPT_DEAD_LETTER_REPLAY_RESULTS.WORK_ITEM_ID.eq(parent.getId())))
+        .isEqualTo(1);
   }
 
   @Test
@@ -1002,6 +1585,67 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
             dsl.fetchExists(
                 SCRIPT_HANDOFF_EVENTS, SCRIPT_HANDOFF_EVENTS.ID.eq(incompleteHandoff.getId())))
         .isTrue();
+  }
+
+  @Test
+  void ageRetentionKeepsOldParentUntilItsCompleteHandoffChildIsOldEnough() {
+    Instant cutoff = Instant.parse("2021-01-01T00:00:00Z");
+    ScriptWorkItem parent = workItemRepository.save(retainedWorkItem());
+    ScriptHandoffEvent handoff = retainedHandoff(parent.getId());
+    handoff.setEventId("newer-complete-child");
+    handoff.setObservedAt(Instant.parse("2022-01-01T00:00:00Z"));
+    handoff = handoffRepository.save(handoff);
+
+    assertThat(workItemRepository.deleteByStatusAndUpdatedAtBefore("HANDED_OFF", cutoff)).isZero();
+    assertThat(dsl.fetchExists(SCRIPT_WORK_ITEMS, SCRIPT_WORK_ITEMS.ID.eq(parent.getId())))
+        .isTrue();
+    assertThat(dsl.fetchExists(SCRIPT_HANDOFF_EVENTS, SCRIPT_HANDOFF_EVENTS.ID.eq(handoff.getId())))
+        .isTrue();
+
+    Instant laterCutoff = Instant.parse("2023-01-01T00:00:00Z");
+    assertThat(workItemRepository.deleteByStatusAndUpdatedAtBefore("HANDED_OFF", laterCutoff))
+        .isEqualTo(1L);
+    assertThat(dsl.fetchExists(SCRIPT_WORK_ITEMS, SCRIPT_WORK_ITEMS.ID.eq(parent.getId())))
+        .isFalse();
+    assertThat(dsl.fetchExists(SCRIPT_HANDOFF_EVENTS, SCRIPT_HANDOFF_EVENTS.ID.eq(handoff.getId())))
+        .isFalse();
+  }
+
+  @Test
+  void handoffAgeRetentionKeepsOldChildWhileAnySiblingIsTooNewOrHeld() {
+    Instant cutoff = Instant.parse("2021-01-01T00:00:00Z");
+    Instant now = Instant.parse("2021-01-02T00:00:00Z");
+    ScriptWorkItem parent = workItemRepository.save(retainedWorkItem());
+    ScriptHandoffEvent candidate = retainedHandoff(parent.getId());
+    candidate.setEventId("old-candidate-handoff");
+    candidate = handoffRepository.save(candidate);
+    ScriptHandoffEvent sibling = retainedHandoff(parent.getId());
+    sibling.setEventId("new-sibling-handoff");
+    sibling.setCommandOrdinal(1);
+    sibling.setAutomationDispatchId("dispatch-2");
+    sibling.setObservedAt(Instant.parse("2022-01-01T00:00:00Z"));
+    sibling = handoffRepository.save(sibling);
+
+    assertThat(handoffRepository.deleteExpiredRetentionEvidence(cutoff, now)).isZero();
+    assertThat(dsl.fetchCount(SCRIPT_HANDOFF_EVENTS)).isEqualTo(2);
+
+    dsl.update(SCRIPT_HANDOFF_EVENTS)
+        .set(SCRIPT_HANDOFF_EVENTS.OBSERVED_AT, OLD.atOffset(ZoneOffset.UTC).toLocalDateTime())
+        .where(SCRIPT_HANDOFF_EVENTS.ID.eq(sibling.getId()))
+        .execute();
+    assertThat(handoffRepository.setRetentionHold("tenant-1", sibling.getId(), now.plusSeconds(1)))
+        .isTrue();
+
+    assertThat(handoffRepository.deleteExpiredRetentionEvidence(cutoff, now)).isZero();
+    assertThat(dsl.fetchCount(SCRIPT_HANDOFF_EVENTS)).isEqualTo(2);
+
+    assertThat(handoffRepository.setRetentionHold("tenant-1", sibling.getId(), null)).isTrue();
+    assertThat(handoffRepository.deleteExpiredRetentionEvidence(cutoff, now)).isEqualTo(2L);
+    assertThat(
+            dsl.fetchExists(SCRIPT_HANDOFF_EVENTS, SCRIPT_HANDOFF_EVENTS.ID.eq(candidate.getId())))
+        .isFalse();
+    assertThat(dsl.fetchExists(SCRIPT_HANDOFF_EVENTS, SCRIPT_HANDOFF_EVENTS.ID.eq(sibling.getId())))
+        .isFalse();
   }
 
   @Test

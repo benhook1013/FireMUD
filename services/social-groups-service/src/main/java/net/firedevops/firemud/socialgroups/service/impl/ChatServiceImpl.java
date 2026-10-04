@@ -6,7 +6,9 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import java.time.Instant;
+import java.util.UUID;
 import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.socialgroups.client.LoggingAdminClient;
 import net.firedevops.firemud.socialgroups.client.ModerationPolicyClient;
 import net.firedevops.firemud.socialgroups.config.ChatProperties;
@@ -85,7 +87,12 @@ public class ChatServiceImpl implements ChatService {
   @Timed(value = "chat.send")
   @Transactional
   public ChatMessageDto sendMessage(SendMessageRequestDto request) {
-    logger.info("Chat message from {}", request.senderAccountId());
+    String senderAccountId = requireAccountId(request.senderAccountId(), "senderAccountId");
+    String recipientAccountId =
+        request.recipientAccountId() == null
+            ? null
+            : requireAccountId(request.recipientAccountId(), "recipientAccountId");
+    logger.info("Chat message from {}", senderAccountId);
     String effectId = normalizeEffectId(request.effectId());
     if (effectId != null) {
       var existing = repository.findByTenantIdAndEffectId(request.tenantId(), effectId);
@@ -93,22 +100,21 @@ public class ChatServiceImpl implements ChatService {
         return mapper.toDto(existing.orElseThrow());
       }
     }
-    enforceChatPolicy(request.tenantId(), request.senderAccountId());
+    enforceChatPolicy(request.tenantId(), senderAccountId);
     String filtered = profanityFilter.filter(request.content());
     if (!filtered.equals(request.content())) {
       runAfterCommit(
-          () ->
-              safeReportModeration(
-                  request.tenantId(), request.senderAccountId(), "Filtered profanity"));
+          () -> safeReportModeration(request.tenantId(), senderAccountId, "Filtered profanity"));
     }
 
     ChatMessage message = new ChatMessage();
     message.setTenantId(request.tenantId());
-    message.setSenderAccountId(request.senderAccountId());
+    message.setSenderAccountId(accountUuid(senderAccountId));
     message.setContent(filtered);
     message.setTimestamp(Instant.now());
     message.setGuildId(request.guildId());
-    message.setRecipientAccountId(request.recipientAccountId());
+    message.setRecipientAccountId(
+        recipientAccountId == null ? null : accountUuid(recipientAccountId));
     message.setCityId(request.cityId());
     message.setEffectId(effectId);
     message.setType(request.type());
@@ -142,7 +148,7 @@ public class ChatServiceImpl implements ChatService {
     return mapper.toDto(saved);
   }
 
-  private void enforceChatPolicy(long tenantId, long accountId) {
+  private void enforceChatPolicy(long tenantId, String accountId) {
     var decision = moderationPolicyClient.evaluateChatSend(tenantId, accountId);
     if (decision.hasError()
         && (decision.getError().getCode() != null && !decision.getError().getCode().isBlank())) {
@@ -158,7 +164,7 @@ public class ChatServiceImpl implements ChatService {
     }
   }
 
-  private void safeReportModeration(long tenantId, long accountId, String description) {
+  private void safeReportModeration(long tenantId, String accountId, String description) {
     try {
       loggingAdminClient.reportChatViolation(tenantId, accountId, description);
     } catch (RuntimeException e) {
@@ -186,8 +192,9 @@ public class ChatServiceImpl implements ChatService {
 
   @Override
   @Timed(value = "chat.tells")
-  public java.util.List<String> getRecentTells(Long tenantId, Long accountId) {
-    String key = String.format("chat:tell:%d:%d", tenantId, accountId);
+  public java.util.List<String> getRecentTells(Long tenantId, String accountId) {
+    String key =
+        String.format("chat:tell:%d:%s", tenantId, requireAccountId(accountId, "accountId"));
     try {
       java.util.List<Object> raw = redisTemplate.opsForList().range(key, 0, -1);
       return raw == null
@@ -201,13 +208,13 @@ public class ChatServiceImpl implements ChatService {
 
   private String historyKey(SendMessageRequestDto request) {
     if (request.type() == ChatType.SAY) {
-      return String.format("chat:say:%d:%d", request.tenantId(), request.senderAccountId());
+      return String.format("chat:say:%d:%s", request.tenantId(), request.senderAccountId());
     }
     if (request.type() == ChatType.WHISPER) {
-      return String.format("chat:whisper:%d:%d", request.tenantId(), request.recipientAccountId());
+      return String.format("chat:whisper:%d:%s", request.tenantId(), request.recipientAccountId());
     }
     if (request.type() == ChatType.TELL) {
-      return String.format("chat:tell:%d:%d", request.tenantId(), request.recipientAccountId());
+      return String.format("chat:tell:%d:%s", request.tenantId(), request.recipientAccountId());
     }
     if (request.type() == ChatType.GUILD) {
       return String.format("chat:guild:%d:%d", request.tenantId(), request.guildId());
@@ -215,7 +222,7 @@ public class ChatServiceImpl implements ChatService {
     if (request.type() == ChatType.CITY) {
       return String.format("chat:city:%d:%d", request.tenantId(), request.cityId());
     }
-    return String.format("chat:account:%d:%d", request.tenantId(), request.recipientAccountId());
+    return String.format("chat:account:%d:%s", request.tenantId(), request.recipientAccountId());
   }
 
   private ChatProperties.ChatCacheSettings settingsFor(SendMessageRequestDto request) {
@@ -239,5 +246,13 @@ public class ChatServiceImpl implements ChatService {
 
   private String normalizeEffectId(String effectId) {
     return effectId == null || effectId.isBlank() ? null : effectId.trim();
+  }
+
+  private String requireAccountId(String accountId, String fieldName) {
+    return JwtClaims.requireAccountId(accountId, fieldName);
+  }
+
+  private UUID accountUuid(String accountId) {
+    return UUID.fromString(requireAccountId(accountId, "accountId"));
   }
 }

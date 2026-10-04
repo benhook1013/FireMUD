@@ -107,8 +107,76 @@ class ServedEnvironmentProbeTest {
         "bridge-rejected", probe.probe(plan, 32001, ready, ready, rejected, ready).reason());
     assertEquals("grpc-rejected", probe.probe(plan, 32001, ready, ready, ready, rejected).reason());
     assertEquals(
+        "grpc-game-session-rejected",
+        probe
+            .probe(
+                plan,
+                HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+                32001,
+                ready,
+                ready,
+                ready,
+                ready,
+                (hostname, port) -> {
+                  assertEquals("game-session-service.pr-42.svc.cluster.local", hostname);
+                  assertEquals(6565, port);
+                  return new ServedEnvironmentProbe.ProbeResult(false, "rejected");
+                })
+            .reason());
+    assertEquals(
         "served-bridge-and-grpc-accepted",
         probe.probe(plan, 32001, ready, ready, ready, ready).reason());
+  }
+
+  @Test
+  void readinessProbeRequiresSocialGroupsToServeItsCurrentLeafAtItsFixedEndpoint() {
+    HostedIdentityProperties properties = new HostedIdentityProperties();
+    EnvironmentIdentityPlan plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
+    List<String> endpoints = Collections.synchronizedList(new ArrayList<>());
+    ServedEnvironmentProbe.EndpointProbe ready =
+        (hostname, port) -> {
+          endpoints.add(hostname + ":" + port);
+          return new ServedEnvironmentProbe.ProbeResult(true, "ready");
+        };
+    ServedEnvironmentProbe.EndpointProbe staleSocialGroupsLeaf =
+        (hostname, port) -> {
+          assertEquals("social-groups-service.pr-42.svc.cluster.local", hostname);
+          assertEquals(6565, port);
+          return new ServedEnvironmentProbe.ProbeResult(false, "leaf-fingerprint-mismatch");
+        };
+
+    ServedEnvironmentProbe probe = new ServedEnvironmentProbe(properties);
+    assertEquals(
+        "grpc-social-groups-leaf-fingerprint-mismatch",
+        probe
+            .probe(
+                plan,
+                HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+                32001,
+                ready,
+                ready,
+                ready,
+                ready,
+                ready,
+                staleSocialGroupsLeaf)
+            .reason());
+    assertTrue(endpoints.contains("account-service.pr-42.svc.cluster.local:6565"));
+    assertTrue(endpoints.contains("game-session-service.pr-42.svc.cluster.local:6565"));
+
+    ServedEnvironmentProbe.ProbeResult converged =
+        probe.probe(
+            plan,
+            HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+            32001,
+            ready,
+            ready,
+            ready,
+            ready,
+            ready,
+            ready);
+
+    assertTrue(converged.ready());
+    assertTrue(endpoints.contains("social-groups-service.pr-42.svc.cluster.local:6565"));
   }
 
   @Test
@@ -140,9 +208,11 @@ class ServedEnvironmentProbeTest {
         Set.of(
             "pr-42.preview.firedevops.net:443",
             "spring-cloud-gateway-mtls.pr-42.svc.cluster.local:443",
-            "account-service.pr-42.svc.cluster.local:6565"),
+            "account-service.pr-42.svc.cluster.local:6565",
+            "game-session-service.pr-42.svc.cluster.local:6565",
+            "social-groups-service.pr-42.svc.cluster.local:6565"),
         Set.copyOf(endpoints));
-    assertEquals(3, endpoints.size());
+    assertEquals(5, endpoints.size());
   }
 
   @Test
@@ -174,9 +244,15 @@ class ServedEnvironmentProbeTest {
         new ServedEnvironmentProbe.ProbeResult(false, "rejected");
 
     assertEquals(
-        List.of("grpc-rejected", "https-rejected", "bridge-rejected", "telnet-rejected"),
+        List.of(
+            "grpc-rejected",
+            "grpc-social-groups-rejected",
+            "https-rejected",
+            "bridge-rejected",
+            "telnet-rejected"),
         List.of(
                 ServedEnvironmentProbe.ProbeName.GRPC,
+                ServedEnvironmentProbe.ProbeName.GRPC_SOCIAL_GROUPS,
                 ServedEnvironmentProbe.ProbeName.HTTPS,
                 ServedEnvironmentProbe.ProbeName.BRIDGE,
                 ServedEnvironmentProbe.ProbeName.TELNET)
@@ -211,9 +287,11 @@ class ServedEnvironmentProbeTest {
             "pr-42.preview.firedevops.net:443",
             "pr-42.preview.firedevops.net:32001",
             "spring-cloud-gateway-mtls.pr-42.svc.cluster.local:443",
-            "account-service.pr-42.svc.cluster.local:6565"),
+            "account-service.pr-42.svc.cluster.local:6565",
+            "game-session-service.pr-42.svc.cluster.local:6565",
+            "social-groups-service.pr-42.svc.cluster.local:6565"),
         Set.copyOf(endpoints));
-    assertEquals(4, endpoints.size());
+    assertEquals(6, endpoints.size());
   }
 
   @Test
@@ -221,7 +299,7 @@ class ServedEnvironmentProbeTest {
     HostedIdentityProperties properties = new HostedIdentityProperties();
     EnvironmentIdentityPlan plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
     ServedEnvironmentProbe probe = new ServedEnvironmentProbe(properties);
-    CountDownLatch started = new CountDownLatch(4);
+    CountDownLatch started = new CountDownLatch(6);
     EndpointProbeState state = new EndpointProbeState(started);
     ServedEnvironmentProbe.EndpointProbe endpoint = state::check;
 
@@ -229,7 +307,7 @@ class ServedEnvironmentProbeTest {
         probe.probe(plan, 32001, endpoint, endpoint, endpoint, endpoint, Duration.ofSeconds(10));
 
     assertEquals("served-bridge-and-grpc-accepted", result.reason());
-    assertEquals(4, state.calls.get());
+    assertEquals(6, state.calls.get());
     assertEquals(0, started.getCount());
   }
 
@@ -238,8 +316,8 @@ class ServedEnvironmentProbeTest {
     HostedIdentityProperties properties = new HostedIdentityProperties();
     EnvironmentIdentityPlan plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
     ServedEnvironmentProbe probe = new ServedEnvironmentProbe(properties);
-    CountDownLatch started = new CountDownLatch(4);
-    CountDownLatch interrupted = new CountDownLatch(4);
+    CountDownLatch started = new CountDownLatch(6);
+    CountDownLatch interrupted = new CountDownLatch(6);
     List<SSLSocket> openSockets = Collections.synchronizedList(new ArrayList<>());
     ServedEnvironmentProbe.EndpointProbe endpoint =
         (hostname, port) -> {
@@ -263,7 +341,7 @@ class ServedEnvironmentProbeTest {
     assertEquals("probe-deadline-exceeded", result.reason());
     assertTrue(started.await(1, TimeUnit.SECONDS));
     assertTrue(interrupted.await(1, TimeUnit.SECONDS));
-    assertEquals(4, openSockets.size());
+    assertEquals(6, openSockets.size());
     for (SSLSocket openSocket : openSockets) {
       verify(openSocket).close();
     }

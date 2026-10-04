@@ -5,7 +5,11 @@ info:
     API for user accounts and authentication. The obsolete caller-asserted
     POST /accounts/{accountId}/external route is removed and denied at the
     public edge; no provider-linking route is available until the
-    server-verified global-account flow and its proof converge.
+    server-verified global-account flow and its proof converge. Account's
+    POST /auth/bootstrap/join facade and local operation are implemented;
+    external Gateway exposure remains blocked pending JOIN recovery and
+    reconciliation (#2848), PostgreSQL runtime proof, and direct text-client
+    end-to-end proof.
   version: 1.0.0
   license:
     name: PolyForm Noncommercial License 1.0.0
@@ -20,6 +24,20 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+  responses:
+    RetryableAuthenticationUnavailable:
+      description: Retryable authority outage; error code is AUTH_UNAVAILABLE or ENTITLEMENT_UNAVAILABLE
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [status, error]
+            properties:
+              status:
+                type: string
+                enum: [ERROR]
+              error:
+                $ref: '#/components/schemas/ErrorDetail'
   schemas:
     CreateAccountRequest:
       type: object
@@ -123,35 +141,6 @@ components:
         requestId:
           type: string
       required: [connectScopeId, requestId]
-    JoinPublicProductionRequest:
-      type: object
-      properties:
-        connectScopeId:
-          type: string
-          description: Account-issued, caller-bound realm discovery scope
-        requestId:
-          type: string
-          description: Stable ID for this explicit join attempt; use a new ID for a new attempt
-      required: [connectScopeId, requestId]
-    JoinPublicProductionResult:
-      type: object
-      properties:
-        success:
-          type: boolean
-        outcomeCode:
-          type: string
-        accountId:
-          type: integer
-        tenantId:
-          type: integer
-        membershipId:
-          type: integer
-        membershipVersion:
-          type: integer
-        membershipAuthorityGeneration:
-          type: integer
-        replayed:
-          type: boolean
     ConnectTokenResponse:
       type: object
       properties:
@@ -182,7 +171,8 @@ components:
           type: string
     BootstrapRealmDto:
       type: object
-      required: [worldSlug, realmSlug, realmId]
+      required:
+        [worldSlug, realmSlug, realmId, catalogRevision, playableStateNamespaceId, playableStateScope]
       properties:
         worldSlug:
           type: string
@@ -199,8 +189,23 @@ components:
           type: integer
         pointerVersion:
           type: integer
+        catalogRevision:
+          type: integer
+          format: int64
+          minimum: 1
+        playableStateNamespaceId:
+          type: string
+          format: uuid
+        playableStateScope:
+          type: string
+          enum: [PLAYABLE_STATE_SCOPE_SHARED, PLAYABLE_STATE_SCOPE_ISOLATED]
         requiresCharacterSelection:
           type: boolean
+        stateScope:
+          type: string
+          enum: [SHARED, ISOLATED]
+        characterCreationPolicy:
+          type: string
         evaluatedAt:
           type: string
         connectScopeExpiresAt:
@@ -275,6 +280,8 @@ components:
           type: string
         newPassword:
           type: string
+          minLength: 6
+          maxLength: 100
       required: [token, newPassword]
     UsernameRecoveryRequest:
       type: object
@@ -392,6 +399,8 @@ paths:
                     $ref: '#/components/schemas/ErrorDetail'
         '401':
           description: Invalid or expired bootstrap token
+        '503':
+          $ref: '#/components/responses/RetryableAuthenticationUnavailable'
   /auth/bootstrap/worlds/{worldSlug}/realms:
     get:
       summary: List caller-visible realms for a selected world
@@ -422,6 +431,8 @@ paths:
                     $ref: '#/components/schemas/ErrorDetail'
         '401':
           description: Invalid or expired bootstrap token
+        '503':
+          $ref: '#/components/responses/RetryableAuthenticationUnavailable'
   /auth/bootstrap/worlds/{worldSlug}/realms/{realmSlug}/characters:
     get:
       summary: List caller-visible characters for a selected world and realm
@@ -464,36 +475,12 @@ paths:
                     $ref: '#/components/schemas/ErrorDetail'
         '401':
           description: Invalid or expired bootstrap token
-  /auth/bootstrap/join:
-    post:
-      summary: Explicitly join the selected public-production realm from a player-bootstrap scope
-      operationId: joinPublicProduction
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/JoinPublicProductionRequest'
-      responses:
-        '200':
-          description: Durable membership snapshot after a successful join or exact replay
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    $ref: '#/components/schemas/ResultStatus'
-                  data:
-                    $ref: '#/components/schemas/JoinPublicProductionResult'
-                  error:
-                    $ref: '#/components/schemas/ErrorDetail'
-        '401':
-          description: Scope, policy, or membership state denied the join
+        '403':
+          description: Gameplay admission denied for this authenticated account or selected realm
+        '409':
+          description: Admission routing evidence is invalid or stale; rediscover realms and obtain a fresh connectScopeId before retrying
         '503':
-          description: Required authority is unavailable; retry with the same attempt ID
+          $ref: '#/components/responses/RetryableAuthenticationUnavailable'
   /auth/connect-token:
     post:
       summary: Mint a short-lived gameplay connect token from a valid player-bootstrap token
@@ -522,6 +509,12 @@ paths:
                     $ref: '#/components/schemas/ErrorDetail'
         '401':
           description: Invalid or expired bootstrap token
+        '403':
+          description: Gameplay admission denied for this authenticated account or selected realm
+        '409':
+          description: Admission routing evidence is invalid or stale; rediscover realms and obtain a fresh connectScopeId before retrying
+        '503':
+          $ref: '#/components/responses/RetryableAuthenticationUnavailable'
   /auth/request-password-reset:
     post:
       summary: Request password reset

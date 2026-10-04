@@ -21,5 +21,5 @@ public interface GuildService {
 
   GuildMemberDto updateMemberRole(UpdateGuildMemberRoleRequest request);
 
-  void removeMember(long tenantId, long guildId, long accountId);
+  void removeMember(long tenantId, long guildId, String accountId);
 }
