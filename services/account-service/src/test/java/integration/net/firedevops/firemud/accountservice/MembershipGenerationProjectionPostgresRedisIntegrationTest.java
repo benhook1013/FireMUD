@@ -105,7 +105,7 @@ class MembershipGenerationProjectionPostgresRedisIntegrationTest {
   private static final String WORKLOAD_NAMESPACE = "membership-generation-projection-test";
   private static final String WORLD_SLUG = "membership-projection-proof-world";
   private static final String REALM_SLUG = "production";
-  private static final String NAMESPACE_ID = "membership-projection-proof-namespace";
+  private static final String NAMESPACE_ID = "0e61cd22-45f6-4ee0-a3be-2f029e0a3c32";
   private static final UUID REALM_ID = UUID.fromString("7bda1169-a8a3-4b43-96a4-53f8579ac164");
   private static final long GAME_INSTANCE_ID = 79L;
   private static final long CATALOG_REVISION = 31L;

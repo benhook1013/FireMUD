@@ -130,7 +130,7 @@ class AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest {
   private static final String WORKLOAD_NAMESPACE = "account-current-authority-test";
   private static final String WORLD_SLUG = "current-authority-proof-world";
   private static final String REALM_SLUG = "production";
-  private static final String NAMESPACE_ID = "current-authority-proof-namespace";
+  private static final String NAMESPACE_ID = "9f206856-6cf8-4cf6-8c0f-0b1af02c491a";
   private static final UUID REALM_ID = UUID.fromString("7bda1169-a8a3-4b43-96a4-53f8579ac164");
   private static final long GAME_INSTANCE_ID = 79L;
   private static final long CATALOG_REVISION = 31L;
