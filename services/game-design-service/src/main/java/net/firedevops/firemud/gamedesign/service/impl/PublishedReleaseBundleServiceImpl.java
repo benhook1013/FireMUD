@@ -310,7 +310,9 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
     }
 
     Set<String> selectorPairs = new HashSet<>();
+    Set<String> realmSlugs = new HashSet<>();
     List<RealmEntryPolicySource> sources = new java.util.ArrayList<>();
+    int visiblePublicProductionCount = 0;
     for (Revision revision : revisions) {
       if (revision == null
           || revision.getId() == null
@@ -326,7 +328,17 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
       if (!selectorPairs.add(pair)) {
         throw new IllegalStateException("Duplicate published realm-entry policy selector");
       }
+      if (!realmSlugs.add(policy.realmSlug())) {
+        throw new IllegalStateException("Duplicate published realm-entry policy realm slug");
+      }
+      if (policy.visible() && policy.publicProduction()) {
+        visiblePublicProductionCount++;
+      }
       sources.add(new RealmEntryPolicySource(revision, policy));
+    }
+    if (visiblePublicProductionCount != 1) {
+      throw new IllegalStateException(
+          "Realm-entry policy set must contain exactly one visible publicProduction realm");
     }
     return List.copyOf(sources);
   }

@@ -18,15 +18,17 @@ import net.firedevops.firemud.gamesession.entity.PublishedRealmCatalogEntry;
 import net.firedevops.firemud.gamesession.entity.PublishedRealmCatalogSnapshot;
 import net.firedevops.firemud.gamesession.service.InitialAdmissionBindOwnerProof.Outcome;
 import net.firedevops.firemud.worldmanagement.v1.AcquireInitialAdmissionBindHoldResponse;
+import net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleResponse;
 import net.firedevops.firemud.worldmanagement.v1.InitialAdmissionBindHold;
 import net.firedevops.firemud.worldmanagement.v1.InitialAdmissionBindHoldStatus;
-import net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot;
 import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
-/** Explicit internal composition of one immutable published realm with the World initial-bind hold. */
+/**
+ * Explicit internal composition of one immutable published realm with the World initial-bind hold.
+ */
 @Service
 @Lazy
 public final class PublishedRealmInitialAdmissionBindCoordinator {
@@ -84,7 +86,8 @@ public final class PublishedRealmInitialAdmissionBindCoordinator {
                 command.initialAdmissionRequestId(),
                 command.ownerAccountId()));
     GameInstanceDto target = requireExactActiveLaunch(launch, command, snapshot);
-    WorldInstanceLifecycleSnapshot lifecycle = requireExactWorldLifecycle(target, command, snapshot);
+    WorldInstanceLifecycleSnapshot lifecycle =
+        requireExactWorldLifecycle(target, command, snapshot);
     if (launch.activeLifecycleEpoch() != lifecycle.getLifecycleEpoch()) {
       throw unresolved(
           "INITIAL_ADMISSION_WORLD_LIFECYCLE_MISMATCH: ACTIVE epoch differs from authored launch proof");
@@ -102,7 +105,9 @@ public final class PublishedRealmInitialAdmissionBindCoordinator {
             command.publishedVersionId(),
             lifecycleEpoch,
             new InitialAdmissionBindRequest.PublishedCatalogBinding(
-                snapshot.targetNamespace(), snapshot.canonicalTenantId(), snapshot.catalogRevision()),
+                snapshot.targetNamespace(),
+                snapshot.canonicalTenantId(),
+                snapshot.catalogRevision()),
             new InitialAdmissionBindRequest.LaunchEvidence(
                 command.gameTemplateId(),
                 lifecycle.getLaunchDescriptorId(),
@@ -125,24 +130,30 @@ public final class PublishedRealmInitialAdmissionBindCoordinator {
             PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
             snapshot.catalogRevision());
     if (acquire == null || acquire.hasError() || !acquire.hasHold()) {
-      throw unresolved("INITIAL_ADMISSION_WORLD_HOLD_UNRESOLVED: World did not return the exact hold");
+      throw unresolved(
+          "INITIAL_ADMISSION_WORLD_HOLD_UNRESOLVED: World did not return the exact hold");
     }
     InitialAdmissionBindHold hold = acquire.getHold();
     InitialAdmissionBindHoldBinding binding =
         requireExactHold(hold, request, entry, snapshot.catalogRevision());
 
-    if (hold.getStatus() == InitialAdmissionBindHoldStatus.INITIAL_ADMISSION_BIND_HOLD_STATUS_COMMITTED
-        || hold.getStatus() == InitialAdmissionBindHoldStatus.INITIAL_ADMISSION_BIND_HOLD_STATUS_ABORTED) {
+    if (hold.getStatus()
+            == InitialAdmissionBindHoldStatus.INITIAL_ADMISSION_BIND_HOLD_STATUS_COMMITTED
+        || hold.getStatus()
+            == InitialAdmissionBindHoldStatus.INITIAL_ADMISSION_BIND_HOLD_STATUS_ABORTED) {
       return terminalResult(ownerService.read(binding), binding, attempt);
     }
     if (!isRetryable(hold.getStatus())) {
-      throw unresolved("INITIAL_ADMISSION_WORLD_HOLD_UNRESOLVED: World returned an unknown hold state");
+      throw unresolved(
+          "INITIAL_ADMISSION_WORLD_HOLD_UNRESOLVED: World returned an unknown hold state");
     }
 
     InitialAdmissionBindAttempt attached = ownerService.attachHold(binding);
     requireExactAttempt(attached, request, entry);
     InitialAdmissionBindOwnerProof proof =
-        attached.status() == net.firedevops.firemud.gamesession.entity.InitialAdmissionBindAttempt.Status.PENDING
+        attached.status()
+                == net.firedevops.firemud.gamesession.entity.InitialAdmissionBindAttempt.Status
+                    .PENDING
             ? ownerService.commit(binding)
             : ownerService.read(binding);
     return terminalResult(proof, binding, attached);
@@ -184,10 +195,12 @@ public final class PublishedRealmInitialAdmissionBindCoordinator {
     try {
       response = worldManagementClient.getWorldInstanceLifecycle(snapshot.tenantId(), target.id());
     } catch (RuntimeException exception) {
-      throw unresolved("INITIAL_ADMISSION_WORLD_LIFECYCLE_UNAVAILABLE: exact launch readback failed");
+      throw unresolved(
+          "INITIAL_ADMISSION_WORLD_LIFECYCLE_UNAVAILABLE: exact launch readback failed");
     }
     if (response == null || response.hasError() || !response.hasWorldInstance()) {
-      throw unresolved("INITIAL_ADMISSION_WORLD_LIFECYCLE_INVALID: exact launch readback is absent");
+      throw unresolved(
+          "INITIAL_ADMISSION_WORLD_LIFECYCLE_INVALID: exact launch readback is absent");
     }
     WorldInstanceLifecycleSnapshot lifecycle = response.getWorldInstance();
     if (parsePositiveId(lifecycle.getTenantId(), "tenantId") != snapshot.tenantId()
@@ -263,9 +276,11 @@ public final class PublishedRealmInitialAdmissionBindCoordinator {
           output.write(encoded);
         }
       }
-      return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes.toByteArray()));
+      return HexFormat.of()
+          .formatHex(MessageDigest.getInstance("SHA-256").digest(bytes.toByteArray()));
     } catch (IOException | NoSuchAlgorithmException exception) {
-      throw new IllegalStateException("Initial admission request digest could not be computed", exception);
+      throw new IllegalStateException(
+          "Initial admission request digest could not be computed", exception);
     }
   }
 
@@ -292,12 +307,14 @@ public final class PublishedRealmInitialAdmissionBindCoordinator {
         || !Objects.equals(
             attempt.canonicalTenantId(), request.publishedCatalog().canonicalTenantId())
         || !Objects.equals(attempt.gameTemplateId(), request.launchEvidence().gameTemplateId())
-        || !Objects.equals(attempt.launchDescriptorId(), request.launchEvidence().launchDescriptorId())
+        || !Objects.equals(
+            attempt.launchDescriptorId(), request.launchEvidence().launchDescriptorId())
         || !Objects.equals(attempt.releaseBundleId(), request.launchEvidence().releaseBundleId())
         || !Objects.equals(
             attempt.publishedReleaseBundleRef(),
             request.launchEvidence().publishedReleaseBundleRef())
-        || !Objects.equals(attempt.versionStateEpoch(), request.launchEvidence().versionStateEpoch())) {
+        || !Objects.equals(
+            attempt.versionStateEpoch(), request.launchEvidence().versionStateEpoch())) {
       throw unresolved("INITIAL_ADMISSION_ATTEMPT_READBACK_MISMATCH: durable intent changed");
     }
   }
@@ -322,7 +339,8 @@ public final class PublishedRealmInitialAdmissionBindCoordinator {
         || hold.getExpectedCatalogRevision() != catalogRevision
         || hold.getStatus()
             == InitialAdmissionBindHoldStatus.INITIAL_ADMISSION_BIND_HOLD_STATUS_UNSPECIFIED) {
-      throw unresolved("INITIAL_ADMISSION_WORLD_HOLD_MISMATCH: World returned a different hold tuple");
+      throw unresolved(
+          "INITIAL_ADMISSION_WORLD_HOLD_MISMATCH: World returned a different hold tuple");
     }
     return new InitialAdmissionBindHoldBinding(
         hold.getHoldId(),
@@ -373,14 +391,15 @@ public final class PublishedRealmInitialAdmissionBindCoordinator {
         && proof.pointerAuditId() == null) {
       return new Result(TerminalOutcome.ABORTED, proof);
     }
-    throw unresolved("INITIAL_ADMISSION_OWNER_PROOF_UNRESOLVED: exact terminal owner proof is absent");
+    throw unresolved(
+        "INITIAL_ADMISSION_OWNER_PROOF_UNRESOLVED: exact terminal owner proof is absent");
   }
 
   private static boolean isRetryable(InitialAdmissionBindHoldStatus status) {
-    return status
-            == InitialAdmissionBindHoldStatus.INITIAL_ADMISSION_BIND_HOLD_STATUS_PENDING
+    return status == InitialAdmissionBindHoldStatus.INITIAL_ADMISSION_BIND_HOLD_STATUS_PENDING
         || status
-            == InitialAdmissionBindHoldStatus.INITIAL_ADMISSION_BIND_HOLD_STATUS_RECONCILIATION_REQUIRED;
+            == InitialAdmissionBindHoldStatus
+                .INITIAL_ADMISSION_BIND_HOLD_STATUS_RECONCILIATION_REQUIRED;
   }
 
   private static boolean isCanonicalUuid(String value) {

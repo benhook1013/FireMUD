@@ -7,6 +7,7 @@ import static net.firedevops.firemud.gamesession.jooq.tables.GameplayInitialAdmi
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -29,7 +30,8 @@ import org.springframework.stereotype.Repository;
 public class InitialAdmissionBindAttemptRepository {
   private static final String ATTEMPT_LOCK_PREFIX = "initial-admission-bind-attempt:";
   private static final String REALM_LOCK_PREFIX = "initial-admission-bind-realm:";
-  private static final Field<String> CATALOG_SOURCE_KIND = field("catalog_source_kind", String.class);
+  private static final Field<String> CATALOG_SOURCE_KIND =
+      field("catalog_source_kind", String.class);
   private static final Field<UUID> FIXTURE_CATALOG_REALM_ID =
       field("fixture_catalog_realm_id", UUID.class);
   private static final Field<String> PUBLISHED_TARGET_NAMESPACE =
@@ -133,7 +135,7 @@ public class InitialAdmissionBindAttemptRepository {
         .set(
             GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT.UPDATED_AT,
             toLocalDateTime(attempt.updatedAt()))
-        .set(GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT.TERMINAL_AT, null)
+        .set(GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT.TERMINAL_AT, (LocalDateTime) null)
         .set(CATALOG_SOURCE_KIND, attempt.catalogSourceKind())
         .set(
             FIXTURE_CATALOG_REALM_ID,

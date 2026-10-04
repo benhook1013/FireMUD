@@ -18,7 +18,9 @@ import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.ObjectMapper;
 
-/** Read-only composition of immutable published policy, current pointer, audit, and bind evidence. */
+/**
+ * Read-only composition of immutable published policy, current pointer, audit, and bind evidence.
+ */
 @Service
 @Lazy
 public final class PublishedRealmAdmissionOwnerReadService {
@@ -52,7 +54,8 @@ public final class PublishedRealmAdmissionOwnerReadService {
    * a currently unchanged version-1 pointer: this first-bind proof does not authorize a later,
    * unproved pointer cutover.
    */
-  public PublishedRealmAdmissionOwnerReadProof read(PublishedRealmAdmissionOwnerReadRequest request) {
+  public PublishedRealmAdmissionOwnerReadProof read(
+      PublishedRealmAdmissionOwnerReadRequest request) {
     Objects.requireNonNull(request, "request");
     PublishedRealmCatalogSnapshot snapshot =
         catalogRepository
@@ -60,8 +63,7 @@ public final class PublishedRealmAdmissionOwnerReadService {
                 request.targetNamespace(),
                 request.gameSessionTenantId(),
                 request.expectedCatalogRevision())
-            .orElseThrow(
-                () -> unresolved("PUBLISHED_REALM_ADMISSION_SNAPSHOT_MISSING"));
+            .orElseThrow(() -> unresolved("PUBLISHED_REALM_ADMISSION_SNAPSHOT_MISSING"));
     requireSnapshotMatchesRequest(snapshot, request);
 
     PublishedRealmCatalogEntry entry =

@@ -19,7 +19,9 @@ UPDATE gameplay_initial_admission_bind_attempt
    SET fixture_catalog_realm_id = realm_id;
 
 ALTER TABLE gameplay_initial_admission_bind_attempt
-    DROP CONSTRAINT gameplay_initial_admission_bind_attempt_catalog_fk,
+    DROP CONSTRAINT gameplay_initial_admission_bind_attempt_catalog_fk;
+
+ALTER TABLE gameplay_initial_admission_bind_attempt
     ADD CONSTRAINT gameplay_initial_admission_bind_attempt_fixture_catalog_fk
         FOREIGN KEY (tenant_id, fixture_catalog_realm_id, playable_state_namespace_id, catalog_revision)
         REFERENCES gameplay_initial_admission_bind_catalog

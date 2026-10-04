@@ -146,15 +146,21 @@ public class DatabaseInitialAdmissionBindOwnerService implements InitialAdmissio
             now,
             null,
             request.isPublishedCatalogRequest() ? PUBLISHED_SOURCE : FIXTURE_SOURCE,
-            request.publishedCatalog() == null ? null : request.publishedCatalog().targetNamespace(),
-            request.publishedCatalog() == null ? null : request.publishedCatalog().canonicalTenantId(),
+            request.publishedCatalog() == null
+                ? null
+                : request.publishedCatalog().targetNamespace(),
+            request.publishedCatalog() == null
+                ? null
+                : request.publishedCatalog().canonicalTenantId(),
             request.launchEvidence() == null ? null : request.launchEvidence().gameTemplateId(),
             request.launchEvidence() == null ? null : request.launchEvidence().launchDescriptorId(),
             request.launchEvidence() == null ? null : request.launchEvidence().releaseBundleId(),
             request.launchEvidence() == null
                 ? null
                 : request.launchEvidence().publishedReleaseBundleRef(),
-            request.launchEvidence() == null ? null : request.launchEvidence().versionStateEpoch()));
+            request.launchEvidence() == null
+                ? null
+                : request.launchEvidence().versionStateEpoch()));
   }
 
   @Override
@@ -414,12 +420,13 @@ public class DatabaseInitialAdmissionBindOwnerService implements InitialAdmissio
                   () ->
                       new IllegalStateException(
                           "INITIAL_ADMISSION_PUBLISHED_ENTRY_MISSING: durable attempt lost its selected entry"));
-      InitialAdmissionBindCatalog catalog = requirePublishedCatalog(
-          snapshot,
-          entry,
-          attempt.gameTemplateId() == null ? 0L : attempt.gameTemplateId(),
-          entry.policyEvidence().policy().worldSlug(),
-          entry.policyEvidence().policy().realmSlug());
+      InitialAdmissionBindCatalog catalog =
+          requirePublishedCatalog(
+              snapshot,
+              entry,
+              attempt.gameTemplateId() == null ? 0L : attempt.gameTemplateId(),
+              entry.policyEvidence().policy().worldSlug(),
+              entry.policyEvidence().policy().realmSlug());
       if (!entry.playableStateNamespaceId().equals(attempt.playableStateNamespaceId())
           || !catalog.stateScope().equals(attempt.playableStateScope())
           || !PUBLISHED_SOURCE.equals(attempt.catalogSourceKind())) {
@@ -609,8 +616,7 @@ public class DatabaseInitialAdmissionBindOwnerService implements InitialAdmissio
           && Objects.equals(attempt.gameTemplateId(), launch.gameTemplateId())
           && Objects.equals(attempt.launchDescriptorId(), launch.launchDescriptorId())
           && Objects.equals(attempt.releaseBundleId(), launch.releaseBundleId())
-          && Objects.equals(
-              attempt.publishedReleaseBundleRef(), launch.publishedReleaseBundleRef())
+          && Objects.equals(attempt.publishedReleaseBundleRef(), launch.publishedReleaseBundleRef())
           && Objects.equals(attempt.versionStateEpoch(), launch.versionStateEpoch());
     }
     return FIXTURE_SOURCE.equals(attempt.catalogSourceKind())

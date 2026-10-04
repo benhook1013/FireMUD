@@ -25,6 +25,12 @@ import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerEve
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerRepository;
 import net.firedevops.firemud.gamesession.repository.InitialAdmissionBindAttemptRepository;
 import net.firedevops.firemud.gamesession.repository.InitialAdmissionBindCatalogRepository;
+import net.firedevops.firemud.gamesession.service.InitialAdmissionBindHoldBinding;
+import net.firedevops.firemud.gamesession.service.InitialAdmissionBindOwnerProof;
+import net.firedevops.firemud.gamesession.service.InitialAdmissionBindOwnerProofReader;
+import net.firedevops.firemud.gamesession.service.PublishedRealmAdmissionOwnerReadProof;
+import net.firedevops.firemud.gamesession.service.PublishedRealmAdmissionOwnerReadRequest;
+import net.firedevops.firemud.gamesession.service.PublishedRealmAdmissionOwnerReadService;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.ObjectMapper;
 
@@ -39,13 +45,10 @@ class PublishedRealmAdmissionOwnerReadServiceTest {
   private static final UUID REALM_ID = UUID.fromString("33333333-3333-4333-8333-333333333333");
   private static final UUID PLAYABLE_NAMESPACE_ID =
       UUID.fromString("44444444-4444-4444-8444-444444444444");
-  private static final UUID ATTEMPT_ID =
-      UUID.fromString("55555555-5555-4555-8555-555555555555");
+  private static final UUID ATTEMPT_ID = UUID.fromString("55555555-5555-4555-8555-555555555555");
   private static final UUID HOLD_ID = UUID.fromString("66666666-6666-4666-8666-666666666666");
-  private static final UUID HOLD_FENCE =
-      UUID.fromString("77777777-7777-4777-8777-777777777777");
-  private static final String REQUEST_ID =
-      "88888888-8888-4888-8888-888888888888";
+  private static final UUID HOLD_FENCE = UUID.fromString("77777777-7777-4777-8777-777777777777");
+  private static final String REQUEST_ID = "88888888-8888-4888-8888-888888888888";
   private static final String REQUEST_DIGEST = "a".repeat(64);
   private static final long PUBLISHED_VERSION_ID = 44L;
   private static final int PUBLISHED_VERSION_NUMBER = 3;
@@ -77,7 +80,7 @@ class PublishedRealmAdmissionOwnerReadServiceTest {
   void composesPublishedPolicyCurrentPointerAuditAndCommittedPublishedAttempt() {
     PublishedRealmCatalogSnapshot snapshot = snapshot();
     PublishedRealmCatalogEntry entry = snapshot.entries().get(0);
-    GameplayAdmissionPointerSnapshot pointer = pointer();
+    GameplayAdmissionPointer pointer = pointer();
     GameplayAdmissionPointerEvent audit = audit();
     InitialAdmissionBindAttempt attempt = attempt("V14_PUBLISHED");
     InitialAdmissionBindHoldBinding binding = binding(attempt);
@@ -190,7 +193,8 @@ class PublishedRealmAdmissionOwnerReadServiceTest {
   }
 
   private void stubSnapshot(PublishedRealmCatalogSnapshot snapshot) {
-    when(catalogRepository.findPublishedSnapshot(NAMESPACE, GAME_SESSION_TENANT_ID, CATALOG_REVISION))
+    when(catalogRepository.findPublishedSnapshot(
+            NAMESPACE, GAME_SESSION_TENANT_ID, CATALOG_REVISION))
         .thenReturn(Optional.of(snapshot));
   }
 

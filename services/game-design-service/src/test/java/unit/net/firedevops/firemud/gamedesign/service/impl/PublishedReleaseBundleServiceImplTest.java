@@ -42,7 +42,7 @@ class PublishedReleaseBundleServiceImplTest {
   private static final String VALID_REALM_ENTRY_POLICY =
       "{\"schemaVersion\":1,\"worldSlug\":\"earth\",\"worldDisplayName\":\"Earth\","
           + "\"realmSlug\":\"main\",\"realmDisplayName\":\"Main Realm\","
-          + "\"visible\":true,\"publicProduction\":false,\"stateScope\":\"SHARED\","
+          + "\"visible\":true,\"publicProduction\":true,\"stateScope\":\"SHARED\","
           + "\"entryPolicy\":\"PRESEEDED_ONLY\"}";
 
   @Mock private PublishedReleaseBundleRepository repository;
@@ -214,6 +214,54 @@ class PublishedReleaseBundleServiceImplTest {
                 new ExportedAssetManifest("abc123", List.of("manifest.json")),
                 "genrev-1",
                 List.of()));
+    verify(gameRepository, never()).findRuntimeTenantIdentityByTenantKey("tenant-1");
+  }
+
+  @Test
+  void createFullVersionBundleRejectsRealmSlugRepeatedAcrossWorldsBeforeMutation() {
+    assertPolicySetRejectedBeforePublicationMutation(
+        VALID_REALM_ENTRY_POLICY,
+        VALID_REALM_ENTRY_POLICY.replace("\"worldSlug\":\"earth\"", "\"worldSlug\":\"mars\""));
+  }
+
+  @Test
+  void createFullVersionBundleRejectsPolicySetWithoutVisiblePublicProductionRealm() {
+    assertPolicySetRejectedBeforePublicationMutation(
+        VALID_REALM_ENTRY_POLICY.replace(
+            "\"publicProduction\":true", "\"publicProduction\":false"));
+  }
+
+  @Test
+  void createFullVersionBundleRejectsPolicySetWithMultipleVisiblePublicProductionRealms() {
+    assertPolicySetRejectedBeforePublicationMutation(
+        VALID_REALM_ENTRY_POLICY,
+        VALID_REALM_ENTRY_POLICY
+            .replace("\"realmSlug\":\"main\"", "\"realmSlug\":\"side\"")
+            .replace("\"realmDisplayName\":\"Main Realm\"", "\"realmDisplayName\":\"Side Realm\""));
+  }
+
+  private void assertPolicySetRejectedBeforePublicationMutation(String... policyJson) {
+    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.empty());
+    List<Revision> revisions =
+        java.util.stream.IntStream.range(0, policyJson.length)
+            .mapToObj(index -> policyRevision(21L + index, "tenant-1", 7L, policyJson[index]))
+            .toList();
+    when(revisionRepository.findByTenantIdAndVersionIdAndRevisionKindOrderByIdAsc(
+            "tenant-1", 7L, RealmEntryPolicy.REVISION_KIND))
+        .thenReturn(revisions);
+
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            service.createFullVersionBundle(
+                version(),
+                "workflow-1",
+                new ExportedAssetManifest("abc123", List.of("manifest.json")),
+                "genrev-1",
+                List.of()));
+
+    verify(repository, never()).save(any(PublishedReleaseBundle.class));
+    verify(realmEntryPolicyRepository, never()).insert(any(PublishedRealmEntryPolicy.class));
     verify(gameRepository, never()).findRuntimeTenantIdentityByTenantKey("tenant-1");
   }
 

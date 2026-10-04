@@ -27,8 +27,7 @@ class PublishedRealmInitialAdmissionBindCoordinatorTest {
   private static final UUID CANONICAL_TENANT_ID =
       UUID.fromString("11111111-1111-4111-8111-111111111111");
   private static final UUID REALM_ID = UUID.fromString("22222222-2222-4222-8222-222222222222");
-  private static final UUID NAMESPACE_ID =
-      UUID.fromString("33333333-3333-4333-8333-333333333333");
+  private static final UUID NAMESPACE_ID = UUID.fromString("33333333-3333-4333-8333-333333333333");
   private static final long LOCAL_GAME_SESSION_TENANT_ID = 41L;
   private static final long SOURCE_GAME_ROW_ID = 731L;
   private static final long PUBLISHED_VERSION_ID = 902L;

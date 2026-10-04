@@ -3,8 +3,8 @@ package net.firedevops.firemud.gamesession.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
@@ -16,7 +16,6 @@ import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerEventRepository;
 import net.firedevops.firemud.gamesession.repository.InitialAdmissionBindAttemptRepository;
 import net.firedevops.firemud.gamesession.repository.InitialAdmissionBindCatalogRepository;
-import net.firedevops.firemud.gamesession.service.InitialAdmissionBindRequest;
 import net.firedevops.firemud.gamesession.service.impl.DatabaseInitialAdmissionBindOwnerService;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;

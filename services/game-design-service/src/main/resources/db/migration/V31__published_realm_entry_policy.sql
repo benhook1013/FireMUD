@@ -32,7 +32,9 @@ CREATE TABLE published_realm_entry_policy (
     policy_json TEXT NOT NULL CHECK (octet_length(policy_json) BETWEEN 1 AND 4096),
     policy_digest VARCHAR(71) NOT NULL CHECK (policy_digest ~ '^sha256:[0-9a-f]{64}$'),
     CONSTRAINT uq_published_realm_entry_policy_selector
-        UNIQUE (canonical_tenant_id, version_id, world_slug, realm_slug)
+        UNIQUE (canonical_tenant_id, version_id, world_slug, realm_slug),
+    CONSTRAINT uq_published_realm_entry_policy_realm_slug
+        UNIQUE (canonical_tenant_id, version_id, realm_slug)
 );
 
 -- [jooq ignore start]
