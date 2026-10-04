@@ -41,6 +41,7 @@ CREATE TABLE game_session_retained_tenant_association_payload (
     CONSTRAINT chk_gs_retained_tenant_association_payload_capture CHECK (
         (approval_schema_version = 1 AND game_session_projection_digest IS NULL)
         OR (approval_schema_version = 2
+            AND game_session_projection_digest IS NOT NULL
             AND game_session_projection_digest ~ '^sha256:[0-9a-f]{64}$')
     ),
     CONSTRAINT chk_gs_retained_tenant_association_payload_approval_operation_id CHECK (

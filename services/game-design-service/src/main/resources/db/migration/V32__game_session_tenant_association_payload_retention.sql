@@ -32,6 +32,7 @@ CREATE TABLE game_design_game_session_tenant_association_payload (
     CONSTRAINT chk_gd_game_session_association_payload_capture CHECK (
         (schema_version = 1 AND game_session_projection_digest IS NULL)
         OR (schema_version = 2
+            AND game_session_projection_digest IS NOT NULL
             AND game_session_projection_digest ~ '^sha256:[0-9a-f]{64}$')
     ),
     CONSTRAINT chk_gd_game_session_association_payload_labels CHECK (

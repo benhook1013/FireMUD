@@ -155,6 +155,20 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
   }
 
   @Test
+  void v2PayloadRequiresProjectionDigestWhileHistoricalV1MayOmitIt() {
+    Fixture fixture = fixture();
+    UUID v1OperationId = uuid(937);
+    fixture.insertAssociationMapping(v1OperationId, uuid(938), uuid(939), 937L);
+    fixture.insertExpiredPayload(v1OperationId, uuid(940), 1, null);
+
+    UUID v2OperationId = uuid(941);
+    fixture.insertAssociationMapping(v2OperationId, uuid(942), uuid(943), 941L);
+    assertThatThrownBy(() -> fixture.insertExpiredPayload(v2OperationId, uuid(944), 2, null))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("chk_gs_retained_tenant_association_payload_capture");
+  }
+
+  @Test
   void unverifiedLegalHoldWritesFailClosedAndCleanupPreservesMinimalAntiReassignmentProof() {
     Fixture fixture = fixture();
     UUID heldOperation = uuid(920);
@@ -666,21 +680,31 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
     }
 
     void insertExpiredPayload(UUID operationId, UUID approvalOperationId) {
+      insertExpiredPayload(
+          operationId,
+          approvalOperationId,
+          2,
+          "sha256:" + "b".repeat(64));
+    }
+
+    void insertExpiredPayload(
+        UUID operationId, UUID approvalOperationId, int schemaVersion, String projectionDigest) {
       dsl.execute(
           "INSERT INTO game_session_retained_tenant_association_payload ("
               + "operation_id, request_digest, approval_operation_id, approval_schema_version, "
               + "signer_key_id, approved_by, approval_reference, signed_at, "
               + "game_session_projection_digest, game_session_evidence_digest, "
               + "approval_manifest_digest, approval_signature, snapshot_canonical_json, "
-              + "snapshot_evidence_digest, receipt_digest) VALUES (?, ?, ?, 2, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              + "snapshot_evidence_digest, receipt_digest) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           operationId,
           "sha256:" + "a".repeat(64),
           approvalOperationId,
+          schemaVersion,
           "fixture-owner-key",
           "owner-reviewer",
           "approval-" + operationId,
           java.time.Instant.now().toString(),
-          "sha256:" + "b".repeat(64),
+          projectionDigest,
           "sha256:" + "c".repeat(64),
           "sha256:" + "d".repeat(64),
           Base64.getEncoder().encodeToString(new byte[64]),

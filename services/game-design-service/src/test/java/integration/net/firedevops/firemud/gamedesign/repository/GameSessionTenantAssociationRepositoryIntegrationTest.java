@@ -102,6 +102,20 @@ class GameSessionTenantAssociationRepositoryIntegrationTest {
   }
 
   @Test
+  void v2PayloadRequiresProjectionDigestWhileHistoricalV1MayOmitIt() {
+    Fixture fixture = fixtureWithFreshAndRetainedSources();
+    UUID v1OperationId = uuid(910);
+    fixture.insertExpiredAssociation(v1OperationId, 910L, fixture.retainedSource());
+    fixture.insertRawPayload(v1OperationId, 1, null);
+
+    UUID v2OperationId = uuid(911);
+    fixture.insertExpiredAssociation(v2OperationId, 911L, fixture.freshSource());
+    assertThatThrownBy(() -> fixture.insertRawPayload(v2OperationId, 2, null))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("chk_gd_game_session_association_payload_capture");
+  }
+
+  @Test
   void unverifiedLegalHoldWritesFailClosedAndCleanupPreservesImmutableAssociationClaim()
       throws Exception {
     Fixture fixture = fixtureWithFreshAndRetainedSources();
@@ -619,15 +633,20 @@ class GameSessionTenantAssociationRepositoryIntegrationTest {
     }
 
     void insertRawPayload(UUID operationId) {
+      insertRawPayload(operationId, 2, "sha256:" + "a".repeat(64));
+    }
+
+    void insertRawPayload(UUID operationId, int schemaVersion, String projectionDigest) {
       dsl()
           .execute(
               "INSERT INTO game_design_game_session_tenant_association_payload ("
                   + "operation_id, schema_version, signer_key_id, approved_by, approval_reference, "
                   + "signed_at, game_session_projection_digest, game_session_evidence_digest, "
-                  + "manifest_digest, signature) VALUES (?, 2, 'owner-key', 'owner', 'case', ?, ?, ?, ?, ?)",
+                  + "manifest_digest, signature) VALUES (?, ?, 'owner-key', 'owner', 'case', ?, ?, ?, ?, ?)",
               operationId,
+              schemaVersion,
               java.time.Instant.now().toString(),
-              "sha256:" + "a".repeat(64),
+              projectionDigest,
               "sha256:" + "b".repeat(64),
               "sha256:" + "c".repeat(64),
               Base64.getEncoder().encodeToString(new byte[64]));
