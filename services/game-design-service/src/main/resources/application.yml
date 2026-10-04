@@ -57,6 +57,15 @@ server:
     mime-types: application/json,application/xml,text/html,text/xml,text/plain
     min-response-size: 1024
 
+asset:
+  store:
+    endpoint: ${ASSET_STORE_ENDPOINT:}
+    public-base-url: ${ASSET_STORE_PUBLIC_BASE_URL:}
+    bucket: ${ASSET_STORE_BUCKET:}
+    region: ${ASSET_STORE_REGION:ap-southeast-2}
+    access-key: ${ASSET_STORE_ACCESS_KEY:}
+    secret-key: ${ASSET_STORE_SECRET_KEY:}
+
 firemud:
   auth:
     http:

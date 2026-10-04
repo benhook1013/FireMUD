@@ -34,6 +34,12 @@ final class PublishedReleaseBundleContract {
   static void requireExactRepairMatch(
       PublishedReleaseBundleDto bundle, ExportedAssetManifest exportedManifest) {
     requireSupportedSchemaForRead(bundle);
+    if (!Objects.equals(bundle.manifestSchemaVersion(), exportedManifest.manifestSchemaVersion())
+        || !Objects.equals(bundle.artifactDigests(), exportedManifest.artifactDigests())) {
+      throw new IllegalStateException(
+          REPAIR_ATTESTATION_MISMATCH
+              + ": repair could not reproduce the attested artifact/schema proof");
+    }
     if (!Objects.equals(bundle.manifestHash(), exportedManifest.manifestHash())) {
       throw new IllegalStateException(
           REPAIR_ATTESTATION_MISMATCH + ": repair could not reproduce the attested manifest hash");

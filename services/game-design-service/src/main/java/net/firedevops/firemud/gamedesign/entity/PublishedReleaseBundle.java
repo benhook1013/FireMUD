@@ -16,6 +16,8 @@ public class PublishedReleaseBundle {
   private String attestationSchemaVersion;
   private String publishWorkflowId;
   private String manifestHash;
+  private Integer manifestSchemaVersion;
+  private String artifactDigestsJson;
   private String generationConfigRevision;
   private String requiredManifestAssetKeysJson;
   private String participantDigestsJson = "[]";

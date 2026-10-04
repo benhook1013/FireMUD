@@ -36,11 +36,14 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 @Testcontainers(disabledWithoutDocker = true)
 class PublishedReleaseCanonicalIdentityIntegrationTest {
+  private static final String MANIFEST_HASH = "sha256:" + "a".repeat(64);
+  private static final String OTHER_MANIFEST_HASH = "sha256:" + "b".repeat(64);
   private static final String FLYWAY_TABLE = "flyway_schema_history_game_design_service";
   private static final MigrationVersion V35 = MigrationVersion.fromVersion("35");
   private static final MigrationVersion V35_1 = MigrationVersion.fromVersion("35.1");
   private static final MigrationVersion V35_2 = MigrationVersion.fromVersion("35.2");
   private static final MigrationVersion V36 = MigrationVersion.fromVersion("36");
+  private static final MigrationVersion V38 = MigrationVersion.fromVersion("38");
   private static final Table<?> VERSION = DSL.table(DSL.name("version"));
   private static final Table<?> RELEASE_BUNDLE = DSL.table(DSL.name("published_release_bundle"));
   private static final Field<Long> ID = DSL.field(DSL.name("id"), Long.class);
@@ -52,6 +55,10 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
       DSL.field(DSL.name("canonical_tenant_id"), UUID.class);
   private static final Field<UUID> CANONICAL_VERSION_ID =
       DSL.field(DSL.name("canonical_version_id"), UUID.class);
+  private static final Field<Integer> MANIFEST_SCHEMA_VERSION =
+      DSL.field(DSL.name("manifest_schema_version"), Integer.class);
+  private static final Field<String> ARTIFACT_DIGESTS_JSON =
+      DSL.field(DSL.name("artifact_digests_json"), String.class);
   private static final UUID NIL_UUID = new UUID(0L, 0L);
 
   @Container
@@ -91,11 +98,40 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
     assertThat(
             fixture
                 .dsl()
+                .select(CANONICAL_TENANT_ID, CANONICAL_VERSION_ID)
+                .from(RELEASE_BUNDLE)
+                .where(ID.eq(retainedBundleId))
+                .fetchOne())
+        .satisfies(
+            row -> {
+              assertThat(row.get(CANONICAL_TENANT_ID)).isNull();
+              assertThat(row.get(CANONICAL_VERSION_ID)).isNull();
+            });
+    assertThat(
+            fixture
+                .dsl()
                 .select(PUBLISHED_RELEASE_BUNDLE_REF)
                 .from(RELEASE_BUNDLE)
                 .where(ID.eq(retainedBundleId))
                 .fetchOne(PUBLISHED_RELEASE_BUNDLE_REF))
         .isNull();
+
+    // V38 only adds nullable proof columns; it must not rewrite or invent proof for this row.
+    migrate(fixture.dataSource(), fixture.schema(), V38);
+    assertThat(retainedTuple(fixture.dsl(), retainedBundleId)).isEqualTo(retainedTupleBefore);
+    assertThat(bundleXmin(fixture.dsl(), retainedBundleId)).isEqualTo(retainedXminBefore);
+    assertThat(
+            fixture
+                .dsl()
+                .select(MANIFEST_SCHEMA_VERSION, ARTIFACT_DIGESTS_JSON)
+                .from(RELEASE_BUNDLE)
+                .where(ID.eq(retainedBundleId))
+                .fetchOne())
+        .satisfies(
+            row -> {
+              assertThat(row.get(MANIFEST_SCHEMA_VERSION)).isNull();
+              assertThat(row.get(ARTIFACT_DIGESTS_JSON)).isNull();
+            });
     PublishedReleaseBundle retained =
         fixture
             .releaseBundleRepository()
@@ -104,6 +140,8 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
     assertThat(retained.getCanonicalTenantId()).isNull();
     assertThat(retained.getCanonicalVersionId()).isNull();
     assertThat(retained.getPublishedReleaseBundleRef()).isNull();
+    assertThat(retained.getManifestSchemaVersion()).isNull();
+    assertThat(retained.getArtifactDigestsJson()).isNull();
     assertThatThrownBy(() -> fixture.releaseBundleRepository().save(retained))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("Published release bundle is immutable");
@@ -119,7 +157,7 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
 
   @Test
   void normalSavePersistsExactVersionAndVerifiedGameIdentityAndReadsBackWithinTransaction() {
-    Fixture fixture = fixture(V36);
+    Fixture fixture = fixture(V38);
     Game owner = saveGame(fixture, "fresh-release-source");
     Game other = saveGame(fixture, "other-release-source");
     Version version = saveVersion(fixture, owner);
@@ -172,7 +210,7 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
 
   @Test
   void repositoryNestedTransactionRollsBackWithOuterSpringPublisherTransaction() {
-    Fixture fixture = fixture(V36);
+    Fixture fixture = fixture(V38);
     Game owner = saveGame(fixture, "outer-release-rollback-owner");
     Version version = saveVersion(fixture, owner);
     String versionXminBefore = versionXmin(fixture.dsl(), version.getId());
@@ -242,7 +280,7 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
 
   @Test
   void deniesWrongTenantNilAndSubstitutedCallerOrDatabaseIdentityWithoutGrowingBundles() {
-    Fixture fixture = fixture(V36);
+    Fixture fixture = fixture(V38);
     Game owner = saveGame(fixture, "denied-release-owner");
     Game other = saveGame(fixture, "denied-release-other");
     Version version = saveVersion(fixture, owner);
@@ -360,7 +398,7 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
     assertThatThrownBy(() -> fixture.releaseBundleRepository().save(exactReadback))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("Published release bundle is immutable");
-    exactReadback.setManifestHash("sha256:attempted-release-metadata-mutation");
+    exactReadback.setManifestHash(OTHER_MANIFEST_HASH);
     assertThatThrownBy(() -> fixture.releaseBundleRepository().save(exactReadback))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("Published release bundle is immutable");
@@ -370,7 +408,7 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
                 fixture
                     .dsl()
                     .update(RELEASE_BUNDLE)
-                    .set(DSL.field(DSL.name("manifest_hash"), String.class), "sha256:forged")
+                    .set(DSL.field(DSL.name("manifest_hash"), String.class), OTHER_MANIFEST_HASH)
                     .where(ID.eq(mapped.getId()))
                     .execute())
         .isInstanceOf(DataAccessException.class)
@@ -410,7 +448,7 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
                 fixture
                     .dsl()
                     .update(RELEASE_BUNDLE)
-                    .set(DSL.field(DSL.name("manifest_hash"), String.class), "sha256:forged")
+                    .set(DSL.field(DSL.name("manifest_hash"), String.class), OTHER_MANIFEST_HASH)
                     .where(ID.eq(retainedBundleId))
                     .execute())
         .isInstanceOf(DataAccessException.class)
@@ -472,7 +510,7 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
     assertThat(retainedAfterAttempts.getCanonicalTenantId()).isNull();
     assertThat(retainedAfterAttempts.getCanonicalVersionId()).isNull();
     assertThat(retainedAfterAttempts.getPublishedReleaseBundleRef()).isNull();
-    assertThat(retainedAfterAttempts.getManifestHash()).isEqualTo("sha256:retained");
+    assertThat(retainedAfterAttempts.getManifestHash()).isEqualTo(MANIFEST_HASH);
 
     assertThatThrownBy(
             () -> fixture.dsl().deleteFrom(RELEASE_BUNDLE).where(ID.eq(mapped.getId())).execute())
@@ -576,10 +614,11 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
                 + "generation_config_revision, required_manifest_asset_keys_json, "
                 + "participant_digests_json, command_definitions_json, script_only, "
                 + "script_patch_version) VALUES (?, ?, 4, 'v1', 'retained-workflow', "
-                + "'sha256:retained', 'retained-config', '[\"asset-a\"]', '[]', '[]', FALSE, NULL) "
+                + "?, 'retained-config', '[\"asset-a\"]', '[]', '[]', FALSE, NULL) "
                 + "RETURNING id",
             tenantId,
-            versionId)
+            versionId,
+            MANIFEST_HASH)
         .fetchOne(0, Long.class);
   }
 
@@ -590,7 +629,9 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
     bundle.setVersionNumber(1);
     bundle.setAttestationSchemaVersion("v1");
     bundle.setPublishWorkflowId("workflow-" + versionId);
-    bundle.setManifestHash("sha256:manifest");
+    bundle.setManifestHash(MANIFEST_HASH);
+    bundle.setManifestSchemaVersion(1);
+    bundle.setArtifactDigestsJson("[]");
     bundle.setGenerationConfigRevision("generation-1");
     bundle.setRequiredManifestAssetKeysJson("[]");
     bundle.setParticipantDigestsJson("[]");
@@ -608,12 +649,14 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
         "INSERT INTO published_release_bundle (tenant_id, version_id, version_number, "
             + "attestation_schema_version, publish_workflow_id, manifest_hash, "
             + "generation_config_revision, required_manifest_asset_keys_json, "
-            + "participant_digests_json, command_definitions_json, script_only, "
+            + "participant_digests_json, command_definitions_json, manifest_schema_version, "
+            + "artifact_digests_json, script_only, "
             + "canonical_tenant_id, canonical_version_id, published_release_bundle_ref) "
-            + "VALUES (?, ?, 1, 'v1', 'direct-write-test', 'sha256:raw', 'generation-1', "
-            + "'[]', '[]', '[]', FALSE, ?, ?, ?)",
+            + "VALUES (?, ?, 1, 'v1', 'direct-write-test', ?, 'generation-1', "
+            + "'[]', '[]', '[]', 1, '[]', FALSE, ?, ?, ?)",
         tenantId,
         versionId,
+        MANIFEST_HASH,
         canonicalTenantId,
         canonicalVersionId,
         UUID.randomUUID().toString());
@@ -644,7 +687,8 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
                     + "version_number, attestation_schema_version, publish_workflow_id, "
                     + "manifest_hash, generation_config_revision, "
                     + "required_manifest_asset_keys_json, participant_digests_json, "
-                    + "command_definitions_json, script_only, script_patch_version, published_at "
+                    + "command_definitions_json, script_only, script_patch_version, published_at, "
+                    + "manifest_schema_version, artifact_digests_json "
                     + "FROM published_release_bundle WHERE id = ?",
                 bundleId),
             "Published release bundle tuple query returned no row")

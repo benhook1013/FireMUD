@@ -16,6 +16,7 @@ class PublishedReleaseBundleRepositoryTest {
   private static final UUID TENANT_UUID = UUID.fromString("11111111-1111-4111-8111-111111111111");
   private static final UUID VERSION_UUID = UUID.fromString("22222222-2222-4222-8222-222222222222");
   private static final UUID OTHER_UUID = UUID.fromString("33333333-3333-4333-8333-333333333333");
+  private static final String MANIFEST_HASH = "sha256:" + "a".repeat(64);
 
   @Test
   void newBundleUsesExactPersistedVersionAndGameIdentityAndReadsItBack() throws Exception {
@@ -37,6 +38,8 @@ class PublishedReleaseBundleRepositoryTest {
       assertThat(saved.getId()).isNotNull();
       assertThat(saved.getCanonicalTenantId()).isEqualTo(TENANT_UUID);
       assertThat(saved.getCanonicalVersionId()).isEqualTo(VERSION_UUID);
+      assertThat(saved.getManifestSchemaVersion()).isEqualTo(1);
+      assertThat(saved.getArtifactDigestsJson()).isEqualTo("[]");
       assertThat(saved.getPublishedReleaseBundleRef())
           .isNotBlank()
           .isNotEqualTo("caller-supplied-release-reference");
@@ -55,7 +58,7 @@ class PublishedReleaseBundleRepositoryTest {
           .usingRecursiveComparison()
           .isEqualTo(stored);
 
-      stored.setManifestHash("sha256:updated-test-value");
+      stored.setManifestHash("sha256:" + "c".repeat(64));
       assertThatThrownBy(() -> fixture.repository().save(stored))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("Published release bundle is immutable");
@@ -65,7 +68,7 @@ class PublishedReleaseBundleRepositoryTest {
           .hasMessageContaining("Published release bundle is immutable");
       PublishedReleaseBundle persistedAfterAttempts =
           fixture.repository().findByTenantIdAndVersionId("tenant-key", 17L).orElseThrow();
-      assertThat(persistedAfterAttempts.getManifestHash()).isEqualTo("sha256:initial-test-value");
+      assertThat(persistedAfterAttempts.getManifestHash()).isEqualTo(MANIFEST_HASH);
       assertThat(persistedAfterAttempts.getCanonicalTenantId()).isEqualTo(TENANT_UUID);
       assertThat(persistedAfterAttempts.getCanonicalVersionId()).isEqualTo(VERSION_UUID);
       assertThat(fixture.bundleCount()).isEqualTo(1);
@@ -146,6 +149,7 @@ class PublishedReleaseBundleRepositoryTest {
             + "generation_config_revision VARCHAR(128), "
             + "required_manifest_asset_keys_json CLOB NOT NULL, "
             + "participant_digests_json CLOB NOT NULL, command_definitions_json CLOB NOT NULL, "
+            + "manifest_schema_version INT, artifact_digests_json CLOB, "
             + "script_only BOOLEAN NOT NULL, script_patch_version VARCHAR(100), "
             + "published_at TIMESTAMP NOT NULL)");
     return new Fixture(connection, dsl, new PublishedReleaseBundleRepository(dsl));
@@ -200,7 +204,9 @@ class PublishedReleaseBundleRepositoryTest {
     bundle.setVersionNumber(1);
     bundle.setAttestationSchemaVersion("1");
     bundle.setPublishWorkflowId("workflow-" + versionId);
-    bundle.setManifestHash("sha256:initial-test-value");
+    bundle.setManifestHash(MANIFEST_HASH);
+    bundle.setManifestSchemaVersion(1);
+    bundle.setArtifactDigestsJson("[]");
     bundle.setGenerationConfigRevision("generation-1");
     bundle.setRequiredManifestAssetKeysJson("[]");
     bundle.setParticipantDigestsJson("[]");

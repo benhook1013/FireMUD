@@ -21,6 +21,7 @@ import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
+import net.firedevops.firemud.gamedesign.service.AssetExportOutcomePendingException;
 import net.firedevops.firemud.gamedesign.service.AssetExportService;
 import net.firedevops.firemud.gamedesign.service.ControlPlaneDigestService;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
@@ -166,11 +167,33 @@ public class VersionPublishCommandServiceImpl {
     } catch (RuntimeException ex) {
       return failDefinitively(request, attempt, version, null, ex);
     }
+    if (existingPublication.isAbsent()) {
+      try {
+        VersionAssetArtifactStateDto staged =
+            versionAssetArtifactService.stageExport(
+                request.tenantId(), dto.id(), dto.versionNumber(), request.publishWorkflowId());
+        VersionAssetArtifactStateDto stagedReadback =
+            versionAssetArtifactService
+                .findState(request.tenantId(), dto.id())
+                .orElseThrow(() -> pendingReconciliation("asset export intent readback is absent"));
+        if (staged == null || !staged.equals(stagedReadback)) {
+          throw pendingReconciliation("asset export intent readback does not match its commit");
+        }
+        verifyStagedIntent(request, attempt, version, stagedReadback);
+      } catch (RuntimeException ex) {
+        throw pendingReconciliation("asset export intent commit requires exact readback", ex);
+      }
+    }
     ExportedAssetManifest exportedManifest;
     try {
       exportedManifest = assetExportService.exportAssets(request.tenantId(), dto.versionNumber());
+    } catch (AssetExportOutcomePendingException ex) {
+      throw pendingReconciliation(
+          "asset export outcome remains unresolved; retry exact request", ex);
     } catch (RuntimeException ex) {
-      return failDefinitively(request, attempt, version, null, ex);
+      // Export may have committed candidate evidence or earlier immutable objects before failing.
+      // A deterministic later conflict does not prove that every prior write is resolved.
+      throw pendingReconciliation("asset export requires exact candidate/write reconciliation", ex);
     }
 
     PublishWorkflowRequest effectiveRequest = request;
@@ -321,7 +344,7 @@ public class VersionPublishCommandServiceImpl {
         generationConfigRevision,
         participantDigests);
     version.setVersionState(VersionLifecycleState.PUBLISHED);
-    version.setVersionStateEpoch(version.getVersionStateEpoch() + 1L);
+    version.setVersionStateEpoch(Math.addExact(version.getVersionStateEpoch(), 1L));
     version.setUpdatedAt(LocalDateTime.now());
     versionRepository.save(version);
     versionAssetArtifactService.markPublished(
@@ -460,13 +483,24 @@ public class VersionPublishCommandServiceImpl {
             if (current.getStatus() != PublishAttemptStatus.PENDING) {
               throw pendingReconciliation("full-version attempt is no longer pending");
             }
+            Version currentVersion = requireAttemptVersionForUpdate(current, request);
             PublicationReadback readback = readPublication(request, current);
             if (!readback.isAbsent()) {
-              throw pendingReconciliation(
-                  "publication failure has committed or partial release evidence; reconciliation is required");
+              if (!readback.isStagedNoRelease()) {
+                throw pendingReconciliation(
+                    "publication failure has committed or partial release evidence; reconciliation is required");
+              }
+              if (exportedManifest == null
+                  || !Objects.equals(readback.candidate(), exportedManifest)) {
+                throw pendingReconciliation(
+                    "staged asset writes remain unresolved; exact export readback is required");
+              }
             }
-            Version currentVersion = requireAttemptVersion(current, request);
             if (exportedManifest != null) {
+              if (!readback.isStagedNoRelease()) {
+                throw pendingReconciliation(
+                    "exported asset manifest lacks an exact staged intent readback");
+              }
               versionAssetArtifactService.markFailed(
                   request.tenantId(),
                   currentVersion.getId(),
@@ -490,7 +524,8 @@ public class VersionPublishCommandServiceImpl {
           "full-version failure marking commit outcome is unknown; readback/reconciliation is required",
           ambiguousFailure);
     }
-    cleanupExportedAssets(request.tenantId(), version.getVersionNumber(), exportedManifest);
+    // Immutable candidate keys can be shared with another release. Retain them for the owner
+    // abandonment/reachability workflow; a failed publication is never deletion authority.
     return new PublishWorkflowSnapshot(
         attempt.getVersionId(),
         attempt.getVersionNumber(),
@@ -653,7 +688,18 @@ public class VersionPublishCommandServiceImpl {
     if (bundle == null
         && artifact == null
         && version.get().getVersionState() == VersionLifecycleState.DRAFT) {
-      return PublicationReadback.absent();
+      return PublicationReadback.absent(version.get());
+    }
+    if (bundle == null
+        && version.get().getVersionState() == VersionLifecycleState.DRAFT
+        && artifact != null) {
+      try {
+        ExportedAssetManifest candidate =
+            verifyStagedIntent(request, attempt, version.get(), artifact);
+        return PublicationReadback.stagedNoRelease(version.get(), artifact, candidate);
+      } catch (RuntimeException ex) {
+        return PublicationReadback.partial();
+      }
     }
     if (bundle == null || artifact == null) {
       return PublicationReadback.partial();
@@ -669,6 +715,45 @@ public class VersionPublishCommandServiceImpl {
       return PublicationReadback.partial();
     }
     return PublicationReadback.complete(version.get(), bundle, artifact);
+  }
+
+  private ExportedAssetManifest verifyStagedIntent(
+      PublishWorkflowRequest request,
+      PublishAttempt attempt,
+      Version version,
+      VersionAssetArtifactStateDto artifact) {
+    if (!Objects.equals(version.getTenantId(), request.tenantId())
+        || !Objects.equals(version.getId(), attempt.getVersionId())
+        || version.getVersionNumber() != attempt.getVersionNumber()
+        || version.getVersionState() != VersionLifecycleState.DRAFT
+        || version.getVersionStateEpoch() == null
+        || version.getVersionStateEpoch() <= 0
+        || version.isScriptOnly()
+        || !Objects.equals(artifact.tenantId(), request.tenantId())
+        || !Objects.equals(artifact.versionId(), attempt.getVersionId())
+        || artifact.exportedVersionNumber() != attempt.getVersionNumber()
+        || !"STAGED".equals(artifact.artifactState())
+        || artifact.stateEpoch() <= 0
+        || !Objects.equals(artifact.lastWorkflowId(), request.publishWorkflowId())) {
+      throw new IllegalStateException("PUBLISH_ATTEMPT_STAGED_ARTIFACT_SCOPE_MISMATCH");
+    }
+
+    ExportedAssetManifest candidate =
+        versionAssetArtifactService.getExportCandidate(request.tenantId(), attempt.getVersionId());
+    if (artifact.manifestHash() == null) {
+      if (!artifact.exportedManifestAssetKeys().isEmpty() || candidate != null) {
+        throw new IllegalStateException("PUBLISH_ATTEMPT_STAGED_CANDIDATE_MISMATCH");
+      }
+      return null;
+    }
+    if (candidate == null
+        || candidate.manifestSchemaVersion() != 1
+        || !Objects.equals(candidate.manifestHash(), artifact.manifestHash())
+        || !Objects.equals(
+            candidate.requiredManifestAssetKeys(), artifact.exportedManifestAssetKeys())) {
+      throw new IllegalStateException("PUBLISH_ATTEMPT_STAGED_CANDIDATE_MISMATCH");
+    }
+    return candidate;
   }
 
   private void requireExactBundleEvidence(
@@ -701,6 +786,22 @@ public class VersionPublishCommandServiceImpl {
       PublishAttempt attempt,
       PublishedReleaseBundleDto bundle,
       VersionAssetArtifactStateDto artifact) {
+    // Retained terminal history is not backfilled into a complete asset attestation. For a new
+    // proof-bearing bundle, recovery must compare every original artifact/schema field too.
+    if (bundle.manifestSchemaVersion() != null) {
+      ExportedAssetManifest expected =
+          new ExportedAssetManifest(
+              bundle.manifestHash(),
+              bundle.manifestSchemaVersion(),
+              bundle.requiredManifestAssetKeys(),
+              bundle.artifactDigests());
+      if (!Objects.equals(
+          expected,
+          versionAssetArtifactService.getExportCandidate(
+              request.tenantId(), attempt.getVersionId()))) {
+        throw new IllegalStateException("PUBLISH_ATTEMPT_ARTIFACT_SCOPE_MISMATCH");
+      }
+    }
     if (!Objects.equals(artifact.tenantId(), request.tenantId())
         || !Objects.equals(artifact.versionId(), attempt.getVersionId())
         || artifact.exportedVersionNumber() != attempt.getVersionNumber()
@@ -751,18 +852,25 @@ public class VersionPublishCommandServiceImpl {
       ReadbackState state,
       Version version,
       PublishedReleaseBundleDto bundle,
-      VersionAssetArtifactStateDto artifact) {
-    private static PublicationReadback absent() {
-      return new PublicationReadback(ReadbackState.ABSENT, null, null, null);
+      VersionAssetArtifactStateDto artifact,
+      ExportedAssetManifest candidate) {
+    private static PublicationReadback absent(Version version) {
+      return new PublicationReadback(ReadbackState.ABSENT, version, null, null, null);
     }
 
     private static PublicationReadback partial() {
-      return new PublicationReadback(ReadbackState.PARTIAL, null, null, null);
+      return new PublicationReadback(ReadbackState.PARTIAL, null, null, null, null);
+    }
+
+    private static PublicationReadback stagedNoRelease(
+        Version version, VersionAssetArtifactStateDto artifact, ExportedAssetManifest candidate) {
+      return new PublicationReadback(
+          ReadbackState.STAGED_NO_RELEASE, version, null, artifact, candidate);
     }
 
     private static PublicationReadback complete(
         Version version, PublishedReleaseBundleDto bundle, VersionAssetArtifactStateDto artifact) {
-      return new PublicationReadback(ReadbackState.COMPLETE, version, bundle, artifact);
+      return new PublicationReadback(ReadbackState.COMPLETE, version, bundle, artifact, null);
     }
 
     private boolean isAbsent() {
@@ -773,6 +881,10 @@ public class VersionPublishCommandServiceImpl {
       return state == ReadbackState.PARTIAL;
     }
 
+    private boolean isStagedNoRelease() {
+      return state == ReadbackState.STAGED_NO_RELEASE;
+    }
+
     private boolean isComplete() {
       return state == ReadbackState.COMPLETE;
     }
@@ -780,6 +892,7 @@ public class VersionPublishCommandServiceImpl {
 
   private enum ReadbackState {
     ABSENT,
+    STAGED_NO_RELEASE,
     PARTIAL,
     COMPLETE
   }
@@ -840,23 +953,6 @@ public class VersionPublishCommandServiceImpl {
         (failureMessage == null || failureMessage.isBlank())
             ? emptyIfNull(failureCode)
             : failureMessage);
-  }
-
-  private void cleanupExportedAssets(
-      String tenantId, int versionNumber, ExportedAssetManifest exportedManifest) {
-    if (exportedManifest == null) {
-      return;
-    }
-    try {
-      assetExportService.deleteExportedAssets(
-          tenantId, versionNumber, exportedManifest.requiredManifestAssetKeys());
-    } catch (RuntimeException cleanupEx) {
-      logger.warn(
-          "Failed cleanup of exported assets for tenant {} version {} after publish failure: {}",
-          tenantId,
-          versionNumber,
-          cleanupEx.getMessage());
-    }
   }
 
   private Version requireTenantVersion(String tenantId, long versionId) {

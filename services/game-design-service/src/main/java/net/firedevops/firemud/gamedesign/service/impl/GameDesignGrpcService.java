@@ -763,6 +763,26 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       if (bundle.publishedReleaseBundleRef() != null) {
         bundleBuilder.setPublishedReleaseBundleRef(bundle.publishedReleaseBundleRef());
       }
+      if (bundle.manifestSchemaVersion() != null) {
+        if (bundle.manifestSchemaVersion() != 1 || bundle.artifactDigests() == null) {
+          throw new IllegalStateException(
+              "SCHEMA_VERSION_UNSUPPORTED: manifest evidence is not readable");
+        }
+        bundleBuilder.setManifestSchemaVersion(bundle.manifestSchemaVersion());
+        bundleBuilder.addAllArtifactDigests(
+            bundle.artifactDigests().stream()
+                .map(
+                    proof ->
+                        net.firedevops.firemud.gamedesign.v1.PublishedArtifactDigest.newBuilder()
+                            .setUsageKey(proof.usageKey())
+                            .setArtifactKind(proof.artifactKind())
+                            .setImmutableObjectKey(proof.immutableObjectKey())
+                            .setContentDigest(proof.contentDigest())
+                            .setContentType(proof.contentType())
+                            .setArtifactSchemaVersion(proof.artifactSchemaVersion())
+                            .build())
+                .toList());
+      }
       builder.setBundle(bundleBuilder.build());
     } catch (AdminAuthorizationException ex) {
       builder.setError(

@@ -6,12 +6,34 @@ on:
       - '.github/workflows/build-trusted-minio-source-images.yml'
       - 'docker/minio/**'
       - 'dev-tools/minio/**'
+      - 'services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/config/AssetStoreProperties.java'
+      - 'services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/repository/VersionAssetPublicationRepository.java'
+      - 'services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/service/AssetExportOutcomePendingException.java'
+      - 'services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/service/AssetExportService.java'
+      - 'services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/service/ExportedAssetManifest.java'
+      - 'services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/service/PublishedArtifactDigest.java'
+      - 'services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/service/VersionAssetExportCandidateService.java'
+      - 'services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/service/VersionAssetPublicationService.java'
+      - 'services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/service/impl/AssetExportServiceImpl.java'
+      - 'services/game-design-service/src/test/java/net/firedevops/firemud/gamedesign/service/AssetExportServiceImplTest.java'
+      - 'services/game-design-service/src/test/java/net/firedevops/firemud/gamedesign/service/AssetExportServiceMinioIntegrationTest.java'
   push:
     branches: [develop]
     paths:
       - '.github/workflows/build-trusted-minio-source-images.yml'
       - 'docker/minio/**'
       - 'dev-tools/minio/**'
+      - 'services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/config/AssetStoreProperties.java'
+      - 'services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/repository/VersionAssetPublicationRepository.java'
+      - 'services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/service/AssetExportOutcomePendingException.java'
+      - 'services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/service/AssetExportService.java'
+      - 'services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/service/ExportedAssetManifest.java'
+      - 'services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/service/PublishedArtifactDigest.java'
+      - 'services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/service/VersionAssetExportCandidateService.java'
+      - 'services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/service/VersionAssetPublicationService.java'
+      - 'services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/service/impl/AssetExportServiceImpl.java'
+      - 'services/game-design-service/src/test/java/net/firedevops/firemud/gamedesign/service/AssetExportServiceImplTest.java'
+      - 'services/game-design-service/src/test/java/net/firedevops/firemud/gamedesign/service/AssetExportServiceMinioIntegrationTest.java'
 
 permissions:
   contents: read
@@ -52,14 +74,16 @@ jobs:
             changed_paths="$(git diff --name-only "$BASE_SHA...$HEAD_SHA")"
             has_source_change=false
             has_workflow_change=false
+            has_asset_export_change=false
             while IFS= read -r path; do
               case "$path" in
                 docker/minio/*|dev-tools/minio/*) has_source_change=true ;;
                 .github/workflows/build-trusted-minio-source-images.yml) has_workflow_change=true ;;
+                services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/config/AssetStoreProperties.java|services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/repository/VersionAssetPublicationRepository.java|services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/service/AssetExportOutcomePendingException.java|services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/service/AssetExportService.java|services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/service/ExportedAssetManifest.java|services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/service/PublishedArtifactDigest.java|services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/service/VersionAssetExportCandidateService.java|services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/service/VersionAssetPublicationService.java|services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/service/impl/AssetExportServiceImpl.java|services/game-design-service/src/test/java/net/firedevops/firemud/gamedesign/service/AssetExportServiceImplTest.java|services/game-design-service/src/test/java/net/firedevops/firemud/gamedesign/service/AssetExportServiceMinioIntegrationTest.java) has_asset_export_change=true ;;
               esac
             done <<< "$changed_paths"
 
-            if [[ "$has_source_change" == true && "$has_workflow_change" == false ]]; then
+            if [[ "$has_source_change" == true && "$has_workflow_change" == false && "$has_asset_export_change" == false ]]; then
               should_build=false
             fi
           fi
@@ -86,7 +110,21 @@ jobs:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+
+      - name: Set up Java
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: 'temurin'
+          java-version: '25'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
+        with:
+          build-scan-publish: true
+          build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
+          build-scan-terms-of-use-agree: 'yes'
 
       - name: Set up canonical Python
         uses: ./.github/actions/setup-python
@@ -96,6 +134,67 @@ jobs:
         env:
           EXPORT_TRUSTED_MINIO_IMAGE_ARTIFACT: ${{ github.event_name == 'push' && 'true' || 'false' }}
         run: bash ./dev-tools/minio/build-and-smoke-images.sh "$SERVER_IMAGE" "$CLIENT_IMAGE"
+
+      - name: Prove Game Design asset export against source-built MinIO
+        env:
+          MINIO_ASSET_EXPORT_ACCESS_KEY: smoke-access-key
+          MINIO_ASSET_EXPORT_SECRET_KEY: smoke-secret-key-123456789
+        run: |
+          set -euo pipefail
+          container_name="minio-asset-export-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          container_created=false
+          cleanup() {
+            if [[ "$container_created" == true ]]; then
+              docker rm --force "$container_name" >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup EXIT
+
+          docker run --detach --name "$container_name" \
+            --publish 127.0.0.1::9000/tcp \
+            --env MINIO_ROOT_USER="$MINIO_ASSET_EXPORT_ACCESS_KEY" \
+            --env MINIO_ROOT_PASSWORD="$MINIO_ASSET_EXPORT_SECRET_KEY" \
+            "$SERVER_IMAGE" >/dev/null
+          container_created=true
+
+          ready=false
+          attempt=0
+          while ((attempt < 30)); do
+            attempt=$((attempt + 1))
+            if docker exec "$container_name" busybox wget -q -T 2 -O /dev/null \
+              http://127.0.0.1:9000/minio/health/live; then
+              ready=true
+              break
+            fi
+            sleep 2
+          done
+          if [[ "$ready" != true ]]; then
+            docker logs "$container_name" >&2 || true
+            echo "Source-built MinIO provider for the Game Design proof did not become healthy." >&2
+            exit 1
+          fi
+
+          published_port="$(docker port "$container_name" 9000/tcp | sed 's/.*://')"
+          [[ "$published_port" =~ ^[0-9]+$ ]]
+          export MINIO_ASSET_EXPORT_ENDPOINT="http://127.0.0.1:$published_port"
+          test -n "$MINIO_ASSET_EXPORT_ACCESS_KEY"
+          test -n "$MINIO_ASSET_EXPORT_SECRET_KEY"
+          ./gradlew :game-design-service:test --rerun-tasks \
+            --tests 'net.firedevops.firemud.gamedesign.service.AssetExportServiceMinioIntegrationTest'
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite net.firedevops.firemud.gamedesign.service.AssetExportServiceMinioIntegrationTest \
+            --require-case 'net.firedevops.firemud.gamedesign.service.AssetExportServiceMinioIntegrationTest#publishesConditionallyReadsBackExactBytesAndRecoversCommittedPutAgainstMinio()' \
+            game-design-service
+
+      - name: Upload Game Design MinIO proof XML
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: game-design-minio-provider-proof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: services/game-design-service/build/test-results/test/*AssetExportServiceMinioIntegrationTest*.xml
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Upload exact smoke-tested image artifact
         if: github.event_name == 'push'

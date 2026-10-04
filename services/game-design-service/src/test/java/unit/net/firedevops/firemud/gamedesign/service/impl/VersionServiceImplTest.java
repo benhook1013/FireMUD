@@ -74,6 +74,7 @@ import org.springframework.data.domain.Pageable;
 
 class VersionServiceImplTest {
   private static final String PUBLISH_REQUEST_ID = "publish-request-1";
+  private static final String MANIFEST_HASH = "sha256:" + "a".repeat(64);
 
   @Mock private VersionRepository versionRepository;
   @Mock private GameRepository gameRepository;
@@ -1790,8 +1791,8 @@ class VersionServiceImplTest {
         7,
         "v1",
         "workflow-1",
-        "manifest-1",
-        List.of("manifest.json"),
+        MANIFEST_HASH,
+        List.of(),
         List.of(
             new PublishParticipantDigestDto(
                 "AUTOMATION_SCRIPTING",
@@ -1807,7 +1808,9 @@ class VersionServiceImplTest {
         LocalDateTime.parse("2026-04-26T10:00:00"),
         UUID.fromString("67d7b75b-42d1-4ac6-9572-684c5e633cda"),
         UUID.fromString("c472ebd1-56d8-49df-b8fa-85963dd940f8"),
-        "opaque-owner-issued-release-reference");
+        "opaque-owner-issued-release-reference",
+        1,
+        List.of());
   }
 
   private PublishedPluginVersion uploadedPluginVersion(

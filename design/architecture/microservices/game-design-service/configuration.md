@@ -2,7 +2,7 @@
 
 ## Implementation Status
 
-The target configuration separates the private authenticated S3 API (`ASSET_STORE_ENDPOINT`) from the gateway/CDN `/assets/**` delivery base (`ASSET_STORE_PUBLIC_BASE_URL`). The current first slice uses one `ASSET_STORE_ENDPOINT` for both S3 operations and generated manifest URLs; `ASSET_STORE_PUBLIC_BASE_URL` is not implemented or bound, so public delivery remains unavailable. The environment-variable table below remains the canonical configuration contract.
+The service binds the private authenticated S3 API and public `/assets/**` base from separate environment variables. It never derives a public URL from the private endpoint, and an explicitly configured base does not establish an approved or provisioned public delivery origin. The delivery authority and activation gates remain owned by [Asset Storage](./asset-storage.md#target-external-delivery-classification).
 
 ## Environment Variables
 
@@ -28,10 +28,9 @@ Published assets are uploaded to an S3-compatible bucket. Configure the client w
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
-| `ASSET_STORE_ENDPOINT` | Private authenticated S3-compatible API used by Game Design reads and writes | *(none)* |
-| `ASSET_STORE_PUBLIC_BASE_URL` | Gateway/CDN `/assets/**` base used for generated manifest links (target-only) | *(none)* |
-| `ASSET_STORE_BUCKET` | Bucket used for published assets | *(none)* |
+| `ASSET_STORE_ENDPOINT` | Private authenticated S3-compatible API used by Game Design reads and writes | *(unset)* |
+| `ASSET_STORE_PUBLIC_BASE_URL` | Separately configured `/assets` base used for generated manifest links; never defaults from the private endpoint | *(unset)* |
+| `ASSET_STORE_BUCKET` | Bucket used for published assets | *(unset)* |
 | `ASSET_STORE_REGION` | Region name for the S3 client | `ap-southeast-2` |
-| `ASSET_STORE_ACCESS_KEY` | Access key for the bucket | *(none)* |
-| `ASSET_STORE_SECRET_KEY` | Secret key for the bucket | *(none)* |
-| `ASSET_STORE_FROZEN_SNAPSHOT_CACHE_MAX_ENTRIES` | Maximum process-local frozen export snapshots retained; a new uncached scope fails closed at capacity rather than evicting retry evidence | `256` |
+| `ASSET_STORE_ACCESS_KEY` | Access key for the bucket | *(unset)* |
+| `ASSET_STORE_SECRET_KEY` | Secret key for the bucket | *(unset)* |

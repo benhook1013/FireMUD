@@ -67,6 +67,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 class PublishAttemptServiceTransactionIntegrationTest {
   private static final String TENANT_ID = "9001";
   private static final String WORKFLOW_ID = "full-version-transaction-integration-test";
+  private static final String TRANSACTION_MANIFEST_HASH = "sha256:" + "a".repeat(64);
+  private static final String FINALIZATION_MANIFEST_HASH = "sha256:" + "b".repeat(64);
 
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
@@ -84,6 +86,8 @@ class PublishAttemptServiceTransactionIntegrationTest {
   @Autowired private PublishedReleaseBundleRepository publishedReleaseBundleRepository;
   @Autowired private VersionAssetArtifactRepository versionAssetArtifactRepository;
   @Autowired private VersionRepository versionRepository;
+  @Autowired private VersionAssetExportCandidateService versionAssetExportCandidateService;
+  @Autowired private VersionAssetPublicationService versionAssetPublicationService;
   @Autowired private VersionTemplateRemapSetRepository templateRemapSetRepository;
   @Autowired private DSLContext dsl;
   @MockitoBean private AssetExportService assetExportService;
@@ -127,9 +131,11 @@ class PublishAttemptServiceTransactionIntegrationTest {
                       bundle.setVersionNumber(persistedVersion.getVersionNumber());
                       bundle.setAttestationSchemaVersion("v1");
                       bundle.setPublishWorkflowId(WORKFLOW_ID);
-                      bundle.setManifestHash("transaction-proof-manifest");
+                      bundle.setManifestHash(TRANSACTION_MANIFEST_HASH);
+                      bundle.setManifestSchemaVersion(1);
                       bundle.setGenerationConfigRevision("transaction-proof-generation");
                       bundle.setRequiredManifestAssetKeysJson("[]");
+                      bundle.setArtifactDigestsJson("[]");
                       bundle.setParticipantDigestsJson("[]");
                       bundle.setCommandDefinitionsJson("[]");
                       publishedReleaseBundleRepository.save(bundle);
@@ -141,6 +147,9 @@ class PublishAttemptServiceTransactionIntegrationTest {
                       artifact.setArtifactState(VersionAssetArtifactState.PUBLISHED);
                       artifact.setStateEpoch(2L);
                       artifact.setManifestHash(bundle.getManifestHash());
+                      // This manually inserted row proves transaction rollback, not export.
+                      // No durable source snapshot exists in this fixture, so candidate proof
+                      // remains explicitly absent rather than bypassing its required FK.
                       artifact.setLastWorkflowId(WORKFLOW_ID);
                       artifact.setExportedManifestAssetKeysJson("[]");
                       versionAssetArtifactRepository.save(artifact);
@@ -248,8 +257,15 @@ class PublishAttemptServiceTransactionIntegrationTest {
                       null));
             });
     Mockito.when(assetExportService.exportAssets(tenantId, 1))
-        .thenReturn(
-            new ExportedAssetManifest("transaction-proof-manifest", List.of("manifest.json")));
+        .thenAnswer(
+            invocation -> {
+              int versionNumber = invocation.getArgument(1);
+              versionAssetPublicationService.freezeOrReadSnapshot(tenantId, versionNumber);
+              return versionAssetExportCandidateService.recordExportCandidate(
+                  tenantId,
+                  versionNumber,
+                  new ExportedAssetManifest(FINALIZATION_MANIFEST_HASH, 1, List.of(), List.of()));
+            });
 
     VersionDto publishedVersion =
         versionPublishCommandService.publishFullVersion(
@@ -272,7 +288,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
     assertThat(attempt.getVersionId()).isEqualTo(publishedVersion.id());
     assertThat(storedVersion.getVersionState()).isEqualTo(VersionLifecycleState.PUBLISHED);
     assertThat(bundle.getPublishWorkflowId()).isEqualTo(publishWorkflowId);
-    assertThat(bundle.getManifestHash()).isEqualTo("transaction-proof-manifest");
+    assertThat(bundle.getManifestHash()).isEqualTo(FINALIZATION_MANIFEST_HASH);
     assertThat(bundle.getPublishedReleaseBundleRef()).isNotBlank();
     assertThat(bundle.getPublishedReleaseBundleRef())
         .isNotEqualTo(
@@ -318,7 +334,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
                 .findByTenantIdAndVersionId(tenantId, publishedVersion.id())
                 .orElseThrow()
                 .getManifestHash())
-        .isEqualTo("transaction-proof-manifest");
+        .isEqualTo(FINALIZATION_MANIFEST_HASH);
     assertThat(artifact.getArtifactState()).isEqualTo(VersionAssetArtifactState.PUBLISHED);
   }
 
@@ -388,12 +404,17 @@ class PublishAttemptServiceTransactionIntegrationTest {
         .assertMatchesRecordedDigests(
             Mockito.eq(tenantId), Mockito.eq(PublishType.FULL_VERSION), Mockito.anyList());
     ExportedAssetManifest exportedManifest =
-        new ExportedAssetManifest("post-export-finalization-manifest", List.of("manifest.json"));
+        new ExportedAssetManifest(FINALIZATION_MANIFEST_HASH, 1, List.of(), List.of());
     Mockito.when(assetExportService.exportAssets(Mockito.eq(tenantId), Mockito.anyInt()))
         .thenAnswer(
             invocation -> {
               exportedVersionNumber.set(invocation.getArgument(1));
               try {
+                versionAssetPublicationService.freezeOrReadSnapshot(
+                    tenantId, exportedVersionNumber.get());
+                ExportedAssetManifest recordedManifest =
+                    versionAssetExportCandidateService.recordExportCandidate(
+                        tenantId, exportedVersionNumber.get(), exportedManifest);
                 VersionTemplateRemapSet approvedRemapSet = new VersionTemplateRemapSet();
                 approvedRemapSet.setRemapSetId("failed-candidate-approved-remap");
                 approvedRemapSet.setTenantId(tenantId);
@@ -407,7 +428,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
                 templateRemapSetRepository.save(approvedRemapSet);
                 remapSetId.set(approvedRemapSet.getRemapSetId());
                 exportCompleted.set(true);
-                return exportedManifest;
+                return recordedManifest;
               } catch (Throwable failure) {
                 exportCallbackFailure.set(failure);
                 throw failure;
@@ -478,6 +499,13 @@ class PublishAttemptServiceTransactionIntegrationTest {
             .findByTenantIdAndVersionId(tenantId, candidateVersionId.get())
             .orElseThrow();
     assertThat(failedArtifact.getArtifactState()).isEqualTo(VersionAssetArtifactState.FAILED);
+    assertThat(failedArtifact.getStateEpoch()).isEqualTo(3L);
+    assertThat(failedArtifact.getManifestHash()).isEqualTo(FINALIZATION_MANIFEST_HASH);
+    assertThat(failedArtifact.getManifestSchemaVersion()).isEqualTo(1);
+    assertThat(failedArtifact.getArtifactDigestsJson()).isEqualTo("[]");
+    assertThat(failedArtifact.getCandidateSnapshotVersionId()).isEqualTo(candidateVersionId.get());
+    assertThat(failedArtifact.getPublishedObjectProofsJson())
+        .contains("manifests/sha256/", FINALIZATION_MANIFEST_HASH);
     VersionTemplateRemapSet retainedRemapSet =
         templateRemapSetRepository
             .findByTenantIdAndRemapSetId(tenantId, remapSetId.get())
