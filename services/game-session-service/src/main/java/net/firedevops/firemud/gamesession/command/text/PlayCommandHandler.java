@@ -942,8 +942,7 @@ public class PlayCommandHandler {
             selectedRealm.slug(),
             selectedRealm.pointerVersion(),
             selectedRealm.gameInstanceId(),
-            requestedCharacterId,
-            tenantTag,
+            Long.toString(selectedRealm.tenantId()),
             "join_required");
         return Optional.of(
             failure(
@@ -1002,8 +1001,7 @@ public class PlayCommandHandler {
         selectedRealm.slug(),
         selectedRealm.pointerVersion(),
         selectedRealm.gameInstanceId(),
-        requestedCharacterId,
-        tenantTag,
+        Long.toString(selectedRealm.tenantId()),
         "access_denied");
     return failure(
         GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE,
@@ -1034,8 +1032,7 @@ public class PlayCommandHandler {
         selectedRealm.slug(),
         selectedRealm.pointerVersion(),
         selectedRealm.gameInstanceId(),
-        requestedCharacterId,
-        tenantTag,
+        Long.toString(selectedRealm.tenantId()),
         "public_admission_denied");
     return failure(
         PUBLIC_PRODUCTION_ADMISSION_DENIED_CODE,
@@ -1100,8 +1097,7 @@ public class PlayCommandHandler {
         selectedRealm.slug(),
         selectedRealm.pointerVersion(),
         selectedRealm.gameInstanceId(),
-        requestedCharacterId,
-        tenantTag,
+        Long.toString(selectedRealm.tenantId()),
         "tenant_unavailable");
     return failure(
         GameplayStageCommandConstants.TENANT_BILLING_BLOCKED_CODE,
@@ -1212,14 +1208,6 @@ public class PlayCommandHandler {
       GetTenantEntitlementsForRuntimeResponse response, GameplayWorldCatalog.RealmView realm) {
     return AccountAuthorityEvidence.isValidEntitlement(
         response, realm.tenantId(), authorityEvaluationClock);
-  }
-
-  private boolean hasMatchingTenantId(String tenantId, long expectedTenantId) {
-    try {
-      return Long.parseLong(tenantId) == expectedTenantId;
-    } catch (NumberFormatException ex) {
-      return false;
-    }
   }
 
   private boolean maybeRecordFreshEntryFallback(
@@ -1484,30 +1472,16 @@ public class PlayCommandHandler {
       String requestedRealmSlug,
       long requestedPointerVersion,
       long requestedGameInstanceId,
-      long requestedCharacterId,
-      String tenantTag,
+      String selectedTenantTag,
       String reason) {
-    boolean selectedTenantMatchesContext =
+    boolean sameRuntimeTarget =
         requestedTenantId > 0L
             && context.tenantId() > 0L
             && requestedTenantId == context.tenantId()
-            && hasMatchingTenantId(tenantTag, context.tenantId());
-    boolean sameRuntimeTarget =
-        selectedTenantMatchesContext
             && requestedGameInstanceId > 0L
             && context.gameInstanceId() > 0L
             && context.gameInstanceId() == requestedGameInstanceId;
-    boolean sameGameplayIdentity =
-        sameRuntimeTarget
-            && context.accountId() > 0L
-            && context.characterId() > 0L
-            && requestedCharacterId > 0
-            && context.characterId() == requestedCharacterId;
-    boolean sameVisibleRealm =
-        sameRuntimeTarget
-            && sameSlug(context.worldSlug(), requestedWorldSlug)
-            && sameSlug(context.realmSlug(), requestedRealmSlug);
-    if (!sameGameplayIdentity && !sameVisibleRealm && !sameRuntimeTarget) {
+    if (!sameRuntimeTarget) {
       return;
     }
     meterRegistry.counter(RESUME_DENIED_METRIC, "reason", reason).increment();
@@ -1533,7 +1507,7 @@ public class PlayCommandHandler {
             context.connectRequestId()));
     LOG.debug(
         "Cleared stale gameplay binding after denied reconnect-style PLAY for tenant {} session {} world {} realm {} reason {}",
-        tenantTag,
+        selectedTenantTag,
         context.sessionId(),
         requestedWorldSlug,
         requestedRealmSlug,

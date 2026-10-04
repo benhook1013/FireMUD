@@ -889,7 +889,7 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void joinPublicProductionRejectsLateAmbiguousPublicRealmBeforeMembershipCommit() {
+  void joinPublicProductionRejectsPreexistingAmbiguousPublicRealmBeforeMembershipCommit() {
     Account account = new Account();
     account.setId(11L);
     account.setUsername("demo");

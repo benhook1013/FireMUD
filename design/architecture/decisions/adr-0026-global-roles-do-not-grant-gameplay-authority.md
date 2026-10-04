@@ -22,7 +22,7 @@ The accepted separation of global control-plane roles from gameplay authority is
 
 ## Context
 
-FireMUD has global `platformAdmin`, `support`, and `billingAdmin` roles for cross-tenant control-plane work. Those roles express platform operating responsibility, not tenant consent, player identity, or in-world authority. Existing target-state admission rules already prevent global roles from bypassing caller-bound gameplay membership, but current runtime presence classification can still translate a global `platformAdmin` role into an in-game `ADMIN` actor after the account joins normally. That leaks control-plane privilege into gameplay and weakens tenant autonomy.
+FireMUD has global `platformAdmin`, `support`, and `billingAdmin` roles for cross-tenant control-plane work. Those roles express platform operating responsibility, not tenant consent, player identity, or in-world authority. Existing target-state admission rules prevent global roles from bypassing caller-bound gameplay membership. A past Game Session presence classifier could translate a global `platformAdmin` role into an in-game `ADMIN` actor after the account joined normally; the current classifier ignores global roles. Account-backed admission remains fail-closed while typed runtime reads and tenant-scoped grant evidence are unavailable, so this correction does not establish completed gameplay admission. The former behavior leaked control-plane privilege into gameplay and weakened tenant autonomy.
 
 Support impersonation or hidden live observation could make some investigations more convenient, but neither has a current product requirement. Both would create a privileged path into private player state, conversations, and tenant experiences that would require substantial privacy, audit, notification, and abuse controls.
 
@@ -47,7 +47,7 @@ Support impersonation or hidden live observation could make some investigations 
 - Tenant gameplay authority remains explicit and cannot be inherited accidentally from platform employment or operating access.
 - Global staff can reproduce ordinary player behavior by joining a public game normally, but they receive no special in-world access unless the tenant explicitly grants it.
 - Support investigations cannot inspect private live gameplay by impersonating a player or attaching invisibly. They depend on purpose-built diagnostics and control-plane evidence.
-- Current global-role-to-presence elevation and its tests are implementation drift that must be removed.
+- Past global-role-to-presence elevation and its tests were implementation drift. The current classifier ignores global roles; Account-backed admission remains fail-closed pending typed runtime reads and tenant-scoped grant evidence.
 - Operational emergency actions remain possible, but their APIs and audit records remain visibly separate from player action processing.
 
 ## Alternatives Considered

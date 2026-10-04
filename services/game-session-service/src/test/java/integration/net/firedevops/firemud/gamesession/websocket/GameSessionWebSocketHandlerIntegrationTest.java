@@ -184,6 +184,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
     redisSetStore.clear();
     sessionContextService.deleteBySessionId(22L, 41L);
     sessionContextService.deleteBySessionId(22L, 42L);
+    sessionContextService.deleteBySessionId(22L, 43L);
+    sessionContextService.deleteBySessionId(22L, 44L);
     sessionContextService.deleteBySessionId(22L, 1L);
     sessionContextService.deleteBySessionId(22L, 2L);
     sessionContextService.deleteBySessionId(23L, 41L);

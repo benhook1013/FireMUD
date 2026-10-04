@@ -37,6 +37,18 @@ The sections below define the target-state runtime contract. Current implementat
 - Current live/recent presence projection wiring is implementation drift: `gameplaypresence:session:<sessionId>`, its game-instance/account set indexes, and `accountrecentpresence:<tenantId>:<accountId>` are written with untagged, separate Redis value/index operations. Game Session remains the target owner, but the physical shapes, storage-role classification, exact scope, partial-write handling, reset/rebuild/readback behavior, and private-by-failure contract are unproved; the [Redis owner and reset catalog](../../system-architecture-redis-reset-and-recovery.md#reset-policy-matrix-prefix-summary) records these current families without accepting them as target authority.
 - Current LOOK handling writes the legacy `lookcache:<tenantId>:<legacySessionOrInstanceId>` projection even though reads remain authoritative/uncached. Its ten-minute, session-or-instance-only scope lacks the target viewer, policy, and causal read-fence identity; it is disposable implementation drift and must not be treated as the target `view:room-look:*` cache. See the [Redis cache catalog](../../system-architecture-redis-cache-reference.md#cache-rate-limit-key-catalog).
 - The former Java/nontransactional `V8__remote_followup_target_instance_effect_identity` migration has been removed from the source chain. Its remote-followup target-instance/effect identity and gameplay-command recovery-index DDL are now direct SQL in Game Session's `V1__baseline.sql`, matching the canonical SQL-only migration input for shared jOOQ generation. This source convergence does not establish retained database history or data state; databases that may retain the former Java V8 application or pre-convergence child cardinality/index versions require exact deployed Flyway-history and data readback plus owner disposition before activation.
+- Before activating against retained `gameplay_admission_pointer` data, run this read-only cardinality check for visible public-production realms:
+
+  ```sql
+  SELECT tenant_id, COUNT(*) AS visible_public_production_realm_count
+  FROM gameplay_admission_pointer
+  WHERE visible AND public_production_realm
+  GROUP BY tenant_id
+  HAVING COUNT(*) > 1
+  ORDER BY tenant_id;
+  ```
+
+  Any returned tenant blocks activation until an operator completes exact data readback and owner disposition. Do not automatically update or delete rows; the V12 constraint fails closed on duplicates.
 
 ## Runtime Details
 
