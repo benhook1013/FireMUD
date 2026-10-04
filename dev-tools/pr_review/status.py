@@ -1147,14 +1147,19 @@ def build_report(
         reasons.append("BLOCKED — cause not exposed by available API")
     verdict = "BLOCKED — cause not exposed by available API" if blocked_unknown else ("READY" if not reasons else "NOT READY")
     unresolved_threads = threads.pop("_items", [])
-    optional_failed = [item for item in failed if item["name"] not in {item["context"] for item in required.get("contexts", [])}]
-    optional_pending = [item for item in pending if item["name"] not in {item["context"] for item in required.get("contexts", [])}]
+    optional_available = required["available"]
+    required_names = {item["context"] for item in required.get("contexts", [])}
+    optional_failed = [item for item in failed if item["name"] not in required_names] if optional_available else []
+    optional_pending = [item for item in pending if item["name"] not in required_names] if optional_available else []
     ci = {
         "observed": observed,
         "pending": pending,
         "failed": failed,
-        "optional": {"pending": optional_pending, "failed": optional_failed},
+        "optional": {"available": optional_available, "pending": optional_pending, "failed": optional_failed},
         "aggregate": aggregate,
+        "aggregate_inventory_conflict": bool(
+            inventory.get("available") and aggregate["state"] == "SUCCESS" and (failed or pending)
+        ),
         "inventory": inventory.get("inventory", []),
         "required": required,
     }
@@ -1237,6 +1242,10 @@ def emit_text(report: Mapping[str, Any]) -> str:
     ) or "none"
     pending_names = ", ".join(item["name"] for item in report["ci"]["pending"]) or "none"
     failed_names = ", ".join(item["name"] for item in report["ci"]["failed"]) or "none"
+    aggregate = report["ci"]["aggregate"]
+    aggregate_label = "GitHub statusCheckRollup" if aggregate.get("source") == "github" else "rollup"
+    optional = report["ci"]["optional"]
+    optional_failed = str(len(optional["failed"])) if optional.get("available", True) else "unknown"
     finding_counts = report["checkpoint_counts"]["by_type"]
     def count_triplet(kind: str) -> str:
         value = finding_counts[kind]
@@ -1251,11 +1260,13 @@ def emit_text(report: Mapping[str, Any]) -> str:
         f"routes: incoming-open={len(report.get('incoming_routes', []))} · source-history={len(report.get('routes_out', []))}",
         f"review: decision={report['review_decision']['status']} · required={required.get('status')} ({required_contexts})",
         f"findings found/accepted/routed: Hosted {count_triplet('Hosted')} · CLI {count_triplet('CLI')}",
-        f"CI: aggregate={report['ci']['aggregate']['state']} · pending={len(report['ci']['pending'])} · failed={len(report['ci']['failed'])} · optional_failed={len(report['ci']['optional']['failed'])} · observed={report['ci']['observed']}",
-        f"pending checks: {pending_names}",
-        f"failed checks: {failed_names}",
+        f"CI: {aggregate_label}={aggregate['state']} · inventory_pending={len(report['ci']['pending'])} · inventory_failed={len(report['ci']['failed'])} · optional_failed={optional_failed} · observed={report['ci']['observed']}",
+        f"pending inventory checks: {pending_names}",
+        f"failed inventory checks: {failed_names}",
         f"verdict: {report['verdict']}",
     ]
+    if report["ci"].get("aggregate_inventory_conflict"):
+        lines.append("CI evidence conflict: SUCCESS rollup coexists with failed or pending inventory checks")
     for route in report.get("incoming_routes", []):
         source = f"PR #{route['source_pr']} {route['source_channel']} {route['source_review']} finding {route['source_finding']}"
         observations = route.get("observations") or []

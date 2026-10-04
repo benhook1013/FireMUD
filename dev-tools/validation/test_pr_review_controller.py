@@ -6030,6 +6030,45 @@ class ControllerTests(unittest.TestCase):
         controller.github.batch_pull_requests = fetch
         return calls
 
+    def test_status_overview_distinguishes_retained_pr_base_from_current_parent(self):
+        values = {1: pr(1, HEAD_1)}
+        evidence = CountingEvidence()
+        controller = self.make(values, evidence, heads={"develop": PARENT})
+        controller.set_stack([1])
+        batch_calls = self._enable_batch_status(controller, values)
+        before = controller.store.load().to_dict()
+
+        report = controller.status_overview()
+        row = report["prs"][0]
+
+        self.assertEqual(row["pr_base_oid"], BASE)
+        self.assertEqual(row["parent_head"], PARENT)
+        self.assertEqual(row["reconciliation"], "PARENT_MOVED")
+        self.assertEqual(row["evidence_status"], "current")
+        self.assertNotIn("between", row["reason"])
+        self.assertEqual(batch_calls, [(1,)])
+        self.assertEqual(controller.store.load().to_dict(), before)
+        for channel in ("hosted", "cli"):
+            self.assertNotEqual(report["review_targets"][channel]["status"], "UNKNOWN")
+        with self.assertRaises(ControllerError):
+            controller.resolve_cli_target()
+
+    def test_status_overview_detects_changed_published_identity_with_stable_parent(self):
+        for field, replacement in (("head", HEAD_2), ("base_tip", PARENT), ("base_ref", "other")):
+            with self.subTest(field=field):
+                values = {1: pr(1, HEAD_1)}
+                controller = self.make(values)
+                controller.set_stack([1])
+                self._enable_batch_status(controller, values, batch_values=dict(values))
+                values[1] = dataclasses.replace(values[1], **{field: replacement})
+
+                report = controller.status_overview()
+
+                self.assertEqual(report["prs"][0]["evidence_status"], "stale")
+                self.assertIn("identity changed between", report["prs"][0]["reason"])
+                for channel in ("hosted", "cli"):
+                    self.assertEqual(report["review_targets"][channel]["status"], "UNKNOWN")
+
     def test_status_overview_retains_prior_closures_when_expanded_deep_read_fails(self):
         values, heads = _stacked_prs(5)
         evidence = CountingEvidence()
@@ -6315,7 +6354,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(report["ordered_prs"], [1, 2, 3])
         self.assertEqual(batch_calls, [tuple(values)])
 
-    def test_status_overview_keeps_split_logical_fronts_when_request_identity_moves(self):
+    def test_status_overview_keeps_split_fronts_with_known_parent_reconciliation(self):
         values, heads = _stacked_prs(3)
         evidence = CountingEvidence()
         controller = self.make(values, evidence, heads=heads, sqlite=True)
@@ -6331,14 +6370,14 @@ class ControllerTests(unittest.TestCase):
 
         report = controller.status_overview()
 
-        self.assertEqual(report["review_targets"]["hosted"]["status"], "UNKNOWN")
-        self.assertIsNone(report["review_targets"]["hosted"]["pr"])
+        self.assertEqual(report["review_targets"]["hosted"]["status"], "PARENT_MOVED")
+        self.assertEqual(report["review_targets"]["hosted"]["pr"], 2)
         self.assertEqual(report["review_fronts"]["hosted"]["pr"], 2)
         self.assertEqual(report["review_fronts"]["cli"]["pr"], 1)
         self.assertEqual(report["review_targets"]["cli"]["pr"], 1)
         rows = {row["pr"]: row for row in report["prs"]}
         self.assertEqual(rows[1]["channels"]["hosted"], "COMPLETE")
-        self.assertEqual(rows[2]["review_progress"]["cli"]["label"], "Progress not checked")
+        self.assertEqual(rows[2]["review_progress"]["cli"]["label"], "Waiting turn")
         self.assertNotIn("waiting_for_pr", rows[2]["review_progress"]["hosted"])
         self.assertNotIn("Reviewing", rows[2]["review_progress"]["hosted"]["label"])
         self.assertEqual(useful, original_evidence)
@@ -6422,7 +6461,7 @@ class ControllerTests(unittest.TestCase):
         report = controller.status_overview()
 
         self.assertEqual(report["prs"][0]["reconciliation"], "COHERENT")
-        self.assertEqual(report["prs"][1]["reconciliation"], "UNRECONCILED")
+        self.assertEqual(report["prs"][1]["reconciliation"], "PARENT_MOVED")
         for channel in ("hosted", "cli"):
             self.assertEqual(report["review_targets"][channel]["pr"], 1)
             self.assertEqual(report["review_targets"][channel]["status"], "READY")
@@ -6438,9 +6477,11 @@ class ControllerTests(unittest.TestCase):
         report = controller.status_overview()
 
         for channel in ("hosted", "cli"):
-            self.assertIsNone(report["review_targets"][channel]["pr"])
-            self.assertEqual(report["review_targets"][channel]["status"], "UNKNOWN")
+            self.assertEqual(report["review_targets"][channel]["pr"], 1)
+            self.assertEqual(report["review_targets"][channel]["status"], "PARENT_MOVED")
             self.assertEqual(report["review_fronts"][channel]["pr"], 1)
+        with self.assertRaises(ControllerError):
+            controller.resolve_cli_target()
 
     def test_status_overview_keeps_coherent_deep_target_with_historic_saved_identity(self):
         values, heads = _stacked_prs(3)

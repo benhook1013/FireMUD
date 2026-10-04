@@ -96,6 +96,12 @@ dev-tools/pr-review records routes --unassigned
 
 Receiving owners use `records route decide` and `records route resolve` (or `records route retarget`) for routes whose origin is `review_records`; those target decisions do not rewrite source counts. Routes whose origin is `legacy_controller` remain owned by the controller, including any SQLite shadow row with the same route ID. Update those routes with the canonical `dev-tools/pr-review decide route` command; SQLite target-side writes reject legacy-owned IDs and direct operators to that command. Provider history and independent manual/subagent runs are records, not CodeRabbit policy input: they never grant, reset, block, or substitute for either channel's taper. Keep the private database free of credentials and raw secret material.
 
+## Read-only status diagnostics
+
+`status --pr <number>` compares published PR identity (head, base branch name and retained GitHub `baseRefOid`) across its reads. Controller rows expose that retained base identity as `pr_base_oid`; `parent_head` separately identifies the current effective parent tip. A retained base differing from that tip can still require `PARENT_MOVED` reconciliation, but does not by itself mean the PR changed between status snapshots. Actual identity or remote-branch changes remain uncertain, and review request preflight and reconciliation requirements are unchanged.
+
+CI output separates the GitHub status rollup from the observed failed and pending check inventory. Required-context authority determines whether an observed failure is required or optional; unavailable authority stays unknown rather than labelling every failure optional. Conflicting rollup and inventory observations remain visible without changing required-gate readiness policy.
+
 ## Separate one-shot backup and restore
 
 `sqlite_backup.py` is an explicit one-shot job for copying a consistent SQLite
