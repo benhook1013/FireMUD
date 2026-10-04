@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -16,6 +17,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.entitymanagement.v1.CleanupRuntimeInstanceResponse;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
 import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateResponse;
@@ -45,6 +47,8 @@ import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionOperations;
 
 class WorldInstanceActivationServiceImplTest {
+  private static final String PERSISTED_RELEASE_BUNDLE_REF = "opaque-release-ref-from-game-design";
+
   private WorldInstanceRepository worldInstanceRepository;
   private RegionInstanceRepository regionInstanceRepository;
   private ZoneRepository zoneRepository;
@@ -116,6 +120,7 @@ class WorldInstanceActivationServiceImplTest {
                         .setManifestHash("manifest-11")
                         .addRequiredManifestAssetKeys("manifest.json")
                         .setGenerationConfigRevision("genrev-11")
+                        .setPublishedReleaseBundleRef(PERSISTED_RELEASE_BUNDLE_REF)
                         .build())
                 .build());
     when(gameDesignClient.getVersionAssetArtifactState(42L, 11L))
@@ -175,14 +180,127 @@ class WorldInstanceActivationServiceImplTest {
                 "{}",
                 "genrev-11",
                 77L,
-                "prb:42:11:77",
+                PERSISTED_RELEASE_BUNDLE_REF,
                 77L));
 
     assertEquals("PREPARING", snapshot.status());
     assertEquals(1L, snapshot.lifecycleEpoch());
+    assertEquals(PERSISTED_RELEASE_BUNDLE_REF, snapshot.publishedReleaseBundleRef());
+    verify(worldInstanceRepository).save(any(WorldInstance.class));
     verify(regionInstanceRepository).save(any());
     verify(zoneInstanceRepository).save(any());
     verify(roomInstanceRepository).save(any());
+  }
+
+  @Test
+  void exactRetryRetainsPersistedOpaqueReleaseBundleReference() {
+    AtomicReference<WorldInstance> persisted = new AtomicReference<>();
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
+        .thenReturn(Optional.empty())
+        .thenAnswer(invocation -> Optional.of(persisted.get()));
+    when(worldInstanceRepository.save(any(WorldInstance.class)))
+        .thenAnswer(
+            invocation -> {
+              WorldInstance instance = invocation.getArgument(0);
+              persisted.set(instance);
+              return instance;
+            });
+    PreparedWorldInstanceRequest request =
+        new PreparedWorldInstanceRequest(
+            42L,
+            101L,
+            7L,
+            "cp-1",
+            "ld-1",
+            11L,
+            "patch-1",
+            "{}",
+            "genrev-11",
+            77L,
+            PERSISTED_RELEASE_BUNDLE_REF,
+            77L);
+
+    var first = service.prepareWorldInstance(request);
+    var retry = service.prepareWorldInstance(request);
+
+    assertEquals(PERSISTED_RELEASE_BUNDLE_REF, first.publishedReleaseBundleRef());
+    assertEquals(PERSISTED_RELEASE_BUNDLE_REF, retry.publishedReleaseBundleRef());
+    assertEquals(PERSISTED_RELEASE_BUNDLE_REF, persisted.get().getPublishedReleaseBundleRef());
+    verify(worldInstanceRepository, times(1)).save(any(WorldInstance.class));
+    verify(gameDesignClient, times(1)).getPublishedReleaseBundle(42L, 11L);
+  }
+
+  @Test
+  void prepareWorldInstanceRejectsSubstitutedReleaseBundleRefBeforePersistence() {
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
+        .thenReturn(Optional.empty());
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.prepareWorldInstance(
+                    new PreparedWorldInstanceRequest(
+                        42L,
+                        101L,
+                        7L,
+                        "cp-1",
+                        "ld-1",
+                        11L,
+                        null,
+                        "{}",
+                        "genrev-11",
+                        77L,
+                        "substituted-release-reference",
+                        77L)));
+
+    assertEquals(
+        "RELEASE_ATTESTATION_MISMATCH: published release bundle ref mismatch", error.getMessage());
+    verify(worldInstanceRepository, never()).save(any(WorldInstance.class));
+    verify(regionInstanceRepository, never()).save(any());
+  }
+
+  @Test
+  void prepareWorldInstanceRejectsMissingPersistedReleaseBundleRefBeforePersistence() {
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
+        .thenReturn(Optional.empty());
+    when(gameDesignClient.getPublishedReleaseBundle(42L, 11L))
+        .thenReturn(
+            GetPublishedReleaseBundleResponse.newBuilder()
+                .setBundle(
+                    PublishedReleaseBundle.newBuilder()
+                        .setId(77L)
+                        .setVersionId(11L)
+                        .setAttestationSchemaVersion("v1")
+                        .setManifestHash("manifest-11")
+                        .addRequiredManifestAssetKeys("manifest.json")
+                        .setGenerationConfigRevision("genrev-11")
+                        .build())
+                .build());
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.prepareWorldInstance(
+                    new PreparedWorldInstanceRequest(
+                        42L,
+                        101L,
+                        7L,
+                        "cp-1",
+                        "ld-1",
+                        11L,
+                        null,
+                        "{}",
+                        "genrev-11",
+                        77L,
+                        PERSISTED_RELEASE_BUNDLE_REF,
+                        77L)));
+
+    assertEquals(
+        "RELEASE_ATTESTATION_MISMATCH: published release bundle ref mismatch", error.getMessage());
+    verify(worldInstanceRepository, never()).save(any(WorldInstance.class));
+    verify(regionInstanceRepository, never()).save(any());
   }
 
   @Test
@@ -196,7 +314,7 @@ class WorldInstanceActivationServiceImplTest {
     instance.setVersionId(11L);
     instance.setGenerationConfigRevision("genrev-11");
     instance.setReleaseBundleId(77L);
-    instance.setPublishedReleaseBundleRef("prb:42:11:77");
+    instance.setPublishedReleaseBundleRef(PERSISTED_RELEASE_BUNDLE_REF);
     instance.setVersionStateEpoch(77L);
     instance.setLifecycleEpoch(1L);
     instance.setStatus("PREPARING");
@@ -222,7 +340,7 @@ class WorldInstanceActivationServiceImplTest {
     instance.setVersionId(11L);
     instance.setGenerationConfigRevision("genrev-11");
     instance.setReleaseBundleId(77L);
-    instance.setPublishedReleaseBundleRef("prb:42:11:77");
+    instance.setPublishedReleaseBundleRef(PERSISTED_RELEASE_BUNDLE_REF);
     instance.setVersionStateEpoch(77L);
     instance.setLifecycleEpoch(1L);
     instance.setStatus("PREPARING");
@@ -248,7 +366,7 @@ class WorldInstanceActivationServiceImplTest {
     instance.setVersionId(11L);
     instance.setReleaseBundleId(77L);
     instance.setGenerationConfigRevision("genrev-11");
-    instance.setPublishedReleaseBundleRef("prb:42:11:77");
+    instance.setPublishedReleaseBundleRef(PERSISTED_RELEASE_BUNDLE_REF);
     instance.setVersionStateEpoch(77L);
     instance.setLifecycleEpoch(2L);
     instance.setStatus("ACTIVE");
@@ -418,7 +536,7 @@ class WorldInstanceActivationServiceImplTest {
                         "{}",
                         "wrong-rev",
                         77L,
-                        "prb:42:11:77",
+                        PERSISTED_RELEASE_BUNDLE_REF,
                         77L)));
 
     assertEquals(
@@ -460,7 +578,7 @@ class WorldInstanceActivationServiceImplTest {
                         "{}",
                         "genrev-11",
                         77L,
-                        "prb:42:11:77",
+                        PERSISTED_RELEASE_BUNDLE_REF,
                         77L)));
 
     assertEquals(
@@ -503,7 +621,7 @@ class WorldInstanceActivationServiceImplTest {
                         "{}",
                         "genrev-11",
                         77L,
-                        "prb:42:11:77",
+                        PERSISTED_RELEASE_BUNDLE_REF,
                         77L)));
 
     assertEquals(
@@ -521,7 +639,7 @@ class WorldInstanceActivationServiceImplTest {
     instance.setVersionId(11L);
     instance.setReleaseBundleId(77L);
     instance.setGenerationConfigRevision("genrev-11");
-    instance.setPublishedReleaseBundleRef("prb:42:11:77");
+    instance.setPublishedReleaseBundleRef(PERSISTED_RELEASE_BUNDLE_REF);
     instance.setVersionStateEpoch(77L);
     instance.setLifecycleEpoch(2L);
     instance.setStatus("ACTIVE");
