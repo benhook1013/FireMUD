@@ -55,7 +55,6 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
   private static final String NAMESPACE = "canonical-launch-it";
   private static final UUID TENANT = uuid(101);
   private static final UUID SOURCE_OPERATION = uuid(102);
-  private static final UUID SOURCE_INTAKE_OPERATION = uuid(103);
   private static final UUID INTAKE_REQUEST = uuid(104);
   private static final UUID CATALOG_REQUEST = uuid(105);
   private static final UUID ACTOR = uuid(106);
@@ -84,7 +83,7 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
     CanonicalRealmCatalogSnapshot catalog = java.util.Objects.requireNonNull(fixture.preV14Catalog);
     assertThat(
             fixture.sourceRepository.read(
-                SOURCE_INTAKE_OPERATION, TENANT, source.source().worldSlug(), NAMESPACE))
+                source.operationId(), TENANT, source.source().worldSlug(), NAMESPACE))
         .contains(source);
     assertThat(fixture.catalogRepository.readByRequest(NAMESPACE, CATALOG_REQUEST))
         .contains(catalog);
