@@ -56,7 +56,7 @@ For an exhaustive review, maintain a response-local coverage table containing:
 
 A focused commissioned review may use a smaller table matching its declared boundary. Working coverage tables remain ephemeral unless the human explicitly requests a retained artifact.
 
-Intentionally bounded representative discovery may complete its declared assessment with evidence proportional to that objective, without claiming whole-repository exhaustiveness or domain closure. Early-return and same-scope resumption are defined in the [AI Delegation And Review](../../../developer-workflows/ai-delegation-and-review.md) guide.
+Intentionally bounded representative discovery may complete its declared assessment with evidence proportional to that objective, without claiming whole-repository exhaustiveness or domain closure. It must cover the full declared assessment. Findings that need human direction do not end the review; continue other safe, useful in-scope coverage and report any concrete blocker with the remaining coverage.
 
 ## Findings
 
@@ -80,8 +80,8 @@ Within a coordinated review, identify duplicates using the canonical owner, affe
 End with exactly one review state:
 
 - `complete` – every item in the declared assessment boundary was covered or explicitly excluded with an acceptable rationale;
-- `incomplete` – the review was an early batch, used undeclared sampling, skipped a required area, or necessary proof or live evidence was unavailable; or
-- `blocked` – a missing authority, competing target state, unavailable required source, or human decision prevents the review from continuing.
+- `incomplete` – the review left a declared item uncovered, used undeclared sampling, skipped a required area, or necessary proof or live evidence was unavailable; or
+- `blocked` – a missing authority, competing target state, unavailable required source, or human decision prevents any remaining in-scope review from continuing.
 
 `No findings` does not imply `complete`. A static review may be complete within its declared static boundary while live evidence remains unavailable, but it must not make an unqualified readiness claim.
 
@@ -89,4 +89,4 @@ End with exactly one review state:
 
 Reread current sources from disk. Prior findings are evidence to reconcile, not authority. Classify them as still present, resolved, changed, superseded, or not reproducible, and do not silently drop them.
 
-Stop and request human direction rather than choosing between competing product outcomes, target architectures, security or privacy risk acceptance, release scope, or traffic-opening decisions.
+Request human direction rather than choosing between competing product outcomes, target architectures, security or privacy risk acceptance, release scope, or traffic-opening decisions. Record the decision needed and the coverage it blocks, then continue all other safe in-scope assessment; stop only when no remaining scope can proceed.
