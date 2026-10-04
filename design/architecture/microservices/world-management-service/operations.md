@@ -13,6 +13,12 @@
 - When temporary content remains a zone-scoped child of a parent game instance, it requires a separate scoped, idempotent cleanup contract. Expiring the child must not transition or terminate the parent `world_instance`.
 - Direct periodic deletion is not a valid target cleanup path for either boundary.
 
+## Playtest Fork Lifecycle Authority
+
+World Management owns allocation, lifecycle, and expiry for each playtest fork under [ADR 0137](../../decisions/adr-0137-isolated-playtest-state-modes-and-reset.md) and [ADR 0138](../../decisions/adr-0138-expiring-playtest-grants-with-bounded-active-revocation.md). A new fork receives a fresh immutable canonical `playtestLifecycleId` and its exact `forkExpiresAt`, bound to the World-owned lifecycle/version/epoch proof. World is the sole producer of this identity and deadline; fork extension changes World lifecycle authority and never silently extends Account grants.
+
+World supplies the exact current proof to Game Session for its admission-pointer transaction and authenticated readback. Game Session and Account consume that proof without allocating an ID, deriving an expiry, or creating a competing lifecycle record. Allocation and authenticated owner readback are not implemented; current legacy runtime rows do not prove the target lifecycle or expiry.
+
 ## Implementation Status
 
 The current `instance` table models legacy temporary zone copies for dungeons or housing, with `expires_at` derived from `world.instance.expiration-hours`. The live scheduled cleanup still deletes those rows directly. That is explicit implementation drift, not evidence that the legacy row participates in the [ADR 0123](../../decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md) lifecycle.
