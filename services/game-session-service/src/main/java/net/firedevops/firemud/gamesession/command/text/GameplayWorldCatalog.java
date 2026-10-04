@@ -1103,7 +1103,7 @@ public final class GameplayWorldCatalog {
 
   private CatalogState readCatalogState() {
     if (authorityPointerSupplier == null) {
-      List<WorldView> suppliedWorlds = worldSupplier.get();
+      List<WorldView> suppliedWorlds = Objects.requireNonNullElse(worldSupplier.get(), List.of());
       List<WorldView> worlds = normalizeWorlds(suppliedWorlds);
       // Count authoritative rows before normalization removes case-colliding realm selectors.
       Map<Long, Long> publicCounts = publicProductionCounts(suppliedWorlds);

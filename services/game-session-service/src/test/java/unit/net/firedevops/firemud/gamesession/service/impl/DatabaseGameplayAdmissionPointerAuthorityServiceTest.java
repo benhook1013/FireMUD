@@ -517,6 +517,8 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
   void catalogPolicyRevisionAdvancesIndependentlyFromPointerVersion() {
     java.util.concurrent.atomic.AtomicReference<GameplayAdmissionPointer> currentPointer =
         new java.util.concurrent.atomic.AtomicReference<>();
+    java.util.concurrent.atomic.AtomicReference<List<Long>> storedRevisions =
+        new java.util.concurrent.atomic.AtomicReference<>();
     when(pointerRepository.findByTenantIdAndWorldSlugAndRealmSlugForUpdate(
             7L, "demo", "production"))
         .thenAnswer(invocation -> Optional.ofNullable(currentPointer.get()));
@@ -528,12 +530,22 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
                 pointer.setId(11L);
               }
               currentPointer.set(pointer);
+              storedRevisions.set(
+                  List.of(pointer.getPointerVersion(), pointer.getCatalogRevision()));
               return pointer;
             });
     when(pointerRepository.updateExisting(any(GameplayAdmissionPointer.class), any(), any()))
         .thenAnswer(
             invocation -> {
               GameplayAdmissionPointer pointer = invocation.getArgument(0);
+              Long expectedPointerVersion = invocation.getArgument(1);
+              Long expectedCatalogRevision = invocation.getArgument(2);
+              if (!List.of(expectedPointerVersion, expectedCatalogRevision)
+                  .equals(storedRevisions.get())) {
+                throw new IllegalStateException("Admission pointer CAS predicate did not match");
+              }
+              storedRevisions.set(
+                  List.of(pointer.getPointerVersion(), pointer.getCatalogRevision()));
               currentPointer.set(pointer);
               return pointer;
             });
@@ -553,6 +565,8 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
     assertEquals(1L, policyChanged.pointerVersion());
     assertEquals(2L, routeChanged.catalogRevision());
     assertEquals(2L, routeChanged.pointerVersion());
+    verify(pointerRepository).updateExisting(any(GameplayAdmissionPointer.class), eq(1L), eq(1L));
+    verify(pointerRepository).updateExisting(any(GameplayAdmissionPointer.class), eq(1L), eq(2L));
   }
 
   @Test

@@ -793,6 +793,8 @@ public class WorldsCommandHandler {
     }
     boolean currentPointerMatches;
     try {
+      // A failed authority read is AUTH_UNAVAILABLE; a reachable invalid/stale pointer
+      // snapshot is classified below as ADMISSION_POINTER_UNAVAILABLE.
       currentPointerMatches = worldCatalog.matchesCurrentAdmissionPointer(world, realm);
     } catch (GameplayWorldCatalog.AuthorityPointerReadUnavailableException ex) {
       return CharacterBrowseResult.failure("AUTH_UNAVAILABLE");

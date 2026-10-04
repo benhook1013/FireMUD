@@ -1204,7 +1204,6 @@ class GameSessionWebSocketHandlerTest {
             eq(binding)))
         .thenReturn("OK PLAY");
     when(promptComposer.compose(binding)).thenReturn(Optional.of(prompt));
-    when(screenBufferService.get(22L, 7L, 7001L)).thenReturn(Optional.empty());
 
     handler.handleMessage(session, new TextMessage("PLAY demo"));
 
@@ -1212,6 +1211,7 @@ class GameSessionWebSocketHandlerTest {
     verify(outputProjector, times(expectedPromptEmissions))
         .projectPlayerOutput(eq(session), eq(prompt), eq("en-NZ"), eq(presentation));
     verify(promptBurstCoordinator, times(expectedPromptEmissions)).recordPromptEmission("41");
+    Mockito.verifyNoInteractions(screenBufferService);
   }
 
   @Test

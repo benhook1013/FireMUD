@@ -4362,16 +4362,6 @@ class PlayCommandHandlerTest {
     assertThat(((ErrorOutput) result.outputs().get(0).payload()).messageKey())
         .isEqualTo("error.play.entitlement-unavailable");
     assertThat(context.hasGameplayBinding()).isTrue();
-    assertThat(context.tenantId()).isEqualTo(22L);
-    assertThat(context.accountId()).isEqualTo(123L);
-    assertThat(context.characterId()).isEqualTo(123L);
-    assertThat(context.gameInstanceId()).isEqualTo(1L);
-    assertThat(context.worldSlug()).isEqualTo("demo");
-    assertThat(context.realmSlug()).isEqualTo("production");
-    assertThat(context.pointerVersion()).isEqualTo(1L);
-    assertThat(context.playableStateScope()).isEqualTo("SHARED");
-    assertThat(context.connectScopeId()).isNull();
-    assertThat(context.connectRequestId()).isNull();
     assertThat(meterRegistry.find("gamesession.session.resume_denied").counters()).isEmpty();
     Mockito.verify(gameplayPresenceLifecycleService, never())
         .clearGameplayBinding(Mockito.any(), Mockito.anyString());

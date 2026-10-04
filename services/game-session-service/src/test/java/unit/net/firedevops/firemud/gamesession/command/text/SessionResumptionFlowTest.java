@@ -586,6 +586,7 @@ class SessionResumptionFlowTest {
     TextCommandInterpretationResult charsAfterCutover =
         interpreter.interpret("1", "CHARS demo", false);
     assertFalse(charsAfterCutover.commandResult().accepted());
+    assertEquals("CHARACTER_LIST_UNAVAILABLE", charsAfterCutover.commandResult().errorCode());
     verify(entityManagementClient, Mockito.never())
         .listCharactersByAccount(
             Mockito.anyString(),

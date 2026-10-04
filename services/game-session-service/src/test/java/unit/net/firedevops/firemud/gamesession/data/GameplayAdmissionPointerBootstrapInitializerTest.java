@@ -323,26 +323,31 @@ class GameplayAdmissionPointerBootstrapInitializerTest {
     YamlPropertySourceLoader loader = new YamlPropertySourceLoader();
     // Read source YAML directly to avoid test-resource shadowing; this is not packaged or live-boot
     // proof.
-    environment
-        .getPropertySources()
-        .addLast(
-            loader
-                .load(
-                    "game-session-application",
-                    new FileSystemResource(
-                        repositoryFile(
-                            "services/game-session-service/src/main/resources/application.yml")))
-                .get(0));
-    environment
-        .getPropertySources()
-        .addLast(
-            loader
-                .load(
-                    "world-management-application",
-                    new FileSystemResource(
-                        repositoryFile(
-                            "services/world-management-service/src/main/resources/application.yml")))
-                .get(0));
+    addYamlPropertySources(
+        environment,
+        loader,
+        "game-session-application-prod",
+        "services/game-session-service/src/main/resources/application-prod.yml");
+    addYamlPropertySources(
+        environment,
+        loader,
+        "game-session-application-test",
+        "services/game-session-service/src/main/resources/application-test.yml");
+    addYamlPropertySources(
+        environment,
+        loader,
+        "game-session-application",
+        "services/game-session-service/src/main/resources/application.yml");
+    addYamlPropertySources(
+        environment,
+        loader,
+        "world-management-application-prod",
+        "services/world-management-service/src/main/resources/application-prod.yml");
+    addYamlPropertySources(
+        environment,
+        loader,
+        "world-management-application",
+        "services/world-management-service/src/main/resources/application.yml");
 
     Binder binder = Binder.get(environment);
     GameplayAdmissionPointerBootstrapProperties gameSession =
@@ -358,6 +363,17 @@ class GameplayAdmissionPointerBootstrapInitializerTest {
                 Bindable.listOf(SmokeRuntimeTarget.class))
             .orElseThrow(() -> new IllegalStateException("Missing World runtime-target YAML"));
     return new ShippedBootstrapConfiguration(gameSession, worldManagementTargets);
+  }
+
+  private static void addYamlPropertySources(
+      MockEnvironment environment,
+      YamlPropertySourceLoader loader,
+      String name,
+      String relativePath)
+      throws IOException {
+    loader
+        .load(name, new FileSystemResource(repositoryFile(relativePath)))
+        .forEach(environment.getPropertySources()::addLast);
   }
 
   private static Path repositoryFile(String relativePath) {

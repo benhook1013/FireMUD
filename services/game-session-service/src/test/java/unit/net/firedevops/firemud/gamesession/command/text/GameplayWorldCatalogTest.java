@@ -964,6 +964,17 @@ class GameplayWorldCatalogTest {
   }
 
   @Test
+  void nullWorldSupplierResultBehavesAsAnEmptyCatalog() {
+    GameplayWorldCatalog catalog = GameplayWorldCatalog.forWorldSupplier(() -> null);
+
+    assertThat(catalog.browseView().worlds()).isEmpty();
+    assertThat(catalog.visibleWorlds()).isEmpty();
+    assertThat(catalog.resolveWorld("demo")).isEmpty();
+    assertThat(catalog.publicProductionRealmCardinality(7L))
+        .isEqualTo(GameplayWorldCatalog.PublicProductionRealmCardinality.ZERO);
+  }
+
+  @Test
   void closedVisiblePublicRealmStillCountsAsTheTenantPublicRealm() {
     GameplayWorldCatalog catalog =
         GameplayWorldCatalog.forWorldViews(

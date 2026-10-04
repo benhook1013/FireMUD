@@ -20,11 +20,7 @@ import net.firedevops.firemud.gamesession.command.text.TextCommandInterpreter;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
-import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointer;
-import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointerEvent;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
-import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerEventRepository;
-import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerRepository;
 import net.firedevops.firemud.gamesession.service.AccountPresenceQueryService;
 import net.firedevops.firemud.gamesession.service.AccountPresenceSnapshot;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
@@ -1644,73 +1640,6 @@ class GameSessionGrpcServiceTest {
     assertEquals("Internal error", response.get().getError().getMessage());
     assertTrue(completed.get());
     assertEquals(0, response.get().getRealmsCount());
-  }
-
-  @Test
-  void catalogPolicyRevisionAdvancesIndependentlyFromPointerVersion() {
-    GameplayAdmissionPointerRepository pointerRepository =
-        Mockito.mock(GameplayAdmissionPointerRepository.class);
-    GameplayAdmissionPointerEventRepository eventRepository =
-        Mockito.mock(GameplayAdmissionPointerEventRepository.class);
-    AtomicReference<GameplayAdmissionPointer> currentPointer = new AtomicReference<>();
-    AtomicReference<List<Long>> storedRevisions = new AtomicReference<>();
-    Mockito.when(
-            pointerRepository.findByTenantIdAndWorldSlugAndRealmSlugForUpdate(
-                7L, "demo", "production"))
-        .thenAnswer(invocation -> java.util.Optional.ofNullable(currentPointer.get()));
-    Mockito.when(pointerRepository.save(Mockito.any(GameplayAdmissionPointer.class)))
-        .thenAnswer(
-            invocation -> {
-              GameplayAdmissionPointer pointer = invocation.getArgument(0);
-              if (pointer.getId() == null) {
-                pointer.setId(11L);
-              }
-              currentPointer.set(pointer);
-              storedRevisions.set(
-                  List.of(pointer.getPointerVersion(), pointer.getCatalogRevision()));
-              return pointer;
-            });
-    Mockito.when(
-            pointerRepository.updateExisting(
-                Mockito.any(GameplayAdmissionPointer.class), Mockito.anyLong(), Mockito.anyLong()))
-        .thenAnswer(
-            invocation -> {
-              GameplayAdmissionPointer pointer = invocation.getArgument(0);
-              Long expectedPointerVersion = invocation.getArgument(1);
-              Long expectedCatalogRevision = invocation.getArgument(2);
-              if (!List.of(expectedPointerVersion, expectedCatalogRevision)
-                  .equals(storedRevisions.get())) {
-                throw new IllegalStateException("Admission pointer CAS predicate did not match");
-              }
-              storedRevisions.set(
-                  List.of(pointer.getPointerVersion(), pointer.getCatalogRevision()));
-              currentPointer.set(pointer);
-              return pointer;
-            });
-    Mockito.when(eventRepository.save(Mockito.any(GameplayAdmissionPointerEvent.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
-    DatabaseGameplayAdmissionPointerAuthorityService authorityService =
-        new DatabaseGameplayAdmissionPointerAuthorityService(pointerRepository, eventRepository);
-
-    GameplayAdmissionPointerSnapshot created =
-        authorityService.upsertPointer(pointerMutation(44L, true, 0L, 0L));
-    GameplayAdmissionPointerSnapshot policyChanged =
-        authorityService.upsertPointer(pointerMutation(44L, false, 1L, 1L));
-    GameplayAdmissionPointerSnapshot routeChanged =
-        authorityService.upsertPointer(pointerMutation(45L, false, 1L, 2L));
-
-    assertEquals(1L, created.catalogRevision());
-    assertEquals(1L, created.pointerVersion());
-    assertEquals(2L, policyChanged.catalogRevision());
-    assertEquals(1L, policyChanged.pointerVersion());
-    assertEquals(2L, routeChanged.catalogRevision());
-    assertEquals(2L, routeChanged.pointerVersion());
-    Mockito.verify(pointerRepository)
-        .updateExisting(
-            Mockito.any(GameplayAdmissionPointer.class), Mockito.eq(1L), Mockito.eq(1L));
-    Mockito.verify(pointerRepository)
-        .updateExisting(
-            Mockito.any(GameplayAdmissionPointer.class), Mockito.eq(1L), Mockito.eq(2L));
   }
 
   @Test

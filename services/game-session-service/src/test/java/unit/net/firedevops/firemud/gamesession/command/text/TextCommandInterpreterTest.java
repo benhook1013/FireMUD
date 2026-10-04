@@ -596,6 +596,12 @@ class TextCommandInterpreterTest {
     assertFalse(
         renderedResponse("CHARS demo", interpretation)
             .contains("Realm state: shared, creation: allow_new"));
+    verify(entityManagementClient, never())
+        .listCharactersByAccount(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.any(PlayableStateScope.class));
   }
 
   @Test
@@ -1247,22 +1253,5 @@ class TextCommandInterpreterTest {
     private boolean hasGameplayIdentity(SessionContext context) {
       return context.gameInstanceId() > 0 && context.characterId() > 0;
     }
-  }
-
-  @Test
-  void charsAreUnavailableUntilTypedEntityRosterProofExists() {
-    interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
-
-    TextCommandInterpretationResult interpretation =
-        interpreter.interpret("1", "CHARS demo", false);
-
-    assertFalse(interpretation.commandResult().accepted());
-    assertEquals("CHARACTER_LIST_UNAVAILABLE", interpretation.commandResult().errorCode());
-    verify(entityManagementClient, never())
-        .listCharactersByAccount(
-            Mockito.anyString(),
-            Mockito.anyString(),
-            Mockito.anyString(),
-            Mockito.any(PlayableStateScope.class));
   }
 }

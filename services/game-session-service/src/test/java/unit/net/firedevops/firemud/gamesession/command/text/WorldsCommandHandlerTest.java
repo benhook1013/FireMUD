@@ -2032,6 +2032,152 @@ class WorldsCommandHandlerTest {
     Mockito.verifyNoInteractions(accountClient);
   }
 
+  @Test
+  void publicBrowseDoesNotExposePrivateWorldOrRealmMetadata() {
+    GameplayWorldCatalog catalog =
+        GameplayWorldCatalog.forWorldViews(
+            List.of(
+                new GameplayWorldCatalog.WorldView(
+                    "private-world",
+                    "Private World",
+                    List.of(
+                        new GameplayWorldCatalog.RealmView(
+                            "secret",
+                            "Secret Realm",
+                            22L,
+                            2L,
+                            1L,
+                            true,
+                            false,
+                            false,
+                            "ISOLATED",
+                            "ALLOW_NEW"))),
+                new GameplayWorldCatalog.WorldView(
+                    "mixed-world",
+                    "Mixed World",
+                    List.of(
+                        new GameplayWorldCatalog.RealmView(
+                            "production",
+                            "Live Realm",
+                            22L,
+                            1L,
+                            1L,
+                            true,
+                            true,
+                            false,
+                            "SHARED",
+                            "ALLOW_NEW"),
+                        new GameplayWorldCatalog.RealmView(
+                            "secret",
+                            "Secret Realm",
+                            22L,
+                            2L,
+                            1L,
+                            true,
+                            false,
+                            false,
+                            "ISOLATED",
+                            "ALLOW_NEW")))));
+    AccountClient localAccount = Mockito.mock(AccountClient.class);
+    WorldsCommandHandler localHandler =
+        new WorldsCommandHandler(
+            catalog, localAccount, DirectTextConnectScopeSessionStore.inMemoryForTest());
+
+    assertThat(localHandler.browseView().worlds())
+        .extracting("slug")
+        .containsExactly("mixed-world");
+    assertThat(localHandler.browseRealms("mixed-world").orElseThrow().realms())
+        .extracting(RealmBrowseViewOutput.RealmEntry::realmSlug)
+        .containsExactly("production");
+    assertThat(localHandler.browseRealms("private-world")).isEmpty();
+    Mockito.verifyNoInteractions(localAccount);
+  }
+
+  @Test
+  void charsPrivateOnlyWorldFailsBeforeEntityRead() {
+    GameplayWorldCatalog catalog =
+        GameplayWorldCatalog.forWorldViews(
+            List.of(
+                new GameplayWorldCatalog.WorldView(
+                    "private-world",
+                    "Private World",
+                    List.of(
+                        new GameplayWorldCatalog.RealmView(
+                            "secret",
+                            "Secret Realm",
+                            22L,
+                            2L,
+                            1L,
+                            true,
+                            false,
+                            false,
+                            "ISOLATED",
+                            "ALLOW_NEW")))));
+    AccountClient localAccount = Mockito.mock(AccountClient.class);
+    WorldsCommandHandler localHandler =
+        new WorldsCommandHandler(
+            catalog, localAccount, DirectTextConnectScopeSessionStore.inMemoryForTest());
+
+    WorldsCommandHandler.CharacterBrowseResult result =
+        localHandler.browseCharacters(
+            new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt"),
+            "private-world",
+            null);
+
+    assertThat(result).isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.InvalidWorld.class);
+    Mockito.verifyNoInteractions(localAccount);
+  }
+
+  @Test
+  void charsDoesNotDistinguishPrivateRealmFromAnInvalidRealm() {
+    GameplayWorldCatalog catalog =
+        GameplayWorldCatalog.forWorldViews(
+            List.of(
+                new GameplayWorldCatalog.WorldView(
+                    "mixed-world",
+                    "Mixed World",
+                    List.of(
+                        new GameplayWorldCatalog.RealmView(
+                            "production",
+                            "Live Realm",
+                            22L,
+                            1L,
+                            1L,
+                            true,
+                            true,
+                            false,
+                            "SHARED",
+                            "ALLOW_NEW",
+                            1L,
+                            ADMISSION_REALM_ID,
+                            ADMISSION_NAMESPACE_ID),
+                        new GameplayWorldCatalog.RealmView(
+                            "secret",
+                            "Secret Realm",
+                            22L,
+                            2L,
+                            1L,
+                            true,
+                            false,
+                            false,
+                            "ISOLATED",
+                            "ALLOW_NEW")))));
+    AccountClient localAccount = Mockito.mock(AccountClient.class);
+    WorldsCommandHandler localHandler =
+        new WorldsCommandHandler(
+            catalog, localAccount, DirectTextConnectScopeSessionStore.inMemoryForTest());
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt");
+
+    assertThat(localHandler.browseCharacters(context, "mixed-world", "secret"))
+        .isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.InvalidRealm.class);
+    assertThat(localHandler.browseCharacters(context, "mixed-world", "nonexistent"))
+        .isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.InvalidRealm.class);
+    assertThat(localHandler.browseCharacters(context, "mixed-world", "production"))
+        .isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.Unavailable.class);
+    Mockito.verifyNoInteractions(localAccount);
+  }
+
   private WorldsCommandHandler authenticatedHandler(
       GameplayCatalogProperties properties, AccountClient accountClient) {
     return new WorldsCommandHandler(
@@ -2285,152 +2431,6 @@ class WorldsCommandHandlerTest {
     realm.setCharacterCreationPolicy(GameplayCatalogProperties.CharacterCreationPolicy.ALLOW_NEW);
     world.setRealms(List.of(realm));
     return world;
-  }
-
-  @Test
-  void publicBrowseDoesNotExposePrivateWorldOrRealmMetadata() {
-    GameplayWorldCatalog catalog =
-        GameplayWorldCatalog.forWorldViews(
-            List.of(
-                new GameplayWorldCatalog.WorldView(
-                    "private-world",
-                    "Private World",
-                    List.of(
-                        new GameplayWorldCatalog.RealmView(
-                            "secret",
-                            "Secret Realm",
-                            22L,
-                            2L,
-                            1L,
-                            true,
-                            false,
-                            false,
-                            "ISOLATED",
-                            "ALLOW_NEW"))),
-                new GameplayWorldCatalog.WorldView(
-                    "mixed-world",
-                    "Mixed World",
-                    List.of(
-                        new GameplayWorldCatalog.RealmView(
-                            "production",
-                            "Live Realm",
-                            22L,
-                            1L,
-                            1L,
-                            true,
-                            true,
-                            false,
-                            "SHARED",
-                            "ALLOW_NEW"),
-                        new GameplayWorldCatalog.RealmView(
-                            "secret",
-                            "Secret Realm",
-                            22L,
-                            2L,
-                            1L,
-                            true,
-                            false,
-                            false,
-                            "ISOLATED",
-                            "ALLOW_NEW")))));
-    WorldsCommandHandler localHandler =
-        new WorldsCommandHandler(
-            catalog,
-            Mockito.mock(AccountClient.class),
-            DirectTextConnectScopeSessionStore.inMemoryForTest());
-
-    assertThat(localHandler.browseView().worlds())
-        .extracting("slug")
-        .containsExactly("mixed-world");
-    assertThat(localHandler.browseRealms("mixed-world").orElseThrow().realms())
-        .extracting(RealmBrowseViewOutput.RealmEntry::realmSlug)
-        .containsExactly("production");
-    assertThat(localHandler.browseRealms("private-world")).isEmpty();
-  }
-
-  @Test
-  void charsPrivateOnlyWorldFailsBeforeEntityRead() {
-    GameplayWorldCatalog catalog =
-        GameplayWorldCatalog.forWorldViews(
-            List.of(
-                new GameplayWorldCatalog.WorldView(
-                    "private-world",
-                    "Private World",
-                    List.of(
-                        new GameplayWorldCatalog.RealmView(
-                            "secret",
-                            "Secret Realm",
-                            22L,
-                            2L,
-                            1L,
-                            true,
-                            false,
-                            false,
-                            "ISOLATED",
-                            "ALLOW_NEW")))));
-    WorldsCommandHandler localHandler =
-        new WorldsCommandHandler(
-            catalog,
-            Mockito.mock(AccountClient.class),
-            DirectTextConnectScopeSessionStore.inMemoryForTest());
-
-    WorldsCommandHandler.CharacterBrowseResult result =
-        localHandler.browseCharacters(
-            new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt"),
-            "private-world",
-            null);
-
-    assertThat(result).isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.InvalidWorld.class);
-  }
-
-  @Test
-  void charsDoesNotDistinguishPrivateRealmFromAnInvalidRealm() {
-    GameplayWorldCatalog catalog =
-        GameplayWorldCatalog.forWorldViews(
-            List.of(
-                new GameplayWorldCatalog.WorldView(
-                    "mixed-world",
-                    "Mixed World",
-                    List.of(
-                        new GameplayWorldCatalog.RealmView(
-                            "production",
-                            "Live Realm",
-                            22L,
-                            1L,
-                            1L,
-                            true,
-                            true,
-                            false,
-                            "SHARED",
-                            "ALLOW_NEW",
-                            1L,
-                            ADMISSION_REALM_ID,
-                            ADMISSION_NAMESPACE_ID),
-                        new GameplayWorldCatalog.RealmView(
-                            "secret",
-                            "Secret Realm",
-                            22L,
-                            2L,
-                            1L,
-                            true,
-                            false,
-                            false,
-                            "ISOLATED",
-                            "ALLOW_NEW")))));
-    WorldsCommandHandler localHandler =
-        new WorldsCommandHandler(
-            catalog,
-            Mockito.mock(AccountClient.class),
-            DirectTextConnectScopeSessionStore.inMemoryForTest());
-    SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt");
-
-    assertThat(localHandler.browseCharacters(context, "mixed-world", "secret"))
-        .isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.InvalidRealm.class);
-    assertThat(localHandler.browseCharacters(context, "mixed-world", "nonexistent"))
-        .isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.InvalidRealm.class);
-    assertThat(localHandler.browseCharacters(context, "mixed-world", "production"))
-        .isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.Unavailable.class);
   }
 
   @Test
