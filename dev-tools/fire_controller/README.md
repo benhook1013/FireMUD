@@ -26,7 +26,9 @@ Briefs, updates, notes, checkpoints, inbox messages and eligible map/public para
 
 ## Current jobs and meaningful updates
 
-All examples below target a disposable database. `--json` returns structured output; `--body-file -` reads Markdown from stdin. Job IDs are stable; friendly names and worker aliases are exact selectors. Only meaningful changes need an update: instructions, progress, a blocker or a handoff.
+All examples below target a disposable database. `--json` returns structured output; `--body-file -` reads Markdown from stdin. Job IDs are stable; friendly names and worker aliases are exact selectors.
+
+Append a job update only for a material assignment or next-step change, significant milestone, blocker needing coordination, or pause, handoff or completion. Normally use 1–3 sentences explaining what changed and what comes next, with a link to existing evidence. Routine edits, tests, CI retries, commits and individual review findings stay in PR/review records and need no separate job update. No update is needed while proceeding as assigned. Revise the brief when standing instructions change; use the latest checkpoint to resume work.
 
 ```sh
 dev-tools/fire-controller jobs --database /tmp/example-controller.sqlite3 --json bootstrap
