@@ -304,8 +304,11 @@ class GameSessionTenantAssociationRepositoryIntegrationTest {
     assertThatThrownBy(() -> fixture.apply(signed, "another-namespace"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("different namespace");
+    byte[] alteredSignatureBytes = Base64.getDecoder().decode(signed.ed25519Signature());
+    alteredSignatureBytes[0] ^= 0x01;
     Signed malformedSignature =
-        new Signed(signed.manifest(), signed.ed25519Signature().substring(0, 84) + "AA==");
+        new Signed(signed.manifest(), Base64.getEncoder().encodeToString(alteredSignatureBytes));
+    assertThat(malformedSignature.ed25519Signature()).isNotEqualTo(signed.ed25519Signature());
     assertThatThrownBy(() -> fixture.apply(malformedSignature, NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("signature");
