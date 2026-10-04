@@ -12,6 +12,41 @@ import yaml
 
 path = Path(sys.argv[1])
 workflow = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+build_test_steps = workflow["jobs"]["build-and-test"]["steps"]
+test_report_steps = [
+    step for step in build_test_steps
+    if step.get("name") == "📤 Upload JUnit XML Reports"
+]
+if len(test_report_steps) != 1:
+    raise SystemExit("build-and-test must contain exactly one JUnit XML artifact upload")
+test_report = test_report_steps[0]
+test_report_with = test_report["with"]
+if test_report.get("if") != "${{ always() && contains(fromJSON('[\"success\",\"failure\",\"cancelled\"]'), steps.checks.outcome) }}":
+    raise SystemExit("JUnit XML upload must run after attempted checks, including failure or cancellation")
+attempted_check_outcomes = {"success", "failure", "cancelled"}
+outcome_truth_table = {
+    "": False,
+    "skipped": False,
+    "success": True,
+    "failure": True,
+    "cancelled": True,
+}
+for outcome, expected in outcome_truth_table.items():
+    if (outcome in attempted_check_outcomes) != expected:
+        raise SystemExit(f"JUnit XML upload attempted-check guard has wrong result for {outcome!r}")
+if test_report.get("uses") != "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a":
+    raise SystemExit("JUnit XML upload must use the pinned upload-artifact action")
+if test_report_with.get("name") != "junit-${{ matrix.module }}-${{ github.sha }}":
+    raise SystemExit("JUnit XML artifact name must identify its module and head")
+expected_test_report_path = (
+    "${{ matrix.module == 'load-testing' && 'dev-tools/load-testing/build/test-results/**/*.xml' "
+    "|| format('services/{0}/build/test-results/**/*.xml', matrix.module) }}"
+)
+if test_report_with.get("path") != expected_test_report_path:
+    raise SystemExit("JUnit XML upload must cover module test-results XML, including load-testing")
+if test_report_with.get("if-no-files-found") != "warn":
+    raise SystemExit("missing JUnit XML reports must warn without failing builds that did not reach tests")
+
 job = workflow["jobs"]["validation-summary"]
 steps = job["steps"]
 summary_steps = [

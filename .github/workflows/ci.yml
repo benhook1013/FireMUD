@@ -1007,6 +1007,14 @@ jobs:
           name: ${{ matrix.module }}-jacoco
           verbose: true
 
+      - name: 📤 Upload JUnit XML Reports
+        if: ${{ always() && contains(fromJSON('["success","failure","cancelled"]'), steps.checks.outcome) }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: junit-${{ matrix.module }}-${{ github.sha }}
+          path: ${{ matrix.module == 'load-testing' && 'dev-tools/load-testing/build/test-results/**/*.xml' || format('services/{0}/build/test-results/**/*.xml', matrix.module) }}
+          if-no-files-found: warn
+
       - name: 📤 Upload Test Logs if Failed
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
