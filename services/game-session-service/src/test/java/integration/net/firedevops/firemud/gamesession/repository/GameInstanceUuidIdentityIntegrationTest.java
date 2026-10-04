@@ -62,7 +62,8 @@ class GameInstanceUuidIdentityIntegrationTest {
 
       String retainedAfterMigration =
           dsl.resultQuery(
-                  "SELECT (to_jsonb(game_instance) - 'game_instance_uuid')::text "
+                  "SELECT (to_jsonb(game_instance) - 'owner_account_uuid' "
+                      + "- 'game_instance_uuid')::text "
                       + "FROM game_instances AS game_instance WHERE id = ?",
                   RETAINED_INSTANCE_ID)
               .fetchOne(0, String.class);
@@ -71,6 +72,10 @@ class GameInstanceUuidIdentityIntegrationTest {
           dsl.fetchOne(
               "SELECT game_instance_uuid FROM game_instances WHERE id = ?", RETAINED_INSTANCE_ID);
       assertThat(retainedUuid.get("game_instance_uuid", UUID.class)).isNull();
+      Record retainedOwnerUuid =
+          dsl.fetchOne(
+              "SELECT owner_account_uuid FROM game_instances WHERE id = ?", RETAINED_INSTANCE_ID);
+      assertThat(retainedOwnerUuid.get("owner_account_uuid", UUID.class)).isNull();
 
       GameInstanceRepository repository = new GameInstanceRepository(dsl);
       GameInstance retained = repository.findById(RETAINED_INSTANCE_ID).orElseThrow();
