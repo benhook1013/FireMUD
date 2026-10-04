@@ -306,9 +306,7 @@ public class WorldsCommandHandler {
     if (resolution instanceof DirectTextOrdinalSelectionResolver.PointerUnavailable<?>) {
       return new RealmSelectorResolution.PointerUnavailable();
     }
-    return resolution instanceof DirectTextOrdinalSelectionResolver.UnboundSelector<?>
-        ? new RealmSelectorResolution.Stale(RealmSelectorStaleReason.UNBOUND_SELECTOR)
-        : new RealmSelectorResolution.Stale(RealmSelectorStaleReason.SNAPSHOT_MISMATCH);
+    return new RealmSelectorResolution.Stale();
   }
 
   private RealmSelectorResolution resolveOmittedLobbyRealm(
@@ -337,12 +335,12 @@ public class WorldsCommandHandler {
         return new RealmSelectorResolution.Unavailable();
       }
       if (revalidation instanceof RealmSnapshotRevalidation.Stale) {
-        return new RealmSelectorResolution.Stale(RealmSelectorStaleReason.SNAPSHOT_MISMATCH);
+        return new RealmSelectorResolution.Stale();
       }
       if (!snapshot.worldSlug().equalsIgnoreCase(world.slug())
           || snapshot.tenantId()
               != DirectTextOrdinalSelectionResolver.worldTenantIdOrInvalid(world)) {
-        return new RealmSelectorResolution.Stale(RealmSelectorStaleReason.SNAPSHOT_MISMATCH);
+        return new RealmSelectorResolution.Stale();
       }
       GameplayWorldCatalog.RealmDiscoverySnapshot currentRealmCatalog =
           ((RealmSnapshotRevalidation.Current) revalidation).snapshot();
@@ -350,14 +348,13 @@ public class WorldsCommandHandler {
         return new RealmSelectorResolution.RequiresSelection();
       }
       if (snapshot.ordinalTargets().isEmpty()) {
-        return new RealmSelectorResolution.Stale(RealmSelectorStaleReason.SNAPSHOT_MISMATCH);
+        return new RealmSelectorResolution.Stale();
       }
       return worldCatalog
           .resolveRealmSnapshotOrdinal(
               world, currentRealmCatalog, snapshot.ordinalTargets().getFirst())
           .<RealmSelectorResolution>map(RealmSelectorResolution.Selected::new)
-          .orElseGet(
-              () -> new RealmSelectorResolution.Stale(RealmSelectorStaleReason.SNAPSHOT_MISMATCH));
+          .orElseGet(RealmSelectorResolution.Stale::new);
     }
 
     // Without a caller-specific REALMS snapshot, only the canonical public default is a safe
@@ -447,11 +444,6 @@ public class WorldsCommandHandler {
     record Unavailable() implements RealmSnapshotRevalidation {}
   }
 
-  private enum RealmSelectorStaleReason {
-    UNBOUND_SELECTOR,
-    SNAPSHOT_MISMATCH
-  }
-
   private sealed interface RealmSelectorResolution
       permits RealmSelectorResolution.Selected,
           RealmSelectorResolution.NoSelection,
@@ -468,7 +460,7 @@ public class WorldsCommandHandler {
 
     record RequiresSelection() implements RealmSelectorResolution {}
 
-    record Stale(RealmSelectorStaleReason reason) implements RealmSelectorResolution {}
+    record Stale() implements RealmSelectorResolution {}
 
     record Unavailable() implements RealmSelectorResolution {}
 
@@ -775,11 +767,7 @@ public class WorldsCommandHandler {
     if (realmSelection instanceof RealmSelectorResolution.PointerUnavailable) {
       return CharacterBrowseResult.failure("ADMISSION_POINTER_UNAVAILABLE");
     }
-    if (realmSelection instanceof RealmSelectorResolution.Stale stale) {
-      if (stale.reason() == RealmSelectorStaleReason.UNBOUND_SELECTOR
-          && !worldCatalog.isPubliclyDiscoverable(catalogSnapshot, world)) {
-        return CharacterBrowseResult.invalidWorld();
-      }
+    if (realmSelection instanceof RealmSelectorResolution.Stale) {
       return CharacterBrowseResult.failure("CONNECT_SCOPE_MISMATCH");
     }
     if (realmSelection instanceof RealmSelectorResolution.RequiresSelection) {
@@ -787,7 +775,6 @@ public class WorldsCommandHandler {
     }
     if (realmSelection instanceof RealmSelectorResolution.Invalid) {
       return StringUtils.hasText(realmSelector)
-              && worldCatalog.isPubliclyDiscoverable(catalogSnapshot, world)
           ? CharacterBrowseResult.invalidRealm(world.slug())
           : CharacterBrowseResult.invalidWorld();
     }
@@ -797,9 +784,7 @@ public class WorldsCommandHandler {
     if (!realm.publicProductionRealm()
         && !isBoundToCurrentRealmSnapshot(sessionContext, world, realm)) {
       // A fresh caller-bound snapshot establishes knowledge of the target, not grant authority.
-      return worldCatalog.isPubliclyDiscoverable(catalogSnapshot, world)
-          ? CharacterBrowseResult.invalidRealm(world.slug())
-          : CharacterBrowseResult.invalidWorld();
+      return CharacterBrowseResult.invalidRealm(world.slug());
     }
     boolean currentPointerMatches;
     try {

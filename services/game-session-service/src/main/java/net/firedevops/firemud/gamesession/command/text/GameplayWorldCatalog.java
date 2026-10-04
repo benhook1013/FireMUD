@@ -16,6 +16,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.LongFunction;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
@@ -378,10 +379,7 @@ public final class GameplayWorldCatalog {
   }
 
   private Optional<WorldView> resolveStableWorld(String selector, List<WorldView> worlds) {
-    String normalized = selectorKey(selector);
-    List<WorldView> matches =
-        worlds.stream().filter(world -> normalized.equals(selectorKey(world.slug()))).toList();
-    return matches.size() == 1 ? Optional.of(matches.getFirst()) : Optional.empty();
+    return resolveWorldBySlug(selector, worlds);
   }
 
   private Optional<WorldView> resolveWorld(
@@ -740,7 +738,7 @@ public final class GameplayWorldCatalog {
   }
 
   private List<RealmView> publicProductionRealms(WorldView world) {
-    return visibleRealms(world).stream().filter(RealmView::publicProductionRealm).toList();
+    return publicVisibleRealms(world);
   }
 
   public List<WorldView> visibleWorlds() {
@@ -1387,48 +1385,15 @@ public final class GameplayWorldCatalog {
 
   private static Set<String> ambiguousWorldSelectors(
       List<GameplayAdmissionPointerSnapshot> pointers) {
-    Map<String, Set<Long>> tenantsBySelector = new HashMap<>();
-    for (GameplayAdmissionPointerSnapshot pointer : pointers) {
-      if (pointer.worldSlug() == null || pointer.worldSlug().isBlank()) {
-        continue;
-      }
-      tenantsBySelector
-          .computeIfAbsent(selectorKey(pointer.worldSlug()), ignored -> new HashSet<>())
-          .add(pointer.tenantId());
-    }
-    return tenantsBySelector.entrySet().stream()
-        .filter(entry -> entry.getValue().size() > 1)
-        .map(Map.Entry::getKey)
-        .collect(Collectors.toUnmodifiableSet());
+    return ambiguousWorldSelectors(selectorTenantsByPointer(pointers), null);
   }
 
   private static Set<String> ambiguousWorldSelectorsFromWorlds(List<WorldView> worlds) {
-    Map<String, Set<Long>> tenantsBySelector = new HashMap<>();
-    for (WorldView world : worlds) {
-      if (world == null || world.slug() == null || world.slug().isBlank()) {
-        continue;
-      }
-      if (world.realms() == null) {
-        continue;
-      }
-      world.realms().stream()
-          .filter(Objects::nonNull)
-          .map(RealmView::tenantId)
-          .filter(tenantId -> tenantId > 0L)
-          .forEach(
-              tenantId ->
-                  tenantsBySelector
-                      .computeIfAbsent(selectorKey(world.slug()), ignored -> new HashSet<>())
-                      .add(tenantId));
-    }
-    return tenantsBySelector.entrySet().stream()
-        .filter(entry -> entry.getValue().size() > 1)
-        .map(Map.Entry::getKey)
-        .collect(Collectors.toUnmodifiableSet());
+    return ambiguousWorldSelectors(selectorTenantsByWorld(worlds), null);
   }
 
-  private static Set<String> ambiguousWorldSelectorsWithUnhealthyTenants(
-      List<GameplayAdmissionPointerSnapshot> pointers, Set<Long> unhealthyTenantIds) {
+  private static Map<String, Set<Long>> selectorTenantsByPointer(
+      List<GameplayAdmissionPointerSnapshot> pointers) {
     Map<String, Set<Long>> tenantsBySelector = new HashMap<>();
     for (GameplayAdmissionPointerSnapshot pointer : pointers) {
       if (pointer.worldSlug() == null || pointer.worldSlug().isBlank()) {
@@ -1438,15 +1403,10 @@ public final class GameplayWorldCatalog {
           .computeIfAbsent(selectorKey(pointer.worldSlug()), ignored -> new HashSet<>())
           .add(pointer.tenantId());
     }
-    return tenantsBySelector.entrySet().stream()
-        .filter(entry -> entry.getValue().size() > 1)
-        .filter(entry -> entry.getValue().stream().anyMatch(unhealthyTenantIds::contains))
-        .map(Map.Entry::getKey)
-        .collect(Collectors.toUnmodifiableSet());
+    return tenantsBySelector;
   }
 
-  private static Set<String> ambiguousWorldSelectorsWithUnhealthyTenantsFromWorlds(
-      List<WorldView> worlds, Map<Long, Long> publicProductionCounts) {
+  private static Map<String, Set<Long>> selectorTenantsByWorld(List<WorldView> worlds) {
     Map<String, Set<Long>> tenantsBySelector = new HashMap<>();
     for (WorldView world : worlds) {
       if (world == null
@@ -1465,14 +1425,32 @@ public final class GameplayWorldCatalog {
                       .computeIfAbsent(selectorKey(world.slug()), ignored -> new HashSet<>())
                       .add(tenantId));
     }
+    return tenantsBySelector;
+  }
+
+  private static Set<String> ambiguousWorldSelectors(
+      Map<String, Set<Long>> tenantsBySelector, Predicate<Long> unhealthyTenantPredicate) {
     return tenantsBySelector.entrySet().stream()
         .filter(entry -> entry.getValue().size() > 1)
         .filter(
             entry ->
-                entry.getValue().stream()
-                    .anyMatch(tenantId -> publicProductionCounts.getOrDefault(tenantId, 0L) != 1L))
+                unhealthyTenantPredicate == null
+                    || entry.getValue().stream().anyMatch(unhealthyTenantPredicate))
         .map(Map.Entry::getKey)
         .collect(Collectors.toUnmodifiableSet());
+  }
+
+  private static Set<String> ambiguousWorldSelectorsWithUnhealthyTenants(
+      List<GameplayAdmissionPointerSnapshot> pointers, Set<Long> unhealthyTenantIds) {
+    return ambiguousWorldSelectors(
+        selectorTenantsByPointer(pointers), unhealthyTenantIds::contains);
+  }
+
+  private static Set<String> ambiguousWorldSelectorsWithUnhealthyTenantsFromWorlds(
+      List<WorldView> worlds, Map<Long, Long> publicProductionCounts) {
+    return ambiguousWorldSelectors(
+        selectorTenantsByWorld(worlds),
+        tenantId -> publicProductionCounts.getOrDefault(tenantId, 0L) != 1L);
   }
 
   private static boolean tenantHasValidPublicProductionAuthority(
