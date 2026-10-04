@@ -2104,6 +2104,8 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountGlobalRoleSourcePostgresIntegrationTest#nonnullLegacyPlayerAndCanonicalRoleScalarsDoNotInventSources()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountGlobalRoleSourcePostgresIntegrationTest#directSourceWritesAndWrongScopeEvidenceCannotManufactureOrEraseBirthState()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountGlobalRoleSourcePostgresIntegrationTest#abortedFreshInsertLeavesNoAccountOrPartialSourceAndReadRequiresWritableTransaction()' \
+            --require-suite net.firedevops.firemud.accountservice.repository.AccountRepositoryIntegrationTest \
+            --require-case 'net.firedevops.firemud.accountservice.repository.AccountRepositoryIntegrationTest#globalRegistrationMigrationPreservesAndQuarantinesUnprovenTenantRows()' \
             account-service
 
       - name: Upload Account fresh explicit-empty global-role source PostgreSQL proof
@@ -2111,7 +2113,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: account-fresh-global-role-source-postgresql-proof-${{ github.sha }}
-          path: services/account-service/build/test-results/integrationTest/TEST-*AccountGlobalRoleSourcePostgresIntegrationTest.xml
+          path: |
+            services/account-service/build/test-results/integrationTest/TEST-*AccountGlobalRoleSourcePostgresIntegrationTest.xml
+            services/account-service/build/test-results/integrationTest/TEST-*AccountRepositoryIntegrationTest.xml
           if-no-files-found: warn
           retention-days: 7
 

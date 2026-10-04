@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -17,6 +18,7 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.security.AccountTokenProfileCatalog;
+import net.firedevops.firemud.accountservice.security.AccountTokenProfileCatalog.ActualClaimMaps;
 import net.firedevops.firemud.accountservice.security.AccountTokenProfileCatalog.AuthorityMapShape;
 import net.firedevops.firemud.accountservice.security.AccountTokenProfileCatalog.ClaimFieldPresence;
 import net.firedevops.firemud.accountservice.security.AccountTokenProfileCatalog.ControlUiShape;
@@ -532,7 +534,12 @@ class AccountTokenProfileCatalogTest {
         IllegalArgumentException.class,
         () ->
             oneByteSmaller.validatePreSignCandidate(
-                AccountTokenProfileCatalog.CONTROL_UI, shape, 1_000, 1_900, canonicalTuple));
+                AccountTokenProfileCatalog.CONTROL_UI,
+                shape,
+                actualClaimMaps(shape),
+                1_000,
+                1_900,
+                canonicalTuple));
 
     assertThrows(
         IllegalArgumentException.class,
@@ -541,6 +548,7 @@ class AccountTokenProfileCatalogTest {
                 .validatePreSignCandidate(
                     AccountTokenProfileCatalog.CONTROL_UI,
                     shape,
+                    actualClaimMaps(shape),
                     1_000,
                     1_900,
                     "{\"tenantAuthorityGeneration\":{},\"accountAuthorityGeneration\":\"1\"}"));
@@ -558,6 +566,7 @@ class AccountTokenProfileCatalogTest {
             catalog.validatePreSignCandidate(
                 AccountTokenProfileCatalog.CONTROL_UI,
                 shape,
+                actualClaimMaps(shape),
                 1_000,
                 1_900,
                 tupleJson(
@@ -571,6 +580,7 @@ class AccountTokenProfileCatalogTest {
             catalog.validatePreSignCandidate(
                 AccountTokenProfileCatalog.CONTROL_UI,
                 shape,
+                actualClaimMaps(shape),
                 1_000,
                 1_900,
                 tupleJson(
@@ -582,6 +592,7 @@ class AccountTokenProfileCatalogTest {
             catalog.validatePreSignCandidate(
                 AccountTokenProfileCatalog.CONTROL_UI,
                 shape,
+                actualClaimMaps(shape),
                 1_000,
                 1_900,
                 tupleJson(shape, Map.of("tenantBillingCutoff", cutoffMap(Set.of(TENANT_A))))));
@@ -602,6 +613,7 @@ class AccountTokenProfileCatalogTest {
             catalog.validatePreSignCandidate(
                 AccountTokenProfileCatalog.CONTROL_UI,
                 withAccountCutoff,
+                actualClaimMaps(withAccountCutoff),
                 1_000,
                 1_900,
                 tupleJsonWithoutField(withAccountCutoff, "accountSecurityCutoff")));
@@ -611,6 +623,7 @@ class AccountTokenProfileCatalogTest {
             catalog.validatePreSignCandidate(
                 AccountTokenProfileCatalog.CONTROL_UI,
                 shape,
+                actualClaimMaps(shape),
                 1_000,
                 1_900,
                 tupleJson(
@@ -631,6 +644,7 @@ class AccountTokenProfileCatalogTest {
             catalog.validatePreSignCandidate(
                 AccountTokenProfileCatalog.CONTROL_UI,
                 shape,
+                actualClaimMaps(shape),
                 1_000,
                 1_900,
                 tupleJsonWithoutField(shape, "tenantAuthorityGeneration")));
@@ -640,6 +654,7 @@ class AccountTokenProfileCatalogTest {
             catalog.validatePreSignCandidate(
                 AccountTokenProfileCatalog.CONTROL_UI,
                 shape,
+                actualClaimMaps(shape),
                 1_000,
                 1_900,
                 tupleJson(shape, Collections.singletonMap("tenantAuthorityGeneration", null))));
@@ -649,6 +664,7 @@ class AccountTokenProfileCatalogTest {
             catalog.validatePreSignCandidate(
                 AccountTokenProfileCatalog.CONTROL_UI,
                 shape,
+                actualClaimMaps(shape),
                 1_000,
                 1_900,
                 tupleJson(shape, Map.of("membershipAuthorityGeneration", "not-a-map"))));
@@ -658,6 +674,7 @@ class AccountTokenProfileCatalogTest {
             catalog.validatePreSignCandidate(
                 AccountTokenProfileCatalog.CONTROL_UI,
                 shape,
+                actualClaimMaps(shape),
                 1_000,
                 1_900,
                 tupleJson(shape, Collections.singletonMap("privateRealmGrantVersions", null))));
@@ -667,6 +684,7 @@ class AccountTokenProfileCatalogTest {
             catalog.validatePreSignCandidate(
                 AccountTokenProfileCatalog.CONTROL_UI,
                 shape,
+                actualClaimMaps(shape),
                 1_000,
                 1_900,
                 tupleJson(shape, Map.of("privateRealmGrantVersions", Map.of()))));
@@ -688,6 +706,7 @@ class AccountTokenProfileCatalogTest {
             catalog.validatePreSignCandidate(
                 AccountTokenProfileCatalog.GAME_SESSION_ACCOUNT_DELEGATION,
                 privateShape,
+                actualClaimMaps(privateShape),
                 1_000,
                 1_600,
                 differentGrant));
@@ -703,9 +722,218 @@ class AccountTokenProfileCatalogTest {
             catalog.validatePreSignCandidate(
                 AccountTokenProfileCatalog.GAME_SESSION_ACCOUNT_DELEGATION,
                 privateShape,
+                actualClaimMaps(privateShape),
                 1_000,
                 1_600,
                 differentGrantIdentity));
+  }
+
+  @Test
+  void bindsActualMembershipVersionAndScopedRoleValuesToTypedScopeWithoutRounding() {
+    AccountTokenProfileCatalog catalog = catalog();
+    ControlUiShape shape = controlUiShape();
+    BigInteger largeVersion = new BigInteger("900719925474099312345678901234567890");
+    Map<String, BigInteger> membershipVersion = new LinkedHashMap<>();
+    membershipVersion.put(TENANT_A.toString(), largeVersion);
+    membershipVersion.put(TENANT_B.toString(), BigInteger.ONE);
+    List<String> rolesForTenantA = new ArrayList<>(List.of("tenantAdmin", "designer"));
+    Map<String, List<String>> scopedRoles = new LinkedHashMap<>();
+    scopedRoles.put(TENANT_A.toString(), rolesForTenantA);
+
+    ActualClaimMaps copied =
+        new ActualClaimMaps(Optional.of(membershipVersion), Optional.of(scopedRoles));
+    membershipVersion.clear();
+    rolesForTenantA.clear();
+    scopedRoles.clear();
+
+    assertEquals(largeVersion, copied.membershipVersion().orElseThrow().get(TENANT_A.toString()));
+    assertEquals(
+        List.of("tenantAdmin", "designer"),
+        copied.scopedRoles().orElseThrow().get(TENANT_A.toString()));
+    assertThrows(
+        UnsupportedOperationException.class,
+        () -> copied.membershipVersion().orElseThrow().put(TENANT_C.toString(), BigInteger.ONE));
+    assertThrows(
+        UnsupportedOperationException.class,
+        () -> copied.scopedRoles().orElseThrow().get(TENANT_A.toString()).add("player"));
+
+    catalog.validatePreSignCandidate(
+        AccountTokenProfileCatalog.CONTROL_UI, shape, copied, 1_000, 1_900, tupleJson(shape));
+  }
+
+  @Test
+  void rejectsActualMembershipVersionAndScopedRoleScopeOrValueMismatches() {
+    AccountTokenProfileCatalog catalog = catalog();
+    ControlUiShape shape = controlUiShape();
+    ActualClaimMaps valid = actualClaimMaps(shape);
+
+    assertInvalidClaimMaps(
+        catalog,
+        AccountTokenProfileCatalog.CONTROL_UI,
+        shape,
+        new ActualClaimMaps(
+            Optional.of(Map.of(TENANT_A.toString(), BigInteger.ONE)), valid.scopedRoles()));
+    assertInvalidClaimMaps(
+        catalog,
+        AccountTokenProfileCatalog.CONTROL_UI,
+        shape,
+        new ActualClaimMaps(
+            Optional.of(
+                Map.of(
+                    TENANT_A.toString(), BigInteger.ONE,
+                    TENANT_B.toString(), BigInteger.ONE,
+                    TENANT_C.toString(), BigInteger.ONE)),
+            valid.scopedRoles()));
+    assertInvalidClaimMaps(
+        catalog,
+        AccountTokenProfileCatalog.CONTROL_UI,
+        shape,
+        new ActualClaimMaps(
+            Optional.of(
+                Map.of(TENANT_C.toString(), BigInteger.ONE, TENANT_B.toString(), BigInteger.ONE)),
+            valid.scopedRoles()));
+    assertInvalidClaimMaps(
+        catalog,
+        AccountTokenProfileCatalog.CONTROL_UI,
+        shape,
+        new ActualClaimMaps(
+            Optional.of(
+                Map.of(
+                    UUID.fromString("abcdef00-0000-4000-8000-000000000001")
+                        .toString()
+                        .toUpperCase(),
+                    BigInteger.ONE,
+                    TENANT_B.toString(),
+                    BigInteger.ONE)),
+            valid.scopedRoles()));
+    assertInvalidClaimMaps(
+        catalog,
+        AccountTokenProfileCatalog.CONTROL_UI,
+        shape,
+        new ActualClaimMaps(
+            Optional.of(
+                Map.of(
+                    TENANT_A.toString(), BigInteger.ZERO,
+                    TENANT_B.toString(), BigInteger.ONE)),
+            valid.scopedRoles()));
+    assertInvalidClaimMaps(
+        catalog,
+        AccountTokenProfileCatalog.CONTROL_UI,
+        shape,
+        new ActualClaimMaps(
+            Optional.of(
+                Map.of(
+                    TENANT_A.toString(),
+                    BigInteger.valueOf(-1),
+                    TENANT_B.toString(),
+                    BigInteger.ONE)),
+            valid.scopedRoles()));
+    assertInvalidClaimMaps(
+        catalog,
+        AccountTokenProfileCatalog.CONTROL_UI,
+        shape,
+        new ActualClaimMaps(
+            valid.membershipVersion(),
+            Optional.of(Map.of(TENANT_B.toString(), List.of("designer")))));
+    assertInvalidClaimMaps(
+        catalog,
+        AccountTokenProfileCatalog.CONTROL_UI,
+        shape,
+        new ActualClaimMaps(
+            valid.membershipVersion(),
+            Optional.of(
+                Map.of(
+                    TENANT_A.toString(), List.of("designer"),
+                    TENANT_B.toString(), List.of("moderator")))));
+    assertInvalidClaimMaps(
+        catalog,
+        AccountTokenProfileCatalog.CONTROL_UI,
+        shape,
+        new ActualClaimMaps(
+            valid.membershipVersion(),
+            Optional.of(Map.of(TENANT_A.toString(), List.of("billingAdmin")))));
+    assertInvalidClaimMaps(
+        catalog,
+        AccountTokenProfileCatalog.CONTROL_UI,
+        shape,
+        new ActualClaimMaps(
+            valid.membershipVersion(),
+            Optional.of(Map.of(TENANT_A.toString(), List.of("designer", "designer")))));
+    assertInvalidClaimMaps(
+        catalog,
+        AccountTokenProfileCatalog.CONTROL_UI,
+        shape,
+        new ActualClaimMaps(
+            valid.membershipVersion(), Optional.of(Map.of(TENANT_A.toString(), List.of()))));
+  }
+
+  @Test
+  void preservesRequiredEmptyScopedRolesAndOptionalDelegationOmissionSeparately() {
+    AccountTokenProfileCatalog catalog = catalog();
+    ControlUiShape emptyControlUi =
+        new ControlUiShape(
+            controlUiClaims(false),
+            emptyAuthority(),
+            Set.of(),
+            Set.of(),
+            Set.of(),
+            Set.of(),
+            Set.of(),
+            Set.of());
+    ActualClaimMaps presentEmpty =
+        new ActualClaimMaps(Optional.of(Map.of()), Optional.of(Map.of()));
+    catalog.validatePreSignCandidate(
+        AccountTokenProfileCatalog.CONTROL_UI,
+        emptyControlUi,
+        presentEmpty,
+        1_000,
+        1_900,
+        tupleJson(emptyControlUi));
+
+    TenantBoundDelegationShape omittedScopedRoles =
+        new TenantBoundDelegationShape(
+            delegationClaims(false, false),
+            authority(Set.of(TENANT_A), Set.of(TENANT_A), Set.of(TENANT_A), Set.of(), List.of()),
+            TENANT_A,
+            Set.of(),
+            true,
+            Optional.empty());
+    catalog.validatePreSignCandidate(
+        AccountTokenProfileCatalog.GAME_SESSION_ACCOUNT_DELEGATION,
+        omittedScopedRoles,
+        new ActualClaimMaps(
+            Optional.of(Map.of(TENANT_A.toString(), BigInteger.ONE)), Optional.empty()),
+        1_000,
+        1_600,
+        tupleJson(omittedScopedRoles));
+
+    TenantBoundDelegationShape emptyScopedRoles =
+        new TenantBoundDelegationShape(
+            delegationClaims(true, false),
+            omittedScopedRoles.authority(),
+            TENANT_A,
+            Set.of(),
+            true,
+            Optional.empty());
+    catalog.validatePreSignCandidate(
+        AccountTokenProfileCatalog.GAME_SESSION_ACCOUNT_DELEGATION,
+        emptyScopedRoles,
+        new ActualClaimMaps(
+            Optional.of(Map.of(TENANT_A.toString(), BigInteger.ONE)), Optional.of(Map.of())),
+        1_000,
+        1_600,
+        tupleJson(emptyScopedRoles));
+
+    assertInvalidClaimMaps(
+        catalog,
+        AccountTokenProfileCatalog.CONTROL_UI,
+        emptyControlUi,
+        new ActualClaimMaps(Optional.empty(), Optional.of(Map.of())));
+    assertInvalidClaimMaps(
+        catalog,
+        AccountTokenProfileCatalog.CONTROL_UI,
+        emptyControlUi,
+        new ActualClaimMaps(Optional.of(Map.of()), Optional.empty()));
   }
 
   @Test
@@ -805,7 +1033,46 @@ class AccountTokenProfileCatalogTest {
       AccountTokenProfileCatalog.ProfileShape shape,
       String tupleJson) {
     catalog.validatePreSignCandidate(
-        profileId, shape, 1_000, 1_000 + lifetime(profileId), tupleJson);
+        profileId, shape, actualClaimMaps(shape), 1_000, 1_000 + lifetime(profileId), tupleJson);
+  }
+
+  private static ActualClaimMaps actualClaimMaps(AccountTokenProfileCatalog.ProfileShape shape) {
+    Optional<Map<String, BigInteger>> membershipVersion = Optional.empty();
+    if (shape.claims().membershipVersionPresent()) {
+      Map<String, BigInteger> values = new TreeMap<>();
+      shape
+          .authority()
+          .membershipVersionKeys()
+          .forEach(tenantId -> values.put(tenantId.toString(), BigInteger.ONE));
+      membershipVersion = Optional.of(values);
+    }
+
+    Optional<Map<String, List<String>>> scopedRoles = Optional.empty();
+    if (shape.claims().scopedRolesPresent()) {
+      Map<String, List<String>> values = new TreeMap<>();
+      shape
+          .scopedRoleKeys()
+          .forEach(tenantId -> values.put(tenantId.toString(), List.of("moderator")));
+      scopedRoles = Optional.of(values);
+    }
+    return new ActualClaimMaps(membershipVersion, scopedRoles);
+  }
+
+  private static void assertInvalidClaimMaps(
+      AccountTokenProfileCatalog catalog,
+      String profileId,
+      AccountTokenProfileCatalog.ProfileShape shape,
+      ActualClaimMaps actualClaims) {
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            catalog.validatePreSignCandidate(
+                profileId,
+                shape,
+                actualClaims,
+                1_000,
+                1_000 + lifetime(profileId),
+                tupleJson(shape)));
   }
 
   private static long lifetime(String profileId) {
@@ -963,7 +1230,12 @@ class AccountTokenProfileCatalogTest {
         IllegalArgumentException.class,
         () ->
             catalog.validatePreSignCandidate(
-                profileId, shape, 1_000, 1_000 + lifetime(profileId), tupleJson(shape)));
+                profileId,
+                shape,
+                actualClaimMaps(shape),
+                1_000,
+                1_000 + lifetime(profileId),
+                tupleJson(shape)));
   }
 
   private static ControlUiShape controlUiShape() {

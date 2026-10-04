@@ -778,6 +778,16 @@ class AccountRepositoryIntegrationTest {
                 "SELECT COUNT(*) FROM " + schema + ".profiles WHERE account_id = ?",
                 legacyAccountId))
         .isEqualTo(1L);
+    assertThat(
+            dsl.fetchValue(
+                "SELECT COUNT(*) FROM "
+                    + schema
+                    + ".account_global_role_sources WHERE account_uuid = (SELECT account_uuid "
+                    + "FROM "
+                    + schema
+                    + ".accounts WHERE id = ?)",
+                legacyAccountId))
+        .isEqualTo(0L);
 
     long newAccountId =
         Objects.requireNonNull(
@@ -802,6 +812,32 @@ class AccountRepositoryIntegrationTest {
                     + ".account_tenant_membership WHERE account_id = ?",
                 newAccountId))
         .isEqualTo(0L);
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE " + schema + ".accounts SET role = 'platformAdmin' WHERE id = ?",
+                    newAccountId))
+        .isInstanceOf(DataAccessException.class)
+        .hasStackTraceContaining(
+            "Account role change requires a versioned global-role source writer");
+    assertThat(
+            dsl.fetchValue("SELECT role FROM " + schema + ".accounts WHERE id = ?", newAccountId))
+        .isNull();
+    assertThat(
+            dsl.fetchValue(
+                "SELECT COUNT(*) FROM "
+                    + schema
+                    + ".account_global_role_sources source "
+                    + "JOIN "
+                    + schema
+                    + ".accounts account_row ON account_row.account_uuid = source.account_uuid "
+                    + "WHERE account_row.id = ? "
+                    + "AND source.account_uuid_source_numeric_id = account_row.id "
+                    + "AND source.account_uuid_provenance = account_row.account_uuid_provenance "
+                    + "AND source.global_roles = ARRAY[]::TEXT[] "
+                    + "AND source.global_role_source_version = 1",
+                newAccountId))
+        .isEqualTo(1L);
   }
 
   @Test

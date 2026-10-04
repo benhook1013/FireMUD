@@ -195,7 +195,8 @@ class AccountGlobalRoleSourcePostgresIntegrationTest {
                     List.of(),
                     1L))
         .isInstanceOf(DataAccessException.class)
-        .hasStackTraceContaining("account_global_role_source_birth_only");
+        .hasStackTraceContaining(
+            "Account global-role source may only be inserted by its fresh Account birth path");
     assertThatThrownBy(
             () ->
                 insertSource(
@@ -206,7 +207,8 @@ class AccountGlobalRoleSourcePostgresIntegrationTest {
                     List.of("platformAdmin"),
                     1L))
         .isInstanceOf(DataAccessException.class)
-        .hasStackTraceContaining("account_global_role_source_birth_only");
+        .hasStackTraceContaining(
+            "Account global-role source may only be inserted by its fresh Account birth path");
     assertThatThrownBy(
             () ->
                 insertSource(
@@ -217,7 +219,8 @@ class AccountGlobalRoleSourcePostgresIntegrationTest {
                     List.of(),
                     1L))
         .isInstanceOf(DataAccessException.class)
-        .hasStackTraceContaining("account_global_role_source_birth_only");
+        .hasStackTraceContaining(
+            "Account global-role source may only be inserted by its fresh Account birth path");
     assertThat(sourceCount(fixture.setupDsl())).isEqualTo(1L);
 
     assertThatThrownBy(
@@ -231,7 +234,8 @@ class AccountGlobalRoleSourcePostgresIntegrationTest {
                             + "WHERE account_uuid = ?",
                         accountWithSource))
         .isInstanceOf(DataAccessException.class)
-        .hasStackTraceContaining("account_global_role_source_immutable");
+        .hasStackTraceContaining(
+            "Fresh Account global-role source is immutable until a versioned writer exists");
     assertThatThrownBy(
             () ->
                 fixture
@@ -240,11 +244,12 @@ class AccountGlobalRoleSourcePostgresIntegrationTest {
                         "DELETE FROM account_global_role_sources WHERE account_uuid = ?",
                         accountWithSource))
         .isInstanceOf(DataAccessException.class)
-        .hasStackTraceContaining("account_global_role_source_immutable");
+        .hasStackTraceContaining(
+            "Fresh Account global-role source is immutable until a versioned writer exists");
     assertThat(sourceCount(fixture.setupDsl())).isEqualTo(1L);
     assertThatThrownBy(() -> fixture.setupDsl().execute("TRUNCATE account_global_role_sources"))
         .isInstanceOf(DataAccessException.class)
-        .hasStackTraceContaining("account_global_role_source_truncate_denied");
+        .hasStackTraceContaining("Fresh Account global-role source cannot be truncated");
     assertThat(sourceCount(fixture.setupDsl())).isEqualTo(1L);
 
     assertThatThrownBy(
@@ -255,7 +260,8 @@ class AccountGlobalRoleSourcePostgresIntegrationTest {
                         "UPDATE accounts SET role = 'support' WHERE account_uuid = ?",
                         accountWithSource))
         .isInstanceOf(DataAccessException.class)
-        .hasStackTraceContaining("account_global_role_source_legacy_scalar_guard");
+        .hasStackTraceContaining(
+            "Account role change requires a versioned global-role source writer");
     assertThat(globalRoleSourceVersion(fixture.setupDsl(), accountWithSource)).isEqualTo(1L);
     assertSourceStoredAsExactEmptyArray(fixture.setupDsl(), accountWithSource);
   }

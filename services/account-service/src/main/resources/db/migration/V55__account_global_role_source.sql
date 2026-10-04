@@ -72,21 +72,39 @@ CREATE FUNCTION account_global_role_source_birth_insert_guard()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
+DECLARE
+    account_identity_exists BOOLEAN;
 BEGIN
-    IF pg_trigger_depth() <> 2
-        OR NOT EXISTS (
+    IF pg_trigger_depth() <> 2 THEN
+        RAISE EXCEPTION 'Account global-role source may only be inserted by its fresh Account birth path'
+            USING ERRCODE = '23514', CONSTRAINT = 'account_global_role_source_birth_only';
+    END IF;
+
+    -- The source table and its Account owner may be written through a
+    -- schema-qualified relation while the connection search_path names another
+    -- schema. Resolve the paired Account row in the trigger table's own schema.
+    EXECUTE format(
+        'SELECT EXISTS (
             SELECT 1
-            FROM accounts account_row
-            WHERE account_row.id = NEW.account_uuid_source_numeric_id
-                AND account_row.account_uuid = NEW.account_uuid
-                AND account_row.account_uuid_source_numeric_id = NEW.account_uuid_source_numeric_id
-                AND account_row.account_uuid_provenance = NEW.account_uuid_provenance
+            FROM %I.accounts account_row
+            WHERE account_row.id = $1
+                AND account_row.account_uuid = $2
+                AND account_row.account_uuid_source_numeric_id = $3
+                AND account_row.account_uuid_provenance = $4
                 AND account_row.account_uuid_provenance IN (
-                    'ACCOUNT_REPOSITORY_INSERT',
-                    'ACCOUNT_DATABASE_INSERT'
+                    ''ACCOUNT_REPOSITORY_INSERT'',
+                    ''ACCOUNT_DATABASE_INSERT''
                 )
                 AND account_row.role IS NULL
-        ) THEN
+        )',
+        TG_TABLE_SCHEMA
+    ) INTO account_identity_exists
+    USING NEW.account_uuid_source_numeric_id,
+        NEW.account_uuid,
+        NEW.account_uuid_source_numeric_id,
+        NEW.account_uuid_provenance;
+
+    IF NOT account_identity_exists THEN
         RAISE EXCEPTION 'Account global-role source may only be inserted by its fresh Account birth path'
             USING ERRCODE = '23514', CONSTRAINT = 'account_global_role_source_birth_only';
     END IF;
@@ -115,19 +133,20 @@ BEGIN
                     CONSTRAINT = 'account_global_role_source_birth_identity';
         END IF;
 
-        INSERT INTO account_global_role_sources (
-            account_uuid,
-            account_uuid_source_numeric_id,
-            account_uuid_provenance,
-            global_roles,
-            global_role_source_version
-        ) VALUES (
-            NEW.account_uuid,
+        -- Bind the fresh source row to the schema that owns this Account row,
+        -- even when the caller inserted through a qualified table name.
+        EXECUTE format(
+            'INSERT INTO %I.account_global_role_sources (
+                account_uuid,
+                account_uuid_source_numeric_id,
+                account_uuid_provenance,
+                global_roles,
+                global_role_source_version
+            ) VALUES ($1, $2, $3, ARRAY[]::TEXT[], 1)',
+            TG_TABLE_SCHEMA
+        ) USING NEW.account_uuid,
             NEW.account_uuid_source_numeric_id,
-            NEW.account_uuid_provenance,
-            ARRAY[]::TEXT[],
-            1
-        );
+            NEW.account_uuid_provenance;
     END IF;
     RETURN NEW;
 END;
@@ -141,16 +160,25 @@ CREATE FUNCTION account_global_role_source_legacy_scalar_guard()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
+DECLARE
+    has_global_role_source BOOLEAN;
 BEGIN
-    IF NEW.role IS DISTINCT FROM OLD.role
-        AND EXISTS (
-            SELECT 1
-            FROM account_global_role_sources source
-            WHERE source.account_uuid = OLD.account_uuid
-        ) THEN
-        RAISE EXCEPTION 'Account role change requires a versioned global-role source writer'
-            USING ERRCODE = '23514',
-                CONSTRAINT = 'account_global_role_source_legacy_scalar_guard';
+    IF NEW.role IS DISTINCT FROM OLD.role THEN
+        EXECUTE format(
+            'SELECT EXISTS (
+                SELECT 1
+                FROM %I.account_global_role_sources source
+                WHERE source.account_uuid = $1
+            )',
+            TG_TABLE_SCHEMA
+        ) INTO has_global_role_source
+        USING OLD.account_uuid;
+
+        IF has_global_role_source THEN
+            RAISE EXCEPTION 'Account role change requires a versioned global-role source writer'
+                USING ERRCODE = '23514',
+                    CONSTRAINT = 'account_global_role_source_legacy_scalar_guard';
+        END IF;
     END IF;
     RETURN NEW;
 END;

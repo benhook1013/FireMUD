@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
+import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
 import java.nio.charset.CharacterCodingException;
@@ -33,12 +34,12 @@ import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
  *
  * <p>This catalog is an unwired issuance prerequisite. It checks the finite profile limits, the
  * caller-supplied typed shape evidence against the supported authority-tuple scope fields, exact
- * UTC-second lifetime arithmetic, and canonical UTF-8 byte lengths at the pre-sign and post-sign
- * boundaries. The authority-tuple API does not include the separate {@code membershipVersion} or
- * {@code scopedRoles} claim values, so their typed evidence is not bound to serialized claims here.
- * This catalog neither establishes current Account authority, validates a signature, performs
- * registry I/O, nor authorizes a token. Issuers and lifecycle handlers must continue to prove those
- * separate contracts before mutation or exposure.
+ * membershipVersion and scopedRoles claim-map structure and scope, exact UTC-second lifetime
+ * arithmetic, and canonical UTF-8 byte lengths at the pre-sign and post-sign boundaries. It does
+ * not establish current Account authority, prove role authorization, validate a signature, perform
+ * registry I/O, or authorize a token. Issuers and lifecycle handlers must continue to prove those
+ * separate contracts before mutation or exposure. This unwired catalog does not prove runtime
+ * issuance or activation.
  */
 public final class AccountTokenProfileCatalog {
   public static final String VERSION = "account-token-profile-catalog/v1";
@@ -81,6 +82,9 @@ public final class AccountTokenProfileCatalog {
           "outboxSequence");
   private static final Set<String> PRIVATE_REALM_GRANT_FIELDS =
       Set.of("tenantId", "worldSlug", "realmSlug", "playtestLifecycleId", "grantVersion");
+  // Canonical tenant-role vocabulary from Authentication & Authorization.
+  private static final Set<String> TENANT_ROLE_VALUES =
+      Set.of("player", "designer", "tenantAdmin", "moderator");
   private static final List<String> PROFILE_ORDER =
       List.of(CONTROL_UI, PLAYER_BOOTSTRAP, GAME_SESSION_ACCOUNT_DELEGATION);
   private static final Set<String> REQUIRED_PROFILES = Set.copyOf(PROFILE_ORDER);
@@ -179,22 +183,31 @@ public final class AccountTokenProfileCatalog {
   }
 
   /**
-   * Applies profile shape, cardinality, checked lifetime, and canonical tuple byte limits before
-   * the one permitted signing operation.
+   * Applies profile shape, actual membership/role claim structure, cardinality, checked lifetime,
+   * and canonical tuple byte limits before the one permitted signing operation.
    *
    * <p>{@code canonicalAuthorityTupleJson} must be the exact RFC 8785 serialization already
    * constructed by the owning Account claim builder. The input is rejected unless it is already
    * canonical; this method does not silently replace it with canonical bytes.
+   *
+   * <p>{@code actualClaims} carries the separate {@code membershipVersion} and {@code scopedRoles}
+   * maps from the same candidate. Their exact presence, tenant keys, positive counters, and role
+   * values are checked against the typed profile shape. This is structural proof only; current
+   * Account sources, role authorization, JWT signature, and registry postconditions remain outside
+   * this unwired API.
    */
   public void validatePreSignCandidate(
       String profileId,
       ProfileShape shape,
+      ActualClaimMaps actualClaims,
       long issuedAtEpochSecond,
       long expiresAtEpochSecond,
       String canonicalAuthorityTupleJson) {
     ProfileLimits limits = requireProfile(profileId);
     validateTokenLifetime(profileId, issuedAtEpochSecond, expiresAtEpochSecond);
+    validateActualClaimPresence(shape, actualClaims);
     validateShape(profileId, limits, shape);
+    validateActualClaimMaps(shape, actualClaims);
 
     CanonicalJsonObject authorityTuple =
         requireCanonicalJsonObject(canonicalAuthorityTupleJson, limits.maxAuthorityTupleBytes());
@@ -360,6 +373,72 @@ public final class AccountTokenProfileCatalog {
         || !claims.issuanceFencePresent()) {
       throw invalidCandidate();
     }
+  }
+
+  private static void validateActualClaimPresence(
+      ProfileShape shape, ActualClaimMaps actualClaims) {
+    if (shape == null || shape.claims() == null || actualClaims == null) {
+      throw invalidCandidate();
+    }
+    ClaimFieldPresence presence = shape.claims();
+    if (presence.membershipVersionPresent() != actualClaims.membershipVersion().isPresent()
+        || presence.scopedRolesPresent() != actualClaims.scopedRoles().isPresent()) {
+      throw invalidCandidate();
+    }
+  }
+
+  private static void validateActualClaimMaps(ProfileShape shape, ActualClaimMaps actualClaims) {
+    Map<String, BigInteger> membershipVersion =
+        actualClaims.membershipVersion().orElseThrow(AccountTokenProfileCatalog::invalidCandidate);
+    Set<String> membershipVersionKeys = requirePositiveTenantCounterMap(membershipVersion);
+    if (!membershipVersionKeys.equals(
+        canonicalTenantKeys(shape.authority().membershipVersionKeys()))) {
+      throw invalidCandidate();
+    }
+
+    if (actualClaims.scopedRoles().isPresent()) {
+      Map<String, List<String>> scopedRoles = actualClaims.scopedRoles().orElseThrow();
+      Set<String> scopedRoleKeys = requireCanonicalScopedRoles(scopedRoles);
+      if (!scopedRoleKeys.equals(canonicalTenantKeys(shape.scopedRoleKeys()))) {
+        throw invalidCandidate();
+      }
+    } else if (!shape.scopedRoleKeys().isEmpty()) {
+      throw invalidCandidate();
+    }
+  }
+
+  private static Set<String> requirePositiveTenantCounterMap(Map<String, BigInteger> values) {
+    Set<String> keys = new HashSet<>();
+    for (Map.Entry<String, BigInteger> entry : values.entrySet()) {
+      String key = entry.getKey();
+      BigInteger value = entry.getValue();
+      requireCanonicalTenantKey(key);
+      if (value == null || value.signum() <= 0) {
+        throw invalidCandidate();
+      }
+      keys.add(key);
+    }
+    return Set.copyOf(keys);
+  }
+
+  private static Set<String> requireCanonicalScopedRoles(Map<String, List<String>> values) {
+    Set<String> keys = new HashSet<>();
+    for (Map.Entry<String, List<String>> entry : values.entrySet()) {
+      String tenantKey = entry.getKey();
+      requireCanonicalTenantKey(tenantKey);
+      List<String> roles = entry.getValue();
+      if (roles == null || roles.isEmpty()) {
+        throw invalidCandidate();
+      }
+      Set<String> seenRoles = new HashSet<>();
+      for (String role : roles) {
+        if (!TENANT_ROLE_VALUES.contains(role) || !seenRoles.add(role)) {
+          throw invalidCandidate();
+        }
+      }
+      keys.add(tenantKey);
+    }
+    return Set.copyOf(keys);
   }
 
   private static void validateControlUiShape(ProfileLimits limits, ControlUiShape shape) {
@@ -679,6 +758,30 @@ public final class AccountTokenProfileCatalog {
     return Set.copyOf(keys);
   }
 
+  private static Map<String, BigInteger> immutableMembershipVersion(
+      Map<String, BigInteger> values) {
+    if (values == null || values.entrySet().stream().anyMatch(entry -> entry.getKey() == null)) {
+      throw invalidCandidate();
+    }
+    return Collections.unmodifiableMap(new LinkedHashMap<>(values));
+  }
+
+  private static Map<String, List<String>> immutableScopedRoles(Map<String, List<String>> values) {
+    if (values == null) {
+      throw invalidCandidate();
+    }
+    Map<String, List<String>> copied = new LinkedHashMap<>();
+    for (Map.Entry<String, List<String>> entry : values.entrySet()) {
+      if (entry.getKey() == null
+          || entry.getValue() == null
+          || entry.getValue().stream().anyMatch(Objects::isNull)) {
+        throw invalidCandidate();
+      }
+      copied.put(entry.getKey(), List.copyOf(entry.getValue()));
+    }
+    return Collections.unmodifiableMap(copied);
+  }
+
   private static void requireWellFormedJsonUnicode(JsonNode node) {
     if (node.isTextual()) {
       requireWellFormedUtf16(node.textValue());
@@ -880,6 +983,34 @@ public final class AccountTokenProfileCatalog {
       if (audience == null) {
         throw invalidCandidate();
       }
+    }
+  }
+
+  /**
+   * Actual separate JWT map claims, preserving omission and arbitrary-precision counters.
+   *
+   * <p>The optionals preserve claim absence separately from an empty object. Maps and nested role
+   * lists are copied defensively.
+   */
+  public record ActualClaimMaps(
+      Optional<Map<String, BigInteger>> membershipVersion,
+      Optional<Map<String, List<String>>> scopedRoles) {
+    public ActualClaimMaps {
+      if (membershipVersion == null || scopedRoles == null) {
+        throw invalidCandidate();
+      }
+      membershipVersion =
+          membershipVersion.map(AccountTokenProfileCatalog::immutableMembershipVersion);
+      scopedRoles = scopedRoles.map(AccountTokenProfileCatalog::immutableScopedRoles);
+    }
+
+    @Override
+    public String toString() {
+      return "ActualClaimMaps[membershipVersionEntries="
+          + membershipVersion.map(Map::size).orElse(0)
+          + ", scopedRoleTenants="
+          + scopedRoles.map(Map::size).orElse(0)
+          + "]";
     }
   }
 
@@ -1167,5 +1298,7 @@ public final class AccountTokenProfileCatalog {
     ClaimFieldPresence claims();
 
     AuthorityMapShape authority();
+
+    Set<UUID> scopedRoleKeys();
   }
 }
