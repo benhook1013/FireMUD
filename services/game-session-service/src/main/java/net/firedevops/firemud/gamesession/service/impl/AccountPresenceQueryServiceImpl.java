@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import net.firedevops.firemud.gamesession.service.AccountIds;
 import net.firedevops.firemud.gamesession.service.AccountPresenceQueryService;
 import net.firedevops.firemud.gamesession.service.AccountPresenceSnapshot;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
@@ -59,11 +60,17 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
   public List<AccountPresenceSnapshot> queryAccountPresence(
       long tenantId, String viewerAccountId, List<String> accountIds) {
     Objects.requireNonNull(accountIds, "accountIds");
+    if (!AccountIds.isCanonicalNonNilUuid(viewerAccountId)) {
+      throw new IllegalArgumentException(
+          "viewerAccountId must be a canonical non-nil Account UUID");
+    }
     LinkedHashSet<String> requestedIds = new LinkedHashSet<>();
     for (String accountId : accountIds) {
-      if (accountId != null && !accountId.isBlank()) {
-        requestedIds.add(accountId);
+      if (!AccountIds.isCanonicalNonNilUuid(accountId)) {
+        throw new IllegalArgumentException(
+            "accountIds must contain canonical non-nil Account UUIDs");
       }
+      requestedIds.add(accountId);
     }
     if (requestedIds.isEmpty()) {
       return List.of();
@@ -74,18 +81,21 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
     Map<String, AccountRecentPresenceState> recentStates =
         accountRecentPresenceService.findByAccountIds(tenantId, requestedIds);
     for (String accountId : requestedIds) {
-      results.put(
-          accountId,
-          offline(tenantId, accountId, recentStates.get(accountId), currentRuntimePointers));
+      AccountRecentPresenceState recentState =
+          matchingRecentState(tenantId, accountId, recentStates.get(accountId));
+      results.put(accountId, offline(tenantId, accountId, recentState, currentRuntimePointers));
     }
 
     Map<String, List<GameplayPresence>> activePresences =
         gameplayPresenceService.listConnectedByAccountIds(tenantId, requestedIds);
     for (Map.Entry<String, List<GameplayPresence>> entry : activePresences.entrySet()) {
       String accountId = entry.getKey();
+      if (!requestedIds.contains(accountId) || !AccountIds.isCanonicalNonNilUuid(accountId)) {
+        continue;
+      }
       GameplayPresence presence =
           selectCurrentPresence(tenantId, entry.getValue(), currentRuntimePointers);
-      if (presence == null) {
+      if (presence == null || !accountId.equals(presence.accountId())) {
         continue;
       }
       GameplayPresenceActivityState activityState =
@@ -93,7 +103,8 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
       GameplayAdmissionPointerSnapshot pointer =
           currentRuntimePointer(tenantId, presence.gameInstanceId(), currentRuntimePointers)
               .orElse(null);
-      AccountRecentPresenceState recentState = recentStates.get(accountId);
+      AccountRecentPresenceState recentState =
+          matchingRecentState(tenantId, accountId, recentStates.get(accountId));
       Long currentGameInstanceId =
           pointer == null ? presence.gameInstanceId() : pointer.gameInstanceId();
       String currentPlayableStateScope =
@@ -127,6 +138,17 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
     return List.copyOf(new ArrayList<>(results.values()));
   }
 
+  private AccountRecentPresenceState matchingRecentState(
+      long tenantId, String accountId, AccountRecentPresenceState recentState) {
+    if (recentState == null
+        || recentState.tenantId() != tenantId
+        || !accountId.equals(recentState.accountId())
+        || !AccountIds.isCanonicalNonNilUuid(recentState.accountId())) {
+      return null;
+    }
+    return recentState;
+  }
+
   private GameplayPresence selectCurrentPresence(
       long tenantId,
       List<GameplayPresence> presences,
@@ -145,7 +167,10 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
       long tenantId,
       GameplayPresence presence,
       Map<Long, GameplayAdmissionPointerSnapshot> currentRuntimePointers) {
-    if (presence == null || presence.tenantId() != tenantId || presence.gameInstanceId() <= 0) {
+    if (presence == null
+        || !AccountIds.isCanonicalNonNilUuid(presence.accountId())
+        || presence.tenantId() != tenantId
+        || presence.gameInstanceId() <= 0) {
       return false;
     }
     GameplayAdmissionPointerSnapshots.RoutingBundle routingBundle =

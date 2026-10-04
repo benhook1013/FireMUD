@@ -53,6 +53,7 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.common.security.RequestIdValidation;
+import net.firedevops.firemud.common.security.SessionContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -208,6 +209,41 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     }
   }
 
+  private void requireSocialGroupsPeer() {
+    GrpcPeerIdentity peer = GrpcPeerIdentity.current();
+    if (peer == null
+        || workloadNamespace == null
+        || workloadNamespace.isBlank()
+        || !peer.uri()
+            .equals("spiffe://firemud/ns/" + workloadNamespace + "/sa/social-groups-service")) {
+      throw new AdminAuthorizationException("Verified Social Groups workload identity is required");
+    }
+  }
+
+  private void requireCallerAccountSubject(UUID accountUuid) {
+    if (SessionContext.isInternalService()) {
+      throw new AdminAuthorizationException("Authenticated account subject is required");
+    }
+    if (!accountUuid.toString().equals(SessionContext.getAccountId())) {
+      throw new AdminAuthorizationException("Profile access is restricted to the caller account");
+    }
+  }
+
+  private static UUID requireCanonicalAccountUuid(String value) {
+    if (value == null || value.isBlank()) {
+      throw new InvalidRequestException("accountId must be a canonical non-nil UUID", null);
+    }
+    try {
+      UUID accountUuid = UUID.fromString(value);
+      if (accountUuid.equals(new UUID(0L, 0L)) || !accountUuid.toString().equals(value)) {
+        throw new IllegalArgumentException("accountId must be a canonical non-nil UUID");
+      }
+      return accountUuid;
+    } catch (IllegalArgumentException exception) {
+      throw new InvalidRequestException("accountId must be a canonical non-nil UUID", exception);
+    }
+  }
+
   private DirectTextCallerContext directTextCaller(
       net.firedevops.firemud.shared.v1.PlayerExecutionContext context) {
     return new DirectTextCallerContext(
@@ -312,7 +348,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       AuthenticateResponse response =
           AuthenticateResponse.newBuilder()
               .setAuthToken(result.authToken())
-              .setAccountId(String.valueOf(result.accountId()))
+              .setAccountId(result.accountId())
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -366,7 +402,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       responseObserver.onNext(
           AuthenticateResponse.newBuilder()
               .setAuthToken(result.authToken())
-              .setAccountId(String.valueOf(result.accountId()))
+              .setAccountId(result.accountId())
               .build());
     } catch (InvalidRequestException ex) {
       responseObserver.onNext(
@@ -521,15 +557,23 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   public void getProfile(
       GetProfileRequest request, StreamObserver<GetProfileResponse> responseObserver) {
     try {
-      var dto =
-          accountService.getProfile(
-              requirePositiveRequestId(request.getTenantId(), "tenantId"),
-              requirePositiveRequestId(request.getAccountId(), "accountId"));
+      requireSocialGroupsPeer();
+      long tenantId = requirePositiveRequestId(request.getTenantId(), "tenantId");
+      UUID accountUuid = requireCanonicalAccountUuid(request.getAccountId());
+      requireCallerAccountSubject(accountUuid);
+      long accountId = accountService.resolveAccountStorageId(accountUuid);
+      var dto = accountService.getProfile(tenantId, accountId);
       GetProfileResponse response =
           GetProfileResponse.newBuilder()
               .setProfileJson(JsonMapper.builder().build().writeValueAsString(dto))
               .build();
       responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      responseObserver.onNext(
+          GetProfileResponse.newBuilder()
+              .setError(appError("GetProfile", "PERMISSION_DENIED", ex.getMessage()))
+              .build());
       responseObserver.onCompleted();
     } catch (InvalidRequestException ex) {
       GetProfileResponse response =
@@ -605,14 +649,19 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   public void updateProfile(
       UpdateProfileRequest request, StreamObserver<UpdateProfileResponse> responseObserver) {
     try {
+      requireSocialGroupsPeer();
+      long tenantId = requirePositiveRequestId(request.getTenantId(), "tenantId");
+      UUID accountUuid = requireCanonicalAccountUuid(request.getAccountId());
+      requireCallerAccountSubject(accountUuid);
+      long accountId = accountService.resolveAccountStorageId(accountUuid);
       JsonNode node = JsonMapper.builder().build().readTree(request.getProfileJson());
       String displayName = node.path("displayName").asText(null);
       String bio = node.path("bio").asText(null);
       String presenceVisibilityPolicy = node.path("presenceVisibilityPolicy").asText(null);
       accountService.updateProfile(
           new net.firedevops.firemud.accountservice.dto.UpdateProfileRequest(
-              requirePositiveRequestId(request.getTenantId(), "tenantId"),
-              requirePositiveRequestId(request.getAccountId(), "accountId"),
+              tenantId,
+              accountId,
               displayName,
               bio,
               ProfilePresenceVisibilityPolicy.valueOf(
@@ -620,6 +669,14 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
                       ? ProfilePresenceVisibilityPolicy.FRIENDS_ONLY.name()
                       : presenceVisibilityPolicy)));
       UpdateProfileResponse response = UpdateProfileResponse.newBuilder().setSuccess(true).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      UpdateProfileResponse response =
+          UpdateProfileResponse.newBuilder()
+              .setSuccess(false)
+              .setError(appError("UpdateProfile", "PERMISSION_DENIED", ex.getMessage()))
+              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (InvalidRequestException ex) {

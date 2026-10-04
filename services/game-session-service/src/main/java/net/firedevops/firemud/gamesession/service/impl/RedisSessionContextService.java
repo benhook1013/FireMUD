@@ -211,12 +211,21 @@ public final class RedisSessionContextService implements SessionContextService {
 
   private SessionContext readContext(
       org.springframework.data.redis.core.RedisOperations<String, Object> operations, String key) {
-    return (SessionContext) operations.opsForValue().get(key);
+    SessionContext context = (SessionContext) operations.opsForValue().get(key);
+    if (context != null && context.accountId() != null && !context.hasAccountIdentity()) {
+      throw new IllegalStateException(
+          "Retained session context has a non-canonical Account identity and cannot be replaced");
+    }
+    return context;
   }
 
   private Optional<SessionContext> findContextForLookup(String key) {
     try {
-      return Optional.ofNullable((SessionContext) redisTemplate.opsForValue().get(key));
+      SessionContext context = (SessionContext) redisTemplate.opsForValue().get(key);
+      if (context != null && context.accountId() != null && !context.hasAccountIdentity()) {
+        return Optional.empty();
+      }
+      return Optional.ofNullable(context);
     } catch (SerializationException | ClassCastException ex) {
       return Optional.empty();
     }

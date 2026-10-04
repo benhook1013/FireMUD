@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package gamedesign.v1;
+
+option java_package = "net.firedevops.firemud.gamedesign.v1";
+option java_multiple_files = true;
+
+// Authenticated owner-local read of Game Design's persisted tenant identity.
+service TenantIdentityService {
+  rpc ResolveRuntimeTenantIdentity(ResolveRuntimeTenantIdentityRequest)
+      returns (ResolveRuntimeTenantIdentityResponse);
+}
+
+message ResolveRuntimeTenantIdentityRequest {
+  string canonical_tenant_id = 1;
+  string request_id = 2;
+}
+
+message ResolveRuntimeTenantIdentityResponse {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string request_id = 3;
+  string canonical_tenant_id = 4;
+  int64 source_game_row_id = 5;
+  string source_game_tenant_key = 6;
+  string provenance_kind = 7;
+}

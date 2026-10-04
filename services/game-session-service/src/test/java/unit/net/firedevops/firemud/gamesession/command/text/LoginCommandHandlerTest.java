@@ -41,10 +41,13 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mockito;
+import org.springframework.data.redis.serializer.SerializationException;
 
 @SuppressWarnings("unchecked")
 class LoginCommandHandlerTest {
   private static final String AUTH_TOKEN = "mock-jwt";
+  private static final String ACCOUNT_UUID = "b8d093f7-cb70-40ed-9fac-3c82d4bf28f1";
+  private static final String OTHER_ACCOUNT_UUID = "2b23537d-c5cc-4fa8-8c0d-dc4c38c77a92";
 
   private final GameInstanceRepository gameInstanceRepository =
       Mockito.mock(GameInstanceRepository.class);
@@ -68,7 +71,10 @@ class LoginCommandHandlerTest {
     stubSessionContext(bootstrapShell(1L, 1L));
     when(accountClient.authenticate(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
-            AuthenticateResponse.newBuilder().setAuthToken(AUTH_TOKEN).setAccountId("77").build());
+            AuthenticateResponse.newBuilder()
+                .setAuthToken(AUTH_TOKEN)
+                .setAccountId(ACCOUNT_UUID)
+                .build());
     when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 1L))
         .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 1L)));
     sessionRoutingNormalizationService =
@@ -401,7 +407,7 @@ class LoginCommandHandlerTest {
     ArgumentCaptor<SessionContext> saved = ArgumentCaptor.forClass(SessionContext.class);
     verify(sessionContextService, times(2)).save(saved.capture());
     assertNull(saved.getAllValues().get(0).accountId());
-    assertEquals("77", saved.getAllValues().get(1).accountId());
+    assertEquals(ACCOUNT_UUID, saved.getAllValues().get(1).accountId());
     assertEquals("demo@example.com", saved.getAllValues().get(1).loginName());
   }
 
@@ -432,7 +438,7 @@ class LoginCommandHandlerTest {
         .thenReturn(
             Optional.of(
                 new FirstPartyConnectContext(
-                    "99",
+                    OTHER_ACCOUNT_UUID,
                     22L,
                     "demo",
                     "production",
@@ -447,12 +453,14 @@ class LoginCommandHandlerTest {
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
     assertTrue(result.commandResult().accepted());
-    assertEquals("Logged in as first-party account 99", joinedOutputText(result.outputs()));
+    assertEquals(
+        "Logged in as first-party account " + OTHER_ACCOUNT_UUID,
+        joinedOutputText(result.outputs()));
     verify(accountClient, never()).authenticate(anyString(), anyString());
     ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
     verify(sessionContextService).save(captor.capture());
     SessionContext context = captor.getValue();
-    assertEquals("99", context.accountId());
+    assertEquals(OTHER_ACCOUNT_UUID, context.accountId());
     assertEquals(1L, context.bootstrapGameInstanceId());
     assertEquals(0L, context.gameInstanceId());
     assertEquals(0L, context.characterId());
@@ -540,8 +548,16 @@ class LoginCommandHandlerTest {
 
   @Test
   void bareLoginRejectsOpaqueFirstPartyAccountWithoutClearingExistingOwnerAlias() {
+    assertBareLoginRetainsMalformedFirstPartyAccount("acct:opaque/legacy");
+  }
+
+  @Test
+  void bareLoginRejectsNumericFirstPartyAccountWithoutClearingExistingOwnerAlias() {
+    assertBareLoginRetainsMalformedFirstPartyAccount("42");
+  }
+
+  private void assertBareLoginRetainsMalformedFirstPartyAccount(String accountId) {
     TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
-    String accountId = "acct:opaque/legacy";
     stubSessionContext(
         new SessionContext(
             1L,
@@ -596,7 +612,16 @@ class LoginCommandHandlerTest {
     GameInstance instance = buildInstance(1L, 22L, 77L);
     FirstPartyConnectContext accountAContext =
         new FirstPartyConnectContext(
-            "99", 22L, "demo", "production", 1L, 1L, "scope-1", "jti-1", "req-1", "gateway-1");
+            OTHER_ACCOUNT_UUID,
+            22L,
+            "demo",
+            "production",
+            1L,
+            1L,
+            "scope-1",
+            "jti-1",
+            "req-1",
+            "gateway-1");
     AtomicBoolean accountAContextRegistered = new AtomicBoolean(true);
     List<String> registryEvents = new java.util.ArrayList<>();
     Mockito.doAnswer(
@@ -632,23 +657,61 @@ class LoginCommandHandlerTest {
         List.of("find-account-a", "find-account-a", "unregister", "find-empty"), registryEvents);
     ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
     verify(sessionContextService, times(3)).save(captor.capture());
-    assertEquals("99", captor.getAllValues().get(0).accountId());
-    assertEquals("77", captor.getAllValues().get(1).accountId());
+    assertEquals(OTHER_ACCOUNT_UUID, captor.getAllValues().get(0).accountId());
+    assertEquals(ACCOUNT_UUID, captor.getAllValues().get(1).accountId());
     assertEquals("demo@example.com", captor.getAllValues().get(1).loginName());
     assertEquals(AUTH_TOKEN, captor.getAllValues().get(1).jwt());
     assertEquals(null, captor.getAllValues().get(2).accountId());
   }
 
   @Test
+  void credentialLoginFailsClosedWhenFirstPartyContextIsUnreadable() {
+    TextCommand credentialLogin =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(buildInstance(1L, 22L, 77L)));
+    when(firstPartyConnectContextRegistry.find(1L))
+        .thenThrow(new SerializationException("retained connect context is unreadable"));
+
+    LoginCommandHandlingResult result = handler.handle("1", credentialLogin, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("CONNECT_CONTEXT_INVALID", result.commandResult().errorCode());
+    verify(sessionContextService, never()).save(any(SessionContext.class));
+    verify(firstPartyConnectContextRegistry, never()).unregister(1L);
+  }
+
+  @Test
+  void credentialLoginFailsClosedWhenFirstPartyContextHasWrongType() {
+    TextCommand credentialLogin =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(buildInstance(1L, 22L, 77L)));
+    when(firstPartyConnectContextRegistry.find(1L))
+        .thenThrow(new ClassCastException("retained connect context has the wrong type"));
+
+    LoginCommandHandlingResult result = handler.handle("1", credentialLogin, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("CONNECT_CONTEXT_INVALID", result.commandResult().errorCode());
+    verify(sessionContextService, never()).save(any(SessionContext.class));
+    verify(firstPartyConnectContextRegistry, never()).unregister(1L);
+  }
+
+  @Test
   void staleFirstPartyRegistryCannotReplacePersistedCredentialIdentity() {
     SessionContext credentialIdentity =
-        new SessionContext(1L, 22L, "77", "demo@example.com", 0L, null, 0L, "mock-jwt");
+        new SessionContext(1L, 22L, ACCOUNT_UUID, "demo@example.com", 0L, null, 0L, "mock-jwt");
     stubSessionContext(credentialIdentity);
     when(firstPartyConnectContextRegistry.find(1L))
         .thenReturn(
             Optional.of(
                 new FirstPartyConnectContext(
-                    "99",
+                    OTHER_ACCOUNT_UUID,
                     22L,
                     "demo",
                     "production",
@@ -677,7 +740,7 @@ class LoginCommandHandlerTest {
         new SessionContext(
             1L,
             22L,
-            "77",
+            ACCOUNT_UUID,
             null,
             0L,
             null,
@@ -700,7 +763,8 @@ class LoginCommandHandlerTest {
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
     assertTrue(result.commandResult().accepted());
-    assertEquals("Logged in as first-party account 77", joinedOutputText(result.outputs()));
+    assertEquals(
+        "Logged in as first-party account " + ACCOUNT_UUID, joinedOutputText(result.outputs()));
   }
 
   @Test
@@ -710,7 +774,7 @@ class LoginCommandHandlerTest {
         new SessionContext(
             1L,
             22L,
-            "77",
+            ACCOUNT_UUID,
             null,
             0L,
             null,
@@ -746,7 +810,7 @@ class LoginCommandHandlerTest {
         new SessionContext(
             1L,
             22L,
-            "77",
+            ACCOUNT_UUID,
             null,
             0L,
             null,
@@ -779,7 +843,7 @@ class LoginCommandHandlerTest {
         .thenReturn(
             Optional.of(
                 new FirstPartyConnectContext(
-                    "77",
+                    ACCOUNT_UUID,
                     0L,
                     "demo",
                     "production",
@@ -804,7 +868,7 @@ class LoginCommandHandlerTest {
         .thenReturn(
             Optional.of(
                 new FirstPartyConnectContext(
-                    "77",
+                    ACCOUNT_UUID,
                     22L,
                     "demo",
                     "production",
@@ -831,7 +895,7 @@ class LoginCommandHandlerTest {
         .thenReturn(
             Optional.of(
                 new FirstPartyConnectContext(
-                    "77",
+                    ACCOUNT_UUID,
                     22L,
                     " ",
                     "production",
@@ -856,7 +920,16 @@ class LoginCommandHandlerTest {
         .thenReturn(
             Optional.of(
                 new FirstPartyConnectContext(
-                    "77", 22L, "demo", " ", 1L, 1L, "scope-1", "jti-1", "req-1", "gateway-1")));
+                    ACCOUNT_UUID,
+                    22L,
+                    "demo",
+                    " ",
+                    1L,
+                    1L,
+                    "scope-1",
+                    "jti-1",
+                    "req-1",
+                    "gateway-1")));
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(buildInstance(1L, 22L, 77L)));
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
@@ -866,20 +939,22 @@ class LoginCommandHandlerTest {
   }
 
   @Test
-  void bareLoginRejectsStalePointerVersion() {
+  void bareLoginRejectsPointerVersionMismatch() {
     TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
     GameInstance instance = buildInstance(1L, 22L, 77L);
     stubSessionContext(staleGameplayContext(1L));
+    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 1L))
+        .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 1L)));
     when(firstPartyConnectContextRegistry.find(1L))
         .thenReturn(
             Optional.of(
                 new FirstPartyConnectContext(
-                    "77",
+                    ACCOUNT_UUID,
                     22L,
                     "demo",
                     "production",
                     1L,
-                    0L,
+                    2L,
                     "scope-1",
                     "jti-1",
                     "req-1",
@@ -889,10 +964,10 @@ class LoginCommandHandlerTest {
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
     assertFalse(result.commandResult().accepted());
-    assertEquals("CONNECT_CONTEXT_INVALID", result.commandResult().errorCode());
+    assertEquals("CONNECT_SCOPE_MISMATCH", result.commandResult().errorCode());
     ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
     verify(sessionContextService).save(captor.capture());
-    assertClearedSessionContext(captor.getValue(), 1L);
+    assertClearedSessionContext(captor.getValue(), 2L);
   }
 
   @Test
@@ -914,7 +989,7 @@ class LoginCommandHandlerTest {
     net.firedevops.firemud.gamesession.service.SessionContext context = captor.getValue();
     assertEquals(1L, context.sessionId());
     assertEquals(22L, context.tenantId());
-    assertEquals("77", context.accountId());
+    assertEquals(ACCOUNT_UUID, context.accountId());
     assertEquals(0L, context.characterId());
     assertEquals(0L, context.gameInstanceId());
     assertNull(context.roomInstanceId());
@@ -979,7 +1054,7 @@ class LoginCommandHandlerTest {
                 new SessionContext(
                     1L,
                     22L,
-                    "77",
+                    ACCOUNT_UUID,
                     "demo@example.com",
                     88L,
                     "Sora",
@@ -1000,7 +1075,7 @@ class LoginCommandHandlerTest {
                 new SessionContext(
                     1L,
                     22L,
-                    "77",
+                    ACCOUNT_UUID,
                     "demo@example.com",
                     88L,
                     "Sora",
@@ -1023,7 +1098,7 @@ class LoginCommandHandlerTest {
     SessionContext context = captor.getValue();
     assertEquals(1L, context.sessionId());
     assertEquals(22L, context.tenantId());
-    assertEquals("77", context.accountId());
+    assertEquals(ACCOUNT_UUID, context.accountId());
     assertEquals(88L, context.characterId());
     assertEquals(1L, context.gameInstanceId());
     assertEquals("R-2045", context.roomInstanceId());
@@ -1042,12 +1117,15 @@ class LoginCommandHandlerTest {
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
     when(accountClient.authenticate(anyString(), anyString()))
         .thenReturn(
-            AuthenticateResponse.newBuilder().setAuthToken(AUTH_TOKEN).setAccountId("99").build());
+            AuthenticateResponse.newBuilder()
+                .setAuthToken(AUTH_TOKEN)
+                .setAccountId(OTHER_ACCOUNT_UUID)
+                .build());
     SessionContext existing =
         new SessionContext(
             1L,
             22L,
-            "77",
+            ACCOUNT_UUID,
             "demo@example.com",
             88L,
             "Sora",
@@ -1074,7 +1152,7 @@ class LoginCommandHandlerTest {
     inOrder.verify(sessionContextService).save(savedContext.capture());
     assertEquals(22L, existing.tenantId());
     assertEquals(23L, savedContext.getValue().tenantId());
-    assertEquals("99", savedContext.getValue().accountId());
+    assertEquals(OTHER_ACCOUNT_UUID, savedContext.getValue().accountId());
     assertEquals(0L, savedContext.getValue().characterId());
     assertEquals(0L, savedContext.getValue().gameInstanceId());
   }
@@ -1090,7 +1168,10 @@ class LoginCommandHandlerTest {
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
     when(accountClient.authenticate(anyString(), anyString()))
         .thenReturn(
-            AuthenticateResponse.newBuilder().setAuthToken(AUTH_TOKEN).setAccountId("99").build());
+            AuthenticateResponse.newBuilder()
+                .setAuthToken(AUTH_TOKEN)
+                .setAccountId(OTHER_ACCOUNT_UUID)
+                .build());
     stubSessionContext(staleGameplayContext(0L));
 
     handler.handle("1", command, false);
@@ -1103,10 +1184,10 @@ class LoginCommandHandlerTest {
         .clearGameplayBinding(clearedContext.capture(), eq("LOGIN_ACCOUNT_CHANGED"));
     inOrder.verify(sessionContextService).save(savedContext.capture());
     assertEquals(22L, clearedContext.getValue().tenantId());
-    assertEquals("77", clearedContext.getValue().accountId());
+    assertEquals(ACCOUNT_UUID, clearedContext.getValue().accountId());
     assertFalse(clearedContext.getValue().hasGameplayBinding());
     assertEquals(23L, savedContext.getValue().tenantId());
-    assertEquals("99", savedContext.getValue().accountId());
+    assertEquals(OTHER_ACCOUNT_UUID, savedContext.getValue().accountId());
     assertEquals(0L, savedContext.getValue().characterId());
     assertEquals(0L, savedContext.getValue().gameInstanceId());
   }
@@ -1122,12 +1203,15 @@ class LoginCommandHandlerTest {
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
     when(accountClient.authenticate(anyString(), anyString()))
         .thenReturn(
-            AuthenticateResponse.newBuilder().setAuthToken(AUTH_TOKEN).setAccountId("77").build());
+            AuthenticateResponse.newBuilder()
+                .setAuthToken(AUTH_TOKEN)
+                .setAccountId(ACCOUNT_UUID)
+                .build());
     SessionContext existing =
         new SessionContext(
             1L,
             22L,
-            "77",
+            ACCOUNT_UUID,
             "demo@example.com",
             88L,
             "Sora",
@@ -1153,9 +1237,9 @@ class LoginCommandHandlerTest {
         .clearGameplayBinding(existing, "LOGIN_TENANT_CHANGED");
     inOrder.verify(sessionContextService).save(savedContext.capture());
     assertEquals(22L, existing.tenantId());
-    assertEquals("77", existing.accountId());
+    assertEquals(ACCOUNT_UUID, existing.accountId());
     assertEquals(23L, savedContext.getValue().tenantId());
-    assertEquals("77", savedContext.getValue().accountId());
+    assertEquals(ACCOUNT_UUID, savedContext.getValue().accountId());
     assertEquals(0L, savedContext.getValue().characterId());
     assertEquals(0L, savedContext.getValue().gameInstanceId());
   }
@@ -1171,7 +1255,10 @@ class LoginCommandHandlerTest {
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
     when(accountClient.authenticate(anyString(), anyString()))
         .thenReturn(
-            AuthenticateResponse.newBuilder().setAuthToken(AUTH_TOKEN).setAccountId("77").build());
+            AuthenticateResponse.newBuilder()
+                .setAuthToken(AUTH_TOKEN)
+                .setAccountId(ACCOUNT_UUID)
+                .build());
     stubSessionContext(staleGameplayContext(0L));
 
     handler.handle("1", command, false);
@@ -1184,10 +1271,10 @@ class LoginCommandHandlerTest {
         .clearGameplayBinding(clearedContext.capture(), eq("LOGIN_TENANT_CHANGED"));
     inOrder.verify(sessionContextService).save(savedContext.capture());
     assertEquals(22L, clearedContext.getValue().tenantId());
-    assertEquals("77", clearedContext.getValue().accountId());
+    assertEquals(ACCOUNT_UUID, clearedContext.getValue().accountId());
     assertFalse(clearedContext.getValue().hasGameplayBinding());
     assertEquals(23L, savedContext.getValue().tenantId());
-    assertEquals("77", savedContext.getValue().accountId());
+    assertEquals(ACCOUNT_UUID, savedContext.getValue().accountId());
     assertEquals(0L, savedContext.getValue().characterId());
     assertEquals(0L, savedContext.getValue().gameInstanceId());
   }
@@ -1204,12 +1291,15 @@ class LoginCommandHandlerTest {
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
     when(accountClient.authenticate(anyString(), anyString()))
         .thenReturn(
-            AuthenticateResponse.newBuilder().setAuthToken(AUTH_TOKEN).setAccountId("99").build());
+            AuthenticateResponse.newBuilder()
+                .setAuthToken(AUTH_TOKEN)
+                .setAccountId(OTHER_ACCOUNT_UUID)
+                .build());
     SessionContext existing =
         new SessionContext(
             1L,
             22L,
-            "77",
+            ACCOUNT_UUID,
             "demo@example.com",
             88L,
             "Sora",
@@ -1235,7 +1325,7 @@ class LoginCommandHandlerTest {
         .clearGameplayBinding(existing, "LOGIN_ACCOUNT_CHANGED");
     inOrder.verify(sessionContextService).save(captor.capture());
     SessionContext context = captor.getValue();
-    assertEquals("99", context.accountId());
+    assertEquals(OTHER_ACCOUNT_UUID, context.accountId());
     assertEquals("other@example.com", context.loginName());
     assertEquals(0L, context.characterId());
     assertNull(context.characterName());
@@ -1262,7 +1352,10 @@ class LoginCommandHandlerTest {
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
     when(accountClient.authenticate(anyString(), anyString()))
         .thenReturn(
-            AuthenticateResponse.newBuilder().setAuthToken(AUTH_TOKEN).setAccountId("99").build());
+            AuthenticateResponse.newBuilder()
+                .setAuthToken(AUTH_TOKEN)
+                .setAccountId(OTHER_ACCOUNT_UUID)
+                .build());
     SessionContext existing = staleGameplayContext(1L);
     stubSessionContext(existing);
     Mockito.doThrow(new IllegalStateException("presence clear unavailable"))
@@ -1299,7 +1392,7 @@ class LoginCommandHandlerTest {
     SessionContext context = captor.getValue();
     assertEquals(1L, context.sessionId());
     assertEquals(22L, context.tenantId());
-    assertEquals("77", context.accountId());
+    assertEquals(ACCOUNT_UUID, context.accountId());
     assertEquals(0L, context.characterId());
     assertNull(context.characterName());
     assertEquals(0L, context.gameInstanceId());
@@ -1368,7 +1461,7 @@ class LoginCommandHandlerTest {
         new SessionContext(
             1L,
             22L,
-            "77",
+            ACCOUNT_UUID,
             "demo@example.com",
             88L,
             "Sora",
@@ -1407,7 +1500,10 @@ class LoginCommandHandlerTest {
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
     when(accountClient.authenticate(anyString(), anyString()))
         .thenReturn(
-            AuthenticateResponse.newBuilder().setAuthToken(AUTH_TOKEN).setAccountId("99").build());
+            AuthenticateResponse.newBuilder()
+                .setAuthToken(AUTH_TOKEN)
+                .setAccountId(OTHER_ACCOUNT_UUID)
+                .build());
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
@@ -1415,7 +1511,7 @@ class LoginCommandHandlerTest {
     assertEquals("Logged in as demo@example.com", joinedOutputText(result.outputs()));
     ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
     verify(sessionContextService).save(captor.capture());
-    assertEquals("99", captor.getValue().accountId());
+    assertEquals(OTHER_ACCOUNT_UUID, captor.getValue().accountId());
     assertEquals("demo@example.com", captor.getValue().loginName());
     assertEquals(77L, instance.getOwnerAccountId());
   }
@@ -1816,7 +1912,7 @@ class LoginCommandHandlerTest {
     return new SessionContext(
         1L,
         22L,
-        "77",
+        ACCOUNT_UUID,
         "demo@example.com",
         88L,
         "Sora",
@@ -1837,7 +1933,7 @@ class LoginCommandHandlerTest {
     return new SessionContext(
         1L,
         22L,
-        "77",
+        ACCOUNT_UUID,
         "demo@example.com",
         88L,
         "Sora",

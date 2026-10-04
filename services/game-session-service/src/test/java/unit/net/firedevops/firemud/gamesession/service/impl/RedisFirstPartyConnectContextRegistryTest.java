@@ -25,6 +25,7 @@ import org.springframework.data.redis.serializer.SerializationException;
 
 @SuppressWarnings("unchecked")
 class RedisFirstPartyConnectContextRegistryTest {
+  private static final String ACCOUNT_UUID = "b8d093f7-cb70-40ed-9fac-3c82d4bf28f1";
   private final ConcurrentMap<String, Object> store = new ConcurrentHashMap<>();
   private final RedisTemplate<String, Object> redisTemplate = mock(RedisTemplate.class);
   private final ValueOperations<String, Object> valueOperations = mock(ValueOperations.class);
@@ -59,7 +60,16 @@ class RedisFirstPartyConnectContextRegistryTest {
   void registerStoresContextWithShortTtl() {
     FirstPartyConnectContext context =
         new FirstPartyConnectContext(
-            "77", 22L, "demo", "production", 41L, 17L, "scope-1", "jti-1", "req-1", "gateway-1");
+            ACCOUNT_UUID,
+            22L,
+            "demo",
+            "production",
+            41L,
+            17L,
+            "scope-1",
+            "jti-1",
+            "req-1",
+            "gateway-1");
 
     registry.register(91L, context);
 
@@ -76,7 +86,16 @@ class RedisFirstPartyConnectContextRegistryTest {
   void unregisterRemovesStoredContext() {
     FirstPartyConnectContext context =
         new FirstPartyConnectContext(
-            "77", 22L, "demo", "production", 41L, 17L, "scope-1", "jti-1", "req-1", "gateway-1");
+            ACCOUNT_UUID,
+            22L,
+            "demo",
+            "production",
+            41L,
+            17L,
+            "scope-1",
+            "jti-1",
+            "req-1",
+            "gateway-1");
     registry.register(91L, context);
 
     registry.unregister(91L);
@@ -90,7 +109,7 @@ class RedisFirstPartyConnectContextRegistryTest {
     String key = "sessionctx:first-party:91:connect-context";
     when(valueOperations.get(key)).thenThrow(new SerializationException("old record shape"));
 
-    assertEquals(Optional.empty(), registry.find(91L));
+    assertThrows(SerializationException.class, () -> registry.find(91L));
 
     assertThrows(
         IllegalStateException.class,
@@ -98,7 +117,7 @@ class RedisFirstPartyConnectContextRegistryTest {
             registry.register(
                 91L,
                 new FirstPartyConnectContext(
-                    "77",
+                    ACCOUNT_UUID,
                     22L,
                     "demo",
                     "production",
@@ -120,7 +139,7 @@ class RedisFirstPartyConnectContextRegistryTest {
     Object retainedEvidence = "serialized record from an incompatible shape";
     store.put(key, retainedEvidence);
 
-    assertEquals(Optional.empty(), registry.find(91L));
+    assertThrows(ClassCastException.class, () -> registry.find(91L));
 
     assertThrows(
         IllegalStateException.class,
@@ -128,7 +147,7 @@ class RedisFirstPartyConnectContextRegistryTest {
             registry.register(
                 91L,
                 new FirstPartyConnectContext(
-                    "77",
+                    ACCOUNT_UUID,
                     22L,
                     "demo",
                     "production",

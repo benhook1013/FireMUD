@@ -18,7 +18,7 @@ public record FirstPartyConnectContext(
   private static final long serialVersionUID = 1L;
 
   public boolean hasCompleteRoutingScope() {
-    return StringUtils.hasText(accountId)
+    return AccountIds.isCanonicalNonNilUuid(accountId)
         && tenantId > 0L
         && gameInstanceId > 0L
         && pointerVersion > 0L

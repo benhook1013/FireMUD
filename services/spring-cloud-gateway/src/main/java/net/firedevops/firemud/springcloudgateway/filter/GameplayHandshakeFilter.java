@@ -179,7 +179,7 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
       JwtClaims.SignedGameplayRoutingClaims routingClaims =
           JwtClaims.requireSignedGameplayRoutingClaims(
               payload, "Connect token account subject mismatch");
-      String accountId = Long.toString(routingClaims.accountId());
+      String accountId = routingClaims.accountId();
       RoutingBundle routingBundle = parseRuntimeRoutingBundleFromClaims(routingClaims);
       String tenantId = Long.toString(routingClaims.tenantId());
       String gameInstanceId = Long.toString(routingClaims.gameInstanceId());
