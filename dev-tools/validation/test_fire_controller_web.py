@@ -207,6 +207,15 @@ class FireControllerWebTest(unittest.TestCase):
         self.assertIn("after-review", page)
         self.assertIn("/jobs/job-1/history", page)
 
+    def test_private_time_metadata_uses_nz_fallback_and_preserves_iso_attributes(self):
+        rendered = web._time_metadata("2026-10-04T08:47:13Z")
+        self.assertEqual(
+            '<time datetime="2026-10-04T08:47:13Z">4 Oct 2026 21:47 NZDT</time>',
+            rendered,
+        )
+        self.assertEqual("&lt;script&gt;", web._time_metadata("<script>"))
+        self.assertEqual("2026-10-04T08:47:13", web._time_metadata("2026-10-04T08:47:13"))
+
     def test_public_inline_markdown_keeps_http_links_and_omits_private_targets(self):
         rendered = web.render_public_inline(
             '**bold** [safe](https://example.com/path) [local](/jobs/job-1) '
@@ -244,12 +253,18 @@ class FireControllerWebTest(unittest.TestCase):
         self.assertEqual(status, 200, body.decode())
         self.assertEqual(headers["Cache-Control"], "no-store")
         self.assertIn(PRIVATE_SENTINEL.encode(), body)
+        self.assertIn(
+            b'<time datetime="2026-10-03T10:00:00Z">3 Oct 2026 23:00 NZDT</time>',
+            body,
+        )
+        self.assertNotIn(b">2026-10-03T10:00:00Z<", body)
         self.assertEqual(store.get_calls, [("job-1", 10, False)])
 
         status, _headers, history = web.private_route("/jobs/job-1/history?offset=0", store)
         self.assertEqual(status, 200)
         self.assertEqual(store.history_calls[-1], ("job-1", None, 50, 0))
         self.assertIn(b"Earlier revision", history)
+        self.assertIn(b'<time datetime="2026-10-03T10:00:00Z">3 Oct 2026 23:00 NZDT</time>', history)
 
         status, _headers, revision = web.private_route("/jobs/job-1/history?revision=2", store)
         self.assertEqual(status, 200)
@@ -291,12 +306,14 @@ class FireControllerWebTest(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertIn(PRIVATE_SENTINEL.encode(), body)
+        self.assertIn(b'<time datetime="2026-10-03T00:00:00Z">3 Oct 2026 13:00 NZDT</time>', body)
         self.assertEqual(jobs.kwargs["phase"], "shared-foundations")
         status, _headers, body = web.private_route(
             "/workstreams/shared-foundations/history?offset=50", jobs, workstreams=workstreams,
             editorial={"workstreams": {}, "return_points": {}},
         )
         self.assertEqual(status, 200)
+        self.assertIn(b'<time datetime="2026-10-03T00:00:00Z">3 Oct 2026 13:00 NZDT</time>', body)
         self.assertEqual(workstreams.history_calls[-1][2], {"limit": 50, "offset": 50})
         self.assertEqual(web.private_route("/workstreams/shared-foundations/history?offset=1000001", jobs,
                                           workstreams=workstreams,
@@ -324,12 +341,14 @@ class FireControllerWebTest(unittest.TestCase):
         status, _headers, body = web.private_route("/inbox/Build%20%26%20Tools?offset=0", None, inbox=inbox)
         self.assertEqual(status, 200)
         self.assertNotIn(PRIVATE_SENTINEL.encode(), body)
+        self.assertIn(b'<time datetime="2026-10-03T00:00:00Z">3 Oct 2026 13:00 NZDT</time>', body)
         self.assertEqual(inbox.list_calls, [("Build & Tools", False, 50, 0)])
         self.assertEqual(inbox.read_calls, [])
         status, _headers, body = web.private_route("/inbox/Build%20%26%20Tools/message-1", None, inbox=inbox)
         self.assertEqual(status, 200)
         self.assertEqual(inbox.read_calls, [("message-1", "Build & Tools")])
         self.assertIn(PRIVATE_SENTINEL.encode(), body)
+        self.assertIn(b'<time datetime="2026-10-03T00:00:00Z">3 Oct 2026 13:00 NZDT</time>', body)
 
 
 class IsolatedWebsiteIntegrationTest(unittest.TestCase):
