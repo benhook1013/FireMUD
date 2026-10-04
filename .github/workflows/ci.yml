@@ -2214,6 +2214,7 @@ jobs:
             --require-case 'net.firedevops.firemud.accountservice.AccountFreshUuidMembershipSnapshotIntegrationTest#membershipSourceReaderRejectsAmbientAccountTransaction()' \
             --require-case 'net.firedevops.firemud.accountservice.AccountFreshUuidMembershipSnapshotIntegrationTest#freshGlobalRoleSourceComposesWithExistingMembershipVectorAndPreservesIndependentVersions()' \
             --require-case 'net.firedevops.firemud.accountservice.AccountFreshUuidMembershipSnapshotIntegrationTest#retainedAccountWithoutFreshGlobalRoleSourceIsDeniedWithoutEnrollment()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountFreshUuidMembershipSnapshotIntegrationTest#tenantAdvanceWaitsForFreshCaptureSourceLocksAndPreservesCapturedVector()' \
             account-service
 
       - name: Upload Account existing-only membership source PostgreSQL proof

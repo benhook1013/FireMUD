@@ -40,6 +40,7 @@ import net.firedevops.firemud.accountservice.service.AccountMembershipSourceRead
 import net.firedevops.firemud.accountservice.service.AccountTenantAuthorityEventProducer;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
+import net.firedevops.firemud.common.account.authority.TenantGenerationAuthorityEventV1Codec.TenantGenerationAuthorityEvent;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.test.GatewayTestProperties;
@@ -829,6 +830,181 @@ class AccountFreshUuidMembershipSnapshotIntegrationTest {
       throw new AssertionError("Concurrent fresh snapshot read failed", exception.getCause());
     } finally {
       releaseFirstSnapshot.countDown();
+      executor.shutdownNow();
+    }
+  }
+
+  @Test
+  void tenantAdvanceWaitsForFreshCaptureSourceLocksAndPreservesCapturedVector() throws Exception {
+    AccountFixture account = accountFixture();
+    UUID tenantUuid = UUID.randomUUID();
+    importFreshTenantAssociation(tenantUuid);
+
+    var enrolledBaseline =
+        readFreshNeverJoinedMembershipSnapshot(account.accountUuid(), tenantUuid);
+    assertThat(enrolledBaseline.membershipExists()).isFalse();
+    assertThat(enrolledBaseline.gameplayAdmissionAllowed()).isFalse();
+    assertThat(enrolledBaseline.membershipVersion()).isEqualTo(Map.of(tenantUuid.toString(), "1"));
+    assertThat(authorityGeneration("TENANT", null, tenantUuid)).isEqualTo(1L);
+    assertThat(authorityGeneration("MEMBERSHIP", account.accountUuid(), tenantUuid)).isEqualTo(1L);
+
+    Map<String, Object> accountAuthorityBefore =
+        authorityGenerationRow("ACCOUNT", account.accountUuid(), null).orElseThrow();
+    Map<String, Object> tenantAuthorityBefore =
+        authorityGenerationRow("TENANT", null, tenantUuid).orElseThrow();
+    assertThat(tenantAuthorityBefore)
+        .containsEntry("generation", 1L)
+        .containsEntry("source_version", 1L);
+    Map<String, Object> membershipAuthorityBefore =
+        authorityGenerationRow("MEMBERSHIP", account.accountUuid(), tenantUuid).orElseThrow();
+    Map<String, Object> issuanceFenceBefore = issuanceFenceRow(account.accountUuid());
+    Map<String, Object> membershipPairBefore =
+        membershipPairAuthorityRow(account.accountUuid(), tenantUuid);
+    Map<String, Object> globalRoleSourceBefore = globalRoleSourceRow(account.accountUuid());
+    assertThat(globalRoleSourceBefore).containsEntry("global_role_source_version", 1L);
+    String tenantStreamKey = "account:auth-authority:v1:tenant/" + tenantUuid;
+    assertThat(countAuthorityEvents(tenantStreamKey)).isZero();
+    assertThat(countAuthorityStreams(tenantStreamKey)).isZero();
+
+    AccountFreshCaptureSourceReader reader =
+        new AccountFreshCaptureSourceReader(producer, globalRoleSourceRepository);
+    TransactionTemplate captureOwnerTransaction = new TransactionTemplate(transactionManager);
+    captureOwnerTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    captureOwnerTransaction.setReadOnly(false);
+    AccountTenantAuthorityEventProducer tenantProducer =
+        new AccountTenantAuthorityEventProducer(
+            authorityGenerationRepository, authorityOutboxRepository, dsl, transactionManager);
+    UUID requestId = UUID.randomUUID();
+
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    CountDownLatch captureReady = new CountDownLatch(1);
+    CountDownLatch releaseCapture = new CountDownLatch(1);
+    CountDownLatch advanceStarted = new CountDownLatch(1);
+    AtomicReference<Integer> captureBackendPid = new AtomicReference<>();
+    try {
+      Future<AccountFreshCaptureSources> captureFuture =
+          executor.submit(
+              () ->
+                  captureOwnerTransaction.execute(
+                      status -> {
+                        AccountFreshCaptureSources capture =
+                            reader.readExisting(account.accountUuid(), tenantUuid);
+                        captureBackendPid.set(currentBackendPid());
+                        captureReady.countDown();
+                        await(releaseCapture);
+                        return capture;
+                      }));
+      assertThat(captureReady.await(10, TimeUnit.SECONDS)).isTrue();
+      assertThat(captureBackendPid.get()).isNotNull();
+
+      Future<TenantGenerationAuthorityEvent> advanceFuture =
+          executor.submit(
+              () -> {
+                advanceStarted.countDown();
+                return tenantProducer.advance(tenantUuid, requestId, 1L, 1L);
+              });
+      assertThat(advanceStarted.await(10, TimeUnit.SECONDS)).isTrue();
+
+      Integer waitingBackendPid = null;
+      long lockWaitDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+      while (System.nanoTime() < lockWaitDeadline && waitingBackendPid == null) {
+        waitingBackendPid =
+            dsl.resultQuery(
+                    "SELECT pid FROM pg_stat_activity "
+                        + "WHERE wait_event_type = 'Lock' "
+                        + "AND CAST(? AS integer) = ANY(pg_blocking_pids(pid)) "
+                        + "AND query ILIKE '%account_authority_generations%' "
+                        + "ORDER BY query_start DESC LIMIT 1",
+                    captureBackendPid.get())
+                .fetchOne(0, Integer.class);
+        if (waitingBackendPid == null) {
+          Thread.sleep(10L);
+        }
+      }
+      assertThat(waitingBackendPid)
+          .as("tenant advancement must block on the captured authority-generation row")
+          .isNotNull();
+      assertThat(advanceFuture.isDone()).isFalse();
+      assertThat(authorityGeneration("TENANT", null, tenantUuid)).isEqualTo(1L);
+      assertThat(countAuthorityEvents(tenantStreamKey)).isZero();
+
+      releaseCapture.countDown();
+      AccountFreshCaptureSources captured = captureFuture.get(20, TimeUnit.SECONDS);
+      var advancedEvent = advanceFuture.get(20, TimeUnit.SECONDS);
+
+      assertThat(captured.requestedAccountUuid()).isEqualTo(account.accountUuid());
+      assertThat(captured.requestedTenantUuid()).isEqualTo(tenantUuid);
+      var membershipSources = captured.membershipSources();
+      assertThat(membershipSources.membershipSnapshot().membershipExists()).isFalse();
+      assertThat(membershipSources.membershipSnapshot().gameplayAdmissionAllowed()).isFalse();
+      assertThat(membershipSources.membershipSnapshot().membershipBaseline().membershipVersion())
+          .isEqualTo(Map.of(tenantUuid.toString(), "1"));
+      assertThat(membershipSources.authoritySnapshot().tenants())
+          .singleElement()
+          .satisfies(
+              tenant -> {
+                assertThat(tenant.generation()).isEqualTo(1L);
+                assertThat(tenant.sourceVersion()).isEqualTo(1L);
+              });
+      assertThat(membershipSources.membershipSnapshot().outboxCheckpoints())
+          .anySatisfy(
+              checkpoint -> {
+                assertThat(checkpoint.outboxStreamKey()).isEqualTo(tenantStreamKey);
+                assertThat(checkpoint.outboxSequence()).isEqualTo("0");
+              });
+      assertThat(membershipSources.membershipSnapshot().outboxSourceEvidence()).isEmpty();
+      assertThat(captured.freshGlobalRoleSource().globalRoles()).isEmpty();
+      assertThat(captured.freshGlobalRoleSource().globalRoleSourceVersion()).isEqualTo(1L);
+
+      assertThat(advancedEvent.requestId()).isEqualTo(requestId.toString());
+      assertThat(advancedEvent.tenantId()).isEqualTo(tenantUuid.toString());
+      assertThat(advancedEvent.outboxStreamKey()).isEqualTo(tenantStreamKey);
+      assertThat(advancedEvent.outboxSequence()).isEqualTo("1");
+      assertThat(advancedEvent.tenantAuthorityGeneration()).isEqualTo("2");
+      assertThat(advancedEvent.sourceVersion()).isEqualTo("2");
+      var currentTenant = tenantProducer.readCurrent(tenantUuid);
+      assertThat(currentTenant.tenantAuthorityGeneration()).isEqualTo(2L);
+      assertThat(currentTenant.sourceVersion()).isEqualTo(2L);
+      assertThat(currentTenant.outboxStreamKey()).isEqualTo(tenantStreamKey);
+      assertThat(currentTenant.outboxSequence()).isEqualTo(1L);
+      assertThat(currentTenant.latestEvent())
+          .hasValueSatisfying(
+              currentEvent -> {
+                assertThat(currentEvent.requestId()).isEqualTo(requestId.toString());
+                assertThat(currentEvent.canonicalJson()).isEqualTo(advancedEvent.canonicalJson());
+                assertThat(currentEvent.outboxSequence()).isEqualTo("1");
+                assertThat(currentEvent.tenantAuthorityGeneration()).isEqualTo("2");
+                assertThat(currentEvent.sourceVersion()).isEqualTo("2");
+              });
+      assertThat(countAuthorityEvents(tenantStreamKey)).isEqualTo(1L);
+      assertThat(countAuthorityStreams(tenantStreamKey)).isEqualTo(1L);
+      assertThat(authorityGenerationRow("TENANT", null, tenantUuid))
+          .hasValueSatisfying(
+              row ->
+                  assertThat(row)
+                      .containsEntry("generation", 2L)
+                      .containsEntry("source_version", 2L));
+
+      // The captured vector remains the exact pre-advance snapshot; the current source is newer.
+      assertThat(captured.freshGlobalRoleSource().globalRoleSourceVersion()).isNotEqualTo(2L);
+      assertThat(membershipSources.authoritySnapshot().tenants().getFirst().sourceVersion())
+          .isNotEqualTo(currentTenant.sourceVersion());
+      assertThat(authorityGenerationRow("ACCOUNT", account.accountUuid(), null))
+          .contains(accountAuthorityBefore);
+      assertThat(authorityGenerationRow("MEMBERSHIP", account.accountUuid(), tenantUuid))
+          .contains(membershipAuthorityBefore);
+      assertThat(issuanceFenceRow(account.accountUuid())).isEqualTo(issuanceFenceBefore);
+      assertThat(membershipPairAuthorityRow(account.accountUuid(), tenantUuid))
+          .isEqualTo(membershipPairBefore);
+      assertThat(globalRoleSourceRow(account.accountUuid())).isEqualTo(globalRoleSourceBefore);
+      assertThat(countMembershipsForAccount(account.accountId())).isZero();
+      assertThat(countMembershipTransitionReceiptsForAccount(account.accountId())).isZero();
+      assertThat(countAuthorityEvents(membershipStreamKey(account.accountUuid(), tenantUuid)))
+          .isZero();
+      assertThat(countAuthorityStreams(membershipStreamKey(account.accountUuid(), tenantUuid)))
+          .isZero();
+    } finally {
+      releaseCapture.countDown();
       executor.shutdownNow();
     }
   }
