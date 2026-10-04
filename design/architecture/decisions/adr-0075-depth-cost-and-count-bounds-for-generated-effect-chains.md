@@ -55,7 +55,7 @@ Every suppression produces durable evidence containing:
 
 - root and parent identities;
 - authored feature, script, and version identity;
-- recorded owner-allocated child ordinal, with its persisted replay-stable mapping;
+- recorded owner-allocated candidate ordinal and sealed candidate-manifest binding; suppressed candidates have no child `EffectId` or ordinal-to-`EffectId` mapping, which is persisted only for admitted children;
 - limit reason: depth, count, cost, or per-target;
 - actual and configured limit values;
 - required or optional classification; and
