@@ -69,7 +69,8 @@ class SocialAccountUuidMigrationIntegrationTest {
     assertThat(constraints(upgraded)).containsAll(constraintsBefore);
     assertThat(rows(upgraded, HISTORY_TABLE, "installed_rank").subList(0, historyBefore.size()))
         .containsExactlyElementsOf(historyBefore);
-    assertThat(rows(upgraded, HISTORY_TABLE, "installed_rank")).hasSize(historyBefore.size() + 1);
+    // Full runtime migration discovery adds V10 and Saga V1000–V1002 after V9.
+    assertThat(rows(upgraded, HISTORY_TABLE, "installed_rank")).hasSize(historyBefore.size() + 4);
   }
 
   @ParameterizedTest
@@ -269,7 +270,8 @@ class SocialAccountUuidMigrationIntegrationTest {
             .schemas(database.schema())
             .defaultSchema(database.schema())
             .table(HISTORY_TABLE)
-            .locations("classpath:db/migration");
+            .locations("classpath:db/migration")
+            .placeholders(Map.of("serviceSchema", database.schema()));
     if (target != null) {
       config.target(MigrationVersion.fromVersion(target));
     }
