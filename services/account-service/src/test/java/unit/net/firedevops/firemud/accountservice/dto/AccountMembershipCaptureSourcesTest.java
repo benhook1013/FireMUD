@@ -16,6 +16,7 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerati
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.TenantProvenanceKind;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository.RoleSnapshot;
+import net.firedevops.firemud.accountservice.repository.ApprovedLegacyTenantAssociationRepository.ApprovedAssociation;
 import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer.OutboxCheckpointEntry;
 import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer.OutboxSourceEvidence;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
@@ -44,7 +45,12 @@ class AccountMembershipCaptureSourcesTest {
         .isEqualTo(Map.of(fixture.tenantUuid().toString(), "2"));
     assertThat(sources.membershipSnapshot().sourceEvent().canonicalJson())
         .isEqualTo(fixture.event().canonicalJson());
-    assertThat(sources.roleSource()).contains(fixture.roleSource());
+    assertThat(sources.roleSource().orElseThrow()).isSameAs(fixture.roleSource());
+    assertThat(sources.roleSource().orElseThrow().accountUuid()).isEqualTo(fixture.accountUuid());
+    assertThat(sources.roleSource().orElseThrow().tenantId()).isEqualTo(81L);
+    assertThat(sources.roleSource().orElseThrow().tenantUuid()).isNull();
+    assertThat(sources.roleSource().orElseThrow().tenantProvenance()).isNull();
+    assertThat(sources.retainedTenantAssociation()).contains(fixture.tenantAssociation());
     assertThat(sources.roleSource().orElseThrow().snapshotVersion()).isEqualTo(2L);
 
     assertThatThrownBy(() -> sources.membershipSnapshot().outboxCheckpoints().clear())
@@ -97,7 +103,8 @@ class AccountMembershipCaptureSourcesTest {
                     fixture.tenantUuid(),
                     original,
                     fixture.membershipSnapshot(),
-                    Optional.of(fixture.roleSource())))
+                    Optional.of(fixture.roleSource()),
+                    Optional.of(fixture.tenantAssociation())))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("exact canonical request");
 
@@ -121,7 +128,8 @@ class AccountMembershipCaptureSourcesTest {
                     fixture.tenantUuid(),
                     mixedTuple,
                     fixture.membershipSnapshot(),
-                    Optional.of(fixture.roleSource())))
+                    Optional.of(fixture.roleSource()),
+                    Optional.of(fixture.tenantAssociation())))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("authority generations or fence");
 
@@ -145,7 +153,8 @@ class AccountMembershipCaptureSourcesTest {
                     fixture.tenantUuid(),
                     mixedCheckpoint,
                     fixture.membershipSnapshot(),
-                    Optional.of(fixture.roleSource())))
+                    Optional.of(fixture.roleSource()),
+                    Optional.of(fixture.tenantAssociation())))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("checkpoints differ");
 
@@ -165,7 +174,8 @@ class AccountMembershipCaptureSourcesTest {
                     fixture.tenantUuid(),
                     mixedFence,
                     fixture.membershipSnapshot(),
-                    Optional.of(fixture.roleSource())))
+                    Optional.of(fixture.roleSource()),
+                    Optional.of(fixture.tenantAssociation())))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("authority generations or fence");
   }
@@ -190,7 +200,8 @@ class AccountMembershipCaptureSourcesTest {
                     fixture.tenantUuid(),
                     fixture.authoritySnapshot(),
                     fixture.membershipSnapshot(),
-                    Optional.of(mixedRoleHeader)))
+                    Optional.of(mixedRoleHeader),
+                    Optional.of(fixture.tenantAssociation())))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("role header and identity");
 
@@ -225,6 +236,124 @@ class AccountMembershipCaptureSourcesTest {
                     mixedCheckpoints,
                     fixture.membershipSnapshot().outboxSourceEvidence(),
                     fixture.event()))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void bindsRawAndCanonicalRoleHeadersToTheExactRetainedAssociation() {
+    CaptureFixture fixture = activeFixture();
+    ApprovedAssociation association = fixture.tenantAssociation();
+
+    assertThatThrownBy(
+            () ->
+                new AccountMembershipCaptureSources(
+                    fixture.accountUuid(),
+                    fixture.tenantUuid(),
+                    fixture.authoritySnapshot(),
+                    fixture.membershipSnapshot(),
+                    Optional.of(fixture.roleSource()),
+                    Optional.empty()))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    ApprovedAssociation substitutedTenant =
+        copyAssociation(
+            association,
+            association.legacyTenantId(),
+            UUID.randomUUID(),
+            association.operationId(),
+            association.manifestDigest());
+    assertThatThrownBy(
+            () ->
+                new AccountMembershipCaptureSources(
+                    fixture.accountUuid(),
+                    fixture.tenantUuid(),
+                    fixture.authoritySnapshot(),
+                    fixture.membershipSnapshot(),
+                    Optional.of(fixture.roleSource()),
+                    Optional.of(substitutedTenant)))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    RoleSnapshot mismatchedAccountHeader =
+        new RoleSnapshot(
+            fixture.roleSource().accountId(),
+            fixture.roleSource().tenantId(),
+            fixture.roleSource().membershipId(),
+            fixture.roleSource().snapshotVersion(),
+            fixture.roleSource().roles(),
+            UUID.fromString("5a29ea5e-a463-4f8a-a1cf-11e0cb35731d"),
+            null,
+            null);
+    assertThatThrownBy(
+            () ->
+                new AccountMembershipCaptureSources(
+                    fixture.accountUuid(),
+                    fixture.tenantUuid(),
+                    fixture.authoritySnapshot(),
+                    fixture.membershipSnapshot(),
+                    Optional.of(mismatchedAccountHeader),
+                    Optional.of(association)))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    ApprovedAssociation wrongLegacyId =
+        copyAssociation(
+            association,
+            association.legacyTenantId() + 1L,
+            association.canonicalTenantId(),
+            association.operationId(),
+            association.manifestDigest());
+    assertThatThrownBy(
+            () ->
+                new AccountMembershipCaptureSources(
+                    fixture.accountUuid(),
+                    fixture.tenantUuid(),
+                    fixture.authoritySnapshot(),
+                    fixture.membershipSnapshot(),
+                    Optional.of(fixture.roleSource()),
+                    Optional.of(wrongLegacyId)))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    VerifiedTenantProvenance canonicalProvenance =
+        new VerifiedTenantProvenance(
+            association.legacyTenantId(),
+            TenantProvenanceKind.APPROVED_RETAINED,
+            association.operationId(),
+            association.manifestDigest());
+    RoleSnapshot canonicalRoleHeader =
+        new RoleSnapshot(
+            fixture.roleSource().accountId(),
+            fixture.roleSource().tenantId(),
+            fixture.roleSource().membershipId(),
+            fixture.roleSource().snapshotVersion(),
+            fixture.roleSource().roles(),
+            fixture.accountUuid(),
+            fixture.tenantUuid(),
+            canonicalProvenance);
+    assertThat(
+            new AccountMembershipCaptureSources(
+                fixture.accountUuid(),
+                fixture.tenantUuid(),
+                fixture.authoritySnapshot(),
+                fixture.membershipSnapshot(),
+                Optional.of(canonicalRoleHeader),
+                Optional.of(association)))
+        .isNotNull();
+
+    ApprovedAssociation wrongProvenance =
+        copyAssociation(
+            association,
+            association.legacyTenantId(),
+            association.canonicalTenantId(),
+            UUID.randomUUID(),
+            association.manifestDigest());
+    assertThatThrownBy(
+            () ->
+                new AccountMembershipCaptureSources(
+                    fixture.accountUuid(),
+                    fixture.tenantUuid(),
+                    fixture.authoritySnapshot(),
+                    fixture.membershipSnapshot(),
+                    Optional.of(canonicalRoleHeader),
+                    Optional.of(wrongProvenance)))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -276,7 +405,7 @@ class AccountMembershipCaptureSourcesTest {
             null);
     checkpoints.clear();
     return new CaptureFixture(
-        accountUuid, tenantUuid, authoritySnapshot, membershipSnapshot, null, null);
+        accountUuid, tenantUuid, authoritySnapshot, membershipSnapshot, null, null, null);
   }
 
   private CaptureFixture activeFixture() {
@@ -365,16 +494,57 @@ class AccountMembershipCaptureSourcesTest {
     checkpoints.clear();
     sourceEvidence.clear();
 
-    VerifiedTenantProvenance provenance =
-        new VerifiedTenantProvenance(
+    ApprovedAssociation association =
+        new ApprovedAssociation(
             81L,
-            TenantProvenanceKind.APPROVED_RETAINED,
+            tenantUuid,
+            "legacy-game-account-capture-source-test",
+            51L,
+            "sha256:" + "b".repeat(64),
             UUID.fromString("f1d82a71-d966-43da-a5cc-e9ac1ea4d8cb"),
-            "sha256:" + "a".repeat(64));
+            "sha256:" + "a".repeat(64),
+            "test-signature",
+            "account-test-namespace",
+            "test-signer",
+            "account-test-owner",
+            "account-capture-source-test",
+            "2026-10-04T00:00:00Z",
+            1,
+            1);
     RoleSnapshot roleSource =
-        new RoleSnapshot(41L, 81L, 33L, 2L, List.of("player"), accountUuid, tenantUuid, provenance);
+        new RoleSnapshot(41L, 81L, 33L, 2L, List.of("player"), accountUuid, null, null);
     return new CaptureFixture(
-        accountUuid, tenantUuid, authoritySnapshot, membershipSnapshot, event, roleSource);
+        accountUuid,
+        tenantUuid,
+        authoritySnapshot,
+        membershipSnapshot,
+        event,
+        roleSource,
+        association);
+  }
+
+  private ApprovedAssociation copyAssociation(
+      ApprovedAssociation source,
+      long legacyTenantId,
+      UUID canonicalTenantId,
+      UUID operationId,
+      String manifestDigest) {
+    return new ApprovedAssociation(
+        legacyTenantId,
+        canonicalTenantId,
+        source.sourceLegacyGameTenantId(),
+        source.sourceGameRowId(),
+        source.accountEvidenceDigest(),
+        operationId,
+        manifestDigest,
+        source.manifestSignature(),
+        source.targetNamespace(),
+        source.signerKeyId(),
+        source.approvedBy(),
+        source.approvalReference(),
+        source.signedAt(),
+        source.operationEntryCount(),
+        source.manifestSchemaVersion());
   }
 
   private static String issuerStream() {
@@ -399,14 +569,16 @@ class AccountMembershipCaptureSourcesTest {
       CompositeSnapshot authoritySnapshot,
       RuntimeMembershipSnapshotDto membershipSnapshot,
       MembershipAuthorityEventV1Codec.MembershipEvent event,
-      RoleSnapshot roleSource) {
+      RoleSnapshot roleSource,
+      ApprovedAssociation tenantAssociation) {
     AccountMembershipCaptureSources sources() {
       return new AccountMembershipCaptureSources(
           accountUuid,
           tenantUuid,
           authoritySnapshot,
           membershipSnapshot,
-          Optional.ofNullable(roleSource));
+          Optional.ofNullable(roleSource),
+          Optional.ofNullable(tenantAssociation));
     }
   }
 }

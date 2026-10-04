@@ -11,7 +11,9 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerati
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.CompositeSnapshot;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.ScopeState;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.TenantProvenanceKind;
+import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository.RoleSnapshot;
+import net.firedevops.firemud.accountservice.repository.ApprovedLegacyTenantAssociationRepository.ApprovedAssociation;
 import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer.OutboxCheckpointEntry;
 import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer.OutboxSourceEvidence;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
@@ -26,14 +28,16 @@ import net.firedevops.firemud.common.account.authority.TenantGenerationAuthority
  *
  * <p>This value is not authorization. It preserves the exact locked authority rows, their
  * independent source versions and Account fence, alongside the membership projection that carries
- * the corresponding source checkpoints and events.
+ * the corresponding source checkpoints and events. A raw retained role header remains unchanged;
+ * its audited tenant association is carried separately for identity binding.
  */
 public record AccountMembershipCaptureSources(
     UUID requestedAccountUuid,
     UUID requestedTenantUuid,
     CompositeSnapshot authoritySnapshot,
     RuntimeMembershipSnapshotDto membershipSnapshot,
-    Optional<RoleSnapshot> roleSource) {
+    Optional<RoleSnapshot> roleSource,
+    Optional<ApprovedAssociation> retainedTenantAssociation) {
   private static final String AUTHORITY_STREAM_PREFIX =
       MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX;
 
@@ -43,6 +47,9 @@ public record AccountMembershipCaptureSources(
     Objects.requireNonNull(authoritySnapshot, "locked Account authority snapshot is required");
     Objects.requireNonNull(membershipSnapshot, "existing runtime membership snapshot is required");
     roleSource = Objects.requireNonNull(roleSource, "role source presence is required");
+    retainedTenantAssociation =
+        Objects.requireNonNull(
+            retainedTenantAssociation, "retained tenant association presence is required");
 
     String accountId = requestedAccountUuid.toString();
     String tenantId = requestedTenantUuid.toString();
@@ -104,11 +111,16 @@ public record AccountMembershipCaptureSources(
         account,
         tenant,
         membership);
+    VerifiedTenantProvenance retainedProvenance =
+        retainedTenantAssociation
+            .map(association -> requireRetainedAssociation(requestedTenantUuid, association))
+            .orElse(null);
     requireRoleSource(
         requestedAccountUuid,
         requestedTenantUuid,
         membershipSnapshot,
         roleSource.orElse(null),
+        retainedProvenance,
         version);
   }
 
@@ -258,6 +270,7 @@ public record AccountMembershipCaptureSources(
       UUID tenantUuid,
       RuntimeMembershipSnapshotDto snapshot,
       RoleSnapshot roleSource,
+      VerifiedTenantProvenance retainedProvenance,
       String membershipVersion) {
     if (!snapshot.membershipExists()) {
       if (roleSource != null || !snapshot.roles().isEmpty()) {
@@ -267,22 +280,40 @@ public record AccountMembershipCaptureSources(
       return;
     }
 
+    boolean canonicalTenantUuidPresent = roleSource != null && roleSource.tenantUuid() != null;
+    boolean canonicalProvenancePresent =
+        roleSource != null && roleSource.tenantProvenance() != null;
     if (roleSource == null
+        || retainedProvenance == null
         || roleSource.accountUuid() == null
         || !accountUuid.equals(roleSource.accountUuid())
-        || roleSource.tenantUuid() == null
-        || !tenantUuid.equals(roleSource.tenantUuid())
         || roleSource.accountId() <= 0L
-        || roleSource.tenantId() == null
-        || roleSource.tenantId() <= 0L
+        || !Objects.equals(roleSource.tenantId(), retainedProvenance.legacyTenantId())
         || roleSource.membershipId() <= 0L
         || roleSource.snapshotVersion() != Long.parseLong(membershipVersion)
         || !roleSource.roles().equals(snapshot.roles())
-        || roleSource.tenantProvenance() == null
-        || roleSource.tenantProvenance().kind() != TenantProvenanceKind.APPROVED_RETAINED) {
+        || canonicalTenantUuidPresent != canonicalProvenancePresent
+        || (canonicalTenantUuidPresent
+            && (!tenantUuid.equals(roleSource.tenantUuid())
+                || !retainedProvenance.equals(roleSource.tenantProvenance())))) {
       throw new IllegalArgumentException(
           "Current membership roles lack the exact existing role header and identity");
     }
+  }
+
+  private static VerifiedTenantProvenance requireRetainedAssociation(
+      UUID tenantUuid, ApprovedAssociation association) {
+    if (association.legacyTenantId() <= 0L
+        || association.canonicalTenantId() == null
+        || !tenantUuid.equals(association.canonicalTenantId())) {
+      throw new IllegalArgumentException(
+          "Retained tenant association differs from the exact canonical request");
+    }
+    return new VerifiedTenantProvenance(
+        association.legacyTenantId(),
+        TenantProvenanceKind.APPROVED_RETAINED,
+        association.operationId(),
+        association.manifestDigest());
   }
 
   private static String membershipSequence(RuntimeMembershipSnapshotDto snapshot) {

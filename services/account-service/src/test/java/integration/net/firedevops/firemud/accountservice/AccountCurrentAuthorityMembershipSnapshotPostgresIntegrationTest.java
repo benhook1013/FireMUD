@@ -648,6 +648,13 @@ class AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest {
   @Test
   void existingCaptureSourcesAuthenticateAbsenceAndRejectMixedSourceOrRoleEvidence() {
     JoinFixture neverJoined = fixture();
+    new TransactionTemplate(transactionManager)
+        .execute(
+            status -> {
+              membershipAuthorityEventProducer.preparePairAuthorityForJoin(
+                  neverJoined.accountId(), neverJoined.tenantId());
+              return null;
+            });
     List<List<String>> absenceBeforeRead = membershipAuthoritySourceFingerprint(neverJoined);
     AccountMembershipCaptureSources absence = readMembershipCaptureSources(neverJoined);
     assertThat(absence.membershipSnapshot().membershipExists()).isFalse();
@@ -676,13 +683,24 @@ class AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest {
                         authority.memberships(),
                         authority.issuanceFence()),
                     absence.membershipSnapshot(),
-                    absence.roleSource()))
+                    absence.roleSource(),
+                    absence.retainedTenantAssociation()))
         .isInstanceOf(IllegalArgumentException.class);
 
     JoinFixture active = fixture();
     assertThat(join(active).success()).isTrue();
     List<List<String>> activeBeforeRead = membershipAuthoritySourceFingerprint(active);
     AccountMembershipCaptureSources existing = readMembershipCaptureSources(active);
+    assertThat(existing.roleSource().orElseThrow().accountUuid()).isEqualTo(active.accountUuid());
+    assertThat(existing.roleSource().orElseThrow().tenantId()).isEqualTo(active.tenantId());
+    assertThat(existing.roleSource().orElseThrow().tenantUuid()).isNull();
+    assertThat(existing.roleSource().orElseThrow().tenantProvenance()).isNull();
+    assertThat(existing.retainedTenantAssociation())
+        .hasValueSatisfying(
+            association -> {
+              assertThat(association.canonicalTenantId()).isEqualTo(active.tenantUuid());
+              assertThat(association.legacyTenantId()).isEqualTo(active.tenantId());
+            });
     RuntimeMembershipSnapshotDto existingMembership = existing.membershipSnapshot();
     List<AccountMembershipAuthorityEventProducer.OutboxCheckpointEntry> mixedCheckpoints =
         existingMembership.outboxCheckpoints().stream()
@@ -731,7 +749,8 @@ class AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest {
                     active.tenantUuid(),
                     existing.authoritySnapshot(),
                     existing.membershipSnapshot(),
-                    Optional.of(mixedRoleHeader)))
+                    Optional.of(mixedRoleHeader),
+                    existing.retainedTenantAssociation()))
         .isInstanceOf(IllegalArgumentException.class);
     assertThat(membershipAuthoritySourceFingerprint(active)).isEqualTo(activeBeforeRead);
   }

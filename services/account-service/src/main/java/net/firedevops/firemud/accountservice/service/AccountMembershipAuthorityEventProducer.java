@@ -726,6 +726,18 @@ public class AccountMembershipAuthorityEventProducer {
       }
       retainedIdentity =
           resolveIdentity(fencedAccount.getId(), retainedAssociation.legacyTenantId());
+      VerifiedTenantProvenance retainedProvenance =
+          new VerifiedTenantProvenance(
+              retainedAssociation.legacyTenantId(),
+              TenantProvenanceKind.APPROVED_RETAINED,
+              retainedAssociation.operationId(),
+              retainedAssociation.manifestDigest());
+      if (!tenantUuid.equals(retainedAssociation.canonicalTenantId())
+          || !tenantUuid.equals(retainedIdentity.tenantUuid())
+          || !retainedProvenance.equals(verifiedProvenance(retainedIdentity))) {
+        throw new IllegalStateException(
+            "Retained Account identity differs from its exact audited tenant association");
+      }
     }
 
     // Hold issuer, account/fence, tenant and membership source rows before the later pair,
@@ -781,23 +793,46 @@ public class AccountMembershipAuthorityEventProducer {
               fencedAccount.getId(),
               retainedAssociation.legacyTenantId(),
               membershipSnapshot,
-              retainedIdentity);
+              retainedIdentity,
+              retainedAssociation);
     }
 
     return new AccountMembershipCaptureSources(
-        accountUuid, tenantUuid, authoritySnapshot, membershipSnapshot, roleSource);
+        accountUuid,
+        tenantUuid,
+        authoritySnapshot,
+        membershipSnapshot,
+        roleSource,
+        Optional.ofNullable(retainedAssociation));
   }
 
   private Optional<RoleSnapshot> readExactExistingRoleSource(
       long accountId,
       long legacyTenantId,
       RuntimeMembershipSnapshotDto membershipSnapshot,
-      Identity identity) {
+      Identity identity,
+      ApprovedAssociation association) {
     if (!membershipSnapshot.membershipExists()) {
       if (!membershipSnapshot.roles().isEmpty()) {
         throw new IllegalStateException("Absent Account membership cannot have role evidence");
       }
       return Optional.empty();
+    }
+    if (association == null) {
+      throw new IllegalStateException(
+          "Retained role source requires its exact audited tenant association");
+    }
+    VerifiedTenantProvenance associationProvenance =
+        new VerifiedTenantProvenance(
+            association.legacyTenantId(),
+            TenantProvenanceKind.APPROVED_RETAINED,
+            association.operationId(),
+            association.manifestDigest());
+    if (association.legacyTenantId() != legacyTenantId
+        || !identity.tenantUuid().equals(association.canonicalTenantId())
+        || !verifiedProvenance(identity).equals(associationProvenance)) {
+      throw new IllegalStateException(
+          "Current role source is not bound to its exact audited tenant association");
     }
 
     JoinMembershipProof membership =
@@ -839,13 +874,17 @@ public class AccountMembershipAuthorityEventProducer {
     }
     UUID accountUuid = UUID.fromString(membershipSnapshot.accountUuid());
     UUID tenantUuid = UUID.fromString(membershipSnapshot.tenantUuid());
+    boolean canonicalTenantUuidPresent = roles.tenantUuid() != null;
+    boolean canonicalProvenancePresent = roles.tenantProvenance() != null;
     if (roles.accountId() != accountId
-        || !Objects.equals(roles.tenantId(), legacyTenantId)
+        || !Objects.equals(roles.tenantId(), association.legacyTenantId())
         || roles.membershipId() != membership.membershipId()
         || roles.snapshotVersion() != membership.membershipVersion()
         || !accountUuid.equals(roles.accountUuid())
-        || !tenantUuid.equals(roles.tenantUuid())
-        || !verifiedProvenance(identity).equals(roles.tenantProvenance())
+        || canonicalTenantUuidPresent != canonicalProvenancePresent
+        || (canonicalTenantUuidPresent
+            && (!tenantUuid.equals(roles.tenantUuid())
+                || !associationProvenance.equals(roles.tenantProvenance())))
         || !canonicalRoles.equals(membershipSnapshot.roles())) {
       throw new IllegalStateException(
           "Current Account role source differs from its exact membership header and identity");

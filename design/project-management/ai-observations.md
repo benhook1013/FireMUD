@@ -293,3 +293,8 @@ Entry format:
   - Context: the exact CI37141351309 observer initially reported the bare-LOGIN XML artifact missing from an unpaginated artifact response, although its upload succeeded and it existed on the second page.
   - Outcome: the complete paginated inventory recovered the artifact; independent raw-XML parsing and hashing proved all fourteen storage cases executed cleanly. The initial missing-artifact statement supplied no evidence of a skipped test or broken upload.
   - Expected pattern: inspect every artifact page and the exact upload outcome before classifying evidence as absent. Preserve the exact run/head and distinguish unavailable capture from execution failure.
+
+- `2026-10-04`: Cross-check CI aggregate labels against exact required job evidence
+  - Context: installed controller writer build 8 returned `aggregate.state=SUCCESS` for #2966 head `bb7fb28ea9fa9c194a3e9418e3f61ee95f149d25` while the same inventory contained six failed jobs, including Validation Gate and Account, and exact workflow run37167089744 concluded failure. Its separate `NOT READY` verdict still prevented a readiness claim; the cause of the aggregate mismatch is unproved.
+  - Outcome: Document reported the discrepancy through FireController inbox981f7fcc-67b9-4c30-8740-128070090dca and retained the actual failed-job and absent-test evidence. The Account fixture correction does not establish that the controller presentation issue is repaired.
+  - Expected pattern: use exact-head required job outcomes and raw test evidence for proof; do not convert an aggregate label into green CI when its own inventory disagrees. Report the command, version and contradictory evidence without changing private review state to bypass the discrepancy.
