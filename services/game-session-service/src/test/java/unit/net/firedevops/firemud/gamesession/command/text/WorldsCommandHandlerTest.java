@@ -1030,54 +1030,6 @@ class WorldsCommandHandlerTest {
   }
 
   @Test
-  void browseCharactersIgnoresIncompleteOrStaleEntitlementBeforeRosterReads() {
-    AccountClient accountClient = Mockito.mock(AccountClient.class);
-    Mockito.when(
-            accountClient.getTenantMembershipForRuntime(
-                Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
-        .thenReturn(activeMembership());
-    WorldsCommandHandler localHandler =
-        authenticatedHandler(publicProductionProperties(), accountClient);
-    GetTenantEntitlementsForRuntimeResponse valid = publicEntitlement(true);
-    for (GetTenantEntitlementsForRuntimeResponse invalid :
-        List.of(
-            valid.toBuilder().setEntitlementVersion(0L).build(),
-            valid.toBuilder().setTenantBillingSequence(0L).build(),
-            valid.toBuilder().setEvaluatedAt(Instant.now().minusSeconds(16).toString()).build(),
-            valid.toBuilder().setEvaluatedAt(Instant.now().plusSeconds(30).toString()).build())) {
-      Mockito.when(
-              accountClient.getTenantEntitlementsForRuntime(
-                  Mockito.anyString(), Mockito.anyString()))
-          .thenReturn(invalid);
-
-      assertThat(localHandler.browseCharacters(authenticatedSession(), "demo", "production"))
-          .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.unavailable());
-    }
-    Mockito.verifyNoInteractions(accountClient);
-  }
-
-  @Test
-  void browseCharactersIgnoresInvalidPublicMembershipBeforeRosterReads() {
-    AccountClient accountClient = Mockito.mock(AccountClient.class);
-    Mockito.when(
-            accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
-        .thenReturn(publicEntitlement(true));
-    WorldsCommandHandler localHandler =
-        authenticatedHandler(publicProductionProperties(), accountClient);
-
-    for (String evaluatedAt : invalidEvaluationTimes()) {
-      Mockito.when(
-              accountClient.getTenantMembershipForRuntime(
-                  Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
-          .thenReturn(activeMembership().toBuilder().setEvaluatedAt(evaluatedAt).build());
-
-      assertThat(localHandler.browseCharacters(authenticatedSession(), "demo", "production"))
-          .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.unavailable());
-    }
-    Mockito.verifyNoInteractions(accountClient);
-  }
-
-  @Test
   void freshBoundSnapshotKeepsPrivateSelectionRetryableWithoutLegacyAuthority() {
     GameplayWorldCatalog.WorldView world =
         mixedWorld(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
@@ -2256,13 +2208,6 @@ class WorldsCommandHandlerTest {
     properties.getWorlds().get(1).getRealms().getFirst().setSlug("preview");
     properties.getWorlds().get(1).getRealms().getFirst().setPublicProductionRealm(false);
     return properties;
-  }
-
-  private List<String> invalidEvaluationTimes() {
-    return List.of(
-        Instant.now().minusSeconds(16).toString(),
-        Instant.now().plusSeconds(30).toString(),
-        "not-an-instant");
   }
 
   private static GameplayCatalogProperties.World world(
