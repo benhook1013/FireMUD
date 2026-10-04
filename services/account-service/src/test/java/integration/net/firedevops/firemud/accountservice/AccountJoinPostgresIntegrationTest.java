@@ -285,10 +285,11 @@ class AccountJoinPostgresIntegrationTest {
     dsl.execute(
         "UPDATE subscription SET status = 'active', entitlement_version = 2 WHERE tenant_id = ?",
         fixture.tenantId());
-    AuthenticationException conflict =
-        assertThrows(AuthenticationException.class, () -> join(fixture));
+    JoinPublicProductionResult conflict = join(fixture);
 
-    assertThat(conflict.getCode()).isEqualTo("IDEMPOTENCY_CONFLICT");
+    assertThat(conflict.success()).isFalse();
+    assertThat(conflict.outcomeCode()).isEqualTo("IDEMPOTENCY_CONFLICT");
+    assertThat(conflict.replayed()).isFalse();
     assertThat(
             dsl.resultQuery(
                     "SELECT request_digest FROM account_join_operations WHERE request_id = ?",
@@ -1198,7 +1199,7 @@ class AccountJoinPostgresIntegrationTest {
     assertMembershipTransitionReceipt(initialJoin, "MEMBERSHIP_JOINED", 1L);
 
     assertThrows(
-        org.jooq.exception.DataAccessException.class,
+        org.springframework.dao.DataIntegrityViolationException.class,
         () ->
             dsl.execute(
                 "UPDATE account_membership_transition_receipts "
@@ -1209,7 +1210,7 @@ class AccountJoinPostgresIntegrationTest {
     assertMembershipTransitionReceipt(initialJoin, "MEMBERSHIP_JOINED", 1L);
 
     assertThrows(
-        org.jooq.exception.DataAccessException.class,
+        org.springframework.dao.DataIntegrityViolationException.class,
         () ->
             dsl.execute(
                 "DELETE FROM account_membership_transition_receipts "
