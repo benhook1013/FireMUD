@@ -2039,9 +2039,7 @@ public class AccountServiceImpl implements AccountService {
         || NIL_ACCOUNT_UUID.equals(account.getAccountUuid())
         || account.getAccountUuidSourceNumericId() == null
         || !account.getId().equals(account.getAccountUuidSourceNumericId())
-        || (provenance != AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT
-            && provenance != AccountIdentityProvenance.ACCOUNT_V29_MIGRATION
-            && provenance != AccountIdentityProvenance.ACCOUNT_DATABASE_INSERT)
+        || !AccountIdentityProvenance.isAccepted(provenance)
         || !accountUuid.equals(account.getAccountUuid())) {
       throw new IllegalStateException(
           "Account UUID readback did not match its exact persisted source row");

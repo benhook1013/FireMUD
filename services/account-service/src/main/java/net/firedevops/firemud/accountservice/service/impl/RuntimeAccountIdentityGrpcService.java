@@ -125,7 +125,6 @@ public class RuntimeAccountIdentityGrpcService
             .setCanonicalAccountId(canonicalAccountId.toString())
             .setSourceAccountRowId(account.getId())
             .setAccountUuidProvenance(account.getAccountUuidProvenance().name())
-            .setSourceNumericRowId(account.getAccountUuidSourceNumericId())
             .build());
     responseObserver.onCompleted();
   }
@@ -156,12 +155,7 @@ public class RuntimeAccountIdentityGrpcService
         || !account.getId().equals(account.getAccountUuidSourceNumericId())) {
       return false;
     }
-    for (AccountIdentityProvenance provenance : AccountIdentityProvenance.values()) {
-      if (provenance == account.getAccountUuidProvenance()) {
-        return true;
-      }
-    }
-    return false;
+    return AccountIdentityProvenance.isAccepted(account.getAccountUuidProvenance());
   }
 
   private static UUID parseCanonicalNonNilUuid(String value) {

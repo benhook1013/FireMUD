@@ -16,6 +16,7 @@ import io.grpc.Status;
 import io.grpc.protobuf.ProtoUtils;
 import io.grpc.stub.StreamObserver;
 import java.io.IOException;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -27,6 +28,7 @@ import net.firedevops.firemud.account.v1.ListPresenceVisibilityPoliciesRequest;
 import net.firedevops.firemud.account.v1.ListPresenceVisibilityPoliciesResponse;
 import net.firedevops.firemud.account.v1.ResolveRuntimeAccountIdentityRequest;
 import net.firedevops.firemud.account.v1.ResolveRuntimeAccountIdentityResponse;
+import net.firedevops.firemud.accountservice.dto.RealmAccessGrantResult;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
 import net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPolicy;
@@ -54,7 +56,8 @@ import org.springframework.core.io.FileSystemResource;
 class RuntimeAccountIdentityGrpcAuthWiringTest {
   private static final String IDENTITY_METHOD =
       "account.v1.RuntimeAccountIdentityService/ResolveRuntimeAccountIdentity";
-  private static final String NONPUBLIC_METHOD =
+  private static final String NONPUBLIC_METHOD = "account.v1.AccountService/GetProfile";
+  private static final String REALM_GRANT_METHOD =
       "account.v1.AccountService/GetRealmAccessGrantForRuntime";
   private static final String PRESENCE_METHOD =
       "account.v1.AccountService/ListPresenceVisibilityPolicies";
@@ -77,6 +80,13 @@ class RuntimeAccountIdentityGrpcAuthWiringTest {
       NONPUBLIC_METHOD_DESCRIPTOR =
           unaryMethod(
               NONPUBLIC_METHOD,
+              GetRealmAccessGrantForRuntimeRequest.getDefaultInstance(),
+              GetRealmAccessGrantForRuntimeResponse.getDefaultInstance());
+  private static final MethodDescriptor<
+          GetRealmAccessGrantForRuntimeRequest, GetRealmAccessGrantForRuntimeResponse>
+      REALM_GRANT_METHOD_DESCRIPTOR =
+          unaryMethod(
+              REALM_GRANT_METHOD,
               GetRealmAccessGrantForRuntimeRequest.getDefaultInstance(),
               GetRealmAccessGrantForRuntimeResponse.getDefaultInstance());
   private static final MethodDescriptor<
@@ -189,6 +199,51 @@ class RuntimeAccountIdentityGrpcAuthWiringTest {
                 .startCall(
                     org.mockito.ArgumentMatchers.eq(call),
                     org.mockito.ArgumentMatchers.any(Metadata.class));
+          });
+    }
+  }
+
+  @Test
+  void realmGrantMethodAllowsOnlyExactSameNamespaceGameSessionWorkloadUnderBothYamlLayers() {
+    for (boolean productionLayer : List.of(false, true)) {
+      withConfiguredInterceptor(
+          productionLayer,
+          (interceptor, jwtUtil) -> {
+            AccountService accountService = mock(AccountService.class);
+            when(accountService.resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID)))
+                .thenReturn(42L);
+            when(accountService.getRealmAccessGrantForRuntime(42L, 1L, "demo", "preview", "req-1"))
+                .thenReturn(
+                    new RealmAccessGrantResult(
+                        42L, 1L, "demo", "preview", true, 2L, Instant.now().toString()));
+            AccountGrpcService service =
+                new AccountGrpcService(mock(PingService.class), accountService, null, "test");
+            String bearer = jwtUtil.generateToken(ACCOUNT_UUID, Map.of("accountId", ACCOUNT_UUID));
+
+            GrantDispatchResult valid =
+                dispatchRealmGrantMethod(interceptor, service, GAME_SESSION_URI, null);
+            assertThat(valid.handlerDispatched()).isTrue();
+            assertThat(valid.observer().completed).isTrue();
+            assertThat(valid.observer().response.getAccountId()).isEqualTo(ACCOUNT_UUID);
+            verify(accountService).resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID));
+
+            AccountService deniedService = mock(AccountService.class);
+            AccountGrpcService deniedHandler =
+                new AccountGrpcService(mock(PingService.class), deniedService, null, "test");
+            GrantDispatchResult bearerOnly =
+                dispatchRealmGrantMethod(interceptor, deniedHandler, null, bearer);
+            GrantDispatchResult wrongNamespace =
+                dispatchRealmGrantMethod(
+                    interceptor,
+                    deniedHandler,
+                    "spiffe://firemud/ns/other/sa/game-session-service",
+                    null);
+            for (GrantDispatchResult denied : List.of(bearerOnly, wrongNamespace)) {
+              assertThat(denied.observer().completed).isTrue();
+              assertThat(denied.observer().response.getError().getCode())
+                  .isEqualTo("PERMISSION_DENIED");
+            }
+            verifyNoInteractions(deniedService);
           });
     }
   }
@@ -377,6 +432,65 @@ class RuntimeAccountIdentityGrpcAuthWiringTest {
     return new PresenceDispatchResult(observer, handlerDispatched.get());
   }
 
+  private static GrantDispatchResult dispatchRealmGrantMethod(
+      AuthTokenInterceptor interceptor,
+      AccountGrpcService service,
+      String peerUri,
+      String bearerToken) {
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    ServerCall<GetRealmAccessGrantForRuntimeRequest, GetRealmAccessGrantForRuntimeResponse> call =
+        mock(ServerCall.class);
+    when(call.getMethodDescriptor()).thenReturn(REALM_GRANT_METHOD_DESCRIPTOR);
+    AtomicBoolean handlerDispatched = new AtomicBoolean();
+    GrantTestObserver observer = new GrantTestObserver();
+    ServerCallHandler<GetRealmAccessGrantForRuntimeRequest, GetRealmAccessGrantForRuntimeResponse>
+        next =
+            new ServerCallHandler<>() {
+              @Override
+              public ServerCall.Listener<GetRealmAccessGrantForRuntimeRequest> startCall(
+                  ServerCall<
+                          GetRealmAccessGrantForRuntimeRequest,
+                          GetRealmAccessGrantForRuntimeResponse>
+                      serverCall,
+                  Metadata headers) {
+                handlerDispatched.set(true);
+                return new ServerCall.Listener<>() {
+                  @Override
+                  public void onMessage(GetRealmAccessGrantForRuntimeRequest request) {
+                    service.getRealmAccessGrantForRuntime(request, observer);
+                  }
+                };
+              }
+            };
+    GetRealmAccessGrantForRuntimeRequest request =
+        GetRealmAccessGrantForRuntimeRequest.newBuilder()
+            .setAccountId(ACCOUNT_UUID)
+            .setTenantId("1")
+            .setWorldSlug("demo")
+            .setRealmSlug("preview")
+            .setRequestId("req-1")
+            .build();
+    Metadata headers = new Metadata();
+    if (bearerToken != null) {
+      headers.put(
+          Metadata.Key.of("Authorization", Metadata.ASCII_STRING_MARSHALLER),
+          "Bearer " + bearerToken);
+    }
+    Runnable dispatch =
+        () -> {
+          ServerCall.Listener<GetRealmAccessGrantForRuntimeRequest> listener =
+              interceptor.interceptCall(call, headers, next);
+          listener.onMessage(request);
+        };
+    if (peerUri == null) {
+      Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, null).run(dispatch);
+    } else {
+      GrpcPeerIdentity peer = GrpcPeerIdentity.parseUri(peerUri).orElseThrow();
+      Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer).run(dispatch);
+    }
+    return new GrantDispatchResult(observer, handlerDispatched.get());
+  }
+
   private static void withConfiguredInterceptor(
       boolean productionLayer,
       java.util.function.BiConsumer<AuthTokenInterceptor, JwtUtil> action) {
@@ -417,6 +531,7 @@ class RuntimeAccountIdentityGrpcAuthWiringTest {
               assertThat(context.getBean(GrpcAuthProperties.class).getPublicMethods())
                   .contains(IDENTITY_METHOD)
                   .contains(PRESENCE_METHOD)
+                  .contains(REALM_GRANT_METHOD)
                   .doesNotContain(NONPUBLIC_METHOD);
               action.accept(
                   context.getBean(AuthTokenInterceptor.class), context.getBean(JwtUtil.class));
@@ -438,6 +553,29 @@ class RuntimeAccountIdentityGrpcAuthWiringTest {
   private record DispatchResult(TestObserver observer, boolean handlerDispatched) {}
 
   private record PresenceDispatchResult(PresenceTestObserver observer, boolean handlerDispatched) {}
+
+  private record GrantDispatchResult(GrantTestObserver observer, boolean handlerDispatched) {}
+
+  private static final class GrantTestObserver
+      implements StreamObserver<GetRealmAccessGrantForRuntimeResponse> {
+    private GetRealmAccessGrantForRuntimeResponse response;
+    private boolean completed;
+
+    @Override
+    public void onNext(GetRealmAccessGrantForRuntimeResponse value) {
+      response = value;
+    }
+
+    @Override
+    public void onError(Throwable throwable) {
+      throw new AssertionError("Expected Account application response", throwable);
+    }
+
+    @Override
+    public void onCompleted() {
+      completed = true;
+    }
+  }
 
   private static final class TestObserver
       implements StreamObserver<ResolveRuntimeAccountIdentityResponse> {

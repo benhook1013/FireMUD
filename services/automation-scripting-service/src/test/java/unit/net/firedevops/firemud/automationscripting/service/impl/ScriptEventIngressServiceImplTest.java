@@ -3251,6 +3251,8 @@ class ScriptEventIngressServiceImplTest {
     assertThat(admission.outcome())
         .isEqualTo(TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_QUOTA_DENIED.name());
     assertThat(admission.reason()).isEqualTo("dry_run_budget_exceeded");
+    verify(dryRunQuotaService)
+        .tryAcquire("1", "script-1", "account:11111111-1111-1111-1111-111111111111");
     verify(bindingRepository, never())
         .findByTenantIdAndScriptPatchVersionAndEventTypeAndEventSchemaVersionAndEnabledTrueOrderByPriorityAscScriptIdAsc(
             Mockito.anyLong(),

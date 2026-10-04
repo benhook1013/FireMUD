@@ -8,6 +8,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -51,6 +53,7 @@ import net.firedevops.firemud.accountservice.dto.DirectTextJoinScope;
 import net.firedevops.firemud.accountservice.dto.DirectTextJoinTarget;
 import net.firedevops.firemud.accountservice.dto.JoinPublicProductionRequest;
 import net.firedevops.firemud.accountservice.dto.JoinPublicProductionResult;
+import net.firedevops.firemud.accountservice.dto.RealmAccessGrantResult;
 import net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPolicy;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.accountservice.service.PingService;
@@ -516,6 +519,32 @@ class AccountGrpcServiceTest {
   }
 
   @Test
+  void authenticateConvertsIllegalStateToBoundedAuthorityUnavailableError() {
+    AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(accountService.authenticateForGameplay("demo@example.com", "password"))
+        .thenThrow(new IllegalStateException("private provenance detail"));
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    AccountGrpcService service =
+        new AccountGrpcService(Mockito.mock(PingService.class), accountService, registry);
+    RecordingObserver<AuthenticateResponse> observer = new RecordingObserver<>();
+
+    service.authenticate(
+        AuthenticateRequest.newBuilder()
+            .setEmail("demo@example.com")
+            .setPassword("password")
+            .build(),
+        observer);
+
+    assertEquals("AUTH_UNAVAILABLE", observer.response().getError().getCode());
+    assertEquals(
+        "Account authority unavailable; retry later", observer.response().getError().getMessage());
+    assertTrue(observer.completed());
+    assertFalse(observer.receivedTransportError());
+    assertEquals(
+        1.0, registry.get("grpc.app_error").tag("code", "AUTH_UNAVAILABLE").counter().count());
+  }
+
+  @Test
   void requestEmailLoginOtpDispatchesNeutralChallengeRequest() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
@@ -641,6 +670,32 @@ class AccountGrpcServiceTest {
         AuthenticationErrorCodes.INVALID_CREDENTIALS, observer.response().getError().getCode());
     assertTrue(observer.completed());
     assertFalse(observer.receivedTransportError());
+  }
+
+  @Test
+  void verifyEmailLoginOtpConvertsIllegalStateToBoundedAuthorityUnavailableError() {
+    AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(accountService.verifyEmailLoginOtp("demo@example.com", "123456"))
+        .thenThrow(new IllegalStateException("private provenance detail"));
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    AccountGrpcService service =
+        new AccountGrpcService(Mockito.mock(PingService.class), accountService, registry);
+    RecordingObserver<AuthenticateResponse> observer = new RecordingObserver<>();
+
+    service.verifyEmailLoginOtp(
+        VerifyEmailLoginOtpRequest.newBuilder()
+            .setEmail("demo@example.com")
+            .setCode("123456")
+            .build(),
+        observer);
+
+    assertEquals("AUTH_UNAVAILABLE", observer.response().getError().getCode());
+    assertEquals(
+        "Account authority unavailable; retry later", observer.response().getError().getMessage());
+    assertTrue(observer.completed());
+    assertFalse(observer.receivedTransportError());
+    assertEquals(
+        1.0, registry.get("grpc.app_error").tag("code", "AUTH_UNAVAILABLE").counter().count());
   }
 
   @Test
@@ -1379,37 +1434,121 @@ class AccountGrpcServiceTest {
   }
 
   @Test
-  void getRealmAccessGrantForRuntimeRejectsZeroAccountIdBeforeLookup() {
+  void getRealmAccessGrantForRuntimeRejectsNumericAccountIdBeforeLookup() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
-    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+    AccountGrpcService service =
+        new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
+    RecordingObserver<GetRealmAccessGrantForRuntimeResponse> observer = new RecordingObserver<>();
 
-    AtomicReference<GetRealmAccessGrantForRuntimeResponse> ref = new AtomicReference<>();
-    service.getRealmAccessGrantForRuntime(
-        GetRealmAccessGrantForRuntimeRequest.newBuilder()
-            .setAccountId("0")
-            .setTenantId("1")
-            .setWorldSlug("demo")
-            .setRealmSlug("production")
-            .setRequestId("req-1")
-            .build(),
-        new StreamObserver<GetRealmAccessGrantForRuntimeResponse>() {
-          @Override
-          public void onNext(GetRealmAccessGrantForRuntimeResponse value) {
-            ref.set(value);
-          }
+    withPeer(
+        GAME_SESSION_PEER,
+        () ->
+            service.getRealmAccessGrantForRuntime(
+                GetRealmAccessGrantForRuntimeRequest.newBuilder()
+                    .setAccountId("42")
+                    .setTenantId("1")
+                    .setWorldSlug("demo")
+                    .setRealmSlug("production")
+                    .setRequestId("req-1")
+                    .build(),
+                observer));
 
-          @Override
-          public void onError(Throwable t) {}
-
-          @Override
-          public void onCompleted() {}
-        });
-
-    assertNotNull(ref.get());
-    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
-    assertEquals("accountId must be positive", ref.get().getError().getMessage());
+    assertEquals("INVALID_ARGUMENT", observer.response().getError().getCode());
+    assertEquals(
+        "accountId must be a canonical non-nil UUID", observer.response().getError().getMessage());
     Mockito.verifyNoInteractions(accountService);
+  }
+
+  @Test
+  void getRealmAccessGrantForRuntimeRequiresExactGameSessionPeer() {
+    AccountService accountService = Mockito.mock(AccountService.class);
+    AccountGrpcService service =
+        new AccountGrpcService(
+            Mockito.mock(PingService.class), accountService, null, WORKLOAD_NAMESPACE);
+    RecordingObserver<GetRealmAccessGrantForRuntimeResponse> observer = new RecordingObserver<>();
+
+    withPeer(
+        SOCIAL_GROUPS_PEER,
+        () ->
+            service.getRealmAccessGrantForRuntime(
+                GetRealmAccessGrantForRuntimeRequest.newBuilder()
+                    .setAccountId(ACCOUNT_UUID)
+                    .setTenantId("1")
+                    .setWorldSlug("demo")
+                    .setRealmSlug("production")
+                    .setRequestId("req-1")
+                    .build(),
+                observer));
+
+    assertEquals("PERMISSION_DENIED", observer.response().getError().getCode());
+    Mockito.verifyNoInteractions(accountService);
+  }
+
+  @Test
+  void getRealmAccessGrantForRuntimeResolvesUuidAndEchoesItAfterCorrelatedRead() {
+    AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(accountService.resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID)))
+        .thenReturn(42L);
+    Mockito.when(accountService.getRealmAccessGrantForRuntime(42L, 7L, "demo", "preview", "req-1"))
+        .thenReturn(
+            new RealmAccessGrantResult(
+                42L, 7L, "demo", "preview", true, 3L, Instant.now().toString()));
+    AccountGrpcService service =
+        new AccountGrpcService(
+            Mockito.mock(PingService.class), accountService, null, WORKLOAD_NAMESPACE);
+    RecordingObserver<GetRealmAccessGrantForRuntimeResponse> observer = new RecordingObserver<>();
+
+    withPeer(
+        GAME_SESSION_PEER,
+        () ->
+            service.getRealmAccessGrantForRuntime(
+                GetRealmAccessGrantForRuntimeRequest.newBuilder()
+                    .setAccountId(ACCOUNT_UUID)
+                    .setTenantId("7")
+                    .setWorldSlug("demo")
+                    .setRealmSlug("preview")
+                    .setRequestId("req-1")
+                    .build(),
+                observer));
+
+    assertEquals(ACCOUNT_UUID, observer.response().getAccountId());
+    assertEquals("7", observer.response().getTenantId());
+    assertEquals("demo", observer.response().getWorldSlug());
+    assertEquals("preview", observer.response().getRealmSlug());
+    assertEquals(3L, observer.response().getGrantVersion());
+    assertTrue(observer.response().getGranted());
+    Mockito.verify(accountService).resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID));
+  }
+
+  @Test
+  void getRealmAccessGrantForRuntimeFailsUnavailableOnMismatchedPrivateOwnerEvidence() {
+    AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(accountService.resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID)))
+        .thenReturn(42L);
+    Mockito.when(accountService.getRealmAccessGrantForRuntime(42L, 7L, "demo", "preview", "req-1"))
+        .thenReturn(
+            new RealmAccessGrantResult(
+                43L, 7L, "demo", "preview", true, 3L, Instant.now().toString()));
+    AccountGrpcService service =
+        new AccountGrpcService(
+            Mockito.mock(PingService.class), accountService, null, WORKLOAD_NAMESPACE);
+    RecordingObserver<GetRealmAccessGrantForRuntimeResponse> observer = new RecordingObserver<>();
+
+    withPeer(
+        GAME_SESSION_PEER,
+        () ->
+            service.getRealmAccessGrantForRuntime(
+                GetRealmAccessGrantForRuntimeRequest.newBuilder()
+                    .setAccountId(ACCOUNT_UUID)
+                    .setTenantId("7")
+                    .setWorldSlug("demo")
+                    .setRealmSlug("preview")
+                    .setRequestId("req-1")
+                    .build(),
+                observer));
+
+    assertEquals("AUTH_UNAVAILABLE", observer.response().getError().getCode());
   }
 
   @Test

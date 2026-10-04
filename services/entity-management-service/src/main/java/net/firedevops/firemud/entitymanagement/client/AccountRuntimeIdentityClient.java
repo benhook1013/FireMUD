@@ -103,8 +103,7 @@ public final class AccountRuntimeIdentityClient
               parseCanonicalNonNilUuid(
                   response.getCanonicalAccountId(), "response canonical account ID"),
               response.getSourceAccountRowId(),
-              response.getAccountUuidProvenance(),
-              response.getSourceNumericRowId());
+              response.getAccountUuidProvenance());
     } catch (IllegalArgumentException exception) {
       throw new IllegalStateException("Account runtime identity response is invalid", exception);
     }

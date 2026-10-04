@@ -15,8 +15,7 @@ public record RuntimeAccountIdentityEvidence(
     UUID requestId,
     UUID canonicalAccountId,
     long sourceAccountRowId,
-    String accountUuidProvenance,
-    long sourceNumericRowId) {
+    String accountUuidProvenance) {
   private static final int SCHEMA_VERSION = 1;
   private static final UUID NIL_UUID = new UUID(0L, 0L);
 
@@ -29,11 +28,8 @@ public record RuntimeAccountIdentityEvidence(
     }
     requireNonNil(requestId, "requestId");
     requireNonNil(canonicalAccountId, "canonicalAccountId");
-    if (sourceAccountRowId <= 0L || sourceNumericRowId <= 0L) {
-      throw new IllegalArgumentException("Account source row identities must be positive");
-    }
-    if (sourceAccountRowId != sourceNumericRowId) {
-      throw new IllegalArgumentException("Account source row identities must match exactly");
+    if (sourceAccountRowId <= 0L) {
+      throw new IllegalArgumentException("Account source row identity must be positive");
     }
     if (!isRecognizedProvenance(accountUuidProvenance)) {
       throw new IllegalArgumentException("Account UUID provenance is not recognized");
