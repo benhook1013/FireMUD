@@ -79,28 +79,32 @@ class VersionCanonicalIdentityIntegrationTest {
     assertThat(retainedFields(fixture.dsl(), retainedVersionId)).isEqualTo(retainedFieldsBefore);
     assertThat(versionXmin(fixture.dsl(), retainedVersionId)).isEqualTo(retainedXminBefore);
     assertThat(
-            fixture.dsl()
+            fixture
+                .dsl()
                 .select(CANONICAL_VERSION_ID)
                 .from(VERSION)
                 .where(ID.eq(retainedVersionId))
                 .fetchOne(CANONICAL_VERSION_ID))
         .isNull();
     assertThat(
-            fixture.dsl()
+            fixture
+                .dsl()
                 .select(CANONICAL_TENANT_ID)
                 .from(VERSION)
                 .where(ID.eq(retainedVersionId))
                 .fetchOne(CANONICAL_TENANT_ID))
         .isNull();
     assertThat(
-            fixture.dsl()
+            fixture
+                .dsl()
                 .select(IDENTITY_SOURCE_GAME_ROW_ID)
                 .from(VERSION)
                 .where(ID.eq(retainedVersionId))
                 .fetchOne(IDENTITY_SOURCE_GAME_ROW_ID))
         .isNull();
     assertThat(
-            fixture.versionRepository()
+            fixture
+                .versionRepository()
                 .findByCanonicalTenantIdAndCanonicalVersionId(
                     game.getCanonicalTenantId(), UUID.randomUUID()))
         .isEmpty();
@@ -138,7 +142,8 @@ class VersionCanonicalIdentityIntegrationTest {
     assertThat(inserted.getIdentitySourceProvenanceKind()).isEqualTo("NEW_GAME_ROW");
 
     Version exactRead =
-        fixture.versionRepository()
+        fixture
+            .versionRepository()
             .findByCanonicalTenantIdAndCanonicalVersionId(
                 game.getCanonicalTenantId(), inserted.getCanonicalVersionId())
             .orElseThrow();
@@ -155,7 +160,8 @@ class VersionCanonicalIdentityIntegrationTest {
     assertThat(updated.getNotes()).isEqualTo("updated without replacing owner identity");
     assertIdentityMatches(updated, game, inserted.getCanonicalVersionId());
     assertIdentityMatches(
-        fixture.versionRepository()
+        fixture
+            .versionRepository()
             .findByCanonicalTenantIdAndCanonicalVersionId(
                 game.getCanonicalTenantId(), inserted.getCanonicalVersionId())
             .orElseThrow(),
@@ -178,7 +184,8 @@ class VersionCanonicalIdentityIntegrationTest {
     assertThat(saved.getCanonicalVersionId()).isNotNull().isNotEqualTo(NIL_UUID);
     assertThat(saved.getIdentitySourceProvenanceKind()).isEqualTo("RETAINED_GAME_V30");
     assertIdentityMatches(
-        fixture.versionRepository()
+        fixture
+            .versionRepository()
             .findByCanonicalTenantIdAndCanonicalVersionId(
                 retainedGame.getCanonicalTenantId(), saved.getCanonicalVersionId())
             .orElseThrow(),
@@ -202,37 +209,42 @@ class VersionCanonicalIdentityIntegrationTest {
     String otherXminBefore = gameXmin(fixture.dsl(), other.getId());
 
     assertThat(
-            fixture.versionRepository()
+            fixture
+                .versionRepository()
                 .findByCanonicalTenantIdAndCanonicalVersionId(
                     other.getCanonicalTenantId(), saved.getCanonicalVersionId()))
         .isEmpty();
     assertThat(
-            fixture.versionRepository()
+            fixture
+                .versionRepository()
                 .findByCanonicalTenantIdAndCanonicalVersionId(
                     owner.getCanonicalTenantId(), UUID.randomUUID()))
         .isEmpty();
     assertThat(
-            fixture.versionRepository()
-                .findByCanonicalTenantIdAndCanonicalVersionId(
-                    owner.getCanonicalTenantId(), null))
+            fixture
+                .versionRepository()
+                .findByCanonicalTenantIdAndCanonicalVersionId(owner.getCanonicalTenantId(), null))
         .isEmpty();
     assertThat(
-            fixture.versionRepository()
-                .findByCanonicalTenantIdAndCanonicalVersionId(
-                    null, saved.getCanonicalVersionId()))
+            fixture
+                .versionRepository()
+                .findByCanonicalTenantIdAndCanonicalVersionId(null, saved.getCanonicalVersionId()))
         .isEmpty();
     assertThat(
-            fixture.versionRepository()
+            fixture
+                .versionRepository()
                 .findByCanonicalTenantIdAndCanonicalVersionId(
                     NIL_UUID, saved.getCanonicalVersionId()))
         .isEmpty();
     assertThat(
-            fixture.versionRepository()
+            fixture
+                .versionRepository()
                 .findByCanonicalTenantIdAndCanonicalVersionId(
                     owner.getCanonicalTenantId(), NIL_UUID))
         .isEmpty();
     assertIdentityMatches(
-        fixture.versionRepository()
+        fixture
+            .versionRepository()
             .findByCanonicalTenantIdAndCanonicalVersionId(
                 owner.getCanonicalTenantId(), saved.getCanonicalVersionId())
             .orElseThrow(),
@@ -343,8 +355,7 @@ class VersionCanonicalIdentityIntegrationTest {
   }
 
   private Fixture fixture(MigrationVersion target) {
-    String schema =
-        "game_design_version_identity_" + UUID.randomUUID().toString().replace("-", "");
+    String schema = "game_design_version_identity_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = dataSource(schema);
     migrate(dataSource, schema, target);
     DSLContext dsl =
@@ -361,8 +372,7 @@ class VersionCanonicalIdentityIntegrationTest {
 
   private Fixture fixtureWithRetainedGame() {
     String schema =
-        "game_design_retained_version_identity_"
-            + UUID.randomUUID().toString().replace("-", "");
+        "game_design_retained_version_identity_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = dataSource(schema);
     migrate(dataSource, schema, MigrationVersion.fromVersion("29"));
     DSLContext legacyDsl =
