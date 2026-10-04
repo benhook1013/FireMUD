@@ -4514,7 +4514,7 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void listBootstrapRealmsReadsFreshEntitlementsOncePerTenantPerInvocation() {
+  void listBootstrapRealmsReadsFreshEntitlementsAndReusesVerifiedAccountIdentity() {
     Account account = new Account();
     account.setId(11L);
     setPersistedAuthenticationIdentity(account);
@@ -4585,12 +4585,21 @@ class AccountServiceImplTest {
     var firstCall = service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo");
     org.mockito.Mockito.verify(subscriptionRepository, org.mockito.Mockito.times(1))
         .findByTenantId(7L);
+    org.mockito.Mockito.clearInvocations(accountRepository);
     var secondCall = service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo");
 
     assertEquals(2, firstCall.size());
     assertEquals(2, secondCall.size());
     org.mockito.Mockito.verify(subscriptionRepository, org.mockito.Mockito.times(2))
         .findByTenantId(7L);
+    org.mockito.Mockito.verify(accountRepository).findByAccountUuid(account.getAccountUuid());
+    org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never()).findById(11L);
+    JwtUtil tokenReader = new JwtUtil(JWT_SECRET, 3600000L);
+    for (var realm : secondCall) {
+      var claims = tokenReader.parseToken(realm.connectScopeId()).getPayload();
+      assertEquals(account.getAccountUuid().toString(), claims.getSubject());
+      assertEquals(account.getAccountUuid().toString(), claims.get("accountId", String.class));
+    }
   }
 
   @Test

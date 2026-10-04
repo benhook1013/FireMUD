@@ -515,7 +515,9 @@ public class AccountServiceImpl implements AccountService {
         || !caller.playableStateScope().equals(target.playableStateScope())) {
       throw new AuthenticationException("CONNECT_SCOPE_INVALID", INVALID_CONNECT_SCOPE_MESSAGE);
     }
-    requireAuthenticationEligible(requireAccount(caller.accountId()));
+    Account account = requireAccount(caller.accountId());
+    requireAuthenticationEligible(account);
+    String accountUuid = requireAuthenticationPersistedIdentity(account).toString();
     RuntimeRealmTarget current =
         requireRealmTarget(target.tenantId(), target.worldSlug(), target.realmSlug());
     if (!isPublicProductionRealm(current)) {
@@ -540,7 +542,7 @@ public class AccountServiceImpl implements AccountService {
     Instant expiresAt = evaluatedAt.plusMillis(tokenProperties.getConnectScopeExpirationMs());
     String scopeId =
         mintAndRetainConnectScope(
-            new BootstrapContext(caller.accountId()), current, evaluatedAt, expiresAt);
+            new BootstrapContext(caller.accountId(), accountUuid), current, evaluatedAt, expiresAt);
     return new DirectTextJoinScope(scopeId, expiresAt.toString());
   }
 
@@ -1012,25 +1014,6 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private JoinEvaluation evaluateJoin(VerifiedJoinScope scope, boolean lockEntitlement) {
-    return evaluateJoin(
-        new ConnectScopeContext(
-            scope.accountId(),
-            requireAuthenticationPersistedIdentity(requireAccount(scope.accountId())).toString(),
-            scope.tenantId(),
-            scope.realmId(),
-            scope.worldSlug(),
-            scope.realmSlug(),
-            scope.playableStateNamespaceId(),
-            scope.playableStateScope(),
-            scope.gameInstanceId(),
-            scope.catalogRevision(),
-            scope.pointerVersion(),
-            Instant.parse(scope.evaluatedAt()),
-            Instant.parse(scope.connectScopeExpiresAt())),
-        lockEntitlement);
-  }
-
-  private JoinEvaluation evaluateJoin(ConnectScopeContext scope, boolean lockEntitlement) {
     RuntimeRealmTarget target;
     try {
       target = requireCurrentConnectScopeTarget(scope);
@@ -1421,7 +1404,7 @@ public class AccountServiceImpl implements AccountService {
       if (!sessionService.isAccountSessionActive(accountId, bootstrapToken)) {
         throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Bootstrap token expired");
       }
-      return new BootstrapContext(accountId);
+      return new BootstrapContext(accountId, accountUuid);
     } catch (IllegalArgumentException ex) {
       throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Invalid bootstrap token", ex);
     }
@@ -1676,9 +1659,7 @@ public class AccountServiceImpl implements AccountService {
       RuntimeRealmTarget realm,
       Instant evaluatedAt,
       Instant expiresAt) {
-    String accountUuid =
-        requireAuthenticationPersistedIdentity(requireAccount(bootstrapContext.accountId()))
-            .toString();
+    String accountUuid = bootstrapContext.accountUuid();
     long expirationMs = Math.max(1L, expiresAt.toEpochMilli() - evaluatedAt.toEpochMilli());
     return mintToken(
         accountUuid,
@@ -1831,16 +1812,49 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private RuntimeRealmTarget requireCurrentConnectScopeTarget(ConnectScopeContext scopeContext) {
-    RuntimeRealmTarget currentRealm =
-        requireRealmTarget(
-            scopeContext.tenantId(), scopeContext.worldSlug(), scopeContext.realmSlug());
-    if (currentRealm.tenantId() != scopeContext.tenantId()
-        || !currentRealm.realmId().equals(scopeContext.realmId())
-        || !currentRealm.playableStateNamespaceId().equals(scopeContext.playableStateNamespaceId())
-        || !currentRealm.stateScope().equals(scopeContext.playableStateScope())
-        || currentRealm.gameInstanceId() != scopeContext.gameInstanceId()
-        || currentRealm.catalogRevision() != scopeContext.catalogRevision()
-        || currentRealm.pointerVersion() != scopeContext.pointerVersion()) {
+    return requireCurrentConnectScopeTarget(
+        scopeContext.tenantId(),
+        scopeContext.realmId(),
+        scopeContext.worldSlug(),
+        scopeContext.realmSlug(),
+        scopeContext.playableStateNamespaceId(),
+        scopeContext.playableStateScope(),
+        scopeContext.gameInstanceId(),
+        scopeContext.catalogRevision(),
+        scopeContext.pointerVersion());
+  }
+
+  private RuntimeRealmTarget requireCurrentConnectScopeTarget(VerifiedJoinScope scope) {
+    return requireCurrentConnectScopeTarget(
+        scope.tenantId(),
+        scope.realmId(),
+        scope.worldSlug(),
+        scope.realmSlug(),
+        scope.playableStateNamespaceId(),
+        scope.playableStateScope(),
+        scope.gameInstanceId(),
+        scope.catalogRevision(),
+        scope.pointerVersion());
+  }
+
+  private RuntimeRealmTarget requireCurrentConnectScopeTarget(
+      long tenantId,
+      UUID realmId,
+      String worldSlug,
+      String realmSlug,
+      String playableStateNamespaceId,
+      String playableStateScope,
+      long gameInstanceId,
+      long catalogRevision,
+      long pointerVersion) {
+    RuntimeRealmTarget currentRealm = requireRealmTarget(tenantId, worldSlug, realmSlug);
+    if (currentRealm.tenantId() != tenantId
+        || !currentRealm.realmId().equals(realmId)
+        || !currentRealm.playableStateNamespaceId().equals(playableStateNamespaceId)
+        || !currentRealm.stateScope().equals(playableStateScope)
+        || currentRealm.gameInstanceId() != gameInstanceId
+        || currentRealm.catalogRevision() != catalogRevision
+        || currentRealm.pointerVersion() != pointerVersion) {
       throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
     }
     return currentRealm;
@@ -2499,7 +2513,7 @@ public class AccountServiceImpl implements AccountService {
         });
   }
 
-  private record BootstrapContext(long accountId) {}
+  private record BootstrapContext(long accountId, String accountUuid) {}
 
   private record JoinAuditPayload(
       long accountId,

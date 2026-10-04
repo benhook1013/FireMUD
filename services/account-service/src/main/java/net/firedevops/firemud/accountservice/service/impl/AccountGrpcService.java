@@ -38,6 +38,7 @@ import net.firedevops.firemud.account.v1.RequestEmailLoginOtpResponse;
 import net.firedevops.firemud.account.v1.UpdateProfileRequest;
 import net.firedevops.firemud.account.v1.UpdateProfileResponse;
 import net.firedevops.firemud.account.v1.VerifyEmailLoginOtpRequest;
+import net.firedevops.firemud.accountservice.AccountUuidText;
 import net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.DirectTextCallerContext;
 import net.firedevops.firemud.accountservice.dto.DirectTextJoinTarget;
@@ -61,6 +62,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.grpc.server.service.GrpcService;
+import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -233,18 +235,11 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   }
 
   private static UUID requireCanonicalAccountUuid(String value) {
-    if (value == null || value.isBlank()) {
+    UUID accountUuid = AccountUuidText.parseOrNull(value);
+    if (accountUuid == null) {
       throw new InvalidRequestException("accountId must be a canonical non-nil UUID", null);
     }
-    try {
-      UUID accountUuid = UUID.fromString(value);
-      if (accountUuid.equals(new UUID(0L, 0L)) || !accountUuid.toString().equals(value)) {
-        throw new IllegalArgumentException("accountId must be a canonical non-nil UUID");
-      }
-      return accountUuid;
-    } catch (IllegalArgumentException exception) {
-      throw new InvalidRequestException("accountId must be a canonical non-nil UUID", exception);
-    }
+    return accountUuid;
   }
 
   private DirectTextCallerContext directTextCaller(
@@ -669,6 +664,12 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (RuntimeException ignored) {
+      responseObserver.onNext(
+          GetProfileResponse.newBuilder()
+              .setError(appError("GetProfile", "AUTH_UNAVAILABLE", AUTHORITY_UNAVAILABLE_MESSAGE))
+              .build());
+      responseObserver.onCompleted();
     }
   }
 
@@ -775,21 +776,39 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       long tenantId = requirePositiveRequestId(request.getTenantId(), "tenantId");
       UUID accountUuid = requireCanonicalAccountUuid(request.getAccountId());
       requireCallerAccountSubject(accountUuid);
-      long accountId = accountService.resolveAccountStorageId(accountUuid);
-      JsonNode node = JsonMapper.builder().build().readTree(request.getProfileJson());
+      long accountId;
+      try {
+        accountId = accountService.resolveAccountStorageId(accountUuid);
+      } catch (IllegalArgumentException ex) {
+        responseObserver.onNext(
+            UpdateProfileResponse.newBuilder()
+                .setSuccess(false)
+                .setError(appError("UpdateProfile", "NOT_FOUND", ex.getMessage()))
+                .build());
+        responseObserver.onCompleted();
+        return;
+      }
+      JsonNode node;
+      ProfilePresenceVisibilityPolicy policy;
+      try {
+        node = JsonMapper.builder().build().readTree(request.getProfileJson());
+        if (node == null || !node.isObject()) {
+          throw new IllegalArgumentException("Profile update must be an object");
+        }
+        String policyName = node.path("presenceVisibilityPolicy").asText(null);
+        policy =
+            ProfilePresenceVisibilityPolicy.valueOf(
+                policyName == null
+                    ? ProfilePresenceVisibilityPolicy.FRIENDS_ONLY.name()
+                    : policyName);
+      } catch (JacksonException | IllegalArgumentException ex) {
+        throw new InvalidRequestException("profileJson must contain a valid profile update", ex);
+      }
       String displayName = node.path("displayName").asText(null);
       String bio = node.path("bio").asText(null);
-      String presenceVisibilityPolicy = node.path("presenceVisibilityPolicy").asText(null);
       accountService.updateProfile(
           new net.firedevops.firemud.accountservice.dto.UpdateProfileRequest(
-              tenantId,
-              accountId,
-              displayName,
-              bio,
-              ProfilePresenceVisibilityPolicy.valueOf(
-                  presenceVisibilityPolicy == null
-                      ? ProfilePresenceVisibilityPolicy.FRIENDS_ONLY.name()
-                      : presenceVisibilityPolicy)));
+              tenantId, accountId, displayName, bio, policy));
       UpdateProfileResponse response = UpdateProfileResponse.newBuilder().setSuccess(true).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -809,13 +828,21 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
-    } catch (Exception ex) {
+    } catch (IllegalArgumentException ex) {
       UpdateProfileResponse response =
           UpdateProfileResponse.newBuilder()
               .setSuccess(false)
               .setError(appError("UpdateProfile", "INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (RuntimeException ignored) {
+      responseObserver.onNext(
+          UpdateProfileResponse.newBuilder()
+              .setSuccess(false)
+              .setError(
+                  appError("UpdateProfile", "AUTH_UNAVAILABLE", AUTHORITY_UNAVAILABLE_MESSAGE))
+              .build());
       responseObserver.onCompleted();
     }
   }
