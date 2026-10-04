@@ -91,6 +91,16 @@ class PublishedReleaseBundleServiceImplTest {
             "genrev-1",
             List.of(
                 new PublishParticipantDigestDto(
+                    "GAME_LOGIC",
+                    "7",
+                    null,
+                    "version:7",
+                    "digest-logic",
+                    1,
+                    "ability-schema-v1",
+                    null,
+                    null),
+                new PublishParticipantDigestDto(
                     "GAME_DESIGN_CONTROL_PLANE", "7", "version:7", "digest-1", 1, null, null)));
 
     assertEquals(11L, dto.id());
@@ -101,7 +111,12 @@ class PublishedReleaseBundleServiceImplTest {
     assertEquals(List.of(logoProof()), dto.artifactDigests());
     assertEquals("genrev-1", dto.generationConfigRevision());
     assertEquals(List.of("logo.png"), dto.requiredManifestAssetKeys());
-    assertEquals(1, dto.participantDigests().size());
+    assertEquals(2, dto.participantDigests().size());
+    assertEquals("GAME_LOGIC", dto.participantDigests().getFirst().participantKey());
+    assertEquals("version:7", dto.participantDigests().getFirst().appliedCommitId());
+    assertEquals("digest-logic", dto.participantDigests().getFirst().contentDigest());
+    assertEquals(1, dto.participantDigests().getFirst().digestSchemaVersion());
+    assertEquals("ability-schema-v1", dto.participantDigests().getFirst().abilitySchemaDigest());
     assertEquals(List.of(validCommandDefinition()), dto.commandDefinitions());
     assertEquals("v1", dto.attestationSchemaVersion());
     assertEquals("owner-issued-reference-11", dto.publishedReleaseBundleRef());
@@ -123,6 +138,11 @@ class PublishedReleaseBundleServiceImplTest {
     retained.setId(11L);
     retained.setTenantId("tenant-1");
     retained.setVersionId(7L);
+    retained.setParticipantDigestsJson(
+        "[{\"participantKey\":\"GAME_LOGIC\",\"scopeValue\":\"7\","
+            + "\"baseVersionId\":null,\"appliedCommitId\":\"version:7\","
+            + "\"contentDigest\":\"legacy-aggregate\",\"digestSchemaVersion\":1,"
+            + "\"errorCode\":null,\"errorMessage\":null}]");
     when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.of(retained));
 
     var dto = service.findPublishedReleaseBundle("tenant-1", 7L).orElseThrow();
@@ -132,6 +152,7 @@ class PublishedReleaseBundleServiceImplTest {
     assertNull(dto.publishedReleaseBundleRef());
     assertNull(dto.manifestSchemaVersion());
     assertNull(dto.artifactDigests());
+    assertNull(dto.participantDigests().getFirst().abilitySchemaDigest());
   }
 
   private Version sourceIdentity() {

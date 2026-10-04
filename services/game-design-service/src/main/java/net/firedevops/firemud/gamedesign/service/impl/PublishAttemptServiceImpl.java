@@ -177,6 +177,7 @@ public class PublishAttemptServiceImpl implements PublishAttemptService {
     entity.setBaseVersionId(digest.baseVersionId());
     entity.setAppliedCommitId(digest.appliedCommitId());
     entity.setContentDigest(digest.contentDigest());
+    entity.setAbilitySchemaDigest(digest.abilitySchemaDigest());
     entity.setDigestSchemaVersion(digest.digestSchemaVersion());
     entity.setErrorCode(digest.errorCode());
     entity.setErrorMessage(digest.errorMessage());

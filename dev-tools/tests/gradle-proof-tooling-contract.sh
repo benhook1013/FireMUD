@@ -308,6 +308,24 @@ STORAGE_CASES = (
     f"{STORAGE_SUITE}#migrationWaitsForConcurrentWriterThenRejectsItsCommittedEvidence()",
 )
 CHECK_STEP = "🧪 Run Gradle Checks"
+GAME_DESIGN_OWNER_STEP = "Run complete Game Design owner component PostgreSQL proof"
+GAME_TENANT_CREATION_STEP = "Verify Game Design fresh tenant creation PostgreSQL proof"
+GAME_AUTHORED_WORLD_SOURCE_STEP = "Verify Game Design authored-world source PostgreSQL proof"
+GAME_DESIGN_CAPTURE_STEP = "Capture Game Design owner component proof before later test selectors"
+GAME_DESIGN_LATER_SELECTOR_STEP = "Run Game Design authored-source launch descriptor PostgreSQL and socket mTLS proof"
+GAME_TENANT_CREATION_SUITE = "integration.net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepositoryIntegrationTest"
+GAME_TENANT_CREATION_CASES = (
+    f"{GAME_TENANT_CREATION_SUITE}#createCandidateExactRetryReturnsCommittedReceiptWithoutSecondGameWrite()",
+    f"{GAME_TENANT_CREATION_SUITE}#concurrentDuplicateCreationRequestsConvergeOnOneUuidAndReceipt()",
+    f"{GAME_TENANT_CREATION_SUITE}#runtimeIdentityLookupReadsOnlyExactNewAndRetainedGameDesignRows()",
+)
+GAME_AUTHORED_WORLD_SOURCE_SUITE = "integration.net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepositoryIntegrationTest"
+GAME_AUTHORED_WORLD_SOURCE_CASES = (
+    f"{GAME_AUTHORED_WORLD_SOURCE_SUITE}#registersAndReadsExactFreshAndRetainedV29ToV30Sources()",
+    f"{GAME_AUTHORED_WORLD_SOURCE_SUITE}#failedOwnerCommitRollsBackBothTenantSelectorAndWorldSource()",
+    f"{GAME_AUTHORED_WORLD_SOURCE_SUITE}#concurrentExactRegistrationRetriesReturnOnePersistedReceipt()",
+    f"{GAME_AUTHORED_WORLD_SOURCE_SUITE}#concurrentDifferentTenantsCannotClaimTheSameTenantSlug()",
+)
 
 
 def require(condition: bool, message: str) -> None:
@@ -323,6 +341,7 @@ def find_step(document, name):
 
 
 def validate(document) -> None:
+    steps = document["jobs"]["build-and-test"]["steps"]
     check = find_step(document, CHECK_STEP)
     check_run = check.get("run")
     require(isinstance(check_run, str), "Gradle check step has no run script")
@@ -359,6 +378,45 @@ def validate(document) -> None:
         for case in cases:
             require(run.count(case) == 1, f"{name} must require exactly one execution of {case}")
         require(re.search(rf"(?m)^\s*{re.escape(service)}\s*$", run) is not None, f"{name} targets the wrong service")
+
+    owner = find_step(document, GAME_DESIGN_OWNER_STEP)
+    tenant_creation = find_step(document, GAME_TENANT_CREATION_STEP)
+    authored_source = find_step(document, GAME_AUTHORED_WORLD_SOURCE_STEP)
+    capture = find_step(document, GAME_DESIGN_CAPTURE_STEP)
+    later_selector = find_step(document, GAME_DESIGN_LATER_SELECTOR_STEP)
+    owner_index = steps.index(owner)
+    tenant_index = steps.index(tenant_creation)
+    source_index = steps.index(authored_source)
+    capture_index = steps.index(capture)
+    later_selector_index = steps.index(later_selector)
+    require(
+        (tenant_index, source_index, capture_index)
+        == (owner_index + 1, owner_index + 2, owner_index + 3),
+        "Game Design fresh tenant and authored-source proof checks must immediately follow the owner component proof",
+    )
+    require(capture_index < later_selector_index, "Game Design owner component reports must be captured before later test selectors")
+    for proof, suite, cases in (
+        (tenant_creation, GAME_TENANT_CREATION_SUITE, GAME_TENANT_CREATION_CASES),
+        (authored_source, GAME_AUTHORED_WORLD_SOURCE_SUITE, GAME_AUTHORED_WORLD_SOURCE_CASES),
+    ):
+        require(
+            proof.get("if") == "${{ !cancelled() && matrix.module == 'game-design-service' }}",
+            f"{proof['name']} must run for Game Design unless cancelled",
+        )
+        require("continue-on-error" not in proof, f"{proof['name']} must remain fail-closed")
+        run = proof.get("run")
+        require(isinstance(run, str), f"{proof['name']} has no run script")
+        require("bash dev-tools/validation/inspect-test-results.sh" in run, f"{proof['name']} must use the existing inspector")
+        require(re.search(r"(?m)^\s*--strict\s*\\?$", run) is not None, f"{proof['name']} must require strict inspection")
+        require(run.count(f"--require-suite {suite}") == 1, f"{proof['name']} must require exactly one suite")
+        for case in cases:
+            require(run.count(case) == 1, f"{proof['name']} must require exactly one execution of {case}")
+        require(re.search(r"(?m)^\s*game-design-service\s*$", run) is not None, f"{proof['name']} targets the wrong service")
+    require(
+        capture.get("if") == "${{ always() && matrix.module == 'game-design-service' }}",
+        "Game Design owner component reports must still be captured after an earlier proof failure",
+    )
+    require(capture.get("uses", "").startswith("actions/upload-artifact@"), "Game Design owner component reports must use artifact capture")
 
 
 validate(workflow)
@@ -406,6 +464,20 @@ mutation_must_fail(
 mutation_must_fail(
     "configuration-cache bypass removed",
     lambda doc: replace_run(doc, CHECK_STEP, "--no-configuration-cache", ""),
+)
+
+
+def move_step_after(document, name: str, anchor_name: str) -> None:
+    steps = document["jobs"]["build-and-test"]["steps"]
+    step = find_step(document, name)
+    anchor = find_step(document, anchor_name)
+    steps.remove(step)
+    steps.insert(steps.index(anchor) + 1, step)
+
+
+mutation_must_fail(
+    "Game Design proof moved after a later Gradle selector",
+    lambda doc: move_step_after(doc, GAME_TENANT_CREATION_STEP, GAME_DESIGN_LATER_SELECTOR_STEP),
 )
 
 print("CI UUID migration proof workflow contract checks passed")

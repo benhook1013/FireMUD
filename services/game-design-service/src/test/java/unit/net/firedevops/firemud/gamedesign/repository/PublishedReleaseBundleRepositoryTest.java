@@ -33,6 +33,11 @@ class PublishedReleaseBundleRepositoryTest {
           "NEW_GAME_ROW");
 
       PublishedReleaseBundle requested = bundle("tenant-key", 17L);
+      String participantDigestsJson =
+          "[{\"participantKey\":\"GAME_LOGIC\",\"scopeValue\":\"17\","
+              + "\"appliedCommitId\":\"commit-17\",\"contentDigest\":\"aggregate-17\","
+              + "\"digestSchemaVersion\":1,\"abilitySchemaDigest\":\"ability-17\"}]";
+      requested.setParticipantDigestsJson(participantDigestsJson);
       requested.setPublishedReleaseBundleRef("caller-supplied-release-reference");
       PublishedReleaseBundle saved = fixture.repository().save(requested);
       assertThat(saved.getId()).isNotNull();
@@ -40,6 +45,7 @@ class PublishedReleaseBundleRepositoryTest {
       assertThat(saved.getCanonicalVersionId()).isEqualTo(VERSION_UUID);
       assertThat(saved.getManifestSchemaVersion()).isEqualTo(1);
       assertThat(saved.getArtifactDigestsJson()).isEqualTo("[]");
+      assertThat(saved.getParticipantDigestsJson()).isEqualTo(participantDigestsJson);
       assertThat(saved.getPublishedReleaseBundleRef())
           .isNotBlank()
           .isNotEqualTo("caller-supplied-release-reference");

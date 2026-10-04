@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamelogic.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.any;
@@ -314,6 +315,7 @@ class GameLogicGrpcServiceTest {
     assertEquals("", ref.get().getAppliedCommitId());
     assertEquals("", ref.get().getContentDigest());
     assertEquals(0, ref.get().getDigestSchemaVersion());
+    assertFalse(ref.get().hasAbilitySchemaDigest());
   }
 
   @Test
@@ -443,7 +445,7 @@ class GameLogicGrpcServiceTest {
     Mockito.when(configuredDigestService.getDraftDesignDigest("1", "7"))
         .thenReturn(
             new GameLogicDraftDesignDigestService.GameLogicDraftDesignDigest(
-                "1", "7", "version:7", "digest-game-logic", 1));
+                "1", "7", "version:7", "digest-game-logic", 1, "ability-schema-v1"));
     GameLogicGrpcService configuredService =
         newDigestService(configuredDigestService, TEST_NAMESPACE);
     AtomicReference<GetDraftDesignDigestResponse> configuredResponse = new AtomicReference<>();
@@ -453,6 +455,8 @@ class GameLogicGrpcServiceTest {
     assertTrue(configuredResponse.get().getError().getCode().isEmpty());
     assertEquals("1", configuredResponse.get().getTenantId());
     assertEquals("7", configuredResponse.get().getVersionId());
+    assertTrue(configuredResponse.get().hasAbilitySchemaDigest());
+    assertEquals("ability-schema-v1", configuredResponse.get().getAbilitySchemaDigest());
     Mockito.verify(configuredDigestService).getDraftDesignDigest("1", "7");
   }
 

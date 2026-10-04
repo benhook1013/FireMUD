@@ -44,7 +44,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Service
 public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService {
   private static final Logger logger = LoggerFactory.getLogger(PluginRuntimeStateServiceImpl.class);
-  private static final String PARTICIPANT_KEY_AUTOMATION_SCRIPTING = "AUTOMATION_SCRIPTING";
+  private static final String PARTICIPANT_KEY_GAME_LOGIC = "GAME_LOGIC";
   private static final String ACTOR_POLICY_RECONCILER = "automation-scripting-policy-reconciler";
   private static final String DEFAULT_DISABLED_REASON = "not_activated";
   private static final String OPERATION_ACTIVATE = "ACTIVATE";
@@ -411,19 +411,42 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
       throw new IllegalArgumentException(
           "GAME_INSTANCE_RUNTIME_UNAVAILABLE: " + releaseBundle.getError().getMessage());
     }
-    ParticipantDigest automationDigest =
+    if (releaseBundle.getBundle().getVersionId() != runtimeVersionId
+        || releaseBundle.getBundle().getIsScriptOnly()) {
+      throw abilitySchemaEvidenceUnavailable();
+    }
+    if (releaseBundle.getBundle().getParticipantDigestsList().stream()
+        .anyMatch(
+            participant ->
+                !PARTICIPANT_KEY_GAME_LOGIC.equals(participant.getParticipantKey())
+                    && participant.hasAbilitySchemaDigest())) {
+      throw abilitySchemaEvidenceUnavailable();
+    }
+    List<ParticipantDigest> ownerEvidence =
         releaseBundle.getBundle().getParticipantDigestsList().stream()
-            .filter(
-                digest -> PARTICIPANT_KEY_AUTOMATION_SCRIPTING.equals(digest.getParticipantKey()))
-            .findFirst()
-            .orElseThrow(
-                () ->
-                    new IllegalArgumentException(
-                        "PLUGIN_ABILITY_SCHEMA_MISMATCH: runtime ability schema digest is unavailable"));
-    if (!automationDigest.getContentDigest().equals(pluginAbilitySchemaDigest)) {
+            .filter(digest -> PARTICIPANT_KEY_GAME_LOGIC.equals(digest.getParticipantKey()))
+            .toList();
+    if (ownerEvidence.size() != 1) {
+      throw abilitySchemaEvidenceUnavailable();
+    }
+    ParticipantDigest digest = ownerEvidence.get(0);
+    if (!Long.toString(runtimeVersionId).equals(digest.getScopeValue())
+        || digest.getDigestSchemaVersion() != 1
+        || digest.getAppliedCommitId().isBlank()
+        || digest.getContentDigest().isBlank()
+        || !digest.hasAbilitySchemaDigest()
+        || digest.getAbilitySchemaDigest().isBlank()) {
+      throw abilitySchemaEvidenceUnavailable();
+    }
+    if (!digest.getAbilitySchemaDigest().equals(pluginAbilitySchemaDigest)) {
       throw new IllegalArgumentException(
           "PLUGIN_ABILITY_SCHEMA_MISMATCH: plugin ability schema digest does not match runtime version");
     }
+  }
+
+  private static IllegalArgumentException abilitySchemaEvidenceUnavailable() {
+    return new IllegalArgumentException(
+        "PLUGIN_ABILITY_SCHEMA_MISMATCH: runtime ability schema digest is unavailable");
   }
 
   @Override

@@ -535,10 +535,15 @@ class ScriptWorkItemServiceImplTest {
             GetPublishedReleaseBundleResponse.newBuilder()
                 .setBundle(
                     PublishedReleaseBundle.newBuilder()
+                        .setVersionId(7L)
                         .addParticipantDigests(
                             ParticipantDigest.newBuilder()
-                                .setParticipantKey("AUTOMATION_SCRIPTING")
-                                .setContentDigest("ability-1")
+                                .setParticipantKey("GAME_LOGIC")
+                                .setScopeValue("7")
+                                .setAppliedCommitId("commit-7")
+                                .setDigestSchemaVersion(1)
+                                .setContentDigest("content-7")
+                                .setAbilitySchemaDigest("ability-1")
                                 .build())
                         .build())
                 .build());
@@ -2004,6 +2009,56 @@ class ScriptWorkItemServiceImplTest {
   }
 
   @Test
+  void patchStatusDoesNotUseAutomationParticipantDigestAsAbilitySchemaEvidence() {
+    ScriptPatchReadinessProjectionService readinessProjectionService =
+        Mockito.mock(ScriptPatchReadinessProjectionService.class);
+    when(readinessProjectionService.getProjection("1", "patch-1"))
+        .thenReturn(
+            Optional.of(
+                new ScriptPatchReadinessProjectionService.ReadinessStatusSummary(
+                    "1",
+                    "patch-1",
+                    7L,
+                    ScriptPatchStatus.SCRIPT_PATCH_STATUS_READY,
+                    "ready_for_tenant",
+                    "",
+                    200L)));
+    GameDesignControlPlaneClient gameDesignControlPlaneClient = gameDesignClient();
+    when(gameDesignControlPlaneClient.getPublishedReleaseBundle("1", 7L))
+        .thenReturn(
+            GetPublishedReleaseBundleResponse.newBuilder()
+                .setBundle(
+                    PublishedReleaseBundle.newBuilder()
+                        .setVersionId(7L)
+                        .addParticipantDigests(
+                            ParticipantDigest.newBuilder()
+                                .setParticipantKey("AUTOMATION_SCRIPTING")
+                                .setContentDigest("aggregate-content-digest")
+                                .build())
+                        .build())
+                .build());
+    ScriptWorkItemService service =
+        service(
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(ScriptEventAuditRepository.class),
+            ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            outboxProperties(),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignControlPlaneClient,
+            readinessProjectionService);
+
+    Optional<ScriptWorkItemService.PatchStatusSummary> status =
+        service.getPatchStatus("1", "patch-1");
+
+    assertThat(status).isPresent();
+    assertThat(status.get().abilitySchemaDigest()).isEmpty();
+  }
+
+  @Test
   void listsPatchStatusesWithFilters() {
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
@@ -3287,10 +3342,15 @@ class ScriptWorkItemServiceImplTest {
             GetPublishedReleaseBundleResponse.newBuilder()
                 .setBundle(
                     PublishedReleaseBundle.newBuilder()
+                        .setVersionId(11L)
                         .addParticipantDigests(
                             ParticipantDigest.newBuilder()
-                                .setParticipantKey("AUTOMATION_SCRIPTING")
-                                .setContentDigest("ability-1")
+                                .setParticipantKey("GAME_LOGIC")
+                                .setScopeValue("11")
+                                .setAppliedCommitId("commit-11")
+                                .setDigestSchemaVersion(1)
+                                .setContentDigest("content-11")
+                                .setAbilitySchemaDigest("ability-1")
                                 .build())
                         .build())
                 .build());

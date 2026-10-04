@@ -196,14 +196,17 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
           gameLogicDraftDesignDigestService.getDraftDesignDigest(
               request.getTenantId(), request.getVersionId());
       binding.requireOwnerScope(digest.tenantId(), digest.scopeValue());
-      responseObserver.onNext(
+      var responseBuilder =
           GetDraftDesignDigestResponse.newBuilder()
               .setTenantId(binding.tenantId())
               .setVersionId(binding.versionId())
               .setAppliedCommitId(digest.appliedCommitId())
               .setContentDigest(digest.contentDigest())
-              .setDigestSchemaVersion(digest.digestSchemaVersion())
-              .build());
+              .setDigestSchemaVersion(digest.digestSchemaVersion());
+      if (digest.abilitySchemaDigest() != null) {
+        responseBuilder.setAbilitySchemaDigest(digest.abilitySchemaDigest());
+      }
+      responseObserver.onNext(responseBuilder.build());
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
       responseObserver.onNext(

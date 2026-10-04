@@ -1,6 +1,8 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.google.protobuf.UnknownFieldSet;
 import io.grpc.Context;
@@ -190,6 +192,16 @@ class GameDesignGrpcServiceTest {
                 List.of("logo.png"),
                 List.of(
                     new PublishParticipantDigestDto(
+                        "GAME_LOGIC",
+                        "7",
+                        null,
+                        "version:7",
+                        "logic-aggregate-digest",
+                        1,
+                        "ability-schema-v1",
+                        null,
+                        null),
+                    new PublishParticipantDigestDto(
                         "GAME_DESIGN_CONTROL_PLANE", "7", "version:7", "digest-1", 1, null, null)),
                 List.of("{\"commandId\":\"block\",\"schemaVersion\":1}"),
                 "genrev-1",
@@ -234,7 +246,13 @@ class GameDesignGrpcServiceTest {
     assertEquals(
         List.of("{\"commandId\":\"block\",\"schemaVersion\":1}"),
         ref.get().getBundle().getCommandDefinitionsList());
-    assertEquals(1, ref.get().getBundle().getParticipantDigestsCount());
+    assertEquals(2, ref.get().getBundle().getParticipantDigestsCount());
+    assertEquals("GAME_LOGIC", ref.get().getBundle().getParticipantDigests(0).getParticipantKey());
+    assertTrue(ref.get().getBundle().getParticipantDigests(0).hasAbilitySchemaDigest());
+    assertEquals(
+        "ability-schema-v1",
+        ref.get().getBundle().getParticipantDigests(0).getAbilitySchemaDigest());
+    assertFalse(ref.get().getBundle().getParticipantDigests(1).hasAbilitySchemaDigest());
     assertEquals(
         "67d7b75b-42d1-4ac6-9572-684c5e633cda", ref.get().getBundle().getCanonicalTenantId());
     assertEquals(

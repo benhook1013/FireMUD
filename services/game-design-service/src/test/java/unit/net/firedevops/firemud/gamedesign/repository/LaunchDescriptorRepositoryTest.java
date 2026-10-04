@@ -26,7 +26,7 @@ class LaunchDescriptorRepositoryTest {
               + "id BIGINT, launch_descriptor_id VARCHAR(64), tenant_id VARCHAR(36), "
               + "game_template_id BIGINT, control_plane_request_id VARCHAR(64), "
               + "request_hash VARCHAR(128), version_id BIGINT, script_patch_version VARCHAR(100), "
-              + "runtime_flags_json VARCHAR(4000), generation_config_revision VARCHAR(128), "
+              + "runtime_flags_json VARCHAR(4000), generation_config_revision TEXT, "
               + "version_state_epoch BIGINT, release_bundle_id BIGINT, "
               + "published_release_bundle_ref VARCHAR(128), remap_set_id VARCHAR(64), "
               + "descriptor_schema_version SMALLINT, target_namespace VARCHAR(63), "
@@ -46,7 +46,10 @@ class LaunchDescriptorRepositoryTest {
               + "request_digest, result_digest, original_request_json, source_evidence_json, "
               + "outcome_status, failure_code, failure_message, created_at) VALUES "
               + "(17, 'launch-17', 'private-tenant', 23, 'request-17', 'sha256:request', 29, "
-              + "'patch-4', '{}', 'generation-6', 8, 31, 'release-31', NULL, 1, 'preview', '"
+              + "'patch-4', '{}', '"
+              + "generation-6:"
+              + "g".repeat(180)
+              + "', 8, 31, 'release-31', NULL, 1, 'preview', '"
               + canonicalTenantId
               + "', 'verdant-harbor', '"
               + sourceOperationId
@@ -62,6 +65,8 @@ class LaunchDescriptorRepositoryTest {
       assertThat(descriptor.getCanonicalTenantId()).isEqualTo(canonicalTenantId.toString());
       assertThat(descriptor.getAuthoredWorldSourceOperationId())
           .isEqualTo(sourceOperationId.toString());
+      assertThat(descriptor.getGenerationConfigRevision())
+          .isEqualTo("generation-6:" + "g".repeat(180));
       assertThat(descriptor.getCreatedAt()).isEqualTo(createdAt);
     }
   }

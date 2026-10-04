@@ -173,6 +173,23 @@ public class PublishGateServiceImpl implements PublishGateService {
           PublishGateFailureCode.APPLIED_COMMIT_MISMATCH,
           "publish gate failed: applied commit mismatch");
     }
+    participantDigests.forEach(
+        digest -> {
+          if (!PublishParticipantKey.GAME_LOGIC.name().equals(digest.participantKey())
+              && digest.abilitySchemaDigest() != null) {
+            throw new PublishGateFailureException(
+                PublishGateFailureCode.ABILITY_SCHEMA_DIGEST_OWNER_MISMATCH,
+                "publish gate failed: ability-schema digest was supplied by "
+                    + digest.participantKey());
+          }
+          if (!version.scriptOnly()
+              && PublishParticipantKey.GAME_LOGIC.name().equals(digest.participantKey())
+              && (digest.abilitySchemaDigest() == null || digest.abilitySchemaDigest().isBlank())) {
+            throw new PublishGateFailureException(
+                PublishGateFailureCode.MISSING_ABILITY_SCHEMA_DIGEST,
+                "publish gate failed: missing dedicated ability-schema digest from GAME_LOGIC");
+          }
+        });
   }
 
   private PublishParticipantDigestDto observeFullVersionParticipant(

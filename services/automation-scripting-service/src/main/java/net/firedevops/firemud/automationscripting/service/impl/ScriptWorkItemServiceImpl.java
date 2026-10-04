@@ -64,7 +64,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   }
 
   private static final Logger LOGGER = LoggerFactory.getLogger(ScriptWorkItemServiceImpl.class);
-  private static final String PARTICIPANT_KEY_AUTOMATION_SCRIPTING = "AUTOMATION_SCRIPTING";
+  private static final String PARTICIPANT_KEY_GAME_LOGIC = "GAME_LOGIC";
   private static final String STATUS_PENDING_EVALUATION = "PENDING_EVALUATION";
   private static final String STATUS_EVALUATING = "EVALUATING";
   private static final String STATUS_CANCELED = "CANCELED";
@@ -1292,13 +1292,39 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       return new PublicationMetadata(baseVersionId, "", publication);
     }
     String abilitySchemaDigest =
-        releaseBundleResponse.getBundle().getParticipantDigestsList().stream()
-            .filter(
-                digest -> PARTICIPANT_KEY_AUTOMATION_SCRIPTING.equals(digest.getParticipantKey()))
-            .map(ParticipantDigest::getContentDigest)
-            .findFirst()
-            .orElse("");
+        readAbilitySchemaDigest(releaseBundleResponse.getBundle(), baseVersionId);
     return new PublicationMetadata(baseVersionId, abilitySchemaDigest, publication);
+  }
+
+  private static String readAbilitySchemaDigest(
+      net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle bundle, long versionId) {
+    if (bundle.getVersionId() != versionId || bundle.getIsScriptOnly()) {
+      return "";
+    }
+    if (bundle.getParticipantDigestsList().stream()
+        .anyMatch(
+            digest ->
+                !PARTICIPANT_KEY_GAME_LOGIC.equals(digest.getParticipantKey())
+                    && digest.hasAbilitySchemaDigest())) {
+      return "";
+    }
+    List<ParticipantDigest> ownerEvidence =
+        bundle.getParticipantDigestsList().stream()
+            .filter(digest -> PARTICIPANT_KEY_GAME_LOGIC.equals(digest.getParticipantKey()))
+            .toList();
+    if (ownerEvidence.size() != 1) {
+      return "";
+    }
+    ParticipantDigest digest = ownerEvidence.get(0);
+    if (!Long.toString(versionId).equals(digest.getScopeValue())
+        || digest.getDigestSchemaVersion() != 1
+        || digest.getAppliedCommitId().isBlank()
+        || digest.getContentDigest().isBlank()
+        || !digest.hasAbilitySchemaDigest()
+        || digest.getAbilitySchemaDigest().isBlank()) {
+      return "";
+    }
+    return digest.getAbilitySchemaDigest();
   }
 
   private PluginRuntimeStateService.PluginPublicationLink pluginPublicationLink(

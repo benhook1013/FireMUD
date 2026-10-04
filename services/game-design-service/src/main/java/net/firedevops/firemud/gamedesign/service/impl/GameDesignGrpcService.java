@@ -734,21 +734,29 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               .addAllParticipantDigests(
                   bundle.participantDigests().stream()
                       .map(
-                          digest ->
-                              net.firedevops.firemud.gamedesign.v1.ParticipantDigest.newBuilder()
-                                  .setParticipantKey(digest.participantKey())
-                                  .setScopeValue(digest.scopeValue())
-                                  .setAppliedCommitId(
-                                      digest.appliedCommitId() == null
-                                          ? ""
-                                          : digest.appliedCommitId())
-                                  .setContentDigest(
-                                      digest.contentDigest() == null ? "" : digest.contentDigest())
-                                  .setDigestSchemaVersion(
-                                      digest.digestSchemaVersion() == null
-                                          ? 0
-                                          : digest.digestSchemaVersion())
-                                  .build())
+                          digest -> {
+                            var participantDigestBuilder =
+                                net.firedevops.firemud.gamedesign.v1.ParticipantDigest.newBuilder()
+                                    .setParticipantKey(digest.participantKey())
+                                    .setScopeValue(digest.scopeValue())
+                                    .setAppliedCommitId(
+                                        digest.appliedCommitId() == null
+                                            ? ""
+                                            : digest.appliedCommitId())
+                                    .setContentDigest(
+                                        digest.contentDigest() == null
+                                            ? ""
+                                            : digest.contentDigest())
+                                    .setDigestSchemaVersion(
+                                        digest.digestSchemaVersion() == null
+                                            ? 0
+                                            : digest.digestSchemaVersion());
+                            if (digest.abilitySchemaDigest() != null) {
+                              participantDigestBuilder.setAbilitySchemaDigest(
+                                  digest.abilitySchemaDigest());
+                            }
+                            return participantDigestBuilder.build();
+                          })
                       .toList())
               .setGenerationConfigRevision(bundle.generationConfigRevision())
               .setIsScriptOnly(bundle.scriptOnly())

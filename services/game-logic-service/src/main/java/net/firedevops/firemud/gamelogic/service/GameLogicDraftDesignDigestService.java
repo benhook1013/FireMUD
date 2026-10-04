@@ -16,5 +16,15 @@ public interface GameLogicDraftDesignDigestService {
       String scopeValue,
       String appliedCommitId,
       String contentDigest,
-      int digestSchemaVersion) {}
+      int digestSchemaVersion,
+      String abilitySchemaDigest) {
+    public GameLogicDraftDesignDigest(
+        String tenantId,
+        String scopeValue,
+        String appliedCommitId,
+        String contentDigest,
+        int digestSchemaVersion) {
+      this(tenantId, scopeValue, appliedCommitId, contentDigest, digestSchemaVersion, null);
+    }
+  }
 }

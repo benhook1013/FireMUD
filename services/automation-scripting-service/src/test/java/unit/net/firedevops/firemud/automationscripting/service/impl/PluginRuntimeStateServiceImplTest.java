@@ -196,8 +196,12 @@ class PluginRuntimeStateServiceImplTest {
                         .setVersionId(7L)
                         .addParticipantDigests(
                             ParticipantDigest.newBuilder()
-                                .setParticipantKey("AUTOMATION_SCRIPTING")
-                                .setContentDigest("ability-1")
+                                .setParticipantKey("GAME_LOGIC")
+                                .setScopeValue("7")
+                                .setAppliedCommitId("commit-7")
+                                .setDigestSchemaVersion(1)
+                                .setContentDigest("content-7")
+                                .setAbilitySchemaDigest("ability-1")
                                 .build())
                         .build())
                 .build());
@@ -590,8 +594,12 @@ class PluginRuntimeStateServiceImplTest {
                         .setVersionId(7L)
                         .addParticipantDigests(
                             ParticipantDigest.newBuilder()
-                                .setParticipantKey("AUTOMATION_SCRIPTING")
-                                .setContentDigest("ability-1")
+                                .setParticipantKey("GAME_LOGIC")
+                                .setScopeValue("7")
+                                .setAppliedCommitId("commit-7")
+                                .setDigestSchemaVersion(1)
+                                .setContentDigest("content-7")
+                                .setAbilitySchemaDigest("ability-1")
                                 .build())
                         .build())
                 .build());
@@ -1309,8 +1317,12 @@ class PluginRuntimeStateServiceImplTest {
                         .setVersionId(7L)
                         .addParticipantDigests(
                             ParticipantDigest.newBuilder()
-                                .setParticipantKey("AUTOMATION_SCRIPTING")
-                                .setContentDigest("ability-1")
+                                .setParticipantKey("GAME_LOGIC")
+                                .setScopeValue("7")
+                                .setAppliedCommitId("commit-7")
+                                .setDigestSchemaVersion(1)
+                                .setContentDigest("content-7")
+                                .setAbilitySchemaDigest("ability-1")
                                 .build())
                         .build())
                 .build());
@@ -1427,8 +1439,12 @@ class PluginRuntimeStateServiceImplTest {
                         .setVersionId(7L)
                         .addParticipantDigests(
                             ParticipantDigest.newBuilder()
-                                .setParticipantKey("AUTOMATION_SCRIPTING")
-                                .setContentDigest("ability-runtime")
+                                .setParticipantKey("GAME_LOGIC")
+                                .setScopeValue("7")
+                                .setAppliedCommitId("commit-7")
+                                .setDigestSchemaVersion(1)
+                                .setContentDigest("content-7")
+                                .setAbilitySchemaDigest("ability-runtime")
                                 .build())
                         .build())
                 .build());
@@ -1448,6 +1464,118 @@ class PluginRuntimeStateServiceImplTest {
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage(
             "PLUGIN_ABILITY_SCHEMA_MISMATCH: plugin ability schema digest does not match runtime version");
+  }
+
+  @Test
+  void rejectsMalformedAbilitySchemaEvidenceBeforeRuntimeMutation() {
+    ParticipantDigest valid = abilitySchemaParticipant("GAME_LOGIC", "7", "commit-7", 1, true);
+    ParticipantDigest wrongOwner =
+        abilitySchemaParticipant("AUTOMATION_SCRIPTING", "7", "commit-7", 1, true);
+    ParticipantDigest wrongScope = abilitySchemaParticipant("GAME_LOGIC", "8", "commit-7", 1, true);
+    ParticipantDigest missingCommit = abilitySchemaParticipant("GAME_LOGIC", "7", "", 1, true);
+    ParticipantDigest unsupportedSchema =
+        abilitySchemaParticipant("GAME_LOGIC", "7", "commit-7", 2, true);
+    ParticipantDigest missingAbility =
+        abilitySchemaParticipant("GAME_LOGIC", "7", "commit-7", 1, false);
+
+    for (List<ParticipantDigest> evidence :
+        List.of(
+            List.<ParticipantDigest>of(),
+            List.of(wrongOwner),
+            List.of(valid, wrongOwner),
+            List.of(valid, valid),
+            List.of(wrongScope),
+            List.of(missingCommit),
+            List.of(unsupportedSchema),
+            List.of(missingAbility))) {
+      assertActivationRejectedWithoutMutation(evidence);
+    }
+    assertActivationRejectedWithoutMutation(List.of(valid), 8L, false);
+    assertActivationRejectedWithoutMutation(List.of(valid), 7L, true);
+  }
+
+  private static void assertActivationRejectedWithoutMutation(
+      List<ParticipantDigest> participantDigests) {
+    assertActivationRejectedWithoutMutation(participantDigests, 7L, false);
+  }
+
+  private static void assertActivationRejectedWithoutMutation(
+      List<ParticipantDigest> participantDigests, long releaseVersionId, boolean scriptOnly) {
+    PluginRuntimeStateRepository repository = Mockito.mock(PluginRuntimeStateRepository.class);
+    PluginRuntimeEventRepository eventRepository = Mockito.mock(PluginRuntimeEventRepository.class);
+    GameDesignControlPlaneClient gameDesignClient =
+        Mockito.mock(GameDesignControlPlaneClient.class);
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    ScriptScheduleInstanceService scheduleService =
+        Mockito.mock(ScriptScheduleInstanceService.class);
+    PluginActivationPreflightService preflightService =
+        Mockito.mock(PluginActivationPreflightService.class);
+    when(gameDesignClient.getPublishedPluginVersion("1", "plugin-1", "plugin-v1"))
+        .thenReturn(
+            publishedPluginVersion(
+                PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_ALLOWED, false));
+    GetGameInstanceRuntimeStateResponse runtimeState =
+        GetGameInstanceRuntimeStateResponse.newBuilder()
+            .setRuntimeState(
+                GameInstanceRuntimeState.newBuilder()
+                    .setTenantId("1")
+                    .setGameInstanceId("game-1")
+                    .setRegionId("region-7")
+                    .setRegionEpoch(12L)
+                    .setRuntimeVersionId("7")
+                    .setStatus("RUNNING")
+                    .build())
+            .build();
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "")).thenReturn(runtimeState);
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "region-7"))
+        .thenReturn(runtimeState);
+    PublishedReleaseBundle.Builder releaseBundle =
+        PublishedReleaseBundle.newBuilder()
+            .setVersionId(releaseVersionId)
+            .setIsScriptOnly(scriptOnly);
+    participantDigests.forEach(releaseBundle::addParticipantDigests);
+    when(gameDesignClient.getPublishedReleaseBundle("1", 7L))
+        .thenReturn(
+            GetPublishedReleaseBundleResponse.newBuilder().setBundle(releaseBundle).build());
+    PluginRuntimeStateService service =
+        new PluginRuntimeStateServiceImpl(
+            repository,
+            eventRepository,
+            gameDesignClient,
+            gameSessionClient,
+            scheduleService,
+            preflightService,
+            null);
+
+    assertThatThrownBy(
+            () ->
+                service.setActiveVersion(
+                    new PluginRuntimeStateService.ActivationCommand(
+                        "1", "game-1", "plugin-1", "plugin-v1", "req-1", "admin", "activation")))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("PLUGIN_ABILITY_SCHEMA_MISMATCH: runtime ability schema digest is unavailable");
+    Mockito.verify(repository, Mockito.never()).save(Mockito.any());
+    Mockito.verifyNoInteractions(eventRepository, scheduleService, preflightService);
+  }
+
+  private static ParticipantDigest abilitySchemaParticipant(
+      String participantKey,
+      String scopeValue,
+      String appliedCommitId,
+      int digestSchemaVersion,
+      boolean includeAbilitySchemaDigest) {
+    ParticipantDigest.Builder digest =
+        ParticipantDigest.newBuilder()
+            .setParticipantKey(participantKey)
+            .setScopeValue(scopeValue)
+            .setAppliedCommitId(appliedCommitId)
+            .setDigestSchemaVersion(digestSchemaVersion)
+            .setContentDigest("content-" + scopeValue);
+    if (includeAbilitySchemaDigest) {
+      digest.setAbilitySchemaDigest("ability-1");
+    }
+    return digest.build();
   }
 
   @Test
@@ -2202,8 +2330,12 @@ class PluginRuntimeStateServiceImplTest {
                         .setVersionId(7L)
                         .addParticipantDigests(
                             ParticipantDigest.newBuilder()
-                                .setParticipantKey("AUTOMATION_SCRIPTING")
-                                .setContentDigest("ability-1")
+                                .setParticipantKey("GAME_LOGIC")
+                                .setScopeValue("7")
+                                .setAppliedCommitId("commit-7")
+                                .setDigestSchemaVersion(1)
+                                .setContentDigest("content-7")
+                                .setAbilitySchemaDigest("ability-1")
                                 .build())
                         .build())
                 .build());

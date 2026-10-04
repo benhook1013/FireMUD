@@ -85,9 +85,11 @@ public class GameLogicClient
     return new PublishParticipantDigestDto(
         "GAME_LOGIC",
         response.getVersionId(),
+        null,
         response.getAppliedCommitId(),
         response.getContentDigest(),
         response.getDigestSchemaVersion(),
+        response.hasAbilitySchemaDigest() ? response.getAbilitySchemaDigest() : null,
         null,
         null);
   }

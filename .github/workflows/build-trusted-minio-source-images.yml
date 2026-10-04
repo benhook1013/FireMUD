@@ -17,6 +17,7 @@ on:
       - 'services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/service/impl/AssetExportServiceImpl.java'
       - 'services/game-design-service/src/test/java/net/firedevops/firemud/gamedesign/service/AssetExportServiceImplTest.java'
       - 'services/game-design-service/src/test/java/net/firedevops/firemud/gamedesign/service/AssetExportServiceMinioIntegrationTest.java'
+      - 'services/game-design-service/src/test/java/integration/net/firedevops/firemud/gamedesign/service/VersionAssetPublicationMinioPostgresIntegrationTest.java'
   push:
     branches: [develop]
     paths:
@@ -34,6 +35,7 @@ on:
       - 'services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/service/impl/AssetExportServiceImpl.java'
       - 'services/game-design-service/src/test/java/net/firedevops/firemud/gamedesign/service/AssetExportServiceImplTest.java'
       - 'services/game-design-service/src/test/java/net/firedevops/firemud/gamedesign/service/AssetExportServiceMinioIntegrationTest.java'
+      - 'services/game-design-service/src/test/java/integration/net/firedevops/firemud/gamedesign/service/VersionAssetPublicationMinioPostgresIntegrationTest.java'
 
 permissions:
   contents: read
@@ -79,7 +81,7 @@ jobs:
               case "$path" in
                 docker/minio/*|dev-tools/minio/*) has_source_change=true ;;
                 .github/workflows/build-trusted-minio-source-images.yml) has_workflow_change=true ;;
-                services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/config/AssetStoreProperties.java|services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/repository/VersionAssetPublicationRepository.java|services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/service/AssetExportOutcomePendingException.java|services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/service/AssetExportService.java|services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/service/ExportedAssetManifest.java|services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/service/PublishedArtifactDigest.java|services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/service/VersionAssetExportCandidateService.java|services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/service/VersionAssetPublicationService.java|services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/service/impl/AssetExportServiceImpl.java|services/game-design-service/src/test/java/net/firedevops/firemud/gamedesign/service/AssetExportServiceImplTest.java|services/game-design-service/src/test/java/net/firedevops/firemud/gamedesign/service/AssetExportServiceMinioIntegrationTest.java) has_asset_export_change=true ;;
+                services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/config/AssetStoreProperties.java|services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/repository/VersionAssetPublicationRepository.java|services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/service/AssetExportOutcomePendingException.java|services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/service/AssetExportService.java|services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/service/ExportedAssetManifest.java|services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/service/PublishedArtifactDigest.java|services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/service/VersionAssetExportCandidateService.java|services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/service/VersionAssetPublicationService.java|services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/service/impl/AssetExportServiceImpl.java|services/game-design-service/src/test/java/net/firedevops/firemud/gamedesign/service/AssetExportServiceImplTest.java|services/game-design-service/src/test/java/net/firedevops/firemud/gamedesign/service/AssetExportServiceMinioIntegrationTest.java|services/game-design-service/src/test/java/integration/net/firedevops/firemud/gamedesign/service/VersionAssetPublicationMinioPostgresIntegrationTest.java) has_asset_export_change=true ;;
               esac
             done <<< "$changed_paths"
 
@@ -179,12 +181,17 @@ jobs:
           export MINIO_ASSET_EXPORT_ENDPOINT="http://127.0.0.1:$published_port"
           test -n "$MINIO_ASSET_EXPORT_ACCESS_KEY"
           test -n "$MINIO_ASSET_EXPORT_SECRET_KEY"
-          ./gradlew :game-design-service:test --rerun-tasks \
-            --tests 'net.firedevops.firemud.gamedesign.service.AssetExportServiceMinioIntegrationTest'
+          ./gradlew --rerun-tasks \
+            :game-design-service:test \
+            --tests 'net.firedevops.firemud.gamedesign.service.AssetExportServiceMinioIntegrationTest' \
+            :game-design-service:integrationTest \
+            --tests 'net.firedevops.firemud.gamedesign.service.VersionAssetPublicationMinioPostgresIntegrationTest'
           bash dev-tools/validation/inspect-test-results.sh \
             --strict \
             --require-suite net.firedevops.firemud.gamedesign.service.AssetExportServiceMinioIntegrationTest \
+            --require-suite net.firedevops.firemud.gamedesign.service.VersionAssetPublicationMinioPostgresIntegrationTest \
             --require-case 'net.firedevops.firemud.gamedesign.service.AssetExportServiceMinioIntegrationTest#publishesConditionallyReadsBackExactBytesAndRecoversCommittedPutAgainstMinio()' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.VersionAssetPublicationMinioPostgresIntegrationTest#composesPostgresSnapshotAndCandidateWithMinioBeforeWriteAndRetriesAfterLostAcknowledgement()' \
             game-design-service
 
       - name: Upload Game Design MinIO proof XML
@@ -192,7 +199,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: game-design-minio-provider-proof-${{ github.run_id }}-${{ github.run_attempt }}
-          path: services/game-design-service/build/test-results/test/*AssetExportServiceMinioIntegrationTest*.xml
+          path: |
+            services/game-design-service/build/test-results/test/*AssetExportServiceMinioIntegrationTest*.xml
+            services/game-design-service/build/test-results/integrationTest/*VersionAssetPublicationMinioPostgresIntegrationTest*.xml
           if-no-files-found: warn
           retention-days: 7
 

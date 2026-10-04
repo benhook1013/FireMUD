@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamedesign.repository;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.LocalDateTime;
+import java.util.List;
 import net.firedevops.firemud.gamedesign.entity.PublishAttemptParticipantDigest;
 import net.firedevops.firemud.gamedesign.model.PublishParticipantKey;
 import org.jooq.DSLContext;
@@ -30,6 +31,8 @@ public class PublishAttemptParticipantDigestRepository {
       DSL.field(DSL.name("applied_commit_id"), String.class);
   private static final Field<String> CONTENT_DIGEST =
       DSL.field(DSL.name("content_digest"), String.class);
+  private static final Field<String> ABILITY_SCHEMA_DIGEST =
+      DSL.field(DSL.name("ability_schema_digest"), String.class);
   private static final Field<Integer> DIGEST_SCHEMA_VERSION =
       DSL.field(DSL.name("digest_schema_version"), Integer.class);
   private static final Field<String> ERROR_CODE = DSL.field(DSL.name("error_code"), String.class);
@@ -56,11 +59,24 @@ public class PublishAttemptParticipantDigestRepository {
               .set(BASE_VERSION_ID, digest.getBaseVersionId())
               .set(APPLIED_COMMIT_ID, digest.getAppliedCommitId())
               .set(CONTENT_DIGEST, digest.getContentDigest())
+              .set(ABILITY_SCHEMA_DIGEST, digest.getAbilitySchemaDigest())
               .set(DIGEST_SCHEMA_VERSION, digest.getDigestSchemaVersion())
               .set(ERROR_CODE, digest.getErrorCode())
               .set(ERROR_MESSAGE, digest.getErrorMessage())
               .set(OBSERVED_AT, observedAt)
-              .returning()
+              .returning(
+                  ID,
+                  PUBLISH_ATTEMPT_ID,
+                  PARTICIPANT_KEY,
+                  SCOPE_VALUE,
+                  BASE_VERSION_ID,
+                  APPLIED_COMMIT_ID,
+                  CONTENT_DIGEST,
+                  ABILITY_SCHEMA_DIGEST,
+                  DIGEST_SCHEMA_VERSION,
+                  ERROR_CODE,
+                  ERROR_MESSAGE,
+                  OBSERVED_AT)
               .fetchOne();
       return toEntity(record);
     }
@@ -71,6 +87,7 @@ public class PublishAttemptParticipantDigestRepository {
         .set(BASE_VERSION_ID, digest.getBaseVersionId())
         .set(APPLIED_COMMIT_ID, digest.getAppliedCommitId())
         .set(CONTENT_DIGEST, digest.getContentDigest())
+        .set(ABILITY_SCHEMA_DIGEST, digest.getAbilitySchemaDigest())
         .set(DIGEST_SCHEMA_VERSION, digest.getDigestSchemaVersion())
         .set(ERROR_CODE, digest.getErrorCode())
         .set(ERROR_MESSAGE, digest.getErrorMessage())
@@ -78,6 +95,26 @@ public class PublishAttemptParticipantDigestRepository {
         .where(ID.eq(digest.getId()))
         .execute();
     return digest;
+  }
+
+  public List<PublishAttemptParticipantDigest> findByPublishAttemptId(Long publishAttemptId) {
+    return dsl.select(
+            ID,
+            PUBLISH_ATTEMPT_ID,
+            PARTICIPANT_KEY,
+            SCOPE_VALUE,
+            BASE_VERSION_ID,
+            APPLIED_COMMIT_ID,
+            CONTENT_DIGEST,
+            ABILITY_SCHEMA_DIGEST,
+            DIGEST_SCHEMA_VERSION,
+            ERROR_CODE,
+            ERROR_MESSAGE,
+            OBSERVED_AT)
+        .from(TABLE_REF)
+        .where(PUBLISH_ATTEMPT_ID.eq(publishAttemptId))
+        .orderBy(ID.asc())
+        .fetch(this::toEntity);
   }
 
   public void deleteByPublishAttemptId(Long publishAttemptId) {
@@ -98,6 +135,7 @@ public class PublishAttemptParticipantDigestRepository {
     digest.setBaseVersionId(record.get(BASE_VERSION_ID));
     digest.setAppliedCommitId(record.get(APPLIED_COMMIT_ID));
     digest.setContentDigest(record.get(CONTENT_DIGEST));
+    digest.setAbilitySchemaDigest(record.get(ABILITY_SCHEMA_DIGEST));
     digest.setDigestSchemaVersion(record.get(DIGEST_SCHEMA_VERSION));
     digest.setErrorCode(record.get(ERROR_CODE));
     digest.setErrorMessage(record.get(ERROR_MESSAGE));

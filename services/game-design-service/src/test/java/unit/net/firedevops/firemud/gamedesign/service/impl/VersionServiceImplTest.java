@@ -1173,7 +1173,7 @@ class VersionServiceImplTest {
   }
 
   @Test
-  void publishPluginVersionRequiresPublishedBaseVersionAbilityDigestMatch() {
+  void publishPluginVersionMarksValidationFailedWhenBaseGameLogicAbilityDigestDiffers() {
     Version version = new Version();
     version.setId(7L);
     version.setTenantId("tenant-1");
@@ -1210,6 +1210,44 @@ class VersionServiceImplTest {
                     "notes"));
 
     assertTrue(thrown.getMessage().contains("VALIDATION_FAILED_DESIGN"));
+    assertTrue(
+        thrown.getMessage().contains("does not match the published Game Logic release proof"));
+    assertEquals(VersionLifecycleState.VALIDATION_FAILED_DESIGN, uploaded.getPublicationState());
+    assertEquals(
+        "abilitySchemaDigest_does_not_match_the_published_Game_Logic_release_proof",
+        uploaded.getStatusReason());
+    verify(publishedPluginVersionRepository).save(uploaded);
+    verify(pluginVersionStatusEventRepository).save(any());
+    verify(pluginBundleStorageService, org.mockito.Mockito.never())
+        .exportPluginAssets(any(), any(), any(), any());
+  }
+
+  @Test
+  void publishPluginVersionRejectsLegacyAggregateAloneWithoutMutation() {
+    assertPluginBaseProofFailureWithoutMutation(
+        List.of(
+            new PublishParticipantDigestDto(
+                "AUTOMATION_SCRIPTING", "7", "version:7", "digest-requested", 5, null, null)),
+        "missing one exact Game Logic participant record");
+  }
+
+  @Test
+  void publishPluginVersionRejectsAbilitySchemaProofOwnedByAutomationWithoutMutation() {
+    assertPluginBaseProofFailureWithoutMutation(
+        List.of(
+            new PublishParticipantDigestDto(
+                "AUTOMATION_SCRIPTING",
+                "7",
+                null,
+                "version:7",
+                "automation-aggregate",
+                5,
+                "digest-requested",
+                null,
+                null),
+            new PublishParticipantDigestDto(
+                "GAME_LOGIC", "7", null, "version:7", "logic-aggregate", 1, null, null, null)),
+        "owned by a non-Game Logic participant");
   }
 
   @Test
@@ -1783,7 +1821,33 @@ class VersionServiceImplTest {
   }
 
   private PublishedReleaseBundleDto publishedReleaseBundle(
-      String tenantId, long versionId, String automationDigest) {
+      String tenantId, long versionId, String gameLogicAbilitySchemaDigest) {
+    return publishedReleaseBundleWithParticipants(
+        tenantId,
+        versionId,
+        List.of(
+            new PublishParticipantDigestDto(
+                "AUTOMATION_SCRIPTING",
+                String.valueOf(versionId),
+                "version:" + versionId,
+                "legacy-aggregate-digest",
+                5,
+                null,
+                null),
+            new PublishParticipantDigestDto(
+                "GAME_LOGIC",
+                String.valueOf(versionId),
+                null,
+                "version:" + versionId,
+                "logic-aggregate-digest",
+                1,
+                gameLogicAbilitySchemaDigest,
+                null,
+                null)));
+  }
+
+  private PublishedReleaseBundleDto publishedReleaseBundleWithParticipants(
+      String tenantId, long versionId, List<PublishParticipantDigestDto> participantDigests) {
     return new PublishedReleaseBundleDto(
         1L,
         tenantId,
@@ -1793,15 +1857,7 @@ class VersionServiceImplTest {
         "workflow-1",
         MANIFEST_HASH,
         List.of(),
-        List.of(
-            new PublishParticipantDigestDto(
-                "AUTOMATION_SCRIPTING",
-                String.valueOf(versionId),
-                "version:" + versionId,
-                automationDigest,
-                1,
-                null,
-                null)),
+        participantDigests,
         "genrev-1",
         false,
         null,
@@ -1811,6 +1867,52 @@ class VersionServiceImplTest {
         "opaque-owner-issued-release-reference",
         1,
         List.of());
+  }
+
+  private void assertPluginBaseProofFailureWithoutMutation(
+      List<PublishParticipantDigestDto> participantDigests, String expectedMessage) {
+    Version version = new Version();
+    version.setId(7L);
+    version.setTenantId("tenant-1");
+    when(versionRepository.findByTenantIdAndId("tenant-1", 7L)).thenReturn(Optional.of(version));
+    PublishedPluginVersion uploaded = uploadedPluginVersion("tenant-1", "plugin-1", "plugin-v1");
+    uploaded.setAbilitySchemaDigest("digest-requested");
+    when(publishedPluginVersionRepository.findByTenantIdAndPluginIdAndPluginVersionId(
+            "tenant-1", "plugin-1", "plugin-v1"))
+        .thenReturn(Optional.of(uploaded));
+    when(pluginBundleStorageService.loadPluginBundle("tenant-1", "plugin-1", "plugin-v1"))
+        .thenReturn(new byte[] {1, 2, 3});
+    when(pluginBundleIntakeService.parseAndVerify(any()))
+        .thenReturn(parsedPluginBundle("plugin-1", "plugin-v1", 7L, "digest-requested"));
+    when(publishedReleaseBundleService.getPublishedReleaseBundle("tenant-1", 7L))
+        .thenReturn(publishedReleaseBundleWithParticipants("tenant-1", 7L, participantDigests));
+
+    IllegalArgumentException thrown =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.publishPluginVersion(
+                    "tenant-1",
+                    "plugin-1",
+                    "plugin-v1",
+                    7L,
+                    "digest-requested",
+                    "bundle-1",
+                    1,
+                    "",
+                    "",
+                    "signer-1",
+                    false,
+                    "ALLOWED",
+                    "notes"));
+
+    assertTrue(thrown.getMessage().contains(expectedMessage));
+    assertEquals(VersionLifecycleState.SIGNATURE_VERIFIED, uploaded.getPublicationState());
+    verify(publishedPluginVersionRepository, org.mockito.Mockito.never())
+        .save(any(PublishedPluginVersion.class));
+    verify(pluginVersionStatusEventRepository, org.mockito.Mockito.never()).save(any());
+    verify(pluginBundleStorageService, org.mockito.Mockito.never())
+        .exportPluginAssets(any(), any(), any(), any());
   }
 
   private PublishedPluginVersion uploadedPluginVersion(
