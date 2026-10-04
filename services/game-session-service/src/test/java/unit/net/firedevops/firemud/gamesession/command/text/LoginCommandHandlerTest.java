@@ -672,6 +672,26 @@ class LoginCommandHandlerTest {
             List.of("demo@example.com", "swordfish"),
             "LOGIN demo@example.com swordfish");
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(buildInstance(1L, 22L, 77L)));
+    SessionContext priorAccount =
+        new SessionContext(
+            1L,
+            22L,
+            OTHER_ACCOUNT_UUID,
+            "old@example.com",
+            88L,
+            "Sora",
+            1L,
+            "R-2045",
+            "old-jwt",
+            "en-NZ",
+            1L,
+            "demo",
+            "production",
+            1L,
+            "SHARED",
+            "scope-old",
+            "req-old");
+    stubSessionContext(priorAccount);
     when(firstPartyConnectContextRegistry.find(1L))
         .thenThrow(new SerializationException("retained connect context is unreadable"));
 
@@ -679,7 +699,14 @@ class LoginCommandHandlerTest {
 
     assertFalse(result.commandResult().accepted());
     assertEquals("CONNECT_CONTEXT_INVALID", result.commandResult().errorCode());
-    verify(sessionContextService, never()).save(any(SessionContext.class));
+    ArgumentCaptor<SessionContext> cleared = ArgumentCaptor.forClass(SessionContext.class);
+    verify(sessionContextService).save(cleared.capture());
+    assertNull(cleared.getValue().accountId());
+    assertEquals(0L, cleared.getValue().characterId());
+    assertEquals(0L, cleared.getValue().gameInstanceId());
+    assertEquals("scope-old", cleared.getValue().connectScopeId());
+    assertEquals("req-old", cleared.getValue().connectRequestId());
+    verify(gameplayPresenceLifecycleService).clearGameplayBinding(priorAccount, "LOGIN_FAILED");
     verify(firstPartyConnectContextRegistry, never()).unregister(1L);
   }
 
@@ -691,6 +718,26 @@ class LoginCommandHandlerTest {
             List.of("demo@example.com", "swordfish"),
             "LOGIN demo@example.com swordfish");
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(buildInstance(1L, 22L, 77L)));
+    SessionContext priorAccount =
+        new SessionContext(
+            1L,
+            22L,
+            OTHER_ACCOUNT_UUID,
+            "old@example.com",
+            88L,
+            "Sora",
+            1L,
+            "R-2045",
+            "old-jwt",
+            "en-NZ",
+            1L,
+            "demo",
+            "production",
+            1L,
+            "SHARED",
+            "scope-old",
+            "req-old");
+    stubSessionContext(priorAccount);
     when(firstPartyConnectContextRegistry.find(1L))
         .thenThrow(new ClassCastException("retained connect context has the wrong type"));
 
@@ -698,7 +745,147 @@ class LoginCommandHandlerTest {
 
     assertFalse(result.commandResult().accepted());
     assertEquals("CONNECT_CONTEXT_INVALID", result.commandResult().errorCode());
+    ArgumentCaptor<SessionContext> cleared = ArgumentCaptor.forClass(SessionContext.class);
+    verify(sessionContextService).save(cleared.capture());
+    assertNull(cleared.getValue().accountId());
+    assertEquals(0L, cleared.getValue().characterId());
+    assertEquals(0L, cleared.getValue().gameInstanceId());
+    assertEquals("scope-old", cleared.getValue().connectScopeId());
+    assertEquals("req-old", cleared.getValue().connectRequestId());
+    verify(gameplayPresenceLifecycleService).clearGameplayBinding(priorAccount, "LOGIN_FAILED");
+    verify(firstPartyConnectContextRegistry, never()).unregister(1L);
+  }
+
+  @Test
+  void unreadableFirstPartyContextDoesNotReplaceUnknownLegacyProjectedIdentity() {
+    TextCommand credentialLogin =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(buildInstance(1L, 22L, 77L)));
+    stubSessionContext(
+        new SessionContext(
+            1L, 22L, "legacy-account-key", "old@example.com", 0L, null, 0L, null, null, 1L));
+    when(firstPartyConnectContextRegistry.find(1L))
+        .thenThrow(new SerializationException("retained connect context is unreadable"));
+
+    LoginCommandHandlingResult result = handler.handle("1", credentialLogin, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("CONNECT_CONTEXT_INVALID", result.commandResult().errorCode());
     verify(sessionContextService, never()).save(any(SessionContext.class));
+    verify(gameplayPresenceLifecycleService, never()).clearGameplayBinding(any(), anyString());
+    verify(firstPartyConnectContextRegistry, never()).unregister(1L);
+  }
+
+  @Test
+  void unreadableFirstPartyContextDoesNotCreateSessionStateWhenProjectionIsAbsent() {
+    TextCommand credentialLogin =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+    SessionContext bootstrap = bootstrapShell(1L, 1L);
+    when(sessionContextService.findBySessionId(1L))
+        .thenReturn(Optional.of(bootstrap))
+        .thenReturn(Optional.empty());
+    when(sessionContextService.findByTenantAndSessionId(bootstrap.tenantId(), 1L))
+        .thenReturn(Optional.of(bootstrap));
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(buildInstance(1L, 22L, 77L)));
+    when(firstPartyConnectContextRegistry.find(1L))
+        .thenThrow(new SerializationException("retained connect context is unreadable"));
+
+    LoginCommandHandlingResult result = handler.handle("1", credentialLogin, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("CONNECT_CONTEXT_INVALID", result.commandResult().errorCode());
+    verify(sessionContextService, never()).save(any(SessionContext.class));
+    verify(gameplayPresenceLifecycleService, never()).clearGameplayBinding(any(), anyString());
+    verify(firstPartyConnectContextRegistry, never()).unregister(1L);
+  }
+
+  @Test
+  void unreadableFirstPartyContextDoesNotReplaceUnreadableProjectedSession() {
+    TextCommand credentialLogin =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+    SessionContext priorAccount =
+        new SessionContext(
+            1L,
+            22L,
+            OTHER_ACCOUNT_UUID,
+            "old@example.com",
+            88L,
+            "Sora",
+            1L,
+            "R-2045",
+            "old-jwt",
+            "en-NZ",
+            1L,
+            "demo",
+            "production",
+            1L,
+            "SHARED",
+            "scope-old",
+            "req-old");
+    when(sessionContextService.findBySessionId(1L))
+        .thenReturn(Optional.of(priorAccount))
+        .thenThrow(new SerializationException("projected session is unreadable"));
+    when(sessionContextService.findByTenantAndSessionId(priorAccount.tenantId(), 1L))
+        .thenReturn(Optional.of(priorAccount));
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(buildInstance(1L, 22L, 77L)));
+    when(firstPartyConnectContextRegistry.find(1L))
+        .thenThrow(new SerializationException("retained connect context is unreadable"));
+
+    LoginCommandHandlingResult result = handler.handle("1", credentialLogin, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("CONNECT_CONTEXT_INVALID", result.commandResult().errorCode());
+    verify(sessionContextService, never()).save(any(SessionContext.class));
+    verify(gameplayPresenceLifecycleService, never()).clearGameplayBinding(any(), anyString());
+    verify(firstPartyConnectContextRegistry, never()).unregister(1L);
+  }
+
+  @Test
+  void unreadableFirstPartyContextPreservesProjectedSessionForSameAccount() {
+    TextCommand credentialLogin =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+    SessionContext sameAccount =
+        new SessionContext(
+            1L,
+            22L,
+            ACCOUNT_UUID,
+            "demo@example.com",
+            88L,
+            "Sora",
+            1L,
+            "R-2045",
+            "old-jwt",
+            "en-NZ",
+            1L,
+            "demo",
+            "production",
+            1L,
+            "SHARED",
+            "scope-old",
+            "req-old");
+    stubSessionContext(sameAccount);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(buildInstance(1L, 22L, 77L)));
+    when(firstPartyConnectContextRegistry.find(1L))
+        .thenThrow(new SerializationException("retained connect context is unreadable"));
+
+    LoginCommandHandlingResult result = handler.handle("1", credentialLogin, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("CONNECT_CONTEXT_INVALID", result.commandResult().errorCode());
+    verify(sessionContextService, never()).save(any(SessionContext.class));
+    verify(gameplayPresenceLifecycleService, never()).clearGameplayBinding(any(), anyString());
     verify(firstPartyConnectContextRegistry, never()).unregister(1L);
   }
 

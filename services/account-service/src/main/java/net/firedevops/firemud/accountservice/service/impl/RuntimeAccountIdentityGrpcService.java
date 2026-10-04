@@ -125,7 +125,6 @@ public class RuntimeAccountIdentityGrpcService
             .setCanonicalAccountId(canonicalAccountId.toString())
             .setSourceAccountRowId(account.getId())
             .setAccountUuidProvenance(account.getAccountUuidProvenance().name())
-            .setSourceNumericRowId(account.getAccountUuidSourceNumericId())
             .build());
     responseObserver.onCompleted();
   }

@@ -28,77 +28,53 @@ class RuntimeAccountIdentityEvidenceTest {
         valid.requestId(),
         valid.canonicalAccountId(),
         valid.sourceAccountRowId(),
-        valid.accountUuidProvenance(),
-        valid.sourceNumericRowId());
+        valid.accountUuidProvenance());
     assertInvalid(
         1,
         "test.invalid",
         valid.requestId(),
         valid.canonicalAccountId(),
         valid.sourceAccountRowId(),
-        valid.accountUuidProvenance(),
-        valid.sourceNumericRowId());
+        valid.accountUuidProvenance());
     assertInvalid(
         1,
         valid.targetNamespace(),
         new UUID(0L, 0L),
         valid.canonicalAccountId(),
         valid.sourceAccountRowId(),
-        valid.accountUuidProvenance(),
-        valid.sourceNumericRowId());
+        valid.accountUuidProvenance());
     assertInvalid(
         1,
         valid.targetNamespace(),
         valid.requestId(),
         new UUID(0L, 0L),
         valid.sourceAccountRowId(),
-        valid.accountUuidProvenance(),
-        valid.sourceNumericRowId());
+        valid.accountUuidProvenance());
     assertInvalid(
         1,
         valid.targetNamespace(),
         valid.requestId(),
         valid.canonicalAccountId(),
         0L,
-        valid.accountUuidProvenance(),
-        valid.sourceNumericRowId());
+        valid.accountUuidProvenance());
     assertInvalid(
         1,
         valid.targetNamespace(),
         valid.requestId(),
         valid.canonicalAccountId(),
         valid.sourceAccountRowId(),
-        valid.accountUuidProvenance(),
-        0L);
+        null);
     assertInvalid(
         1,
         valid.targetNamespace(),
         valid.requestId(),
         valid.canonicalAccountId(),
         valid.sourceAccountRowId(),
-        valid.accountUuidProvenance(),
-        valid.sourceNumericRowId() + 1L);
-    assertInvalid(
-        1,
-        valid.targetNamespace(),
-        valid.requestId(),
-        valid.canonicalAccountId(),
-        valid.sourceAccountRowId(),
-        null,
-        valid.sourceNumericRowId());
-    assertInvalid(
-        1,
-        valid.targetNamespace(),
-        valid.requestId(),
-        valid.canonicalAccountId(),
-        valid.sourceAccountRowId(),
-        "UNKNOWN",
-        valid.sourceNumericRowId());
+        "UNKNOWN");
   }
 
   private static RuntimeAccountIdentityEvidence evidence(String provenance) {
-    return new RuntimeAccountIdentityEvidence(
-        1, "test", REQUEST_ID, ACCOUNT_ID, 73L, provenance, 73L);
+    return new RuntimeAccountIdentityEvidence(1, "test", REQUEST_ID, ACCOUNT_ID, 73L, provenance);
   }
 
   private static void assertInvalid(
@@ -107,8 +83,7 @@ class RuntimeAccountIdentityEvidenceTest {
       UUID requestId,
       UUID canonicalAccountId,
       long sourceAccountRowId,
-      String provenance,
-      long sourceNumericRowId) {
+      String provenance) {
     assertThatThrownBy(
             () ->
                 new RuntimeAccountIdentityEvidence(
@@ -117,8 +92,7 @@ class RuntimeAccountIdentityEvidenceTest {
                     requestId,
                     canonicalAccountId,
                     sourceAccountRowId,
-                    provenance,
-                    sourceNumericRowId))
+                    provenance))
         .isInstanceOf(IllegalArgumentException.class);
   }
 }

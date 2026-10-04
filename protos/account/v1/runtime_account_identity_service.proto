@@ -24,5 +24,6 @@ message ResolveRuntimeAccountIdentityResponse {
   // Private Account provenance evidence; never use this row key as gameplay identity.
   int64 source_account_row_id = 5;
   string account_uuid_provenance = 6;
-  int64 source_numeric_row_id = 7;
+  reserved 7;
+  reserved "source_numeric_row_id";
 }

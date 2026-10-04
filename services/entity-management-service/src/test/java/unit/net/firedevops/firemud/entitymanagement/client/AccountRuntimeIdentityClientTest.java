@@ -54,7 +54,6 @@ class AccountRuntimeIdentityClientTest {
     assertThat(evidence.requestId()).isEqualTo(REQUEST_ID);
     assertThat(evidence.canonicalAccountId()).isEqualTo(ACCOUNT_ID);
     assertThat(evidence.sourceAccountRowId()).isEqualTo(SOURCE_ROW_ID);
-    assertThat(evidence.sourceNumericRowId()).isEqualTo(SOURCE_ROW_ID);
     assertThat(evidence.accountUuidProvenance()).isEqualTo("ACCOUNT_REPOSITORY_INSERT");
 
     ArgumentCaptor<ResolveRuntimeAccountIdentityRequest> requestCaptor =
@@ -126,8 +125,6 @@ class AccountRuntimeIdentityClientTest {
     assertRejected(valid.toBuilder().setRequestId("22222222-2222-4222-8222-22222222222").build());
     assertRejected(valid.toBuilder().setRequestId("00000000-0000-0000-0000-000000000000").build());
     assertRejected(valid.toBuilder().setSourceAccountRowId(0L).build());
-    assertRejected(valid.toBuilder().setSourceNumericRowId(0L).build());
-    assertRejected(valid.toBuilder().setSourceNumericRowId(SOURCE_ROW_ID + 1L).build());
     assertRejected(valid.toBuilder().setAccountUuidProvenance("").build());
     assertRejected(valid.toBuilder().setAccountUuidProvenance("UNKNOWN").build());
     assertRejected(
@@ -286,7 +283,6 @@ class AccountRuntimeIdentityClientTest {
         .setCanonicalAccountId(ACCOUNT_ID.toString())
         .setSourceAccountRowId(SOURCE_ROW_ID)
         .setAccountUuidProvenance(provenance)
-        .setSourceNumericRowId(SOURCE_ROW_ID)
         .build();
   }
 

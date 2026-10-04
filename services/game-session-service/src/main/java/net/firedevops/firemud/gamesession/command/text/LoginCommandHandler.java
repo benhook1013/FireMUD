@@ -174,8 +174,35 @@ public final class LoginCommandHandler {
           .ifPresent(ignored -> firstPartyConnectContextRegistry.unregister(sessionId));
       return true;
     } catch (SerializationException | ClassCastException ex) {
+      neutralizeKnownProjectedSessionAfterUnreadableConnectContext(sessionId, accountId);
       return false;
     }
+  }
+
+  private void neutralizeKnownProjectedSessionAfterUnreadableConnectContext(
+      long sessionId, String authenticatedAccountId) {
+    SessionContext projectedExisting;
+    try {
+      projectedExisting =
+          sessionRoutingNormalizationService
+              .resolveProjectedSessionContext(Long.toString(sessionId))
+              .orElse(null);
+    } catch (SerializationException | ClassCastException ex) {
+      return;
+    }
+    if (projectedExisting == null
+        || !AccountIds.isCanonicalNonNilUuid(projectedExisting.accountId())
+        || Objects.equals(projectedExisting.accountId(), authenticatedAccountId)) {
+      return;
+    }
+    clearFailedLoginSessionState(
+        sessionId,
+        projectedExisting.tenantId(),
+        projectedExisting.bootstrapGameInstanceId(),
+        projectedExisting.worldSlug(),
+        projectedExisting.realmSlug(),
+        projectedExisting.pointerVersion(),
+        projectedExisting);
   }
 
   private LoginCommandHandlingResult handleEmailLoginChallenge(
@@ -574,6 +601,24 @@ public final class LoginCommandHandler {
         sessionAuthenticationService
             .resolveUnverifiedSessionContext(Long.toString(sessionId))
             .orElse(null);
+    clearFailedLoginSessionState(
+        sessionId,
+        fallbackTenantId,
+        fallbackBootstrapGameInstanceId,
+        worldSlug,
+        realmSlug,
+        pointerVersion,
+        projectedExisting);
+  }
+
+  private void clearFailedLoginSessionState(
+      long sessionId,
+      long fallbackTenantId,
+      long fallbackBootstrapGameInstanceId,
+      String worldSlug,
+      String realmSlug,
+      long pointerVersion,
+      SessionContext projectedExisting) {
     long tenantId =
         projectedExisting != null
             ? projectedExisting.tenantId()

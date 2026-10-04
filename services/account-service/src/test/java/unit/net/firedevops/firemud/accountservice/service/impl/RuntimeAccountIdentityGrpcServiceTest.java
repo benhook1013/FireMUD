@@ -54,7 +54,6 @@ class RuntimeAccountIdentityGrpcServiceTest {
     assertThat(observer.value.getCanonicalAccountId()).isEqualTo(ACCOUNT_ID.toString());
     assertThat(observer.value.getSourceAccountRowId()).isEqualTo(42L);
     assertThat(observer.value.getAccountUuidProvenance()).isEqualTo("ACCOUNT_V29_MIGRATION");
-    assertThat(observer.value.getSourceNumericRowId()).isEqualTo(42L);
     verify(repository).findByAccountUuid(ACCOUNT_ID);
   }
 
