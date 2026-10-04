@@ -267,4 +267,148 @@ set -e
 [[ $bootstrap_invalid_status -ne 0 ]]
 grep -q "Use Docker Compose service ids here" <<<"$bootstrap_invalid_output"
 
+python3 - "$ROOT_DIR" <<'PY'
+from __future__ import annotations
+
+import copy
+import re
+import sys
+from pathlib import Path
+
+import yaml
+
+root = Path(sys.argv[1])
+workflow = yaml.safe_load((root / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
+
+SOCIAL_SUITE = "net.firedevops.firemud.socialgroups.SocialAccountUuidMigrationIntegrationTest"
+SOCIAL_CASES = (
+    f"{SOCIAL_SUITE}#freshAndEmptyV9UpgradeConvergeAllAccountColumnsWithoutChangingOtherIdentityTypes()",
+    f"{SOCIAL_SUITE}#concurrentWriterCommitsBeforeEmptyCheckAndItsEvidenceIsPreserved()",
+)
+LOGGING_SUITE = "integration.net.firedevops.firemud.loggingadmin.LoggingAccountUuidMigrationIntegrationTest"
+LOGGING_CASES = (
+    f"{LOGGING_SUITE}#freshSchemaMigratesWithCanonicalAccountUuidsAndNumericLocalIdentifiers()",
+    f"{LOGGING_SUITE}#emptyAffectedTablesUpgradeFromV5AndGenericLogAccountIdRemainsNumeric()",
+    f"{LOGGING_SUITE}#retainedModerationActionRefusesWithoutChangingRowsOrMigrationHistory()",
+    f"{LOGGING_SUITE}#retainedPlayerReportRefusesWithoutChangingRowsOrMigrationHistory()",
+    f"{LOGGING_SUITE}#migrationWaitsForConcurrentWriterAndRefusesAfterItsRowCommits()",
+)
+SOCIAL_STEP = "🔎 Verify Social Account UUID migration PostgreSQL proof"
+LOGGING_STEP = "🔎 Verify Logging Account UUID migration PostgreSQL proof"
+ACCOUNT_STEP = "🔎 Verify Account PostgreSQL proof cases"
+RECONCILIATION_SUITE = "net.firedevops.firemud.accountservice.AccountJoinReconciliationPostgresIntegrationTest"
+RECONCILIATION_CASES = (
+    f"{RECONCILIATION_SUITE}#exactPersistedEvidenceRecoversExpiredScopeAndSameRequestRetryWithoutDuplicates()",
+    f"{RECONCILIATION_SUITE}#twoWorkersRecoverThresholdPendingEvidenceWithoutDuplicatingMembershipOrAudit()",
+    f"{RECONCILIATION_SUITE}#retainedScopeDeletionAndExpiredScopeWithoutMembershipProofRemainPendingWithDiagnostics()",
+)
+STORAGE_SUITE = "integration.net.firedevops.firemud.accountservice.AccountConnectStorageUuidMigrationIntegrationTest"
+STORAGE_CASES = (
+    f"{STORAGE_SUITE}#freshMigrationsAndEmptyV39UpgradeUseCanonicalUuidColumns()",
+    f"{STORAGE_SUITE}#migrationWaitsForConcurrentWriterThenRejectsItsCommittedEvidence()",
+)
+CHECK_STEP = "🧪 Run Gradle Checks"
+
+
+def require(condition: bool, message: str) -> None:
+    if not condition:
+        raise ValueError(message)
+
+
+def find_step(document, name):
+    steps = document["jobs"]["build-and-test"]["steps"]
+    matches = [step for step in steps if step.get("name") == name]
+    require(len(matches) == 1, f"expected exactly one CI step named {name!r}")
+    return matches[0]
+
+
+def validate(document) -> None:
+    check = find_step(document, CHECK_STEP)
+    check_run = check.get("run")
+    require(isinstance(check_run, str), "Gradle check step has no run script")
+    require("continue-on-error" not in check, "Gradle check step must remain fail-closed")
+    branch = re.search(r"if \[\[(.*?)\]\]; then\s*(.*?)\s*else", check_run, re.DOTALL)
+    require(branch is not None, "Gradle check no-cache branch is missing")
+    modules = set(re.findall(r'\$\{\{ matrix\.module \}\}" == "([^"]+)"', branch[1]))
+    require(
+        {"social-groups-service", "logging-admin-service"} <= modules,
+        "Social and Logging must use the fresh Gradle check branch",
+    )
+    for flag in ("--no-build-cache", "--no-configuration-cache"):
+        require(flag in branch[2], f"fresh Gradle check branch omits {flag}")
+
+    check_index = document["jobs"]["build-and-test"]["steps"].index(check)
+    for name, service, suite, cases in (
+        (SOCIAL_STEP, "social-groups-service", SOCIAL_SUITE, SOCIAL_CASES),
+        (LOGGING_STEP, "logging-admin-service", LOGGING_SUITE, LOGGING_CASES),
+        (ACCOUNT_STEP, "account-service", RECONCILIATION_SUITE, RECONCILIATION_CASES),
+        (ACCOUNT_STEP, "account-service", STORAGE_SUITE, STORAGE_CASES),
+    ):
+        proof = find_step(document, name)
+        require(
+            document["jobs"]["build-and-test"]["steps"].index(proof) > check_index,
+            f"{name} must follow Gradle checks",
+        )
+        require(proof.get("if") == f"${{{{ matrix.module == '{service}' }}}}", f"{name} has wrong module condition")
+        require("continue-on-error" not in proof, f"{name} must remain fail-closed")
+        run = proof.get("run")
+        require(isinstance(run, str), f"{name} has no run script")
+        require("bash dev-tools/validation/inspect-test-results.sh" in run, f"{name} must use the existing inspector")
+        require(re.search(r"(?m)^\s*--strict\s*\\?$", run) is not None, f"{name} must require strict inspection")
+        require(run.count(f"--require-suite {suite}") == 1, f"{name} must require exactly one migration suite")
+        for case in cases:
+            require(run.count(case) == 1, f"{name} must require exactly one execution of {case}")
+        require(re.search(rf"(?m)^\s*{re.escape(service)}\s*$", run) is not None, f"{name} targets the wrong service")
+
+
+validate(workflow)
+
+
+def mutation_must_fail(label: str, mutate) -> None:
+    changed = copy.deepcopy(workflow)
+    mutate(changed)
+    try:
+        validate(changed)
+    except ValueError:
+        return
+    raise SystemExit(f"CI UUID migration proof contract accepted mutation: {label}")
+
+
+def replace_run(document, step_name: str, old: str, new: str = "") -> None:
+    step = find_step(document, step_name)
+    run = step["run"]
+    require(run.count(old) == 1, f"mutation fixture could not find unique text {old!r}")
+    step["run"] = run.replace(old, new, 1)
+
+
+mutation_must_fail("missing strict mode", lambda doc: replace_run(doc, SOCIAL_STEP, "--strict", "strict"))
+mutation_must_fail(
+    "missing required suite",
+    lambda doc: replace_run(doc, LOGGING_STEP, f"--require-suite {LOGGING_SUITE}", ""),
+)
+mutation_must_fail(
+    "missing Account reconciliation suite",
+    lambda doc: replace_run(doc, ACCOUNT_STEP, f"--require-suite {RECONCILIATION_SUITE}", ""),
+)
+mutation_must_fail("missing required case", lambda doc: replace_run(doc, SOCIAL_STEP, SOCIAL_CASES[0], ""))
+mutation_must_fail(
+    "wrong module condition",
+    lambda doc: find_step(doc, SOCIAL_STEP).__setitem__("if", "${{ matrix.module == 'logging-admin-service' }}"),
+)
+mutation_must_fail(
+    "weakened continue-on-error",
+    lambda doc: find_step(doc, LOGGING_STEP).__setitem__("continue-on-error", True),
+)
+mutation_must_fail(
+    "fresh-cache bypass removed",
+    lambda doc: replace_run(doc, CHECK_STEP, "--no-build-cache", ""),
+)
+mutation_must_fail(
+    "configuration-cache bypass removed",
+    lambda doc: replace_run(doc, CHECK_STEP, "--no-configuration-cache", ""),
+)
+
+print("CI UUID migration proof workflow contract checks passed")
+PY
+
 echo "gradle proof tooling contract checks passed"
