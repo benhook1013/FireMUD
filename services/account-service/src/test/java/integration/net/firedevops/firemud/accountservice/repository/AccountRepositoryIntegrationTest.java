@@ -471,8 +471,9 @@ class AccountRepositoryIntegrationTest {
           transactionJdbc.update(
               "INSERT INTO account_audit_outbox "
                   + "(audit_event_id, scope, producer_service, event_type, occurred_at, "
-                  + "schema_version, payload_digest_version, payload_digest, payload, delivery_status) "
-                  + "VALUES (?, 'platform', 'account-service', 'ACCOUNT_REGISTERED', ?, 1, 1, ?, '{}', 'PENDING')",
+                  + "tenant_identity_version, tenant_uuid, schema_version, payload_digest_version, "
+                  + "payload_digest, payload, delivery_status) "
+                  + "VALUES (?, 'platform', 'account-service', 'ACCOUNT_REGISTERED', ?, 1, NULL, 1, 1, ?, '{}', 'PENDING')",
               defaultedEventId,
               LocalDateTime.ofInstant(beforeDefaultInsert, ZoneOffset.UTC),
               AccountAuditDigest.ofPayload("{}"));
