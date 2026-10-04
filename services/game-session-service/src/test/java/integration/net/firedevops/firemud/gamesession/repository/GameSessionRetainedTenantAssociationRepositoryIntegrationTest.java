@@ -175,6 +175,7 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
     UUID releasedOperation = uuid(921);
     UUID heldCanonical = uuid(922);
     UUID releasedCanonical = uuid(923);
+    fixture.seedInstance(920L, 920L, "held-runtime");
     fixture.insertExpiredMapping(heldOperation, uuid(924), heldCanonical, 920L);
     fixture.insertExpiredMapping(releasedOperation, uuid(925), releasedCanonical, 921L);
 
@@ -204,11 +205,14 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
                     "SELECT 1 FROM game_session_retained_tenant_association_legal_hold "
                         + "WHERE hold_id = ? AND operation_id = ? "
                         + "AND hold_scope = 'RAW_PAYLOAD' AND reason_code = 'LITIGATION' "
+                        + "AND authorized_principal = ? "
                         + "AND released_at IS NOT NULL "
-                        + "AND released_by = 'fixture-authenticated-owner' "
+                        + "AND released_by = ? "
                         + "AND release_reference = 'release-927'",
                     releasedHoldId,
-                    releasedOperation)
+                    releasedOperation,
+                    fixture.sessionUser(),
+                    fixture.sessionUser())
                 != null)
         .isTrue();
     assertThat(fixture.repository.purgeExpiredRawPayloads()).isZero();
@@ -219,9 +223,13 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
             fixture.dsl.fetchOne(
                     "SELECT 1 FROM game_session_retained_tenant_association_legal_hold "
                         + "WHERE hold_id = ? AND operation_id = ? "
-                        + "AND released_at IS NOT NULL AND release_reference = 'release-927'",
+                        + "AND authorized_principal = ? "
+                        + "AND released_at IS NOT NULL AND released_by = ? "
+                        + "AND release_reference = 'release-927'",
                     activeHoldId,
-                    heldOperation)
+                    heldOperation,
+                    fixture.sessionUser(),
+                    fixture.sessionUser())
                 != null)
         .isTrue();
     assertThat(fixture.repository.readMinimalAssociation(NAMESPACE, heldCanonical))
@@ -239,10 +247,7 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
             () -> fixture.repository.read(heldOperation, uuid(924), heldCanonical, 920L, NAMESPACE))
         .isInstanceOf(InvalidAssociationEvidenceException.class);
     GameSessionRetainedTenantSnapshot staleCapture =
-        fixture
-            .capture(920L)
-            .withCapturedAt(
-                java.time.Instant.now().minus(java.time.Duration.ofDays(31)).toString());
+        fixture.capture(920L).withCapturedAt(fixture.captureTimeDaysAgo(31));
     LegacyGameSessionTenantAssociationReceipt staleRetry =
         fixture.approval(uuid(928), heldCanonical, 920L, staleCapture);
     assertThatThrownBy(() -> fixture.register(uuid(924), staleRetry))
@@ -265,8 +270,7 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
     fixture.seedInstance(42L, 420L, "runtime-42");
     GameSessionRetainedTenantSnapshot current = fixture.capture(42L);
     GameSessionRetainedTenantSnapshot expired =
-        current.withCapturedAt(
-            java.time.Instant.now().minus(java.time.Duration.ofDays(31)).toString());
+        current.withCapturedAt(fixture.captureTimeDaysAgo(31));
     LegacyGameSessionTenantAssociationReceipt oldApproval =
         fixture.approval(uuid(930), uuid(931), 42L, expired);
 
@@ -388,6 +392,7 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
     String originalReceiptDigest = committed.get("receipt_digest", String.class);
     byte[] originalSnapshotBytes = originalSnapshot.getBytes(StandardCharsets.UTF_8);
     String originalXmin = fixture.associationXmin(associationRequestId);
+    String originalPayloadXmin = fixture.payloadXmin(associationRequestId);
 
     AssociationReceipt recovered = fixture.register(associationRequestId, approval);
 
@@ -400,6 +405,7 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
     assertThat(recovered.snapshot().evidenceDigest()).isEqualTo(originalSnapshotDigest);
     assertThat(recovered.receiptDigest()).isEqualTo(originalReceiptDigest);
     assertThat(fixture.associationXmin(associationRequestId)).isEqualTo(originalXmin);
+    assertThat(fixture.payloadXmin(associationRequestId)).isEqualTo(originalPayloadXmin);
     assertThat(fixture.dsl.fetchCount(ASSOCIATIONS)).isEqualTo(1);
   }
 
@@ -555,9 +561,21 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
             fixture.dsl.execute(
                 "DELETE FROM game_session_retained_tenant_association WHERE operation_id = ?",
                 operationId));
+    SQLException truncateBlockedByForeignKey =
+        assertSqlState(
+            () -> fixture.dsl.execute("TRUNCATE game_session_retained_tenant_association"),
+            "0A000");
+    assertThat((Throwable) truncateBlockedByForeignKey)
+        .hasMessageContaining("cannot truncate a table referenced in a foreign key constraint");
     assertCheckViolation(
-        () -> fixture.dsl.execute("TRUNCATE game_session_retained_tenant_association"));
+        () -> fixture.dsl.execute("TRUNCATE game_session_retained_tenant_association CASCADE"));
     assertThat(fixture.dsl.fetchCount(ASSOCIATIONS)).isEqualTo(1);
+    assertThat(
+            fixture
+                .dsl
+                .fetchOne("SELECT count(*) FROM game_session_retained_tenant_association_payload")
+                .get(0, Long.class))
+        .isEqualTo(1L);
   }
 
   private Fixture fixture() {
@@ -588,11 +606,17 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
 
   private static void assertCheckViolation(
       org.assertj.core.api.ThrowableAssert.ThrowingCallable action) {
+    assertSqlState(action, "23514");
+  }
+
+  private static SQLException assertSqlState(
+      org.assertj.core.api.ThrowableAssert.ThrowingCallable action, String expectedSqlState) {
     Throwable failure = catchThrowable(action);
     assertThat(failure).isInstanceOf(DataAccessException.class);
     SQLException sqlException = findSqlException(failure);
     assertThat((Throwable) sqlException).isNotNull();
-    assertThat(sqlException.getSQLState()).isEqualTo("23514");
+    assertThat(sqlException.getSQLState()).isEqualTo(expectedSqlState);
+    return sqlException;
   }
 
   private static SQLException findSqlException(Throwable failure) {
@@ -730,12 +754,13 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
                   "INSERT INTO game_session_retained_tenant_association_legal_hold ("
                       + "hold_id, operation_id, hold_scope, reason_code, case_reference, "
                       + "authorization_id, authorized_principal, authorized_at, review_at) "
-                      + "VALUES (?, ?, 'RAW_PAYLOAD', 'LITIGATION', 'test-case-927', ?, "
-                      + "'fixture-authenticated-owner', clock_timestamp() - INTERVAL '2 days', "
+                      + "VALUES (?, ?, 'RAW_PAYLOAD', 'LITIGATION', 'test-case-927', ?, ?, "
+                      + "clock_timestamp() - INTERVAL '2 days', "
                       + "clock_timestamp() + INTERVAL '30 days')",
                   holdId,
                   operationId,
-                  uuid(928)));
+                  uuid(928),
+                  sessionUser()));
       return holdId;
     }
 
@@ -746,19 +771,21 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
                   "INSERT INTO game_session_retained_tenant_association_legal_hold ("
                       + "hold_id, operation_id, hold_scope, reason_code, case_reference, "
                       + "authorization_id, authorized_principal, authorized_at, review_at) "
-                      + "VALUES (?, ?, 'ACCOUNT_MAPPING', 'LITIGATION', 'bad-scope', ?, "
-                      + "'fixture-authenticated-owner', clock_timestamp(), "
+                      + "VALUES (?, ?, 'ACCOUNT_MAPPING', 'LITIGATION', 'bad-scope', ?, ?, "
+                      + "clock_timestamp(), "
                       + "clock_timestamp() + INTERVAL '30 days')",
                   uuid(929),
                   operationId,
-                  uuid(930)));
+                  uuid(930),
+                  sessionUser()));
     }
 
     void releaseHold(UUID holdId) {
       dsl.execute(
           "UPDATE game_session_retained_tenant_association_legal_hold "
-              + "SET released_at = clock_timestamp(), released_by = 'fixture-authenticated-owner', "
+              + "SET released_at = clock_timestamp(), released_by = ?, "
               + "release_reference = 'release-927' WHERE hold_id = ?",
+          sessionUser(),
           holdId);
     }
 
@@ -780,6 +807,20 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
             "ALTER TABLE game_session_retained_tenant_association_legal_hold "
                 + "ENABLE TRIGGER game_session_retained_tenant_hold_release_only");
       }
+    }
+
+    String sessionUser() {
+      Record row = dsl.fetchOne("SELECT session_user AS db_session_user");
+      return Objects.requireNonNull(row).get("db_session_user", String.class);
+    }
+
+    String captureTimeDaysAgo(int days) {
+      Record row =
+          dsl.fetchOne(
+              "SELECT clock_timestamp() - (?::int * INTERVAL '1 day') AS captured_at", days);
+      java.time.OffsetDateTime capturedAt =
+          Objects.requireNonNull(row).get("captured_at", java.time.OffsetDateTime.class);
+      return capturedAt.toInstant().truncatedTo(java.time.temporal.ChronoUnit.MICROS).toString();
     }
 
     private void withHoldInsertTriggerDisabled(Runnable insert) {
@@ -871,7 +912,9 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
 
     Record storedByRequest(UUID associationRequestId) {
       return dsl.fetchOne(
-          "SELECT association.*, payload.approval_manifest_digest, payload.approval_signature "
+          "SELECT association.*, payload.request_digest, payload.approval_manifest_digest, "
+              + "payload.approval_signature, payload.snapshot_canonical_json, "
+              + "payload.snapshot_evidence_digest, payload.receipt_digest "
               + "FROM game_session_retained_tenant_association association "
               + "JOIN game_session_retained_tenant_association_payload payload USING (operation_id) "
               + "WHERE association.target_namespace = ? AND association.association_request_id = ?",
@@ -896,6 +939,18 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
           dsl.fetchOne(
               "SELECT xmin::text AS xmin FROM game_session_retained_tenant_association "
                   + "WHERE target_namespace = ? AND association_request_id = ?",
+              NAMESPACE,
+              associationRequestId);
+      return Objects.requireNonNull(row).get("xmin", String.class);
+    }
+
+    String payloadXmin(UUID associationRequestId) {
+      Record row =
+          dsl.fetchOne(
+              "SELECT payload.xmin::text AS xmin "
+                  + "FROM game_session_retained_tenant_association association "
+                  + "JOIN game_session_retained_tenant_association_payload payload USING (operation_id) "
+                  + "WHERE association.target_namespace = ? AND association.association_request_id = ?",
               NAMESPACE,
               associationRequestId);
       return Objects.requireNonNull(row).get("xmin", String.class);

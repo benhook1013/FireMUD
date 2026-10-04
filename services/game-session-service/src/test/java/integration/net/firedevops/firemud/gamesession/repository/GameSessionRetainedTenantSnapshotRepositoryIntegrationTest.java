@@ -194,14 +194,15 @@ class GameSessionRetainedTenantSnapshotRepositoryIntegrationTest {
 
     fixture.dsl.execute("UPDATE game_instances SET owner_account_id = ? WHERE id = ?", 90011L, 10L);
     GameSessionRetainedTenantSnapshot changedRawSnapshot = fixture.capture();
-    assertThat(changedRawSnapshot.evidenceDigest()).isNotEqualTo(snapshot.evidenceDigest());
+    assertThat(changedRawSnapshot.projectionDigest()).isNotEqualTo(snapshot.projectionDigest());
     JsonNode changedRawOwner =
         JSON.readTree(changedRawSnapshot.canonicalJson()).get("instances").get(1);
     assertThat(changedRawOwner.get("owner_account_id").textValue()).isEqualTo("90011");
 
     fixture.dsl.execute("UPDATE game_instances SET owner_account_id = ? WHERE id = ?", 90023L, 22L);
     GameSessionRetainedTenantSnapshot changedSnapshot = fixture.capture();
-    assertThat(changedSnapshot.evidenceDigest()).isNotEqualTo(changedRawSnapshot.evidenceDigest());
+    assertThat(changedSnapshot.projectionDigest())
+        .isNotEqualTo(changedRawSnapshot.projectionDigest());
     JsonNode changedOwner = JSON.readTree(changedSnapshot.canonicalJson()).get("instances").get(3);
     assertThat(changedOwner.get("owner_account_id").textValue()).isEqualTo("90023");
   }
@@ -259,7 +260,7 @@ class GameSessionRetainedTenantSnapshotRepositoryIntegrationTest {
         });
 
     fixture.assertMutationMatrixSucceedsThenRollsBack();
-    assertThat(fixture.capture().evidenceDigest()).isEqualTo(originalSnapshot.evidenceDigest());
+    assertThat(fixture.capture().projectionDigest()).isEqualTo(originalSnapshot.projectionDigest());
     fixture.executeMutation(COMMITTED_INSTANCE_PHANTOM_INSERT);
     Long instancePhantomCount =
         java.util.Objects.requireNonNull(
@@ -268,8 +269,8 @@ class GameSessionRetainedTenantSnapshotRepositoryIntegrationTest {
             .get(0, Long.class);
     assertThat(instancePhantomCount).isEqualTo(1L);
     GameSessionRetainedTenantSnapshot afterInstanceInsert = fixture.capture();
-    assertThat(afterInstanceInsert.evidenceDigest())
-        .isNotEqualTo(originalSnapshot.evidenceDigest());
+    assertThat(afterInstanceInsert.projectionDigest())
+        .isNotEqualTo(originalSnapshot.projectionDigest());
 
     fixture.transactions.execute(
         status -> {
@@ -278,7 +279,8 @@ class GameSessionRetainedTenantSnapshotRepositoryIntegrationTest {
           return null;
         });
     fixture.assertMutationMatrixSucceedsThenRollsBack();
-    assertThat(fixture.capture().evidenceDigest()).isEqualTo(afterInstanceInsert.evidenceDigest());
+    assertThat(fixture.capture().projectionDigest())
+        .isEqualTo(afterInstanceInsert.projectionDigest());
     fixture.executeMutation(COMMITTED_POINTER_PHANTOM_INSERT);
     Long pointerPhantomCount =
         java.util.Objects.requireNonNull(
@@ -289,8 +291,8 @@ class GameSessionRetainedTenantSnapshotRepositoryIntegrationTest {
             .get(0, Long.class);
     assertThat(pointerPhantomCount).isEqualTo(1L);
     GameSessionRetainedTenantSnapshot afterPointerInsert = fixture.capture();
-    assertThat(afterPointerInsert.evidenceDigest())
-        .isNotEqualTo(afterInstanceInsert.evidenceDigest());
+    assertThat(afterPointerInsert.projectionDigest())
+        .isNotEqualTo(afterInstanceInsert.projectionDigest());
   }
 
   private Fixture fixture() {

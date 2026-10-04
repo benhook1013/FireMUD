@@ -175,7 +175,9 @@ class InitialAdmissionBindPostgresIntegrationTest {
     runtime.setLaunchDescriptorId("published-launch-v1");
     runtime.setReleaseBundleId(77L);
     runtime.setVersionStateEpoch(4L);
+    runtime.setGenerationConfigRevision("genrev-4");
     runtime.setRunOwnedStartRequestId("4c31b7b9-e9e8-41a4-a5b1-334db8bc49ae");
+    runtime.setRunOwnedStartRequestDigest("a".repeat(64));
     runtime.setRunOwnedStartPublishedReleaseBundleRef("prb:41:902:77");
     GameInstance savedRuntime = gameInstanceRepository.save(runtime);
     seedAssociation(dsl, 41L, CANONICAL_TENANT_ID, 731L, "source-game-key-not-local-id");
