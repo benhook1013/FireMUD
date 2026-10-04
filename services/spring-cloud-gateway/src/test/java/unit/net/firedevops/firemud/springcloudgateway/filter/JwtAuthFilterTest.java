@@ -3,6 +3,7 @@ package net.firedevops.firemud.springcloudgateway.filter;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.common.security.JwtUtil;
@@ -14,6 +15,7 @@ import org.springframework.mock.web.server.MockServerWebExchange;
 import reactor.core.publisher.Mono;
 
 class JwtAuthFilterTest {
+  private static final String ACCOUNT_ID = "018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a";
   private final JwtUtil jwtUtil = new JwtUtil("testsecretkeytestsecretkeytest1234", 3600000L);
   private final JwtAuthFilter filter = new JwtAuthFilter(jwtUtil);
 
@@ -27,7 +29,7 @@ class JwtAuthFilterTest {
 
   @Test
   void rejectsRequestWithoutAdminRole() {
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("player")));
+    String token = accountToken(Map.of("globalRoles", List.of("player")));
     MockServerHttpRequest.BaseBuilder<?> builder =
         MockServerHttpRequest.get("/routes/test")
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token);
@@ -38,7 +40,7 @@ class JwtAuthFilterTest {
 
   @Test
   void allowsRequestWithAdminRole() {
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = accountToken(Map.of("globalRoles", List.of("platformAdmin")));
     MockServerHttpRequest.BaseBuilder<?> builder =
         MockServerHttpRequest.get("/routes/test")
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token);
@@ -51,7 +53,7 @@ class JwtAuthFilterTest {
 
   @Test
   void rejectsMalformedScopedRolesClaimShape() {
-    String token = jwtUtil.generateToken("user", Map.of("scopedRoles", List.of("tenantAdmin")));
+    String token = accountToken(Map.of("scopedRoles", List.of("tenantAdmin")));
     MockServerHttpRequest.BaseBuilder<?> builder =
         MockServerHttpRequest.get("/routes/test")
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token);
@@ -60,5 +62,11 @@ class JwtAuthFilterTest {
     filter.filter(exchange, e -> Mono.empty()).block();
 
     assertEquals(HttpStatus.UNAUTHORIZED, exchange.getResponse().getStatusCode());
+  }
+
+  private String accountToken(Map<String, Object> claims) {
+    Map<String, Object> accountClaims = new HashMap<>(claims);
+    accountClaims.put("accountId", ACCOUNT_ID);
+    return jwtUtil.generateToken(ACCOUNT_ID, accountClaims);
   }
 }

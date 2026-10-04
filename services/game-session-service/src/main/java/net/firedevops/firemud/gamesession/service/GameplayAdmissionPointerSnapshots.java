@@ -114,8 +114,7 @@ public final class GameplayAdmissionPointerSnapshots {
         && !pointer.worldSlug().isBlank()
         && pointer.realmSlug() != null
         && !pointer.realmSlug().isBlank()
-        && pointer.stateScope() != null
-        && !pointer.stateScope().isBlank();
+        && hasSupportedStateScope(pointer.stateScope());
   }
 
   public static boolean hasCompleteRoutingBundle(SessionContext shell) {
@@ -123,7 +122,11 @@ public final class GameplayAdmissionPointerSnapshots {
         && shell.pointerVersion() > 0L
         && StringUtils.hasText(shell.worldSlug())
         && StringUtils.hasText(shell.realmSlug())
-        && StringUtils.hasText(shell.playableStateScope());
+        && hasSupportedStateScope(shell.playableStateScope());
+  }
+
+  private static boolean hasSupportedStateScope(String stateScope) {
+    return "SHARED".equals(stateScope) || "ISOLATED".equals(stateScope);
   }
 
   public static boolean sameBootstrapRoute(SessionContext existing, SessionContext incoming) {

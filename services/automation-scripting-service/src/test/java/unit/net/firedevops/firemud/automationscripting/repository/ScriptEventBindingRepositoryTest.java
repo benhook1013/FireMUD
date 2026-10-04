@@ -67,6 +67,29 @@ class ScriptEventBindingRepositoryTest {
             "order by", "priority\" asc", "script_id\" asc", "binding_id\" asc", "id\" asc");
   }
 
+  @Test
+  void retainedBaseGuardUsesOneExistsQueryAndNullSafeMismatchPredicate() {
+    java.util.concurrent.atomic.AtomicReference<String> sql =
+        new java.util.concurrent.atomic.AtomicReference<>();
+    MockDataProvider provider =
+        context -> {
+          sql.set(context.sql().toLowerCase(Locale.ROOT));
+          return new MockResult[] {new MockResult(0)};
+        };
+    ScriptEventBindingRepository repository =
+        new ScriptEventBindingRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    assertThat(
+            repository.existsByTenantIdAndScriptPatchVersionWithNullOrMismatchedBaseVersionId(
+                1L, "patch-1", 7L))
+        .isFalse();
+
+    assertThat(sql.get())
+        .contains(
+            "exists", "tenant_id", "script_patch_version", "base_version_id", "is distinct from");
+  }
+
   private static ScriptEventBinding binding(Long id, String bindingId) {
     ScriptEventBinding binding = new ScriptEventBinding();
     binding.setId(id);

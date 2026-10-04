@@ -3,6 +3,7 @@ package net.firedevops.firemud.loggingadmin.dto;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.PositiveOrZero;
 import jakarta.validation.constraints.Size;
 
 public record SetAdmissionPointerRequest(
@@ -19,5 +20,6 @@ public record SetAdmissionPointerRequest(
     @NotBlank @Size(max = 50) String characterCreationPolicy,
     @Size(max = 255) String reason,
     @Size(max = 128) String controlPlaneRequestId,
-    Long expectedPointerVersion,
+    @NotNull @PositiveOrZero Long expectedPointerVersion,
+    @NotNull @PositiveOrZero Long expectedCatalogRevision,
     @Size(max = 64) String preparedVersionUpgradeId) {}

@@ -24,6 +24,8 @@ previewStack:
   tenantAssociationMigration:
     # Operator-invoked Jobs only; ordinary chart releases never run them.
     # Evidence Secrets and immutable images are supplied by the operator.
+    # Each mode also requires its fixed, separately provisioned least-privilege
+    # database Secret; shared bootstrap/service credentials are never a fallback.
     gameDesign:
       enabled: false
       mode: ""

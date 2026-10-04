@@ -404,7 +404,8 @@ public class TextPlayerOutputRenderer {
         + "Realm state: "
         + output.stateScope().toLowerCase(java.util.Locale.ROOT)
         + ", creation: "
-        + output.characterCreationPolicy().toLowerCase(java.util.Locale.ROOT);
+        + output.characterCreationPolicy().toLowerCase(java.util.Locale.ROOT)
+        + "\nUse the character name with PLAY; list numbers are not character selectors.";
   }
 
   private String renderWhoView(WhoViewOutput output) {
@@ -462,9 +463,7 @@ public class TextPlayerOutputRenderer {
     if (output.friends().isEmpty()) {
       return "Friends "
           + output.filter().toUpperCase(java.util.Locale.ROOT)
-          + " [0/"
-          + output.totalCount()
-          + "]: no matching friends.";
+          + ": no matching friends.";
     }
     String body =
         output.friends().stream()
@@ -483,14 +482,7 @@ public class TextPlayerOutputRenderer {
     if ("ALL".equalsIgnoreCase(output.filter())) {
       return body;
     }
-    return "Friends "
-        + output.filter().toUpperCase(java.util.Locale.ROOT)
-        + " ["
-        + output.matchCount()
-        + "/"
-        + output.totalCount()
-        + "]:\n"
-        + body;
+    return "Friends " + output.filter().toUpperCase(java.util.Locale.ROOT) + ":\n" + body;
   }
 
   private String renderFriendDetailView(FriendDetailViewOutput output) {
@@ -540,27 +532,7 @@ public class TextPlayerOutputRenderer {
   }
 
   private String renderFriendRosterSummaryView(FriendRosterSummaryViewOutput output) {
-    return "Friend roster summary:"
-        + "\nLinked: "
-        + output.totalCount()
-        + "\nOnline: "
-        + output.onlineCount()
-        + "\nOffline: "
-        + output.offlineCount()
-        + "\nRecent offline: "
-        + output.recentCount()
-        + "\nVisibility public: "
-        + output.publicCount()
-        + "\nVisibility friends-only: "
-        + output.friendsOnlyCount()
-        + "\nVisibility private: "
-        + output.privateCount()
-        + "\nScope shared: "
-        + output.sharedCount()
-        + "\nScope isolated: "
-        + output.isolatedCount()
-        + "\nScope unspecified: "
-        + output.unspecifiedScopeCount();
+    return "Friend roster summary:" + "\nLinked: " + output.totalCount();
   }
 
   private String renderFriendPresencePolicyView(FriendPresencePolicyViewOutput output) {

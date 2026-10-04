@@ -170,6 +170,51 @@ def check_contract(items: list[dict]) -> None:
     certificate_match = actual_policies["firemud-trust-bootstrap-certificate"]["spec"][
         "matchConditions"
     ][0]["expression"]
+    certificate_match_normalized = " ".join(certificate_match.split())
+    certificate_rules = actual_policies["firemud-trust-bootstrap-certificate"]["spec"][
+        "matchConstraints"
+    ]["resourceRules"]
+    if len(certificate_rules) != 1:
+        fail("Certificate issuance boundary must have exactly one resource rule")
+    if certificate_rules[0].get("operations") != ["CREATE", "UPDATE", "DELETE"]:
+        fail("Certificate issuance boundary must cover create, update, and delete")
+    if certificate_rules[0].get("resources") != ["certificates"]:
+        fail("Certificate issuance boundary must match only the certificates resource")
+    if certificate_rules[0].get("scope") != "Namespaced":
+        fail("Certificate issuance boundary must be namespaced")
+    delete_match_branch = certificate_match_normalized.split(
+        "(request.operation == 'DELETE' &&", 1
+    )[1].split("(request.operation == 'CREATE' &&", 1)[0]
+    for needle in (
+        "oldObject.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-grpc-(",
+        "game-design-baseline-migrator|game-design-tenant-migrator|account-tenant-migrator)$')",
+        "request.namespace.matches('^(dev|pr-[1-9][0-9]{0,50})$')",
+    ):
+        require(delete_match_branch, needle, "runtime migrator Certificate DELETE match condition")
+    certificate_validations = actual_policies["firemud-trust-bootstrap-certificate"][
+        "spec"
+    ]["validations"]
+    if len(certificate_validations) != 2:
+        fail("Certificate boundary must retain both authorization and spec validations")
+    certificate_validation_normalized = " ".join(
+        certificate_validations[0]["expression"].split()
+    )
+    if not certificate_validation_normalized.startswith(
+        "request.userInfo.groups.exists(group, group == 'system:masters') ||"
+    ):
+        fail("trusted system:masters must pass the Certificate authorization validation")
+    spec_validation_normalized = " ".join(
+        certificate_validations[1]["expression"].split()
+    )
+    for needle in (
+        "request.userInfo.groups.exists(group, group == 'system:masters') ||",
+        "request.operation == 'DELETE' ||",
+    ):
+        require(
+            spec_validation_normalized,
+            needle,
+            "Certificate spec validation for an authorized DELETE",
+        )
     certificate_status_policy = actual_policies["firemud-trust-bootstrap-certificate-status"]
     certificate_status = certificate_status_policy["spec"]
     for needle in (
@@ -201,7 +246,7 @@ def check_contract(items: list[dict]) -> None:
         "object.spec.uris == ['spiffe://firemud/ns/' + request.namespace + '/sa/game-design-baseline-migrator']",
         "firemud-hosted-identity-controller",
         "system:serviceaccount:kube-system:namespace-controller",
-        "object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service))$')",
+        "object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service|social-groups-service))$')",
     ):
         require(certificate, needle, "Certificate boundary")
     status_rules = certificate_status["matchConstraints"]["resourceRules"]
@@ -229,7 +274,7 @@ def check_contract(items: list[dict]) -> None:
         fail("Certificate status denial message does not describe the allowed callers")
     require(
         certificate_validation,
-        "^(dev|pr-[1-9][0-9]{0,50})-(telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service|game-design-baseline-migrator|game-design-tenant-migrator|account-tenant-migrator))$",
+        "^(dev|pr-[1-9][0-9]{0,50})-(telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service|social-groups-service|game-design-baseline-migrator|game-design-tenant-migrator|account-tenant-migrator))$",
         "standalone Certificate validation",
     )
     for needle in (
@@ -243,10 +288,15 @@ def check_contract(items: list[dict]) -> None:
         "object.spec.issuerRef.name == 'firemud-ca-issuer'",
         "object.spec.dnsNames == ['game-session-service', 'game-session-service.' + request.namespace, 'game-session-service.' + request.namespace + '.svc', 'game-session-service.' + request.namespace + '.svc.cluster.local']",
         "object.spec.uris == ['spiffe://firemud/ns/' + request.namespace + '/sa/game-session-service']",
+        "object.metadata.name.endsWith('-grpc-social-groups-service')",
+        "object.spec.secretName == 'firemud-grpc-social-groups-service'",
+        "object.spec.issuerRef.name == 'firemud-ca-issuer'",
+        "object.spec.dnsNames == ['social-groups-service', 'social-groups-service.' + request.namespace, 'social-groups-service.' + request.namespace + '.svc', 'social-groups-service.' + request.namespace + '.svc.cluster.local']",
+        "object.spec.uris == ['spiffe://firemud/ns/' + request.namespace + '/sa/social-groups-service']",
     ):
         require(certificate_validation, needle, "standalone workload identity")
     normalized_certificate_validation = " ".join(certificate_validation.split())
-    for workload in ("account-service", "game-session-service"):
+    for workload in ("account-service", "game-session-service", "social-groups-service"):
         expected_branch = (
             f"(object.metadata.name.endsWith('-grpc-{workload}') && "
             f"object.spec.secretName == 'firemud-grpc-{workload}' && "

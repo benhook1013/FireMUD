@@ -144,16 +144,19 @@ public class EntityDigestBaselineMigrationService {
         || version.isScriptOnly()) {
       throw rejected("VERSION_SCOPE_MISMATCH", "version is outside the tenant or is script-only");
     }
-    if (version.getVersionState() == VersionLifecycleState.DRAFT) {
-      throw rejected("VERSION_DRAFT", "mutable DRAFT versions cannot be migrated");
-    }
-
     Optional<EntityDigestBaselineMigrationAudit> priorAudit =
         auditRepository.findByOperationId(command.operationId());
     if (priorAudit.isPresent()) {
       EntityDigestBaselineMigrationAudit audit = priorAudit.orElseThrow();
       assertAuditSourceMatchesCommand(audit, command);
       return readBackCommittedResult(command, audit, MigrationDisposition.EXACT_RETRY);
+    }
+    if (version.getVersionState() == VersionLifecycleState.DRAFT) {
+      throw rejected("VERSION_DRAFT", "mutable DRAFT versions cannot be migrated");
+    }
+    Long versionStateEpoch = version.getVersionStateEpoch();
+    if (versionStateEpoch == null || versionStateEpoch < 1L) {
+      throw rejected("VERSION_STATE_EPOCH_MISSING", "version has no valid lifecycle state epoch");
     }
 
     RecordedParticipantDigest current =
@@ -188,12 +191,19 @@ public class EntityDigestBaselineMigrationService {
     RecordedParticipantDigest replacement = replacementFor(current, observed);
     EntityDigestBaselineMigrationAudit audit = auditFor(current, observed, command, migrationTime);
     try {
-      writeService.commit(current, replacement, audit);
+      writeService.commit(current, replacement, audit, versionStateEpoch);
     } catch (EntityDigestBaselineMigrationWriteService.DraftVersionException draftAtCommit) {
       throw rejected(
           "VERSION_DRAFT",
           "version became DRAFT before the guarded migration write",
           draftAtCommit);
+    } catch (
+        EntityDigestBaselineMigrationWriteService.VersionStateEpochChangedException
+            epochChangedAtCommit) {
+      throw rejected(
+          "VERSION_STATE_EPOCH_CHANGED",
+          "version lifecycle changed while the Entity digest was being recomputed",
+          epochChangedAtCommit);
     } catch (RuntimeException uncertainWrite) {
       try {
         return readBackCommittedResult(
@@ -505,9 +515,11 @@ public class EntityDigestBaselineMigrationService {
     ScopeStatus status =
         version == null
             ? ScopeStatus.BLOCKED_VERSION_MISSING
-            : version.getVersionState() == VersionLifecycleState.DRAFT
-                ? ScopeStatus.BLOCKED_DRAFT
-                : ScopeStatus.V1_REQUIRES_MIGRATION;
+            : version.isScriptOnly()
+                ? ScopeStatus.BLOCKED_SCRIPT_ONLY
+                : version.getVersionState() == VersionLifecycleState.DRAFT
+                    ? ScopeStatus.BLOCKED_DRAFT
+                    : ScopeStatus.V1_REQUIRES_MIGRATION;
     return toSummary(row, status);
   }
 
@@ -596,6 +608,7 @@ public class EntityDigestBaselineMigrationService {
     V1_REQUIRES_MIGRATION,
     BLOCKED_DRAFT,
     BLOCKED_VERSION_MISSING,
+    BLOCKED_SCRIPT_ONLY,
     V2_ALREADY_RECORDED,
     NO_RECORDED_BASELINE,
     AMBIGUOUS_BASELINE,

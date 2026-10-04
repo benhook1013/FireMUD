@@ -11,6 +11,7 @@ never sent over the WebSocket or included in errors.
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import os
 import sys
@@ -19,9 +20,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping, Sequence
-
+from typing import Any
 
 DEFAULT_USERNAME = "demo@example.com"
 DEFAULT_PASSWORD = "swordfish"
@@ -29,6 +30,15 @@ DEFAULT_WORLD = "demo"
 DEFAULT_REALM = "production"
 DEFAULT_AUTH_PREFIX = "/api/account"
 DEFAULT_GATEWAY_BASE = "http://localhost:8080"
+MAX_HTTP_RESPONSE_BYTES = 1_048_576
+MAX_WEBSOCKET_FRAME_BYTES = 1_048_576
+MAX_WEBSOCKET_MESSAGE_BYTES = 1_048_576
+MAX_WEBSOCKET_RECEIVE_FRAMES = 256
+MAX_WEBSOCKET_RECEIVE_BYTES = 2 * 1_048_576
+MAX_WEBSOCKET_WAIT_FRAMES = 1_024
+MAX_WEBSOCKET_WAIT_MESSAGES = 256
+MAX_WEBSOCKET_WAIT_BYTES = 2 * 1_048_576
+MAX_WEBSOCKET_CLOSE_SECONDS = 3.0
 
 
 class HostedWebSocketPlayableSmokeError(RuntimeError):
@@ -50,7 +60,7 @@ class SmokeConfig:
     character: str | None = None
     expected_room_id: str | None = None
     timeout_seconds: float = 10.0
-    exercise_logout: bool = True
+    exercise_logout: bool = False
     exercise_reconnect: bool = False
 
 
@@ -66,6 +76,172 @@ WebSocketFactory = Callable[[str, float, Sequence[str]], Any]
 WEBSOCKET_CLOSE_OPCODE = 0x8
 
 
+class _WebSocketReceiveLimitExceeded(ValueError):
+    """An inbound WebSocket frame or receive budget exceeded its local bound."""
+
+
+def _websocket_payload_size(payload: Any) -> int:
+    if isinstance(payload, bytes):
+        return len(payload)
+    if isinstance(payload, str):
+        return len(payload.encode("utf-8"))
+    return 0
+
+
+def _bounded_websocket_client(websocket: Any) -> type:
+    """Build the smoke-only bounded adapter for the pinned websocket-client API."""
+    # websocket-client 1.9.2 exposes create_connection(class_) but no public
+    # max-frame/message setting. These two private _abnf hooks are intentionally
+    # isolated here; the requirements pin must be reviewed with this adapter.
+    from websocket import _abnf
+
+    class BoundedFrameBuffer(_abnf.frame_buffer):
+        def __init__(
+            self,
+            recv_fn: Callable[[int], bytes],
+            skip_utf8_validation: bool,
+            owner: Any,
+        ):
+            super().__init__(recv_fn, skip_utf8_validation)
+            self.owner = owner
+
+        def recv_length(self) -> None:
+            super().recv_length()
+            if self.header is None or self.length is None:
+                raise _WebSocketReceiveLimitExceeded("incomplete WebSocket frame header")
+            opcode = self.header[4]
+            maximum = 125 if opcode & 0x8 else MAX_WEBSOCKET_FRAME_BYTES
+            try:
+                if self.length > maximum:
+                    raise _WebSocketReceiveLimitExceeded("WebSocket frame exceeds its size limit")
+                self.owner._reserve_inbound_frame(self.length)
+            except _WebSocketReceiveLimitExceeded:
+                self.clear()
+                self.owner._receive_limit_failed = True
+                raise
+
+    class BoundedContinuousFrame(_abnf.continuous_frame):
+        def add(self, frame: Any) -> None:
+            if frame.opcode in (_abnf.ABNF.OPCODE_TEXT, _abnf.ABNF.OPCODE_BINARY):
+                previous_size = len(self.cont_data[1]) if self.cont_data else 0
+                if previous_size + len(frame.data) > MAX_WEBSOCKET_MESSAGE_BYTES:
+                    raise _WebSocketReceiveLimitExceeded("WebSocket message exceeds its size limit")
+            elif frame.opcode == _abnf.ABNF.OPCODE_CONT and self.cont_data:
+                if len(self.cont_data[1]) + len(frame.data) > MAX_WEBSOCKET_MESSAGE_BYTES:
+                    raise _WebSocketReceiveLimitExceeded("WebSocket message exceeds its size limit")
+            super().add(frame)
+
+    class BoundedWebSocket(websocket.WebSocket):
+        def __init__(self, *args: Any, **kwargs: Any):
+            super().__init__(*args, **kwargs)
+            self._receive_deadline: float | None = None
+            self._receive_operation_active = False
+            self._receive_operation_frames = 0
+            self._receive_operation_bytes = 0
+            self._last_receive_usage = (0, 0)
+            self._receive_limit_failed = False
+            self.frame_buffer = BoundedFrameBuffer(
+                self._recv,
+                self.frame_buffer.skip_utf8_validation,
+                self,
+            )
+            self.cont_frame = BoundedContinuousFrame(
+                self.cont_frame.fire_cont_frame,
+                self.cont_frame.skip_utf8_validation,
+            )
+
+        def set_receive_deadline(self, deadline: float | None) -> None:
+            self._receive_deadline = deadline
+
+        def _reserve_inbound_frame(self, payload_bytes: int) -> None:
+            if self._receive_operation_frames + 1 > MAX_WEBSOCKET_RECEIVE_FRAMES:
+                raise _WebSocketReceiveLimitExceeded("WebSocket receive frame budget exceeded")
+            if self._receive_operation_bytes + payload_bytes > MAX_WEBSOCKET_RECEIVE_BYTES:
+                raise _WebSocketReceiveLimitExceeded("WebSocket receive byte budget exceeded")
+            self._receive_operation_frames += 1
+            self._receive_operation_bytes += payload_bytes
+
+        def _begin_receive_operation(self) -> bool:
+            if self._receive_operation_active:
+                return False
+            self._receive_operation_active = True
+            self._receive_operation_frames = 0
+            self._receive_operation_bytes = 0
+            return True
+
+        def _end_receive_operation(self, started: bool) -> None:
+            if started:
+                self._last_receive_usage = (
+                    self._receive_operation_frames,
+                    self._receive_operation_bytes,
+                )
+                self._receive_operation_active = False
+
+        def last_receive_usage(self) -> tuple[int, int]:
+            return self._last_receive_usage
+
+        def _recv(self, bufsize: int) -> bytes:
+            deadline = self._receive_deadline
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("WebSocket receive deadline expired")
+                if self.sock is not None:
+                    self.sock.settimeout(remaining)
+            result = super()._recv(bufsize)
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError("WebSocket receive deadline expired")
+            return result
+
+        def recv_frame(self) -> Any:
+            started = self._begin_receive_operation()
+            try:
+                return super().recv_frame()
+            except _WebSocketReceiveLimitExceeded:
+                self._receive_limit_failed = True
+                raise
+            finally:
+                self._end_receive_operation(started)
+
+        def recv_data_frame(self, control_frame: bool = False) -> tuple:
+            started = self._begin_receive_operation()
+            try:
+                return super().recv_data_frame(control_frame)
+            except _WebSocketReceiveLimitExceeded:
+                self._receive_limit_failed = True
+                raise
+            finally:
+                self._end_receive_operation(started)
+
+        def close(
+            self,
+            status: int = 1000,
+            reason: str | bytes = b"",
+            timeout: float | None = 3,
+        ) -> None:
+            if self._receive_limit_failed or not self.connected:
+                self.shutdown()
+                return
+            close_timeout = (
+                MAX_WEBSOCKET_CLOSE_SECONDS
+                if timeout is None
+                else min(max(0.0, float(timeout)), MAX_WEBSOCKET_CLOSE_SECONDS)
+            )
+            previous_deadline = self._receive_deadline
+            self._receive_deadline = time.monotonic() + close_timeout
+            started = self._begin_receive_operation()
+            try:
+                if self.sock is not None:
+                    self.sock.settimeout(close_timeout)
+                super().close(status=status, reason=reason, timeout=close_timeout)
+            finally:
+                self.shutdown()
+                self._receive_deadline = previous_deadline
+                self._end_receive_operation(started)
+
+    return BoundedWebSocket
+
+
 def redact_credentials(value: Any, username: str, password: str) -> str:
     text = str(value)
     for secret in (password, username):
@@ -75,9 +251,7 @@ def redact_credentials(value: Any, username: str, password: str) -> str:
 
 
 def _fail(message: str, config: SmokeConfig) -> HostedWebSocketPlayableSmokeError:
-    return HostedWebSocketPlayableSmokeError(
-        redact_credentials(message, config.username, config.password)
-    )
+    return HostedWebSocketPlayableSmokeError(redact_credentials(message, config.username, config.password))
 
 
 def _join_url(base: str, path: str) -> str:
@@ -86,6 +260,15 @@ def _join_url(base: str, path: str) -> str:
 
 def _quote(value: str) -> str:
     return urllib.parse.quote(value, safe="")
+
+
+def _valid_character_name(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and bool(value)
+        and value == value.strip()
+        and not any(ord(character) < 0x20 or ord(character) == 0x7F for character in value)
+    )
 
 
 def _header(headers: Mapping[str, str], name: str) -> str:
@@ -120,6 +303,20 @@ def _require_envelope(response: HttpResponse, description: str, config: SmokeCon
     return payload["data"]
 
 
+class _RejectRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # Returning None leaves the original 3xx response for the normal status
+        # check; no second request can carry bootstrap authority or cookies.
+        return None
+
+
+def _read_http_body(response: Any) -> tuple[bytes, bool]:
+    # Socket timeouts bound stalls, not bytes; the sentinel independently caps
+    # memory use and JSON input while allowing an exactly-at-limit response.
+    body = response.read(MAX_HTTP_RESPONSE_BYTES + 1)
+    return body[:MAX_HTTP_RESPONSE_BYTES], len(body) > MAX_HTTP_RESPONSE_BYTES
+
+
 def _default_http_request(
     method: str,
     url: str,
@@ -129,19 +326,28 @@ def _default_http_request(
 ) -> HttpResponse:
     body = None if payload is None else json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(url, data=body, method=method, headers=dict(headers))
+    opener = urllib.request.build_opener(_RejectRedirectHandler())
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with opener.open(request, timeout=timeout) as response:
+            response_body, oversized = _read_http_body(response)
+            if oversized:
+                raise HostedWebSocketPlayableSmokeError(
+                    f"{method} returned HTTP {response.status} with a response body exceeding "
+                    f"{MAX_HTTP_RESPONSE_BYTES} bytes"
+                )
             return HttpResponse(
                 response.status,
                 dict(response.headers.items()),
-                response.read(),
+                response_body,
             )
     except urllib.error.HTTPError as exc:
-        return HttpResponse(exc.code, dict(exc.headers.items()), exc.read())
+        try:
+            response_body, _ = _read_http_body(exc)
+            return HttpResponse(exc.code, dict(exc.headers.items()), response_body)
+        finally:
+            exc.close()
     except (OSError, urllib.error.URLError) as exc:
-        raise HostedWebSocketPlayableSmokeError(
-            f"{method} {url} failed: {exc.__class__.__name__}"
-        ) from exc
+        raise HostedWebSocketPlayableSmokeError(f"{method} {url} failed: {exc.__class__.__name__}") from exc
 
 
 def _request(
@@ -223,22 +429,24 @@ def _discover_target(
     ):
         raise _fail(f"world {config.world!r} was not visible during bootstrap discovery", config)
 
-    realms_url = _auth_url(
-        config, f"/auth/bootstrap/worlds/{_quote(config.world)}/realms"
-    )
+    realms_url = _auth_url(config, f"/auth/bootstrap/worlds/{_quote(config.world)}/realms")
     realms = _require_envelope(
         _request(http_request, config, "GET", realms_url, headers=headers),
         "bootstrap realms",
         config,
     )
-    realm = next(
-        (
-            candidate
-            for candidate in realms
-            if isinstance(candidate, dict) and candidate.get("realmSlug") == config.realm
-        ),
-        None,
-    ) if isinstance(realms, list) else None
+    realm = (
+        next(
+            (
+                candidate
+                for candidate in realms
+                if isinstance(candidate, dict) and candidate.get("realmSlug") == config.realm
+            ),
+            None,
+        )
+        if isinstance(realms, list)
+        else None
+    )
     if not isinstance(realm, dict) or not isinstance(realm.get("connectScopeId"), str):
         raise _fail(f"realm {config.realm!r} was not visible during bootstrap discovery", config)
     connect_scope_id = realm["connectScopeId"]
@@ -248,8 +456,7 @@ def _discover_target(
     query = urllib.parse.urlencode({"connectScopeId": connect_scope_id})
     characters_url = _auth_url(
         config,
-        f"/auth/bootstrap/worlds/{_quote(config.world)}/realms/"
-        f"{_quote(config.realm)}/characters?{query}",
+        f"/auth/bootstrap/worlds/{_quote(config.world)}/realms/{_quote(config.realm)}/characters?{query}",
     )
     characters = _require_envelope(
         _request(http_request, config, "GET", characters_url, headers=headers),
@@ -259,11 +466,15 @@ def _discover_target(
     if not isinstance(characters, list):
         raise _fail("bootstrap characters returned a malformed list", config)
     if config.character:
+        if not _valid_character_name(config.character):
+            raise _fail("configured character name is malformed", config)
         if not any(
-            isinstance(candidate, dict) and candidate.get("characterName") == config.character
+            isinstance(candidate, dict)
+            and _valid_character_name(candidate.get("characterName"))
+            and candidate.get("characterName") == config.character
             for candidate in characters
         ):
-            raise _fail(f"character {config.character!r} was not visible during bootstrap discovery", config)
+            raise _fail("configured character was not visible during bootstrap discovery", config)
         return connect_scope_id, config.character
     if len(characters) > 1:
         raise _fail(
@@ -271,12 +482,15 @@ def _discover_target(
             config,
         )
     if not characters:
-        return connect_scope_id, None
+        raise _fail(
+            "bootstrap character discovery returned no valid current character",
+            config,
+        )
     first = characters[0]
     if not isinstance(first, dict):
         raise _fail("bootstrap characters returned a malformed entry", config)
     character = first.get("characterName")
-    if character is not None and not isinstance(character, str):
+    if not _valid_character_name(character):
         raise _fail("bootstrap characters returned a malformed name", config)
     return connect_scope_id, character
 
@@ -301,26 +515,113 @@ def _connect_context(
             "Content-Type": "application/json",
         },
     )
-    _require_envelope(response, "connect-token issuance", config)
+    metadata = _require_envelope(response, "connect-token issuance", config)
     set_cookie = _header(response.headers, "Set-Cookie")
-    pair = set_cookie.split(";", 1)[0].strip()
+    cookie_parts = [part.strip() for part in set_cookie.split(";")]
+    pair = cookie_parts[0] if cookie_parts else ""
     name, separator, value = pair.partition("=")
     if separator != "=" or name != "Firemud-Connect-Token" or not value:
         raise _fail(
             "connect-token issuance did not return a valid Firemud-Connect-Token cookie",
             config,
         )
+    attributes: dict[str, list[str | None]] = {}
+    for part in cookie_parts[1:]:
+        attribute, equals, attribute_value = part.partition("=")
+        attribute = attribute.strip().lower()
+        if not attribute:
+            raise _fail("connect-token cookie protections are malformed", config)
+        attributes.setdefault(attribute, []).append(attribute_value.strip() if equals else None)
+
+    def require_flag(attribute: str) -> bool:
+        return attributes.get(attribute) == [None]
+
+    if not require_flag("httponly") or not require_flag("secure"):
+        raise _fail("connect-token cookie protections are incomplete", config)
+    same_site_values = attributes.get("samesite")
+    if (
+        same_site_values is None
+        or len(same_site_values) != 1
+        or not isinstance(same_site_values[0], str)
+        or same_site_values[0].casefold() != "strict"
+    ):
+        raise _fail("connect-token cookie protections are incomplete", config)
+    if attributes.get("path") != ["/ws/game"]:
+        raise _fail("connect-token cookie protections are incomplete", config)
+
+    max_age_values = attributes.get("max-age")
+    if max_age_values is None or len(max_age_values) != 1:
+        raise _fail("connect-token cookie lifetime is invalid", config)
+    max_age = max_age_values[0]
+    if not isinstance(max_age, str) or not max_age.isascii() or not max_age.isdecimal() or max_age.startswith("0"):
+        raise _fail("connect-token cookie lifetime is invalid", config)
+    if not isinstance(metadata, dict):
+        raise _fail("connect-token response metadata is malformed", config)
+    issued_at = metadata.get("issuedAt")
+    expires_at = metadata.get("expiresAt")
+    if not isinstance(issued_at, str) or not isinstance(expires_at, str):
+        raise _fail("connect-token response metadata is malformed", config)
+    try:
+        issued = datetime.datetime.fromisoformat(issued_at.replace("Z", "+00:00"))
+        expires = datetime.datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+        ttl_seconds = (expires - issued).total_seconds()
+        cookie_seconds = int(max_age)
+    except (OverflowError, TypeError, ValueError):
+        raise _fail("connect-token response metadata is malformed", config) from None
+    if (
+        issued.utcoffset() is None
+        or expires.utcoffset() is None
+        or ttl_seconds <= 0
+        or cookie_seconds <= 0
+        or cookie_seconds > ttl_seconds
+    ):
+        raise _fail("connect-token cookie lifetime exceeds its token lifetime", config)
     return f"Firemud-Connect-Token={value}", character
+
+
+def _set_receive_deadline(ws: Any, deadline: float) -> None:
+    setter = getattr(ws, "set_receive_deadline", None)
+    if callable(setter):
+        setter(deadline)
+
+
+def _receive_usage(ws: Any, payload: Any) -> tuple[int, int]:
+    getter = getattr(ws, "last_receive_usage", None)
+    usage = getter() if callable(getter) else None
+    if (
+        isinstance(usage, tuple)
+        and len(usage) == 2
+        and all(isinstance(value, int) and not isinstance(value, bool) and value >= 0 for value in usage)
+    ):
+        return usage
+    return 1, _websocket_payload_size(payload)
 
 
 def _await_command_result(ws: Any, command_type: str, config: SmokeConfig) -> dict[str, Any]:
     deadline = time.monotonic() + config.timeout_seconds
+    received_messages = 0
+    received_frames = 0
+    received_bytes = 0
     while time.monotonic() < deadline:
+        if received_messages >= MAX_WEBSOCKET_WAIT_MESSAGES:
+            raise _fail(f"WebSocket receive budget exceeded while waiting for {command_type}", config)
         ws.settimeout(max(0.01, deadline - time.monotonic()))
+        _set_receive_deadline(ws, deadline)
         try:
             payload = ws.recv()
+        except _WebSocketReceiveLimitExceeded as exc:
+            raise _fail(
+                f"WebSocket receive limits exceeded while waiting for {command_type}",
+                config,
+            ) from exc
         except Exception as exc:
             raise _fail(f"WebSocket closed while waiting for {command_type}", config) from exc
+        received_messages += 1
+        frame_count, byte_count = _receive_usage(ws, payload)
+        received_frames += frame_count
+        received_bytes += byte_count
+        if received_frames > MAX_WEBSOCKET_WAIT_FRAMES or received_bytes > MAX_WEBSOCKET_WAIT_BYTES:
+            raise _fail(f"WebSocket receive budget exceeded while waiting for {command_type}", config)
         try:
             parsed = json.loads(payload)
         except (TypeError, json.JSONDecodeError):
@@ -329,15 +630,13 @@ def _await_command_result(ws: Any, command_type: str, config: SmokeConfig) -> di
             continue
         if parsed.get("eventType") != "command_result" or parsed.get("commandType") != command_type:
             continue
-        if not parsed.get("accepted", False):
+        if parsed.get("accepted") is not True:
             raise _fail(f"{command_type} was rejected by the first-party gameplay session", config)
         return parsed
     raise _fail(f"timed out waiting for structured {command_type} result", config)
 
 
-def _require_look_view(
-    response: dict[str, Any], config: SmokeConfig
-) -> tuple[str, str]:
+def _require_look_view(response: dict[str, Any], config: SmokeConfig) -> tuple[str, str]:
     outputs = response.get("outputs")
     if not isinstance(outputs, list):
         raise _fail("LOOK accepted without an authoritative LOOK view", config)
@@ -349,12 +648,7 @@ def _require_look_view(
             continue
         room_id = payload.get("roomId")
         room_name = payload.get("roomName")
-        if not (
-            isinstance(room_id, str)
-            and room_id.strip()
-            and isinstance(room_name, str)
-            and room_name.strip()
-        ):
+        if not (isinstance(room_id, str) and room_id.strip() and isinstance(room_name, str) and room_name.strip()):
             continue
         if config.expected_room_id is not None and room_id != config.expected_room_id:
             raise _fail("LOOK room ID did not match the expected Telnet parity room ID", config)
@@ -372,24 +666,37 @@ def _await_websocket_close(ws: Any, config: SmokeConfig) -> None:
         )
 
     deadline = time.monotonic() + config.timeout_seconds
+    received_messages = 0
+    received_frames = 0
+    received_bytes = 0
     while time.monotonic() < deadline:
+        if received_messages >= MAX_WEBSOCKET_WAIT_MESSAGES:
+            raise _fail("WebSocket receive budget exceeded while waiting for close", config)
         ws.settimeout(max(0.01, deadline - time.monotonic()))
+        _set_receive_deadline(ws, deadline)
         try:
             observation = recv_data(control_frame=True)
+        except _WebSocketReceiveLimitExceeded as exc:
+            raise _fail(
+                "WebSocket receive limits exceeded while waiting for close",
+                config,
+            ) from exc
         except Exception as exc:
             raise _fail(
                 "first-party WSS close observation failed after LOGOUT",
                 config,
             ) from exc
-        if (
-            not isinstance(observation, tuple)
-            or len(observation) != 2
-            or not isinstance(observation[0], int)
-        ):
+        if not isinstance(observation, tuple) or len(observation) != 2 or not isinstance(observation[0], int):
             raise _fail(
                 "first-party WSS close observation returned a malformed frame",
                 config,
             )
+        received_messages += 1
+        frame_count, byte_count = _receive_usage(ws, observation[1])
+        received_frames += frame_count
+        received_bytes += byte_count
+        if received_frames > MAX_WEBSOCKET_WAIT_FRAMES or received_bytes > MAX_WEBSOCKET_WAIT_BYTES:
+            raise _fail("WebSocket receive budget exceeded while waiting for close", config)
         if observation[0] == WEBSOCKET_CLOSE_OPCODE:
             return
 
@@ -503,6 +810,7 @@ def run_smoke(
             import websocket
         except ImportError as exc:
             raise _fail("the websocket-client package is required for WSS smoke", config) from exc
+        bounded_websocket = _bounded_websocket_client(websocket)
 
         def websocket_factory(url: str, timeout: float, headers: Sequence[str]) -> Any:
             # websocket-client emits its own Origin unless the dedicated
@@ -511,11 +819,8 @@ def run_smoke(
             return websocket.create_connection(
                 url,
                 timeout=timeout,
-                header=[
-                    header
-                    for header in headers
-                    if not header.lower().startswith("origin:")
-                ],
+                class_=bounded_websocket,
+                header=[header for header in headers if not header.lower().startswith("origin:")],
                 origin=config.origin,
             )
 
@@ -584,8 +889,7 @@ def _config_from_args(args: argparse.Namespace) -> SmokeConfig:
     gateway = args.gateway_base.rstrip("/")
     auth_base = args.auth_base or gateway
     websocket_url = args.websocket_url or (
-        gateway.replace("https://", "wss://", 1).replace("http://", "ws://", 1)
-        + "/ws/game"
+        gateway.replace("https://", "wss://", 1).replace("http://", "ws://", 1) + "/ws/game"
     )
     return SmokeConfig(
         auth_api_base=auth_base,
@@ -601,7 +905,7 @@ def _config_from_args(args: argparse.Namespace) -> SmokeConfig:
         character=args.character,
         expected_room_id=args.expected_room_id,
         timeout_seconds=args.timeout,
-        exercise_logout=not args.no_logout,
+        exercise_logout=args.logout,
         exercise_reconnect=args.reconnect,
     )
 
@@ -610,7 +914,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--gateway-base", default=os.environ.get("SMOKE_GATEWAY_API_BASE", DEFAULT_GATEWAY_BASE))
     parser.add_argument("--auth-base", default=os.environ.get("PLAYER_EXPERIENCE_AUTH_API_BASE"))
-    parser.add_argument("--auth-prefix", default=os.environ.get("PLAYER_EXPERIENCE_AUTH_API_PREFIX", DEFAULT_AUTH_PREFIX))
+    parser.add_argument(
+        "--auth-prefix", default=os.environ.get("PLAYER_EXPERIENCE_AUTH_API_PREFIX", DEFAULT_AUTH_PREFIX)
+    )
     parser.add_argument("--websocket-url", default=os.environ.get("PLAYER_EXPERIENCE_WEBSOCKET_URL"))
     parser.add_argument(
         "--origin",
@@ -633,14 +939,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Optional room ID from the trusted Telnet probe for live parity",
     )
     parser.add_argument("--timeout", type=float, default=float(os.environ.get("SMOKE_TIMEOUT_SECONDS", "10")))
-    parser.add_argument("--no-logout", action="store_true")
+    parser.add_argument(
+        "--logout",
+        action="store_true",
+        help="Opt into LOGOUT diagnostics (currently expected to fail with LOGOUT_UNAVAILABLE)",
+    )
     parser.add_argument("--reconnect", action="store_true")
     args = parser.parse_args(argv)
     config = _config_from_args(args)
     try:
         result = run_smoke(config)
     except HostedWebSocketPlayableSmokeError as exc:
-        print(f"Hosted first-party WSS smoke failed: {redact_credentials(exc, config.username, config.password)}", file=sys.stderr)
+        print(
+            f"Hosted first-party WSS smoke failed: {redact_credentials(exc, config.username, config.password)}",
+            file=sys.stderr,
+        )
         return 1
     print(json.dumps(result, sort_keys=True))
     return 0

@@ -2,8 +2,10 @@ package net.firedevops.firemud.socialgroups.service.impl;
 
 import io.micrometer.core.annotation.Timed;
 import java.time.Instant;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.socialgroups.client.LoggingAdminClient;
 import net.firedevops.firemud.socialgroups.dto.AddGuildMemberRequest;
 import net.firedevops.firemud.socialgroups.dto.AddGuildStorageItemRequest;
@@ -53,17 +55,18 @@ public class GuildServiceImpl implements GuildService {
   @Transactional
   @Timed(value = "guild.create")
   public GuildDto createGuild(CreateGuildRequest request) {
+    String ownerAccountId = requireAccountId(request.ownerAccountId(), "ownerAccountId");
     logger.info("Creating guild {}", request.name());
     Guild guild = new Guild();
     guild.setTenantId(request.tenantId());
-    guild.setOwnerAccountId(request.ownerAccountId());
+    guild.setOwnerAccountId(accountUuid(ownerAccountId));
     guild.setName(request.name());
     guild.setCreatedAt(Instant.now());
     Guild saved = guildRepository.save(guild);
     runAfterCommit(
         () ->
             safeReportModeration(
-                request.tenantId(), request.ownerAccountId(), "Guild created: " + request.name()));
+                request.tenantId(), ownerAccountId, "Guild created: " + request.name()));
     return guildMapper.toDto(saved);
   }
 
@@ -97,18 +100,19 @@ public class GuildServiceImpl implements GuildService {
   @Transactional
   @Timed(value = "guild.addMember")
   public GuildMemberDto addMember(AddGuildMemberRequest request) {
-    logger.info("Adding member {} to guild {}", request.accountId(), request.guildId());
+    String accountId = requireAccountId(request.accountId(), "accountId");
+    logger.info("Adding member {} to guild {}", accountId, request.guildId());
     GuildMember member = new GuildMember();
     member.setTenantId(request.tenantId());
     member.setGuildId(request.guildId());
-    member.setAccountId(request.accountId());
+    member.setAccountId(accountUuid(accountId));
     member.setRole(request.role());
     GuildMember saved = guildMemberRepository.save(member);
     member.setId(saved.getId());
     runAfterCommit(
         () ->
             safeReportModeration(
-                request.tenantId(), request.accountId(), "Joined guild " + request.guildId()));
+                request.tenantId(), accountId, "Joined guild " + request.guildId()));
     return guildMemberMapper.toDto(member);
   }
 
@@ -116,44 +120,43 @@ public class GuildServiceImpl implements GuildService {
   @Transactional
   @Timed(value = "guild.updateMemberRole")
   public GuildMemberDto updateMemberRole(UpdateGuildMemberRoleRequest request) {
+    String accountId = requireAccountId(request.accountId(), "accountId");
     logger.info(
-        "Updating member {} in guild {} to role {}",
-        request.accountId(),
-        request.guildId(),
-        request.role());
+        "Updating member {} in guild {} to role {}", accountId, request.guildId(), request.role());
     GuildMember member =
         guildMemberRepository
             .findFirstByTenantIdAndGuildIdAndAccountId(
-                request.tenantId(), request.guildId(), request.accountId())
+                request.tenantId(), request.guildId(), accountUuid(accountId))
             .orElseThrow();
     member.setRole(request.role());
     guildMemberRepository.save(member);
     runAfterCommit(
         () ->
             safeReportModeration(
-                request.tenantId(),
-                request.accountId(),
-                "Updated guild role to " + request.role()));
+                request.tenantId(), accountId, "Updated guild role to " + request.role()));
     return guildMemberMapper.toDto(member);
   }
 
   @Override
   @Transactional
   @Timed(value = "guild.removeMember")
-  public void removeMember(long tenantId, long guildId, long accountId) {
+  public void removeMember(long tenantId, long guildId, String accountId) {
+    String canonicalAccountId = requireAccountId(accountId, "accountId");
     logger.info("Removing member {} from guild {}", accountId, guildId);
     GuildMember member =
         guildMemberRepository
-            .findFirstByTenantIdAndGuildIdAndAccountId(tenantId, guildId, accountId)
+            .findFirstByTenantIdAndGuildIdAndAccountId(
+                tenantId, guildId, accountUuid(canonicalAccountId))
             .orElse(null);
     if (member == null) {
       return;
     }
     guildMemberRepository.delete(member);
-    runAfterCommit(() -> safeReportModeration(tenantId, accountId, "Left guild " + guildId));
+    runAfterCommit(
+        () -> safeReportModeration(tenantId, canonicalAccountId, "Left guild " + guildId));
   }
 
-  private void safeReportModeration(long tenantId, long accountId, String description) {
+  private void safeReportModeration(long tenantId, String accountId, String description) {
     try {
       loggingAdminClient.reportChatViolation(tenantId, accountId, description);
     } catch (RuntimeException ex) {
@@ -177,5 +180,13 @@ public class GuildServiceImpl implements GuildService {
             action.run();
           }
         });
+  }
+
+  private String requireAccountId(String accountId, String fieldName) {
+    return JwtClaims.requireAccountId(accountId, fieldName);
+  }
+
+  private UUID accountUuid(String accountId) {
+    return UUID.fromString(requireAccountId(accountId, "accountId"));
   }
 }

@@ -235,19 +235,23 @@ public class TextCommandInterpreter {
 
   public TextCommandInterpretationResult interpret(
       String sessionId, String rawLine, boolean requiresSoloTick) {
+    TextCommand baseCommand = parser.parse(rawLine, registry);
+    if (baseCommand.type() == TextCommandType.LOGOUT) {
+      return interpretLogoutWithoutNormalization(sessionId, baseCommand, requiresSoloTick);
+    }
     Optional<SessionContext> context =
         sessionAuthenticationService.resolveSessionContext(sessionId);
     TextCommandRegistry activeRegistry = registryFor(context);
-    return interpret(
-        sessionId,
-        parser.parse(rawLine, activeRegistry),
-        requiresSoloTick,
-        context,
-        activeRegistry);
+    TextCommand activeCommand =
+        admittedRegistryResolver == null ? baseCommand : parser.parse(rawLine, activeRegistry);
+    return interpret(sessionId, activeCommand, requiresSoloTick, context, activeRegistry);
   }
 
   public TextCommandInterpretationResult interpret(
       String sessionId, TextCommand command, boolean requiresSoloTick) {
+    if (command.type() == TextCommandType.LOGOUT) {
+      return interpretLogoutWithoutNormalization(sessionId, command, requiresSoloTick);
+    }
     Optional<SessionContext> context =
         sessionAuthenticationService.resolveSessionContext(sessionId);
     TextCommandRegistry activeRegistry = registryFor(context);
@@ -256,6 +260,23 @@ public class TextCommandInterpreter {
             ? command
             : parser.parse(command.rawLine(), activeRegistry);
     return interpret(sessionId, activeCommand, requiresSoloTick, context, activeRegistry);
+  }
+
+  private TextCommandInterpretationResult interpretLogoutWithoutNormalization(
+      String sessionId, TextCommand command, boolean requiresSoloTick) {
+    // A rejected LOGOUT must not normalize a stale binding (and clear presence) before
+    // the fail-closed handler runs. The handler performs only a raw session read.
+    TextCommandDefinition definition =
+        registry
+            .findDefinition(command.commandId())
+            .orElseGet(
+                () ->
+                    TextCommandDefinition.extensionDefinition(command.type(), command.commandId()));
+    TextCommandInterpretationResult result =
+        dispatcher.dispatch(
+            TextCommandDispatchGroup.SESSION,
+            new TextCommandDispatchRequest(sessionId, command, requiresSoloTick, Optional.empty()));
+    return withResolvedCommand(result, command, definition);
   }
 
   private TextCommandInterpretationResult interpret(

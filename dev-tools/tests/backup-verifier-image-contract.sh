@@ -21,8 +21,9 @@ require_contains() {
 
 require_aws_cli_stage() {
   local path="$1"
-  local declaration_pattern='^FROM[[:space:]]+(--platform=[^[:space:]]+[[:space:]]+)?public\.ecr\.aws/aws-cli/aws-cli'
-  local stage_pattern='^FROM[[:space:]]+(--platform=[^[:space:]]+[[:space:]]+)?public\.ecr\.aws/aws-cli/aws-cli:[0-9]+\.[0-9]+\.[0-9]+@sha256:[0-9a-f]{64}([[:space:]]+[Aa][Ss][[:space:]]+[[:alnum:]_.-]+)?$'
+  local aws_cli_image='(public\.ecr\.aws/aws-cli/aws-cli|docker\.io/amazon/aws-cli)'
+  local declaration_pattern="^FROM[[:space:]]+(--platform=[^[:space:]]+[[:space:]]+)?${aws_cli_image}"
+  local stage_pattern="^FROM[[:space:]]+(--platform=[^[:space:]]+[[:space:]]+)?${aws_cli_image}:[0-9]+\\.[0-9]+\\.[0-9]+@sha256:[0-9a-f]{64}([[:space:]]+[Aa][Ss][[:space:]]+[[:alnum:]_.-]+)?$"
   local aws_cli_stages=()
   mapfile -t aws_cli_stages < <(grep -E "$declaration_pattern" "$path" || true)
   if [[ "${#aws_cli_stages[@]}" != 1 ]]; then
@@ -48,20 +49,25 @@ require_count() {
 }
 
 velero_version="$(awk -F= '$1 == "VELERO_VERSION" { print $2 }' "$authority")"
-velero_digest="$(awk -F= '$1 == "VELERO_IMAGE_DIGEST" { print $2 }' "$authority")"
-if [[ -z "$velero_version" || -z "$velero_digest" ]]; then
-  echo "workflow tool authority must define Velero version and image digest" >&2
+if [[ -z "$velero_version" ]]; then
+  echo "workflow tool authority must define the Velero CLI version" >&2
   exit 1
 fi
-require_contains "$dockerfile" "FROM velero/velero:v${velero_version}@${velero_digest} AS velero-cli"
+if ! grep -Eq "^FROM velero/velero:v${velero_version}@sha256:[0-9a-f]{64} AS velero-cli$" "$dockerfile"; then
+  echo "backup verifier Dockerfile must pin the authority Velero version by digest" >&2
+  exit 1
+fi
 require_aws_cli_stage "$dockerfile"
 
 fixture_dir="$(mktemp -d)"
 trap 'rm -rf -- "$fixture_dir"' EXIT
 pinned_aws_cli_stage='FROM public.ecr.aws/aws-cli/aws-cli:2.36.49@sha256:f42bf088cb1456ba9e179ce71fdeb22cc46ff64ea1e3aeae8251ff81391f5bb1'
 aliased_aws_cli_stage='FROM --platform=linux/amd64 public.ecr.aws/aws-cli/aws-cli:2.36.49@sha256:f42bf088cb1456ba9e179ce71fdeb22cc46ff64ea1e3aeae8251ff81391f5bb1 as aws-cli'
+docker_hub_aws_cli_stage='FROM docker.io/amazon/aws-cli:2.37.4@sha256:fdd8d1fcbea9c371678dee5a40df8b178c7a781b4586605756ee28114c97ead6'
 printf '%s\n' "$aliased_aws_cli_stage" > "$fixture_dir/aliased-stage.Dockerfile"
 require_aws_cli_stage "$fixture_dir/aliased-stage.Dockerfile"
+printf '%s\n' "$docker_hub_aws_cli_stage" > "$fixture_dir/docker-hub-stage.Dockerfile"
+require_aws_cli_stage "$fixture_dir/docker-hub-stage.Dockerfile"
 cat > "$fixture_dir/extra-latest.Dockerfile" <<EOF
 $pinned_aws_cli_stage
 FROM public.ecr.aws/aws-cli/aws-cli:latest
@@ -76,6 +82,22 @@ FROM --platform=linux/amd64 public.ecr.aws/aws-cli/aws-cli:latest
 EOF
 if (require_aws_cli_stage "$fixture_dir/extra-platform-latest.Dockerfile"); then
   echo "backup verifier contract accepted an extra platform-qualified unpinned AWS CLI stage" >&2
+  exit 1
+fi
+cat > "$fixture_dir/extra-docker-hub-latest.Dockerfile" <<EOF
+$pinned_aws_cli_stage
+FROM docker.io/amazon/aws-cli:latest
+EOF
+if (require_aws_cli_stage "$fixture_dir/extra-docker-hub-latest.Dockerfile"); then
+  echo "backup verifier contract accepted an extra unpinned Docker Hub AWS CLI stage" >&2
+  exit 1
+fi
+cat > "$fixture_dir/extra-ecr-latest-after-docker-hub.Dockerfile" <<EOF
+$docker_hub_aws_cli_stage
+FROM --platform=linux/amd64 public.ecr.aws/aws-cli/aws-cli:latest
+EOF
+if (require_aws_cli_stage "$fixture_dir/extra-ecr-latest-after-docker-hub.Dockerfile"); then
+  echo "backup verifier contract accepted an extra platform-qualified unpinned ECR AWS CLI stage" >&2
   exit 1
 fi
 require_contains "$dockerfile" 'COPY --from=velero-cli /velero /usr/local/bin/velero'

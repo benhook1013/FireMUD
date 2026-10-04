@@ -28,7 +28,7 @@ class TestDataSeederTest {
   }
 
   @Test
-  void runSeedsAndReassertsCanonicalRuntimeData() throws Exception {
+  void runSeedsManifestAndFeatureFlagMetadata() throws Exception {
     when(gameManifestRepository.findAll()).thenReturn(java.util.List.of());
     when(featureFlagRepository.findByTenantIdAndName(1L, "double_xp"))
         .thenReturn(java.util.Optional.empty());

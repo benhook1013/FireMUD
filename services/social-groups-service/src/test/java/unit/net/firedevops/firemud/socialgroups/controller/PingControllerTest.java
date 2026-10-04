@@ -24,6 +24,7 @@ import org.springframework.test.web.servlet.MockMvc;
 @Import({CommonSecurityAutoConfiguration.class, CommonSecurityServletAutoConfiguration.class})
 @WithFiremudHttpAuthTestProperties
 class PingControllerTest {
+  private static final String ACCOUNT_UUID = "c41744c9-285e-4ed0-9fb4-0f0acb7a0123";
 
   @Autowired private MockMvc mockMvc;
   @Autowired private JwtUtil jwtUtil;
@@ -34,7 +35,10 @@ class PingControllerTest {
   void pingEndpointReturnsPong() throws Exception {
     when(pingService.ping()).thenReturn("pong");
 
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token =
+        jwtUtil.generateToken(
+            ACCOUNT_UUID,
+            Map.of("accountId", ACCOUNT_UUID, "globalRoles", List.of("platformAdmin")));
     mockMvc
         .perform(get("/ping").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())

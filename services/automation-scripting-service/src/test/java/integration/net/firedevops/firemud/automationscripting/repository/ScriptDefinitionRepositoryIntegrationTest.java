@@ -68,6 +68,7 @@ class ScriptDefinitionRepositoryIntegrationTest {
   @BeforeEach
   void cleanScripts() {
     dsl.execute("TRUNCATE TABLE scripts RESTART IDENTITY");
+    dsl.execute("TRUNCATE TABLE script_patch_base_bindings RESTART IDENTITY");
   }
 
   @AfterAll
@@ -154,6 +155,121 @@ class ScriptDefinitionRepositoryIntegrationTest {
     assertThat(retry.getRowVersion()).isEqualTo(initial.getRowVersion()).isZero();
     assertThat(dsl.fetchValue(SCRIPTS.ROW_VERSION, SCRIPTS.ID.eq(initial.getId()))).isZero();
     assertThat(dsl.fetchCount(SCRIPTS)).isEqualTo(1);
+  }
+
+  @Test
+  void patchBaseBindingCanonicalizesEquivalentPositiveTenantIdsAndRetainsConflict() {
+    repository.bindScriptPatchBaseVersionId("01", "patch-1", 7L);
+
+    assertThat(repository.findScriptPatchBaseVersionId("1", "patch-1")).contains(7L);
+    assertThat(repository.findScriptPatchBaseVersionId("0001", "patch-1")).contains(7L);
+    assertThatThrownBy(() -> repository.bindScriptPatchBaseVersionId("1", "patch-1", 8L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("script_patch_base_version_conflict");
+    assertThat(repository.findScriptPatchBaseVersionId("1", "patch-1")).contains(7L);
+  }
+
+  @Test
+  void existingPatchRowsRequireAnExactNonNullBaseVersion() {
+    repository.requireExistingScriptPatchRowsMatchBase("1", "empty-patch", 7L);
+
+    dsl.execute(
+        "INSERT INTO scripts (tenant_id, name, version, definition, base_version_id) "
+            + "VALUES (1, 'matching-script', 'matching-patch', '{\"value\":1}', 7)");
+    repository.requireExistingScriptPatchRowsMatchBase("1", "matching-patch", 7L);
+
+    dsl.execute(
+        "INSERT INTO scripts (tenant_id, name, version, definition, base_version_id) "
+            + "VALUES (1, 'null-base-script', 'null-patch', '{\"value\":1}', NULL)");
+    assertThatThrownBy(
+            () -> repository.requireExistingScriptPatchRowsMatchBase("1", "null-patch", 7L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("script_patch_base_version_conflict");
+
+    dsl.execute(
+        "INSERT INTO scripts (tenant_id, name, version, definition, base_version_id) "
+            + "VALUES (1, 'different-base-script', 'different-patch', '{\"value\":1}', 8)");
+    assertThatThrownBy(
+            () -> repository.requireExistingScriptPatchRowsMatchBase("1", "different-patch", 7L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("script_patch_base_version_conflict");
+  }
+
+  @Test
+  void patchBaseTenantValidationFailsClosedWithoutPersistingAnInvalidBinding() {
+    assertThatThrownBy(() -> repository.bindScriptPatchBaseVersionId("0", "patch-1", 7L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("tenantId must be positive");
+    assertThatThrownBy(() -> repository.findScriptPatchBaseVersionId("not-a-number", "patch-1"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("tenantId must be numeric");
+
+    assertThat(dsl.fetch("select * from script_patch_base_bindings")).isEmpty();
+  }
+
+  @Test
+  void retainedNullBaseVersionCannotBeAdoptedByAnExactBaseWrite() {
+    dsl.execute(
+        "INSERT INTO scripts (tenant_id, name, version, definition, base_version_id) "
+            + "VALUES (1, 'stable-script', 'v1', '{\"value\":1}', NULL)");
+    ScriptDefinition retained =
+        repository.findByTenantIdAndScriptVersionAndName(1L, "v1", "stable-script").orElseThrow();
+
+    assertThatThrownBy(() -> repository.save(script("{\"value\":2}")))
+        .isInstanceOf(ScriptDefinitionIdentityConflictException.class)
+        .hasMessageStartingWith("SCRIPT_DEFINITION_CONFLICT: ");
+
+    assertThat(repository.findById(retained.getId()))
+        .get()
+        .usingRecursiveComparison()
+        .isEqualTo(retained);
+    assertThat(dsl.fetchCount(SCRIPTS)).isEqualTo(1);
+  }
+
+  @Test
+  void explicitIdUpdateRetainsNullBaseVersionAndUpdatesContent() {
+    dsl.execute(
+        "INSERT INTO scripts (tenant_id, name, version, definition, base_version_id) "
+            + "VALUES (1, 'stable-script', 'v1', '{\"value\":1}', NULL)");
+    ScriptDefinition retained =
+        repository.findByTenantIdAndScriptVersionAndName(1L, "v1", "stable-script").orElseThrow();
+
+    ScriptDefinition replacement = script("{\"value\":2}");
+    replacement.setId(retained.getId());
+    replacement.setBaseVersionId(null);
+    replacement.setRowVersion(retained.getRowVersion());
+
+    ScriptDefinition saved = repository.save(replacement);
+
+    assertThat(saved.getId()).isEqualTo(retained.getId());
+    assertThat(saved.getBaseVersionId()).isNull();
+    assertThat(saved.getDefinition()).isEqualTo("{\"value\":2}");
+    assertThat(saved.getRowVersion()).isEqualTo(retained.getRowVersion() + 1);
+    assertThat(repository.findById(retained.getId())).contains(saved);
+  }
+
+  @Test
+  void explicitIdNullBaseIdentityConflictPreservesRetainedRow() {
+    dsl.execute(
+        "INSERT INTO scripts (tenant_id, name, version, definition, base_version_id) "
+            + "VALUES (1, 'stable-script', 'v1', '{\"value\":1}', NULL)");
+    ScriptDefinition retained =
+        repository.findByTenantIdAndScriptVersionAndName(1L, "v1", "stable-script").orElseThrow();
+
+    ScriptDefinition changedIdentity = script("{\"value\":2}");
+    changedIdentity.setId(retained.getId());
+    changedIdentity.setBaseVersionId(7L);
+    changedIdentity.setRowVersion(retained.getRowVersion());
+
+    assertThatThrownBy(() -> repository.save(changedIdentity))
+        .isInstanceOf(ScriptDefinitionIdentityConflictException.class)
+        .hasMessageContaining("existing=(tenantId=1, version=v1, baseVersionId=null")
+        .hasMessageContaining("requested=(tenantId=1, version=v1, baseVersionId=7");
+
+    assertThat(repository.findById(retained.getId()))
+        .get()
+        .usingRecursiveComparison()
+        .isEqualTo(retained);
   }
 
   @Test
@@ -245,6 +361,7 @@ class ScriptDefinitionRepositoryIntegrationTest {
     script.setTenantId(1L);
     script.setName("stable-script");
     script.setScriptVersion("v1");
+    script.setBaseVersionId(7L);
     script.setDefinition(definition);
     return script;
   }

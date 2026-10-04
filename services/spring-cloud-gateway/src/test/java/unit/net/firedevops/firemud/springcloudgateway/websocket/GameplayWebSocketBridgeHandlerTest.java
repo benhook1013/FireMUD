@@ -3,6 +3,7 @@ package net.firedevops.firemud.springcloudgateway.websocket;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -11,6 +12,8 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.net.URI;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -70,25 +73,67 @@ class GameplayWebSocketBridgeHandlerTest {
   }
 
   @Test
-  void bridgeGeneratesTransportSessionIdWhenTrustedAdmissionProvidesNone() {
+  void trustedProxyBridgeForwardsStableConnectionIdWithoutHopOrTransportSessionId() {
+    ReactorNettyWebSocketClient client = mock(ReactorNettyWebSocketClient.class);
+    List<HttpHeaders> upstreamHeaders = new ArrayList<>();
+    when(client.execute(any(URI.class), any(HttpHeaders.class), any(WebSocketHandler.class)))
+        .thenAnswer(
+            invocation -> {
+              HttpHeaders captured = new HttpHeaders();
+              HttpHeaders forwarded = invocation.getArgument(1);
+              captured.putAll(forwarded);
+              upstreamHeaders.add(captured);
+              return Mono.never();
+            });
+    GameplayWebSocketBridgeHandler handler =
+        new GameplayWebSocketBridgeHandler(
+            client,
+            new GameplayWebSocketBridgeProperties(
+                "ws://game-session-service:8080/ws/game", 0, 50L, 128),
+            new RuntimeIdentity(
+                "spring-cloud-gateway", "gateway-test", null, Instant.EPOCH, null, null, null));
+
+    for (String replaceableHopId : List.of("gateway-hop-a", "gateway-hop-b")) {
+      WebSocketSession downstream = mock(WebSocketSession.class);
+      HandshakeInfo handshakeInfo = mock(HandshakeInfo.class);
+      HttpHeaders headers = new HttpHeaders();
+      headers.set("X-Firemud-Connection-Mode", "trusted_tcp_proxy");
+      headers.set("X-Proxy-Connection-Id", "tcp-connection-481");
+      // Even a transport header on a trusted-proxy request is not forwarded as session identity.
+      headers.set("X-Firemud-Transport-Session-Id", "9999");
+
+      when(downstream.getId()).thenReturn(replaceableHopId);
+      when(downstream.getHandshakeInfo()).thenReturn(handshakeInfo);
+      when(handshakeInfo.getHeaders()).thenReturn(headers);
+      when(downstream.send(any())).thenReturn(Mono.never());
+      when(downstream.receive()).thenReturn(Flux.never());
+
+      StepVerifier.create(handler.handle(downstream))
+          .expectSubscription()
+          .thenAwait(Duration.ofMillis(100))
+          .thenCancel()
+          .verify();
+    }
+
+    assertThat(upstreamHeaders).hasSize(2);
+    for (HttpHeaders forwarded : upstreamHeaders) {
+      assertThat(forwarded.getFirst("X-Firemud-Connection-Mode")).isEqualTo("trusted_tcp_proxy");
+      assertThat(forwarded.getFirst("X-Proxy-Connection-Id")).isEqualTo("tcp-connection-481");
+      assertThat(forwarded.getFirst("X-Firemud-Transport-Session-Id")).isNull();
+    }
+  }
+
+  @Test
+  void trustedProxyBridgeFailsClosedWhenAuthenticatedConnectionIdIsMissing() {
     ReactorNettyWebSocketClient client = mock(ReactorNettyWebSocketClient.class);
     WebSocketSession downstream = mock(WebSocketSession.class);
     HandshakeInfo handshakeInfo = mock(HandshakeInfo.class);
     HttpHeaders headers = new HttpHeaders();
     headers.set("X-Firemud-Connection-Mode", "trusted_tcp_proxy");
-    AtomicReference<HttpHeaders> upstreamHeaders = new AtomicReference<>();
-
-    when(downstream.getId()).thenReturn("downstream");
+    headers.set("X-Firemud-Transport-Session-Id", "9001");
     when(downstream.getHandshakeInfo()).thenReturn(handshakeInfo);
     when(handshakeInfo.getHeaders()).thenReturn(headers);
-    when(downstream.send(any())).thenReturn(Mono.never());
-    when(downstream.receive()).thenReturn(Flux.never());
-    when(client.execute(any(URI.class), any(HttpHeaders.class), any(WebSocketHandler.class)))
-        .thenAnswer(
-            invocation -> {
-              upstreamHeaders.set(invocation.getArgument(1));
-              return Mono.never();
-            });
+    when(downstream.close(any(CloseStatus.class))).thenReturn(Mono.empty());
 
     GameplayWebSocketBridgeHandler handler =
         new GameplayWebSocketBridgeHandler(
@@ -98,18 +143,14 @@ class GameplayWebSocketBridgeHandlerTest {
             new RuntimeIdentity(
                 "spring-cloud-gateway", "gateway-test", null, Instant.EPOCH, null, null, null));
 
-    StepVerifier.create(handler.handle(downstream))
-        .expectSubscription()
-        .thenAwait(Duration.ofMillis(100))
-        .thenCancel()
-        .verify();
+    StepVerifier.create(handler.handle(downstream)).verifyComplete();
 
-    assertThat(upstreamHeaders.get()).isNotNull();
-    assertThat(upstreamHeaders.get().getFirst("X-Firemud-Connection-Mode"))
-        .isEqualTo("trusted_tcp_proxy");
-    assertThat(upstreamHeaders.get().getFirst("X-Firemud-Transport-Session-Id"))
-        .matches("\\d+")
-        .isNotEqualTo("9001");
+    ArgumentCaptor<CloseStatus> closeStatus = ArgumentCaptor.forClass(CloseStatus.class);
+    verify(downstream).close(closeStatus.capture());
+    assertThat(closeStatus.getValue().getCode()).isEqualTo(1008);
+    assertThat(closeStatus.getValue().getReason()).isEqualTo("policy_violation");
+    verify(client, never())
+        .execute(any(URI.class), any(HttpHeaders.class), any(WebSocketHandler.class));
   }
 
   @Test

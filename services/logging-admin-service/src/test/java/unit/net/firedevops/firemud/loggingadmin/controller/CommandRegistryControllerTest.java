@@ -1,5 +1,6 @@
 package net.firedevops.firemud.loggingadmin.controller;
 
+import static net.firedevops.firemud.loggingadmin.AccountJwtTestTokens.accountToken;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -44,7 +45,7 @@ class CommandRegistryControllerTest {
     when(commandRegistryService.validateBuiltInCommandAlias("LoGoFf"))
         .thenReturn(new BuiltInCommandAliasValidationDto(true, "logout"));
     SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -59,7 +60,7 @@ class CommandRegistryControllerTest {
   void validateBuiltInCommandAliasRejectsTenantOnlyCaller() throws Exception {
     SessionContext.setContext("user", List.of(), Map.of("2", List.of("tenantAdmin")));
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("2", List.of("tenantAdmin"))));
+        accountToken(jwtUtil, Map.of("scopedRoles", Map.of("2", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(

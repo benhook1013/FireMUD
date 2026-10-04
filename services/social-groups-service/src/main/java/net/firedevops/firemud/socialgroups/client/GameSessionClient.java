@@ -9,6 +9,7 @@ import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.gamesession.v1.GameSessionServiceGrpc;
 import net.firedevops.firemud.gamesession.v1.QueryAccountPresenceRequest;
 import net.firedevops.firemud.gamesession.v1.QueryAccountPresenceResponse;
@@ -49,15 +50,14 @@ public class GameSessionClient
   }
 
   public QueryAccountPresenceResponse queryAccountPresence(
-      long tenantId, long viewerAccountId, List<Long> accountIds) {
+      long tenantId, String viewerAccountId, List<String> accountIds) {
+    JwtClaims.requireAccountId(viewerAccountId, "viewerAccountId");
     QueryAccountPresenceRequest.Builder request =
         QueryAccountPresenceRequest.newBuilder()
             .setTenantId(Long.toString(tenantId))
-            .setViewerAccountId(Long.toString(viewerAccountId));
-    for (Long accountId : accountIds) {
-      if (accountId != null) {
-        request.addAccountIds(Long.toString(accountId));
-      }
+            .setViewerAccountId(viewerAccountId);
+    for (String accountId : accountIds) {
+      request.addAccountIds(JwtClaims.requireAccountId(accountId, "accountId"));
     }
     return stub().queryAccountPresence(request.build());
   }
