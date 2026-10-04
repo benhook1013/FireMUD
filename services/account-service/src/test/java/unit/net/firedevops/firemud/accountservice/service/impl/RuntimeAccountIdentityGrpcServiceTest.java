@@ -131,6 +131,26 @@ class RuntimeAccountIdentityGrpcServiceTest {
     verifyNoInteractions(repository);
   }
 
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "",
+        " ",
+        "42",
+        "not-a-uuid",
+        "1-1-1-1-1",
+        "00000000-0000-0000-0000-000000000000",
+        "4CAE05E8-7A6B-4B14-9D44-665E3EEC450B",
+        " 4cae05e8-7a6b-4b14-9d44-665e3eec450b"
+      })
+  void rejectsInvalidAccountAndRequestUuidTextWithoutOwnerRead(String value) {
+    assertThat(status(call(request(value, REQUEST_ID.toString()), GAME_SESSION_URI)))
+        .isEqualTo(Status.Code.INVALID_ARGUMENT);
+    assertThat(status(call(request(ACCOUNT_ID.toString(), value), GAME_SESSION_URI)))
+        .isEqualTo(Status.Code.INVALID_ARGUMENT);
+    verifyNoInteractions(repository);
+  }
+
   @Test
   void returnsNotFoundAndFailsClosedForMalformedAmbiguousOrMismatchedProvenance() {
     when(repository.findByAccountUuid(ACCOUNT_ID))

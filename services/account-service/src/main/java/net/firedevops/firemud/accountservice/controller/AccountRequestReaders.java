@@ -1,26 +1,18 @@
 package net.firedevops.firemud.accountservice.controller;
 
 import java.util.UUID;
+import net.firedevops.firemud.accountservice.AccountUuidText;
 import net.firedevops.firemud.common.security.RequestIdValidation;
 
 final class AccountRequestReaders {
-  private static final UUID NIL_UUID = new UUID(0L, 0L);
-
   private AccountRequestReaders() {}
 
   static UUID requireAccountUuid(String accountId) {
-    if (accountId == null || accountId.isBlank()) {
+    UUID parsed = AccountUuidText.parseOrNull(accountId);
+    if (parsed == null) {
       throw new IllegalArgumentException("accountId must be a canonical non-nil UUID");
     }
-    try {
-      UUID parsed = UUID.fromString(accountId);
-      if (NIL_UUID.equals(parsed) || !parsed.toString().equals(accountId)) {
-        throw new IllegalArgumentException("accountId must be a canonical non-nil UUID");
-      }
-      return parsed;
-    } catch (IllegalArgumentException exception) {
-      throw new IllegalArgumentException("accountId must be a canonical non-nil UUID", exception);
-    }
+    return parsed;
   }
 
   static long requireAccountId(String accountId) {

@@ -9,6 +9,7 @@ import java.util.UUID;
 import net.firedevops.firemud.account.v1.ResolveRuntimeAccountIdentityRequest;
 import net.firedevops.firemud.account.v1.ResolveRuntimeAccountIdentityResponse;
 import net.firedevops.firemud.account.v1.RuntimeAccountIdentityServiceGrpc;
+import net.firedevops.firemud.accountservice.AccountUuidText;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
@@ -52,8 +53,8 @@ public class RuntimeAccountIdentityGrpcService
       return;
     }
 
-    UUID canonicalAccountId = parseCanonicalNonNilUuid(request.getCanonicalAccountId());
-    UUID requestId = parseCanonicalNonNilUuid(request.getRequestId());
+    UUID canonicalAccountId = AccountUuidText.parseOrNull(request.getCanonicalAccountId());
+    UUID requestId = AccountUuidText.parseOrNull(request.getRequestId());
     if (canonicalAccountId == null
         || requestId == null
         || !request.getUnknownFields().asMap().isEmpty()) {
@@ -156,18 +157,6 @@ public class RuntimeAccountIdentityGrpcService
       return false;
     }
     return AccountIdentityProvenance.isAccepted(account.getAccountUuidProvenance());
-  }
-
-  private static UUID parseCanonicalNonNilUuid(String value) {
-    if (value == null) {
-      return null;
-    }
-    try {
-      UUID parsed = UUID.fromString(value);
-      return !NIL_UUID.equals(parsed) && parsed.toString().equals(value) ? parsed : null;
-    } catch (IllegalArgumentException ex) {
-      return null;
-    }
   }
 
   private static boolean hasConnectionFailureSqlState(Throwable failure) {
