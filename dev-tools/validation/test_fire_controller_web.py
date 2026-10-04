@@ -562,6 +562,13 @@ class IsolatedWebsiteIntegrationTest(unittest.TestCase):
             thread.start()
             try:
                 connection = HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+                # The live output directory contains HTML, not the source stylesheet.
+                connection.request("GET", "/shared.css")
+                stylesheet = connection.getresponse()
+                css = stylesheet.read()
+                self.assertEqual(stylesheet.status, 200)
+                self.assertEqual(stylesheet.getheader("Content-Type"), "text/css; charset=utf-8")
+                self.assertEqual(css, (SITE / "shared.css").read_bytes())
                 for route in routes:
                     with self.subTest(route=route):
                         connection.request("GET", route)

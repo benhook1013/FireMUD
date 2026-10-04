@@ -27,7 +27,7 @@ UNCHANGED = {
 }
 POST_PATCH = {
     "render.py": "51f9a81bd921c1e6c3d864236859404b4c238e8ec2c34d540c3f60ba05e66f23",
-    "server.py": "b53044ff02ef98508484689b590e18cef2f22087a4fb5a75cfb3c33af02ef9ce",
+    "server.py": "2e585fafe4e0052e3eca1b347eadc564fa8cd0ac0cf6f43720b59b87f58c96a3",
     "publish-hetzner.py": "6d3a4dad2de8cdccd760aaaa17843926cbbeb97db4b392d17227c6162dee4298",
     "render_progress.py": "d1f2b3bdc2862ba46166e8d30348920f0836e52eec1bdde28ed2378a0b0c47a2",
 }
