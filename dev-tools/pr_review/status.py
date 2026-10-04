@@ -1161,6 +1161,9 @@ def build_report(
             inventory.get("available") and aggregate["state"] == "SUCCESS" and (failed or pending)
         ),
         "inventory": inventory.get("inventory", []),
+        "inventory_available": bool(inventory.get("available")),
+        "inventory_status": "available" if inventory.get("available") else inventory.get("status", "unavailable"),
+        "inventory_reason": inventory.get("reason"),
         "required": required,
     }
     rendered_inventory = {key: value for key, value in inventory.items() if key != "_entries"}
@@ -1246,6 +1249,19 @@ def emit_text(report: Mapping[str, Any]) -> str:
     aggregate_label = "GitHub statusCheckRollup" if aggregate.get("source") == "github" else "rollup"
     optional = report["ci"]["optional"]
     optional_failed = str(len(optional["failed"])) if optional.get("available", True) else "unknown"
+    inventory_available = report["ci"].get("inventory_available", False)
+    observation_label = "inventory checks" if inventory_available else "rollup observations"
+    if inventory_available:
+        check_counts = (
+            f"inventory_pending={len(report['ci']['pending'])} · inventory_failed={len(report['ci']['failed'])}"
+            f" · observed={report['ci']['observed']}"
+        )
+    else:
+        check_counts = (
+            f"inventory={report['ci'].get('inventory_status', 'unknown')}"
+            f" · rollup_pending={len(report['ci']['pending'])} · rollup_failed={len(report['ci']['failed'])}"
+            f" · rollup_observed={report['ci']['observed']}"
+        )
     finding_counts = report["checkpoint_counts"]["by_type"]
     def count_triplet(kind: str) -> str:
         value = finding_counts[kind]
@@ -1260,11 +1276,13 @@ def emit_text(report: Mapping[str, Any]) -> str:
         f"routes: incoming-open={len(report.get('incoming_routes', []))} · source-history={len(report.get('routes_out', []))}",
         f"review: decision={report['review_decision']['status']} · required={required.get('status')} ({required_contexts})",
         f"findings found/accepted/routed: Hosted {count_triplet('Hosted')} · CLI {count_triplet('CLI')}",
-        f"CI: {aggregate_label}={aggregate['state']} · inventory_pending={len(report['ci']['pending'])} · inventory_failed={len(report['ci']['failed'])} · optional_failed={optional_failed} · observed={report['ci']['observed']}",
-        f"pending inventory checks: {pending_names}",
-        f"failed inventory checks: {failed_names}",
+        f"CI: {aggregate_label}={aggregate['state']} · {check_counts} · optional_failed={optional_failed}",
+        f"pending {observation_label}: {pending_names}",
+        f"failed {observation_label}: {failed_names}",
         f"verdict: {report['verdict']}",
     ]
+    if not inventory_available and report["ci"].get("inventory_reason"):
+        lines.append(f"CI inventory unavailable: {report['ci']['inventory_reason']}")
     if report["ci"].get("aggregate_inventory_conflict"):
         lines.append("CI evidence conflict: SUCCESS rollup coexists with failed or pending inventory checks")
     for route in report.get("incoming_routes", []):

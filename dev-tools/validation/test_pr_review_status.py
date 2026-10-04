@@ -1086,6 +1086,37 @@ class StatusTest(unittest.TestCase):
         self.assertEqual(report["verdict"], "READY")
         self.assertIn("optional_failed=1", status.emit_text(report))
 
+    def test_unavailable_inventory_labels_empty_and_failed_fallback_as_rollup_observations(self) -> None:
+        for failure in (False, True):
+            with self.subTest(failure=failure):
+                payload = github_payload()
+                pr = payload["data"]["repository"]["pullRequest"]
+                pr["reviewThreads"] = {"nodes": []}
+                pr["statusCheckRollup"] = (
+                    [{"name": "Account", "status": "COMPLETED", "conclusion": "FAILURE"}]
+                    if failure else []
+                )
+                report = self._ready_report(
+                    payload,
+                    check_inventory_payload={"available": False, "reason": "complete check inventory unavailable"},
+                )
+
+                self.assertFalse(report["ci"]["inventory_available"])
+                self.assertEqual(report["ci"]["inventory_status"], "unavailable")
+                self.assertEqual(report["ci"]["inventory_reason"], "complete check inventory unavailable")
+                self.assertEqual(report["ci"]["aggregate"], {"state": "SUCCESS", "source": "github"})
+                self.assertFalse(report["ci"]["aggregate_inventory_conflict"])
+                self.assertFalse(report["ready"])
+                compact = status.emit_text(report)
+                self.assertIn("inventory=unavailable", compact)
+                self.assertNotIn("inventory_pending=", compact)
+                self.assertNotIn("inventory_failed=", compact)
+                self.assertNotIn("inventory checks:", compact)
+                self.assertIn(f"rollup_observed={int(failure)}", compact)
+                self.assertIn(f"rollup_failed={int(failure)}", compact)
+                self.assertIn(f"failed rollup observations: {'Account' if failure else 'none'}", compact)
+                self.assertIn("CI inventory unavailable: complete check inventory unavailable", compact)
+
     def test_cli_status_fails_closed_when_snapshots_have_different_base_or_head(self) -> None:
         report = {
             "pull_request": {
