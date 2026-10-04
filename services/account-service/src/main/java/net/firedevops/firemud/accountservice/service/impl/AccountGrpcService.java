@@ -1,6 +1,7 @@
 package net.firedevops.firemud.accountservice.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -67,6 +68,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   private static final int MAX_ACCOUNT_IDS_PER_REQUEST = 100;
   private static final String AUTHORITY_UNAVAILABLE_MESSAGE =
       "Account authority unavailable; retry later";
+  private static final String ACCOUNT_CREATION_INTERNAL_ERROR_MESSAGE = "Account creation failed";
   private final PingService pingService;
   private final AccountService accountService;
   private final MeterRegistry meterRegistry;
@@ -278,7 +280,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               request.getUsername(), request.getEmail(), request.getPassword());
       var account = accountService.createAccount(dto);
       CreateAccountResponse response =
-          CreateAccountResponse.newBuilder().setAccountId(account.id().toString()).build();
+          CreateAccountResponse.newBuilder().setAccountId(account.id()).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (AccountAlreadyExistsException ex) {
@@ -299,6 +301,11 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               .setError(appError("CreateAccount", "INVALID_ARGUMENT", ex.getMessage()))
               .build());
       responseObserver.onCompleted();
+    } catch (IllegalStateException ex) {
+      responseObserver.onError(
+          Status.INTERNAL
+              .withDescription(ACCOUNT_CREATION_INTERNAL_ERROR_MESSAGE)
+              .asRuntimeException());
     }
   }
 

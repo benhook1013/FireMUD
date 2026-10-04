@@ -58,7 +58,13 @@ class PublicBootstrapRoutesProdProfileTest {
     CreateAccountRequest request =
         new CreateAccountRequest("demo", "demo@example.com", "swordfish");
     when(accountService.createAccount(request))
-        .thenReturn(new AccountDto(1L, "demo", "demo@example.com", "player", true));
+        .thenReturn(
+            new AccountDto(
+                "4cae05e8-7a6b-4b14-9d44-665e3eec450b",
+                "demo",
+                "demo@example.com",
+                "player",
+                true));
 
     mockMvc
         .perform(
@@ -67,7 +73,7 @@ class PublicBootstrapRoutesProdProfileTest {
                 .content(objectMapper.writeValueAsString(request)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
-        .andExpect(jsonPath("$.data.id").value(1))
+        .andExpect(jsonPath("$.data.id").value("4cae05e8-7a6b-4b14-9d44-665e3eec450b"))
         .andExpect(jsonPath("$.data.username").value("demo"));
   }
 }
