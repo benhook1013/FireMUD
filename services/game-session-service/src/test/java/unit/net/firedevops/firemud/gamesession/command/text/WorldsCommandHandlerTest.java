@@ -91,18 +91,6 @@ class WorldsCommandHandlerTest {
         properties.getWorlds().getFirst().getRealms().get(1);
     AccountClient accountClient = Mockito.mock(AccountClient.class);
     stubPublicConnectScope(accountClient, "scope-public");
-    Mockito.when(
-            accountClient.getTenantMembershipForRuntime(
-                Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
-        .thenReturn(activeMembership());
-    Mockito.when(
-            accountClient.getRealmAccessGrantForRuntime(
-                Mockito.anyString(),
-                Mockito.anyString(),
-                Mockito.eq("demo"),
-                Mockito.eq("playtest"),
-                Mockito.anyString()))
-        .thenReturn(grant("demo", "playtest", false));
     WorldsCommandHandler localHandler = authenticatedHandler(properties, accountClient);
 
     assertThat(localHandler.browseRealms(authenticatedSession(), "demo"))
@@ -187,18 +175,6 @@ class WorldsCommandHandlerTest {
         properties.getWorlds().getFirst().getRealms().get(1);
     AccountClient accountClient = Mockito.mock(AccountClient.class);
     stubPublicConnectScope(accountClient, "scope-public");
-    Mockito.when(
-            accountClient.getTenantMembershipForRuntime(
-                Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
-        .thenReturn(activeMembership());
-    Mockito.when(
-            accountClient.getRealmAccessGrantForRuntime(
-                Mockito.anyString(),
-                Mockito.anyString(),
-                Mockito.eq("demo"),
-                Mockito.eq("playtest"),
-                Mockito.anyString()))
-        .thenReturn(grant("demo", "playtest", false));
     Mockito.when(
             accountClient.joinPublicProductionMembership(
                 Mockito.any(),

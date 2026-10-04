@@ -458,7 +458,7 @@ class AccountJoinReconciliationPostgresIntegrationTest {
     assertThat(updated).isEqualTo(1);
     int auditUpdated =
         dsl.execute(
-            "UPDATE account_audit_outbox SET delivery_status = 'COMMITTED', receiver_audit_projection_version = 1, receiver_receipt_id = 'verified-receipt', receiver_log_event_id = 'verified-projection' WHERE audit_event_id = ? AND scope = 'tenant' AND tenant_id = ? AND producer_service = 'account-service' AND event_type = 'ACCOUNT_JOINED_PUBLIC_PRODUCTION'",
+            "UPDATE account_audit_outbox SET delivery_status = 'COMMITTED', next_attempt_at = NULL, receiver_audit_projection_version = 1, receiver_receipt_id = 'verified-receipt', receiver_log_event_id = 'verified-projection' WHERE audit_event_id = ? AND scope = 'tenant' AND tenant_id = ? AND producer_service = 'account-service' AND event_type = 'ACCOUNT_JOINED_PUBLIC_PRODUCTION'",
             joinAuditEventId(fixture.requestId()),
             fixture.tenantId());
     assertThat(auditUpdated).isEqualTo(1);

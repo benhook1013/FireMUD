@@ -1237,7 +1237,9 @@ public class AccountServiceImpl implements AccountService {
       membership =
           getTenantMembershipForRuntime(
               bootstrapContext.accountId(), scopeContext.tenantId(), requestId);
-    } catch (org.springframework.dao.DataAccessException ex) {
+    } catch (MappingException | ConfigurationException ex) {
+      throw ex;
+    } catch (DataAccessException | org.springframework.dao.DataAccessException ex) {
       throw new AuthenticationException(
           "AUTH_UNAVAILABLE", "Membership authority is unavailable; retry later", ex);
     }

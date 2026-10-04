@@ -1459,11 +1459,28 @@ class AccountRepositoryIntegrationTest {
         .isEqualTo(explicitMembershipBefore);
     assertThat(
             jsonRow(
-                "SELECT to_jsonb(j)::text FROM "
+                "SELECT (to_jsonb(j) - 'reconciliation_attempt_count' "
+                    + "- 'last_reconciliation_attempt_at' "
+                    + "- 'last_reconciliation_attempt_reason' "
+                    + "- 'next_reconciliation_attempt_at')::text FROM "
                     + schema
                     + ".account_join_operations j WHERE request_id = ?",
                 pendingJoinRequestId))
         .isEqualTo(pendingJoinBefore);
+    assertThat(
+            dsl.fetchOne(
+                "SELECT reconciliation_attempt_count, last_reconciliation_attempt_at, "
+                    + "last_reconciliation_attempt_reason, next_reconciliation_attempt_at FROM "
+                    + schema
+                    + ".account_join_operations WHERE request_id = ?",
+                pendingJoinRequestId))
+        .satisfies(
+            row -> {
+              assertThat(row.get("reconciliation_attempt_count", Integer.class)).isZero();
+              assertThat(row.get("last_reconciliation_attempt_at")).isNull();
+              assertThat(row.get("last_reconciliation_attempt_reason", String.class)).isNull();
+              assertThat(row.get("next_reconciliation_attempt_at")).isNotNull();
+            });
     assertThat(
             jsonRow(
                 "SELECT to_jsonb(s)::text FROM "

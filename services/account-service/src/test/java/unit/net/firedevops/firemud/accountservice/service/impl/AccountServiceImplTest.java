@@ -4068,8 +4068,10 @@ class AccountServiceImplTest {
     verifyNoConnectTokenReplayWrites();
   }
 
-  @Test
-  void issueConnectTokenReturnsAuthUnavailableWhenMembershipRepositoryIsUnavailable() {
+  @ParameterizedTest
+  @ValueSource(
+      strings = {"jooq-data-access", "spring-data-access", "jooq-mapping", "jooq-configuration"})
+  void issueConnectTokenClassifiesMembershipReadFailuresWithoutWritingReplay(String failureType) {
     Account account = new Account();
     account.setId(11L);
     account.setUsername("demo");
@@ -4090,31 +4092,52 @@ class AccountServiceImplTest {
         service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
     ConnectTokenRequest request = new ConnectTokenRequest(connectScopeId, "req-membership-outage");
     ConnectTokenResult issued = service.issueConnectToken(bootstrap.bootstrapToken(), request);
-    DataAccessResourceFailureException unavailable =
-        new DataAccessResourceFailureException("membership authority unavailable");
-    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
-        .thenThrow(unavailable);
+    RuntimeException cause =
+        switch (failureType) {
+          case "jooq-data-access" ->
+              new org.jooq.exception.DataAccessException("membership authority unavailable");
+          case "spring-data-access" ->
+              new DataAccessResourceFailureException("membership authority unavailable");
+          case "jooq-mapping" -> new MappingException("membership mapping failed");
+          case "jooq-configuration" -> new ConfigurationException("membership query misconfigured");
+          default -> throw new IllegalArgumentException("Unknown membership failure type");
+        };
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L)).thenThrow(cause);
 
     org.mockito.Mockito.clearInvocations(sessionService);
-    AuthenticationException freshFailure =
-        assertThrows(
-            AuthenticationException.class,
-            () -> service.issueConnectToken(bootstrap.bootstrapToken(), request));
-
-    assertEquals("AUTH_UNAVAILABLE", freshFailure.getCode());
-    assertSame(unavailable, freshFailure.getCause());
+    if (failureType.endsWith("data-access")) {
+      AuthenticationException freshFailure =
+          assertThrows(
+              AuthenticationException.class,
+              () -> service.issueConnectToken(bootstrap.bootstrapToken(), request));
+      assertEquals("AUTH_UNAVAILABLE", freshFailure.getCode());
+      assertSame(cause, freshFailure.getCause());
+    } else {
+      RuntimeException freshFailure =
+          assertThrows(
+              RuntimeException.class,
+              () -> service.issueConnectToken(bootstrap.bootstrapToken(), request));
+      assertSame(cause, freshFailure);
+    }
     verifyNoConnectTokenReplayWrites();
 
     when(sessionService.getConnectTokenReplay(7L, 11L, connectScopeId, request.requestId()))
         .thenReturn(Optional.of(new SessionService.ConnectTokenReplay(true, issued, "", "")));
     org.mockito.Mockito.clearInvocations(sessionService);
-    AuthenticationException replayFailure =
-        assertThrows(
-            AuthenticationException.class,
-            () -> service.issueConnectToken(bootstrap.bootstrapToken(), request));
-
-    assertEquals("AUTH_UNAVAILABLE", replayFailure.getCode());
-    assertSame(unavailable, replayFailure.getCause());
+    if (failureType.endsWith("data-access")) {
+      AuthenticationException replayFailure =
+          assertThrows(
+              AuthenticationException.class,
+              () -> service.issueConnectToken(bootstrap.bootstrapToken(), request));
+      assertEquals("AUTH_UNAVAILABLE", replayFailure.getCode());
+      assertSame(cause, replayFailure.getCause());
+    } else {
+      RuntimeException replayFailure =
+          assertThrows(
+              RuntimeException.class,
+              () -> service.issueConnectToken(bootstrap.bootstrapToken(), request));
+      assertSame(cause, replayFailure);
+    }
     verifyNoConnectTokenReplayWrites();
   }
 
