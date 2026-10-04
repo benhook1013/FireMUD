@@ -78,7 +78,8 @@ class ControllerHelpTest(unittest.TestCase):
         allocation = self.help("reviews", "decide", "allocation")
         self.assertIn("renew to replace an existing allocation or human stop", allocation)
         self.assertIn("does not request a review", allocation)
-        self.assertIn("Exact rounds do not reset taper unless", allocation)
+        self.assertIn("Exact rounds always preserve taper", allocation)
+        self.assertIn("cannot be combined with --fresh-taper", allocation)
 
 
 class ControllerCliTest(unittest.TestCase):

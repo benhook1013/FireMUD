@@ -428,8 +428,8 @@ def _parser() -> argparse.ArgumentParser:
     allocation = decide_commands.add_parser(
         "allocation", help="grant, renew, or cancel one exact-bound channel review allocation",
         description=("Grant a new allocation, or renew to replace an existing allocation or human stop explicitly. "
-                     "Recording an allocation does not request a review. Exact rounds do not reset taper unless "
-                     "--fresh-taper is explicitly supplied."),
+                     "Recording an allocation does not request a review. Exact rounds always preserve taper "
+                     "and cannot be combined with --fresh-taper."),
         epilog=("Example: firemud-controller reviews decide allocation grant --pr 123 --channel cli\n"
                 "  --head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --exact-additional-completed 2\n"
                 "  --reason 'Human requested two further completed results'\n"
