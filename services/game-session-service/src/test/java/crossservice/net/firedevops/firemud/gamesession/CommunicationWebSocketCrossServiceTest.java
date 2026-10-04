@@ -19,6 +19,7 @@ import net.firedevops.firemud.socialgroups.v1.ChatType;
 import net.firedevops.firemud.socialgroups.v1.FriendPresenceActivityState;
 import net.firedevops.firemud.socialgroups.v1.FriendPresenceEntry;
 import net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy;
+import net.firedevops.firemud.test.AccountRuntimeStubServer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.GenericContainer;
@@ -952,15 +953,16 @@ class CommunicationWebSocketCrossServiceTest {
   }
 
   private GameplayWebSocketDriver openFirstPartyClient(String transportSessionId) {
+    String accountUuid = AccountRuntimeStubServer.accountUuidForTestFixture(ACCOUNT_ID);
     return GameplayWebSocketDriver.connectFirstPartyWeb(
         URI.create("ws://localhost:" + gameSession().port() + "/ws/game"),
         COMMAND_WAIT,
         transportSessionId,
         FIRST_PARTY_CONNECT_SECRET,
-        Long.toString(ACCOUNT_ID),
+        accountUuid,
         Map.of(
             "accountId",
-            Long.toString(ACCOUNT_ID),
+            accountUuid,
             "tenantId",
             Long.toString(TENANT_ID),
             "worldSlug",
