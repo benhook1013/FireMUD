@@ -767,9 +767,12 @@ class AccountConnectStorageUuidMigrationIntegrationTest {
 
   private static Database newDatabase() throws SQLException {
     String schema = "account_connect_uuid_" + UUID.randomUUID().toString().replace("-", "");
+    String separator = postgres.getJdbcUrl().contains("?") ? "&" : "?";
     DriverManagerDataSource dataSource =
         new DriverManagerDataSource(
-            postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+            postgres.getJdbcUrl() + separator + "currentSchema=" + schema,
+            postgres.getUsername(),
+            postgres.getPassword());
     dataSource.setDriverClassName("org.postgresql.Driver");
     try (Connection connection = dataSource.getConnection();
         Statement statement = connection.createStatement()) {
