@@ -288,19 +288,11 @@ class WorldAuthoredSourceIntakeIntegrationTest {
         .isEmpty();
     assertThat(
             repository.readBySource(
-                NAMESPACE,
-                tenant,
-                "another-world",
-                source.operationId(),
-                source.evidenceDigest()))
+                NAMESPACE, tenant, "another-world", source.operationId(), source.evidenceDigest()))
         .isEmpty();
     assertThat(
             repository.readBySource(
-                NAMESPACE,
-                tenant,
-                source.worldSlug(),
-                UUID.randomUUID(),
-                source.evidenceDigest()))
+                NAMESPACE, tenant, source.worldSlug(), UUID.randomUUID(), source.evidenceDigest()))
         .isEmpty();
     assertThat(
             repository.readBySource(
@@ -312,8 +304,7 @@ class WorldAuthoredSourceIntakeIntegrationTest {
         .isEmpty();
 
     AuthoredWorldSourceEvidence retainedSource =
-        source(
-            tenant, tenantSlug, "retained-world", sourceRowId, "Retained", "RETAINED_GAME_V30");
+        source(tenant, tenantSlug, "retained-world", sourceRowId, "Retained", "RETAINED_GAME_V30");
     assertThat(
             repository.readBySource(
                 NAMESPACE,
@@ -370,11 +361,7 @@ class WorldAuthoredSourceIntakeIntegrationTest {
     assertThatThrownBy(
             () ->
                 repository.readBySource(
-                    NAMESPACE,
-                    tenant,
-                    source.worldSlug(),
-                    nilUuid,
-                    source.evidenceDigest()))
+                    NAMESPACE, tenant, source.worldSlug(), nilUuid, source.evidenceDigest()))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(
             () ->
