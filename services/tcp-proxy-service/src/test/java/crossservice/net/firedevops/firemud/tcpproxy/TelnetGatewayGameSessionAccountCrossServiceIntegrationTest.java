@@ -131,13 +131,6 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
         .setCharacters(
             List.of("Emberline", "Sora", "Nyx").stream()
                 .map(ChatTestFixtures::characterByName)
-                .map(
-                    character ->
-                        character.toBuilder()
-                            .setAccountId(
-                                AccountRuntimeStubServer.accountUuidForTestFixture(
-                                    Long.parseLong(character.getAccountId())))
-                            .build())
                 .toList());
   }
 
