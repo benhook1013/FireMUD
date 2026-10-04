@@ -723,7 +723,7 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
           "fixture-owner-key",
           "owner-reviewer",
           "approval-" + operationId,
-          java.time.Instant.now().toString(),
+          java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS).toString(),
           projectionDigest,
           "sha256:" + "c".repeat(64),
           "sha256:" + "d".repeat(64),
