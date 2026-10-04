@@ -50,6 +50,7 @@ import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyAccountTenantAssociationResponse;
+import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -93,6 +94,26 @@ class AccountMembershipTransitionReceiptCanonicalIntegrationTest {
     restoreMembership(fixture, pair, 3L, 3L);
     migrateToV48(fixture);
 
+    assertThat(v1ReceiptProjection(fixture.setupDsl(), pair.accountId(), RETAINED_TENANT_ID, 1L))
+        .containsExactlyEntriesOf(v1RowBefore);
+    assertThat(v1HeadProjection(fixture.setupDsl(), pair.accountId(), RETAINED_TENANT_ID))
+        .containsEntry("last_receipt_sequence", 1L)
+        .containsEntry("receipt_stream_key", v1HeadBefore.get("receipt_stream_key"));
+    assertReceiptMutationRejected(
+        () ->
+            fixture
+                .setupDsl()
+                .execute(
+                    "UPDATE account_membership_transition_receipts "
+                        + "SET evidence_status = 'MUTATED' WHERE request_id = ?",
+                    "retained-v1-left"));
+    assertReceiptMutationRejected(
+        () ->
+            fixture
+                .setupDsl()
+                .execute(
+                    "DELETE FROM account_membership_transition_receipts " + "WHERE request_id = ?",
+                    "retained-v1-left"));
     assertThat(v1ReceiptProjection(fixture.setupDsl(), pair.accountId(), RETAINED_TENANT_ID, 1L))
         .containsExactlyEntriesOf(v1RowBefore);
     assertThat(v1HeadProjection(fixture.setupDsl(), pair.accountId(), RETAINED_TENANT_ID))
@@ -1098,6 +1119,19 @@ class AccountMembershipTransitionReceiptCanonicalIntegrationTest {
 
   private static void migrateToV48(Fixture fixture) {
     flyway(fixture.dataSource(), fixture.schema(), "48").migrate();
+  }
+
+  private static void assertReceiptMutationRejected(ThrowingCallable mutation) {
+    assertThatThrownBy(mutation)
+        .satisfies(
+            failure -> {
+              Throwable rootCause = failure;
+              while (rootCause.getCause() != null) {
+                rootCause = rootCause.getCause();
+              }
+              assertThat(rootCause.getMessage())
+                  .contains("Account membership transition receipts are append-only");
+            });
   }
 
   private static AccountMembershipTransitionReceiptRepository repository(Fixture fixture) {

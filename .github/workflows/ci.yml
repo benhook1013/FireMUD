@@ -1408,6 +1408,7 @@ jobs:
             --strict \
             --require-suite integration.net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest \
             --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest#commitsCatalogBackedClosedPointerWithoutNumericOrRuntimeAliases()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest#canonicalClosedRowsRejectNumericRuntimeAndNamespaceAliasesWithoutGrowingEvidence()' \
             --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest#exactRetryAndLostResponseReadbackPreserveTheOriginalOutcomeAndEvent()' \
             --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest#changedAuditOrCatalogInputUnderTheSameRequestConflictsWithoutAddingRows()' \
             --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest#concurrentExactCreationLeavesOnePointerEventAndImmutableOutcome()' \
@@ -1574,15 +1575,15 @@ jobs:
           bash dev-tools/validation/inspect-test-results.sh \
             --strict \
             --require-suite net.firedevops.firemud.loggingadmin.service.impl.AccountAuditCanonicalIdentityMtlsTest \
-            --require-case 'net.firedevops.firemud.loggingadmin.service.impl.AccountAuditCanonicalIdentityMtlsTest#validAccountCanonicalUuidCreateAndReadEchoExactIdentityOverSocketMtls()' \
-            --require-case 'net.firedevops.firemud.loggingadmin.service.impl.AccountAuditCanonicalIdentityMtlsTest#retainedV1NumericCreateAndReadEchoExplicitIdentityOverSocketMtls()' \
-            --require-case 'net.firedevops.firemud.loggingadmin.service.impl.AccountAuditCanonicalIdentityMtlsTest#retainedV1PlatformCreateAndReadEchoExplicitIdentityOverSocketMtls()' \
+            --require-case 'net.firedevops.firemud.loggingadmin.service.impl.AccountAuditCanonicalIdentityMtlsTest#canonicalUuidCreateIsUnavailableAndReadEchoesExactIdentityOverSocketMtls()' \
+            --require-case 'net.firedevops.firemud.loggingadmin.service.impl.AccountAuditCanonicalIdentityMtlsTest#retainedV1NumericCreateIsUnavailableAndReadEchoesIdentityOverSocketMtls()' \
+            --require-case 'net.firedevops.firemud.loggingadmin.service.impl.AccountAuditCanonicalIdentityMtlsTest#retainedV1PlatformCreateIsUnavailableAndReadEchoesIdentityOverSocketMtls()' \
             --require-case 'net.firedevops.firemud.loggingadmin.service.impl.AccountAuditCanonicalIdentityMtlsTest#missingClientCertificateIsRejectedByTls()' \
             --require-case 'net.firedevops.firemud.loggingadmin.service.impl.AccountAuditCanonicalIdentityMtlsTest#wrongServiceValidCaCertificateCannotInvokeEitherAccountAuditMethod()' \
             --require-case 'net.firedevops.firemud.loggingadmin.service.impl.AccountAuditCanonicalIdentityMtlsTest#wrongNamespaceCertificateCannotInvokeEitherAccountAuditMethod()' \
             --require-case 'net.firedevops.firemud.loggingadmin.service.impl.AccountAuditCanonicalIdentityMtlsTest#sharedCertificateWithoutWorkloadUriCannotInvokeEitherAccountAuditMethod()' \
             --require-case 'net.firedevops.firemud.loggingadmin.service.impl.AccountAuditCanonicalIdentityMtlsTest#jwtOnlyCallerCannotBypassMissingClientCertificate()' \
-            --require-case 'net.firedevops.firemud.loggingadmin.service.impl.AccountAuditCanonicalIdentityMtlsTest#mixedAndUnknownTenantIdentityFailBeforeLogEventServiceInvocation()' \
+            --require-case 'net.firedevops.firemud.loggingadmin.service.impl.AccountAuditCanonicalIdentityMtlsTest#createGatePrecedesIdentityValidationAndReadRejectsMalformedIdentity()' \
             logging-admin-service
 
       - name: Upload Logging Account audit physical mTLS proof results
