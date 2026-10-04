@@ -207,7 +207,7 @@ class WorldLifecycleCommandServiceImplTest {
                 "{}",
                 "genrev-11",
                 77L,
-                "prb:42:11:77",
+                PERSISTED_RELEASE_BUNDLE_REF,
                 77L));
 
     assertEquals("PREPARING", prepared.status());

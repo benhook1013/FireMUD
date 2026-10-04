@@ -312,7 +312,11 @@ public final class AccountBareLoginCurrentAuthorityReader {
     if (!versionMap.keySet().equals(Set.of(tenantUuid.toString()))) {
       throw invalidEvidence();
     }
-    return Map.of(tenantUuid.toString(), positiveInteger(versionMap.get(tenantUuid.toString())));
+    Object version = versionMap.get(tenantUuid.toString());
+    if (!(version instanceof String decimalVersion)) {
+      throw invalidEvidence();
+    }
+    return Map.of(tenantUuid.toString(), decimalInteger(decimalVersion));
   }
 
   private static void requireCaptureMatchesCurrentFence(

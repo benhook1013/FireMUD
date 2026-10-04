@@ -320,6 +320,71 @@ class AccountBareLoginCurrentAuthorityReaderTest {
   }
 
   @Test
+  void membershipVersionAcceptsCanonicalDecimalStringsBeyondPrimitiveIntegerRange() {
+    Fixture base = fixture();
+    String largeVersion = "1234567890123456789012345678901234567890";
+    Map<String, Object> sourceClaims = new LinkedHashMap<>(base.source().originalSourceClaims());
+    sourceClaims.put("membershipVersion", Map.of(TENANT_UUID.toString(), largeVersion));
+    Map<String, Object> gatewayClaims =
+        GatewayConnectContextCodec.projectVerifiedAccountGameplayConnectClaims(
+            sourceClaims, NOW.getEpochSecond(), "gateway-request-1");
+    Fixture fixture =
+        new Fixture(
+            base.identity(),
+            sourceEvidence(sourceClaims, gatewayClaims),
+            base.capture(),
+            base.snapshot(),
+            base.authorityTuple(),
+            base.accountAuthority());
+    installHappyPath(fixture);
+    when(fixture.snapshot().membershipBaseline())
+        .thenReturn(
+            new MembershipBaseline("ACTIVE", Map.of(TENANT_UUID.toString(), largeVersion), "5"));
+
+    CurrentAuthorityReadback result =
+        reader.read(fixture.identity(), REQUEST_DIGEST, SIGNED_CONTEXT);
+
+    assertEquals(Map.of(TENANT_UUID.toString(), largeVersion), result.membershipVersion());
+    verify(committedSourceReader, org.mockito.Mockito.times(2))
+        .read(fixture.identity(), SIGNED_CONTEXT);
+  }
+
+  @Test
+  void membershipVersionRejectsNonStringNoncanonicalAndWrongTenantSourceValues() {
+    List<Object> invalidValues =
+        List.of(
+            Map.of(TENANT_UUID.toString(), BigInteger.valueOf(8)),
+            Map.of(TENANT_UUID.toString(), "08"),
+            Map.of(TENANT_UUID.toString(), "0"),
+            Map.of("00000000-0000-4000-8000-000000000099", "8"),
+            Map.of(TENANT_UUID.toString(), "8", "00000000-0000-4000-8000-000000000099", "9"));
+
+    for (Object invalidValue : invalidValues) {
+      org.mockito.Mockito.clearInvocations(
+          committedSourceReader, captureService, membershipProducer, authorityGenerationRepository);
+      Fixture fixture = fixture();
+      Map<String, Object> sourceClaims =
+          new LinkedHashMap<>(fixture.source().originalSourceClaims());
+      sourceClaims.put("membershipVersion", invalidValue);
+      // This substitutes source-reader output to exercise defensive validation. It does not claim
+      // that Gateway or the production source verifier accepts these malformed source claims.
+      OriginalSourceEvidence substitutedSource =
+          sourceEvidence(sourceClaims, fixture.source().gatewayContextClaims());
+      installHappyPath(fixture);
+      doReturn(substitutedSource)
+          .when(committedSourceReader)
+          .read(fixture.identity(), SIGNED_CONTEXT);
+
+      assertThrows(
+          IllegalStateException.class,
+          () -> reader.read(fixture.identity(), REQUEST_DIGEST, SIGNED_CONTEXT));
+
+      verify(committedSourceReader, org.mockito.Mockito.times(1))
+          .read(fixture.identity(), SIGNED_CONTEXT);
+    }
+  }
+
+  @Test
   void captureCounterAndFenceSourceVersionMustEqualCurrentDurableAccountFence() {
     Fixture fixture = fixture();
     AccountConnectIssuanceFenceEvidence wrongCounterCapture =
@@ -569,7 +634,7 @@ class AccountBareLoginCurrentAuthorityReaderTest {
     claims.put("connectScopeId", CONNECT_SCOPE_ID);
     claims.put("requestId", REQUEST_ID);
     claims.put("authorityTuple", sourceAuthorityTuple());
-    claims.put("membershipVersion", Map.of(TENANT_UUID.toString(), BigInteger.valueOf(8)));
+    claims.put("membershipVersion", Map.of(TENANT_UUID.toString(), "8"));
     // This Gateway replay fence intentionally differs from the Account issuance fence below.
     claims.put("replayAdmissionFence", BigInteger.valueOf(29));
     return claims;
