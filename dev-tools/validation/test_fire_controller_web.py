@@ -480,9 +480,13 @@ class IsolatedWebsiteIntegrationTest(unittest.TestCase):
                   "pause_reason": "Paused for FireController cutover."}
         paused_card = self.page._render_controller_lane(paused)
         self.assertIn('aria-label="PAUSED"', paused_card)
-        self.assertNotIn("Pause reason", paused_card)
-        self.assertNotIn("Paused for FireController cutover.", paused_card)
+        self.assertIn("Pause reason", paused_card)
+        self.assertIn("Paused for FireController cutover.", paused_card)
         self.assertEqual(paused["pause_reason"], "Paused for FireController cutover.")
+        self.assertIn(
+            ".controller-job-lane .lane-content > .lane-blocker:first-child { border-top: 0; }",
+            document,
+        )
 
         card = self.page.render_controller_job(public_row())
         self.assertIn("<h4>Keep the lane moving</h4>", card)
