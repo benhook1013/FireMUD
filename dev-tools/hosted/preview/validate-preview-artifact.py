@@ -69,8 +69,12 @@ PUBLICATION_GRPC_WORKLOADS = {
 }
 ACCOUNT_GRPC_WORKLOADS = {"account-service"}
 GAME_SESSION_GRPC_WORKLOADS = {"game-session-service"}
+SOCIAL_GROUPS_GRPC_WORKLOADS = {"social-groups-service"}
 DISTINCT_GRPC_WORKLOADS = (
-    PUBLICATION_GRPC_WORKLOADS | ACCOUNT_GRPC_WORKLOADS | GAME_SESSION_GRPC_WORKLOADS
+    PUBLICATION_GRPC_WORKLOADS
+    | ACCOUNT_GRPC_WORKLOADS
+    | GAME_SESSION_GRPC_WORKLOADS
+    | SOCIAL_GROUPS_GRPC_WORKLOADS
 )
 EXPECTED_NAMES = {
     "Deployment": SERVICE_IMAGES
@@ -92,6 +96,8 @@ EXPECTED_NAMES = {
         "internal-services",
         "internal-services-egress",
         "account-service-controller-ingress",
+        "game-session-service-controller-ingress",
+        "social-groups-service-controller-ingress",
         "spring-cloud-gateway-ingress",
         "spring-cloud-gateway-egress",
         "tcp-proxy-service-egress",
@@ -306,8 +312,12 @@ def _expected_names_for_mode(
         for kind, names in FRONTEND_EXPECTED_NAMES.items():
             expected_names.setdefault(kind, set()).difference_update(names)
     if certificate_identity_mode == "standalone":
-        expected_names.setdefault("NetworkPolicy", set()).discard(
-            "account-service-controller-ingress"
+        expected_names["NetworkPolicy"].difference_update(
+            {
+                "account-service-controller-ingress",
+                "game-session-service-controller-ingress",
+                "social-groups-service-controller-ingress",
+            }
         )
     return expected_names
 
@@ -1459,7 +1469,6 @@ def _frontend_ingress_paths() -> list[dict]:
         {"path": "/auth", "pathType": "Prefix", "backend": gateway},
         {"path": "/api", "pathType": "Prefix", "backend": gateway},
         {"path": "/ws/game", "pathType": "Prefix", "backend": gateway},
-        {"path": "/assets", "pathType": "Prefix", "backend": gateway},
         {"path": "/", "pathType": "Prefix", "backend": frontend},
     ]
 
@@ -1941,7 +1950,7 @@ def validate_service_consumers(
             fail(f"Deployment/{service} has an unexpected container layout")
 
         container = containers[0]
-        if service in DISTINCT_GRPC_WORKLOADS:
+        if service in DISTINCT_GRPC_WORKLOADS or service == "logging-admin-service":
             workload_namespace_entries = [
                 entry
                 for entry in container.get("env", [])
@@ -1976,24 +1985,6 @@ def validate_service_consumers(
             for entry in container.get("env", [])
             if isinstance(entry, dict)
         }
-        if service in DISTINCT_GRPC_WORKLOADS:
-            namespace_identity = next(
-                (
-                    entry
-                    for entry in container.get("env", [])
-                    if isinstance(entry, dict)
-                    and entry.get("name") == "FIREMUD_GRPC_WORKLOAD_NAMESPACE"
-                ),
-                None,
-            )
-            if namespace_identity != {
-                "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
-                "valueFrom": {"fieldRef": {"fieldPath": "metadata.namespace"}},
-            }:
-                fail(
-                    f"Deployment/{service} must derive FIREMUD_GRPC_WORKLOAD_NAMESPACE "
-                    "from metadata.namespace"
-                )
         for env_name, expected_path in expected_grpc_paths.items():
             if declared_grpc_paths.get(env_name) != expected_path:
                 fail(
@@ -2237,26 +2228,28 @@ def validate_network_policies(
         },
     }
     if certificate_identity_mode == "hosted-controller":
-        controller_policy = policies["account-service-controller-ingress"]
-        spec = _require_mapping(
-            controller_policy.get("spec"),
-            "NetworkPolicy/account-service-controller-ingress.spec",
-        )
-        if spec.get("podSelector") != {"matchLabels": {"app": "account-service"}}:
-            fail(
-                "NetworkPolicy/account-service-controller-ingress selects an unsafe workload"
+        for workload in (
+            "account-service",
+            "game-session-service",
+            "social-groups-service",
+        ):
+            policy_name = f"{workload}-controller-ingress"
+            spec = _require_mapping(
+                policies[policy_name].get("spec"),
+                f"NetworkPolicy/{policy_name}.spec",
             )
-        if spec.get("policyTypes") != ["Ingress"]:
-            fail(
-                "NetworkPolicy/account-service-controller-ingress must only govern ingress"
-            )
-        expected_ingress = [
-            {"from": [expected_from], "ports": [{"protocol": "TCP", "port": 6565}]}
-        ]
-        if spec.get("ingress") != expected_ingress:
-            fail(
-                "NetworkPolicy/account-service-controller-ingress has an unsafe exception"
-            )
+            if spec.get("podSelector") != {"matchLabels": {"app": workload}}:
+                fail(f"NetworkPolicy/{policy_name} selects an unsafe workload")
+            if spec.get("policyTypes") != ["Ingress"]:
+                fail(f"NetworkPolicy/{policy_name} must only govern ingress")
+            expected_ingress = [
+                {
+                    "from": [expected_from],
+                    "ports": [{"protocol": "TCP", "port": 6565}],
+                }
+            ]
+            if spec.get("ingress") != expected_ingress:
+                fail(f"NetworkPolicy/{policy_name} has an unsafe exception")
 
     gateway_ingress = _require_mapping(
         policies["spring-cloud-gateway-ingress"].get("spec"),
@@ -2391,7 +2384,7 @@ def validate_ingress(
     paths = _require_mapping_list(
         http.get("paths"), f"{ingress_path}.rules[0].http.paths"
     )
-    if len(paths) != (6 if frontend_enabled else 1):
+    if len(paths) != (5 if frontend_enabled else 1):
         fail("Ingress/firemud-preview has an unexpected route set")
     if frontend_enabled:
         if paths != _frontend_ingress_paths():

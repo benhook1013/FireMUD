@@ -1,6 +1,8 @@
 package net.firedevops.firemud.common.security;
 
-import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
@@ -8,53 +10,102 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class SessionClaimsTest {
+  private static final String ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
 
   @Test
-  void hasGameplayElevatedRoleIgnoresGlobalRolesAndRecognizesScopedModerator() {
-    SessionClaims globalRoles =
-        new SessionClaims(
-            "11",
-            List.of("platformAdmin", "support", "billingAdmin", "god", "moderator"),
-            Map.of("7", List.of("player")),
-            false,
-            null,
-            null);
-    SessionClaims scopedModerator =
-        new SessionClaims("11", List.of(), Map.of("7", List.of("moderator")), false, null, null);
-
-    assertFalse(globalRoles.hasGameplayElevatedRole("7"));
-    assertTrue(scopedModerator.hasGameplayElevatedRole("7"));
-  }
-
-  @Test
-  void hasGameplayElevatedRoleIgnoresUnrelatedTenantScopes() {
+  void privilegedRoleCheckStillRecognizesGlobalControlPlaneRoles() {
     SessionClaims claims =
-        new SessionClaims("11", List.of(), Map.of("8", List.of("tenantAdmin")), false, null, null);
-
-    assertFalse(claims.hasGameplayElevatedRole("7"));
-  }
-
-  @Test
-  void hasGameplayRoleChecksRequestedTenantScopeOnly() {
-    SessionClaims claims =
-        new SessionClaims(
-            "11",
-            List.of("platformAdmin"),
-            Map.of("7", List.of("moderator"), "8", List.of("god")),
-            false,
-            null,
-            null);
-
-    assertFalse(claims.hasGameplayRole("7", "platformAdmin"));
-    assertTrue(claims.hasGameplayRole("7", "moderator"));
-    assertFalse(claims.hasGameplayRole("7", "god"));
-  }
-
-  @Test
-  void hasPrivilegedRoleRetainsControlPlaneGlobalRoleBehavior() {
-    SessionClaims claims =
-        new SessionClaims("11", List.of("platformAdmin"), Map.of(), false, null, null);
+        new SessionClaims(ACCOUNT_ID, List.of("platformAdmin"), Map.of(), false, null, null);
 
     assertTrue(claims.hasPrivilegedRole());
+  }
+
+  @Test
+  void privilegedRoleCheckStillRecognizesTenantScopedControlPlaneRoles() {
+    SessionClaims claims =
+        new SessionClaims(
+            ACCOUNT_ID,
+            List.of(),
+            Map.of("7", List.of("tenantAdmin", "moderator")),
+            false,
+            null,
+            null);
+
+    assertTrue(claims.hasPrivilegedRole());
+  }
+
+  @Test
+  void fromJwtPreservesCanonicalAccountSubjectAndClaim() {
+    JwtUtil jwtUtil = new JwtUtil("mysecretkey123456789012345678901", 30_000L);
+    SessionClaims claims =
+        SessionClaims.fromJwt(
+            jwtUtil.parseToken(jwtUtil.generateToken(ACCOUNT_ID, Map.of("accountId", ACCOUNT_ID))));
+
+    assertEquals(ACCOUNT_ID, claims.accountId());
+  }
+
+  @Test
+  void fromJwtRejectsNonUuidOrMismatchedAccountIdentity() {
+    JwtUtil jwtUtil = new JwtUtil("mysecretkey123456789012345678901", 30_000L);
+    String otherAccountId = "22222222-2222-4222-8222-222222222222";
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            SessionClaims.fromJwt(
+                jwtUtil.parseToken(jwtUtil.generateToken("42", Map.of("accountId", "42")))));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            SessionClaims.fromJwt(
+                jwtUtil.parseToken(
+                    jwtUtil.generateToken(ACCOUNT_ID, Map.of("accountId", otherAccountId)))));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> SessionClaims.fromJwt(jwtUtil.parseToken(jwtUtil.generateToken("user", Map.of()))));
+  }
+
+  @Test
+  void rejectsNumericAccountIdentityWhenClaimsAreConstructedDirectly() {
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> new SessionClaims("42", List.of(), Map.of(), false, null, null));
+  }
+
+  @Test
+  void fromJwtAllowsInternalWorkloadWithoutAccountIdentity() {
+    JwtUtil jwtUtil = new JwtUtil("mysecretkey123456789012345678901", 30_000L);
+    SessionClaims claims =
+        SessionClaims.fromJwt(
+            jwtUtil.parseToken(
+                jwtUtil.generateToken(
+                    "world-management-service", Map.of("internalService", true))));
+
+    assertNull(claims.accountId());
+    assertTrue(claims.internalService());
+  }
+
+  @Test
+  void internalWorkloadFlagDoesNotDiscardMalformedOrMismatchedAccountIdentity() {
+    JwtUtil jwtUtil = new JwtUtil("mysecretkey123456789012345678901", 30_000L);
+    for (Object accountId : List.of("", " ", "null", "NULL", 42L, List.of(), ACCOUNT_ID)) {
+      assertThrows(
+          IllegalArgumentException.class,
+          () ->
+              SessionClaims.fromJwt(
+                  jwtUtil.parseToken(
+                      jwtUtil.generateToken(
+                          "world-management-service",
+                          Map.of("internalService", true, "accountId", accountId)))));
+    }
+  }
+
+  @Test
+  void rejectsPresentBlankAccountIdentityWhenClaimsAreConstructedDirectly() {
+    for (String accountId : List.of("", " ", "null")) {
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> new SessionClaims(accountId, List.of(), Map.of(), true, null, null));
+    }
   }
 }

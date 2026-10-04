@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
 import java.time.Instant;
+import java.util.UUID;
 import net.firedevops.firemud.socialgroups.dto.MailMessageDto;
 import net.firedevops.firemud.socialgroups.dto.SendMailRequest;
 import net.firedevops.firemud.socialgroups.entity.MailMessage;
@@ -16,6 +17,8 @@ import org.mapstruct.factory.Mappers;
 import org.mockito.Mockito;
 
 class MailServiceImplTest {
+  private static final String SENDER_ACCOUNT_ID = "00000000-0000-4000-8000-000000000002";
+  private static final String RECIPIENT_ACCOUNT_ID = "00000000-0000-4000-8000-000000000003";
   private MailMessageRepository repository;
   private MailServiceImpl service;
 
@@ -28,12 +31,13 @@ class MailServiceImplTest {
 
   @Test
   void sendMailReturnsDto() {
-    SendMailRequest request = new SendMailRequest(1L, 2L, 3L, "hello", "body");
+    SendMailRequest request =
+        new SendMailRequest(1L, SENDER_ACCOUNT_ID, RECIPIENT_ACCOUNT_ID, "hello", "body");
     MailMessage saved = new MailMessage();
     saved.setId(1L);
     saved.setTenantId(1L);
-    saved.setSenderAccountId(2L);
-    saved.setRecipientAccountId(3L);
+    saved.setSenderAccountId(UUID.fromString(SENDER_ACCOUNT_ID));
+    saved.setRecipientAccountId(UUID.fromString(RECIPIENT_ACCOUNT_ID));
     saved.setSubject("hello");
     saved.setContent("body");
     saved.setSentAt(Instant.now());
@@ -41,6 +45,6 @@ class MailServiceImplTest {
 
     MailMessageDto result = service.sendMail(request);
     assertEquals("hello", result.subject());
-    assertEquals(3L, result.recipientAccountId());
+    assertEquals(RECIPIENT_ACCOUNT_ID, result.recipientAccountId());
   }
 }

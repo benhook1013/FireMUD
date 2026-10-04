@@ -8,11 +8,11 @@ final class SessionActorReaders {
   private SessionActorReaders() {}
 
   static String actorPrincipalOrInternalService() {
-    Long accountId = currentAccountIdOrNull();
-    return accountId == null ? "internal-service" : Long.toString(accountId);
+    String accountId = currentAccountIdOrNull();
+    return accountId == null ? "internal-service" : accountId;
   }
 
-  static Long currentAccountIdOrNull() {
+  static String currentAccountIdOrNull() {
     try {
       return SessionContext.currentAccountIdOrNull();
     } catch (IllegalArgumentException ex) {

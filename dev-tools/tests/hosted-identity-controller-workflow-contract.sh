@@ -456,18 +456,19 @@ for required in \
   'id: versions' \
   'uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9' \
   'path: ${{ runner.temp }}/firemud-helm/v${{ steps.versions.outputs.helm-version }}/helm.tar.gz' \
-  'key: firemud-helm-${{ runner.os }}-${{ runner.arch }}-v${{ steps.versions.outputs.helm-version }}-${{ steps.versions.outputs.helm-linux-amd64-sha256 }}' \
+  'key: firemud-helm-${{ runner.os }}-${{ runner.arch }}-v${{ steps.versions.outputs.helm-version }}' \
   'HELM_VERSION: v${{ steps.versions.outputs.helm-version }}' \
-  'HELM_SHA256: ${{ steps.versions.outputs.helm-linux-amd64-sha256 }}' \
   'RUNNER_OS' \
   'RUNNER_ARCH' \
   'RUNNER_TEMP' \
   'helm_root="${RUNNER_TEMP:?}/firemud-helm/${helm_version}"' \
+  'https://get.helm.sh/${expected_archive_name}.sha256sum' \
+  'verify-publisher-checksum.sh' \
+  'manifest "$checksum_path"' \
   '[[ ! -f "$archive_path" ]]' \
   'temporary_archive="$(mktemp -- "${helm_root}/helm.tar.gz.XXXXXX")"' \
   'mv -fT -- "$temporary_archive" "$archive_path"' \
   'curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30' \
-  'sha256sum --check --status' \
   'echo "$install_dir" >> "$GITHUB_PATH"' \
   'version --template' \
   'Helm version mismatch' \
@@ -475,8 +476,11 @@ for required in \
   contains "$helm_action" "$required"
 done
 contains "$workflow_tool_authority" 'HELM_VERSION='
-contains "$workflow_tool_authority" 'HELM_LINUX_AMD64_SHA256='
-if [[ "$(grep -Fc 'sha256sum --check --status' "$helm_action")" -lt 2 ]]; then
+if grep -Fq 'HELM_LINUX_AMD64_SHA256=' "$workflow_tool_authority"; then
+  echo "$workflow_tool_authority must not retain a repository-frozen Helm checksum" >&2
+  exit 1
+fi
+if [[ "$(grep -Fc 'verify-publisher-checksum.sh' "$helm_action")" -lt 3 ]]; then
   echo "$helm_action must verify both restored and downloaded Helm archives" >&2
   exit 1
 fi
@@ -631,6 +635,8 @@ contains "$waiter" 'publication_workloads=('
 # shellcheck disable=SC2016 # Match literal shell source in the waiter.
 contains "$waiter" 'firemud-grpc-${workload}|grpc-publication-${workload}|tls.crt,tls.key,ca.crt'
 contains "$waiter" 'firemud-grpc-account-service|grpc-account-service|tls.crt,tls.key,ca.crt'
+contains "$waiter" 'firemud-grpc-game-session-service|grpc-game-session-service|tls.crt,tls.key,ca.crt'
+contains "$waiter" 'firemud-grpc-social-groups-service|grpc-social-groups-service|tls.crt,tls.key,ca.crt'
 for workload in \
   game-design-service \
   world-management-service \
@@ -714,6 +720,8 @@ import re
 import subprocess
 import sys
 import tempfile
+import hashlib
+import json
 from pathlib import Path
 
 import yaml
@@ -725,6 +733,7 @@ preview_annotator = Path(sys.argv[3]).read_text(encoding="utf-8")
 dev_demo_workflow = yaml.safe_load(Path(sys.argv[4]).read_text(encoding="utf-8"))
 publisher_workflow = yaml.safe_load(Path(sys.argv[5]).read_text(encoding="utf-8"))
 credential_source_text = Path(sys.argv[6]).read_text(encoding="utf-8")
+repository_root = Path(sys.argv[1]).parents[2]
 janitor_workflow = yaml.safe_load(Path(sys.argv[7]).read_text(encoding="utf-8"))
 mode_action = yaml.safe_load(Path(sys.argv[8]).read_text(encoding="utf-8"))
 runtime_workflow = yaml.safe_load(Path(sys.argv[9]).read_text(encoding="utf-8"))
@@ -2549,6 +2558,18 @@ for flag, source in (
     ("character", "HOSTED_PLAYABLE_CHARACTER"),
 ):
     assert f'--{flag} "${source}"' in wss_diagnostic["run"]
+for required_wss_argument in (
+    '--gateway-base "https://${PREVIEW_HOSTNAME}"',
+    '--auth-base "https://${PREVIEW_HOSTNAME}"',
+    '--auth-prefix "/api/account"',
+    '--websocket-url "wss://${PREVIEW_HOSTNAME}/ws/game"',
+    '--origin "https://${PREVIEW_HOSTNAME}"',
+    '--readiness-url ""',
+    '--revoke-url ""',
+    '--expected-room-id "$room_id"',
+    "--reconnect",
+):
+    assert required_wss_argument in wss_diagnostic["run"], required_wss_argument
 for diagnostic in (wss_diagnostic, proof_writer, proof_upload):
     assert diagnostic["if"] == public_controller_condition
 assert proof_writer["env"]["NAMESPACE_KUBECONFIG"] == (
@@ -2568,6 +2589,10 @@ for credential_path in (
     assert credential_path in proof_writer["run"]
 assert "--expected-room-id \"$room_id\"" in wss_diagnostic["run"]
 assert "--reconnect" in wss_diagnostic["run"]
+assert "--logout" not in wss_diagnostic["run"]
+assert '.logout == false' in wss_diagnostic["run"]
+assert '.replayRejected == true' in wss_diagnostic["run"]
+assert '.steps == ["LOGIN", "PLAY", "LOOK"]' in wss_diagnostic["run"]
 assert "write-playable-proof.py" in proof_writer["run"]
 assert "--base-sha \"$BASE_SHA\"" in proof_writer["run"]
 assert "--merge-sha \"$MERGE_SHA\"" in proof_writer["run"]
@@ -2627,21 +2652,317 @@ assert verify_failure["env"] == {
     "KUBECONFIG": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
 }
 failure_script = verify_failure["with"]["script"]
-for fragment in (
-    'const { execFileSync } = require("node:child_process");',
-    '"--ignore-not-found"',
-    "JSON.parse(namespaceJson)",
-    "observedUid !== process.env.EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID",
-    "Skipping stale preview verification failure publication",
-    "core.warning(",
-):
-    assert fragment in failure_script, fragment
-assert 'mode: "failure"' in failure_script
-assert 'markerPolicy: "replace"' in failure_script
-assert 'statePolicy: "expected-open"' in failure_script
-assert 'telnetPort: "unavailable"' in failure_script
-assert 'failureStage: "verify-runtime"' in failure_script
 assert verify_failure["uses"] == proof_success["uses"]
+proof_failure = proof_by_name["Publish trusted preview proof failure"]
+assert proof_failure["if"] == "${{ !cancelled() && failure() }}"
+assert proof_failure["env"] == {
+    "KUBECONFIG": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
+    "PREVIEW_PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
+    "PREVIEW_HEAD_SHA": "${{ needs.validate-target.outputs.head_sha }}",
+    "PREVIEW_BASE_SHA": "${{ needs.validate-target.outputs.base_sha }}",
+    "PREVIEW_MERGE_SHA": "${{ needs.validate-target.outputs.merge_sha }}",
+    "PREVIEW_IMAGE_TAG": "${{ needs.validate-target.outputs.image_tag }}",
+    "PREVIEW_HOSTNAME": "${{ needs.validate-target.outputs.hostname }}",
+    "PREVIEW_EXPOSURE_MODE": "${{ needs.validate-target.outputs.exposure_mode }}",
+    "RUNTIME_NAMESPACE": "${{ needs.validate-target.outputs.namespace }}",
+    "EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID": (
+        "${{ needs.deploy-runtime.outputs.runtime_namespace_uid }}"
+    ),
+}
+
+failure_scripts = (
+    ("verification", failure_script),
+    ("proof", proof_failure["with"]["script"]),
+)
+for failure_kind, inline_failure_script in failure_scripts:
+    for fragment in (
+        'const { execFileSync } = require("node:child_process");',
+        '"--ignore-not-found"',
+        "JSON.parse(namespaceJson)",
+        '"firemud.dev/requested-preview-base-sha"',
+        '"firemud.dev/requested-preview-head-sha"',
+        '"firemud.dev/requested-preview-merge-sha"',
+        '"firemud.dev/requested-preview-image-tag"',
+        '"firemud.dev/last-preview-base-sha"',
+        '"firemud.dev/last-preview-head-sha"',
+        '"firemud.dev/last-preview-merge-sha"',
+        '"firemud.dev/last-preview-image-tag"',
+        "metadata.uid !== expectedUid",
+        "process.env.RUNTIME_NAMESPACE !== expectedNamespace",
+        f"Skipping stale preview {failure_kind} failure publication",
+        'markerPolicy: "preserve-reclaimed"',
+        'statePolicy: "expected-open"',
+        'telnetPort: "unavailable"',
+        'failureStage: "verify-runtime"',
+    ):
+        assert fragment in inline_failure_script, (failure_kind, fragment)
+    assert 'mode: "failure"' in inline_failure_script
+
+node_failure_fence_harness = r"""
+const assert = require("node:assert/strict");
+const { publishPreviewComment: publishRealPreviewComment } = require(
+  process.env.PUBLISHER_PATH,
+);
+const sourceTuple = {
+  "firemud.dev/requested-preview-base-sha": process.env.PREVIEW_BASE_SHA,
+  "firemud.dev/requested-preview-head-sha": process.env.PREVIEW_HEAD_SHA,
+  "firemud.dev/requested-preview-merge-sha": process.env.PREVIEW_MERGE_SHA,
+  "firemud.dev/requested-preview-image-tag": process.env.PREVIEW_IMAGE_TAG,
+  "firemud.dev/last-preview-base-sha": process.env.PREVIEW_BASE_SHA,
+  "firemud.dev/last-preview-head-sha": process.env.PREVIEW_HEAD_SHA,
+  "firemud.dev/last-preview-merge-sha": process.env.PREVIEW_MERGE_SHA,
+  "firemud.dev/last-preview-image-tag": process.env.PREVIEW_IMAGE_TAG,
+};
+const reclaimedMarker = "<!-- firemud-preview-reclaimed -->";
+
+function namespaceFor(uid, annotationOverrides = {}) {
+  return {
+    metadata: {
+      name: "pr-42",
+      uid,
+      labels: { "firemud.dev/preview": "true", "firemud.dev/pr-number": "42" },
+      annotations: { ...sourceTuple, ...annotationOverrides },
+    },
+  };
+}
+
+async function runScenario(scenario, inlineScript) {
+  let comments = [];
+  const mutations = [];
+  const publishCalls = [];
+  const core = { info() {}, notice() {}, warning() {} };
+  const context = { repo: { owner: "FireMUD", repo: "FireMUD" } };
+  const github = {
+    rest: {
+      pulls: {
+        async get() {
+          return {
+            data: {
+              state: "open",
+              head: { sha: process.env.PREVIEW_HEAD_SHA },
+              merge_commit_sha: process.env.PREVIEW_MERGE_SHA,
+              base: { ref: "main" },
+            },
+          };
+        },
+      },
+      git: {
+        async getRef() {
+          return { data: { object: { sha: process.env.PREVIEW_BASE_SHA } } };
+        },
+      },
+      repos: {
+        async getCommit() {
+          return {
+            data: {
+              sha: process.env.PREVIEW_MERGE_SHA,
+              parents: [
+                { sha: process.env.PREVIEW_BASE_SHA },
+                { sha: process.env.PREVIEW_HEAD_SHA },
+              ],
+            },
+          };
+        },
+      },
+      issues: {
+        async listComments() {
+          return { data: comments };
+        },
+        async createComment({ body }) {
+          mutations.push({ type: "create", body });
+          comments.push({
+            id: 3,
+            created_at: "2026-01-03T00:00:00Z",
+            user: { login: "github-actions[bot]" },
+            body,
+          });
+        },
+        async updateComment({ comment_id, body }) {
+          mutations.push({ type: "update", id: comment_id, body });
+          comments = comments.map((comment) =>
+            comment.id === comment_id ? { ...comment, body } : comment,
+          );
+        },
+        async deleteComment({ comment_id }) {
+          mutations.push({ type: "delete", id: comment_id });
+          comments = comments.filter((comment) => comment.id !== comment_id);
+        },
+      },
+    },
+    async paginate() {
+      return comments;
+    },
+  };
+
+  if (scenario === "exact-reclaimed") {
+    comments = [
+      {
+        id: 1,
+        created_at: "2026-01-01T00:00:00Z",
+        user: { login: "github-actions[bot]" },
+        body: "<!-- firemud-preview-summary -->\n### Preview Summary\nold failure",
+      },
+      {
+        id: 2,
+        created_at: "2026-01-02T00:00:00Z",
+        user: { login: "github-actions[bot]" },
+        body: `<!-- firemud-preview-summary -->\n### Preview Summary\n${reclaimedMarker}\nPreview unavailable`,
+      },
+    ];
+  } else if (scenario !== "exact") {
+    comments = [
+      {
+        id: 2,
+        created_at: "2026-01-02T00:00:00Z",
+        user: { login: "github-actions[bot]" },
+        body: `<!-- firemud-preview-summary -->\n### Preview Summary\n${reclaimedMarker}\nPreview unavailable`,
+      },
+    ];
+  }
+
+  function requireForWorkflow(moduleName) {
+    if (moduleName === "node:child_process") {
+      return {
+        execFileSync(binary, args) {
+          assert.equal(binary, "kubectl");
+          assert.deepEqual(args, [
+            "get",
+            "namespace",
+            process.env.RUNTIME_NAMESPACE,
+            "--ignore-not-found",
+            "-o",
+            "json",
+          ]);
+          if (scenario === "error") throw new Error("redacted kube read failure");
+          if (scenario === "absent") return "";
+          if (scenario === "malformed") return "{";
+          if (scenario === "malformed-object") return JSON.stringify({ metadata: { uid: 17 } });
+          if (scenario === "recreated") return JSON.stringify(namespaceFor("uid-recreated"));
+          let namespace = namespaceFor("uid-expected");
+          if (scenario.startsWith("wrong-annotation:")) {
+            const annotation = scenario.slice("wrong-annotation:".length);
+            namespace.metadata.annotations[annotation] = "wrong-tuple-value";
+          }
+          if (scenario === "missing-uid") delete namespace.metadata.uid;
+          if (scenario === "missing-name") delete namespace.metadata.name;
+          if (scenario === "wrong-name") namespace.metadata.name = "pr-43";
+          if (scenario === "missing-labels") delete namespace.metadata.labels;
+          if (scenario === "wrong-preview-label") {
+            namespace.metadata.labels["firemud.dev/preview"] = "false";
+          }
+          if (scenario === "wrong-pr-number-label") {
+            namespace.metadata.labels["firemud.dev/pr-number"] = "43";
+          }
+          if (scenario === "missing-annotations") delete namespace.metadata.annotations;
+          return JSON.stringify(namespace);
+        },
+      };
+    }
+    if (moduleName.endsWith("/publish-preview-comment.js")) {
+      return {
+        async publishPreviewComment(options) {
+          publishCalls.push(options);
+          return publishRealPreviewComment({
+            ...options,
+            summaryExecutor: () => "failure summary from exact tuple\n",
+          });
+        },
+      };
+    }
+    throw new Error(`Unexpected workflow require: ${moduleName}`);
+  }
+
+  const runInlineScript = new Function(
+    "github",
+    "context",
+    "core",
+    "require",
+    `return (async () => {\n${inlineScript}\n})()`,
+  );
+  await runInlineScript(github, context, core, requireForWorkflow);
+
+  const expectedPublication = scenario.startsWith("exact");
+  assert.equal(publishCalls.length, expectedPublication ? 1 : 0, scenario);
+  if (!expectedPublication) {
+    assert.equal(mutations.length, 0, `${scenario} must not overwrite a reclaimed or current status`);
+    assert.equal(comments.length, 1);
+    assert.match(comments[0].body, /firemud-preview-reclaimed/);
+    return;
+  }
+
+  assert.equal(publishCalls[0].mode, "failure");
+  assert.equal(publishCalls[0].markerPolicy, "preserve-reclaimed");
+  assert.equal(publishCalls[0].failureStage, "verify-runtime");
+  if (scenario === "exact") {
+    assert.equal(mutations.length, 1);
+    assert.equal(mutations[0].type, "create");
+    assert.match(mutations[0].body, /failure summary from exact tuple/);
+  } else {
+    assert.ok(mutations.some((mutation) => mutation.type === "update"));
+    assert.ok(mutations.some((mutation) => mutation.type === "delete"));
+    assert.equal(comments.length, 1);
+    assert.match(comments[0].body, /firemud-preview-reclaimed/);
+    assert.doesNotMatch(comments[0].body, /failure summary from exact tuple/);
+  }
+}
+
+(async () => {
+  const scenarios = [
+    "absent",
+    "recreated",
+    "malformed",
+    "malformed-object",
+    "missing-uid",
+    "missing-name",
+    "wrong-name",
+    "missing-labels",
+    "wrong-preview-label",
+    "wrong-pr-number-label",
+    "missing-annotations",
+    "error",
+    "exact",
+    "exact-reclaimed",
+    ...Object.keys(sourceTuple).map((annotation) => `wrong-annotation:${annotation}`),
+  ];
+  for (const scenario of scenarios) {
+    await runScenario(scenario, process.env.INLINE_FAILURE_SCRIPT);
+  }
+})().catch((error) => {
+  process.stderr.write(`${error.stack || error}\n`);
+  process.exitCode = 1;
+});
+"""
+for failure_kind, inline_failure_script in failure_scripts:
+    node_environment = os.environ.copy()
+    node_environment.update(
+        {
+            "INLINE_FAILURE_SCRIPT": inline_failure_script,
+            "PUBLISHER_PATH": str(
+                Path(sys.argv[1]).parents[2]
+                / "dev-tools/hosted/preview/publish-preview-comment.js"
+            ),
+            "PREVIEW_PR_NUMBER": "42",
+            "PREVIEW_HEAD_SHA": "b" * 40,
+            "PREVIEW_BASE_SHA": "a" * 40,
+            "PREVIEW_MERGE_SHA": "c" * 40,
+            "PREVIEW_IMAGE_TAG": f"pr-merge-{'c' * 40}",
+            "PREVIEW_HOSTNAME": "pr-42.preview.firemud.test",
+            "RUNTIME_NAMESPACE": "pr-42",
+            "EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID": "uid-expected",
+        }
+    )
+    failure_fence_result = subprocess.run(
+        ["node", "-e", node_failure_fence_harness],
+        cwd=Path(sys.argv[1]).parents[2],
+        env=node_environment,
+        capture_output=True,
+        text=True,
+    )
+    assert failure_fence_result.returncode == 0, (
+        failure_kind,
+        failure_fence_result.stdout,
+        failure_fence_result.stderr,
+    )
 
 destroy_steps = jobs["destroy-runtime"]["steps"]
 destroy_by_name = {
@@ -3126,6 +3447,46 @@ assert credential_source_text.count('" || return 1') >= 7
 assert credential_source_text.count('load_firemud_secret "$firemud_secret_json" || exit 1') == 2
 assert credential_source_text.count('load_minio_secret "$minio_secret_json" || exit 1') == 2
 assert credential_source_text.count('load_jwt_signing_secret "$jwt_signing_secret_json" || exit 1') == 2
+renderer_cases = (
+    (
+        "dev-tools/hosted/preview/render-preview-values.py",
+        ("123", "pr-123", "pr-123", "pr-123.preview.firedevops.net", "fixture", "32000"),
+    ),
+    (
+        "dev-tools/hosted/dev-demo/render-dev-demo-values.py",
+        ("dev", "dev", "dev.preview.firedevops.net", "fixture", "32016"),
+    ),
+)
+for renderer_name, renderer_args in renderer_cases:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        rendered_values_path = Path(temp_dir) / "hosted-values.yaml"
+        subprocess.run(
+            [
+                sys.executable,
+                str(repository_root / renderer_name),
+                str(repository_root / "k8s/helm/firemud/values-hosted-shared.example.yaml"),
+                str(rendered_values_path),
+                *renderer_args,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        rendered_values = yaml.safe_load(rendered_values_path.read_text(encoding="utf-8"))
+    jwt_values = rendered_values["previewStack"]["jwt"]
+    signing_key = jwt_values["signingKey"]
+    diagnostic_jwks = json.loads(jwt_values["jwksJson"])
+    expected_diagnostic_jwks = {
+        "keys": [],
+        "firemudDiagnostic": {
+            "purpose": "shared-hmac-secret-path-fingerprint",
+            "sha256": hashlib.sha256(signing_key.encode("utf-8")).hexdigest(),
+        },
+    }
+    if diagnostic_jwks != expected_diagnostic_jwks:
+        raise SystemExit(f"{renderer_name} emitted noncanonical diagnostic JWKS")
+    if signing_key in jwt_values["jwksJson"]:
+        raise SystemExit(f"{renderer_name} included signing material in diagnostic JWKS")
 assert 'report_existing_secret_rejection "$secret_name" "key ${key} is empty or malformed"' in credential_source_text
 for ambient_result_flow in (
     "if read_secret_if_present",
@@ -6012,6 +6373,9 @@ if [[ "$1" == -n && "$2" == pr-42 && "$3" == get && "$4" == secret ]]; then
     firemud-grpc-game-session-service)
       printf '%s' '{"metadata":{"name":"firemud-grpc-game-session-service","labels":{"firemud.dev/managed-by":"hosted-identity-controller","firemud.dev/identity-name":"pr-42","firemud.dev/role":"grpc-game-session-service","firemud.dev/retention":"retained"}},"data":{"tls.crt":"cert","tls.key":"key","ca.crt":"ca"}}'
       ;;
+    firemud-grpc-social-groups-service)
+      printf '%s' '{"metadata":{"name":"firemud-grpc-social-groups-service","labels":{"firemud.dev/managed-by":"hosted-identity-controller","firemud.dev/identity-name":"pr-42","firemud.dev/role":"grpc-social-groups-service","firemud.dev/retention":"retained"}},"data":{"tls.crt":"cert","tls.key":"key","ca.crt":"ca"}}'
+      ;;
     *)
       printf 'unexpected projection Secret: %s\n' "$secret_name" >&2
       exit 2
@@ -6127,19 +6491,20 @@ run_projection_waiter_fixture() {
   fi
 }
 
-run_projection_waiter_fixture projection-absence 0 14 2
+# Successful two-retry fixtures read 13 canonical projections plus two retries.
+run_projection_waiter_fixture projection-absence 0 15 2
 run_projection_waiter_fixture projection-command-failure 42 1 0 'Error from server (Forbidden)'
 run_projection_waiter_fixture projection-command-not-found 46 1 0 'Error from server (NotFound)'
 run_projection_waiter_fixture projection-command-unauthorized 47 1 0 'Error from server (Unauthorized)'
 run_projection_waiter_fixture projection-command-usage-error 2 1 0 'error: unknown flag'
-run_projection_waiter_fixture projection-transport-recovery 0 14 2
+run_projection_waiter_fixture projection-transport-recovery 0 15 2
 run_projection_waiter_fixture projection-transport-exhaustion 45 3 2 'Unable to connect to the server'
-run_projection_waiter_fixture projection-etcd-timeout-recovery 0 14 2
-run_projection_waiter_fixture projection-etcd-leader-recovery 0 14 2
-run_projection_waiter_fixture projection-overload-recovery 0 14 2
-run_projection_waiter_fixture projection-unavailable-recovery 0 14 2
-run_projection_waiter_fixture projection-currently-unavailable-recovery 0 14 2
-run_projection_waiter_fixture projection-apiserver-shutdown-recovery 0 14 2
+run_projection_waiter_fixture projection-etcd-timeout-recovery 0 15 2
+run_projection_waiter_fixture projection-etcd-leader-recovery 0 15 2
+run_projection_waiter_fixture projection-overload-recovery 0 15 2
+run_projection_waiter_fixture projection-unavailable-recovery 0 15 2
+run_projection_waiter_fixture projection-currently-unavailable-recovery 0 15 2
+run_projection_waiter_fixture projection-apiserver-shutdown-recovery 0 15 2
 
 run_active_waiter_fixture() {
   local scenario="$1"

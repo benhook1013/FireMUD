@@ -30,6 +30,7 @@ import net.firedevops.firemud.gamedesign.service.PingService;
 import net.firedevops.firemud.gamedesign.service.PublishAttemptPendingReconciliationException;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import net.firedevops.firemud.gamedesign.service.RevisionService;
+import net.firedevops.firemud.gamedesign.service.ScriptPatchPublishFailureException;
 import net.firedevops.firemud.gamedesign.service.SettingsAuthorityService;
 import net.firedevops.firemud.gamedesign.service.TemplateRemapSetService;
 import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
@@ -301,6 +302,26 @@ class GameDesignGrpcServiceTest {
   }
 
   @Test
+  void publishVersionMapsUnavailableWorkflowWithoutHidingItAsInternal() throws Exception {
+    Mockito.when(versionService.publishVersion("tenant-1", "notes", "publish-request-1"))
+        .thenThrow(
+            new IllegalStateException("PUBLISH_WORKFLOW_UNAVAILABLE: Temporal is unavailable"));
+    AtomicReference<PublishVersionResponse> ref = new AtomicReference<>();
+
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishVersion(
+          PublishVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setNotes("notes")
+              .setPublishRequestId("publish-request-1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("PUBLISH_WORKFLOW_UNAVAILABLE", ref.get().getError().getCode());
+  }
+
+  @Test
   void publishVersionMapsTemporalKnownGateFailureCode() throws Exception {
     PublishGateFailureException gateFailure =
         (PublishGateFailureException)
@@ -511,6 +532,32 @@ class GameDesignGrpcServiceTest {
   }
 
   @Test
+  void publishScriptPatchVersionMapsReplayedFailureCodeAndMessage() throws Exception {
+    Mockito.when(
+            versionService.publishScriptPatchVersion(
+                "tenant-1", 7L, "patch-1", "notes", "publish-request-1"))
+        .thenThrow(
+            new ScriptPatchPublishFailureException(
+                "LEGACY_REQUEST_IDENTITY_UNAVAILABLE", "stored identity cannot be replayed"));
+    AtomicReference<PublishScriptPatchVersionResponse> ref = new AtomicReference<>();
+
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishScriptPatchVersion(
+          PublishScriptPatchVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setBaseVersionId(7L)
+              .setScriptPatchVersion("patch-1")
+              .setNotes("notes")
+              .setPublishRequestId("publish-request-1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("LEGACY_REQUEST_IDENTITY_UNAVAILABLE", ref.get().getError().getCode());
+    assertEquals("stored identity cannot be replayed", ref.get().getError().getMessage());
+  }
+
+  @Test
   void publishVersionMapsPendingReconciliationToStableApplicationError() throws Exception {
     Mockito.when(versionService.publishVersion("tenant-1", "notes", "request-1"))
         .thenThrow(new PublishAttemptPendingReconciliationException());
@@ -522,6 +569,34 @@ class GameDesignGrpcServiceTest {
               .setTenantId("tenant-1")
               .setNotes("notes")
               .setPublishRequestId("request-1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals(
+        PublishAttemptPendingReconciliationException.ERROR_CODE, ref.get().getError().getCode());
+    assertEquals(
+        PublishAttemptPendingReconciliationException.SAFE_MESSAGE,
+        ref.get().getError().getMessage());
+  }
+
+  @Test
+  void publishScriptPatchVersionMapsPendingReconciliationToStableApplicationError()
+      throws Exception {
+    Mockito.when(
+            versionService.publishScriptPatchVersion(
+                "tenant-1", 7L, "patch-1", "notes", "publish-request-1"))
+        .thenThrow(new PublishAttemptPendingReconciliationException());
+    AtomicReference<PublishScriptPatchVersionResponse> ref = new AtomicReference<>();
+
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishScriptPatchVersion(
+          PublishScriptPatchVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setBaseVersionId(7L)
+              .setScriptPatchVersion("patch-1")
+              .setNotes("notes")
+              .setPublishRequestId("publish-request-1")
               .build(),
           observerFor(ref));
     }
@@ -1285,6 +1360,46 @@ class GameDesignGrpcServiceTest {
     Mockito.verify(versionService, Mockito.never())
         .getDesignControlPlaneDigestForScriptPatch(
             Mockito.anyString(), Mockito.anyLong(), Mockito.anyString());
+  }
+
+  @Test
+  void getDesignControlPlaneDigestReturnsNotFoundForMissingScriptPatchScope() {
+    Mockito.when(
+            versionService.getDesignControlPlaneDigestForScriptPatch("tenant-1", 7L, "patch-1"))
+        .thenThrow(new IllegalArgumentException("script patch version scope not found"));
+
+    AtomicReference<GetDesignControlPlaneDigestResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.getDesignControlPlaneDigest(
+          GetDesignControlPlaneDigestRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setBaseVersionId(7L)
+              .setScriptPatchVersion("patch-1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("NOT_FOUND", ref.get().getError().getCode());
+  }
+
+  @Test
+  void getDesignControlPlaneDigestKeepsAmbiguousScriptPatchScopeInvalidArgument() {
+    Mockito.when(
+            versionService.getDesignControlPlaneDigestForScriptPatch("tenant-1", 7L, "patch-1"))
+        .thenThrow(new IllegalArgumentException("script patch version scope is ambiguous"));
+
+    AtomicReference<GetDesignControlPlaneDigestResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.getDesignControlPlaneDigest(
+          GetDesignControlPlaneDigestRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setBaseVersionId(7L)
+              .setScriptPatchVersion("patch-1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
   }
 
   @Test

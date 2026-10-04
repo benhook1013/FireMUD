@@ -35,17 +35,14 @@ def main() -> int:
 
     seed = f"{namespace}:{release_name}:dev-demo:{image_tag}"
     signing_key = hashlib.sha256((seed + ":" + secrets.token_hex(32)).encode("utf-8")).hexdigest()
+    signing_key_sha256 = hashlib.sha256(signing_key.encode("utf-8")).hexdigest()
     jwks_json = json.dumps(
         {
-            "keys": [
-                {
-                    "kty": "oct",
-                    "kid": f"{release_name}-dev-demo",
-                    "k": hashlib.sha256(signing_key.encode("utf-8")).hexdigest(),
-                    "alg": "HS256",
-                    "use": "sig",
-                }
-            ]
+            "keys": [],
+            "firemudDiagnostic": {
+                "purpose": "shared-hmac-secret-path-fingerprint",
+                "sha256": signing_key_sha256,
+            },
         },
         separators=(",", ":"),
     )

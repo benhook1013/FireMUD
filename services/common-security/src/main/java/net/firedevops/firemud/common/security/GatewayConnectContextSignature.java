@@ -204,6 +204,9 @@ public final class GatewayConnectContextSignature {
     if (payload == null) {
       throw new IllegalArgumentException("Gateway context payload is required");
     }
+    if (payload.length == 0) {
+      throw new IllegalArgumentException("Gateway context payload must not be empty");
+    }
     if (payload.length > MAX_PAYLOAD_BYTES) {
       throw new IllegalArgumentException("Gateway context payload exceeds the bounded limit");
     }

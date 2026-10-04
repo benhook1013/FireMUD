@@ -106,8 +106,10 @@ def github_payload(checks: list[dict] | None = None) -> dict:
         for key in ("status", "state", "conclusion")
         if value.get(key) is not None
     }
-    aggregate_state = "FAILURE" if lifecycle & {"FAILURE", "ERROR", "CANCELLED"} else (
-        "PENDING" if lifecycle & {"EXPECTED", "IN_PROGRESS", "PENDING", "QUEUED", "RUNNING"} else "SUCCESS"
+    aggregate_state = (
+        "FAILURE"
+        if lifecycle & {"FAILURE", "ERROR", "CANCELLED"}
+        else ("PENDING" if lifecycle & {"EXPECTED", "IN_PROGRESS", "PENDING", "QUEUED", "RUNNING"} else "SUCCESS")
     )
     return {
         "data": {
@@ -124,9 +126,7 @@ def github_payload(checks: list[dict] | None = None) -> dict:
                     "mergeStateStatus": "CLEAN",
                     "isDraft": False,
                     "url": "https://github.test/pull/2838",
-                    "commits": {
-                        "nodes": [{"commit": {"oid": HEAD, "statusCheckRollup": {"state": aggregate_state}}}]
-                    },
+                    "commits": {"nodes": [{"commit": {"oid": HEAD, "statusCheckRollup": {"state": aggregate_state}}}]},
                     "body": (
                         "<!-- firemud:cloc-report:start -->\n"
                         "<!-- firemud:cloc-report:metadata "
@@ -179,9 +179,7 @@ class StatusTest(unittest.TestCase):
 
         with patch.object(cli, "default_controller", return_value=controller):
             overview, overview_exit = cli._dispatch(cli._parser().parse_args(["status", "--json"]))
-            full, full_exit = cli._dispatch(
-                cli._parser().parse_args(["status", "--full-scan", "--json"])
-            )
+            full, full_exit = cli._dispatch(cli._parser().parse_args(["status", "--full-scan", "--json"]))
 
         self.assertEqual((overview_exit, full_exit), (0, 0))
         self.assertEqual(overview, {"mode": "windowed"})
@@ -230,8 +228,10 @@ class StatusTest(unittest.TestCase):
         controller = Mock()
         controller.store.load.return_value = SimpleNamespace(summary_dispositions=())
         controller.status_for_pr.side_effect = stack_report
-        with patch.object(cli, "default_controller", return_value=controller), patch.object(
-            status, "status", side_effect=report_for
+        with (
+            patch.object(cli, "default_controller", return_value=controller),
+            patch.object(status, "status", side_effect=report_for),
+            patch.object(cli, "_read_record_incoming_routes", return_value=([], {"status": "not_bootstrapped"})),
         ):
             target, _ = cli._dispatch(cli._parser().parse_args(["status", "--pr", "2879", "--json"]))
             source, _ = cli._dispatch(cli._parser().parse_args(["status", "--pr", "2828", "--json"]))
@@ -323,8 +323,9 @@ class StatusTest(unittest.TestCase):
 
     def test_graphql_errors_and_missing_review_connections_fail_closed(self) -> None:
         graphql_error = {"errors": [{"message": "partial response"}], "data": {}}
-        with patch.object(github, "run_gh_query", return_value=graphql_error), self.assertRaisesRegex(
-            RuntimeError, "GraphQL response contains errors"
+        with (
+            patch.object(github, "run_gh_query", return_value=graphql_error),
+            self.assertRaisesRegex(RuntimeError, "GraphQL response contains errors"),
         ):
             github.fetch_pull_request("owner/repo", 2838)
         with tempfile.TemporaryDirectory() as directory:
@@ -346,8 +347,9 @@ class StatusTest(unittest.TestCase):
                     pull_request[connection] = None
                 expected = f"missing {connection} connection"
                 with self.subTest(connection=connection, missing=missing):
-                    with patch.object(github, "run_gh_query", return_value=payload), self.assertRaisesRegex(
-                        TypeError, expected
+                    with (
+                        patch.object(github, "run_gh_query", return_value=payload),
+                        self.assertRaisesRegex(TypeError, expected),
                     ):
                         github.fetch_pull_request("owner/repo", 2838)
                     with tempfile.TemporaryDirectory() as directory:
@@ -410,11 +412,14 @@ class StatusTest(unittest.TestCase):
             result = github.fetch_pr_identity_batch("owner/repo", (12, 931))
         self.assertIsNone(result[931])
 
-        with patch.object(
-            github,
-            "run_gh_query",
-            return_value={"errors": [{"message": "partial"}], "data": {"repository": {}}},
-        ), self.assertRaisesRegex(RuntimeError, "contains errors"):
+        with (
+            patch.object(
+                github,
+                "run_gh_query",
+                return_value={"errors": [{"message": "partial"}], "data": {"repository": {}}},
+            ),
+            self.assertRaisesRegex(RuntimeError, "contains errors"),
+        ):
             github.fetch_pr_identity_batch("owner/repo", (12,))
 
     def test_cli_selected_tail_uses_scoped_status_instead_of_default_full_scan(self) -> None:
@@ -961,7 +966,10 @@ class StatusTest(unittest.TestCase):
         self.assertEqual(validation["result"]["app"]["id"], 42)
 
     def test_missing_or_mismatched_aggregate_head_fails_visibly(self) -> None:
-        for mutate in (lambda pr: pr.pop("commits"), lambda pr: pr["commits"]["nodes"][0]["commit"].update({"oid": "c" * 40})):
+        for mutate in (
+            lambda pr: pr.pop("commits"),
+            lambda pr: pr["commits"]["nodes"][0]["commit"].update({"oid": "c" * 40}),
+        ):
             with self.subTest(mutate=mutate):
                 payload = github_payload()
                 pr = payload["data"]["repository"]["pullRequest"]
@@ -1082,6 +1090,7 @@ class StatusTest(unittest.TestCase):
         with (
             patch.object(cli, "default_controller", return_value=controller),
             patch.object(status, "status", return_value=report),
+            patch.object(cli, "_read_record_incoming_routes", return_value=([], {"status": "not_bootstrapped"})),
         ):
             value, exit_status = cli._dispatch(cli._parser().parse_args(["status", "--pr", "2838", "--json"]))
 
@@ -1090,6 +1099,83 @@ class StatusTest(unittest.TestCase):
         self.assertEqual(value["verdict"], "READY")
         self.assertTrue(value["mergeability"]["clean"])
         self.assertEqual(value["mergeability"]["diagnosis"], "READY")
+
+    def test_human_stop_satisfies_only_the_taper_gate(self) -> None:
+        report = {
+            "pull_request": {
+                "headRefOid": HEAD,
+                "baseRefName": "develop",
+                "baseRefOid": BASE,
+            },
+            "reasons": [],
+            "ready": True,
+            "verdict": "READY",
+            "mergeability": {"clean": True, "diagnosis": "READY"},
+        }
+        controller = Mock()
+        controller.status.return_value = {
+            "prs": [
+                {
+                    "pr": 2838,
+                    "head": HEAD,
+                    "base": "develop",
+                    "parent_head": BASE,
+                    "reconciliation": "COHERENT",
+                    "channels": {"hosted": "HUMAN_STOPPED", "cli": "HUMAN_STOPPED"},
+                    "review_obligations": {"hosted": [], "cli": []},
+                }
+            ]
+        }
+        controller.status_for_pr.return_value = controller.status.return_value
+
+        with (
+            patch.object(cli, "default_controller", return_value=controller),
+            patch.object(status, "status", return_value=report),
+            patch.object(cli, "_read_record_incoming_routes", return_value=([], {"status": "not_bootstrapped"})),
+        ):
+            value, exit_status = cli._dispatch(cli._parser().parse_args(["status", "--pr", "2838", "--json"]))
+
+        self.assertEqual(exit_status, 0)
+        self.assertTrue(value["ready"], value["reasons"])
+        self.assertEqual(value["verdict"], "READY")
+        self.assertTrue(value["mergeability"]["clean"])
+        self.assertEqual(value["mergeability"]["diagnosis"], "READY")
+
+    def test_human_stop_keeps_review_and_fix_obligations_as_readiness_gates(self) -> None:
+        for obligation in ("active review", "pending capture", "accepted finding", "unattributed result"):
+            for channel in ("hosted", "cli"):
+                with self.subTest(obligation=obligation, channel=channel):
+                    report = {
+                        "pull_request": {"headRefOid": HEAD, "baseRefName": "develop", "baseRefOid": BASE},
+                        "reasons": [],
+                        "ready": True,
+                        "verdict": "READY",
+                        "mergeability": {"clean": True, "diagnosis": "READY"},
+                    }
+                    controller = Mock()
+                    controller.status_for_pr.return_value = {
+                        "prs": [
+                            {
+                                "pr": 2838,
+                                "head": HEAD,
+                                "base": "develop",
+                                "parent_head": BASE,
+                                "reconciliation": "COHERENT",
+                                "channels": {"hosted": "HUMAN_STOPPED", "cli": "HUMAN_STOPPED"},
+                                "review_obligations": {channel: [obligation]},
+                            }
+                        ]
+                    }
+                    with (
+                        patch.object(cli, "default_controller", return_value=controller),
+                        patch.object(status, "status", return_value=report),
+                        patch.object(
+                            cli, "_read_record_incoming_routes", return_value=([], {"status": "not_bootstrapped"})
+                        ),
+                    ):
+                        value, _ = cli._dispatch(cli._parser().parse_args(["status", "--pr", "2838", "--json"]))
+                    self.assertFalse(value["ready"])
+                    self.assertIn(f"{channel}: {obligation}", value["reasons"])
 
     def test_cli_status_supplies_persisted_summary_dispositions_to_report(self) -> None:
         disposition = SummaryFindingDisposition(
@@ -1120,6 +1206,7 @@ class StatusTest(unittest.TestCase):
         with (
             patch.object(cli, "default_controller", return_value=controller),
             patch.object(status, "status", return_value=report) as status_call,
+            patch.object(cli, "_read_record_incoming_routes", return_value=([], {"status": "not_bootstrapped"})),
         ):
             value, exit_status = cli._dispatch(cli._parser().parse_args(["status", "--pr", "2838", "--json"]))
 
@@ -1183,11 +1270,7 @@ class StatusTest(unittest.TestCase):
                     blocked["coderabbit_summary"]["findings"],
                 )
 
-        pr["reviews"] = {
-            "nodes": [
-                self._coderabbit_review("Outside diff range comments (2)\nDuplicate comments (1)")
-            ]
-        }
+        pr["reviews"] = {"nodes": [self._coderabbit_review("Outside diff range comments (2)\nDuplicate comments (1)")]}
         partial = self._ready_report(payload, summary_dispositions=(rejected,))
         self.assertFalse(partial["ready"])
         self.assertEqual(partial["coderabbit_summary"]["unresolved_findings"], [{"kind": "duplicate", "count": 1}])
@@ -1215,12 +1298,8 @@ class StatusTest(unittest.TestCase):
         pr["reviewThreads"] = {"nodes": []}
         pr["reviews"] = {
             "nodes": [
-                self._coderabbit_review(
-                    "Duplicate comments (1)", submitted_at="2026-09-23T00:00:00Z", database_id=501
-                ),
-                self._coderabbit_review(
-                    "Duplicate comments (0)", submitted_at="2026-09-23T02:00:00Z", database_id=502
-                ),
+                self._coderabbit_review("Duplicate comments (1)", submitted_at="2026-09-23T00:00:00Z", database_id=501),
+                self._coderabbit_review("Duplicate comments (0)", submitted_at="2026-09-23T02:00:00Z", database_id=502),
             ]
         }
 
@@ -1306,9 +1385,7 @@ class StatusTest(unittest.TestCase):
         pr = payload["data"]["repository"]["pullRequest"]
         pr["reviews"] = {
             "nodes": [
-                self._coderabbit_review(
-                    "Duplicate comments (1)", submitted_at="2026-09-23T02:00:00Z", database_id=603
-                )
+                self._coderabbit_review("Duplicate comments (1)", submitted_at="2026-09-23T02:00:00Z", database_id=603)
             ]
         }
         pr["comments"] = {

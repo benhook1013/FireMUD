@@ -160,6 +160,13 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
   void syntheticDefaultPointerTargetsRemainValidAcrossRepeatedFixtureBaselines() {
     Fixture fixture = fixture();
     fixture.seedDefaultDemoAndSandboxPointers();
+    var sandboxPointer =
+        Objects.requireNonNull(
+            fixture.dsl.fetchOne(
+                "SELECT visible, public_production_realm FROM gameplay_admission_pointer WHERE id = ?",
+                2L));
+    assertThat(sandboxPointer.get("visible", Boolean.class)).isTrue();
+    assertThat(sandboxPointer.get("public_production_realm", Boolean.class)).isFalse();
     GameInstanceTestFixtures.ensureDeclaredRunningGameInstance(
         fixture.jdbc, 1L, 1L, GameInstanceTestFixtures.TEST_OWNER_ACCOUNT_UUID, 501L);
     GameInstanceTestFixtures.ensureDeclaredRunningGameInstance(
@@ -1014,7 +1021,8 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
           "Demo",
           "Production",
           "a6eea203-4080-4db9-95e3-9ec838aff44a",
-          sharedNamespace);
+          sharedNamespace,
+          true);
       seedDefaultPointer(
           2L,
           2L,
@@ -1023,7 +1031,8 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
           "Sandbox",
           "Production",
           "bb8a798d-6706-472a-986b-7eb998748ec2",
-          sharedNamespace);
+          sharedNamespace,
+          false);
     }
 
     private void seedDefaultPointer(
@@ -1034,7 +1043,8 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
         String worldName,
         String realmName,
         String realmId,
-        UUID sharedNamespace) {
+        UUID sharedNamespace,
+        boolean publicProductionRealm) {
       dsl.execute(
           "INSERT INTO gameplay_admission_pointer ("
               + "id, world_slug, world_display_name, realm_slug, realm_display_name, tenant_id, "
@@ -1056,7 +1066,7 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
           "OPEN",
           "test/default-pointer-bootstrap",
           "synthetic retained-snapshot fixture",
-          true,
+          publicProductionRealm,
           UUID.fromString(realmId),
           sharedNamespace);
     }

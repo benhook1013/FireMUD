@@ -1,6 +1,8 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import {
   completeEmailLink,
+  emailLinkFailureMessage,
+  EmailLinkCompletionError,
   type EmailLinkLandingRoute,
 } from './emailLinkLanding';
 
@@ -24,7 +26,7 @@ export default function EmailLinkLanding({ route }: EmailLinkLandingProps) {
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [complete, setComplete] = useState(false);
-  const [failed, setFailed] = useState(false);
+  const [failure, setFailure] = useState<EmailLinkCompletionError | null>(null);
 
   useEffect(() => {
     installNoReferrerPolicy();
@@ -39,13 +41,17 @@ export default function EmailLinkLanding({ route }: EmailLinkLandingProps) {
     if (!token || submitting || complete) return;
 
     setSubmitting(true);
-    setFailed(false);
+    setFailure(null);
     try {
       await completeEmailLink(route, isVerification ? undefined : password);
       setComplete(true);
       setPassword('');
-    } catch {
-      setFailed(true);
+    } catch (error) {
+      setFailure(
+        error instanceof EmailLinkCompletionError
+          ? error
+          : new EmailLinkCompletionError('network', null)
+      );
     } finally {
       setSubmitting(false);
     }
@@ -79,6 +85,8 @@ export default function EmailLinkLanding({ route }: EmailLinkLandingProps) {
                   New password
                   <input
                     autoComplete="new-password"
+                    maxLength={100}
+                    minLength={6}
                     name="newPassword"
                     onChange={(event) => setPassword(event.target.value)}
                     required
@@ -95,11 +103,8 @@ export default function EmailLinkLanding({ route }: EmailLinkLandingProps) {
                     : 'Update password'}
               </button>
             </form>
-            {failed && (
-              <p role="alert">
-                We could not complete this request. The link may be invalid or
-                expired. Request a new email and try again.
-              </p>
+            {failure && (
+              <p role="alert">{emailLinkFailureMessage(route.kind, failure)}</p>
             )}
           </>
         )}

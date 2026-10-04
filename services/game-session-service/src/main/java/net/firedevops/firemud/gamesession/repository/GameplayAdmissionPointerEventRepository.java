@@ -5,11 +5,18 @@ import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupp
 import static net.firedevops.firemud.gamesession.jooq.tables.GameplayAdmissionPointerEvent.GAMEPLAY_ADMISSION_POINTER_EVENT;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Optional;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointerEvent;
 import net.firedevops.firemud.gamesession.jooq.tables.records.GameplayAdmissionPointerEventRecord;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService.PointerAuditKey;
+import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Record;
+import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
 
 @Repository
@@ -17,13 +24,15 @@ import org.springframework.stereotype.Repository;
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class GameplayAdmissionPointerEventRepository {
+  private static final int POINTER_KEY_QUERY_CHUNK_SIZE = 500;
+
   private final DSLContext dsl;
 
   public GameplayAdmissionPointerEventRepository(DSLContext dsl) {
     this.dsl = dsl;
   }
 
-  public List<GameplayAdmissionPointerEvent> findByWorldSlugAndRealmSlugOrderByOccurredAtDesc(
+  public List<GameplayAdmissionPointerEvent> findByWorldSlugAndRealmSlugOrderByIdDesc(
       String worldSlug, String realmSlug) {
     return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER_EVENT)
         .where(
@@ -31,15 +40,12 @@ public class GameplayAdmissionPointerEventRepository {
                 .WORLD_SLUG
                 .eq(worldSlug)
                 .and(GAMEPLAY_ADMISSION_POINTER_EVENT.REALM_SLUG.eq(realmSlug)))
-        .orderBy(
-            GAMEPLAY_ADMISSION_POINTER_EVENT.OCCURRED_AT.desc(),
-            GAMEPLAY_ADMISSION_POINTER_EVENT.ID.desc())
+        .orderBy(GAMEPLAY_ADMISSION_POINTER_EVENT.ID.desc())
         .fetch(this::toEntity);
   }
 
-  public List<GameplayAdmissionPointerEvent>
-      findByTenantIdAndWorldSlugAndRealmSlugOrderByOccurredAtDesc(
-          Long tenantId, String worldSlug, String realmSlug) {
+  public List<GameplayAdmissionPointerEvent> findByTenantIdAndWorldSlugAndRealmSlugOrderByIdDesc(
+      Long tenantId, String worldSlug, String realmSlug) {
     return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER_EVENT)
         .where(
             GAMEPLAY_ADMISSION_POINTER_EVENT
@@ -47,10 +53,60 @@ public class GameplayAdmissionPointerEventRepository {
                 .eq(tenantId)
                 .and(GAMEPLAY_ADMISSION_POINTER_EVENT.WORLD_SLUG.eq(worldSlug))
                 .and(GAMEPLAY_ADMISSION_POINTER_EVENT.REALM_SLUG.eq(realmSlug)))
-        .orderBy(
-            GAMEPLAY_ADMISSION_POINTER_EVENT.OCCURRED_AT.desc(),
-            GAMEPLAY_ADMISSION_POINTER_EVENT.ID.desc())
+        .orderBy(GAMEPLAY_ADMISSION_POINTER_EVENT.ID.desc())
         .fetch(this::toEntity);
+  }
+
+  public Optional<GameplayAdmissionPointerEvent> findLatestByTenantIdAndWorldSlugAndRealmSlug(
+      Long tenantId, String worldSlug, String realmSlug) {
+    return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER_EVENT)
+        .where(
+            GAMEPLAY_ADMISSION_POINTER_EVENT
+                .TENANT_ID
+                .eq(tenantId)
+                .and(GAMEPLAY_ADMISSION_POINTER_EVENT.WORLD_SLUG.eq(worldSlug))
+                .and(GAMEPLAY_ADMISSION_POINTER_EVENT.REALM_SLUG.eq(realmSlug)))
+        .orderBy(GAMEPLAY_ADMISSION_POINTER_EVENT.ID.desc())
+        .limit(1)
+        .fetchOptional(this::toEntity);
+  }
+
+  public List<GameplayAdmissionPointerEvent> findLatestByPointerKeys(List<PointerAuditKey> keys) {
+    if (keys.isEmpty()) {
+      return List.of();
+    }
+    List<PointerAuditKey> uniqueKeys = new ArrayList<>(new LinkedHashSet<>(keys));
+    List<GameplayAdmissionPointerEvent> latestEvents = new ArrayList<>();
+    for (int offset = 0; offset < uniqueKeys.size(); offset += POINTER_KEY_QUERY_CHUNK_SIZE) {
+      List<PointerAuditKey> keyChunk =
+          uniqueKeys.subList(
+              offset, Math.min(offset + POINTER_KEY_QUERY_CHUNK_SIZE, uniqueKeys.size()));
+      Condition selectedKeys = DSL.falseCondition();
+      for (PointerAuditKey key : keyChunk) {
+        selectedKeys =
+            selectedKeys.or(
+                GAMEPLAY_ADMISSION_POINTER_EVENT
+                    .TENANT_ID
+                    .eq(key.tenantId())
+                    .and(GAMEPLAY_ADMISSION_POINTER_EVENT.WORLD_SLUG.eq(key.worldSlug()))
+                    .and(GAMEPLAY_ADMISSION_POINTER_EVENT.REALM_SLUG.eq(key.realmSlug())));
+      }
+      var latestIds =
+          dsl.select(DSL.max(GAMEPLAY_ADMISSION_POINTER_EVENT.ID))
+              .from(GAMEPLAY_ADMISSION_POINTER_EVENT)
+              .where(selectedKeys)
+              .groupBy(
+                  GAMEPLAY_ADMISSION_POINTER_EVENT.TENANT_ID,
+                  GAMEPLAY_ADMISSION_POINTER_EVENT.WORLD_SLUG,
+                  GAMEPLAY_ADMISSION_POINTER_EVENT.REALM_SLUG);
+      latestEvents.addAll(
+          dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER_EVENT)
+              .where(GAMEPLAY_ADMISSION_POINTER_EVENT.ID.in(latestIds))
+              .orderBy(GAMEPLAY_ADMISSION_POINTER_EVENT.ID.asc())
+              .fetch(this::toEntity));
+    }
+    latestEvents.sort(Comparator.comparing(GameplayAdmissionPointerEvent::getId));
+    return latestEvents;
   }
 
   public GameplayAdmissionPointerEvent save(GameplayAdmissionPointerEvent entity) {
@@ -69,6 +125,11 @@ public class GameplayAdmissionPointerEventRepository {
             .set(GAMEPLAY_ADMISSION_POINTER_EVENT.TENANT_ID, entity.getTenantId())
             .set(GAMEPLAY_ADMISSION_POINTER_EVENT.GAME_INSTANCE_ID, entity.getGameInstanceId())
             .set(GAMEPLAY_ADMISSION_POINTER_EVENT.POINTER_VERSION, entity.getPointerVersion())
+            .set(GAMEPLAY_ADMISSION_POINTER_EVENT.CATALOG_REVISION, entity.getCatalogRevision())
+            .set(GAMEPLAY_ADMISSION_POINTER_EVENT.REALM_ID, entity.getRealmId())
+            .set(
+                GAMEPLAY_ADMISSION_POINTER_EVENT.PLAYABLE_STATE_NAMESPACE_ID,
+                entity.getPlayableStateNamespaceId())
             .set(GAMEPLAY_ADMISSION_POINTER_EVENT.VISIBLE, entity.isVisible())
             .set(
                 GAMEPLAY_ADMISSION_POINTER_EVENT.PUBLIC_PRODUCTION_REALM,
@@ -120,6 +181,9 @@ public class GameplayAdmissionPointerEventRepository {
     record.setTenantId(entity.getTenantId());
     record.setGameInstanceId(entity.getGameInstanceId());
     record.setPointerVersion(entity.getPointerVersion());
+    record.setCatalogRevision(entity.getCatalogRevision());
+    record.setRealmId(entity.getRealmId());
+    record.setPlayableStateNamespaceId(entity.getPlayableStateNamespaceId());
     record.setVisible(entity.isVisible());
     record.setPublicProductionRealm(entity.isPublicProductionRealm());
     record.setRequiresCharacterSelection(entity.isRequiresCharacterSelection());
@@ -142,6 +206,10 @@ public class GameplayAdmissionPointerEventRepository {
     entity.setTenantId(record.get(GAMEPLAY_ADMISSION_POINTER_EVENT.TENANT_ID));
     entity.setGameInstanceId(record.get(GAMEPLAY_ADMISSION_POINTER_EVENT.GAME_INSTANCE_ID));
     entity.setPointerVersion(record.get(GAMEPLAY_ADMISSION_POINTER_EVENT.POINTER_VERSION));
+    entity.setCatalogRevision(record.get(GAMEPLAY_ADMISSION_POINTER_EVENT.CATALOG_REVISION));
+    entity.setRealmId(record.get(GAMEPLAY_ADMISSION_POINTER_EVENT.REALM_ID));
+    entity.setPlayableStateNamespaceId(
+        record.get(GAMEPLAY_ADMISSION_POINTER_EVENT.PLAYABLE_STATE_NAMESPACE_ID));
     entity.setVisible(Boolean.TRUE.equals(record.get(GAMEPLAY_ADMISSION_POINTER_EVENT.VISIBLE)));
     entity.setPublicProductionRealm(
         Boolean.TRUE.equals(record.get(GAMEPLAY_ADMISSION_POINTER_EVENT.PUBLIC_PRODUCTION_REALM)));

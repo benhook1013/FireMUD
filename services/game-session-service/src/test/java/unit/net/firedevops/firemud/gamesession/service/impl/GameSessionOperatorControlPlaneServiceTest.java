@@ -982,6 +982,25 @@ class GameSessionOperatorControlPlaneServiceTest {
   }
 
   @Test
+  void unpinnedReadsOmitPublicationWithoutCallingGameDesign() {
+    GameInstanceRepository repository = mock(GameInstanceRepository.class);
+    TickService tickService = mock(TickService.class);
+    GameDesignClient gameDesign = mock(GameDesignClient.class);
+    GameInstance instance = validUnpinnedInstance();
+    when(repository.findById(7L)).thenReturn(Optional.of(instance));
+    GameSessionOperatorControlPlaneService service =
+        newService(
+            repository, tickService, gameDesign, mock(AutomationScriptingControlPlaneClient.class));
+
+    var pinned = service.getPinnedScriptPatchVersion(1L, 7L);
+    var convergence = service.getGameSessionPinConvergence(1L, 7L);
+
+    assertThat(pinned.hasPublication()).isFalse();
+    assertThat(convergence.hasPublication()).isFalse();
+    verifyNoInteractions(gameDesign);
+  }
+
+  @Test
   void pinReadPublicationLookupFailsClosedWhenRetainedPinBaseIsUnknown() {
     GameInstanceRepository repository = mock(GameInstanceRepository.class);
     TickService tickService = mock(TickService.class);

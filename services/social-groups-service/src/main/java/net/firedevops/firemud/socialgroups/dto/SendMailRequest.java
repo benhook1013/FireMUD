@@ -6,7 +6,7 @@ import jakarta.validation.constraints.Positive;
 
 public record SendMailRequest(
     @NotNull @Positive Long tenantId,
-    @NotNull @Positive Long senderAccountId,
-    @NotNull @Positive Long recipientAccountId,
+    @NotBlank String senderAccountId,
+    @NotBlank String recipientAccountId,
     @NotBlank String subject,
     @NotBlank String content) {}

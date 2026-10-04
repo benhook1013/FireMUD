@@ -104,6 +104,7 @@ query($owner:String!, $repo:String!, $number:Int!) {
     baseRefName
     baseRefOid
     headRefOid
+    changedFiles
     commits(last:1) { nodes { commit { oid committedDate statusCheckRollup { state } } } }
     reviewThreads(first:100) { nodes { id isResolved isOutdated path line comments(first:20) {
       nodes { id databaseId author { login } body url createdAt updatedAt }
