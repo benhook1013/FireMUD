@@ -1779,6 +1779,21 @@ def main() -> int:
         fail("Testcontainers image extraction loses database version or image suffix")
     if list(testcontainer_pattern.finditer('"ghcr.io/benhook1013/logging-admin-service:latest"')):
         fail("Testcontainers manager must not update repository-built service images")
+    digest_image_managers = [
+        testcontainer_manager,
+        next(manager for manager in custom_managers if manager.get("description") == "Update the PostgreSQL image used by ERD generation"),
+        next(manager for manager in custom_managers if manager.get("description") == "Update the embedded dev-demo bootstrap Pod runtime image"),
+    ]
+    old_digest = "sha256:" + "a" * 64
+    for manager, image in zip(digest_image_managers, ('"postgres:16-alpine"', 'postgres:16', 'image: python:3.12-alpine')):
+        pattern = compile_re2_pattern(manager["matchStrings"][0])
+        pinned_image = image[:-1] + "@" + old_digest + '"' if image.startswith('"') else image + "@" + old_digest
+        match = pattern.search(pinned_image)
+        if match is None or match.group("currentDigest") != old_digest:
+            fail("Custom runtime image managers must extract pinned digests separately from tags")
+        replacement = manager.get("autoReplaceStringTemplate", "")
+        if "{{#if newDigest}}@{{{newDigest}}}" not in replacement or "{{#if currentDigest}}@{{{currentDigest}}}" not in replacement:
+            fail("Custom runtime image replacements must insert/update digests and retain existing pins")
     if "**/test/**" in renovate.get("ignorePaths", []):
         fail("Renovate must include service test image authorities")
     manifest_patterns = renovate.get("kubernetes", {}).get("managerFilePatterns", [])
@@ -1817,6 +1832,16 @@ def main() -> int:
         or velero_rule.get("automerge") is not False
     ):
         fail("Velero native managers must remain grouped, digest-pinned, and manually merged")
+    cli_digest_rule = next((rule for rule in rules if rule.get("description") == "Velero CLI authority is a binary release version rather than a container image reference"), None)
+    if (
+        cli_digest_rule is None
+        or rules.index(cli_digest_rule) <= rules.index(velero_rule)
+        or cli_digest_rule.get("matchManagers") != ["custom.regex"]
+        or cli_digest_rule.get("matchFileNames") != ["config/workflow-tool-versions.env"]
+        or cli_digest_rule.get("matchPackageNames") != ["velero/velero"]
+        or cli_digest_rule.get("pinDigests") is not False
+    ):
+        fail("Only the Velero binary authority may opt out of container digest pinning")
     if "# renovate-version: datasource=docker depName=velero/velero" not in authority_text:
         fail("Velero CLI authority must retain its Docker release manager marker")
 

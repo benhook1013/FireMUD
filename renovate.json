@@ -195,10 +195,11 @@
         "/^services\\/[^/]+\\/src\\/test\\/java\\/.*\\.java$/"
       ],
       "matchStrings": [
-        "\"(?<depName>postgres|redis):(?<currentValue>[0-9][^\"\\s]*)\""
+        "\"(?<depName>postgres|redis):(?<currentValue>[0-9][A-Za-z0-9_.-]*)(?:@(?<currentDigest>sha256:[0-9a-f]{64}))?\""
       ],
       "datasourceTemplate": "docker",
-      "versioningTemplate": "docker"
+      "versioningTemplate": "docker",
+      "autoReplaceStringTemplate": "\"{{{depName}}}:{{#if newValue}}{{{newValue}}}{{else}}{{{currentValue}}}{{/if}}{{#if newDigest}}@{{{newDigest}}}{{else}}{{#if currentDigest}}@{{{currentDigest}}}{{/if}}{{/if}}\""
     },
     {
       "customType": "regex",
@@ -207,10 +208,11 @@
         "/^dev-tools\\/docs\\/generate-erd\\.sh$/"
       ],
       "matchStrings": [
-        "\\b(?<depName>postgres):(?<currentValue>[0-9][^\\s\"\\x27]*)"
+        "(?m)\\b(?<depName>postgres):(?<currentValue>[0-9][A-Za-z0-9_.-]*)(?:@(?<currentDigest>sha256:[0-9a-f]{64}))?$"
       ],
       "datasourceTemplate": "docker",
-      "versioningTemplate": "docker"
+      "versioningTemplate": "docker",
+      "autoReplaceStringTemplate": "{{{depName}}}:{{#if newValue}}{{{newValue}}}{{else}}{{{currentValue}}}{{/if}}{{#if newDigest}}@{{{newDigest}}}{{else}}{{#if currentDigest}}@{{{currentDigest}}}{{/if}}{{/if}}"
     },
     {
       "customType": "regex",
@@ -249,10 +251,11 @@
         "/^\\.github\\/workflows\\/dev-demo\\.yml$/"
       ],
       "matchStrings": [
-        "image:\\s+(?<depName>python):(?<currentValue>[0-9][^\\s]+)"
+        "(?m)image:[ \\t]+(?<depName>python):(?<currentValue>[0-9][A-Za-z0-9_.-]*)(?:@(?<currentDigest>sha256:[0-9a-f]{64}))?$"
       ],
       "datasourceTemplate": "docker",
-      "versioningTemplate": "docker"
+      "versioningTemplate": "docker",
+      "autoReplaceStringTemplate": "image: {{{depName}}}:{{#if newValue}}{{{newValue}}}{{else}}{{{currentValue}}}{{/if}}{{#if newDigest}}@{{{newDigest}}}{{else}}{{#if currentDigest}}@{{{currentDigest}}}{{/if}}{{/if}}"
     }
   ],
   "vulnerabilityAlerts": {
@@ -418,6 +421,19 @@
       ],
       "groupName": "Testcontainers database images",
       "automerge": false
+    },
+    {
+      "description": "Velero CLI authority is a binary release version rather than a container image reference",
+      "matchManagers": [
+        "custom.regex"
+      ],
+      "matchFileNames": [
+        "config/workflow-tool-versions.env"
+      ],
+      "matchPackageNames": [
+        "velero/velero"
+      ],
+      "pinDigests": false
     }
   ],
   "lockFileMaintenance": {
