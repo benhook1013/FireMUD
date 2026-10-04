@@ -5,6 +5,12 @@ public enum AccountIdentityProvenance {
   ACCOUNT_REPOSITORY_INSERT,
   ACCOUNT_DATABASE_INSERT;
 
+  public static boolean isAccepted(AccountIdentityProvenance provenance) {
+    return provenance == ACCOUNT_V29_MIGRATION
+        || provenance == ACCOUNT_REPOSITORY_INSERT
+        || provenance == ACCOUNT_DATABASE_INSERT;
+  }
+
   public static AccountIdentityProvenance fromStorageValue(String value) {
     if (value == null) {
       throw new IllegalStateException("Account UUID provenance must not be null");

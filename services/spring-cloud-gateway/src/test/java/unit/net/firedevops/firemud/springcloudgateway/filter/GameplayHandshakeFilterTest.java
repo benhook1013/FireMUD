@@ -318,18 +318,21 @@ class GameplayHandshakeFilterTest {
             MockServerHttpRequest.get("/ws/game/test")
                 .cookie(new HttpCookie(GameplayHandshakeFilter.CONNECT_TOKEN_COOKIE, token))
                 .build());
+    AtomicBoolean delegated = new AtomicBoolean();
 
-    filter.filter(exchange, e -> Mono.empty()).block();
+    filter
+        .filter(
+            exchange,
+            e -> {
+              delegated.set(true);
+              return Mono.empty();
+            })
+        .block();
 
+    assertThat(delegated).isFalse();
     assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
     assertThat(exchange.getResponse().getHeaders().getFirst("X-Firemud-Handshake-Error-Class"))
         .isEqualTo(GameplayHandshakeFilter.CONNECT_TOKEN_REJECTED);
-    assertThat(
-            exchange
-                .getRequest()
-                .getHeaders()
-                .getFirst(GameplayHandshakeFilter.CONNECT_CONTEXT_HEADER))
-        .isNull();
   }
 
   @Test

@@ -381,6 +381,13 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (IllegalStateException ex) {
+      AuthenticateResponse response =
+          AuthenticateResponse.newBuilder()
+              .setError(appError("Authenticate", "AUTH_UNAVAILABLE", AUTHORITY_UNAVAILABLE_MESSAGE))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     }
   }
 
@@ -425,6 +432,13 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
                       "VerifyEmailLoginOtp",
                       AuthenticationErrorCodes.INVALID_CREDENTIALS,
                       "Invalid credentials"))
+              .build());
+    } catch (IllegalStateException ex) {
+      responseObserver.onNext(
+          AuthenticateResponse.newBuilder()
+              .setError(
+                  appError(
+                      "VerifyEmailLoginOtp", "AUTH_UNAVAILABLE", AUTHORITY_UNAVAILABLE_MESSAGE))
               .build());
     }
     responseObserver.onCompleted();

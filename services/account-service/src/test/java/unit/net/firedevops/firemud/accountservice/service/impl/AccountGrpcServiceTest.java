@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -518,6 +519,32 @@ class AccountGrpcServiceTest {
   }
 
   @Test
+  void authenticateConvertsIllegalStateToBoundedAuthorityUnavailableError() {
+    AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(accountService.authenticateForGameplay("demo@example.com", "password"))
+        .thenThrow(new IllegalStateException("private provenance detail"));
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    AccountGrpcService service =
+        new AccountGrpcService(Mockito.mock(PingService.class), accountService, registry);
+    RecordingObserver<AuthenticateResponse> observer = new RecordingObserver<>();
+
+    service.authenticate(
+        AuthenticateRequest.newBuilder()
+            .setEmail("demo@example.com")
+            .setPassword("password")
+            .build(),
+        observer);
+
+    assertEquals("AUTH_UNAVAILABLE", observer.response().getError().getCode());
+    assertEquals(
+        "Account authority unavailable; retry later", observer.response().getError().getMessage());
+    assertTrue(observer.completed());
+    assertFalse(observer.receivedTransportError());
+    assertEquals(
+        1.0, registry.get("grpc.app_error").tag("code", "AUTH_UNAVAILABLE").counter().count());
+  }
+
+  @Test
   void requestEmailLoginOtpDispatchesNeutralChallengeRequest() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
@@ -643,6 +670,32 @@ class AccountGrpcServiceTest {
         AuthenticationErrorCodes.INVALID_CREDENTIALS, observer.response().getError().getCode());
     assertTrue(observer.completed());
     assertFalse(observer.receivedTransportError());
+  }
+
+  @Test
+  void verifyEmailLoginOtpConvertsIllegalStateToBoundedAuthorityUnavailableError() {
+    AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(accountService.verifyEmailLoginOtp("demo@example.com", "123456"))
+        .thenThrow(new IllegalStateException("private provenance detail"));
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    AccountGrpcService service =
+        new AccountGrpcService(Mockito.mock(PingService.class), accountService, registry);
+    RecordingObserver<AuthenticateResponse> observer = new RecordingObserver<>();
+
+    service.verifyEmailLoginOtp(
+        VerifyEmailLoginOtpRequest.newBuilder()
+            .setEmail("demo@example.com")
+            .setCode("123456")
+            .build(),
+        observer);
+
+    assertEquals("AUTH_UNAVAILABLE", observer.response().getError().getCode());
+    assertEquals(
+        "Account authority unavailable; retry later", observer.response().getError().getMessage());
+    assertTrue(observer.completed());
+    assertFalse(observer.receivedTransportError());
+    assertEquals(
+        1.0, registry.get("grpc.app_error").tag("code", "AUTH_UNAVAILABLE").counter().count());
   }
 
   @Test
