@@ -1390,7 +1390,7 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
             snapshot_matches = (
                 pull_request.get("headRefOid") == stack_item.get("head")
                 and pull_request.get("baseRefName") == stack_item.get("base")
-                and pull_request.get("baseRefOid") == stack_item.get("parent_head")
+                and pull_request.get("baseRefOid") == stack_item.get("pr_base_oid")
             )
             if not snapshot_matches:
                 review_reasons.append("PR base/head changed between status snapshots")

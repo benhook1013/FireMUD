@@ -2238,6 +2238,7 @@ class ReviewRecordsCliTest(unittest.TestCase):
                             "head": "a" * 40,
                             "base": "main",
                             "parent_head": "b" * 40,
+                            "pr_base_oid": "b" * 40,
                         }
                     ]
                 },
@@ -2270,6 +2271,37 @@ class ReviewRecordsCliTest(unittest.TestCase):
         self.assertEqual(report["record_route_store"]["status"], "available")
         self.assertFalse(report["ready"])
         self.assertTrue(any("SQLite-record incoming route" in reason for reason in report["reasons"]))
+
+    def test_selected_status_compares_retained_pr_identity_not_parent_tip(self) -> None:
+        for changed_field in (None, "headRefOid", "baseRefName", "baseRefOid"):
+            with self.subTest(changed_field=changed_field):
+                item = {
+                    "pr": 42, "head": "a" * 40, "base": "develop", "pr_base_oid": "b" * 40,
+                    "parent_head": "c" * 40, "reconciliation": "PARENT_MOVED",
+                    "channels": {"hosted": "COMPLETE", "cli": "HUMAN_STOPPED"},
+                    "allocations": {}, "incoming_routes": [], "routes_out": [],
+                }
+                controller = type("FakeController", (), {
+                    "status_for_pr": lambda self, pr, row=item: {"prs": [row]},
+                })()
+                identity = {"headRefOid": "a" * 40, "baseRefName": "develop", "baseRefOid": "b" * 40}
+                if changed_field:
+                    identity[changed_field] = "other" if changed_field == "baseRefName" else "d" * 40
+                base_report = {"pull_request": identity, "reasons": [], "ready": True, "verdict": "READY",
+                               "mergeability": {"clean": True, "diagnosis": "READY"}}
+                output = io.StringIO()
+                with (
+                    patch.object(cli, "default_controller", return_value=controller),
+                    patch.object(cli.status_module, "status", return_value=base_report),
+                    patch.object(cli, "_read_record_incoming_routes", return_value=([], {"status": "available"})),
+                    contextlib.redirect_stdout(output),
+                ):
+                    self.assertEqual(cli.main(["status", "--pr", "42", "--json"]), 0)
+                report = json.loads(output.getvalue())
+                self.assertEqual(any("between status snapshots" in reason for reason in report["reasons"]),
+                                 changed_field is not None)
+                self.assertFalse(report["ready"])
+                self.assertIn("review stack is PARENT_MOVED", report["reasons"])
 
     def test_selected_status_deduplicates_legacy_route_shadows_before_filtering(self) -> None:
         retargeted = FindingRoute(

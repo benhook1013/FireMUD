@@ -4981,6 +4981,7 @@ class ReviewController:
                     "pr": pr,
                     "head": item.head,
                     "base": item.base_ref,
+                    "pr_base_oid": item.base_tip,
                     "parent": reconciliation.links[pr].identity,
                     "parent_head": reconciliation.links[pr].parent_head,
                     "state": item.state,
@@ -5099,6 +5100,7 @@ class ReviewController:
                 "pr": pr,
                 "head": None,
                 "base": None,
+                "pr_base_oid": None,
                 "parent": None,
                 "parent_head": None,
                 "state": "UNKNOWN",
@@ -5415,8 +5417,8 @@ class ReviewController:
                 not isinstance(detailed.get("head"), str)
                 or detailed["head"].casefold() != item.head.casefold()
                 or detailed.get("base") != item.base_ref
-                or not isinstance(detailed.get("parent_head"), str)
-                or detailed["parent_head"].casefold() != item.base_tip.casefold()
+                or not isinstance(detailed.get("pr_base_oid"), str)
+                or detailed["pr_base_oid"].casefold() != item.base_tip.casefold()
                 or detailed.get("state") != item.state
                 or detailed.get("merged") != item.merged
             ):
@@ -5429,18 +5431,14 @@ class ReviewController:
                     mismatch.add(pr)
                     changed = True
 
+        # A retained PR base OID may differ from the current parent tip in
+        # both reads. Canonical reconciliation already reports that condition;
+        # only an inconsistent snapshot invalidates this display selection.
         changed_target_pr = next(
             (
                 pr
                 for pr in target_scan_prs
                 if pr in mismatch
-                or (
-                    batch_live[pr].state == "OPEN"
-                    and (
-                        batch_live[pr].base_ref != links[pr].parent_ref
-                        or batch_live[pr].base_tip.casefold() != links[pr].parent_head.casefold()
-                    )
-                )
                 or (pr not in deep_by_pr and self._saved_identity_moved(state, pr, batch_live[pr], links[pr]))
             ),
             None,
@@ -5472,7 +5470,7 @@ class ReviewController:
                         "evidence_last_checked_at": None,
                     }
                 )
-                if pr in mismatch or batch_topology_moved:
+                if pr in mismatch:
                     row["reconciliation"] = "UNRECONCILED"
                     row["reason"] = (
                         "remote parent or head branch changed during deep reconciliation"
@@ -5561,6 +5559,7 @@ class ReviewController:
                     "pr": pr,
                     "head": item.head,
                     "base": item.base_ref,
+                    "pr_base_oid": item.base_tip,
                     "parent": parent.identity,
                     "parent_head": parent.parent_head,
                     "state": item.state,

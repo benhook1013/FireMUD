@@ -207,6 +207,7 @@ class StatusTest(unittest.TestCase):
                         "head": HEAD,
                         "base": "develop",
                         "parent_head": BASE,
+                        "pr_base_oid": BASE,
                         "reconciliation": "COHERENT",
                         "channels": {"hosted": "COMPLETE", "cli": "COMPLETE"},
                         "allocations": {},
@@ -1018,6 +1019,104 @@ class StatusTest(unittest.TestCase):
         self.assertIn("authoritative branch protection is unavailable", report["ci"]["required"]["reason"])
         self.assertFalse(report["ready"])
 
+    def test_success_rollup_reports_conflicting_failed_or_pending_inventory(self) -> None:
+        for conclusion, lifecycle, category in (
+            ("FAILURE", "COMPLETED", "failed"),
+            (None, "IN_PROGRESS", "pending"),
+        ):
+            with self.subTest(category=category):
+                payload = github_payload()
+                pr = payload["data"]["repository"]["pullRequest"]
+                pr["reviewThreads"] = {"nodes": []}
+                pr["statusCheckRollup"][0].update(status=lifecycle, conclusion=conclusion)
+                report = self._ready_report(payload)
+
+                self.assertEqual(report["ci"]["aggregate"], {"state": "SUCCESS", "source": "github"})
+                self.assertTrue(report["ci"]["aggregate_inventory_conflict"])
+                self.assertEqual([item["name"] for item in report["ci"][category]], ["Validation Gate"])
+                self.assertEqual(report["verdict"], "NOT READY")
+                self.assertFalse(report["ready"])
+                compact = status.emit_text(report)
+                self.assertIn("GitHub statusCheckRollup=SUCCESS", compact)
+                self.assertIn(f"inventory_{category}=1", compact)
+                self.assertIn("CI evidence conflict:", compact)
+
+    def test_unavailable_required_authority_does_not_classify_inventory_as_optional(self) -> None:
+        payload = github_payload()
+        pr = payload["data"]["repository"]["pullRequest"]
+        pr["reviewThreads"] = {"nodes": []}
+        pr["required_status_checks"] = {"available": False, "reason": "protection unavailable"}
+        pr["statusCheckRollup"][0].update(conclusion="FAILURE")
+        pr["statusCheckRollup"][1].update(status="IN_PROGRESS", conclusion=None)
+
+        report = self._ready_report(payload)
+
+        self.assertEqual(report["ci"]["required"]["status"], "unavailable")
+        self.assertEqual(report["ci"]["optional"], {"available": False, "pending": [], "failed": []})
+        self.assertEqual([item["name"] for item in report["ci"]["failed"]], ["Validation Gate"])
+        self.assertEqual([item["name"] for item in report["ci"]["pending"]], ["Security Gate"])
+        self.assertEqual(report["verdict"], "NOT READY")
+        self.assertIn("protection unavailable", report["reasons"])
+        self.assertIn("optional_failed=unknown", status.emit_text(report))
+
+    def test_success_rollup_with_known_optional_failure_preserves_readiness(self) -> None:
+        payload = github_payload()
+        pr = payload["data"]["repository"]["pullRequest"]
+        pr["reviewThreads"] = {"nodes": []}
+        pr["statusCheckRollup"].append(
+            {
+                "__typename": "CheckRun",
+                "workflowName": "Optional Workflow",
+                "name": "Optional Summary",
+                "startedAt": "2026-09-23T02:00:00Z",
+                "status": "COMPLETED",
+                "conclusion": "FAILURE",
+                "head_sha": HEAD,
+                "app": {"id": 42, "slug": "github-actions"},
+            }
+        )
+
+        report = self._ready_report(payload)
+
+        self.assertEqual(report["ci"]["required"]["status"], "passed")
+        self.assertTrue(report["ci"]["optional"]["available"])
+        self.assertEqual([item["name"] for item in report["ci"]["optional"]["failed"]], ["Optional Summary"])
+        self.assertTrue(report["ci"]["aggregate_inventory_conflict"])
+        self.assertTrue(report["ready"])
+        self.assertEqual(report["verdict"], "READY")
+        self.assertIn("optional_failed=1", status.emit_text(report))
+
+    def test_unavailable_inventory_labels_empty_and_failed_fallback_as_rollup_observations(self) -> None:
+        for failure in (False, True):
+            with self.subTest(failure=failure):
+                payload = github_payload()
+                pr = payload["data"]["repository"]["pullRequest"]
+                pr["reviewThreads"] = {"nodes": []}
+                pr["statusCheckRollup"] = (
+                    [{"name": "Account", "status": "COMPLETED", "conclusion": "FAILURE"}]
+                    if failure else []
+                )
+                report = self._ready_report(
+                    payload,
+                    check_inventory_payload={"available": False, "reason": "complete check inventory unavailable"},
+                )
+
+                self.assertFalse(report["ci"]["inventory_available"])
+                self.assertEqual(report["ci"]["inventory_status"], "unavailable")
+                self.assertEqual(report["ci"]["inventory_reason"], "complete check inventory unavailable")
+                self.assertEqual(report["ci"]["aggregate"], {"state": "SUCCESS", "source": "github"})
+                self.assertFalse(report["ci"]["aggregate_inventory_conflict"])
+                self.assertFalse(report["ready"])
+                compact = status.emit_text(report)
+                self.assertIn("inventory=unavailable", compact)
+                self.assertNotIn("inventory_pending=", compact)
+                self.assertNotIn("inventory_failed=", compact)
+                self.assertNotIn("inventory checks:", compact)
+                self.assertIn(f"rollup_observed={int(failure)}", compact)
+                self.assertIn(f"rollup_failed={int(failure)}", compact)
+                self.assertIn(f"failed rollup observations: {'Account' if failure else 'none'}", compact)
+                self.assertIn("CI inventory unavailable: complete check inventory unavailable", compact)
+
     def test_cli_status_fails_closed_when_snapshots_have_different_base_or_head(self) -> None:
         report = {
             "pull_request": {
@@ -1030,8 +1129,8 @@ class StatusTest(unittest.TestCase):
             "verdict": "READY",
             "mergeability": {"clean": True, "diagnosis": "READY"},
         }
-        for stack_head, stack_parent_head in (("e" * 40, BASE), (HEAD, "f" * 40)):
-            with self.subTest(head=stack_head, parent_head=stack_parent_head):
+        for stack_head, stack_pr_base_oid in (("e" * 40, BASE), (HEAD, "f" * 40)):
+            with self.subTest(head=stack_head, pr_base_oid=stack_pr_base_oid):
                 controller = Mock()
                 controller.status.return_value = {
                     "prs": [
@@ -1039,7 +1138,8 @@ class StatusTest(unittest.TestCase):
                             "pr": 2838,
                             "head": stack_head,
                             "base": "develop",
-                            "parent_head": stack_parent_head,
+                            "parent_head": BASE,
+                            "pr_base_oid": stack_pr_base_oid,
                             "reconciliation": "COHERENT",
                             "channels": {"hosted": "COMPLETE", "cli": "COMPLETE"},
                         }
@@ -1079,7 +1179,8 @@ class StatusTest(unittest.TestCase):
                     "pr": 2838,
                     "head": HEAD,
                     "base": "develop",
-                    "parent_head": BASE,
+                    "parent_head": "f" * 40,
+                    "pr_base_oid": BASE,
                     "reconciliation": "COHERENT",
                     "channels": {"hosted": "COMPLETE", "cli": "COMPLETE"},
                 }
@@ -1120,6 +1221,7 @@ class StatusTest(unittest.TestCase):
                     "head": HEAD,
                     "base": "develop",
                     "parent_head": BASE,
+                    "pr_base_oid": BASE,
                     "reconciliation": "COHERENT",
                     "channels": {"hosted": "HUMAN_STOPPED", "cli": "HUMAN_STOPPED"},
                     "review_obligations": {"hosted": [], "cli": []},
@@ -1190,6 +1292,7 @@ class StatusTest(unittest.TestCase):
                     "head": HEAD,
                     "base": "develop",
                     "parent_head": BASE,
+                    "pr_base_oid": BASE,
                     "reconciliation": "COHERENT",
                     "channels": {"hosted": "COMPLETE", "cli": "COMPLETE"},
                 }
