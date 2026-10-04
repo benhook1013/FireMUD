@@ -16,7 +16,9 @@ import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.DirectTextConnectScopeTarget;
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
+import net.firedevops.firemud.gamesession.service.AccountIds;
 import net.firedevops.firemud.gamesession.service.DirectTextConnectScopeSessionStore;
+import net.firedevops.firemud.gamesession.service.RetainedRuntimeTenantUuidResolver;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -33,26 +35,38 @@ public class WorldsCommandHandler {
   private final GameplayWorldCatalog worldCatalog;
   private final AccountClient accountClient;
   private final DirectTextConnectScopeSessionStore connectScopeSessionStore;
+  private final RetainedRuntimeTenantUuidResolver retainedRuntimeTenantUuidResolver;
   private final Clock clock;
 
   @Autowired
   public WorldsCommandHandler(
       GameplayWorldCatalog worldCatalog,
       AccountClient accountClient,
-      DirectTextConnectScopeSessionStore connectScopeSessionStore) {
-    this(worldCatalog, accountClient, connectScopeSessionStore, Clock.systemUTC());
+      DirectTextConnectScopeSessionStore connectScopeSessionStore,
+      RetainedRuntimeTenantUuidResolver retainedRuntimeTenantUuidResolver) {
+    this(
+        worldCatalog,
+        accountClient,
+        connectScopeSessionStore,
+        retainedRuntimeTenantUuidResolver,
+        Clock.systemUTC());
   }
 
   WorldsCommandHandler(
       GameplayWorldCatalog worldCatalog,
       AccountClient accountClient,
       DirectTextConnectScopeSessionStore connectScopeSessionStore,
+      RetainedRuntimeTenantUuidResolver retainedRuntimeTenantUuidResolver,
       Clock clock) {
     this.worldCatalog = Objects.requireNonNull(worldCatalog, "worldCatalog must not be null");
     this.accountClient = Objects.requireNonNull(accountClient, "accountClient must not be null");
     this.connectScopeSessionStore =
         Objects.requireNonNull(
             connectScopeSessionStore, "connectScopeSessionStore must not be null");
+    this.retainedRuntimeTenantUuidResolver =
+        Objects.requireNonNull(
+            retainedRuntimeTenantUuidResolver,
+            "retainedRuntimeTenantUuidResolver must not be null");
     this.clock = Objects.requireNonNull(clock, "clock must not be null");
   }
 
@@ -148,11 +162,17 @@ public class WorldsCommandHandler {
       if (accountClient == null) {
         return RealmBrowseResult.failure("AUTH_UNAVAILABLE");
       }
-      DirectTextConnectScopeTarget target = connectScopeTarget(world, realm);
+      Optional<UUID> canonicalTenantId = canonicalTenantId(realm.tenantId());
+      if (canonicalTenantId.isEmpty()) {
+        return RealmBrowseResult.failure("AUTH_UNAVAILABLE");
+      }
+      DirectTextConnectScopeTarget target =
+          connectScopeTarget(world, realm, canonicalTenantId.orElseThrow());
       if (target == null) {
         return RealmBrowseResult.failure("ADMISSION_POINTER_UNAVAILABLE");
       }
-      PlayerExecutionContext playerContext = playerContext(sessionContext, realm, requestId);
+      PlayerExecutionContext playerContext =
+          playerContext(sessionContext, realm, requestId, canonicalTenantId.orElseThrow());
       IssueDirectTextConnectScopeResponse scopeResponse =
           accountClient.issueDirectTextConnectScope(playerContext, target);
       if (scopeResponse.hasError()) {
@@ -176,7 +196,13 @@ public class WorldsCommandHandler {
       }
       issuedScopes.add(
           new DirectTextConnectScopeSessionStore.ScopedRealm(
-              realm.slug(), true, scopeResponse.getConnectScopeId(), expiresAt, playerContext));
+              realm.slug(),
+              realm.tenantId(),
+              true,
+              scopeResponse.getConnectScopeId(),
+              expiresAt,
+              playerContext,
+              ""));
       visibleEntries.add(realmEntry(visibleEntries.size() + 1, realm));
       responseRealms.add(realm);
     }
@@ -553,6 +579,32 @@ public class WorldsCommandHandler {
             .equals(revalidatedRealmCatalog.orElseThrow().catalogFingerprint())) {
       return JoinMembershipResult.failure("CONNECT_SCOPE_MISMATCH");
     }
+    long catalogTenantId = DirectTextOrdinalSelectionResolver.worldTenantIdOrInvalid(world);
+    Optional<DirectTextConnectScopeSessionStore.ScopedRealm> maybeStoredScope;
+    try {
+      maybeStoredScope =
+          connectScopeSessionStore.publicProductionScope(
+              sessionContext, catalogTenantId, world.slug(), clock.instant());
+    } catch (DirectTextConnectScopeSessionStore.StoreUnavailableException
+        | DirectTextConnectScopeSessionStore.ConflictingIdentityException ex) {
+      return JoinMembershipResult.failure("AUTH_UNAVAILABLE");
+    }
+    if (maybeStoredScope.isEmpty()) {
+      return JoinMembershipResult.failure("CONNECT_SCOPE_MISMATCH");
+    }
+    DirectTextConnectScopeSessionStore.ScopedRealm storedScope = maybeStoredScope.orElseThrow();
+    Optional<UUID> currentCanonicalTenantId = canonicalTenantId(storedScope.localTenantId());
+    if (currentCanonicalTenantId.isEmpty()) {
+      return JoinMembershipResult.failure("AUTH_UNAVAILABLE");
+    }
+    if (storedScope.localTenantId() != catalogTenantId
+        || !currentCanonicalTenantId
+            .orElseThrow()
+            .toString()
+            .equals(storedScope.playerContext().getTenantId())) {
+      return JoinMembershipResult.failure("CONNECT_SCOPE_MISMATCH");
+    }
+
     Optional<DirectTextConnectScopeSessionStore.JoinScope> maybeJoinScope;
     try {
       maybeJoinScope =
@@ -571,18 +623,20 @@ public class WorldsCommandHandler {
     }
     DirectTextConnectScopeSessionStore.JoinScope joinScope = maybeJoinScope.orElseThrow();
     DirectTextConnectScopeSessionStore.ScopedRealm scope = joinScope.scope();
-    long tenantId;
-    try {
-      tenantId = Long.parseLong(scope.playerContext().getTenantId());
-    } catch (NumberFormatException ex) {
-      return JoinMembershipResult.failure("ADMISSION_POINTER_UNAVAILABLE");
+    Optional<UUID> revalidatedCanonicalTenantId = canonicalTenantId(scope.localTenantId());
+    if (revalidatedCanonicalTenantId.isEmpty()) {
+      return JoinMembershipResult.failure("AUTH_UNAVAILABLE");
     }
-    if (tenantId != DirectTextOrdinalSelectionResolver.worldTenantIdOrInvalid(world)) {
+    if (scope.localTenantId() != catalogTenantId
+        || !revalidatedCanonicalTenantId
+            .orElseThrow()
+            .toString()
+            .equals(scope.playerContext().getTenantId())) {
       return JoinMembershipResult.failure("CONNECT_SCOPE_MISMATCH");
     }
     boolean hasPublicProductionRealm;
     try {
-      hasPublicProductionRealm = worldCatalog.hasValidPublicProductionRealm(tenantId);
+      hasPublicProductionRealm = worldCatalog.hasValidPublicProductionRealm(catalogTenantId);
     } catch (GameplayWorldCatalog.AuthorityPointerReadUnavailableException ex) {
       return JoinMembershipResult.failure("AUTH_UNAVAILABLE");
     } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
@@ -604,7 +658,9 @@ public class WorldsCommandHandler {
   }
 
   private DirectTextConnectScopeTarget connectScopeTarget(
-      GameplayWorldCatalog.WorldView world, GameplayWorldCatalog.RealmView realm) {
+      GameplayWorldCatalog.WorldView world,
+      GameplayWorldCatalog.RealmView realm,
+      UUID canonicalTenantId) {
     if (realm.tenantId() <= 0
         || realm.gameInstanceId() <= 0
         || realm.realmId() == null
@@ -615,7 +671,7 @@ public class WorldsCommandHandler {
       return null;
     }
     return new DirectTextConnectScopeTarget(
-        Long.toString(realm.tenantId()),
+        canonicalTenantId.toString(),
         world.slug(),
         realm.slug(),
         realm.realmId().toString(),
@@ -627,17 +683,26 @@ public class WorldsCommandHandler {
   }
 
   private PlayerExecutionContext playerContext(
-      SessionContext caller, GameplayWorldCatalog.RealmView realm, String requestId) {
+      SessionContext caller,
+      GameplayWorldCatalog.RealmView realm,
+      String requestId,
+      UUID canonicalTenantId) {
     return PlayerExecutionContext.newBuilder()
         .setAccountId(caller.accountId())
         .setSessionId(Long.toString(caller.sessionId()))
-        .setTenantId(Long.toString(realm.tenantId()))
+        .setTenantId(canonicalTenantId.toString())
         .setRealmId(realm.realmId().toString())
         .setPlayableStateNamespaceId(realm.playableStateNamespaceId().toString())
         .setPlayableStateScope(realm.stateScope())
         .setGameInstanceId(Long.toString(realm.gameInstanceId()))
         .setRequestId(requestId)
         .build();
+  }
+
+  private Optional<UUID> canonicalTenantId(long localTenantId) {
+    return retainedRuntimeTenantUuidResolver
+        .resolveCanonicalTenantId(localTenantId)
+        .filter(tenantId -> AccountIds.isCanonicalNonNilUuid(tenantId.toString()));
   }
 
   private RealmBrowseViewOutput.RealmEntry realmEntry(

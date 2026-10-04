@@ -1042,7 +1042,6 @@ public class PlayCommandHandler {
               && response.getRolesCount() == 0;
       case "ACTIVE" ->
           response.getMembershipExists()
-              && response.getGameplayAdmissionAllowed()
               && response.getRolesList().contains("player")
               && hasPositiveMembershipVersion(response);
       case "INACTIVE" ->
@@ -1161,8 +1160,8 @@ public class PlayCommandHandler {
 
     if (response.getOutboxSourceEvidenceCount() != 1
         || !response.getMembershipExists()
-        || (response.getGameplayAdmissionAllowed()
-            != "ACTIVE".equals(response.getMembershipLifecycleState()))
+        || ("INACTIVE".equals(response.getMembershipLifecycleState())
+            && response.getGameplayAdmissionAllowed())
         || response.getMembershipVersionCount() != 1
         || !hasPositiveMembershipVersion(response)) {
       return false;

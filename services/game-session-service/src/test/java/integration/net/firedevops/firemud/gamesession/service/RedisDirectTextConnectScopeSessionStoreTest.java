@@ -82,10 +82,12 @@ class RedisDirectTextConnectScopeSessionStoreTest {
         List.of(
             new DirectTextConnectScopeSessionStore.ScopedRealm(
                 "production",
+                22L,
                 true,
                 "account-connect-scope-17",
                 now.plusSeconds(600),
-                playerContext(caller))),
+                playerContext(caller),
+                "")),
         now);
     firstInstance.replaceRealmSnapshot(
         caller,
@@ -99,15 +101,21 @@ class RedisDirectTextConnectScopeSessionStoreTest {
         List.of(
             new DirectTextConnectScopeSessionStore.ScopedRealm(
                 "production",
+                33L,
                 true,
                 "account-connect-scope-33",
                 now.plusSeconds(600),
-                playerContext(caller, 33L))),
+                playerContext(caller, 33L),
+                "")),
         now);
     assertThat(
             replacementJoinScope(newStoreInstance(), caller, "2", 33L, "demo-world", Instant.now()))
         .satisfies(
-            selected -> assertThat(selected.scope().playerContext().getTenantId()).isEqualTo("33"));
+            selected -> {
+              assertThat(selected.scope().playerContext().getTenantId())
+                  .isEqualTo(canonicalTenantId(33L));
+              assertThat(selected.scope().localTenantId()).isEqualTo(33L);
+            });
 
     List<DirectTextConnectScopeSessionStore> replacementInstances =
         java.util.stream.IntStream.range(0, 8).mapToObj(ignored -> newStoreInstance()).toList();
@@ -165,10 +173,12 @@ class RedisDirectTextConnectScopeSessionStoreTest {
           List.of(
               new DirectTextConnectScopeSessionStore.ScopedRealm(
                   "production",
+                  22L,
                   true,
                   "account-connect-scope-18",
                   Instant.now().plusSeconds(600),
-                  playerContext(caller))),
+                  playerContext(caller),
+                  "")),
           Instant.now());
       String freshRequestId =
           firstInstance
@@ -215,6 +225,8 @@ class RedisDirectTextConnectScopeSessionStoreTest {
                             Map.of(
                                 "realmSlug",
                                 "production",
+                                "localTenantId",
+                                22L,
                                 "publicProductionRealm",
                                 true,
                                 "connectScopeId",
@@ -265,7 +277,9 @@ class RedisDirectTextConnectScopeSessionStoreTest {
               assertThat(selected.scope().playerContext().getAccountId()).isEqualTo(ACCOUNT_UUID);
               assertThat(selected.scope().playerContext().getSessionId())
                   .isEqualTo(Long.toString(SESSION_ID));
-              assertThat(selected.scope().playerContext().getTenantId()).isEqualTo("22");
+              assertThat(selected.scope().playerContext().getTenantId())
+                  .isEqualTo(canonicalTenantId(22L));
+              assertThat(selected.scope().localTenantId()).isEqualTo(22L);
               assertThat(selected.requestId()).isEqualTo("join-request-already-bound");
             });
     assertThat(redisTemplate.opsForValue().get(REDIS_KEY)).doesNotContain("worldBySelector");
@@ -287,12 +301,20 @@ class RedisDirectTextConnectScopeSessionStoreTest {
     return PlayerExecutionContext.newBuilder()
         .setAccountId(caller.accountId())
         .setSessionId(Long.toString(caller.sessionId()))
-        .setTenantId(Long.toString(tenantId))
+        .setTenantId(canonicalTenantId(tenantId))
         .setRealmId("4c4b57d8-e3a2-48fe-9977-e7df0fdce901")
         .setPlayableStateNamespaceId("42d234a2-7487-4dda-a7e5-a3831214328e")
         .setPlayableStateScope("SHARED")
         .setGameInstanceId("9")
         .build();
+  }
+
+  private static String canonicalTenantId(long localTenantId) {
+    return switch ((int) localTenantId) {
+      case 22 -> "22222222-2222-4222-8222-222222222222";
+      case 33 -> "33333333-3333-4333-8333-333333333333";
+      default -> throw new IllegalArgumentException("No test association for local tenant");
+    };
   }
 
   private static DirectTextConnectScopeSessionStore.JoinScope replacementJoinScope(

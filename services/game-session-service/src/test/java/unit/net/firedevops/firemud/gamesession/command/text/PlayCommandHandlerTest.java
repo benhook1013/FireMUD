@@ -908,7 +908,7 @@ class PlayCommandHandlerTest {
             Mockito.eq("preview"),
             Mockito.anyString()))
         .thenReturn(
-            validGrant(PLAYER_ACCOUNT_ID, "22", "demo", "preview").toBuilder()
+            validGrant(PLAYER_ACCOUNT_ID, CANONICAL_TENANT_UUID, "demo", "preview").toBuilder()
                 .setGranted(false)
                 .build());
 
@@ -1572,14 +1572,7 @@ class PlayCommandHandlerTest {
   void activePublicMembershipDeniedByPolicyReturnsWorldAccessDeniedWithoutBinding() {
     SessionContext context =
         new SessionContext(
-            1L,
-            22L,
-            PLAYER_ACCOUNT_ID,
-            "demo@example.com",
-            0L,
-            null,
-            0L,
-            "jwt-token");
+            1L, 22L, PLAYER_ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(accountClient.getTenantMembershipForRuntime(
             Mockito.any(net.firedevops.firemud.shared.v1.PlayerExecutionContext.class)))
@@ -1588,9 +1581,8 @@ class PlayCommandHandlerTest {
                 net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
                     .echoRequestId(
                         freshMembership(
-                            net.firedevops.firemud.gamesession.support
-                                .RuntimeMembershipTestFixtures.active(
-                                    PLAYER_ACCOUNT_ID, 22L, "22"),
+                            net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                                .active(PLAYER_ACCOUNT_ID, 22L, "22"),
                             false),
                         invocation.getArgument(0)));
 
@@ -3320,7 +3312,10 @@ class PlayCommandHandlerTest {
             Mockito.eq("demo"),
             Mockito.eq("invite-only"),
             Mockito.anyString()))
-        .thenReturn(GetRealmAccessGrantForRuntimeResponse.newBuilder().setGranted(false).build());
+        .thenReturn(
+            validGrant(PLAYER_ACCOUNT_ID, CANONICAL_TENANT_UUID, "demo", "invite-only").toBuilder()
+                .setGranted(false)
+                .build());
 
     PlayCommandHandlingResult denied =
         handler.handle(
@@ -5553,16 +5548,18 @@ class PlayCommandHandlerTest {
   }
 
   private static GetTenantMembershipForRuntimeResponse missingMembershipAt(String evaluatedAt) {
-    return net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures.missing(
-            PLAYER_ACCOUNT_ID, 22L)
+    return freshMembership(
+            net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures.missing(
+                PLAYER_ACCOUNT_ID, 22L))
         .toBuilder()
         .setEvaluatedAt(evaluatedAt)
         .build();
   }
 
   private static GetTenantMembershipForRuntimeResponse activeMembershipAt(String evaluatedAt) {
-    return net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures.active(
-            PLAYER_ACCOUNT_ID, 22L, "1")
+    return freshMembership(
+            net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures.active(
+                PLAYER_ACCOUNT_ID, 22L, "1"))
         .toBuilder()
         .setEvaluatedAt(evaluatedAt)
         .build();
@@ -5854,7 +5851,11 @@ class PlayCommandHandlerTest {
             Mockito.any(), Mockito.anyString(), Mockito.anyString(), Mockito.any(Instant.class)))
         .thenReturn(JoinPublicProductionMembershipResponse.newBuilder().setSuccess(true).build());
     WorldsCommandHandler worldsCommandHandler =
-        new WorldsCommandHandler(worldCatalog, accountClient, connectScopeSessionStore);
+        new WorldsCommandHandler(
+            worldCatalog,
+            accountClient,
+            connectScopeSessionStore,
+            retainedRuntimeTenantUuidResolver);
     assertThat(worldsCommandHandler.browseRealms(resolvedContext, "demo"))
         .isInstanceOf(WorldsCommandHandler.RealmBrowseResult.Success.class);
     WorldsTextCommandDispatchHandler worldsDispatchHandler =

@@ -325,7 +325,7 @@ class DirectTextConnectScopeSessionStoreTest {
     assertThat(selected.scope().connectScopeId()).isEqualTo("uuid-connect-scope");
     assertThat(selected.scope().playerContext().getAccountId()).isEqualTo(ACCOUNT_UUID);
     assertThat(selected.scope().playerContext().getSessionId()).isEqualTo("41");
-    assertThat(selected.scope().playerContext().getTenantId()).isEqualTo("22");
+    assertThat(selected.scope().playerContext().getTenantId()).isEqualTo(canonicalTenantId(22L));
     assertThat(
             firstInstance
                 .publicProductionScopeForJoin(caller, "1", 22L, "demo-world", now)
@@ -371,13 +371,17 @@ class DirectTextConnectScopeSessionStoreTest {
         .hasValueSatisfying(
             selected -> {
               assertThat(selected.scope().connectScopeId()).isEqualTo("tenant-22-scope");
-              assertThat(selected.scope().playerContext().getTenantId()).isEqualTo("22");
+              assertThat(selected.scope().playerContext().getTenantId())
+                  .isEqualTo(canonicalTenantId(22L));
+              assertThat(selected.scope().localTenantId()).isEqualTo(22L);
             });
     assertThat(store.publicProductionScopeForJoin(caller, "2", 33L, "demo", now))
         .hasValueSatisfying(
             selected -> {
               assertThat(selected.scope().connectScopeId()).isEqualTo("tenant-33-scope");
-              assertThat(selected.scope().playerContext().getTenantId()).isEqualTo("33");
+              assertThat(selected.scope().playerContext().getTenantId())
+                  .isEqualTo(canonicalTenantId(33L));
+              assertThat(selected.scope().localTenantId()).isEqualTo(33L);
             });
     assertThat(store.publicProductionScopeForJoin(caller, "2", 22L, "demo", now)).isEmpty();
     assertThat(store.publicProductionScope(caller, "demo", now)).isEmpty();
@@ -583,6 +587,39 @@ class DirectTextConnectScopeSessionStoreTest {
         .isInstanceOf(DirectTextConnectScopeSessionStore.ConflictingIdentityException.class);
   }
 
+  @Test
+  void rejectsNumericTenantContextAndMismatchedLocalTenantMetadata() {
+    SessionContext caller = session(7L, ACCOUNT_UUID);
+    Instant now = Instant.now();
+    DirectTextConnectScopeSessionStore.ScopedRealm valid =
+        scopedRealm(caller, 22L, "production", "scope-secret", now.plusSeconds(60));
+    PlayerExecutionContext numericContext =
+        valid.playerContext().toBuilder().setTenantId("22").build();
+    DirectTextConnectScopeSessionStore.ScopedRealm numericTenantScope =
+        new DirectTextConnectScopeSessionStore.ScopedRealm(
+            "production", 22L, true, "scope-numeric", now.plusSeconds(60), numericContext, "");
+    assertThatThrownBy(
+            () ->
+                store.replaceWorldScopes(
+                    caller, "demo", 22L, "demo", List.of(numericTenantScope), now))
+        .isInstanceOf(DirectTextConnectScopeSessionStore.ConflictingIdentityException.class);
+
+    DirectTextConnectScopeSessionStore.ScopedRealm mismatchedLocalTenantScope =
+        new DirectTextConnectScopeSessionStore.ScopedRealm(
+            "production",
+            33L,
+            true,
+            "scope-wrong-local-key",
+            now.plusSeconds(60),
+            valid.playerContext(),
+            "");
+    assertThatThrownBy(
+            () ->
+                store.replaceWorldScopes(
+                    caller, "demo", 22L, "demo", List.of(mismatchedLocalTenantScope), now))
+        .isInstanceOf(DirectTextConnectScopeSessionStore.ConflictingIdentityException.class);
+  }
+
   private static SessionContext session(long sessionId, String accountId) {
     return new SessionContext(sessionId, 22L, accountId, 7001L, 9L, "jwt");
   }
@@ -622,13 +659,21 @@ class DirectTextConnectScopeSessionStoreTest {
         PlayerExecutionContext.newBuilder()
             .setAccountId(caller.accountId())
             .setSessionId(Long.toString(caller.sessionId()))
-            .setTenantId(Long.toString(tenantId))
+            .setTenantId(canonicalTenantId(tenantId))
             .setRealmId("4c4b57d8-e3a2-48fe-9977-e7df0fdce901")
             .setPlayableStateNamespaceId("42d234a2-7487-4dda-a7e5-a3831214328e")
             .setPlayableStateScope("SHARED")
             .setGameInstanceId("9")
             .build();
     return new DirectTextConnectScopeSessionStore.ScopedRealm(
-        realmSlug, true, scopeId, expiry, playerContext);
+        realmSlug, tenantId, true, scopeId, expiry, playerContext, "");
+  }
+
+  private static String canonicalTenantId(long localTenantId) {
+    return switch ((int) localTenantId) {
+      case 22 -> "22222222-2222-4222-8222-222222222222";
+      case 33 -> "33333333-3333-4333-8333-333333333333";
+      default -> throw new IllegalArgumentException("No test association for local tenant");
+    };
   }
 }

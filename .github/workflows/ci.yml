@@ -946,16 +946,30 @@ jobs:
         run: |
           ./gradlew :game-design-service:integrationTest \
             --tests integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest \
+            --tests integration.net.firedevops.firemud.gamedesign.service.EntityDigestBaselineMigrationIntegrationTest \
             -PfullCheck --no-build-cache --no-configuration-cache
           bash dev-tools/validation/inspect-test-results.sh \
             --strict \
             --require-suite integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest \
+            --require-suite integration.net.firedevops.firemud.gamedesign.service.EntityDigestBaselineMigrationIntegrationTest \
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest#appliesAuditedAssociationForFreshAndRetainedGameSources()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest#versionLockRepositoryUsesConfiguredIsolatedOwnerSchema()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest#concurrentExactFirstWritersReturnOneImmutableReceipt()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest#ownerRollbackLeavesNoClaimAndLostAcknowledgementRetryReadsExactReceipt()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest#databaseRejectsAssociationUpdatesDeletesTruncatesAndContradictorySourceInsert()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.service.EntityDigestBaselineMigrationIntegrationTest#exactRetryReadsCommittedEvidenceWithoutCallingEntityAgain()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.service.EntityDigestBaselineMigrationIntegrationTest#databaseMigrationRolesHaveOnlyTheirDirectTablePrivileges()' \
             game-design-service
+
+      - name: Retain Game Design owner migration raw PostgreSQL evidence
+        if: ${{ always() && matrix.module == 'game-design-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: game-design-owner-migration-proof-${{ github.sha }}
+          path: |
+            services/game-design-service/build/test-results/integrationTest/TEST-integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest.xml
+            services/game-design-service/build/test-results/integrationTest/TEST-integration.net.firedevops.firemud.gamedesign.service.EntityDigestBaselineMigrationIntegrationTest.xml
+          if-no-files-found: error
 
       - name: Run Game Session authored-world intake PostgreSQL component proof
         if: ${{ matrix.module == 'game-session-service' }}

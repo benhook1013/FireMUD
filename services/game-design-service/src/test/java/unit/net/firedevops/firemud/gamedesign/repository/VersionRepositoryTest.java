@@ -1,11 +1,13 @@
 package net.firedevops.firemud.gamedesign.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.sql.DriverManager;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.config.PostgresProperties;
 import net.firedevops.firemud.gamedesign.entity.Version;
@@ -39,6 +41,33 @@ class VersionRepositoryTest {
     assertThat(sql.get())
         .contains(
             "\"isolated_game_design_owner\".\"lock_version_for_entity_digest_baseline_migration\"");
+  }
+
+  @Test
+  void entityDigestBaselineVersionLockRejectsMissingOrBlankOwnerSchemaWithoutQuery() {
+    AtomicInteger queryCount = new AtomicInteger();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    MockDataProvider provider =
+        context -> {
+          queryCount.incrementAndGet();
+          return new MockResult[] {new MockResult(0, resultDsl.newResult())};
+        };
+    DSLContext dsl = DSL.using(new MockConnection(provider), SQLDialect.POSTGRES);
+
+    for (String schema : new String[] {null, "   "}) {
+      PostgresProperties postgres = new PostgresProperties();
+      postgres.setSchema(schema);
+      VersionRepository repository = new VersionRepository(dsl, postgres);
+
+      assertThatThrownBy(
+              () -> repository.findByTenantIdAndIdForEntityDigestBaselineMigration("tenant", 17L))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage(
+              "Game Design PostgreSQL schema must be configured for the "
+                  + "Entity digest baseline Version lock");
+    }
+
+    assertThat(queryCount.get()).isZero();
   }
 
   @Test

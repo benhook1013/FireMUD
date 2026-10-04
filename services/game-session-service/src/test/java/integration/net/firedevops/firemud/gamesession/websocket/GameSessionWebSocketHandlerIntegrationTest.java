@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.websocket;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.argThat;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.never;
@@ -66,6 +67,7 @@ import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketDriver;
 import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketScenarios;
 import net.firedevops.firemud.gamesession.testsupport.InMemorySessionContextTestConfiguration;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
+import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
@@ -570,7 +572,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     verify(accountClient, atLeastOnce())
         .getTenantMembershipForRuntime(
             argThat(
-                request ->
+                (PlayerExecutionContext request) ->
                     CANONICAL_TENANT_UUID.toString().equals(request.getTenantId())
                         && "1".equals(request.getGameInstanceId())
                         && "41".equals(request.getSessionId())));

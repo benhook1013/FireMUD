@@ -218,7 +218,7 @@ class AccountRuntimeStubServerTest {
   }
 
   @Test
-  void contradictoryMembershipLifecycleAndAdmissionRemainDenied() throws Exception {
+  void activeMembershipCanBeDeniedWhileInactiveMembershipCannotBeAdmitted() throws Exception {
     try (AccountRuntimeStubServer server = new AccountRuntimeStubServer(0)) {
       ManagedChannel channel =
           ManagedChannelBuilder.forAddress("localhost", server.port()).usePlaintext().build();
@@ -229,9 +229,10 @@ class AccountRuntimeStubServerTest {
         server.setGameplayAdmissionAllowed(false);
         var activeButDenied =
             stub.getTenantMembershipForRuntime(membershipRequest(TENANT_UUID, "contradictory-1"));
-        assertContradictoryMembershipDenied(activeButDenied, "ACTIVE", "contradictory-1");
+        assertMembershipEventMatches(activeButDenied, "ACTIVE", false, "contradictory-1");
 
         server.denyGameplayAdmission();
+        server.setMembershipInactive();
         server.setGameplayAdmissionAllowed(true);
         var inactiveButAllowed =
             stub.getTenantMembershipForRuntime(membershipRequest(TENANT_UUID, "contradictory-2"));
@@ -306,7 +307,7 @@ class AccountRuntimeStubServerTest {
                         "membershipAuthorityGeneration", Map.of(TENANT_UUID, "1"),
                         "privateRealmGrantVersions", List.of())),
                 Map.entry("issuanceFence", "1"),
-                Map.entry("roles", admitted ? List.of("player") : List.of()),
+                Map.entry("roles", lifecycle.equals("ACTIVE") ? List.of("player") : List.of()),
                 Map.entry("gameplayAdmissionAllowed", admitted),
                 Map.entry("callerBoundAuthorityInvalidated", false)));
 
@@ -382,7 +383,7 @@ class AccountRuntimeStubServerTest {
     assertThat(response.getAuthorityTuple().hasTenantBillingCutoff()).isFalse();
     assertThat(response.getIssuanceFence()).isEqualTo("1");
     assertThat(response.getRolesList())
-        .containsExactlyElementsOf(admitted ? List.of("player") : List.of());
+        .containsExactlyElementsOf(lifecycle.equals("ACTIVE") ? List.of("player") : List.of());
     assertThat(response.getOutboxCheckpointsList())
         .containsExactly(
             checkpoint("account:auth-authority:v1:account/" + ACCOUNT_UUID, "0"),

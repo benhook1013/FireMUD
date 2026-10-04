@@ -45,17 +45,11 @@ public class VersionRepository {
       DSL.field(DSL.name("updated_at"), Timestamp.class);
 
   private final DSLContext dsl;
-  private final String entityDigestBaselineMigrationVersionLockFunction;
+  private final String postgresSchema;
 
   public VersionRepository(DSLContext dsl, PostgresProperties postgres) {
-    this.dsl = Objects.requireNonNull(dsl);
-    String schema = Objects.requireNonNull(postgres).getSchema();
-    if (schema == null || schema.isBlank()) {
-      throw new IllegalArgumentException("Game Design PostgreSQL schema must be configured");
-    }
-    this.entityDigestBaselineMigrationVersionLockFunction =
-        dsl.render(
-            DSL.quotedName(schema, ENTITY_DIGEST_BASELINE_MIGRATION_VERSION_LOCK_FUNCTION_NAME));
+    this.dsl = dsl;
+    this.postgresSchema = postgres == null ? null : postgres.getSchema();
   }
 
   public List<Version> findAllByTenantIdOrderByVersionNumberAsc(String tenantId) {
@@ -106,12 +100,21 @@ public class VersionRepository {
    */
   public Optional<Version> findByTenantIdAndIdForEntityDigestBaselineMigration(
       String tenantId, Long id) {
+    if (postgresSchema == null || postgresSchema.isBlank()) {
+      throw new IllegalStateException(
+          "Game Design PostgreSQL schema must be configured for the "
+              + "Entity digest baseline Version lock");
+    }
+    String versionLockFunction =
+        dsl.render(
+            DSL.quotedName(
+                postgresSchema, ENTITY_DIGEST_BASELINE_MIGRATION_VERSION_LOCK_FUNCTION_NAME));
     return Optional.ofNullable(
         dsl.resultQuery(
                 "SELECT id, tenant_id, version_number, version_state, version_state_epoch, "
                     + "script_patch_version, base_version_id, is_script_only, notes, "
                     + "created_at, updated_at FROM "
-                    + entityDigestBaselineMigrationVersionLockFunction
+                    + versionLockFunction
                     + "(?, ?)",
                 tenantId,
                 id)

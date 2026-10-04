@@ -369,10 +369,10 @@ class EntityDigestBaselineMigrationIntegrationTest {
 
   @Test
   void exactRetryReadsCommittedEvidenceWithoutCallingEntityAgain() {
-    createGame("9301");
-    Version version = createVersion("9301", 1);
-    RecordedParticipantDigest source = seedEntityBaseline("9301", version, 1);
-    MigrationCommand command = command("retry-operation", "9301", source);
+    createGame("9302");
+    Version version = createVersion("9302", 1);
+    RecordedParticipantDigest source = seedEntityBaseline("9302", version, 1);
+    MigrationCommand command = command("retry-operation", "9302", source);
 
     MigrationResult first = migrationService.migrate(command);
     MigrationResult retry = migrationService.migrate(command);

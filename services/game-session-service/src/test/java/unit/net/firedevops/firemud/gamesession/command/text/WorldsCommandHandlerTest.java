@@ -23,6 +23,7 @@ import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
 import net.firedevops.firemud.gamesession.service.DirectTextConnectScopeSessionStore;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
+import net.firedevops.firemud.gamesession.service.RetainedRuntimeTenantUuidResolver;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures;
 import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
@@ -39,13 +40,20 @@ class WorldsCommandHandlerTest {
       UUID.fromString("00000000-0000-0000-0000-000000000001");
   private static final UUID ADMISSION_NAMESPACE_ID =
       UUID.fromString("00000000-0000-0000-0000-000000000002");
+  private static final UUID TENANT_22_UUID =
+      UUID.fromString("22222222-2222-4222-8222-222222222222");
+  private static final UUID TENANT_23_UUID =
+      UUID.fromString("23232323-2323-4232-8232-232323232323");
+  private static final UUID TENANT_33_UUID =
+      UUID.fromString("33333333-3333-4333-8333-333333333333");
   private final GameplayCatalogProperties gameplayCatalogProperties =
       new GameplayCatalogProperties();
   private final WorldsCommandHandler handler =
       new WorldsCommandHandler(
           TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties),
           Mockito.mock(AccountClient.class),
-          DirectTextConnectScopeSessionStore.inMemoryForTest());
+          DirectTextConnectScopeSessionStore.inMemoryForTest(),
+          tenantUuidResolver());
 
   @BeforeEach
   void setUp() {
@@ -273,7 +281,8 @@ class WorldsCommandHandlerTest {
         new WorldsCommandHandler(
             GameplayWorldCatalog.forWorldSupplier(worlds::get),
             accountClient,
-            DirectTextConnectScopeSessionStore.inMemoryForTest());
+            DirectTextConnectScopeSessionStore.inMemoryForTest(),
+            tenantUuidResolver());
 
     localHandler.browseView("7", Optional.of(authenticatedSession()));
     worlds.set(List.of(worldB, worldA));
@@ -308,7 +317,8 @@ class WorldsCommandHandlerTest {
         new WorldsCommandHandler(
             GameplayWorldCatalog.forWorldViews(List.of(worldA, worldB)),
             accountClient,
-            DirectTextConnectScopeSessionStore.inMemoryForTest());
+            DirectTextConnectScopeSessionStore.inMemoryForTest(),
+            tenantUuidResolver());
 
     WorldsViewOutput worldSnapshot =
         localHandler.browseView("7", Optional.of(authenticatedSession()));
@@ -335,32 +345,32 @@ class WorldsCommandHandlerTest {
         .isInstanceOf(WorldsCommandHandler.JoinMembershipResult.Response.class);
     Mockito.verify(accountClient)
         .issueDirectTextConnectScope(
-            Mockito.argThat(context -> context.getTenantId().equals("22")),
+            Mockito.argThat(context -> context.getTenantId().equals(TENANT_22_UUID.toString())),
             Mockito.argThat(
                 target ->
-                    target.tenantId().equals("22")
+                    target.tenantId().equals(TENANT_22_UUID.toString())
                         && target.worldSlug().equals("demo")
                         && target.realmSlug().equals("production")
                         && target.gameInstanceId().equals("1")));
     Mockito.verify(accountClient)
         .issueDirectTextConnectScope(
-            Mockito.argThat(context -> context.getTenantId().equals("33")),
+            Mockito.argThat(context -> context.getTenantId().equals(TENANT_33_UUID.toString())),
             Mockito.argThat(
                 target ->
-                    target.tenantId().equals("33")
+                    target.tenantId().equals(TENANT_33_UUID.toString())
                         && target.worldSlug().equals("DEMO")
                         && target.realmSlug().equals("production")
                         && target.gameInstanceId().equals("2")));
     Mockito.verify(accountClient)
         .joinPublicProductionMembership(
-            Mockito.argThat(context -> context.getTenantId().equals("22")),
-            Mockito.eq("scope-22"),
+            Mockito.argThat(context -> context.getTenantId().equals(TENANT_22_UUID.toString())),
+            Mockito.eq("scope-" + TENANT_22_UUID),
             Mockito.anyString(),
             Mockito.any(Instant.class));
     Mockito.verify(accountClient)
         .joinPublicProductionMembership(
-            Mockito.argThat(context -> context.getTenantId().equals("33")),
-            Mockito.eq("scope-33"),
+            Mockito.argThat(context -> context.getTenantId().equals(TENANT_33_UUID.toString())),
+            Mockito.eq("scope-" + TENANT_33_UUID),
             Mockito.anyString(),
             Mockito.any(Instant.class));
   }
@@ -378,7 +388,8 @@ class WorldsCommandHandlerTest {
         new WorldsCommandHandler(
             GameplayWorldCatalog.forWorldViews(List.of(worldView("demo", "Demo", 22L, 1L))),
             accountClient,
-            DirectTextConnectScopeSessionStore.inMemoryForTest());
+            DirectTextConnectScopeSessionStore.inMemoryForTest(),
+            tenantUuidResolver());
 
     assertThat(localHandler.browseRealms(authenticatedSession(), "demo"))
         .isInstanceOf(WorldsCommandHandler.RealmBrowseResult.Success.class);
@@ -410,7 +421,8 @@ class WorldsCommandHandlerTest {
         new WorldsCommandHandler(
             GameplayWorldCatalog.forWorldViews(List.of(worldView("demo", "Demo", 22L, 1L))),
             accountClient,
-            DirectTextConnectScopeSessionStore.inMemoryForTest());
+            DirectTextConnectScopeSessionStore.inMemoryForTest(),
+            tenantUuidResolver());
 
     assertThat(localHandler.browseRealms(authenticatedSession(), "demo"))
         .isInstanceOf(WorldsCommandHandler.RealmBrowseResult.Success.class);
@@ -423,6 +435,56 @@ class WorldsCommandHandlerTest {
             Mockito.eq("scope-with-expiry"),
             Mockito.anyString(),
             Mockito.eq(scopeExpiresAt));
+  }
+
+  @Test
+  void unresolvedOrNilTenantAssociationDeniesRealmScopeIssuance() {
+    for (Optional<UUID> association :
+        List.of(Optional.<UUID>empty(), Optional.of(new UUID(0L, 0L)))) {
+      AccountClient accountClient = Mockito.mock(AccountClient.class);
+      RetainedRuntimeTenantUuidResolver resolver =
+          Mockito.mock(RetainedRuntimeTenantUuidResolver.class);
+      Mockito.when(resolver.resolveCanonicalTenantId(22L)).thenReturn(association);
+      WorldsCommandHandler localHandler =
+          new WorldsCommandHandler(
+              TestGameplayWorldCatalogs.fromProperties(publicProductionProperties()),
+              accountClient,
+              DirectTextConnectScopeSessionStore.inMemoryForTest(),
+              resolver);
+
+      assertThat(localHandler.browseRealms(authenticatedSession(), "demo"))
+          .isEqualTo(WorldsCommandHandler.RealmBrowseResult.failure("AUTH_UNAVAILABLE"));
+      Mockito.verifyNoInteractions(accountClient);
+    }
+  }
+
+  @Test
+  void changedTenantAssociationDeniesJoinBeforeAccountMembershipCall() {
+    AccountClient accountClient = Mockito.mock(AccountClient.class);
+    Mockito.when(accountClient.issueDirectTextConnectScope(Mockito.any(), Mockito.any()))
+        .thenReturn(
+            IssueDirectTextConnectScopeResponse.newBuilder()
+                .setConnectScopeId("scope")
+                .setConnectScopeExpiresAt(Instant.now().plusSeconds(60).toString())
+                .build());
+    RetainedRuntimeTenantUuidResolver resolver =
+        Mockito.mock(RetainedRuntimeTenantUuidResolver.class);
+    Mockito.when(resolver.resolveCanonicalTenantId(22L))
+        .thenReturn(Optional.of(TENANT_22_UUID), Optional.of(UUID.randomUUID()));
+    WorldsCommandHandler localHandler =
+        new WorldsCommandHandler(
+            TestGameplayWorldCatalogs.fromProperties(publicProductionProperties()),
+            accountClient,
+            DirectTextConnectScopeSessionStore.inMemoryForTest(),
+            resolver);
+
+    assertThat(localHandler.browseRealms(authenticatedSession(), "demo"))
+        .isInstanceOf(WorldsCommandHandler.RealmBrowseResult.Success.class);
+    assertThat(localHandler.joinPublicProductionMembership(authenticatedSession(), "demo"))
+        .isEqualTo(WorldsCommandHandler.JoinMembershipResult.failure("CONNECT_SCOPE_MISMATCH"));
+    Mockito.verify(accountClient, Mockito.never())
+        .joinPublicProductionMembership(
+            Mockito.any(), Mockito.anyString(), Mockito.anyString(), Mockito.any());
   }
 
   @Test
@@ -474,7 +536,8 @@ class WorldsCommandHandlerTest {
         new WorldsCommandHandler(
             GameplayWorldCatalog.forWorldSupplier(worlds::get),
             accountClient,
-            DirectTextConnectScopeSessionStore.inMemoryForTest());
+            DirectTextConnectScopeSessionStore.inMemoryForTest(),
+            tenantUuidResolver());
 
     localHandler.browseView("7", Optional.of(authenticatedSession()));
     worlds.set(List.of(worldB, worldA));
@@ -488,7 +551,8 @@ class WorldsCommandHandlerTest {
             success -> assertThat(success.output().worldSlug()).isEqualTo("a"));
     Mockito.verify(accountClient)
         .issueDirectTextConnectScope(
-            Mockito.argThat(context -> context.getTenantId().equals("22")), Mockito.any());
+            Mockito.argThat(context -> context.getTenantId().equals(TENANT_22_UUID.toString())),
+            Mockito.any());
   }
 
   @Test
@@ -541,7 +605,10 @@ class WorldsCommandHandlerTest {
         DirectTextConnectScopeSessionStore.inMemoryForTest();
     WorldsCommandHandler localHandler =
         new WorldsCommandHandler(
-            GameplayWorldCatalog.forWorldSupplier(worlds::get), accountClient, scopeStore);
+            GameplayWorldCatalog.forWorldSupplier(worlds::get),
+            accountClient,
+            scopeStore,
+            tenantUuidResolver());
 
     assertThat(localHandler.browseRealms("7", authenticatedSession(), "demo"))
         .isInstanceOfSatisfying(
@@ -610,7 +677,8 @@ class WorldsCommandHandlerTest {
         new WorldsCommandHandler(
             TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties),
             Mockito.mock(AccountClient.class),
-            DirectTextConnectScopeSessionStore.inMemoryForTest());
+            DirectTextConnectScopeSessionStore.inMemoryForTest(),
+            tenantUuidResolver());
 
     RealmBrowseViewOutput response = localHandler.browseRealms("demo").orElseThrow();
 
@@ -770,7 +838,8 @@ class WorldsCommandHandlerTest {
         new WorldsCommandHandler(
             catalog,
             Mockito.mock(AccountClient.class),
-            DirectTextConnectScopeSessionStore.inMemoryForTest());
+            DirectTextConnectScopeSessionStore.inMemoryForTest(),
+            tenantUuidResolver());
 
     WorldsCommandHandler.CharacterBrowseResult result =
         localHandler.browseCharacters(authenticatedSession(), "demo", "production");
@@ -968,7 +1037,7 @@ class WorldsCommandHandlerTest {
     DirectTextConnectScopeSessionStore scopeStore =
         DirectTextConnectScopeSessionStore.inMemoryForTest();
     WorldsCommandHandler localHandler =
-        new WorldsCommandHandler(catalog, accountClient, scopeStore);
+        new WorldsCommandHandler(catalog, accountClient, scopeStore, tenantUuidResolver());
 
     assertThat(localHandler.browseCharacters(session, "preview", "unknown"))
         .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.invalidWorld());
@@ -1028,7 +1097,8 @@ class WorldsCommandHandlerTest {
         new WorldsCommandHandler(
             new GameplayWorldCatalog(authorityService),
             accountClient,
-            DirectTextConnectScopeSessionStore.inMemoryForTest());
+            DirectTextConnectScopeSessionStore.inMemoryForTest(),
+            tenantUuidResolver());
 
     WorldsCommandHandler.CharacterBrowseResult result =
         localHandler.browseCharacters(authenticatedSession(), "demo", "production");
@@ -1109,7 +1179,8 @@ class WorldsCommandHandlerTest {
               GameplayWorldCatalog.forWorldViews(
                   List.of(new GameplayWorldCatalog.WorldView("demo", "Demo", List.of(incomplete)))),
               accountClient,
-              DirectTextConnectScopeSessionStore.inMemoryForTest());
+              DirectTextConnectScopeSessionStore.inMemoryForTest(),
+              tenantUuidResolver());
 
       assertThat(localHandler.browseCharacters(authenticatedSession(), "demo", "production"))
           .isEqualTo(
@@ -1215,7 +1286,7 @@ class WorldsCommandHandlerTest {
                 Mockito.anyString()))
         .thenReturn(grant("demo", "preview", true));
     WorldsCommandHandler localHandler =
-        new WorldsCommandHandler(catalog, accountClient, scopeStore);
+        new WorldsCommandHandler(catalog, accountClient, scopeStore, tenantUuidResolver());
 
     assertThat(localHandler.browseCharacters(authenticatedSession(), "demo", "preview"))
         .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.failure("AUTH_UNAVAILABLE"));
@@ -1264,7 +1335,8 @@ class WorldsCommandHandlerTest {
                   Mockito.anyString()))
           .thenReturn(grant("demo", "preview", true));
       WorldsCommandHandler localHandler =
-          new WorldsCommandHandler(changingCatalog, accountClient, scopeStore);
+          new WorldsCommandHandler(
+              changingCatalog, accountClient, scopeStore, tenantUuidResolver());
 
       assertThat(localHandler.browseCharacters(authenticatedSession(), "demo", "preview"))
           .isEqualTo(new WorldsCommandHandler.CharacterBrowseResult.InvalidRealm("demo"));
@@ -1373,7 +1445,10 @@ class WorldsCommandHandlerTest {
                 .build());
     WorldsCommandHandler localHandler =
         new WorldsCommandHandler(
-            TestGameplayWorldCatalogs.fromProperties(properties), accountClient, scopeStore);
+            TestGameplayWorldCatalogs.fromProperties(properties),
+            accountClient,
+            scopeStore,
+            tenantUuidResolver());
 
     assertThat(localHandler.browseRealms(authenticatedSession(), "public"))
         .isInstanceOf(WorldsCommandHandler.RealmBrowseResult.Success.class);
@@ -1471,7 +1546,10 @@ class WorldsCommandHandlerTest {
         DirectTextConnectScopeSessionStore.inMemoryForTest();
     WorldsCommandHandler localHandler =
         new WorldsCommandHandler(
-            TestGameplayWorldCatalogs.fromProperties(properties), accountClient, scopeStore);
+            TestGameplayWorldCatalogs.fromProperties(properties),
+            accountClient,
+            scopeStore,
+            tenantUuidResolver());
 
     assertThat(localHandler.browseCharacters(authenticatedSession(), "private-only", null))
         .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.invalidWorld());
@@ -1497,7 +1575,8 @@ class WorldsCommandHandlerTest {
         new WorldsCommandHandler(
             TestGameplayWorldCatalogs.fromProperties(publicWorldWithPrivateRealm()),
             accountClient,
-            scopeStore);
+            scopeStore,
+            tenantUuidResolver());
 
     assertThat(localHandler.browseRealms(authenticatedSession(), "demo"))
         .isInstanceOfSatisfying(
@@ -1612,7 +1691,8 @@ class WorldsCommandHandlerTest {
                     new GameplayWorldCatalog.WorldView(
                         "demo", "Demo", List.of(realm, privateRealm)))),
             accountClient,
-            scopeStore);
+            scopeStore,
+            tenantUuidResolver());
 
     WorldsCommandHandler.RealmBrowseResult result =
         localHandler.browseRealms(authenticatedSession(), "demo");
@@ -1680,7 +1760,8 @@ class WorldsCommandHandlerTest {
             GameplayWorldCatalog.forWorldViews(
                 List.of(new GameplayWorldCatalog.WorldView("demo", "Demo", List.of(realm)))),
             accountClient,
-            DirectTextConnectScopeSessionStore.inMemoryForTest());
+            DirectTextConnectScopeSessionStore.inMemoryForTest(),
+            tenantUuidResolver());
 
     WorldsCommandHandler.RealmBrowseResult result =
         localHandler.browseRealms(authenticatedSession(), "demo");
@@ -1718,7 +1799,8 @@ class WorldsCommandHandlerTest {
             GameplayWorldCatalog.forWorldViews(
                 List.of(new GameplayWorldCatalog.WorldView("demo", "Demo", List.of(realm)))),
             accountClient,
-            DirectTextConnectScopeSessionStore.inMemoryForTest());
+            DirectTextConnectScopeSessionStore.inMemoryForTest(),
+            tenantUuidResolver());
 
     assertThat(localHandler.browseRealms(authenticatedSession(), "demo"))
         .isEqualTo(WorldsCommandHandler.RealmBrowseResult.failure("REALM_UNAVAILABLE"));
@@ -1783,7 +1865,10 @@ class WorldsCommandHandlerTest {
                 .build());
     WorldsCommandHandler localHandler =
         new WorldsCommandHandler(
-            catalog, accountClient, DirectTextConnectScopeSessionStore.inMemoryForTest());
+            catalog,
+            accountClient,
+            DirectTextConnectScopeSessionStore.inMemoryForTest(),
+            tenantUuidResolver());
 
     localHandler.browseView("7", Optional.of(authenticatedSession()));
     assertThat(localHandler.browseRealms(authenticatedSession(), "1"))
@@ -1846,7 +1931,8 @@ class WorldsCommandHandlerTest {
         new WorldsCommandHandler(
             GameplayWorldCatalog.forWorldSupplier(worlds::get),
             accountClient,
-            DirectTextConnectScopeSessionStore.inMemoryForTest());
+            DirectTextConnectScopeSessionStore.inMemoryForTest(),
+            tenantUuidResolver());
 
     assertThat(localHandler.browseRealms(authenticatedSession(), "a"))
         .isInstanceOf(WorldsCommandHandler.RealmBrowseResult.Success.class);
@@ -1915,7 +2001,10 @@ class WorldsCommandHandlerTest {
     GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
     WorldsCommandHandler localHandler =
         new WorldsCommandHandler(
-            catalog, accountClient, DirectTextConnectScopeSessionStore.inMemoryForTest());
+            catalog,
+            accountClient,
+            DirectTextConnectScopeSessionStore.inMemoryForTest(),
+            tenantUuidResolver());
 
     assertThat(localHandler.browseRealms(authenticatedSession(), "demo"))
         .isInstanceOf(WorldsCommandHandler.RealmBrowseResult.Success.class);
@@ -1968,7 +2057,8 @@ class WorldsCommandHandlerTest {
         new WorldsCommandHandler(
             new GameplayWorldCatalog(authorityService),
             accountClient,
-            DirectTextConnectScopeSessionStore.inMemoryForTest());
+            DirectTextConnectScopeSessionStore.inMemoryForTest(),
+            tenantUuidResolver());
 
     assertThat(localHandler.browseRealms(authenticatedSession(), "demo"))
         .isInstanceOf(WorldsCommandHandler.RealmBrowseResult.Success.class);
@@ -2011,7 +2101,17 @@ class WorldsCommandHandlerTest {
     return new WorldsCommandHandler(
         TestGameplayWorldCatalogs.fromProperties(properties),
         accountClient,
-        DirectTextConnectScopeSessionStore.inMemoryForTest());
+        DirectTextConnectScopeSessionStore.inMemoryForTest(),
+        tenantUuidResolver());
+  }
+
+  private static RetainedRuntimeTenantUuidResolver tenantUuidResolver() {
+    RetainedRuntimeTenantUuidResolver resolver =
+        Mockito.mock(RetainedRuntimeTenantUuidResolver.class);
+    Mockito.when(resolver.resolveCanonicalTenantId(22L)).thenReturn(Optional.of(TENANT_22_UUID));
+    Mockito.when(resolver.resolveCanonicalTenantId(23L)).thenReturn(Optional.of(TENANT_23_UUID));
+    Mockito.when(resolver.resolveCanonicalTenantId(33L)).thenReturn(Optional.of(TENANT_33_UUID));
+    return resolver;
   }
 
   private void stubPublicConnectScope(AccountClient accountClient, String scopeId) {
@@ -2311,7 +2411,8 @@ class WorldsCommandHandlerTest {
         new WorldsCommandHandler(
             catalog,
             Mockito.mock(AccountClient.class),
-            DirectTextConnectScopeSessionStore.inMemoryForTest());
+            DirectTextConnectScopeSessionStore.inMemoryForTest(),
+            tenantUuidResolver());
 
     assertThat(localHandler.browseView().worlds())
         .extracting("slug")
@@ -2346,7 +2447,8 @@ class WorldsCommandHandlerTest {
         new WorldsCommandHandler(
             catalog,
             Mockito.mock(AccountClient.class),
-            DirectTextConnectScopeSessionStore.inMemoryForTest());
+            DirectTextConnectScopeSessionStore.inMemoryForTest(),
+            tenantUuidResolver());
 
     WorldsCommandHandler.CharacterBrowseResult result =
         localHandler.browseCharacters(
@@ -2403,7 +2505,8 @@ class WorldsCommandHandlerTest {
         new WorldsCommandHandler(
             catalog,
             Mockito.mock(AccountClient.class),
-            DirectTextConnectScopeSessionStore.inMemoryForTest());
+            DirectTextConnectScopeSessionStore.inMemoryForTest(),
+            tenantUuidResolver());
     SessionContext context =
         new SessionContext(1L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "jwt");
 
@@ -2449,7 +2552,10 @@ class WorldsCommandHandlerTest {
     AccountClient accountClient = Mockito.mock(AccountClient.class);
     WorldsCommandHandler localHandler =
         new WorldsCommandHandler(
-            catalog, accountClient, DirectTextConnectScopeSessionStore.inMemoryForTest());
+            catalog,
+            accountClient,
+            DirectTextConnectScopeSessionStore.inMemoryForTest(),
+            tenantUuidResolver());
 
     assertThat(localHandler.browseCharacters(authenticatedSession(), "mixed-world", "secret"))
         .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.invalidRealm("mixed-world"));
