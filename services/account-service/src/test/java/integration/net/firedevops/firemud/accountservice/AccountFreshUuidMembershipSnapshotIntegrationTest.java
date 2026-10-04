@@ -387,7 +387,7 @@ class AccountFreshUuidMembershipSnapshotIntegrationTest {
     assertThat(countAuthorityStreams(membershipStreamKey(account.accountUuid(), tenantUuid)))
         .isZero();
 
-    // A separately established V38 sequence-zero pair remains non-admitting, and the strict
+    // A separately established V38.1 sequence-zero pair remains non-admitting, and the strict
     // existing-positive reader must neither promote it nor alter its counters.
     readFreshNeverJoinedMembershipSnapshot(account.accountUuid(), tenantUuid);
     Map<String, Object> pairBeforeRead =

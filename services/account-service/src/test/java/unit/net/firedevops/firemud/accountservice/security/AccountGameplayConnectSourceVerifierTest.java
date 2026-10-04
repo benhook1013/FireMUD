@@ -73,7 +73,7 @@ class AccountGameplayConnectSourceVerifierTest {
     assertEquals(BigInteger.valueOf(NOW_SECONDS - 1), verified.get("iat"));
     assertEquals(BigInteger.valueOf(NOW_SECONDS + 29), verified.get("exp"));
     assertEquals(
-        BigInteger.valueOf(19),
+        "19",
         verified.get("membershipVersion") instanceof Map<?, ?> map ? map.get(TENANT_ID) : null);
     assertEquals(
         LARGE_ACCOUNT_GENERATION,
@@ -336,6 +336,38 @@ class AccountGameplayConnectSourceVerifierTest {
   }
 
   @Test
+  void rejectsNonCanonicalMembershipVersionStringsAndJsonNumbers() throws Exception {
+    for (Object malformedVersion :
+        List.of(
+            BigInteger.valueOf(19),
+            new BigDecimal("19.0"),
+            new BigDecimal("1E2"),
+            "0",
+            "00",
+            "+19",
+            "-19",
+            " 19",
+            "19 ",
+            "1e2",
+            "19.0",
+            Boolean.TRUE)) {
+      Map<String, Object> claims = sourceClaims(NOW_SECONDS - 1, NOW_SECONDS + 29);
+      claims.put(
+          "membershipVersion", java.util.Collections.singletonMap(TENANT_ID, malformedVersion));
+      assertSanitizedFailure(sign(claims, "RS256", RSA_KID, "JWT", rsaKeyPair.getPrivate()));
+    }
+
+    Map<String, Object> nullVersion = sourceClaims(NOW_SECONDS - 1, NOW_SECONDS + 29);
+    nullVersion.put("membershipVersion", java.util.Collections.singletonMap(TENANT_ID, null));
+    assertSanitizedFailure(sign(nullVersion, "RS256", RSA_KID, "JWT", rsaKeyPair.getPrivate()));
+
+    Map<String, Object> extraTenant = sourceClaims(NOW_SECONDS - 1, NOW_SECONDS + 29);
+    extraTenant.put(
+        "membershipVersion", Map.of(TENANT_ID, "19", "00000000-0000-4000-8000-000000000099", "20"));
+    assertSanitizedFailure(sign(extraTenant, "RS256", RSA_KID, "JWT", rsaKeyPair.getPrivate()));
+  }
+
+  @Test
   void rejectsSelectedTargetAndMembershipMapChanges() throws Exception {
     Map<String, Object> wrongTenant = sourceClaims(NOW_SECONDS - 1, NOW_SECONDS + 29);
     wrongTenant.put("tenantId", "00000000-0000-4000-8000-000000000099");
@@ -453,7 +485,7 @@ class AccountGameplayConnectSourceVerifierTest {
     claims.put("connectScopeId", "scope-1");
     claims.put("requestId", "request-1");
     claims.put("authorityTuple", authorityTuple());
-    claims.put("membershipVersion", Map.of(TENANT_ID, BigInteger.valueOf(19)));
+    claims.put("membershipVersion", Map.of(TENANT_ID, "19"));
     claims.put("replayAdmissionFence", BigInteger.valueOf(29));
     return claims;
   }

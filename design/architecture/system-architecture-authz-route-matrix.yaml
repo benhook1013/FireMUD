@@ -327,6 +327,11 @@ required_live_check_vocabulary:
   - browser_origin
   - capacity_admission_fence
   - cancellation_window
+  # Exact initial-admission owner-ledger and World hold admission checks.
+  - aborted_attempt_future_commit_fence
+  - active_target_version_epoch
+  - committed_pointer_audit_binding
+  - conflicting_hold_absence
   - conditional_membership
   - conditional_membership_generation
   - conditional_realm_access_grant
@@ -347,7 +352,9 @@ required_live_check_vocabulary:
   - explicit_deletion_confirmation
   - export_availability
   - explicit_per_subscription_binding
+  - exact_attempt_tuple
   - exact_binding_admission_lease
+  - exact_retry_identity
   - binding_fence
   - binding_ownership
   - playable_state_namespace
@@ -393,7 +400,7 @@ required_live_check_vocabulary:
   - security_lock_export_action_family
 implementation_status:
   known_drift:
-    - explicit_public_production_JOIN_route_account_operation_and_text_dispatch_exist_locally; current_PLAY_returns_JOIN_REQUIRED_for_missing_or_existing_non_admitting_public_production_membership; the_live_adapter_uses_membershipExists_false_for_missing_and_gameplayAdmissionAllowed_false_for_existing_non_admitting_membership_without_classifying_the_latter_as_INACTIVE; current_PLAY_returns_WORLD_ACCESS_DENIED_for_missing_non_public_membership; connect_token_issuance_requires_existing_membership_and_never_creates_it; lifecycle_and_membership_authority_generation_rereads_remain_unproved; postgresql_execution_and_pending_operation_recovery_remain_incomplete
+    - direct_text_explicit_public_production_JOIN_is_implemented_locally; first_party_Join_and_Play_remains_unimplemented; Account_runtime_membership_entitlement_and_grant_handlers_fail_closed_with_FAILED_PRECONDITION_before_reads_until_typed_caller_target_binding_exists; Game_Session_PLAY_validates_supplied_membershipLifecycleState_membershipAuthorityGeneration_membershipVersion_and_evaluatedAt_and_classifies_missing_or_INACTIVE_eligible_public_membership_as_JOIN_REQUIRED_and_ACTIVE_non_admitting_membership_as_denied_without_JOIN_advice; live_composed_membership_reads_and_successful_public_PLAY_are_not_established; live_membership_failure_maps_to_WORLD_ACCESS_DENIED; connect_token_local_missing_or_INACTIVE_public_membership_branches_require_fresh_positive_entitlement_and_allowPublicJoin_while_live_reads_remain_unavailable; connect_token_issuance_requires_existing_membership_and_never_creates_it; connect_token_membership_authority_generation_and_membership_version_issuance_rereads_remain_unproved; PostgreSQL_execution_and_bounded_pending_operation_readback_proof_remain_incomplete
     - protected_cookie_ws_game_and_bootstrap_bare_LOGIN_are_implemented_but_non_promotable_until_Gateway_carrier_requirements_replay_marker_durability_replay_quarantine_continuity_and_Account_planned_rotation_compromise_cutover_evidence_are_complete
     - privileged_control_is_target_only_and_unavailable_in_current_runtime; platformAdmin_and_cross_tenant_billingAdmin_branches_requiring_it_fail_closed_while_the_support_branch_does_not_require_it
     - operator_mutation_rows_are_normative_target_contracts_not_current_availability; action_schema_mutationDigest_v1_vectors_and_account_issued_authorization_reference_flow_are_required_before_external_support
@@ -1171,7 +1178,6 @@ routes:
       any_of: [JOIN_REQUIRED, PUBLIC_PRODUCTION_ADMISSION_DENIED, NON_PUBLIC_ENROLLMENT_REQUIRED, REALM_ACCESS_DENIED, WORLD_ACCESS_DENIED, TENANT_BILLING_BLOCKED, ENTITLEMENT_UNAVAILABLE, AUTH_UNAVAILABLE]
   - service: game-session-service
     route: JOIN
-    route_status: target_not_currently_routable
     scope: tenant
     classification: public_production_onboarding
     auth_path: game_session_authenticated_context
@@ -1184,9 +1190,15 @@ routes:
     membership_authority_generation_applies: false
     required_live_checks: [public_production_visibility, public_production_admission, runtime_entitlements, admission_pointer, idempotency]
     canonical_errors:
-      any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE, TENANT_BILLING_BLOCKED]
+      any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_INVALID, CONNECT_SCOPE_MISMATCH, MEMBERSHIP_RECONCILIATION_REQUIRED, TENANT_BILLING_BLOCKED, ENTITLEMENT_UNAVAILABLE, AUTH_UNAVAILABLE, IDEMPOTENCY_CONFLICT]
     mutation_contract: explicit_public_membership_atomic
     membership_creation: caller_bound_after_validation
+    implementation_status:
+      known_drift:
+        - membership_authority_generation_snapshot_and_consumer_proof_remains_target_only
+        - join_unknown_database_outcome_recovery_and_reconciliation_remains_target_only
+        - join_audit_receipt_retention_and_safe_watermark_proof_remains_target_only
+        - postgresql_runtime_and_direct_text_end_to_end_proof_unavailable
   - service: game-session-service
     route: PLAY
     scope: tenant
@@ -1937,9 +1949,44 @@ routes:
     membership_authority_generation_applies: false
     required_live_checks: [account_state_bootstrap_eligible, pending_deletion_state, public_production_visibility, public_production_admission, runtime_entitlements, admission_pointer, connect_scope_match, idempotency]
     canonical_errors:
-      any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_MISMATCH, TENANT_BILLING_BLOCKED]
+      any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE, AUTH_UNAVAILABLE, CONNECT_SCOPE_INVALID, CONNECT_SCOPE_MISMATCH, ENTITLEMENT_UNAVAILABLE, IDEMPOTENCY_CONFLICT, MEMBERSHIP_RECONCILIATION_REQUIRED, TENANT_BILLING_BLOCKED]
     mutation_contract: explicit_public_membership_atomic
     membership_creation: caller_bound_after_validation
+    route_status: target_not_currently_routable
+    implementation_status:
+      known_drift:
+        - Account_controller_and_operation_are_implemented_locally_but_the_exact_public_Gateway_path_is_blocked_by_an_explicit_route_guard_and_the_route_is_absent_from_publicOpenAPI
+        - local_policy_digest_revalidation_does_not_prove_exact_target_validity_through_Account_commit; strict_ADR_0025_commit_gate_remains_incomplete
+  - service: account-service
+    route: IssueDirectTextConnectScope
+    scope: tenant
+    classification: internal_workload
+    auth_path: exact_mtls_workload_plus_caller_specific_context
+    issued_token_state: none
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    method_policy: exact_declared_route
+    allowed_callers:
+      any_of: [game-session-service]
+    mtls_callers:
+      any_of: ["spiffe://firemud/ns/{namespace}/sa/game-session-service"]
+    delegated_subject: typed_player_execution_context
+    target_binding: typed_caller_context_and_exact_resolved_target
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: false
+    required_live_checks: [account_state_bootstrap_eligible, pending_deletion_state, public_production_visibility, public_production_admission, runtime_entitlements, admission_pointer]
+    canonical_errors:
+      any_of: [ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_INVALID, CONNECT_SCOPE_MISMATCH, REALM_UNAVAILABLE, TENANT_BILLING_BLOCKED, ENTITLEMENT_UNAVAILABLE, AUTH_UNAVAILABLE]
+    end_user_token_required: false
+    issuance_contract:
+      result: opaque_short_lived_connect_scope_id
+      binds: [caller_account, resolved_target, catalogRevision, pointerVersion, evaluatedAt, connectScopeExpiresAt]
+      silent_retarget: forbidden
+    implementation_status:
+      known_drift:
+        - direct_text_client_end_to_end_proof_unavailable
   - service: account-service
     route: JoinPublicProductionMembership
     scope: tenant
@@ -1962,7 +2009,7 @@ routes:
     membership_authority_generation_applies: false
     required_live_checks: [account_state_bootstrap_eligible, pending_deletion_state, public_production_visibility, public_production_admission, runtime_entitlements, admission_pointer, connect_scope_match, idempotency]
     canonical_errors:
-      any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_MISMATCH, TENANT_BILLING_BLOCKED, ENTITLEMENT_UNAVAILABLE, AUTH_UNAVAILABLE, IDEMPOTENCY_CONFLICT]
+      any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_INVALID, CONNECT_SCOPE_MISMATCH, MEMBERSHIP_RECONCILIATION_REQUIRED, TENANT_BILLING_BLOCKED, ENTITLEMENT_UNAVAILABLE, AUTH_UNAVAILABLE, IDEMPOTENCY_CONFLICT]
     mutation_contract: explicit_public_membership_atomic
     exact_scope_revalidation:
       required: true
@@ -1977,7 +2024,11 @@ routes:
     membership_creation: caller_bound_after_validation
     implementation_status:
       known_drift:
-        - pending_operation_recovery_after_unknown_database_outcome_remains_unresolved; direct_text_and_first_party_end_to_end_runtime_deployment_and_postgresql_proof_remain_incomplete; membership_lifecycle_generation_and_connect_token_issuance_baseline_proof_remain_incomplete
+        - membership_authority_generation_snapshot_and_consumer_proof_remains_target_only
+        - bounded_readback_reconciler_has_no_executed_postgresql_unknown_outcome_or_concurrency_proof
+        - join_audit_receipt_retention_and_safe_watermark_proof_remains_target_only
+        - direct_text_and_first_party_end_to_end_runtime_deployment_proof_unavailable
+        - connect_token_issuance_baseline_proof_incomplete
   - service: account-service
     route: DELETE /tenants/{tenantId}/memberships/me
     scope: tenant
@@ -3633,6 +3684,48 @@ routes:
       any_of: [IDEMPOTENCY_CONFLICT]
     roles:
       any_of: [tenantAdmin, platformAdmin]
+  - service: logging-admin-service
+    route: CreateLogEvent
+    transport: grpc
+    scope: account
+    route_status: target_not_currently_routable
+    classification: internal_workload
+    auth_path: exact_mtls_workload
+    issued_token_state: none
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    method_policy: exact_declared_route
+    allowed_callers:
+      any_of: [account-service]
+    mtls_callers:
+      any_of: ["spiffe://firemud/ns/{namespace}/sa/account-service"]
+    end_user_token_required: false
+    implementation_status:
+      known_drift:
+        - exact_Account_mTLS_peer_is_authenticated_then_CreateLogEvent_returns_UNAVAILABLE_before_validation_or_storage; positive_receipt_projection_is_offline_fixture_only_and_live_activation_remains_retention_and_runtime_proof_gated
+  - service: logging-admin-service
+    route: ReadLogEventReceipt
+    transport: grpc
+    scope: account
+    route_status: current_openapi_operator_surface
+    classification: internal_workload
+    auth_path: exact_mtls_workload
+    issued_token_state: none
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    method_policy: exact_declared_route
+    allowed_callers:
+      any_of: [account-service]
+    mtls_callers:
+      any_of: ["spiffe://firemud/ns/{namespace}/sa/account-service"]
+    end_user_token_required: false
+    implementation_status:
+      known_drift:
+        - local_Account_mTLS_receipt_readback_is_implemented_but_not_invoked_by_Account; historical_evidence_retention_lifecycle_and_PostgreSQL_end_to_end_proof_remain_activation_gates
   - service: game-session-service
     route: ToggleFeatureFlag
     transport: grpc
@@ -3777,3 +3870,39 @@ routes:
     required_fields: [control_plane_request_id, actor, reason, mutation_digest]
     canonical_errors:
       any_of: [IDEMPOTENCY_CONFLICT]
+  - service: game-session-service
+    route: GetInitialAdmissionBindProof
+    transport: grpc
+    scope: tenant
+    classification: internal_workload
+    auth_path: exact_mtls_workload
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    method_policy: exact_declared_route
+    allowed_callers:
+      any_of: [world-management-service]
+    mtls_callers:
+      any_of: ["spiffe://firemud/ns/{namespace}/sa/world-management-service"]
+    end_user_token_required: false
+    required_live_checks: [exact_attempt_tuple, committed_pointer_audit_binding, aborted_attempt_future_commit_fence]
+    required_fields: [hold_id, hold_fence, tenant_id, realm_uuid, playable_state_namespace_uuid, playable_state_scope, game_instance_id, version_id, active_lifecycle_epoch, initial_admission_request_id, request_digest, expected_no_prior_pointer, expected_catalog_revision]
+  - service: world-management-service
+    route: AcquireInitialAdmissionBindHold
+    transport: grpc
+    scope: tenant
+    classification: internal_workload
+    auth_path: exact_mtls_workload
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    method_policy: exact_declared_route
+    allowed_callers:
+      any_of: [game-session-service]
+    mtls_callers:
+      any_of: ["spiffe://firemud/ns/{namespace}/sa/game-session-service"]
+    end_user_token_required: false
+    required_live_checks: [active_target_version_epoch, exact_retry_identity, conflicting_hold_absence]
+    required_fields: [tenant_id, game_instance_id, version_id, expected_active_lifecycle_epoch, initial_admission_request_id, request_digest, realm_uuid, playable_state_namespace_uuid, playable_state_scope, expected_no_prior_pointer, expected_catalog_revision]

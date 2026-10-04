@@ -1,5 +1,6 @@
 package net.firedevops.firemud.loggingadmin.controller;
 
+import static net.firedevops.firemud.loggingadmin.AccountJwtTestTokens.accountToken;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -53,7 +54,7 @@ class LogQueryControllerTest {
   void queryReturnsEntries() throws Exception {
     QueryLogsRequest request = new QueryLogsRequest(1L, "msg");
     when(service.queryLogs(request)).thenReturn(List.of("hello"));
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -69,7 +70,7 @@ class LogQueryControllerTest {
   void queryRejectsCrossTenantScopedAdmin() throws Exception {
     QueryLogsRequest request = new QueryLogsRequest(1L, "msg");
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
+        accountToken(jwtUtil, Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(
@@ -83,7 +84,7 @@ class LogQueryControllerTest {
   @Test
   void queryRejectsZeroTenantIdBeforeDispatch() throws Exception {
     QueryLogsRequest request = new QueryLogsRequest(0L, "msg");
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(

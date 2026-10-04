@@ -9,23 +9,14 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import net.firedevops.firemud.common.LoggingUtil;
-import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.gamesession.service.GameplayPresence;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
-import org.slf4j.Logger;
 import org.springframework.util.StringUtils;
 
 /** Small process-local fake for command tests; production presence is Redis-backed. */
 public final class FakeGameplayPresenceService implements GameplayPresenceService {
-  private static final Logger logger = LoggingUtil.getLogger(FakeGameplayPresenceService.class);
   private final ConcurrentMap<Long, GameplayPresence> presences = new ConcurrentHashMap<>();
-  private final JwtUtil jwtUtil;
-
-  public FakeGameplayPresenceService(JwtUtil jwtUtil) {
-    this.jwtUtil = jwtUtil;
-  }
 
   @Override
   public void registerConnected(SessionContext context) {
@@ -47,7 +38,7 @@ public final class FakeGameplayPresenceService implements GameplayPresenceServic
             StringUtils.hasText(context.characterName())
                 ? context.characterName().trim()
                 : fallbackCharacterName(context),
-            GameplayPresenceRoleClassifier.classifyRole(context, jwtUtil, logger),
+            GameplayPresenceRoleClassifier.classifyRole(),
             System.currentTimeMillis(),
             null,
             null,

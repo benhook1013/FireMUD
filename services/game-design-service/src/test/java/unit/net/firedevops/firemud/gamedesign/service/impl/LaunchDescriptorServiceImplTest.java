@@ -6,9 +6,11 @@ import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.time.LocalDateTime;
@@ -117,7 +119,7 @@ class LaunchDescriptorServiceImplTest {
   }
 
   @Test
-  void exactRetryReturnsStoredResultWithoutReadingChangedDefaultsVersionOrRelease() {
+  void exactRetryReturnsStoredResultWithoutReadingChangedTemplateDefaultsVersionOrRelease() {
     AuthoredWorldLaunchDescriptorEvidence.Request request = request("cp-retry", 9L);
     GameTemplateLaunchConfigView template = stubTemplate(request, 7L, null);
     stubVersion(7L, VersionLifecycleState.PUBLISHED, 17L, null);
@@ -139,6 +141,8 @@ class LaunchDescriptorServiceImplTest {
 
     var first = service.resolveLaunchDescriptor(request);
     when(template.getDefaultVersionId()).thenReturn(8L);
+    when(template.getDefaultScriptPatchVersion()).thenReturn("patch-1");
+    clearInvocations(template);
     when(versionRepository.findById(8L)).thenReturn(Optional.empty());
     when(publishedReleaseBundleService.getPublishedReleaseBundle(PRIVATE_SOURCE_TENANT_KEY, 8L))
         .thenThrow(new PublishedReleaseBundleNotFoundException(PRIVATE_SOURCE_TENANT_KEY, 8L));
@@ -149,7 +153,7 @@ class LaunchDescriptorServiceImplTest {
     assertEquals(7L, retry.versionId());
     verify(gameTemplateRepository, times(1))
         .findLaunchConfigByTenantIdAndId(PRIVATE_SOURCE_TENANT_KEY, 9L);
-    verify(template, times(1)).getDefaultVersionId();
+    verifyNoInteractions(template);
     verify(versionRepository, times(1)).findById(7L);
     verify(versionRepository, never()).findById(8L);
     verify(publishedReleaseBundleService, times(1))

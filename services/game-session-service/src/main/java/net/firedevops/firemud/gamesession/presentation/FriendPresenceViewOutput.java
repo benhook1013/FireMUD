@@ -3,8 +3,7 @@ package net.firedevops.firemud.gamesession.presentation;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import java.util.List;
 
-public record FriendPresenceViewOutput(
-    String filter, int totalCount, int matchCount, List<Entry> friends)
+public record FriendPresenceViewOutput(String filter, int totalCount, List<Entry> friends)
     implements PlayerOutputPayload {
   public FriendPresenceViewOutput {
     friends = List.copyOf(friends);

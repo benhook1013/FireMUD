@@ -6,7 +6,9 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record;
@@ -193,6 +195,38 @@ public class WorldAuthoredSourceIntakeRepository {
     }
     validateReadKey(namespace, intakeRequestId);
     Record record = findByRequest(namespace, intakeRequestId);
+    if (record == null) {
+      return Optional.empty();
+    }
+    WorldAuthoredSourceIntakeReceipt receipt = toReceipt(record);
+    requireTenantAssociation(receipt);
+    return Optional.of(receipt);
+  }
+
+  /** Reads a committed World intake by its exact canonical source-owned binding. */
+  @Transactional(propagation = Propagation.NOT_SUPPORTED, readOnly = true)
+  public Optional<WorldAuthoredSourceIntakeReceipt> readBySource(
+      String namespace,
+      UUID canonicalTenantId,
+      String worldSlug,
+      UUID sourceOperationId,
+      String sourceEvidenceDigest) {
+    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new IllegalStateException(
+          "World authored-source intake read requires a committed-outcome owner read");
+    }
+    validateSourceReadKey(
+        namespace, canonicalTenantId, worldSlug, sourceOperationId, sourceEvidenceDigest);
+    Record record =
+        dsl.selectFrom(INTAKE)
+            .where(
+                TARGET_NAMESPACE
+                    .eq(namespace)
+                    .and(CANONICAL_TENANT_ID.eq(canonicalTenantId))
+                    .and(WORLD_SLUG.eq(worldSlug))
+                    .and(SOURCE_OPERATION_ID.eq(sourceOperationId))
+                    .and(SOURCE_EVIDENCE_DIGEST.eq(sourceEvidenceDigest)))
+            .fetchOne();
     if (record == null) {
       return Optional.empty();
     }
@@ -428,6 +462,20 @@ public class WorldAuthoredSourceIntakeRepository {
       throw new IllegalArgumentException("namespace must be one canonical DNS label");
     }
     requireNonNil(intakeRequestId, "intakeRequestId");
+  }
+
+  private void validateSourceReadKey(
+      String namespace,
+      UUID canonicalTenantId,
+      String worldSlug,
+      UUID sourceOperationId,
+      String sourceEvidenceDigest) {
+    AuthoredWorldSourceDigest.validateReadSelector(namespace, canonicalTenantId, worldSlug);
+    requireNonNil(sourceOperationId, "sourceOperationId");
+    if (!GameTenantCreationDigest.isDigest(sourceEvidenceDigest)) {
+      throw new IllegalArgumentException(
+          "sourceEvidenceDigest must be a canonical lowercase SHA-256 digest");
+    }
   }
 
   private void requireActiveOwnerTransaction() {

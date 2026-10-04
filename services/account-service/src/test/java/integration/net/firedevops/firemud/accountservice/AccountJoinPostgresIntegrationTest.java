@@ -92,7 +92,7 @@ class AccountJoinPostgresIntegrationTest {
   private static final UUID REALM_ID = UUID.fromString("4c4b57d8-e3a2-48fe-9977-e7df0fdce901");
   private static final String WORLD_SLUG = "join-proof-world";
   private static final String REALM_SLUG = "production";
-  private static final String NAMESPACE_ID = "join-proof-namespace";
+  private static final String NAMESPACE_ID = "65f23d2c-3b4f-4ec3-9b11-0c56a9a2a7d1";
   private static final long GAME_INSTANCE_ID = 44L;
   private static final long CATALOG_REVISION = 23L;
   private static final long POINTER_VERSION = 17L;
@@ -285,10 +285,11 @@ class AccountJoinPostgresIntegrationTest {
     dsl.execute(
         "UPDATE subscription SET status = 'active', entitlement_version = 2 WHERE tenant_id = ?",
         fixture.tenantId());
-    AuthenticationException conflict =
-        assertThrows(AuthenticationException.class, () -> join(fixture));
+    JoinPublicProductionResult conflict = join(fixture);
 
-    assertThat(conflict.getCode()).isEqualTo("IDEMPOTENCY_CONFLICT");
+    assertThat(conflict.success()).isFalse();
+    assertThat(conflict.outcomeCode()).isEqualTo("IDEMPOTENCY_CONFLICT");
+    assertThat(conflict.replayed()).isFalse();
     assertThat(
             dsl.resultQuery(
                     "SELECT request_digest FROM account_join_operations WHERE request_id = ?",
@@ -1192,51 +1193,126 @@ class AccountJoinPostgresIntegrationTest {
   }
 
   @Test
-  void absentMembershipWithPriorAuditHistoryCannotRestartAtSequenceOne() {
+  void membershipTransitionReceiptsRejectMutationAndStillAllowAppendAndStreamAdvance() {
     JoinFixture initialJoin = fixture("active");
     assertThat(join(initialJoin).success()).isTrue();
-    dsl.execute(
-        "DELETE FROM account_membership_transition_receipts WHERE account_id = ? AND tenant_id = ?",
-        initialJoin.accountId(),
-        initialJoin.tenantId());
-    dsl.execute(
-        "DELETE FROM account_membership_transition_receipt_stream_heads "
-            + "WHERE account_id = ? AND tenant_id = ?",
-        initialJoin.accountId(),
-        initialJoin.tenantId());
-    dsl.execute(
-        "DELETE FROM account_join_operations WHERE request_id = ?", initialJoin.requestId());
-    dsl.execute(
-        "DELETE FROM account_tenant_membership_role_snapshot_roles "
-            + "WHERE membership_id IN (SELECT id FROM account_tenant_membership "
-            + "WHERE account_id = ? AND tenant_id = ?)",
-        initialJoin.accountId(),
-        initialJoin.tenantId());
-    dsl.execute(
-        "DELETE FROM account_tenant_membership_role_snapshots "
-            + "WHERE membership_id IN (SELECT id FROM account_tenant_membership "
-            + "WHERE account_id = ? AND tenant_id = ?)",
-        initialJoin.accountId(),
-        initialJoin.tenantId());
-    dsl.execute(
-        "DELETE FROM account_tenant_membership WHERE account_id = ? AND tenant_id = ?",
-        initialJoin.accountId(),
-        initialJoin.tenantId());
-    JoinFixture retry = fixtureForMembership(initialJoin);
+    assertMembershipTransitionReceipt(initialJoin, "MEMBERSHIP_JOINED", 1L);
 
-    AuthenticationException blocked =
-        assertThrows(AuthenticationException.class, () -> join(retry));
+    assertThrows(
+        org.springframework.dao.DataIntegrityViolationException.class,
+        () ->
+            dsl.execute(
+                "UPDATE account_membership_transition_receipts "
+                    + "SET transition_type = 'MEMBERSHIP_REACTIVATED' "
+                    + "WHERE account_id = ? AND tenant_id = ?",
+                initialJoin.accountId(),
+                initialJoin.tenantId()));
+    assertMembershipTransitionReceipt(initialJoin, "MEMBERSHIP_JOINED", 1L);
 
-    assertThat(blocked.getCode()).isEqualTo("AUTH_UNAVAILABLE");
+    assertThrows(
+        org.springframework.dao.DataIntegrityViolationException.class,
+        () ->
+            dsl.execute(
+                "DELETE FROM account_membership_transition_receipts "
+                    + "WHERE account_id = ? AND tenant_id = ?",
+                initialJoin.accountId(),
+                initialJoin.tenantId()));
+    assertMembershipTransitionReceipt(initialJoin, "MEMBERSHIP_JOINED", 1L);
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT last_receipt_sequence "
+                        + "FROM account_membership_transition_receipt_stream_heads "
+                        + "WHERE account_id = ? AND tenant_id = ?",
+                    initialJoin.accountId(),
+                    initialJoin.tenantId())
+                .fetchOne(0, Long.class))
+        .isEqualTo(1L);
+
+    String leftRequestId = "leave-proof-" + UUID.randomUUID();
+    MembershipTransitionReceipt left = leave(initialJoin, leftRequestId);
+    assertThat(left.transitionType()).isEqualTo("MEMBERSHIP_LEFT");
+    assertThat(left.requestId()).isEqualTo(leftRequestId);
+    assertThat(left.receiptSequence()).isEqualTo(2L);
+    assertMembershipTransitionReceipt(initialJoin, "MEMBERSHIP_LEFT", 2L);
+    assertThat(membershipSnapshot(initialJoin))
+        .containsEntry("lifecycle_state", "INACTIVE")
+        .containsEntry("gameplay_admission_allowed", false)
+        .containsEntry("membership_version", 3L)
+        .containsEntry("membership_authority_generation", 2L);
+    assertThat(countAuthorityMembershipEvents(initialJoin)).isEqualTo(2L);
+    assertLeftAuthorityMembershipEvent(initialJoin, leftRequestId, 2L, 3L);
+
+    JoinFixture reactivation = fixtureForMembership(initialJoin);
+
+    assertThat(join(reactivation).success()).isTrue();
+    assertMembershipTransitionReceipt(reactivation, "MEMBERSHIP_REACTIVATED", 3L);
+    assertThat(membershipSnapshot(reactivation))
+        .containsEntry("lifecycle_state", "ACTIVE")
+        .containsEntry("gameplay_admission_allowed", true)
+        .containsEntry("membership_version", 4L)
+        .containsEntry("membership_authority_generation", 3L);
+    assertThat(countAuthorityMembershipEvents(reactivation)).isEqualTo(3L);
+    assertAuthorityMembershipEvent(reactivation, 3L, 4L, true);
+    assertThat(countMembershipTransitionReceipts(reactivation)).isEqualTo(3L);
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT last_receipt_sequence "
+                        + "FROM account_membership_transition_receipt_stream_heads "
+                        + "WHERE account_id = ? AND tenant_id = ?",
+                    reactivation.accountId(),
+                    reactivation.tenantId())
+                .fetchOne(0, Long.class))
+        .isEqualTo(3L);
+  }
+
+  @Test
+  void minimizedPriorJoinAuditWithoutMembershipOrReceiptKeepsJoinRetryable() {
+    JoinFixture retry = fixture("active");
+    dsl.execute(
+        "INSERT INTO account_audit_outbox "
+            + "(audit_event_id, scope, tenant_id, producer_service, event_type, occurred_at, "
+            + "schema_version, payload_digest_version, payload_digest, payload, delivery_status, "
+            + "next_attempt_at) "
+            + "VALUES (?, 'tenant', ?, 'account-service', "
+            + "'ACCOUNT_JOINED_PUBLIC_PRODUCTION', CURRENT_TIMESTAMP, 1, 1, ?, NULL, 'MINIMIZED', NULL)",
+        UUID.randomUUID(),
+        retry.tenantId(),
+        "sha256:" + "0".repeat(64));
+
+    for (int attempt = 0; attempt < 2; attempt++) {
+      AuthenticationException blocked =
+          assertThrows(AuthenticationException.class, () -> join(retry));
+      assertThat(blocked.getCode()).isEqualTo("AUTH_UNAVAILABLE");
+    }
+
     assertThat(countMemberships(retry)).isZero();
     assertThat(countMembershipTransitionReceipts(retry)).isZero();
+    assertThat(countJoinOutbox(retry)).isZero();
     assertThat(countTenantJoinOutboxEvents(retry)).isEqualTo(1L);
     assertThat(
             dsl.resultQuery(
-                    "SELECT status FROM account_join_operations WHERE request_id = ?",
+                    "SELECT status, last_attempt_failure_code FROM account_join_operations "
+                        + "WHERE request_id = ?",
                     retry.requestId())
-                .fetchOne(0, String.class))
-        .isEqualTo("PENDING");
+                .fetchOne())
+        .satisfies(
+            row -> {
+              assertThat(row.get("status", String.class)).isEqualTo("PENDING");
+              assertThat(row.get("last_attempt_failure_code", String.class))
+                  .isEqualTo("AUTH_UNAVAILABLE");
+            });
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT delivery_status, payload FROM account_audit_outbox "
+                        + "WHERE scope = 'tenant' AND tenant_id = ? "
+                        + "AND event_type = 'ACCOUNT_JOINED_PUBLIC_PRODUCTION'",
+                    retry.tenantId())
+                .fetchOne())
+        .satisfies(
+            row -> {
+              assertThat(row.get("delivery_status", String.class)).isEqualTo("MINIMIZED");
+              assertThat(row.get("payload", String.class)).isNull();
+            });
   }
 
   @Test
@@ -1445,21 +1521,24 @@ class AccountJoinPostgresIntegrationTest {
     assertThat(membershipAuthorityReadEvidenceSnapshot(absent)).isEqualTo(absentBeforeRead);
 
     JoinFixture missingReceipt = fixture("active");
-    JoinPublicProductionResult joined = join(missingReceipt);
     dsl.execute(
-        "DELETE FROM account_membership_transition_receipts WHERE account_id = ? AND tenant_id = ?",
+        "INSERT INTO account_tenant_membership "
+            + "(account_id, tenant_id, gameplay_admission_allowed, lifecycle_state, "
+            + "membership_version, membership_authority_generation, authority_provenance) "
+            + "VALUES (?, ?, TRUE, 'ACTIVE', 1, 1, 'EXPLICIT_JOIN')",
         missingReceipt.accountId(),
         missingReceipt.tenantId());
-    dsl.execute(
-        "DELETE FROM account_membership_transition_receipt_stream_heads "
-            + "WHERE account_id = ? AND tenant_id = ?",
-        missingReceipt.accountId(),
-        missingReceipt.tenantId());
+    long retainedMembershipId = seedPlayerRoleSnapshot(missingReceipt);
+    Map<String, Object> retainedMembership = membershipSnapshot(missingReceipt);
 
-    assertThat(joined.success()).isTrue();
+    assertThat(retainedMembershipId).isPositive();
+    assertThat(countMembershipTransitionReceipts(missingReceipt)).isZero();
     assertThatThrownBy(() -> readPositiveMembershipSnapshot(missingReceipt))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("Account membership exists without a provisional transition receipt");
+    assertThat(membershipSnapshot(missingReceipt)).isEqualTo(retainedMembership);
+    assertThat(countMembershipTransitionReceipts(missingReceipt)).isZero();
+    assertThat(countAuthorityMembershipEvents(missingReceipt)).isZero();
   }
 
   @Test

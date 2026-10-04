@@ -45,7 +45,8 @@ public record EnvironmentIdentityPlan(
                     .map(HostedIdentityContract::grpcPublicationRole),
                 Stream.of(
                     HostedIdentityContract.GRPC_ACCOUNT_ROLE,
-                    HostedIdentityContract.GRPC_GAME_SESSION_ROLE))
+                    HostedIdentityContract.GRPC_GAME_SESSION_ROLE,
+                    HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE))
             .collect(Collectors.toUnmodifiableSet());
     if (!grpcWorkloadIdentityCertificateNames.keySet().equals(expectedGrpcWorkloadIdentityRoles)
         || !grpcWorkloadIdentitySecretNames.keySet().equals(expectedGrpcWorkloadIdentityRoles)
@@ -53,7 +54,7 @@ public record EnvironmentIdentityPlan(
             .keySet()
             .equals(expectedGrpcWorkloadIdentityRoles)) {
       throw new IllegalArgumentException(
-          "gRPC publication certificate, runtime Secret, and source Secret maps must contain exactly the supported roles");
+          "gRPC workload-identity certificate, runtime Secret, and source Secret maps must contain exactly the supported roles");
     }
   }
 
@@ -125,6 +126,19 @@ public record EnvironmentIdentityPlan(
 
   public String grpcGameSessionSourceSecretName() {
     return grpcWorkloadIdentitySourceSecretNames.get(HostedIdentityContract.GRPC_GAME_SESSION_ROLE);
+  }
+
+  public String grpcSocialGroupsCertificateName() {
+    return grpcWorkloadIdentityCertificateNames.get(HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE);
+  }
+
+  public String grpcSocialGroupsSecretName() {
+    return grpcWorkloadIdentitySecretNames.get(HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE);
+  }
+
+  public String grpcSocialGroupsSourceSecretName() {
+    return grpcWorkloadIdentitySourceSecretNames.get(
+        HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE);
   }
 
   public String grpcPublicationUriSan(String workload) {

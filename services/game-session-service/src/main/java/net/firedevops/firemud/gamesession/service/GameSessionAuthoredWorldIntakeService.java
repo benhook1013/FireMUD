@@ -81,7 +81,6 @@ public class GameSessionAuthoredWorldIntakeService {
         || !worldSlug.equals(source.worldSlug())) {
       throw new IllegalStateException("Authenticated authored-world source does not match intake");
     }
-
     IntakeReceipt written =
         ownerTransaction.execute(status -> repository.register(intakeRequestId, source));
     if (written == null) {

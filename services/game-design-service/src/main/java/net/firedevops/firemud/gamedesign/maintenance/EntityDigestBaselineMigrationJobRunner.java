@@ -6,6 +6,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
+import java.sql.Connection;
+import java.sql.SQLException;
+import javax.sql.DataSource;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.gamedesign.service.impl.EntityDigestBaselineMigrationService;
 import net.firedevops.firemud.gamedesign.service.impl.EntityDigestBaselineMigrationService.ExpectedSource;
@@ -37,14 +40,17 @@ public class EntityDigestBaselineMigrationJobRunner implements ApplicationRunner
   private final Environment environment;
   private final ObjectMapper objectMapper;
   private final EntityDigestBaselineMigrationService migrationService;
+  private final DataSource dataSource;
 
   public EntityDigestBaselineMigrationJobRunner(
       Environment environment,
       ObjectMapper objectMapper,
-      EntityDigestBaselineMigrationService migrationService) {
+      EntityDigestBaselineMigrationService migrationService,
+      DataSource dataSource) {
     this.environment = environment;
     this.objectMapper = objectMapper;
     this.migrationService = migrationService;
+    this.dataSource = dataSource;
   }
 
   @Override
@@ -56,6 +62,12 @@ public class EntityDigestBaselineMigrationJobRunner implements ApplicationRunner
       throw new IllegalStateException(
           "migration Job must not start application listeners or workers");
     }
+    String mode = required("firemud.entity-baseline-migration.mode");
+    requireDatabaseAuthority(
+        mode,
+        connectedDatabaseUsername(),
+        environment.getProperty("spring.flyway.enabled", Boolean.class, true));
+
     String namespace = required("firemud.entity-baseline-migration.pod-namespace");
     GrpcPeerIdentity identity = verifiedWorkloadIdentity();
     requireJobAuthority(
@@ -65,7 +77,6 @@ public class EntityDigestBaselineMigrationJobRunner implements ApplicationRunner
         identity);
     String workloadIdentity = identity.uri();
 
-    String mode = required("firemud.entity-baseline-migration.mode");
     switch (mode) {
       case "enumerate" -> {
         long afterId = optionalLong("firemud.entity-baseline-migration.after-baseline-id", 0);
@@ -130,6 +141,34 @@ public class EntityDigestBaselineMigrationJobRunner implements ApplicationRunner
         || !identity.isInNamespace(podNamespace)) {
       throw new IllegalStateException(
           "migration client certificate has the wrong workload identity");
+    }
+  }
+
+  static void requireDatabaseAuthority(String mode, String username, boolean flywayEnabled) {
+    if (flywayEnabled) {
+      throw new IllegalStateException("migration Job requires Flyway to be disabled");
+    }
+    String requiredUsername =
+        switch (mode) {
+          case "enumerate", "preflight" -> "firemud_game_design_baseline_reader";
+          case "migrate" -> "firemud_game_design_baseline_writer";
+          default -> throw new IllegalArgumentException("unsupported migration Job mode");
+        };
+    if (!requiredUsername.equals(username)) {
+      throw new IllegalStateException("migration DB credential does not match the required mode");
+    }
+  }
+
+  private String connectedDatabaseUsername() {
+    try (Connection connection = dataSource.getConnection()) {
+      String username = connection.getMetaData().getUserName();
+      if (username == null || username.isBlank()) {
+        throw new IllegalStateException("migration DB connection did not identify its user");
+      }
+      return username;
+    } catch (SQLException failure) {
+      // Avoid surfacing driver diagnostics that can echo the configured database username.
+      throw new IllegalStateException("migration DB connection identity could not be verified");
     }
   }
 

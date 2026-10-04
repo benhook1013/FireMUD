@@ -210,6 +210,11 @@ class GameSessionApplicationIntegrationTest {
         HttpHeaders.AUTHORIZATION,
         "Bearer "
             + JWT_UTIL.generateToken(
-                "game-session-test", Map.of("globalRoles", List.of("platformAdmin"))));
+                "018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a",
+                Map.of(
+                    "accountId",
+                    "018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a",
+                    "globalRoles",
+                    List.of("platformAdmin"))));
   }
 }

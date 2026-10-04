@@ -5,6 +5,7 @@ import jakarta.validation.Valid;
 import java.util.function.Supplier;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.common.ErrorDetail;
+import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.socialgroups.dto.AddFriendRequest;
 import net.firedevops.firemud.socialgroups.dto.FriendLinkDto;
@@ -62,7 +63,7 @@ public class FriendController {
       @RequestParam String accountId) {
     return withBadRequest(
         () -> {
-          long parsedFriendAccountId = requireFriendAccountId(friendAccountId);
+          String parsedFriendAccountId = requireFriendAccountId(friendAccountId);
           AccountScope scope = requireAccountScope(tenantId, accountId);
           socialAccessGuard.requireAccountAccess(scope.tenantId(), scope.accountId());
           friendService.removeFriend(scope.tenantId(), scope.accountId(), parsedFriendAccountId);
@@ -77,7 +78,7 @@ public class FriendController {
       @RequestParam String accountId) {
     return withBadRequest(
         () -> {
-          long parsedFriendAccountId = requireFriendAccountId(friendAccountId);
+          String parsedFriendAccountId = requireFriendAccountId(friendAccountId);
           AccountScope scope = requireAccountScope(tenantId, accountId);
           socialAccessGuard.requireAccountAccess(scope.tenantId(), scope.accountId());
           return friendService
@@ -214,8 +215,8 @@ public class FriendController {
     }
   }
 
-  private long requireFriendAccountId(String friendAccountId) {
-    return RequestIdValidation.requirePositiveLong(friendAccountId, "friendAccountId");
+  private String requireFriendAccountId(String friendAccountId) {
+    return JwtClaims.requireAccountId(friendAccountId, "friendAccountId");
   }
 
   private int requireOrdinal(String ordinal) {
@@ -225,7 +226,7 @@ public class FriendController {
   private AccountScope requireAccountScope(String tenantId, String accountId) {
     return new AccountScope(
         RequestIdValidation.requirePositiveLong(tenantId, "tenantId"),
-        RequestIdValidation.requirePositiveLong(accountId, "accountId"));
+        JwtClaims.requireAccountId(accountId, "accountId"));
   }
 
   private <T> ResponseEntity<ApiResponse<T>> withBadRequest(
@@ -247,5 +248,5 @@ public class FriendController {
         .body(ApiResponse.error(new ErrorDetail("UNAVAILABLE", ex.getMessage())));
   }
 
-  private record AccountScope(long tenantId, long accountId) {}
+  private record AccountScope(long tenantId, String accountId) {}
 }

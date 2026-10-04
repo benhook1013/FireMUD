@@ -2,9 +2,13 @@ package net.firedevops.firemud.worldmanagement.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -14,6 +18,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -30,6 +35,9 @@ import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
 import net.firedevops.firemud.worldmanagement.config.WorldProperties;
 import net.firedevops.firemud.worldmanagement.dto.PreparedWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.entity.Room;
+import net.firedevops.firemud.worldmanagement.entity.RoomExit;
+import net.firedevops.firemud.worldmanagement.entity.RoomInstance;
+import net.firedevops.firemud.worldmanagement.entity.RoomInstanceExit;
 import net.firedevops.firemud.worldmanagement.entity.WorldInstance;
 import net.firedevops.firemud.worldmanagement.entity.Zone;
 import net.firedevops.firemud.worldmanagement.repository.RegionInstanceRepository;
@@ -43,12 +51,12 @@ import net.firedevops.firemud.worldmanagement.repository.ZoneInstanceRepository;
 import net.firedevops.firemud.worldmanagement.repository.ZoneRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionOperations;
 
-class WorldInstanceActivationServiceImplTest {
+class WorldLifecycleCommandServiceImplTest {
   private static final String PERSISTED_RELEASE_BUNDLE_REF = "opaque-release-ref-from-game-design";
-
   private WorldInstanceRepository worldInstanceRepository;
   private RegionInstanceRepository regionInstanceRepository;
   private ZoneRepository zoneRepository;
@@ -61,6 +69,7 @@ class WorldInstanceActivationServiceImplTest {
   private EntityManagementClient entityManagementClient;
   private GameDesignClient gameDesignClient;
   private AtomicBoolean localTransactionActive;
+  private AtomicBoolean worldInstanceReadInLocalTransaction;
   private WorldLifecycleCommandServiceImpl service;
 
   @BeforeEach
@@ -77,6 +86,7 @@ class WorldInstanceActivationServiceImplTest {
     entityManagementClient = mock(EntityManagementClient.class);
     gameDesignClient = mock(GameDesignClient.class);
     localTransactionActive = new AtomicBoolean();
+    worldInstanceReadInLocalTransaction = new AtomicBoolean();
     TransactionOperations transactionOperations =
         new TransactionOperations() {
           @Override
@@ -158,6 +168,85 @@ class WorldInstanceActivationServiceImplTest {
     when(roomInstanceRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     when(roomInstanceExitRepository.save(any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
+  }
+
+  @Test
+  void prepareWorldInstanceMaterializesSeededRoomIdentityAndActivatesOwnerLifecycle() {
+    Room starterRoom = templateRoom(42L, 1021L);
+    starterRoom.setName("Candle-lit Antechamber");
+    Room secondaryRoom = templateRoom(42L, 2045L);
+    secondaryRoom.setName("Smith's Annex");
+    when(roomRepository.findByTenantIdAndVersionIdOrderByIdAsc(42L, 11L))
+        .thenReturn(List.of(starterRoom, secondaryRoom));
+    when(roomExitRepository.findByTenantIdAndVersionIdOrderByIdAsc(42L, 11L))
+        .thenReturn(
+            List.of(
+                templateExit(42L, 11L, starterRoom, secondaryRoom, "NORTH"),
+                templateExit(42L, 11L, secondaryRoom, starterRoom, "SOUTH")));
+    AtomicReference<WorldInstance> storedInstance = new AtomicReference<>();
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
+        .thenAnswer(invocation -> Optional.ofNullable(storedInstance.get()));
+    when(worldInstanceRepository.save(any(WorldInstance.class)))
+        .thenAnswer(
+            invocation -> {
+              WorldInstance worldInstance = invocation.getArgument(0);
+              storedInstance.set(worldInstance);
+              return worldInstance;
+            });
+
+    var prepared =
+        service.prepareWorldInstance(
+            new PreparedWorldInstanceRequest(
+                42L,
+                101L,
+                7L,
+                "cp-1",
+                "ld-1",
+                11L,
+                "patch-1",
+                "{}",
+                "genrev-11",
+                77L,
+                "prb:42:11:77",
+                77L));
+
+    assertEquals("PREPARING", prepared.status());
+    assertEquals(1L, prepared.lifecycleEpoch());
+    assertEquals(42L, storedInstance.get().getTenantId());
+    assertEquals(101L, storedInstance.get().getGameInstanceId());
+    assertEquals(11L, storedInstance.get().getVersionId());
+    assertEquals(0L, storedInstance.get().getRowVersion());
+    verify(regionInstanceRepository).save(any());
+    verify(zoneInstanceRepository).save(any());
+    ArgumentCaptor<RoomInstance> roomCaptor = ArgumentCaptor.forClass(RoomInstance.class);
+    verify(roomInstanceRepository, times(2)).save(roomCaptor.capture());
+    List<RoomInstance> rooms = roomCaptor.getAllValues();
+    assertEquals(
+        List.of(1021L, 2045L), rooms.stream().map(RoomInstance::getRoomInstanceRowId).toList());
+    assertEquals(
+        List.of(1021L, 2045L), rooms.stream().map(RoomInstance::getTemplateRoomId).toList());
+    assertEquals(List.of(42L, 42L), rooms.stream().map(RoomInstance::getTenantId).toList());
+    assertEquals(List.of(101L, 101L), rooms.stream().map(RoomInstance::getGameInstanceId).toList());
+
+    ArgumentCaptor<RoomInstanceExit> exitCaptor = ArgumentCaptor.forClass(RoomInstanceExit.class);
+    verify(roomInstanceExitRepository, times(2)).save(exitCaptor.capture());
+    assertEquals(
+        List.of("NORTH", "SOUTH"),
+        exitCaptor.getAllValues().stream().map(RoomInstanceExit::getDirection).toList());
+    assertEquals(
+        List.of(1021L, 2045L),
+        exitCaptor.getAllValues().stream()
+            .map(exit -> exit.getFromRoomInstance().getRoomInstanceRowId())
+            .toList());
+    assertEquals(
+        List.of(2045L, 1021L),
+        exitCaptor.getAllValues().stream()
+            .map(exit -> exit.getToRoomInstance().getRoomInstanceRowId())
+            .toList());
+
+    var activated = service.activatePreparedWorldInstance(42L, 101L, prepared.lifecycleEpoch());
+    assertEquals("ACTIVE", activated.status());
+    assertEquals(2L, activated.lifecycleEpoch());
   }
 
   @Test
@@ -370,10 +459,7 @@ class WorldInstanceActivationServiceImplTest {
     instance.setVersionStateEpoch(77L);
     instance.setLifecycleEpoch(2L);
     instance.setStatus("ACTIVE");
-    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
-        .thenReturn(Optional.of(instance));
-    when(worldInstanceRepository.save(any(WorldInstance.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
+    stubPersistedWorldInstance(instance);
 
     var snapshot = service.terminateWorldInstance(42L, 101L, 2L, "term-1", "stop");
 
@@ -391,7 +477,7 @@ class WorldInstanceActivationServiceImplTest {
     instance.setStatus("TERMINATED");
     instance.setTerminationRequestId("term-1");
     instance.setLifecycleEpoch(4L);
-    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(42L, 101L))
         .thenReturn(Optional.of(instance));
 
     var snapshot = service.terminateWorldInstance(42L, 101L, 2L, "term-1", "stop");
@@ -416,7 +502,7 @@ class WorldInstanceActivationServiceImplTest {
     instance.setStatus("TERMINATED");
     instance.setTerminationRequestId("term-1");
     instance.setLifecycleEpoch(4L);
-    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(42L, 101L))
         .thenReturn(Optional.of(instance));
 
     IllegalArgumentException changedIdentity =
@@ -453,10 +539,7 @@ class WorldInstanceActivationServiceImplTest {
   @Test
   void terminateWorldInstanceDoesNotCommitTerminationWhenWorldCleanupFails() {
     WorldInstance instance = activeWorldInstance();
-    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
-        .thenReturn(Optional.of(instance));
-    when(worldInstanceRepository.save(any(WorldInstance.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
+    stubPersistedWorldInstance(instance);
     doThrow(new IllegalStateException("world cleanup failed"))
         .when(roomInstanceExitRepository)
         .deleteByTenantIdAndGameInstanceId(42L, 101L);
@@ -472,12 +555,33 @@ class WorldInstanceActivationServiceImplTest {
   }
 
   @Test
+  void terminationDoesNotCrossAnUnresolvedInitialAdmissionBindHold() {
+    WorldInstance instance = activeWorldInstance();
+    stubPersistedWorldInstance(instance);
+    when(worldInstanceRepository.hasNonterminalInitialAdmissionBindHold(42L, 101L))
+        .thenAnswer(
+            invocation -> {
+              assertTrue(localTransactionActive.get());
+              return true;
+            });
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.terminateWorldInstance(42L, 101L, 2L, "term-1", "stop"));
+
+    assertTrue(error.getMessage().startsWith("INITIAL_ADMISSION_BIND_HOLD_ACTIVE:"));
+    assertEquals("ACTIVE", instance.getStatus());
+    verify(entityManagementClient, org.mockito.Mockito.never())
+        .cleanupRuntimeInstance(anyLong(), anyLong(), anyString());
+    verify(worldInstanceRepository).findByTenantIdAndGameInstanceIdForUpdate(42L, 101L);
+    verify(worldInstanceRepository, org.mockito.Mockito.never()).save(any(WorldInstance.class));
+  }
+
+  @Test
   void terminateWorldInstanceRetriesSameRequestAfterLocalCleanupFailure() {
     WorldInstance instance = activeWorldInstance();
-    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
-        .thenReturn(Optional.of(instance));
-    when(worldInstanceRepository.save(any(WorldInstance.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
+    stubPersistedWorldInstance(instance);
     doThrow(new IllegalStateException("world cleanup failed"))
         .when(roomInstanceExitRepository)
         .deleteByTenantIdAndGameInstanceId(42L, 101L);
@@ -486,12 +590,17 @@ class WorldInstanceActivationServiceImplTest {
         IllegalStateException.class,
         () -> service.terminateWorldInstance(42L, 101L, 2L, "term-1", "stop"));
 
-    org.mockito.Mockito.doNothing()
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              assertTrue(localTransactionActive.get());
+              return null;
+            })
         .when(roomInstanceExitRepository)
         .deleteByTenantIdAndGameInstanceId(42L, 101L);
     var snapshot = service.terminateWorldInstance(42L, 101L, 3L, "term-1", "stop");
 
     assertEquals("TERMINATED", snapshot.status());
+    assertEquals(4L, snapshot.lifecycleEpoch());
     verify(entityManagementClient, org.mockito.Mockito.times(2))
         .cleanupRuntimeInstance(42L, 101L, "term-1");
   }
@@ -499,10 +608,14 @@ class WorldInstanceActivationServiceImplTest {
   @Test
   void entityCleanupRunsBeforeTheLocalWorldTransaction() {
     WorldInstance instance = activeWorldInstance();
-    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
-        .thenReturn(Optional.of(instance));
-    when(worldInstanceRepository.save(any(WorldInstance.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
+    stubPersistedWorldInstance(instance);
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              assertTrue(localTransactionActive.get());
+              return null;
+            })
+        .when(worldEventRepository)
+        .deleteByTenantIdAndGameInstanceId(42L, 101L);
     when(entityManagementClient.cleanupRuntimeInstance(42L, 101L, "term-1"))
         .thenAnswer(
             invocation -> {
@@ -510,9 +623,126 @@ class WorldInstanceActivationServiceImplTest {
               return CleanupRuntimeInstanceResponse.newBuilder().build();
             });
 
-    service.terminateWorldInstance(42L, 101L, 2L, "term-1", "stop");
+    var snapshot = service.terminateWorldInstance(42L, 101L, 2L, "term-1", "stop");
 
+    assertEquals("TERMINATED", snapshot.status());
+    assertEquals("TERMINATING", instance.getStatus());
     assertFalse(localTransactionActive.get());
+    assertTrue(worldInstanceReadInLocalTransaction.get());
+    org.mockito.ArgumentCaptor<WorldInstance> savedRows =
+        org.mockito.ArgumentCaptor.forClass(WorldInstance.class);
+    verify(worldInstanceRepository, org.mockito.Mockito.times(2)).save(savedRows.capture());
+    assertNotSame(savedRows.getAllValues().get(0), savedRows.getAllValues().get(1));
+    assertEquals("TERMINATED", savedRows.getAllValues().get(1).getStatus());
+  }
+
+  @Test
+  void terminationFinalizationRejectsChangedRequestBeforeLocalCleanup() {
+    WorldInstance instance = activeWorldInstance();
+    AtomicReference<WorldInstance> persisted = stubPersistedWorldInstance(instance);
+    when(entityManagementClient.cleanupRuntimeInstance(42L, 101L, "term-1"))
+        .thenAnswer(
+            invocation -> {
+              WorldInstance changed = copyWorldInstance(persisted.get());
+              changed.setTerminationRequestId("term-2");
+              persisted.set(changed);
+              return CleanupRuntimeInstanceResponse.newBuilder().build();
+            });
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.terminateWorldInstance(42L, 101L, 2L, "term-1", "stop"));
+
+    assertTrue(error.getMessage().contains("termination request changed"));
+    verify(worldInstanceRepository, org.mockito.Mockito.times(1)).save(any(WorldInstance.class));
+    verify(worldEventRepository, org.mockito.Mockito.never())
+        .deleteByTenantIdAndGameInstanceId(42L, 101L);
+    verify(roomInstanceExitRepository, org.mockito.Mockito.never())
+        .deleteByTenantIdAndGameInstanceId(42L, 101L);
+  }
+
+  @Test
+  void terminationFinalizationRejectsChangedStateBeforeLocalCleanup() {
+    WorldInstance instance = activeWorldInstance();
+    AtomicReference<WorldInstance> persisted = stubPersistedWorldInstance(instance);
+    when(entityManagementClient.cleanupRuntimeInstance(42L, 101L, "term-1"))
+        .thenAnswer(
+            invocation -> {
+              WorldInstance changed = copyWorldInstance(persisted.get());
+              changed.setStatus("ACTIVE");
+              persisted.set(changed);
+              return CleanupRuntimeInstanceResponse.newBuilder().build();
+            });
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.terminateWorldInstance(42L, 101L, 2L, "term-1", "stop"));
+
+    assertTrue(error.getMessage().contains("not terminating"));
+    verify(worldInstanceRepository, org.mockito.Mockito.times(1)).save(any(WorldInstance.class));
+    verify(worldEventRepository, org.mockito.Mockito.never())
+        .deleteByTenantIdAndGameInstanceId(42L, 101L);
+    verify(roomInstanceExitRepository, org.mockito.Mockito.never())
+        .deleteByTenantIdAndGameInstanceId(42L, 101L);
+  }
+
+  @Test
+  void terminationFinalizationAcceptsSameRequestConcurrentCompletionWithoutDoubleEpoch() {
+    WorldInstance instance = activeWorldInstance();
+    AtomicReference<WorldInstance> persisted = stubPersistedWorldInstance(instance);
+    when(entityManagementClient.cleanupRuntimeInstance(42L, 101L, "term-1"))
+        .thenAnswer(
+            invocation -> {
+              WorldInstance completed = copyWorldInstance(persisted.get());
+              completed.setStatus("TERMINATED");
+              completed.setLifecycleEpoch(4L);
+              completed.setTerminatedAt(Instant.parse("2026-09-01T00:00:00Z"));
+              persisted.set(completed);
+              return CleanupRuntimeInstanceResponse.newBuilder().build();
+            });
+
+    var snapshot = service.terminateWorldInstance(42L, 101L, 2L, "term-1", "stop");
+
+    assertEquals("TERMINATED", snapshot.status());
+    assertEquals(4L, snapshot.lifecycleEpoch());
+    verify(worldInstanceRepository, org.mockito.Mockito.times(1)).save(any(WorldInstance.class));
+    verify(worldEventRepository, org.mockito.Mockito.never())
+        .deleteByTenantIdAndGameInstanceId(42L, 101L);
+    verify(roomInstanceExitRepository, org.mockito.Mockito.never())
+        .deleteByTenantIdAndGameInstanceId(42L, 101L);
+  }
+
+  @Test
+  void terminationFinalizationPropagatesOptimisticWriteFailure() {
+    WorldInstance instance = activeWorldInstance();
+    WorldInstance terminating = copyWorldInstance(instance);
+    terminating.setStatus("TERMINATING");
+    terminating.setTerminationRequestId("term-1");
+    terminating.setLifecycleEpoch(3L);
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
+        .thenReturn(Optional.of(instance), Optional.of(terminating));
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(42L, 101L))
+        .thenReturn(Optional.of(instance), Optional.of(terminating));
+    when(worldInstanceRepository.save(any(WorldInstance.class)))
+        .thenAnswer(
+            invocation -> {
+              WorldInstance submitted = invocation.getArgument(0);
+              if ("TERMINATED".equals(submitted.getStatus())) {
+                throw new IllegalStateException("stale write for world_instance");
+              }
+              return submitted;
+            });
+
+    IllegalStateException error =
+        assertThrows(
+            IllegalStateException.class,
+            () -> service.terminateWorldInstance(42L, 101L, 2L, "term-1", "stop"));
+
+    assertEquals("stale write for world_instance", error.getMessage());
+    verify(worldEventRepository).deleteByTenantIdAndGameInstanceId(42L, 101L);
+    verify(worldInstanceRepository, org.mockito.Mockito.times(2)).save(any(WorldInstance.class));
   }
 
   @Test
@@ -631,6 +861,7 @@ class WorldInstanceActivationServiceImplTest {
 
   private WorldInstance activeWorldInstance() {
     WorldInstance instance = new WorldInstance();
+    instance.setId(101L);
     instance.setTenantId(42L);
     instance.setGameInstanceId(101L);
     instance.setGameTemplateId(7L);
@@ -643,7 +874,77 @@ class WorldInstanceActivationServiceImplTest {
     instance.setVersionStateEpoch(77L);
     instance.setLifecycleEpoch(2L);
     instance.setStatus("ACTIVE");
+    instance.setRowVersion(0L);
     return instance;
+  }
+
+  private AtomicReference<WorldInstance> stubPersistedWorldInstance(WorldInstance initiallyLoaded) {
+    AtomicReference<WorldInstance> persisted =
+        new AtomicReference<>(copyWorldInstance(initiallyLoaded));
+    AtomicBoolean firstFind = new AtomicBoolean(true);
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
+        .thenAnswer(
+            invocation -> {
+              if (localTransactionActive.get()) {
+                worldInstanceReadInLocalTransaction.set(true);
+              }
+              if (firstFind.compareAndSet(true, false)) {
+                return Optional.of(initiallyLoaded);
+              }
+              return Optional.of(copyWorldInstance(persisted.get()));
+            });
+    AtomicBoolean firstLockedFind = new AtomicBoolean(true);
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(42L, 101L))
+        .thenAnswer(
+            invocation -> {
+              if (localTransactionActive.get()) {
+                worldInstanceReadInLocalTransaction.set(true);
+              }
+              return firstLockedFind.compareAndSet(true, false)
+                  ? Optional.of(initiallyLoaded)
+                  : Optional.of(copyWorldInstance(persisted.get()));
+            });
+    when(worldInstanceRepository.save(any(WorldInstance.class)))
+        .thenAnswer(
+            invocation -> {
+              WorldInstance submitted = invocation.getArgument(0);
+              if ("TERMINATED".equals(submitted.getStatus())) {
+                assertTrue(localTransactionActive.get());
+              }
+              WorldInstance saved = copyWorldInstance(submitted);
+              long rowVersion = submitted.getRowVersion() == null ? 0L : submitted.getRowVersion();
+              saved.setRowVersion(rowVersion + 1L);
+              persisted.set(saved);
+              return copyWorldInstance(saved);
+            });
+    return persisted;
+  }
+
+  private WorldInstance copyWorldInstance(WorldInstance source) {
+    WorldInstance copy = new WorldInstance();
+    copy.setId(source.getId());
+    copy.setTenantId(source.getTenantId());
+    copy.setGameInstanceId(source.getGameInstanceId());
+    copy.setGameTemplateId(source.getGameTemplateId());
+    copy.setControlPlaneRequestId(source.getControlPlaneRequestId());
+    copy.setLaunchDescriptorId(source.getLaunchDescriptorId());
+    copy.setVersionId(source.getVersionId());
+    copy.setScriptPatchVersion(source.getScriptPatchVersion());
+    copy.setRuntimeFlagsJson(source.getRuntimeFlagsJson());
+    copy.setGenerationConfigRevision(source.getGenerationConfigRevision());
+    copy.setReleaseBundleId(source.getReleaseBundleId());
+    copy.setPublishedReleaseBundleRef(source.getPublishedReleaseBundleRef());
+    copy.setVersionStateEpoch(source.getVersionStateEpoch());
+    copy.setRemapSetId(source.getRemapSetId());
+    copy.setLifecycleEpoch(source.getLifecycleEpoch());
+    copy.setStatus(source.getStatus());
+    copy.setFailureReason(source.getFailureReason());
+    copy.setTerminationRequestId(source.getTerminationRequestId());
+    copy.setTerminatedAt(source.getTerminatedAt());
+    copy.setCreatedAt(source.getCreatedAt());
+    copy.setUpdatedAt(source.getUpdatedAt());
+    copy.setRowVersion(source.getRowVersion());
+    return copy;
   }
 
   private Room templateRoom(long tenantId, long roomId) {
@@ -656,6 +957,17 @@ class WorldInstanceActivationServiceImplTest {
     room.setName("Login Hall");
     room.setDescription("A narrow testing hall.");
     return room;
+  }
+
+  private RoomExit templateExit(
+      long tenantId, long versionId, Room fromRoom, Room toRoom, String direction) {
+    RoomExit exit = new RoomExit();
+    exit.setTenantId(tenantId);
+    exit.setVersionId(versionId);
+    exit.setFromRoom(fromRoom);
+    exit.setToRoom(toRoom);
+    exit.setDirection(direction);
+    return exit;
   }
 
   private Zone templateZone(long tenantId, long zoneId) {

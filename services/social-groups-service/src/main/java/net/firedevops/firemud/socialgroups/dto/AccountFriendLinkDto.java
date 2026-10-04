@@ -7,7 +7,7 @@ import java.time.Instant;
 public record AccountFriendLinkDto(
     Long id,
     @NotNull Long tenantId,
-    @NotNull Long accountId,
-    @NotNull Long friendAccountId,
+    @NotNull String accountId,
+    @NotNull String friendAccountId,
     String status,
     Instant createdAt) {}

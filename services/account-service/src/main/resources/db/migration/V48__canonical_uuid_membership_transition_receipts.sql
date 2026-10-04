@@ -111,6 +111,13 @@ ALTER TABLE account_membership_transition_receipts
 ALTER TABLE account_membership_transition_receipts
     ALTER COLUMN tenant_id DROP NOT NULL;
 
+-- V41 protects retained receipt bytes from runtime mutation. Disable only that row guard for
+-- this migration-owned key backfill, then restore it before the migration continues.
+-- [jooq ignore start]
+ALTER TABLE account_membership_transition_receipts
+    DISABLE TRIGGER account_membership_transition_receipts_append_only;
+-- [jooq ignore stop]
+
 UPDATE account_membership_transition_receipts receipt
 SET receipt_head_id = (
     SELECT head.receipt_head_id
@@ -124,6 +131,11 @@ WHERE EXISTS (
     WHERE receipt.account_id = head.account_id
       AND receipt.tenant_id = head.tenant_id
 );
+
+-- [jooq ignore start]
+ALTER TABLE account_membership_transition_receipts
+    ENABLE TRIGGER account_membership_transition_receipts_append_only;
+-- [jooq ignore stop]
 
 ALTER TABLE account_membership_transition_receipts
     ALTER COLUMN receipt_head_id SET NOT NULL;

@@ -71,24 +71,24 @@ grep -Fq 'one repository review stack' design/developer-workflows/pr-lifecycle.m
   || fail 'lifecycle guidance does not define one stack'
 grep -Fq 'PARENT_MOVED' design/developer-workflows/pr-lifecycle.md \
   || fail 'lifecycle guidance does not define PARENT_MOVED'
-grep -Fq 'JUDGMENT_REQUIRED' design/developer-workflows/pr-lifecycle.md \
-  || fail 'lifecycle guidance does not define JUDGMENT_REQUIRED'
+grep -Fq 'Reconciliation or an unproven candidate may block a new request' design/developer-workflows/pr-lifecycle.md \
+  || fail 'lifecycle guidance does not separate request safety from completed taper'
 grep -Fq 'exact parent' design/developer-workflows/pr-lifecycle.md \
   || fail 'lifecycle guidance does not require exact parent anchoring'
 grep -Fq 'merge-base SHA' design/developer-workflows/pr-lifecycle.md \
   || fail 'lifecycle guidance does not require merge-base anchoring'
 grep -Fq 'unique patch identity' design/developer-workflows/pr-lifecycle.md \
   || fail 'lifecycle guidance does not require patch anchoring'
-grep -Fq 'one corrected-state zero-useful' design/developer-workflows/pr-lifecycle.md \
+grep -Fq 'Hosted taper is one completed, attributable zero-useful result' design/developer-workflows/pr-lifecycle.md \
   || fail 'lifecycle guidance does not define Hosted taper'
 grep -Fq 'three consecutive zero-useful' design/developer-workflows/pr-lifecycle.md \
   || fail 'lifecycle guidance does not define CLI taper'
-grep -Fq 'CLI rounds may span reviewed heads within one coherent PR lineage' design/developer-workflows/pr-lifecycle.md \
+grep -Fq 'Results count across reviewed heads' design/developer-workflows/pr-lifecycle.md \
   || fail 'lifecycle guidance does not define cross-head CLI taper'
-grep -Fq 'completion persists on a proven descendant live head' design/developer-workflows/pr-lifecycle.md \
-  || fail 'lifecycle guidance does not preserve completed CLI taper on proven descendants'
-grep -Fq -- '--allow-unreconciled' design/developer-workflows/pr-lifecycle.md \
-  || fail 'lifecycle guidance does not define provisional CLI semantics'
+grep -Fq 'Once reached, taper is durable' design/developer-workflows/pr-lifecycle.md \
+  || fail 'lifecycle guidance does not preserve completed taper across head changes'
+grep -Fq -- '--force' design/developer-workflows/pr-lifecycle.md \
+  || fail 'lifecycle guidance does not define forced warning acknowledgment'
 
 grep -Fq 'review_results' dev-tools/pr_review/acceptance.py \
   || fail 'acceptance fixtures do not expose deterministic review result sequences'
@@ -109,6 +109,8 @@ grep -Eq -- '--checkpoint' <<<"$allocation_help" \
   || fail 'allocation help does not expose an explicit review baseline checkpoint'
 grep -Eq -- '--max-additional-completed' <<<"$allocation_help" \
   || fail 'allocation help does not expose a bounded completed-review cap'
+grep -Eq -- '--fresh-taper' <<<"$allocation_help" \
+  || fail 'allocation help does not expose explicit fresh-taper selection'
 grep -Fq 'cap exhausted; findings pending' design/developer-workflows/pr-lifecycle.md \
   || fail 'lifecycle guidance does not explain pending work at cap exhaustion'
 

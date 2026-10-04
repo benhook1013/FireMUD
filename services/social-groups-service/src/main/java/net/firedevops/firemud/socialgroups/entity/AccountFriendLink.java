@@ -1,6 +1,7 @@
 package net.firedevops.firemud.socialgroups.entity;
 
 import java.time.Instant;
+import java.util.UUID;
 import lombok.Data;
 
 /** Entity representing an account-level friendship. */
@@ -8,8 +9,8 @@ import lombok.Data;
 public class AccountFriendLink {
   private Long id;
   private Long tenantId;
-  private Long accountId;
-  private Long friendAccountId;
+  private UUID accountId;
+  private UUID friendAccountId;
   private String status;
   private Instant createdAt;
 }

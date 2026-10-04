@@ -75,7 +75,7 @@ class GameSessionAuthoredWorldIntakeServiceTest {
   }
 
   @Test
-  void rejectsInvalidSelectorsBeforeSourceOrOwnerRead() {
+  void rejectsInvalidSelectorsBeforeSourceReadOrPersistence() {
     assertThatThrownBy(() -> service.intake(null, TENANT, SOURCE_OPERATION, WORLD))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> service.intake(REQUEST, TENANT, new UUID(0, 0), WORLD))
@@ -85,6 +85,7 @@ class GameSessionAuthoredWorldIntakeServiceTest {
     assertThatThrownBy(() -> service.intake(REQUEST, TENANT, SOURCE_OPERATION, "Bad-Slug"))
         .isInstanceOf(IllegalArgumentException.class);
     verifyNoInteractions(client, repository);
+    assertThat(transactionManager.startedWith).isNull();
   }
 
   @Test
@@ -194,7 +195,6 @@ class GameSessionAuthoredWorldIntakeServiceTest {
       assertThatThrownBy(() -> service.intake(REQUEST, TENANT, SOURCE_OPERATION, WORLD))
           .isInstanceOf(IllegalStateException.class);
     }
-
     verify(repository, never()).register(any(UUID.class), any(AuthoredWorldSourceEvidence.class));
     verify(repository, never()).read(any(UUID.class), any(UUID.class), anyString(), anyString());
     assertThat(transactionManager.startedWith).isNull();
@@ -213,7 +213,6 @@ class GameSessionAuthoredWorldIntakeServiceTest {
     assertThatThrownBy(() -> service.intake(REQUEST, TENANT, SOURCE_OPERATION, WORLD))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("source unavailable");
-
     verify(repository, never()).register(any(UUID.class), any(AuthoredWorldSourceEvidence.class));
     verify(repository, never()).read(any(UUID.class), any(UUID.class), anyString(), anyString());
     assertThat(transactionManager.startedWith).isNull();
@@ -257,6 +256,22 @@ class GameSessionAuthoredWorldIntakeServiceTest {
         .isInstanceOf(InvalidIntakeEvidenceException.class)
         .hasMessageContaining("changed during commit readback");
     assertThat(transactionManager.commitCount).isEqualTo(1);
+  }
+
+  @Test
+  void registrationFailureRollsBackOwnerTransaction() {
+    AuthoredWorldSourceEvidence source = source("firemud", TENANT, SOURCE_OPERATION, WORLD);
+    when(repository.readByIntakeRequest("firemud", REQUEST)).thenReturn(Optional.empty());
+    when(client.resolveAuthoredWorldSource(anyString(), anyString(), anyString(), anyString()))
+        .thenReturn(source);
+    when(repository.register(REQUEST, source)).thenThrow(new IllegalStateException("write failed"));
+
+    assertThatThrownBy(() -> service.intake(REQUEST, TENANT, SOURCE_OPERATION, WORLD))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("write failed");
+
+    assertThat(transactionManager.rollbackCount).isEqualTo(1);
+    assertThat(transactionManager.commitCount).isZero();
   }
 
   private void stubFreshWrite(AuthoredWorldSourceEvidence source, IntakeReceipt receipt) {
@@ -325,6 +340,7 @@ class GameSessionAuthoredWorldIntakeServiceTest {
   private static final class RecordingTransactionManager implements PlatformTransactionManager {
     private TransactionDefinition startedWith;
     private int commitCount;
+    private int rollbackCount;
 
     @Override
     public TransactionStatus getTransaction(TransactionDefinition definition) {
@@ -345,6 +361,7 @@ class GameSessionAuthoredWorldIntakeServiceTest {
 
     @Override
     public void rollback(TransactionStatus status) {
+      rollbackCount++;
       TransactionSynchronizationManager.clear();
     }
   }

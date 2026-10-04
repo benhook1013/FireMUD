@@ -349,6 +349,7 @@ jobs:
           bash ./dev-tools/tests/ci-lightweight-scope-contract.sh
           bash ./dev-tools/tests/workflow-version-authority-contract.sh
           bash ./dev-tools/tests/workflow-tool-updater-contract.sh
+          bash ./dev-tools/tests/publisher-checksum-contract.sh
           bash ./dev-tools/tests/jacoco-combined-report-contract.sh
           bash ./dev-tools/tests/pr-review-controller-contract.sh
           bash ./dev-tools/tests/testcontainers-disabled-contract.sh
@@ -383,6 +384,7 @@ jobs:
           bash ./dev-tools/tests/backup-verifier-image-contract.sh
           bash ./dev-tools/tests/kubectl-version-skew-contract.sh
           bash ./dev-tools/tests/helm-transaction-proof-contract.sh
+          bash ./dev-tools/tests/helm-entity-digest-baseline-migration-contract.sh
           bash ./dev-tools/tests/preview-image-tag-contract.sh
           bash ./dev-tools/tests/preview-merge-image-tag-contract.sh
           bash ./dev-tools/tests/overlay-preflight-contract.sh
@@ -500,7 +502,7 @@ jobs:
           node-version-file: '.node-version'
 
       - name: ⚙️ Set Up Gradle
-        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
         with:
           build-scan-publish: true
           build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
@@ -536,7 +538,7 @@ jobs:
           node-version-file: '.node-version'
 
       - name: ⚙️ Set Up Gradle
-        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
         with:
           build-scan-publish: true
           build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
@@ -935,26 +937,33 @@ jobs:
           java-version: ${{ matrix.java-version }}
 
       - name: ⚙️ Set Up Gradle
-        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
         with:
           build-scan-publish: true
           build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
           build-scan-terms-of-use-agree: 'yes'
           cache-read-only: false
 
-      - name: Run Game Design retained Game Session association PostgreSQL component proof
+      - name: Run complete Game Design owner component PostgreSQL proof
         if: ${{ matrix.module == 'game-design-service' }}
         run: |
           ./gradlew :game-design-service:integrationTest \
             --tests integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest \
+            --tests net.firedevops.firemud.gamedesign.service.EntityDigestBaselineMigrationIntegrationTest \
+            --tests integration.net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepositoryIntegrationTest \
+            --tests integration.net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepositoryIntegrationTest \
             -PfullCheck --no-build-cache --no-configuration-cache
           bash dev-tools/validation/inspect-test-results.sh \
             --strict \
             --require-suite integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest \
+            --require-suite net.firedevops.firemud.gamedesign.service.EntityDigestBaselineMigrationIntegrationTest \
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest#appliesAuditedAssociationForFreshAndRetainedGameSources()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest#versionLockRepositoryUsesConfiguredIsolatedOwnerSchema()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest#concurrentExactFirstWritersReturnOneImmutableReceipt()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest#ownerRollbackLeavesNoClaimAndLostAcknowledgementRetryReadsExactReceipt()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest#databaseRejectsAssociationUpdatesDeletesTruncatesAndContradictorySourceInsert()' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.EntityDigestBaselineMigrationIntegrationTest#exactRetryReadsCommittedEvidenceWithoutCallingEntityAgain()' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.EntityDigestBaselineMigrationIntegrationTest#databaseMigrationRolesHaveOnlyTheirDirectTablePrivileges()' \
             game-design-service
 
       - name: Run Game Design authored-source launch descriptor PostgreSQL and socket mTLS proof
@@ -1094,6 +1103,10 @@ jobs:
             --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredSourceIntakeIntegrationTest#concurrentLegacyNumericClaimSerializesBeforeFreshSelectorAllocation()' \
             --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredSourceIntakeIntegrationTest#concurrentLegacyClaimAfterAllocationCannotTakeTheReservedSelector()' \
             --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredSourceIntakeIntegrationTest#canonicalReservationsGuardEveryWorldRowMutationTrigger()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredSourceIntakeIntegrationTest#readBySourceReturnsExactCommittedReceiptOnRepeatedCallsWithoutGrowth()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredSourceIntakeIntegrationTest#readBySourceRejectsAnyChangedBindingAndRetainedOrUnmappedEvidence()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredSourceIntakeIntegrationTest#readBySourceRejectsMalformedBinding()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredSourceIntakeIntegrationTest#readBySourceDoesNotExposeUncommittedOwnerEvidence()' \
             world-management-service
 
       - name: Upload World authored-source intake proof results
@@ -1180,6 +1193,14 @@ jobs:
           path: services/world-management-service/build/test-results/integrationTest/TEST-*WorldAuthoredSourceIntakeMtlsIntegrationTest.xml
           if-no-files-found: warn
           retention-days: 7
+      - name: Retain Game Design owner migration raw PostgreSQL evidence
+        if: ${{ always() && matrix.module == 'game-design-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: game-design-owner-migration-proof-${{ github.sha }}
+          # Gradle may shorten long report filenames; strict verification binds suite/class names.
+          path: services/game-design-service/build/test-results/integrationTest/*.xml
+          if-no-files-found: error
 
       - name: Run Game Session authored-world intake PostgreSQL component proof
         if: ${{ !cancelled() && matrix.module == 'game-session-service' }}
@@ -1488,6 +1509,7 @@ jobs:
             --strict \
             --require-suite integration.net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest \
             --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest#commitsCatalogBackedClosedPointerWithoutNumericOrRuntimeAliases()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest#canonicalClosedRowsRejectNumericRuntimeAndNamespaceAliasesWithoutGrowingEvidence()' \
             --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest#exactRetryAndLostResponseReadbackPreserveTheOriginalOutcomeAndEvent()' \
             --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest#changedAuditOrCatalogInputUnderTheSameRequestConflictsWithoutAddingRows()' \
             --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest#concurrentExactCreationLeavesOnePointerEventAndImmutableOutcome()' \
@@ -1654,15 +1676,15 @@ jobs:
           bash dev-tools/validation/inspect-test-results.sh \
             --strict \
             --require-suite net.firedevops.firemud.loggingadmin.service.impl.AccountAuditCanonicalIdentityMtlsTest \
-            --require-case 'net.firedevops.firemud.loggingadmin.service.impl.AccountAuditCanonicalIdentityMtlsTest#validAccountCanonicalUuidCreateAndReadEchoExactIdentityOverSocketMtls()' \
-            --require-case 'net.firedevops.firemud.loggingadmin.service.impl.AccountAuditCanonicalIdentityMtlsTest#retainedV1NumericCreateAndReadEchoExplicitIdentityOverSocketMtls()' \
-            --require-case 'net.firedevops.firemud.loggingadmin.service.impl.AccountAuditCanonicalIdentityMtlsTest#retainedV1PlatformCreateAndReadEchoExplicitIdentityOverSocketMtls()' \
+            --require-case 'net.firedevops.firemud.loggingadmin.service.impl.AccountAuditCanonicalIdentityMtlsTest#canonicalUuidCreateIsUnavailableAndReadEchoesExactIdentityOverSocketMtls()' \
+            --require-case 'net.firedevops.firemud.loggingadmin.service.impl.AccountAuditCanonicalIdentityMtlsTest#retainedV1NumericCreateIsUnavailableAndReadEchoesIdentityOverSocketMtls()' \
+            --require-case 'net.firedevops.firemud.loggingadmin.service.impl.AccountAuditCanonicalIdentityMtlsTest#retainedV1PlatformCreateIsUnavailableAndReadEchoesIdentityOverSocketMtls()' \
             --require-case 'net.firedevops.firemud.loggingadmin.service.impl.AccountAuditCanonicalIdentityMtlsTest#missingClientCertificateIsRejectedByTls()' \
             --require-case 'net.firedevops.firemud.loggingadmin.service.impl.AccountAuditCanonicalIdentityMtlsTest#wrongServiceValidCaCertificateCannotInvokeEitherAccountAuditMethod()' \
             --require-case 'net.firedevops.firemud.loggingadmin.service.impl.AccountAuditCanonicalIdentityMtlsTest#wrongNamespaceCertificateCannotInvokeEitherAccountAuditMethod()' \
             --require-case 'net.firedevops.firemud.loggingadmin.service.impl.AccountAuditCanonicalIdentityMtlsTest#sharedCertificateWithoutWorkloadUriCannotInvokeEitherAccountAuditMethod()' \
             --require-case 'net.firedevops.firemud.loggingadmin.service.impl.AccountAuditCanonicalIdentityMtlsTest#jwtOnlyCallerCannotBypassMissingClientCertificate()' \
-            --require-case 'net.firedevops.firemud.loggingadmin.service.impl.AccountAuditCanonicalIdentityMtlsTest#mixedAndUnknownTenantIdentityFailBeforeLogEventServiceInvocation()' \
+            --require-case 'net.firedevops.firemud.loggingadmin.service.impl.AccountAuditCanonicalIdentityMtlsTest#createGatePrecedesIdentityValidationAndReadRejectsMalformedIdentity()' \
             logging-admin-service
 
       - name: Upload Logging Account audit physical mTLS proof results
@@ -1692,7 +1714,7 @@ jobs:
             --require-case 'net.firedevops.firemud.loggingadmin.LoggingAdminApplicationIntegrationTest#receiptFailureRollsBackTheAlreadyInsertedAuditProjection()' \
             --require-case 'net.firedevops.firemud.loggingadmin.LoggingAdminApplicationIntegrationTest#canonicalUuidReceiptFailureRollsBackItsProjection()' \
             --require-case 'net.firedevops.firemud.loggingadmin.LoggingAdminApplicationIntegrationTest#concurrentExactRetriesCreateOneProjectionAndReturnTheSameIdentifiers()' \
-            --require-case 'net.firedevops.firemud.loggingadmin.CanonicalAuditIdentityMigrationIntegrationTest#versionThreePreservesRetainedVersionOneReceiptAndProjectionBytes()' \
+            --require-case 'net.firedevops.firemud.loggingadmin.CanonicalAuditIdentityMigrationIntegrationTest#versionThreePointOnePreservesRetainedVersionOneReceiptAndProjectionBytes()' \
             logging-admin-service
 
       - name: Upload Logging canonical Account audit PostgreSQL proof results
@@ -1789,7 +1811,7 @@ jobs:
         id: checks
         run: |
           echo "::group::Run Module Validation"
-          if [[ "${{ matrix.module }}" == "account-service" || "${{ matrix.module }}" == "game-session-service" || "${{ matrix.module }}" == "game-design-service" ]]; then
+          if [[ "${{ matrix.module }}" == "account-service" || "${{ matrix.module }}" == "game-session-service" || "${{ matrix.module }}" == "game-design-service" || "${{ matrix.module }}" == "social-groups-service" || "${{ matrix.module }}" == "logging-admin-service" ]]; then
             ./gradlew :${{ matrix.module }}:check -PfullCheck --no-build-cache --no-configuration-cache
           else
             ./gradlew :${{ matrix.module }}:check -PfullCheck
@@ -2022,12 +2044,38 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+      - name: 🔎 Verify Social Account UUID migration PostgreSQL proof
+        if: ${{ matrix.module == 'social-groups-service' }}
+        run: |
+          # Strict suite validation also requires every retained-table parameter to execute.
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite net.firedevops.firemud.socialgroups.SocialAccountUuidMigrationIntegrationTest \
+            --require-case 'net.firedevops.firemud.socialgroups.SocialAccountUuidMigrationIntegrationTest#freshAndEmptyV9UpgradeConvergeAllAccountColumnsWithoutChangingOtherIdentityTypes()' \
+            --require-case 'net.firedevops.firemud.socialgroups.SocialAccountUuidMigrationIntegrationTest#concurrentWriterCommitsBeforeEmptyCheckAndItsEvidenceIsPreserved()' \
+            social-groups-service
+
+      - name: 🔎 Verify Logging Account UUID migration PostgreSQL proof
+        if: ${{ matrix.module == 'logging-admin-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.loggingadmin.LoggingAccountUuidMigrationIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.loggingadmin.LoggingAccountUuidMigrationIntegrationTest#freshSchemaMigratesWithCanonicalAccountUuidsAndNumericLocalIdentifiers()' \
+            --require-case 'integration.net.firedevops.firemud.loggingadmin.LoggingAccountUuidMigrationIntegrationTest#emptyAffectedTablesUpgradeFromV5AndGenericLogAccountIdRemainsNumeric()' \
+            --require-case 'integration.net.firedevops.firemud.loggingadmin.LoggingAccountUuidMigrationIntegrationTest#retainedModerationActionRefusesWithoutChangingRowsOrMigrationHistory()' \
+            --require-case 'integration.net.firedevops.firemud.loggingadmin.LoggingAccountUuidMigrationIntegrationTest#retainedPlayerReportRefusesWithoutChangingRowsOrMigrationHistory()' \
+            --require-case 'integration.net.firedevops.firemud.loggingadmin.LoggingAccountUuidMigrationIntegrationTest#migrationWaitsForConcurrentWriterAndRefusesAfterItsRowCommits()' \
+            logging-admin-service
+
       - name: 🔎 Verify Account PostgreSQL proof cases
         if: ${{ matrix.module == 'account-service' }}
         run: |
           bash dev-tools/validation/inspect-test-results.sh \
             --strict \
             --require-suite net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest \
+            --require-suite net.firedevops.firemud.accountservice.AccountJoinReconciliationPostgresIntegrationTest \
+            --require-suite integration.net.firedevops.firemud.accountservice.AccountConnectStorageUuidMigrationIntegrationTest \
             --require-suite integration.net.firedevops.firemud.accountservice.AccountBareLoginExchangeRepositoryIntegrationTest \
             --require-suite integration.net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceRepositoryIntegrationTest \
             --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#positiveMembershipSnapshotRejectsScalarAndWrongTenantVersionMaps()' \
@@ -2047,6 +2095,12 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountBareLoginExchangeRepositoryIntegrationTest#concurrentExactPendingClaimsConvergeOnOneDurableOperation()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountBareLoginExchangeRepositoryIntegrationTest#concurrentChangedPendingEvidenceWritersKeepOneFirstWrite()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountBareLoginExchangeRepositoryIntegrationTest#terminalSuccessWithoutItsExactBoundEnvelopeCannotCommit()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#membershipTransitionReceiptsRejectMutationAndStillAllowAppendAndStreamAdvance()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountJoinReconciliationPostgresIntegrationTest#exactPersistedEvidenceRecoversExpiredScopeAndSameRequestRetryWithoutDuplicates()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountJoinReconciliationPostgresIntegrationTest#twoWorkersRecoverThresholdPendingEvidenceWithoutDuplicatingMembershipOrAudit()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountJoinReconciliationPostgresIntegrationTest#retainedScopeDeletionAndExpiredScopeWithoutMembershipProofRemainPendingWithDiagnostics()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountConnectStorageUuidMigrationIntegrationTest#freshMigrationsAndEmptyV39UpgradeUseCanonicalUuidColumns()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountConnectStorageUuidMigrationIntegrationTest#migrationWaitsForConcurrentWriterThenRejectsItsCommittedEvidence()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceRepositoryIntegrationTest#concurrentExactIssuanceClaimsHaveOneTerminalFirstWriter()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceRepositoryIntegrationTest#lostIssuanceResponseRecoversExactEncryptedResultFromDurableReadback(Path)' \
             --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceRepositoryIntegrationTest#directDeletionOfIssuanceOperationOrResponseEnvelopeIsRejected()' \

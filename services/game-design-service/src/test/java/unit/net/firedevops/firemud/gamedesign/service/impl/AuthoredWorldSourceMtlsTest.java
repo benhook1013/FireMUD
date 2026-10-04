@@ -393,13 +393,15 @@ class AuthoredWorldSourceMtlsTest {
     ManagedChannel channel = channel(server, pki.worldManagementCertificate(), jwtToken());
     TenantIdentityServiceGrpc.TenantIdentityServiceBlockingStub stub = sourceStub(channel);
     try {
+      // This legacy method requires a valid JWT; the fixture's empty accountId is rejected before
+      // the exact-workload peer guard can run.
       assertStatus(
           () ->
               stub.resolveLegacyGameTenantIdentity(
                   ResolveLegacyGameTenantIdentityRequest.newBuilder()
                       .setLegacyGameTenantId("legacy-game-17")
                       .build()),
-          Status.Code.PERMISSION_DENIED);
+          Status.Code.UNAUTHENTICATED);
       assertStatus(
           () ->
               stub.resolveLegacyAccountTenantAssociation(
