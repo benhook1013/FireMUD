@@ -33,7 +33,7 @@ class PlayerOutputTest {
             PlayerOutput.view(
                     new WorldsViewOutput(
                         java.util.List.of(
-                            new WorldsViewOutput.WorldEntry(1, "demo", "Demo World", 1L, false))))
+                            new WorldsViewOutput.WorldEntry(1, "demo", "Demo World", false))))
                 .screenBufferEligible())
         .isFalse();
     assertThat(PlayerOutput.prompt("demo> ").screenBufferEligible()).isFalse();

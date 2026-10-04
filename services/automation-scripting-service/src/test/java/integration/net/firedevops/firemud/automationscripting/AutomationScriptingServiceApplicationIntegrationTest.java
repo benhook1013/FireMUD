@@ -150,7 +150,12 @@ class AutomationScriptingServiceApplicationIntegrationTest {
   void unsupportedFormationRestRoutesRejectCrossTenantSelectorsByBeingAbsent() throws Exception {
     String token =
         JWT_UTIL.generateToken(
-            "automation-test", Map.of("scopedRoles", Map.of("1", List.of("tenantAdmin"))));
+            "018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a",
+            Map.of(
+                "accountId",
+                "018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a",
+                "scopedRoles",
+                Map.of("1", List.of("tenantAdmin"))));
     HttpRequest request =
         HttpRequest.newBuilder(
                 URI.create("http://localhost:" + port + "/formations/7/members?tenantId=2"))
@@ -167,12 +172,20 @@ class AutomationScriptingServiceApplicationIntegrationTest {
   void removedFactionRestEndpointReturnsNotFound() throws Exception {
     String token =
         JWT_UTIL.generateToken(
-            "automation-test", Map.of("scopedRoles", Map.of("1", List.of("tenantAdmin"))));
+            "018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a",
+            Map.of(
+                "accountId",
+                "018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a",
+                "scopedRoles",
+                Map.of("1", List.of("tenantAdmin"))));
     HttpRequest request =
         HttpRequest.newBuilder(
-                URI.create("http://localhost:" + port + "/formations/7/members?tenantId=2"))
+                URI.create(
+                    "http://localhost:"
+                        + port
+                        + "/factions/1/reputation?tenantId=1&characterId=2&gameInstanceId=GI-1&playableStateScope=NOPE&delta=1"))
             .header("Authorization", "Bearer " + token)
-            .GET()
+            .method("PATCH", HttpRequest.BodyPublishers.noBody())
             .build();
 
     HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
@@ -280,9 +293,15 @@ class AutomationScriptingServiceApplicationIntegrationTest {
   @Test
   void postgresBindingCompensationRestoresLogicalBindings() {
     String name = "script-binding-compensation-" + UUID.randomUUID();
+    String scriptPatchVersion =
+        "patch-" + UUID.randomUUID().toString().replace("-", "").substring(0, 14);
     ScriptDefinition originalDefinition = scriptDefinition(name, "{\"original\":true}");
+    originalDefinition.setScriptVersion(scriptPatchVersion);
+    originalDefinition.setBaseVersionId(1L);
     ScriptDefinition savedDefinition = scriptDefinitionRepository.save(originalDefinition);
     ScriptEventBinding originalBinding = scriptBinding(name, "original-scope");
+    originalBinding.setScriptPatchVersion(scriptPatchVersion);
+    originalBinding.setBaseVersionId(1L);
     ScriptEventBinding savedBinding = scriptEventBindingRepository.save(originalBinding);
     int originalDefinitionRowVersion = savedDefinition.getRowVersion();
     AtomicReference<List<ScriptEventBinding>> bindingsObservedAfterDelete = new AtomicReference<>();
@@ -295,7 +314,7 @@ class AutomationScriptingServiceApplicationIntegrationTest {
             if (failForwardReplacement.getAndSet(false)) {
               bindingsObservedAfterDelete.set(
                   findByTenantIdAndScriptPatchVersionAndScriptIdOrderByEventTypeAscEventSchemaVersionAscPriorityAscBindingIdAscIdAsc(
-                      1L, "patch-definition", name));
+                      1L, scriptPatchVersion, name));
               throw new IllegalStateException("binding replacement failed");
             }
             return super.saveAll(entities);
@@ -314,7 +333,7 @@ class AutomationScriptingServiceApplicationIntegrationTest {
             null,
             1L,
             name,
-            "patch-definition",
+            scriptPatchVersion,
             1L,
             "{\"replacement\":true}",
             List.of(
@@ -334,7 +353,7 @@ class AutomationScriptingServiceApplicationIntegrationTest {
     List<ScriptEventBinding> restoredBindings =
         scriptEventBindingRepository
             .findByTenantIdAndScriptPatchVersionOrderByEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
-                1L, "patch-definition")
+                1L, scriptPatchVersion)
             .stream()
             .filter(binding -> name.equals(binding.getScriptId()))
             .toList();
@@ -348,7 +367,7 @@ class AutomationScriptingServiceApplicationIntegrationTest {
 
     ScriptDefinition restoredDefinition =
         scriptDefinitionRepository
-            .findByTenantIdAndScriptVersionAndName(1L, "patch-definition", name)
+            .findByTenantIdAndScriptVersionAndName(1L, scriptPatchVersion, name)
             .orElseThrow();
     assertThat(restoredDefinition.getId()).isEqualTo(savedDefinition.getId());
     assertThat(restoredDefinition.getDefinition()).isEqualTo("{\"original\":true}");
@@ -356,6 +375,8 @@ class AutomationScriptingServiceApplicationIntegrationTest {
 
     ScriptDefinition staleDefinition = scriptDefinition(name, "{\"stale\":true}");
     staleDefinition.setId(restoredDefinition.getId());
+    staleDefinition.setScriptVersion(scriptPatchVersion);
+    staleDefinition.setBaseVersionId(1L);
     staleDefinition.setRowVersion(originalDefinitionRowVersion);
     assertThatThrownBy(() -> scriptDefinitionRepository.save(staleDefinition))
         .isInstanceOf(org.springframework.dao.OptimisticLockingFailureException.class);

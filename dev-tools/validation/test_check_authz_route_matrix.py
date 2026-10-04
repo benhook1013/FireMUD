@@ -2801,6 +2801,30 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         self.validator.validate_route_statuses(document["routes"], statuses, errors)
         self.assertEqual([], errors)
 
+    def test_account_audit_readback_is_routable_but_ingress_stays_gated(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        create = route_for(document, "logging-admin-service", "CreateLogEvent")
+        readback = route_for(document, "logging-admin-service", "ReadLogEventReceipt")
+
+        self.assertEqual("target_not_currently_routable", create["route_status"])
+        self.assertEqual("current_openapi_operator_surface", readback["route_status"])
+        auth_fields = (
+            "classification",
+            "auth_path",
+            "issued_token_state",
+            "accepted_token_profiles",
+            "token_type",
+            "token_issuer",
+            "token_audience",
+            "method_policy",
+            "allowed_callers",
+            "mtls_callers",
+            "end_user_token_required",
+        )
+        create_auth = {field: create[field] for field in auth_fields}
+        readback_auth = {field: readback[field] for field in auth_fields}
+        self.assertEqual(create_auth, readback_auth)
+
     def test_required_fields_use_snake_case(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         errors = []
@@ -6145,6 +6169,26 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 if "exactly one game-session-service JOIN" in error
             ],
         )
+
+    def test_direct_text_join_matrix_includes_account_terminal_outcomes(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(document, "game-session-service", "JOIN")
+        outcomes = route["canonical_errors"]["any_of"]
+
+        self.assertIn("CONNECT_SCOPE_INVALID", outcomes)
+        self.assertIn("MEMBERSHIP_RECONCILIATION_REQUIRED", outcomes)
+
+        for route_name in (
+            "POST /auth/bootstrap/join",
+            "JoinPublicProductionMembership",
+        ):
+            with self.subTest(route_name=route_name):
+                account_route = route_for(document, "account-service", route_name)
+                account_outcomes = account_route["canonical_errors"]["any_of"]
+                self.assertIn("CONNECT_SCOPE_INVALID", account_outcomes)
+                self.assertIn("MEMBERSHIP_RECONCILIATION_REQUIRED", account_outcomes)
+                self.assertIn("AUTH_UNAVAILABLE", account_outcomes)
+                self.assertIn("ENTITLEMENT_UNAVAILABLE", account_outcomes)
 
     def test_privileged_control_cardinality_error_uses_shared_set(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))

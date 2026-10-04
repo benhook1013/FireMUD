@@ -14,31 +14,32 @@ import net.firedevops.firemud.socialgroups.dto.FriendRosterViewDto;
 public interface FriendService {
   FriendLinkDto addFriend(AddFriendRequest request);
 
-  void removeFriend(long tenantId, long accountId, long friendAccountId);
+  void removeFriend(long tenantId, String accountId, String friendAccountId);
 
-  Optional<FriendRosterEntryDto> getFriend(long tenantId, long accountId, long friendAccountId);
+  Optional<FriendRosterEntryDto> getFriend(long tenantId, String accountId, String friendAccountId);
 
-  Optional<FriendRosterEntryDto> getFriendByOrdinal(long tenantId, long accountId, int ordinal);
+  Optional<FriendRosterEntryDto> getFriendByOrdinal(long tenantId, String accountId, int ordinal);
 
-  Optional<FriendRosterEntryDto> removeFriendByOrdinal(long tenantId, long accountId, int ordinal);
+  Optional<FriendRosterEntryDto> removeFriendByOrdinal(
+      long tenantId, String accountId, int ordinal);
 
-  FriendRosterViewDto listFriends(long tenantId, long accountId, FriendRosterFilter filter);
+  FriendRosterViewDto listFriends(long tenantId, String accountId, FriendRosterFilter filter);
 
-  FriendRosterSummaryDto getFriendRosterSummary(long tenantId, long accountId);
+  FriendRosterSummaryDto getFriendRosterSummary(long tenantId, String accountId);
 
-  default FriendRosterViewDto listFriends(long tenantId, long accountId) {
+  default FriendRosterViewDto listFriends(long tenantId, String accountId) {
     return listFriends(tenantId, accountId, FriendRosterFilter.ALL);
   }
 
   FriendPresenceViewDto listFriendPresence(
-      long tenantId, long accountId, FriendRosterFilter filter);
+      long tenantId, String accountId, FriendRosterFilter filter);
 
-  default FriendPresenceViewDto listFriendPresence(long tenantId, long accountId) {
+  default FriendPresenceViewDto listFriendPresence(long tenantId, String accountId) {
     return listFriendPresence(tenantId, accountId, FriendRosterFilter.ALL);
   }
 
-  FriendPresencePolicyViewDto getFriendPresencePolicy(long tenantId, long accountId);
+  FriendPresencePolicyViewDto getFriendPresencePolicy(long tenantId, String accountId);
 
   FriendPresencePolicyViewDto updateFriendPresencePolicy(
-      long tenantId, long accountId, FriendPresenceVisibilityPolicyValue visibilityPolicy);
+      long tenantId, String accountId, FriendPresenceVisibilityPolicyValue visibilityPolicy);
 }

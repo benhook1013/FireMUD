@@ -21,6 +21,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
 class AuthTokenInterceptorTest {
+  private static final String ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
   private static final Metadata.Key<String> AUTH_HEADER =
       Metadata.Key.of("Authorization", Metadata.ASCII_STRING_MARSHALLER);
   private static final MethodDescriptor<Empty, Empty> METHOD =
@@ -51,9 +52,9 @@ class AuthTokenInterceptorTest {
     Metadata headers = new Metadata();
     String token =
         jwtUtil.generateToken(
-            "account",
+            ACCOUNT_ID,
             Map.of(
-                "accountId", "account", "globalRoles", "platformAdmin", "scopedRoles", Map.of()));
+                "accountId", ACCOUNT_ID, "globalRoles", "platformAdmin", "scopedRoles", Map.of()));
     headers.put(AUTH_HEADER, "Bearer " + token);
 
     interceptor.interceptCall(call, headers, next);
@@ -65,6 +66,48 @@ class AuthTokenInterceptorTest {
     assertThat(SessionContext.getAccountId()).isNull();
     assertThat(SessionContext.getGlobalRoles()).isEmpty();
     assertThat(SessionContext.getScopedRolesMap()).isEmpty();
+  }
+
+  @Test
+  void rejectsPresentBlankAccountIdOnInternalServiceTokenAndClearsPriorContext() {
+    AuthTokenInterceptor interceptor = new AuthTokenInterceptor(jwtUtil);
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    ServerCall call = Mockito.mock(ServerCall.class);
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    ServerCallHandler next = Mockito.mock(ServerCallHandler.class);
+    Mockito.when(call.getMethodDescriptor()).thenReturn(METHOD);
+
+    seedThreadLocalInternalServiceState();
+    assertThat(SessionContext.isInternalService()).isTrue();
+    assertThat(SessionContext.getServiceName()).isEqualTo("seeded-service");
+
+    Metadata headers = new Metadata();
+    String token =
+        jwtUtil.generateToken(
+            ACCOUNT_ID,
+            Map.of(
+                "accountId",
+                "",
+                "globalRoles",
+                java.util.List.of(),
+                "scopedRoles",
+                Map.of(),
+                "internalService",
+                true,
+                "serviceName",
+                "game-logic-service"));
+    headers.put(AUTH_HEADER, "Bearer " + token);
+
+    interceptor.interceptCall(call, headers, next);
+
+    ArgumentCaptor<Status> statusCaptor = ArgumentCaptor.forClass(Status.class);
+    Mockito.verify(call).close(statusCaptor.capture(), Mockito.any(Metadata.class));
+    assertThat(statusCaptor.getValue().getCode()).isEqualTo(Status.Code.UNAUTHENTICATED);
+    Mockito.verify(next, Mockito.never()).startCall(Mockito.eq(call), Mockito.any(Metadata.class));
+    assertThat(SessionContext.getAccountId()).isNull();
+    assertThat(SessionContext.isInternalService()).isFalse();
+    assertThat(SessionContext.getServiceName()).isNull();
+    assertThat(SessionContext.getServiceInstanceId()).isNull();
   }
 
   @Test
@@ -96,8 +139,6 @@ class AuthTokenInterceptorTest {
         jwtUtil.generateToken(
             "service:game-logic-service",
             Map.of(
-                "accountId",
-                "",
                 "globalRoles",
                 java.util.List.of(),
                 "scopedRoles",
@@ -198,7 +239,7 @@ class AuthTokenInterceptorTest {
 
   private void seedThreadLocalInternalServiceState() {
     SessionContext.setContext(
-        "", java.util.List.of(), Map.of(), true, "seeded-service", "seeded-instance");
+        null, java.util.List.of(), Map.of(), true, "seeded-service", "seeded-instance");
   }
 
   private Metadata internalServiceHeaders() {
@@ -207,8 +248,6 @@ class AuthTokenInterceptorTest {
         jwtUtil.generateToken(
             "service:game-logic-service",
             Map.of(
-                "accountId",
-                "",
                 "globalRoles",
                 java.util.List.of(),
                 "scopedRoles",

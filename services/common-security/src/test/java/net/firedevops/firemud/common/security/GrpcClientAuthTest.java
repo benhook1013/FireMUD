@@ -19,6 +19,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 class GrpcClientAuthTest {
+  private static final String ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
   private static final Metadata.Key<String> AUTH_HEADER =
       Metadata.Key.of("Authorization", Metadata.ASCII_STRING_MARSHALLER);
 
@@ -38,15 +39,21 @@ class GrpcClientAuthTest {
     TestStub stub = new TestStub(channel, CallOptions.DEFAULT);
     TestStub customized = GrpcClientAuth.attach(stub, jwtUtil, runtimeIdentity);
 
-    SessionContext.setContext("1", List.of("player"), Map.of());
+    SessionContext.setContext(ACCOUNT_ID, List.of("player"), Map.of());
     customized.invoke();
     String firstToken = bearerToken(channel.lastAuthorization());
-    assertThat(jwtUtil.parseToken(firstToken).getPayload().getSubject()).isEqualTo("1");
+    assertThat(jwtUtil.parseToken(firstToken).getPayload().getSubject()).isEqualTo(ACCOUNT_ID);
+    assertThat(jwtUtil.parseToken(firstToken).getPayload().get("accountId", String.class))
+        .isEqualTo(ACCOUNT_ID);
 
-    SessionContext.setContext("2", List.of("player"), Map.of());
+    String secondAccountId = "22222222-2222-4222-8222-222222222222";
+    SessionContext.setContext(secondAccountId, List.of("player"), Map.of());
     customized.invoke();
     String secondToken = bearerToken(channel.lastAuthorization());
-    assertThat(jwtUtil.parseToken(secondToken).getPayload().getSubject()).isEqualTo("2");
+    assertThat(jwtUtil.parseToken(secondToken).getPayload().getSubject())
+        .isEqualTo(secondAccountId);
+    assertThat(jwtUtil.parseToken(secondToken).getPayload().get("accountId", String.class))
+        .isEqualTo(secondAccountId);
     assertThat(secondToken).isNotEqualTo(firstToken);
   }
 
@@ -77,7 +84,7 @@ class GrpcClientAuthTest {
     TestStub stub = new TestStub(channel, CallOptions.DEFAULT);
     TestStub customized = GrpcClientAuth.attach(stub, jwtUtil, runtimeIdentity);
 
-    SessionContext.setContext("not-a-long", List.of("player"), Map.of());
+    SessionContext.setContext("not-a-uuid", List.of("player"), Map.of());
 
     assertThrows(IllegalArgumentException.class, customized::invoke);
     assertThat(channel.lastAuthorization()).isNull();

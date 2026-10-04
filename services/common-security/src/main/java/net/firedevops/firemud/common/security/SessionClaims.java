@@ -17,6 +17,9 @@ public record SessionClaims(
     String serviceInstanceId) {
 
   public SessionClaims {
+    if (accountId != null) {
+      accountId = JwtClaims.requireAccountId(accountId, "accountId");
+    }
     globalRoles = globalRoles == null ? List.of() : List.copyOf(globalRoles);
     scopedRoles =
         scopedRoles == null
@@ -29,11 +32,18 @@ public record SessionClaims(
 
   public static SessionClaims fromJwt(Jws<Claims> jwt) {
     Claims payload = jwt.getPayload();
+    boolean internalService = Boolean.TRUE.equals(payload.get("internalService", Boolean.class));
+    String accountId = null;
+    if (payload.containsKey("accountId")) {
+      accountId = JwtClaims.requireSignedActorAccountId(payload, "JWT subject/accountId mismatch");
+    } else if (!internalService) {
+      throw new IllegalArgumentException("Missing claim: accountId");
+    }
     return new SessionClaims(
-        JwtClaims.claimText(payload.get("accountId")),
+        accountId,
         extractGlobalRoles(payload.get("globalRoles")),
         extractScopedRoles(payload.get("scopedRoles")),
-        Boolean.TRUE.equals(payload.get("internalService", Boolean.class)),
+        internalService,
         JwtClaims.claimText(payload.get("serviceName")),
         JwtClaims.claimText(payload.get("serviceInstanceId")));
   }
@@ -63,17 +73,6 @@ public record SessionClaims(
       }
     }
     return false;
-  }
-
-  public boolean hasGameplayElevatedRole(String tenantId) {
-    return StringUtils.hasText(tenantId)
-        && containsAnyRoleIgnoreCase(scopedRoles.get(tenantId), "tenantAdmin", "moderator", "god");
-  }
-
-  /** Returns whether a requested tenant-scoped role matches a gameplay role. */
-  public boolean hasGameplayRole(String tenantId, String... expectedRoles) {
-    return StringUtils.hasText(tenantId)
-        && containsAnyRoleIgnoreCase(scopedRoles.get(tenantId), expectedRoles);
   }
 
   private static List<String> extractGlobalRoles(Object rawGlobalRoles) {
@@ -116,23 +115,5 @@ public record SessionClaims(
       }
     }
     return normalizedRoles;
-  }
-
-  private static boolean containsAnyRoleIgnoreCase(
-      Iterable<String> roles, String... expectedRoles) {
-    if (roles == null) {
-      return false;
-    }
-    for (String role : roles) {
-      if (!StringUtils.hasText(role)) {
-        continue;
-      }
-      for (String expectedRole : expectedRoles) {
-        if (role.equalsIgnoreCase(expectedRole)) {
-          return true;
-        }
-      }
-    }
-    return false;
   }
 }

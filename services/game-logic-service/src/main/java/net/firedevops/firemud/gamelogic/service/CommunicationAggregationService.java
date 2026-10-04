@@ -9,6 +9,7 @@ import java.util.TreeSet;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.common.settings.EffectiveCommandCapabilitiesSettingsResolver;
 import net.firedevops.firemud.common.settings.PlayerCommandCapability;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
@@ -56,10 +57,10 @@ public class CommunicationAggregationService {
           SendCommunicationResponse.newBuilder()
               .setType(request.getType())
               .setMessage(normalizedText);
-      String validatedAccountId = parsePositiveAccountId(request.getAccountId());
+      String validatedAccountId = parseCanonicalAccountId(request.getAccountId());
       if (validatedAccountId == null) {
         return errorResponse(
-            builder, "INVALID_ARGUMENT", "account_id must be a positive numeric account id");
+            builder, "INVALID_ARGUMENT", "account_id must be a canonical non-nil Account UUID");
       }
 
       if (tenantId != null && !isSocialCapabilityEnabled(tenantId, gameInstanceId)) {
@@ -396,15 +397,10 @@ public class CommunicationAggregationService {
     }
   }
 
-  private String parsePositiveAccountId(String accountId) {
-    if (!StringUtils.hasText(accountId)) {
-      return null;
-    }
-    String normalized = accountId.trim();
+  private String parseCanonicalAccountId(String accountId) {
     try {
-      long parsed = Long.parseLong(normalized);
-      return parsed > 0L ? Long.toString(parsed) : null;
-    } catch (NumberFormatException ignored) {
+      return JwtClaims.requireAccountId(accountId, "account_id");
+    } catch (IllegalArgumentException ignored) {
       return null;
     }
   }

@@ -34,6 +34,7 @@ public class SubscriptionRepository {
         .where(SUBSCRIPTION.TENANT_ID.eq(tenantId))
         .orderBy(SUBSCRIPTION.ID.asc())
         .forUpdate()
+        .of(SUBSCRIPTION)
         .fetch(this::toEntity);
   }
 

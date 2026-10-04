@@ -7,7 +7,9 @@ import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.common.security.RequestIdValidation;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.socialgroups.dto.AddFriendRequest;
 import net.firedevops.firemud.socialgroups.dto.CreateGuildRequest;
 import net.firedevops.firemud.socialgroups.dto.FriendPresenceDto;
@@ -104,8 +106,7 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
               senderScope.accountId(),
               mapChatType(request),
               request.getChannelId(),
-              RequestIdValidation.parseOptionalPositiveLong(
-                  request.getRecipientId(), "recipientId"),
+              parseOptionalAccountId(request.getRecipientId(), "recipientId"),
               RequestIdValidation.parseOptionalPositiveLong(request.getGuildId(), "guildId"),
               RequestIdValidation.parseOptionalPositiveLong(request.getCityId(), "cityId"),
               request.getContent(),
@@ -189,8 +190,7 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
           new AddFriendRequest(
               accountScope.tenantId(),
               accountScope.accountId(),
-              RequestIdValidation.requirePositiveLong(
-                  request.getFriendAccountId(), "friendAccountId"));
+              JwtClaims.requireAccountId(request.getFriendAccountId(), "friendAccountId"));
       friendService.addFriend(dto);
       AddFriendResponse response = AddFriendResponse.newBuilder().setSuccess(true).build();
       responseObserver.onNext(response);
@@ -224,7 +224,7 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
       friendService.removeFriend(
           accountScope.tenantId(),
           accountScope.accountId(),
-          RequestIdValidation.requirePositiveLong(request.getFriendAccountId(), "friendAccountId"));
+          JwtClaims.requireAccountId(request.getFriendAccountId(), "friendAccountId"));
       responseObserver.onNext(RemoveFriendResponse.newBuilder().setSuccess(true).build());
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
@@ -261,8 +261,8 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
     try {
       AccountScope accountScope =
           requireAccountScope(request.getTenantId(), request.getAccountId(), "accountId");
-      long friendAccountId =
-          RequestIdValidation.requirePositiveLong(request.getFriendAccountId(), "friendAccountId");
+      String friendAccountId =
+          JwtClaims.requireAccountId(request.getFriendAccountId(), "friendAccountId");
       FriendRosterEntryDto friend =
           friendService
               .getFriend(accountScope.tenantId(), accountScope.accountId(), friendAccountId)
@@ -623,7 +623,7 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
   private FriendPresenceEntry mapPresence(FriendPresenceDto presence) {
     FriendPresenceEntry.Builder entry =
         FriendPresenceEntry.newBuilder()
-            .setFriendAccountId(Long.toString(presence.friendAccountId()))
+            .setFriendAccountId(presence.friendAccountId())
             .setOnline(presence.online());
     if (presence.gameInstanceId() != null) {
       entry.setGameInstanceId(Long.toString(presence.gameInstanceId()));
@@ -671,7 +671,7 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
     FriendRosterEntry.Builder entry =
         FriendRosterEntry.newBuilder()
             .setOrdinal(friend.ordinal())
-            .setFriendAccountId(Long.toString(friend.friendAccountId()))
+            .setFriendAccountId(friend.friendAccountId())
             .setPresence(mapPresence(friend.presence()));
     if (friend.friendLinkId() != null) {
       entry.setFriendLinkId(Long.toString(friend.friendLinkId()));
@@ -680,7 +680,7 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
       entry.setTenantId(Long.toString(friend.tenantId()));
     }
     if (friend.accountId() != null) {
-      entry.setAccountId(Long.toString(friend.accountId()));
+      entry.setAccountId(friend.accountId());
     }
     if (friend.status() != null && !friend.status().isBlank()) {
       entry.setStatus(friend.status());
@@ -770,12 +770,16 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
       AccountScope senderScope =
           requireAccountScope(
               request.getTenantId(), request.getSenderAccountId(), "senderAccountId");
+      String recipientAccountId =
+          JwtClaims.requireAccountId(request.getRecipientAccountId(), "recipientAccountId");
+      if (!SessionContext.isCurrentAccount(senderScope.accountId())) {
+        throw new AuthorizationException("Mail sender must match the authenticated account");
+      }
       SendMailRequest dto =
           new SendMailRequest(
               senderScope.tenantId(),
               senderScope.accountId(),
-              RequestIdValidation.requirePositiveLong(
-                  request.getRecipientAccountId(), "recipientAccountId"),
+              recipientAccountId,
               request.getSubject(),
               request.getContent());
       mailService.sendMail(dto);
@@ -832,7 +836,7 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
     return GrpcAppErrors.internal(meterRegistry, logger, operation, ex);
   }
 
-  private void requireAccountAccess(long tenantId, long accountId) {
+  private void requireAccountAccess(long tenantId, String accountId) {
     if (socialAccessGuard.hasAccountAccess(tenantId, accountId)) {
       return;
     }
@@ -842,12 +846,16 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
   private AccountScope requireAccountScope(
       String tenantIdText, String accountIdText, String accountFieldName) {
     long tenantId = RequestIdValidation.requirePositiveLong(tenantIdText, "tenantId");
-    long accountId = RequestIdValidation.requirePositiveLong(accountIdText, accountFieldName);
+    String accountId = JwtClaims.requireAccountId(accountIdText, accountFieldName);
     requireAccountAccess(tenantId, accountId);
     return new AccountScope(tenantId, accountId);
   }
 
-  private record AccountScope(long tenantId, long accountId) {}
+  private String parseOptionalAccountId(String value, String fieldName) {
+    return value == null || value.isBlank() ? null : JwtClaims.requireAccountId(value, fieldName);
+  }
+
+  private record AccountScope(long tenantId, String accountId) {}
 
   private FriendPresenceActivityState mapActivityState(
       net.firedevops.firemud.socialgroups.dto.FriendPresenceActivityState activityState) {

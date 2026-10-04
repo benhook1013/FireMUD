@@ -37,29 +37,36 @@ message QueryLogsResponse {
 }
 
 message CreateLogEventRequest {
-  AccountAuditScope scope = 1;
-  string tenant_id = 2;
-  string audit_event_id = 3;
-  string producer_service = 4;
-  string event_type = 5;
-  google.protobuf.Timestamp occurred_at = 6;
-  int32 schema_version = 7;
-  bytes payload = 8;
-  int32 payload_digest_version = 9;
-  string payload_digest = 10;
+  reserved 2 to 4;
+  reserved "account_id", "type", "message";
+
+  string tenant_id = 1;
+  AccountAuditScope scope = 5;
+  string audit_event_id = 6;
+  string producer_service = 7;
+  string event_type = 8;
+  google.protobuf.Timestamp occurred_at = 9;
+  int32 schema_version = 10;
+  bytes payload = 11;
+  int32 payload_digest_version = 12;
+  string payload_digest = 13;
 }
 
 message CreateLogEventResponse {
-  AccountAuditScope scope = 1;
-  string tenant_id = 2;
-  string audit_event_id = 3;
-  string receipt_id = 4;
-  string log_event_id = 5;
-  int32 schema_version = 6;
-  int32 payload_digest_version = 7;
-  string payload_digest = 8;
-  AccountAuditReceiptStatus status = 9;
-  AccountAuditReceiptOutcome outcome = 10;
+  string log_event_id = 1;
+  shared.v1.ErrorDetail error = 2;
+  AccountAuditScope scope = 3;
+  string tenant_id = 4;
+  string audit_event_id = 5;
+  string receipt_id = 6;
+  int32 schema_version = 7;
+  int32 payload_digest_version = 8;
+  string payload_digest = 9;
+  AccountAuditReceiptStatus status = 10;
+  AccountAuditReceiptOutcome outcome = 11;
+  // Version 1 attests an exact receipt linked atomically to a distinct audit log projection.
+  // Zero or unsupported versions cannot verify delivery or historical producer provenance.
+  int32 audit_projection_version = 12;
 }
 
 message ReadLogEventReceiptRequest {
@@ -86,6 +93,10 @@ message ReadLogEventReceiptResponse {
   string payload_digest = 8;
   AccountAuditReceiptStatus status = 9;
   AccountAuditReceiptOutcome outcome = 10;
+  shared.v1.ErrorDetail error = 11;
+  // Same receipt/projection attestation as CreateLogEventResponse; never payload replay proof.
+  // Zero or unsupported versions cannot verify delivery or historical producer provenance.
+  int32 audit_projection_version = 12;
 }
 
 enum AccountAuditScope {

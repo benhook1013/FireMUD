@@ -83,6 +83,7 @@ class AccountGrpcServiceTest {
   private static final String OTHER_TENANT_UUID = "04ef66b4-c0ad-3d5b-b3b2-0e8510e72004";
   private static final String PLAYABLE_NAMESPACE_UUID = "04ef66b4-c0ad-3d5b-b3b2-0e8510e72005";
   private static final String GAME_INSTANCE_UUID = "04ef66b4-c0ad-3d5b-b3b2-0e8510e72006";
+  private static final String PLAYABLE_STATE_NAMESPACE_ID = "c6ed6a44-c7e7-4f18-81fc-078a74e67c07";
   private static final GrpcPeerIdentity GAME_SESSION_PEER =
       new GrpcPeerIdentity(
           "spiffe://firemud/ns/test/sa/game-session-service",
@@ -99,7 +100,7 @@ class AccountGrpcServiceTest {
         .setAccountId("10")
         .setTenantId("20")
         .setRealmId(REALM_ID)
-        .setPlayableStateNamespaceId("realm-state-30")
+        .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
         .setPlayableStateScope("realm:30")
         .setGameInstanceId("40")
         .setSessionId("session-1")
@@ -267,7 +268,7 @@ class AccountGrpcServiceTest {
         .setRealmId(REALM_ID)
         .setWorldSlug("world")
         .setRealmSlug("public")
-        .setPlayableStateNamespaceId("realm-state-30")
+        .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
         .setPlayableStateScope("realm:30")
         .setGameInstanceId("40")
         .setCatalogRevision(5)
@@ -353,7 +354,7 @@ class AccountGrpcServiceTest {
                 10L,
                 20L,
                 UUID.fromString(REALM_ID),
-                "realm-state-30",
+                PLAYABLE_STATE_NAMESPACE_ID,
                 "realm:30",
                 40L,
                 "session-1",
@@ -363,7 +364,7 @@ class AccountGrpcServiceTest {
                 UUID.fromString(REALM_ID),
                 "world",
                 "public",
-                "realm-state-30",
+                PLAYABLE_STATE_NAMESPACE_ID,
                 "realm:30",
                 40L,
                 5L,
@@ -403,12 +404,60 @@ class AccountGrpcServiceTest {
                 10L,
                 20L,
                 UUID.fromString(REALM_ID),
-                "realm-state-30",
+                PLAYABLE_STATE_NAMESPACE_ID,
                 "realm:30",
                 40L,
                 "session-1",
                 "request-1"),
             new JoinPublicProductionRequest("scope-1", "request-1"));
+  }
+
+  @Test
+  void issueDirectTextConnectScopeMapsUnexpectedFailureToRetryableUnavailable() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(
+            accountService.issueDirectTextConnectScope(
+                Mockito.any(DirectTextCallerContext.class),
+                Mockito.any(DirectTextJoinTarget.class)))
+        .thenThrow(new IllegalStateException("private backend detail"));
+    AccountGrpcService service =
+        new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
+    RecordingObserver<IssueDirectTextConnectScopeResponse> observer = new RecordingObserver<>();
+
+    withPeer(
+        GAME_SESSION_PEER,
+        () -> service.issueDirectTextConnectScope(validScopeRequest(), observer));
+
+    assertTrue(observer.completed());
+    assertFalse(observer.receivedTransportError());
+    assertEquals("AUTH_UNAVAILABLE", observer.response().getError().getCode());
+    assertEquals(
+        "Account authority unavailable; retry later", observer.response().getError().getMessage());
+  }
+
+  @Test
+  void joinPublicProductionMembershipMapsUnexpectedFailureToRetryableUnavailable() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(
+            accountService.joinPublicProductionFromGameSession(
+                Mockito.any(DirectTextCallerContext.class),
+                Mockito.any(JoinPublicProductionRequest.class)))
+        .thenThrow(new IllegalStateException("private backend detail"));
+    AccountGrpcService service =
+        new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
+    RecordingObserver<JoinPublicProductionMembershipResponse> observer = new RecordingObserver<>();
+
+    withPeer(
+        GAME_SESSION_PEER,
+        () -> service.joinPublicProductionMembership(validJoinRequest(), observer));
+
+    assertTrue(observer.completed());
+    assertFalse(observer.receivedTransportError());
+    assertEquals("AUTH_UNAVAILABLE", observer.response().getError().getCode());
+    assertEquals(
+        "Account authority unavailable; retry later", observer.response().getError().getMessage());
   }
 
   @Test
@@ -486,6 +535,50 @@ class AccountGrpcServiceTest {
     Mockito.verifyNoInteractions(accountService);
   }
 
+  @Test
+  void joinRejectsRequestIdLongerThanThePublicContractBeforeCallingAccountService() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    AccountGrpcService service =
+        new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
+    String requestId = "j".repeat(JoinPublicProductionRequest.MAX_REQUEST_ID_LENGTH + 1);
+    PlayerExecutionContext playerContext =
+        validPlayerContext().toBuilder().setRequestId(requestId).build();
+    JoinPublicProductionMembershipRequest request =
+        validJoinRequest().toBuilder()
+            .setPlayerContext(playerContext)
+            .setRequestId(requestId)
+            .build();
+    RecordingObserver<JoinPublicProductionMembershipResponse> observer = new RecordingObserver<>();
+
+    withPeer(GAME_SESSION_PEER, () -> service.joinPublicProductionMembership(request, observer));
+
+    assertEquals("INVALID_ARGUMENT", observer.response().getError().getCode());
+    Mockito.verifyNoInteractions(accountService);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"", "   "})
+  void issueDirectTextConnectScopeRejectsBlankRequestIdBeforeServiceCall(String requestId) {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    AccountGrpcService service =
+        new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
+    RecordingObserver<IssueDirectTextConnectScopeResponse> observer = new RecordingObserver<>();
+
+    withPeer(
+        GAME_SESSION_PEER,
+        () ->
+            service.issueDirectTextConnectScope(
+                validScopeRequest().toBuilder()
+                    .setPlayerContext(validPlayerContext().toBuilder().setRequestId(requestId))
+                    .build(),
+                observer));
+
+    assertEquals("INVALID_ARGUMENT", observer.response().getError().getCode());
+    Mockito.verifyNoInteractions(accountService);
+  }
+
   @ParameterizedTest
   @ValueSource(strings = {"30", "not-a-uuid", "4C4B57D8-E3A2-48FE-9977-E7DF0FDCE901"})
   void directTextScopeRejectsNoncanonicalRealmIdsAtBothIngressFields(String realmId) {
@@ -514,6 +607,43 @@ class AccountGrpcServiceTest {
 
     assertEquals("INVALID_ARGUMENT", targetObserver.response().getError().getCode());
     assertEquals("INVALID_ARGUMENT", contextObserver.response().getError().getCode());
+    Mockito.verifyNoInteractions(accountService);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "shared-live",
+        "C6ED6A44-C7E7-4F18-81FC-078A74E67C07",
+        "c6ed6a44c7e74f1881fc078a74e67c07"
+      })
+  void directTextMethodsRejectNoncanonicalPlayableStateNamespaceIdsAtIngress(String namespaceId) {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    AccountGrpcService service =
+        new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
+    PlayerExecutionContext malformedContext =
+        validPlayerContext().toBuilder().setPlayableStateNamespaceId(namespaceId).build();
+    RecordingObserver<IssueDirectTextConnectScopeResponse> scopeObserver =
+        new RecordingObserver<>();
+    RecordingObserver<JoinPublicProductionMembershipResponse> joinObserver =
+        new RecordingObserver<>();
+
+    withPeer(
+        GAME_SESSION_PEER,
+        () ->
+            service.issueDirectTextConnectScope(
+                validScopeRequest().toBuilder().setPlayerContext(malformedContext).build(),
+                scopeObserver));
+    withPeer(
+        GAME_SESSION_PEER,
+        () ->
+            service.joinPublicProductionMembership(
+                validJoinRequest().toBuilder().setPlayerContext(malformedContext).build(),
+                joinObserver));
+
+    assertEquals("INVALID_ARGUMENT", scopeObserver.response().getError().getCode());
+    assertEquals("INVALID_ARGUMENT", joinObserver.response().getError().getCode());
     Mockito.verifyNoInteractions(accountService);
   }
 
@@ -614,6 +744,29 @@ class AccountGrpcServiceTest {
     assertNotNull(ref.get());
     assertTrue(ref.get().getAccepted());
     Mockito.verify(accountService).requestEmailLoginOtp("demo@example.com");
+  }
+
+  @Test
+  void requestEmailLoginOtpRejectsBlankEmailBeforeCallingAccountService() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    AccountGrpcService service =
+        new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
+    RecordingObserver<RequestEmailLoginOtpResponse> observer = new RecordingObserver<>();
+
+    withPeer(
+        GAME_SESSION_PEER,
+        () ->
+            service.requestEmailLoginOtp(
+                RequestEmailLoginOtpRequest.newBuilder().setEmail("   ").build(), observer));
+
+    assertNotNull(observer.response());
+    assertFalse(observer.response().getAccepted());
+    assertEquals("INVALID_ARGUMENT", observer.response().getError().getCode());
+    assertEquals("email must not be blank", observer.response().getError().getMessage());
+    assertTrue(observer.completed());
+    assertFalse(observer.receivedTransportError());
+    Mockito.verifyNoInteractions(accountService);
   }
 
   @Test
@@ -914,6 +1067,36 @@ class AccountGrpcServiceTest {
   }
 
   @Test
+  void getProfileMapsSourceValidationFailuresToSanitizedApplicationErrors() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(accountService.resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID)))
+        .thenReturn(2L);
+    Mockito.when(accountService.getProfile(1L, 2L))
+        .thenThrow(new IllegalStateException("private source validation detail"));
+    AccountGrpcService service =
+        new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
+    RecordingObserver<GetProfileResponse> observer = new RecordingObserver<>();
+    SessionContext.setContext(ACCOUNT_UUID, List.of("player"), Map.of());
+
+    withPeer(
+        SOCIAL_GROUPS_PEER,
+        () ->
+            service.getProfile(
+                GetProfileRequest.newBuilder().setTenantId("1").setAccountId(ACCOUNT_UUID).build(),
+                observer));
+
+    assertEquals(1, observer.responseCount());
+    assertEquals("INTERNAL", observer.response().getError().getCode());
+    assertEquals("Profile source validation failed", observer.response().getError().getMessage());
+    assertEquals("", observer.response().getProfileJson());
+    assertTrue(observer.completed());
+    assertFalse(observer.receivedTransportError());
+    Mockito.verify(accountService).resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID));
+    Mockito.verify(accountService).getProfile(1L, 2L);
+  }
+
+  @Test
   void getProfileRejectsZeroAccountIdBeforeLookup() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
@@ -1036,11 +1219,13 @@ class AccountGrpcServiceTest {
   void listPresenceVisibilityPoliciesMapsPersistedPolicies() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
-    Mockito.when(accountService.listPresenceVisibilityPolicies(1L, List.of(2L, 3L)))
+    Mockito.when(
+            accountService.listPresenceVisibilityPolicies(
+                1L, List.of(ACCOUNT_UUID, OTHER_ACCOUNT_UUID)))
         .thenReturn(
             Map.of(
-                2L, ProfilePresenceVisibilityPolicy.PRIVATE,
-                3L, ProfilePresenceVisibilityPolicy.HIDDEN_STAFF));
+                ACCOUNT_UUID, ProfilePresenceVisibilityPolicy.PRIVATE,
+                OTHER_ACCOUNT_UUID, ProfilePresenceVisibilityPolicy.HIDDEN_STAFF));
     AccountGrpcService service =
         new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
     RecordingObserver<ListPresenceVisibilityPoliciesResponse> observer = new RecordingObserver<>();
@@ -1051,9 +1236,9 @@ class AccountGrpcServiceTest {
             service.listPresenceVisibilityPolicies(
                 ListPresenceVisibilityPoliciesRequest.newBuilder()
                     .setTenantId("1")
-                    .addAccountIds("2")
-                    .addAccountIds("3")
-                    .addAccountIds("2")
+                    .addAccountIds(ACCOUNT_UUID)
+                    .addAccountIds(OTHER_ACCOUNT_UUID)
+                    .addAccountIds(ACCOUNT_UUID)
                     .build(),
                 observer));
 
@@ -1062,15 +1247,19 @@ class AccountGrpcServiceTest {
     assertTrue(
         observer.response().getPoliciesList().stream()
             .anyMatch(
-                entry -> entry.getAccountId().equals("2") && entry.getPolicy().equals("PRIVATE")));
+                entry ->
+                    entry.getAccountId().equals(ACCOUNT_UUID)
+                        && entry.getPolicy().equals("PRIVATE")));
     assertTrue(
         observer.response().getPoliciesList().stream()
             .anyMatch(
                 entry ->
-                    entry.getAccountId().equals("3") && entry.getPolicy().equals("HIDDEN_STAFF")));
+                    entry.getAccountId().equals(OTHER_ACCOUNT_UUID)
+                        && entry.getPolicy().equals("HIDDEN_STAFF")));
     assertTrue(observer.completed());
     assertFalse(observer.receivedTransportError());
-    Mockito.verify(accountService).listPresenceVisibilityPolicies(1L, List.of(2L, 3L));
+    Mockito.verify(accountService)
+        .listPresenceVisibilityPolicies(1L, List.of(ACCOUNT_UUID, OTHER_ACCOUNT_UUID));
   }
 
   @Test
@@ -1109,28 +1298,61 @@ class AccountGrpcServiceTest {
   }
 
   @Test
-  void listPresenceVisibilityPoliciesRejectsNonPositiveAccountId() {
+  void listPresenceVisibilityPoliciesRejectsMalformedAccountUuidsBeforeLookup() {
+    for (String malformedAccountId :
+        List.of(
+            "2",
+            "00000000-0000-0000-0000-000000000000",
+            ACCOUNT_UUID.toUpperCase(java.util.Locale.ROOT))) {
+      PingService pingService = Mockito.mock(PingService.class);
+      AccountService accountService = Mockito.mock(AccountService.class);
+      AccountGrpcService service =
+          new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
+      RecordingObserver<ListPresenceVisibilityPoliciesResponse> observer =
+          new RecordingObserver<>();
+
+      withPeer(
+          SOCIAL_GROUPS_PEER,
+          () ->
+              service.listPresenceVisibilityPolicies(
+                  ListPresenceVisibilityPoliciesRequest.newBuilder()
+                      .setTenantId("1")
+                      .addAccountIds(malformedAccountId)
+                      .build(),
+                  observer));
+
+      assertNotNull(observer.response());
+      assertEquals("INVALID_ARGUMENT", observer.response().getError().getCode());
+      assertEquals(
+          "accountId must be a canonical non-nil UUID",
+          observer.response().getError().getMessage());
+      assertTrue(observer.completed());
+      assertFalse(observer.receivedTransportError());
+      Mockito.verifyNoInteractions(accountService);
+    }
+  }
+
+  @Test
+  void listPresenceVisibilityPoliciesRejectsMoreThanOneHundredSelectorsBeforeLookup() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
     AccountGrpcService service =
         new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
+    ListPresenceVisibilityPoliciesRequest.Builder request =
+        ListPresenceVisibilityPoliciesRequest.newBuilder().setTenantId("1");
+    for (int index = 0; index < 101; index++) {
+      request.addAccountIds(ACCOUNT_UUID);
+    }
     RecordingObserver<ListPresenceVisibilityPoliciesResponse> observer = new RecordingObserver<>();
 
     withPeer(
         SOCIAL_GROUPS_PEER,
-        () ->
-            service.listPresenceVisibilityPolicies(
-                ListPresenceVisibilityPoliciesRequest.newBuilder()
-                    .setTenantId("1")
-                    .addAccountIds("0")
-                    .build(),
-                observer));
+        () -> service.listPresenceVisibilityPolicies(request.build(), observer));
 
-    assertNotNull(observer.response());
     assertEquals("INVALID_ARGUMENT", observer.response().getError().getCode());
-    assertEquals("accountId must be positive", observer.response().getError().getMessage());
+    assertEquals(
+        "accountIds must contain at most 100 entries", observer.response().getError().getMessage());
     assertTrue(observer.completed());
-    assertFalse(observer.receivedTransportError());
     Mockito.verifyNoInteractions(accountService);
   }
 
@@ -1141,7 +1363,7 @@ class AccountGrpcServiceTest {
     AccountGrpcService service =
         new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
 
-    Mockito.when(accountService.listPresenceVisibilityPolicies(1L, List.of(2L)))
+    Mockito.when(accountService.listPresenceVisibilityPolicies(1L, List.of(ACCOUNT_UUID)))
         .thenThrow(new IllegalArgumentException("Tenant not found"));
     RecordingObserver<ListPresenceVisibilityPoliciesResponse> notFoundObserver =
         new RecordingObserver<>();
@@ -1151,7 +1373,7 @@ class AccountGrpcServiceTest {
             service.listPresenceVisibilityPolicies(
                 ListPresenceVisibilityPoliciesRequest.newBuilder()
                     .setTenantId("1")
-                    .addAccountIds("2")
+                    .addAccountIds(ACCOUNT_UUID)
                     .build(),
                 notFoundObserver));
 
@@ -1160,7 +1382,7 @@ class AccountGrpcServiceTest {
     assertFalse(notFoundObserver.receivedTransportError());
 
     Mockito.reset(accountService);
-    Mockito.when(accountService.listPresenceVisibilityPolicies(1L, List.of(2L)))
+    Mockito.when(accountService.listPresenceVisibilityPolicies(1L, List.of(ACCOUNT_UUID)))
         .thenThrow(new IllegalStateException("Policy lookup unavailable"));
     RecordingObserver<ListPresenceVisibilityPoliciesResponse> internalObserver =
         new RecordingObserver<>();
@@ -1170,7 +1392,7 @@ class AccountGrpcServiceTest {
             service.listPresenceVisibilityPolicies(
                 ListPresenceVisibilityPoliciesRequest.newBuilder()
                     .setTenantId("1")
-                    .addAccountIds("2")
+                    .addAccountIds(ACCOUNT_UUID)
                     .build(),
                 internalObserver));
 
@@ -1429,6 +1651,10 @@ class AccountGrpcServiceTest {
     AccountService accountService = Mockito.mock(AccountService.class);
     Mockito.when(accountService.resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID)))
         .thenReturn(2L);
+    Mockito.when(accountService.updateProfile(Mockito.eq(2L), Mockito.any()))
+        .thenReturn(
+            new net.firedevops.firemud.accountservice.dto.ProfileDto(
+                10L, 1L, ACCOUNT_UUID, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE));
     AccountGrpcService service =
         new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
 
@@ -1447,6 +1673,8 @@ class AccountGrpcServiceTest {
                 observer));
 
     assertTrue(observer.response().getSuccess());
+    assertEquals(ACCOUNT_UUID, observer.response().getAccountId());
+    assertEquals("1", observer.response().getTenantId());
     assertTrue(observer.completed());
     org.mockito.ArgumentCaptor<net.firedevops.firemud.accountservice.dto.UpdateProfileRequest>
         captor =
@@ -1457,6 +1685,52 @@ class AccountGrpcServiceTest {
     assertEquals(1L, captor.getValue().tenantId());
     assertEquals(ACCOUNT_UUID, captor.getValue().accountId());
     assertEquals("demo", captor.getValue().displayName());
+  }
+
+  @Test
+  void updateProfileRejectsMismatchedPersistedIdentityEchoes() {
+    for (var mismatchedProfile :
+        List.of(
+            new net.firedevops.firemud.accountservice.dto.ProfileDto(
+                10L,
+                1L,
+                OTHER_ACCOUNT_UUID,
+                "demo",
+                "bio",
+                ProfilePresenceVisibilityPolicy.PRIVATE),
+            new net.firedevops.firemud.accountservice.dto.ProfileDto(
+                10L, 2L, ACCOUNT_UUID, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE))) {
+      PingService pingService = Mockito.mock(PingService.class);
+      AccountService accountService = Mockito.mock(AccountService.class);
+      Mockito.when(accountService.resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID)))
+          .thenReturn(2L);
+      Mockito.when(accountService.updateProfile(Mockito.eq(2L), Mockito.any()))
+          .thenReturn(mismatchedProfile);
+      AccountGrpcService service =
+          new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
+      RecordingObserver<UpdateProfileResponse> observer = new RecordingObserver<>();
+      SessionContext.setContext(ACCOUNT_UUID, List.of("player"), Map.of());
+
+      withPeer(
+          SOCIAL_GROUPS_PEER,
+          () ->
+              service.updateProfile(
+                  UpdateProfileRequest.newBuilder()
+                      .setTenantId("1")
+                      .setAccountId(ACCOUNT_UUID)
+                      .setProfileJson(
+                          "{\"displayName\":\"demo\",\"bio\":\"bio\",\"presenceVisibilityPolicy\":\"PRIVATE\"}")
+                      .build(),
+                  observer));
+
+      assertFalse(observer.response().getSuccess());
+      assertEquals("INTERNAL", observer.response().getError().getCode());
+      assertEquals("Profile source validation failed", observer.response().getError().getMessage());
+      assertEquals("", observer.response().getAccountId());
+      assertEquals("", observer.response().getTenantId());
+      assertTrue(observer.completed());
+      Mockito.verify(accountService).updateProfile(Mockito.eq(2L), Mockito.any());
+    }
   }
 
   @Test
@@ -1488,6 +1762,42 @@ class AccountGrpcServiceTest {
     assertEquals("INVALID_ARGUMENT", observer.response().getError().getCode());
     assertTrue(observer.completed());
     Mockito.verify(accountService).updateProfile(Mockito.anyLong(), Mockito.any());
+  }
+
+  @Test
+  void updateProfileMapsSourceValidationFailuresToSanitizedApplicationErrors() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(accountService.resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID)))
+        .thenReturn(2L);
+    Mockito.doThrow(new IllegalStateException("private source validation detail"))
+        .when(accountService)
+        .updateProfile(Mockito.eq(2L), Mockito.any());
+    AccountGrpcService service =
+        new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
+    RecordingObserver<UpdateProfileResponse> observer = new RecordingObserver<>();
+    SessionContext.setContext(ACCOUNT_UUID, List.of("player"), Map.of());
+
+    withPeer(
+        SOCIAL_GROUPS_PEER,
+        () ->
+            service.updateProfile(
+                UpdateProfileRequest.newBuilder()
+                    .setTenantId("1")
+                    .setAccountId(ACCOUNT_UUID)
+                    .setProfileJson(
+                        "{\"displayName\":\"demo\",\"bio\":\"bio\",\"presenceVisibilityPolicy\":\"PRIVATE\"}")
+                    .build(),
+                observer));
+
+    assertEquals(1, observer.responseCount());
+    assertFalse(observer.response().getSuccess());
+    assertEquals("INTERNAL", observer.response().getError().getCode());
+    assertEquals("Profile source validation failed", observer.response().getError().getMessage());
+    assertTrue(observer.completed());
+    assertFalse(observer.receivedTransportError());
+    Mockito.verify(accountService).resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID));
+    Mockito.verify(accountService).updateProfile(Mockito.eq(2L), Mockito.any());
   }
 
   @Test
@@ -1849,6 +2159,37 @@ class AccountGrpcServiceTest {
           @Override
           public void onNext(
               net.firedevops.firemud.account.v1.RequestEmailVerificationResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertFalse(ref.get().getSuccess());
+    assertEquals("FAILED_PRECONDITION", ref.get().getError().getCode());
+    Mockito.verifyNoInteractions(accountService);
+  }
+
+  @Test
+  void verifyEmailFailsClosedBeforeTokenConsumption() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+
+    AtomicReference<net.firedevops.firemud.account.v1.VerifyEmailResponse> ref =
+        new AtomicReference<>();
+    service.verifyEmail(
+        net.firedevops.firemud.account.v1.VerifyEmailRequest.newBuilder()
+            .setToken("verification-token")
+            .build(),
+        new StreamObserver<net.firedevops.firemud.account.v1.VerifyEmailResponse>() {
+          @Override
+          public void onNext(net.firedevops.firemud.account.v1.VerifyEmailResponse value) {
             ref.set(value);
           }
 
@@ -2338,12 +2679,14 @@ class AccountGrpcServiceTest {
 
   private static final class RecordingObserver<T> implements StreamObserver<T> {
     private T response;
+    private int responseCount;
     private boolean receivedTransportError;
     private boolean completed;
 
     @Override
     public void onNext(T value) {
       response = value;
+      responseCount++;
     }
 
     @Override
@@ -2358,6 +2701,10 @@ class AccountGrpcServiceTest {
 
     private T response() {
       return response;
+    }
+
+    private int responseCount() {
+      return responseCount;
     }
 
     private boolean receivedTransportError() {

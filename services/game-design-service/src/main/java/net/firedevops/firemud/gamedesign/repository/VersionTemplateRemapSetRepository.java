@@ -4,7 +4,6 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.gamedesign.entity.VersionTemplateRemapEntry;
 import net.firedevops.firemud.gamedesign.entity.VersionTemplateRemapSet;
@@ -166,16 +165,18 @@ public class VersionTemplateRemapSetRepository {
       LocalDateTime createdAt =
           entry.getCreatedAt() == null ? LocalDateTime.now() : entry.getCreatedAt();
       Record record =
-          Objects.requireNonNull(
-              dsl.insertInto(ENTRY_TABLE)
-                  .set(ENTRY_REMAP_SET_PK, remapSet.getId())
-                  .set(ENTRY_MAPPING_DOMAIN, entry.getMappingDomain())
-                  .set(ENTRY_MAPPING_TYPE, entry.getMappingType())
-                  .set(ENTRY_SOURCE_TEMPLATE_KEY, entry.getSourceTemplateKey())
-                  .set(ENTRY_TARGET_TEMPLATE_KEY, entry.getTargetTemplateKey())
-                  .set(ENTRY_CREATED_AT, createdAt)
-                  .returning()
-                  .fetchOne());
+          dsl.insertInto(ENTRY_TABLE)
+              .set(ENTRY_REMAP_SET_PK, remapSet.getId())
+              .set(ENTRY_MAPPING_DOMAIN, entry.getMappingDomain())
+              .set(ENTRY_MAPPING_TYPE, entry.getMappingType())
+              .set(ENTRY_SOURCE_TEMPLATE_KEY, entry.getSourceTemplateKey())
+              .set(ENTRY_TARGET_TEMPLATE_KEY, entry.getTargetTemplateKey())
+              .set(ENTRY_CREATED_AT, createdAt)
+              .returningResult(ENTRY_ID, ENTRY_CREATED_AT)
+              .fetchOne();
+      if (record == null || record.get(ENTRY_ID) == null) {
+        throw new IllegalStateException("VERSION_TEMPLATE_REMAP_ENTRY_INSERT_FAILED");
+      }
       entry.setId(record.get(ENTRY_ID));
       entry.setRemapSet(remapSet);
       entry.setCreatedAt(record.get(ENTRY_CREATED_AT));

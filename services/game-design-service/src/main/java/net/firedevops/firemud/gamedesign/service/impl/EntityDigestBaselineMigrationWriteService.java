@@ -34,8 +34,12 @@ public class EntityDigestBaselineMigrationWriteService {
   public void commit(
       RecordedParticipantDigest expectedOld,
       RecordedParticipantDigest replacement,
-      EntityDigestBaselineMigrationAudit audit) {
+      EntityDigestBaselineMigrationAudit audit,
+      long expectedVersionStateEpoch) {
     validateWriteSet(expectedOld, replacement, audit);
+    if (expectedVersionStateEpoch < 1L) {
+      throw new IllegalArgumentException("expected version state epoch must be positive");
+    }
     long versionId;
     try {
       versionId = Long.parseLong(expectedOld.getScopeValue());
@@ -45,10 +49,14 @@ public class EntityDigestBaselineMigrationWriteService {
     }
     var version =
         versionRepository
-            .findByTenantIdAndIdForUpdate(expectedOld.getTenantId(), versionId)
+            .findByTenantIdAndIdForEntityDigestBaselineMigration(
+                expectedOld.getTenantId(), versionId)
             .orElseThrow(() -> new IllegalStateException("migration version disappeared"));
     if (version.getVersionState() == VersionLifecycleState.DRAFT) {
       throw new DraftVersionException();
+    }
+    if (!Objects.equals(version.getVersionStateEpoch(), expectedVersionStateEpoch)) {
+      throw new VersionStateEpochChangedException();
     }
     int updated =
         baselineRepository.migrateEntityFullVersionBaselineIfUnchanged(expectedOld, replacement);
@@ -62,6 +70,12 @@ public class EntityDigestBaselineMigrationWriteService {
   static final class DraftVersionException extends IllegalStateException {
     private DraftVersionException() {
       super("mutable DRAFT versions cannot be migrated");
+    }
+  }
+
+  static final class VersionStateEpochChangedException extends IllegalStateException {
+    private VersionStateEpochChangedException() {
+      super("version lifecycle changed while the Entity digest was being recomputed");
     }
   }
 

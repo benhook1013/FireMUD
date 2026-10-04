@@ -1,6 +1,7 @@
 package net.firedevops.firemud.socialgroups.controller;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -35,6 +36,7 @@ import org.springframework.test.web.servlet.MockMvc;
 })
 @WithFiremudHttpAuthTestProperties
 class VoiceChatControllerTest {
+  private static final String ACCOUNT_UUID = "c41744c9-285e-4ed0-9fb4-0f0acb7a0123";
 
   @Autowired private MockMvc mockMvc;
   @Autowired private JwtUtil jwtUtil;
@@ -45,8 +47,9 @@ class VoiceChatControllerTest {
   @Test
   void createTokenReturnsToken() throws Exception {
     when(service.createToken(any())).thenReturn(new VoiceTokenDto("abc", Instant.now()));
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
-    String body = "{\"tenantId\":1,\"accountId\":2,\"channelId\":\"guild-1\"}";
+    String token = accountToken();
+    String body =
+        "{\"tenantId\":1,\"accountId\":\"" + ACCOUNT_UUID + "\",\"channelId\":\"guild-1\"}";
 
     mockMvc
         .perform(
@@ -59,9 +62,12 @@ class VoiceChatControllerTest {
   }
 
   @Test
-  void createTokenRejectsZeroAccountIdBeforeAccessCheckAndDispatch() throws Exception {
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
-    String body = "{\"tenantId\":1,\"accountId\":0,\"channelId\":\"guild-1\"}";
+  void createTokenRejectsLegacyNumericAccountIdAtAccessCheckBeforeDispatch() throws Exception {
+    String token = accountToken();
+    String body = "{\"tenantId\":1,\"accountId\":\"0\",\"channelId\":\"guild-1\"}";
+    org.mockito.Mockito.doThrow(new IllegalArgumentException("Malformed claim: accountId"))
+        .when(socialAccessGuard)
+        .requireAccountAccess(1L, "0");
 
     mockMvc
         .perform(
@@ -72,8 +78,14 @@ class VoiceChatControllerTest {
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.status").value("ERROR"))
         .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
-        .andExpect(jsonPath("$.error.message").value("accountId must be positive"));
+        .andExpect(jsonPath("$.error.message").value("Malformed claim: accountId"));
 
-    verifyNoInteractions(service, socialAccessGuard);
+    verify(socialAccessGuard).requireAccountAccess(1L, "0");
+    verifyNoInteractions(service);
+  }
+
+  private String accountToken() {
+    return jwtUtil.generateToken(
+        ACCOUNT_UUID, Map.of("accountId", ACCOUNT_UUID, "globalRoles", List.of()));
   }
 }

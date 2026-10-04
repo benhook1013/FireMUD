@@ -40,11 +40,13 @@ import net.firedevops.firemud.gamedesign.service.PluginBundleIntakeService;
 import net.firedevops.firemud.gamedesign.service.PluginBundleStorageService;
 import net.firedevops.firemud.gamedesign.service.PluginDistributionManifest;
 import net.firedevops.firemud.gamedesign.service.PublicationFailureClassifier;
+import net.firedevops.firemud.gamedesign.service.PublishAttemptPendingReconciliationException;
 import net.firedevops.firemud.gamedesign.service.PublishAttemptService;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import net.firedevops.firemud.gamedesign.service.PublishGateService;
 import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
 import net.firedevops.firemud.gamedesign.service.RecordedParticipantDigestService;
+import net.firedevops.firemud.gamedesign.service.ScriptPatchPublishFailureException;
 import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
 import net.firedevops.firemud.gamedesign.service.VersionService;
 import org.slf4j.Logger;
@@ -166,7 +168,9 @@ public class VersionServiceImpl implements VersionService {
       throw replayFailedScriptPatch(reservation.failureCode(), reservation.failureMessage());
     }
 
+    boolean notificationAttempted = false;
     boolean finalizationStarted = false;
+    boolean finalizationReturned = false;
     try {
       List<PublishParticipantDigestDto> participantDigests =
           publishGateService.collectScriptPatchParticipantDigests(
@@ -174,37 +178,56 @@ public class VersionServiceImpl implements VersionService {
       publishGateService.assertGatePassed(reservation.versionDto(), participantDigests);
       recordedParticipantDigestService.assertMatchesRecordedDigests(
           tenantId, PublishType.SCRIPT_PATCH, participantDigests);
+      // Automation must accept the exact base-bound patch before Game Design can publish it.
+      // Only local validation known to happen before dispatch may safely fail the reservation;
+      // every other notification failure can follow external effects and remains reconcilable.
+      notificationAttempted = true;
       scriptingClient.notifyScriptVersionUpdate(
           tenantId, baseVersionId, scriptPatchVersion, List.of());
       finalizationStarted = true;
       ScriptPatchFinalization finalization =
           publishAttemptService.executeScriptPatchTransaction(
               () -> finalizeScriptPatch(patchBinding, reservation, participantDigests, tenantId));
+      finalizationReturned = true;
       if (finalization.status() == PublishAttemptStatus.SUCCEEDED) {
         return finalization.versionDto();
       }
       if (finalization.status() == PublishAttemptStatus.FAILED) {
         throw replayFailedScriptPatch(finalization.failureCode(), finalization.failureMessage());
       }
-      throw new IllegalStateException(
-          "PUBLISH_ATTEMPT_INCONSISTENT: finalization remained pending");
+      throw pendingScriptPatchReconciliation(
+          new IllegalStateException("finalization returned a pending publish attempt"));
     } catch (RuntimeException ex) {
+      if (finalizationReturned) {
+        // A returned terminal receipt is authoritative; do not reinterpret its stored failure as
+        // a new attempt failure or run cleanup against it.
+        throw ex;
+      }
       RuntimeException operationFailure =
           ex instanceof PublishAttemptService.ScriptPatchTransactionException transactionFailure
               ? transactionFailure.causeException()
               : ex;
-      if (finalizationStarted) {
-        // Automation has accepted the notification. Neither an in-transaction rollback nor an
-        // ambiguous transaction-manager failure can undo that external effect, so retain the
-        // durable PENDING reservation for exact-request reconciliation.
-        if (ex instanceof PublishAttemptService.ScriptPatchTransactionException) {
-          throw new IllegalStateException(
-              "PUBLISH_ATTEMPT_PENDING_RECONCILIATION_REQUIRED: finalization failed after Automation accepted the notification; retry exact publish request",
-              operationFailure);
-        }
-        throw ex;
+      boolean localPreflightFailure =
+          operationFailure instanceof AutomationScriptingClient.PreDispatchValidationException;
+      if (operationFailure instanceof PublishAttemptPendingReconciliationException
+          || (operationFailure.getMessage() != null
+              && operationFailure
+                  .getMessage()
+                  .startsWith(PublishAttemptPendingReconciliationException.ERROR_CODE + ":"))) {
+        throw operationFailure;
       }
-      if (!finalizationStarted
+      if (finalizationStarted && !finalizationReturned) {
+        // The transaction call did not return, so its commit status is unknown. Keep the durable
+        // PENDING receipt rather than guessing whether cleanup is safe.
+        throw pendingScriptPatchReconciliation(operationFailure);
+      }
+      if (notificationAttempted && !localPreflightFailure) {
+        // Automation may have produced effects even when it rejects the request or its response
+        // is lost. A transport or response failure does not prove that no effect occurred.
+        throw pendingScriptPatchReconciliation(operationFailure);
+      }
+      if (!notificationAttempted
+          && !localPreflightFailure
           && PublicationFailureClassifier.isRetryableParticipantDependencyFailure(
               operationFailure)) {
         throw new IllegalStateException(
@@ -340,7 +363,7 @@ public class VersionServiceImpl implements VersionService {
       return new ScriptPatchFinalization(
           attempt.getStatus(), null, attempt.getFailureCode(), attempt.getFailureMessage());
     }
-    Version saved = requireAttemptVersion(attempt, patchBinding);
+    Version saved = requireAttemptVersionForUpdate(attempt, patchBinding);
     if (saved.getVersionState() != VersionLifecycleState.DRAFT) {
       throw new IllegalStateException(
           "PUBLISH_ATTEMPT_PENDING_RECONCILIATION_REQUIRED: pending attempt does not reference a draft version");
@@ -380,7 +403,8 @@ public class VersionServiceImpl implements VersionService {
           attempt.getStatus(), null, attempt.getFailureCode(), attempt.getFailureMessage());
     }
     Optional<Version> draft =
-        versionRepository.findByTenantIdAndId(patchBinding.tenantId(), attempt.getVersionId());
+        versionRepository.findByTenantIdAndIdForUpdate(
+            patchBinding.tenantId(), attempt.getVersionId());
     if (draft.isPresent() && draft.get().getVersionState() != VersionLifecycleState.DRAFT) {
       throw new IllegalStateException(
           "PUBLISH_ATTEMPT_INCONSISTENT: pending attempt references a non-draft version");
@@ -425,13 +449,26 @@ public class VersionServiceImpl implements VersionService {
 
   private Version requireAttemptVersion(
       PublishAttempt attempt, PublicationDigestRequestBinding patchBinding) {
+    return requireAttemptVersion(attempt, patchBinding, false);
+  }
+
+  private Version requireAttemptVersionForUpdate(
+      PublishAttempt attempt, PublicationDigestRequestBinding patchBinding) {
+    return requireAttemptVersion(attempt, patchBinding, true);
+  }
+
+  private Version requireAttemptVersion(
+      PublishAttempt attempt, PublicationDigestRequestBinding patchBinding, boolean forUpdate) {
     if (attempt.getVersionId() == null || attempt.getVersionNumber() <= 0) {
       throw new IllegalStateException(
           "PUBLISH_ATTEMPT_INCOMPLETE: attempt is missing its durable version evidence");
     }
     Version version =
-        versionRepository
-            .findByTenantIdAndId(patchBinding.tenantId(), attempt.getVersionId())
+        (forUpdate
+                ? versionRepository.findByTenantIdAndIdForUpdate(
+                    patchBinding.tenantId(), attempt.getVersionId())
+                : versionRepository.findByTenantIdAndId(
+                    patchBinding.tenantId(), attempt.getVersionId()))
             .orElseThrow(
                 () ->
                     new IllegalStateException(
@@ -457,9 +494,20 @@ public class VersionServiceImpl implements VersionService {
       return new PublishGateFailureException(
           PublishGateFailureCode.valueOf(failureCode), failureMessage);
     } catch (IllegalArgumentException ignored) {
-      return new IllegalStateException(
+      return new ScriptPatchPublishFailureException(
+          failureCode,
           failureMessage == null || failureMessage.isBlank() ? failureCode : failureMessage);
     }
+  }
+
+  private ScriptPatchPublishFailureException pendingScriptPatchReconciliation(
+      RuntimeException cause) {
+    String errorCode = PublishAttemptPendingReconciliationException.ERROR_CODE;
+    return new ScriptPatchPublishFailureException(
+        errorCode,
+        errorCode
+            + ": script-patch publication outcome is unknown; retry the exact publish request",
+        cause);
   }
 
   @Override
@@ -803,7 +851,7 @@ public class VersionServiceImpl implements VersionService {
       long expectedVersionStateEpoch,
       VersionLifecycleState newState,
       String reason) {
-    Version version = requireTenantVersion(tenantId, versionId);
+    Version version = requireTenantVersionForUpdate(tenantId, versionId);
     if (newState == null) {
       throw new IllegalArgumentException("INVALID_ARGUMENT: new version state is required");
     }
@@ -837,6 +885,12 @@ public class VersionServiceImpl implements VersionService {
             .map(Version::getVersionNumber)
             .orElse(0)
         + 1;
+  }
+
+  private Version requireTenantVersionForUpdate(String tenantId, long versionId) {
+    return versionRepository
+        .findByTenantIdAndIdForUpdate(tenantId, versionId)
+        .orElseThrow(() -> new IllegalArgumentException("version not found"));
   }
 
   private String publishFailureCode(RuntimeException ex) {

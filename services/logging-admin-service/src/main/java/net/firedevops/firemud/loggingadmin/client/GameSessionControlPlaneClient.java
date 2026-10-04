@@ -2,6 +2,7 @@ package net.firedevops.firemud.loggingadmin.client;
 
 import jakarta.annotation.PostConstruct;
 import java.io.IOException;
+import java.util.List;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
@@ -83,8 +84,13 @@ public class GameSessionControlPlaneClient
         GameSessionControlPlaneServiceGrpc.newBlockingStub(channel).withCompression("gzip"));
   }
 
-  public ListAdmissionPointersResponse listAdmissionPointers() {
-    return stub().listAdmissionPointers(ListAdmissionPointersRequest.getDefaultInstance());
+  public ListAdmissionPointersResponse listAdmissionPointers(List<Long> tenantIds) {
+    return stub()
+        .listAdmissionPointers(
+            ListAdmissionPointersRequest.newBuilder()
+                .addAllTenantIds(
+                    tenantIds.stream().map(tenantId -> Long.toString(tenantId)).toList())
+                .build());
   }
 
   public ListAdmissionPointerAuditResponse listAdmissionPointerAudit(

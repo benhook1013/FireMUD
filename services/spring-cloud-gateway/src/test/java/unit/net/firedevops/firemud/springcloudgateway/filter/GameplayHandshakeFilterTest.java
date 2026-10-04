@@ -29,6 +29,8 @@ import reactor.core.publisher.Mono;
 
 class GameplayHandshakeFilterTest {
   private static final String SECRET = "testsecretkeytestsecretkeytest1234";
+  private static final String ACCOUNT_ID = "018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a";
+  private static final String OTHER_ACCOUNT_ID = "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f";
   private static final RuntimeIdentity TEST_RUNTIME_IDENTITY =
       new RuntimeIdentity(
           "spring-cloud-gateway", "gateway-test", "localhost", Instant.EPOCH, null, null, null);
@@ -84,10 +86,10 @@ class GameplayHandshakeFilterTest {
     String token =
         new JwtUtil(SECRET, 30_000L)
             .generateToken(
-                "7",
+                ACCOUNT_ID,
                 Map.of(
                     "aud", "gameplay-connect",
-                    "accountId", "7",
+                    "accountId", ACCOUNT_ID,
                     "tenantId", "1",
                     "worldSlug", "demo",
                     "realmSlug", "production",
@@ -180,10 +182,10 @@ class GameplayHandshakeFilterTest {
     String token =
         new JwtUtil(SECRET, 30_000L)
             .generateToken(
-                "7",
+                ACCOUNT_ID,
                 Map.of(
                     "aud", "gameplay-connect",
-                    "accountId", "7",
+                    "accountId", ACCOUNT_ID,
                     "tenantId", "not-a-number",
                     "worldSlug", "demo",
                     "realmSlug", "production",
@@ -219,7 +221,7 @@ class GameplayHandshakeFilterTest {
     String token =
         new JwtUtil(SECRET, 30_000L)
             .generateToken(
-                "7",
+                ACCOUNT_ID,
                 Map.of(
                     "aud", "gameplay-connect",
                     "accountId", "0",
@@ -258,10 +260,10 @@ class GameplayHandshakeFilterTest {
     String token =
         new JwtUtil(SECRET, 30_000L)
             .generateToken(
-                "8",
+                OTHER_ACCOUNT_ID,
                 Map.of(
                     "aud", "gameplay-connect",
-                    "accountId", "7",
+                    "accountId", ACCOUNT_ID,
                     "tenantId", "1",
                     "worldSlug", "demo",
                     "realmSlug", "production",
@@ -297,10 +299,10 @@ class GameplayHandshakeFilterTest {
     String token =
         new JwtUtil(SECRET, 30_000L)
             .generateToken(
-                "7",
+                ACCOUNT_ID,
                 Map.of(
                     "aud", "gameplay-connect",
-                    "accountId", "7",
+                    "accountId", ACCOUNT_ID,
                     "tenantId", "1",
                     "worldSlug", "demo",
                     "realmSlug", "production",
@@ -334,10 +336,10 @@ class GameplayHandshakeFilterTest {
     String token =
         new JwtUtil(SECRET, 30_000L)
             .generateToken(
-                "7",
+                ACCOUNT_ID,
                 Map.of(
                     "aud", "gameplay-connect",
-                    "accountId", "7",
+                    "accountId", ACCOUNT_ID,
                     "tenantId", "1",
                     "realmSlug", "production",
                     "gameInstanceId", "42",
@@ -391,10 +393,10 @@ class GameplayHandshakeFilterTest {
     String token =
         new JwtUtil(SECRET, 30_000L)
             .generateToken(
-                "7",
+                ACCOUNT_ID,
                 Map.of(
                     "aud", "gameplay-connect",
-                    "accountId", "7",
+                    "accountId", ACCOUNT_ID,
                     "tenantId", "1",
                     "worldSlug", "demo",
                     "realmSlug", "production",
@@ -429,10 +431,10 @@ class GameplayHandshakeFilterTest {
     String token =
         new JwtUtil(SECRET, 30_000L)
             .generateToken(
-                "7",
+                ACCOUNT_ID,
                 Map.of(
                     "aud", "gameplay-connect",
-                    "accountId", "7",
+                    "accountId", ACCOUNT_ID,
                     "tenantId", "1",
                     "worldSlug", "demo",
                     "realmSlug", "production",
@@ -471,10 +473,10 @@ class GameplayHandshakeFilterTest {
     String token =
         new JwtUtil(SECRET, 30_000L)
             .generateToken(
-                "7",
+                ACCOUNT_ID,
                 Map.of(
                     "aud", "gameplay-connect",
-                    "accountId", "7",
+                    "accountId", ACCOUNT_ID,
                     "tenantId", "1",
                     "worldSlug", "demo",
                     "realmSlug", "production",
@@ -509,10 +511,10 @@ class GameplayHandshakeFilterTest {
     String token =
         new JwtUtil(SECRET, 30_000L)
             .generateToken(
-                "7",
+                ACCOUNT_ID,
                 Map.of(
                     "aud", "gameplay-connect",
-                    "accountId", "7",
+                    "accountId", ACCOUNT_ID,
                     "tenantId", "1",
                     "worldSlug", "demo",
                     "realmSlug", "production",
@@ -573,10 +575,10 @@ class GameplayHandshakeFilterTest {
     String token =
         new JwtUtil(SECRET, 30_000L)
             .generateToken(
-                "7",
+                ACCOUNT_ID,
                 Map.of(
                     "aud", "gameplay-connect",
-                    "accountId", "7",
+                    "accountId", ACCOUNT_ID,
                     "tenantId", "1",
                     "worldSlug", "demo",
                     "realmSlug", "production",
@@ -964,10 +966,10 @@ class GameplayHandshakeFilterTest {
     JwtUtil expiredJwtUtil = new JwtUtil(SECRET, -1L);
     String token =
         expiredJwtUtil.generateToken(
-            "7",
+            ACCOUNT_ID,
             Map.of(
                 "aud", "gameplay-connect",
-                "accountId", "7",
+                "accountId", ACCOUNT_ID,
                 "tenantId", "1",
                 "worldSlug", "demo",
                 "realmSlug", "production",
@@ -1007,10 +1009,10 @@ class GameplayHandshakeFilterTest {
     String token =
         new JwtUtil(SECRET, 30_000L)
             .generateToken(
-                "7",
+                ACCOUNT_ID,
                 Map.of(
                     "aud", "gameplay-connect",
-                    "accountId", "7",
+                    "accountId", ACCOUNT_ID,
                     "tenantId", "1",
                     "worldSlug", "demo",
                     "realmSlug", "production",
@@ -1054,10 +1056,10 @@ class GameplayHandshakeFilterTest {
     String token =
         new JwtUtil(SECRET, 30_000L)
             .generateToken(
-                "7",
+                ACCOUNT_ID,
                 Map.of(
                     "aud", "gameplay-connect",
-                    "accountId", "7",
+                    "accountId", ACCOUNT_ID,
                     "tenantId", "1",
                     "worldSlug", "demo",
                     "realmSlug", "production",
