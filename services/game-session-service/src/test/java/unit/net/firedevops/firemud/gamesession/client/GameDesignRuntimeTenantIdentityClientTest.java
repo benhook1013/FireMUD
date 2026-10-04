@@ -378,10 +378,7 @@ class GameDesignRuntimeTenantIdentityClientTest {
             manifest.toBuilder().setSourceGameRowId("92").build(),
             manifest.toBuilder().setSourceGameTenantKey("game-design-tenant-92").build(),
             manifest.toBuilder().setProvenanceKind("NEW_GAME_ROW").build(),
-            manifest
-                .toBuilder()
-                .setGameSessionProjectionDigest("sha256:" + "c".repeat(64))
-                .build(),
+            manifest.toBuilder().setGameSessionProjectionDigest("sha256:" + "c".repeat(64)).build(),
             manifest.toBuilder().setGameSessionEvidenceDigest("sha256:" + "b".repeat(64)).build());
 
     for (GameSessionTenantAssociationManifestEvidence changed : changedManifests) {

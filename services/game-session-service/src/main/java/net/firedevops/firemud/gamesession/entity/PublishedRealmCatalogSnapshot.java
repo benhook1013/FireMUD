@@ -58,12 +58,15 @@ public record PublishedRealmCatalogSnapshot(
       if (entry.tenantId() != tenantId
           || entry.catalogRevision() != catalogRevision
           || !entry.policyEvidence().equals(policySetEvidence.policies().get(index))
-          || !entry.policyEvidence().tenantIdentityProvenanceKind().equals(
-              tenantIdentityProvenanceKind)
+          || !entry
+              .policyEvidence()
+              .tenantIdentityProvenanceKind()
+              .equals(tenantIdentityProvenanceKind)
           || entry.policyEvidence().sourceGameRowId() != sourceGameRowId
           || !entry.policyEvidence().sourceGameTenantKey().equals(sourceGameTenantKey)
           || !realmIds.add(entry.realmId())) {
-        throw new IllegalArgumentException("Catalog snapshot entries are incomplete or contradictory");
+        throw new IllegalArgumentException(
+            "Catalog snapshot entries are incomplete or contradictory");
       }
     }
   }

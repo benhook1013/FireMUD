@@ -6,8 +6,8 @@ import java.util.UUID;
 /**
  * Legacy run-owned fixture catalog evidence used by the initial-bind fixture path.
  *
- * <p>Published Game Design authority is stored and read through
- * {@link PublishedRealmCatalogSnapshot}; this row is never promoted into that authority.
+ * <p>Published Game Design authority is stored and read through {@link
+ * PublishedRealmCatalogSnapshot}; this row is never promoted into that authority.
  */
 public record InitialAdmissionBindCatalog(
     UUID realmId,

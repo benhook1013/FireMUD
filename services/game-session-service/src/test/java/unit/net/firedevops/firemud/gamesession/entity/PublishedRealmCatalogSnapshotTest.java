@@ -10,7 +10,9 @@ import java.util.UUID;
 import net.firedevops.firemud.common.publication.PublishedRealmEntryPolicyEvidence;
 import net.firedevops.firemud.common.publication.PublishedRealmEntryPolicySetEvidence;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
+import net.firedevops.firemud.gamesession.entity.PublishedRealmCatalogEntry;
 import net.firedevops.firemud.gamesession.entity.PublishedRealmCatalogEntry.NamespaceResolution;
+import net.firedevops.firemud.gamesession.entity.PublishedRealmCatalogSnapshot;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.ObjectMapper;
 
@@ -126,14 +128,7 @@ class PublishedRealmCatalogSnapshotTest {
             CANONICAL_TENANT_ID, versionId, workflow, MANIFEST, JSON);
     List<PublishedRealmEntryPolicyEvidence> policies =
         List.of(
-            evidence(
-                versionId,
-                versionNumber,
-                releaseBundleIdentity,
-                "main",
-                true,
-                true,
-                "SHARED"),
+            evidence(versionId, versionNumber, releaseBundleIdentity, "main", true, true, "SHARED"),
             evidence(
                 versionId,
                 versionNumber,

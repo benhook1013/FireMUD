@@ -140,12 +140,10 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
     Fixture fixture = fixture();
     UUID nilUuid = new UUID(0L, 0L);
 
-    assertThatThrownBy(
-            () -> fixture.insertAssociationMapping(nilUuid, uuid(930), uuid(931), 930L))
+    assertThatThrownBy(() -> fixture.insertAssociationMapping(nilUuid, uuid(930), uuid(931), 930L))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("chk_gs_retained_tenant_association_operation_ids");
-    assertThatThrownBy(
-            () -> fixture.insertAssociationMapping(uuid(932), nilUuid, uuid(933), 932L))
+    assertThatThrownBy(() -> fixture.insertAssociationMapping(uuid(932), nilUuid, uuid(933), 932L))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("chk_gs_retained_tenant_association_operation_ids");
 
@@ -153,8 +151,7 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
     fixture.insertAssociationMapping(payloadOperationId, uuid(935), uuid(936), 934L);
     assertThatThrownBy(() -> fixture.insertExpiredPayload(payloadOperationId, nilUuid))
         .isInstanceOf(DataAccessException.class)
-        .hasMessageContaining(
-            "chk_gs_retained_tenant_association_payload_approval_operation_id");
+        .hasMessageContaining("chk_gs_retained_tenant_association_payload_approval_operation_id");
   }
 
   @Test

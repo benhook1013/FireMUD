@@ -65,8 +65,10 @@ class PublishedRealmCatalogRepositoryIntegrationTest {
     assertThat(first.tenantId()).isEqualTo(TENANT_ID);
     assertThat(first.sourceGameRowId()).isEqualTo(501L);
     assertThat(first.catalogRevision()).isEqualTo(1L);
-    assertThat(first.entries()).allSatisfy(
-        entry -> assertThat(entry.namespaceResolution()).isEqualTo(NamespaceResolution.RESOLVED));
+    assertThat(first.entries())
+        .allSatisfy(
+            entry ->
+                assertThat(entry.namespaceResolution()).isEqualTo(NamespaceResolution.RESOLVED));
     UUID mainRealmId = first.entries().getFirst().realmId();
     UUID sharedNamespaceId = first.entries().getFirst().playableStateNamespaceId();
     assertThat(first.entries().get(1).playableStateNamespaceId()).isEqualTo(sharedNamespaceId);
@@ -100,13 +102,7 @@ class PublishedRealmCatalogRepositoryIntegrationTest {
                 fixture.materialize(
                     TENANT_ID,
                     evidenceSet(
-                        CANONICAL_TENANT_ID,
-                        501L,
-                        "source-game-501",
-                        99L,
-                        1,
-                        "Older",
-                        "SHARED")))
+                        CANONICAL_TENANT_ID, 501L, "source-game-501", 99L, 1, "Older", "SHARED")))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("PUBLISHED_REALM_CATALOG_STALE_VERSION");
 
@@ -115,13 +111,7 @@ class PublishedRealmCatalogRepositoryIntegrationTest {
         fixture.materialize(
             OTHER_TENANT_ID,
             evidenceSet(
-                OTHER_CANONICAL_TENANT_ID,
-                502L,
-                "source-game-502",
-                200L,
-                1,
-                "Main",
-                "SHARED"));
+                OTHER_CANONICAL_TENANT_ID, 502L, "source-game-502", 200L, 1, "Main", "SHARED"));
     assertThat(otherTenant.entries().getFirst().realmId()).isNotEqualTo(mainRealmId);
     assertThat(otherTenant.entries().getFirst().playableStateNamespaceId())
         .isNotEqualTo(sharedNamespaceId);
@@ -133,14 +123,12 @@ class PublishedRealmCatalogRepositoryIntegrationTest {
         .isEqualTo(NamespaceResolution.RESOLVED);
     assertThat(awaitingLifecycle.entries().getFirst().requirePlayableStateNamespaceId())
         .isEqualTo(sharedNamespaceId);
-    assertThat(
-            awaitingLifecycle.requireVisibleEntryForAdmission("firemud", "main").realmId())
+    assertThat(awaitingLifecycle.requireVisibleEntryForAdmission("firemud", "main").realmId())
         .isEqualTo(mainRealmId);
     assertThat(awaitingLifecycle.entries().get(1).namespaceResolution())
         .isEqualTo(NamespaceResolution.AWAITING_LIFECYCLE_PROOF);
     assertThat(awaitingLifecycle.entries().get(1).playableStateNamespaceId()).isNull();
-    assertThatThrownBy(
-            () -> awaitingLifecycle.requireVisibleEntryForAdmission("firemud", "side"))
+    assertThatThrownBy(() -> awaitingLifecycle.requireVisibleEntryForAdmission("firemud", "side"))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("PUBLISHED_REALM_CATALOG_LIFECYCLE_UNRESOLVED");
     assertThatThrownBy(awaitingLifecycle::requireNamespaceResolved)

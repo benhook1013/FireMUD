@@ -140,15 +140,13 @@ class PublishedRealmEntryPolicyEvidenceTest {
                 createSet(
                     identity,
                     java.util.Collections.nCopies(
-                      PublishedRealmEntryPolicySetEvidence.MAX_POLICIES + 1, main)));
+                        PublishedRealmEntryPolicySetEvidence.MAX_POLICIES + 1, main)));
   }
 
   @Test
   void completeSetRejectsRealmSlugRepeatedAcrossDifferentWorlds() {
-    PublishedRealmEntryPolicyEvidence publicRealm =
-        policyEvidence("main", "earth", true, true);
-    PublishedRealmEntryPolicyEvidence duplicateRealm =
-        policyEvidence("main", "mars", false, false);
+    PublishedRealmEntryPolicyEvidence publicRealm = policyEvidence("main", "earth", true, true);
+    PublishedRealmEntryPolicyEvidence duplicateRealm = policyEvidence("main", "mars", false, false);
 
     assertThatIllegalArgumentException()
         .isThrownBy(

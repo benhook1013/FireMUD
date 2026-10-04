@@ -114,8 +114,8 @@ public class InitialAdmissionBindCatalogRepository {
 
   /**
    * Commits one complete immutable Game Design policy set after its remote owner read has
-   * completed. The retained association is reread locally under this transaction before any
-   * catalog identity or snapshot row is written.
+   * completed. The retained association is reread locally under this transaction before any catalog
+   * identity or snapshot row is written.
    */
   @Transactional
   public PublishedRealmCatalogSnapshot materializePublishedSnapshot(
@@ -136,7 +136,11 @@ public class InitialAdmissionBindCatalogRepository {
         policySet);
     lockPublishedTenant(exactNamespace, tenantId, canonicalTenantId);
     requireRetainedAssociationMatches(
-        exactNamespace, tenantId, canonicalTenantId, sourceGameRowId, sourceGameTenantKey,
+        exactNamespace,
+        tenantId,
+        canonicalTenantId,
+        sourceGameRowId,
+        sourceGameTenantKey,
         provenanceKind);
 
     Optional<PublishedRealmCatalogSnapshot> exactVersion =
@@ -157,8 +161,7 @@ public class InitialAdmissionBindCatalogRepository {
     }
 
     Record current = latestSnapshotHeader(exactNamespace, tenantId);
-    long catalogRevision =
-        current == null ? 1L : Math.addExact(current.get(CATALOG_REVISION), 1L);
+    long catalogRevision = current == null ? 1L : Math.addExact(current.get(CATALOG_REVISION), 1L);
     if (current != null && current.get(VERSION_NUMBER) >= policySet.versionNumber()) {
       throw new IllegalStateException(
           "PUBLISHED_REALM_CATALOG_STALE_VERSION: owner version is not newer than the stored snapshot");
@@ -181,8 +184,8 @@ public class InitialAdmissionBindCatalogRepository {
       RealmEntryPolicy policy = evidence.policy();
       UUID realmId = resolveRealmIdentity(exactNamespace, tenantId, canonicalTenantId, policy);
       NamespaceAssignment namespace =
-          resolveNamespace(exactNamespace, tenantId, canonicalTenantId, catalogRevision, realmId,
-              evidence);
+          resolveNamespace(
+              exactNamespace, tenantId, canonicalTenantId, catalogRevision, realmId, evidence);
       insertPublishedEntry(exactNamespace, tenantId, catalogRevision, realmId, namespace, evidence);
       entries.add(
           new PublishedRealmCatalogEntry(
@@ -213,8 +216,12 @@ public class InitialAdmissionBindCatalogRepository {
   @Transactional(readOnly = true, propagation = Propagation.NOT_SUPPORTED)
   public Optional<PublishedRealmCatalogSnapshot> findPublishedSnapshot(
       String exactNamespace, long tenantId, long catalogRevision) {
-    if (exactNamespace == null || exactNamespace.isBlank() || tenantId <= 0 || catalogRevision <= 0) {
-      throw new IllegalArgumentException("Exact namespace, tenant, and catalog revision are required");
+    if (exactNamespace == null
+        || exactNamespace.isBlank()
+        || tenantId <= 0
+        || catalogRevision <= 0) {
+      throw new IllegalArgumentException(
+          "Exact namespace, tenant, and catalog revision are required");
     }
     return findPublishedSnapshotInTransaction(exactNamespace, tenantId, catalogRevision);
   }
@@ -355,7 +362,7 @@ public class InitialAdmissionBindCatalogRepository {
     String policySetDigest = Objects.requireNonNull(header.get(POLICY_SET_DIGEST));
     int policyCount = Objects.requireNonNull(header.get(POLICY_COUNT));
 
-    List<Record> rows =
+    List<? extends Record> rows =
         dsl.selectFrom(PUBLISHED_ENTRY)
             .where(
                 TARGET_NAMESPACE
@@ -502,10 +509,7 @@ public class InitialAdmissionBindCatalogRepository {
   }
 
   private UUID resolveRealmIdentity(
-      String exactNamespace,
-      long tenantId,
-      UUID canonicalTenantId,
-      RealmEntryPolicy policy) {
+      String exactNamespace, long tenantId, UUID canonicalTenantId, RealmEntryPolicy policy) {
     Record existing =
         dsl.selectFrom(PUBLISHED_IDENTITY)
             .where(
@@ -552,7 +556,11 @@ public class InitialAdmissionBindCatalogRepository {
       PublishedRealmEntryPolicyEvidence evidence) {
     Record previous =
         dsl.selectFrom(PUBLISHED_ENTRY)
-            .where(TARGET_NAMESPACE.eq(exactNamespace).and(TENANT_ID.eq(tenantId)).and(REALM_ID.eq(realmId)))
+            .where(
+                TARGET_NAMESPACE
+                    .eq(exactNamespace)
+                    .and(TENANT_ID.eq(tenantId))
+                    .and(REALM_ID.eq(realmId)))
             .orderBy(CATALOG_REVISION.desc())
             .limit(1)
             .fetchOne();
@@ -594,9 +602,7 @@ public class InitialAdmissionBindCatalogRepository {
     Record existing =
         dsl.selectFrom(PUBLISHED_SHARED_NAMESPACE)
             .where(
-                TARGET_NAMESPACE
-                    .eq(exactNamespace)
-                    .and(ALLOCATED_TENANT_ID.eq(canonicalTenantId)))
+                TARGET_NAMESPACE.eq(exactNamespace).and(ALLOCATED_TENANT_ID.eq(canonicalTenantId)))
             .fetchOne();
     if (existing != null) {
       UUID namespaceId = Objects.requireNonNull(existing.get(IDENTITY_NAMESPACE_ID));
@@ -664,9 +670,7 @@ public class InitialAdmissionBindCatalogRepository {
                 ASSOCIATION_PROVENANCE_KIND)
             .from(RETAINED_ASSOCIATION)
             .where(
-                TARGET_NAMESPACE
-                    .eq(exactNamespace)
-                    .and(CANONICAL_TENANT_ID.eq(canonicalTenantId)))
+                TARGET_NAMESPACE.eq(exactNamespace).and(CANONICAL_TENANT_ID.eq(canonicalTenantId)))
             .fetchOne();
     if (association == null
         || !exactNamespace.equals(association.get(TARGET_NAMESPACE))
@@ -711,8 +715,7 @@ public class InitialAdmissionBindCatalogRepository {
         || sourceGameRowId <= 0
         || sourceGameTenantKey == null
         || sourceGameTenantKey.isBlank()
-        || !("NEW_GAME_ROW".equals(provenanceKind)
-            || "RETAINED_GAME_V29".equals(provenanceKind))
+        || !("NEW_GAME_ROW".equals(provenanceKind) || "RETAINED_GAME_V29".equals(provenanceKind))
         || policySet == null
         || !canonicalTenantId.equals(policySet.canonicalTenantId())
         || !policySet.hasValidDigest(OBJECT_MAPPER)) {
