@@ -6,6 +6,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import net.firedevops.firemud.common.config.PostgresProperties;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import org.jooq.DSLContext;
@@ -20,6 +21,8 @@ import org.springframework.stereotype.Repository;
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class VersionRepository {
+  private static final String ENTITY_DIGEST_BASELINE_MIGRATION_VERSION_LOCK_FUNCTION_NAME =
+      "lock_version_for_entity_digest_baseline_migration";
   private static final Table<?> VERSION_TABLE = DSL.table(DSL.name("version"));
   private static final Field<Long> ID = DSL.field(DSL.name("id"), Long.class);
   private static final Field<String> TENANT_ID = DSL.field(DSL.name("tenant_id"), String.class);
@@ -42,9 +45,17 @@ public class VersionRepository {
       DSL.field(DSL.name("updated_at"), Timestamp.class);
 
   private final DSLContext dsl;
+  private final String entityDigestBaselineMigrationVersionLockFunction;
 
-  public VersionRepository(DSLContext dsl) {
-    this.dsl = dsl;
+  public VersionRepository(DSLContext dsl, PostgresProperties postgres) {
+    this.dsl = Objects.requireNonNull(dsl);
+    String schema = Objects.requireNonNull(postgres).getSchema();
+    if (schema == null || schema.isBlank()) {
+      throw new IllegalArgumentException("Game Design PostgreSQL schema must be configured");
+    }
+    this.entityDigestBaselineMigrationVersionLockFunction =
+        dsl.render(
+            DSL.quotedName(schema, ENTITY_DIGEST_BASELINE_MIGRATION_VERSION_LOCK_FUNCTION_NAME));
   }
 
   public List<Version> findAllByTenantIdOrderByVersionNumberAsc(String tenantId) {
@@ -89,8 +100,29 @@ public class VersionRepository {
   }
 
   /**
-   * Returns every published script-patch candidate for an exact tenant/base/patch scope. Callers
-   * reject anything other than one row so duplicate retained scope is fail-closed.
+   * Reads and locks the exact version row through the restricted migration-only database function.
+   * The function performs the lock with its owner privileges so the migration writer need not have
+   * direct Version UPDATE privilege.
+   */
+  public Optional<Version> findByTenantIdAndIdForEntityDigestBaselineMigration(
+      String tenantId, Long id) {
+    return Optional.ofNullable(
+        dsl.resultQuery(
+                "SELECT id, tenant_id, version_number, version_state, version_state_epoch, "
+                    + "script_patch_version, base_version_id, is_script_only, notes, "
+                    + "created_at, updated_at FROM "
+                    + entityDigestBaselineMigrationVersionLockFunction
+                    + "(?, ?)",
+                tenantId,
+                id)
+            .fetchOne(this::toEntity));
+  }
+
+  /**
+   * Returns every retained publication metadata candidate for an exact tenant/base/patch scope.
+   * Callers reject anything other than one row so missing or duplicate retained scope is
+   * fail-closed. Historical ACTIVE and RETIRED rows remain valid metadata for this lookup; new
+   * runtime activation admission applies its own PUBLISHED-only gate.
    */
   public List<Version> findByTenantIdAndBaseVersionIdAndScriptPatchVersionAndPublishedScriptOnly(
       String tenantId, Long baseVersionId, String scriptPatchVersion) {
@@ -100,7 +132,11 @@ public class VersionRepository {
                 .eq(tenantId)
                 .and(BASE_VERSION_ID.eq(baseVersionId))
                 .and(SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
-                .and(VERSION_STATE.eq(VersionLifecycleState.PUBLISHED.name()))
+                .and(
+                    VERSION_STATE.in(
+                        VersionLifecycleState.PUBLISHED.name(),
+                        VersionLifecycleState.ACTIVE.name(),
+                        VersionLifecycleState.RETIRED.name()))
                 .and(IS_SCRIPT_ONLY.isTrue()))
         .orderBy(VERSION_NUMBER.desc(), ID.desc())
         .fetch(this::toEntity);

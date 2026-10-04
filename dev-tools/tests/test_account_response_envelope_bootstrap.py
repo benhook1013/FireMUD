@@ -172,7 +172,12 @@ class AccountResponseEnvelopeBootstrapTest(unittest.TestCase):
         self.assertEqual({"bare-login", "connect-token"}, set(rotated_manifest.keys[rotated_manifest.active_key_id]))
 
         fake_kubectl = FakeKubectl()
-        with patch.object(MATERIALIZER.subprocess, "run", side_effect=fake_kubectl):
+        # These fake Kubernetes transcripts prove offline behavior only; they
+        # do not authorize or establish live target-cluster delivery.
+        with (
+            patch.object(MATERIALIZER, "_require_target_cluster_binding", return_value=None),
+            patch.object(MATERIALIZER.subprocess, "run", side_effect=fake_kubectl),
+        ):
             self.assertTrue(
                 MATERIALIZER.materialize(
                     self.output,
@@ -234,7 +239,12 @@ class AccountResponseEnvelopeBootstrapTest(unittest.TestCase):
         self.assertEqual(initial.materializer_username, rotated.materializer_username)
 
         fake_kubectl = FakeKubectl()
-        with patch.object(MATERIALIZER.subprocess, "run", side_effect=fake_kubectl):
+        # These fake Kubernetes transcripts prove offline behavior only; they
+        # do not authorize or establish live target-cluster delivery.
+        with (
+            patch.object(MATERIALIZER, "_require_target_cluster_binding", return_value=None),
+            patch.object(MATERIALIZER.subprocess, "run", side_effect=fake_kubectl),
+        ):
             self.assertTrue(
                 MATERIALIZER.materialize(
                     self.output,

@@ -5,6 +5,7 @@ import static net.firedevops.firemud.socialgroups.jooq.tables.AccountFriendLinks
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import net.firedevops.firemud.socialgroups.entity.AccountFriendLink;
 import net.firedevops.firemud.socialgroups.jooq.tables.records.AccountFriendLinksRecord;
 import org.jooq.DSLContext;
@@ -24,7 +25,7 @@ public class AccountFriendLinkRepository {
   }
 
   public List<AccountFriendLink> findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(
-      Long tenantId, Long accountId, String status) {
+      Long tenantId, UUID accountId, String status) {
     var reciprocal = ACCOUNT_FRIEND_LINKS.as("reciprocal_friend_link");
     return dsl.selectFrom(ACCOUNT_FRIEND_LINKS)
         .where(
@@ -52,7 +53,7 @@ public class AccountFriendLinkRepository {
   }
 
   public List<AccountFriendLink> findByTenantIdAndAccountIdAndStatus(
-      Long tenantId, Long accountId, String status) {
+      Long tenantId, UUID accountId, String status) {
     return dsl.selectFrom(ACCOUNT_FRIEND_LINKS)
         .where(
             ACCOUNT_FRIEND_LINKS
@@ -65,7 +66,7 @@ public class AccountFriendLinkRepository {
   }
 
   public Optional<AccountFriendLink> findFirstByTenantIdAndAccountIdAndFriendAccountIdAndStatus(
-      Long tenantId, Long accountId, Long friendAccountId, String status) {
+      Long tenantId, UUID accountId, UUID friendAccountId, String status) {
     return dsl.selectFrom(ACCOUNT_FRIEND_LINKS)
         .where(
             ACCOUNT_FRIEND_LINKS

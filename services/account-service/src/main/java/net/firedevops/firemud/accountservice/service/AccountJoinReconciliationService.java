@@ -17,6 +17,7 @@ import net.firedevops.firemud.accountservice.dto.AccountAuditEnvelope;
 import net.firedevops.firemud.accountservice.dto.MembershipTransitionReceipt;
 import net.firedevops.firemud.accountservice.dto.MembershipTransitionReceiptDigest;
 import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository.JoinAuditEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Checkpoint;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
@@ -118,8 +119,7 @@ public class AccountJoinReconciliationService {
     Objects.requireNonNull(now, "JOIN reconciliation time is required");
     final List<JoinOperation> dueOperations;
     try {
-      dueOperations =
-          joinOperationRepository.findDuePendingReconciliation(now, batchSize, maxAttempts);
+      dueOperations = joinOperationRepository.findDuePendingReconciliation(now, batchSize);
     } catch (RuntimeException ex) {
       failures.increment();
       logger.warn(
@@ -158,7 +158,13 @@ public class AccountJoinReconciliationService {
           "JOIN reconciliation readback failed for request {} ({})",
           candidate.requestId(),
           ex.getClass().getSimpleName());
-      recordUnavailableAttempt(candidate, now);
+      ReconciliationResult fallbackResult = recordUnavailableAttempt(candidate, now);
+      if (fallbackResult == ReconciliationResult.ATTEMPT_RECORDED) {
+        unresolved.increment();
+      } else if (fallbackResult == ReconciliationResult.MAX_ATTEMPTS_REACHED) {
+        unresolved.increment();
+        maxAttemptsReached.increment();
+      }
     }
   }
 
@@ -170,7 +176,6 @@ public class AccountJoinReconciliationService {
     if (operation == null
         || operation.accountId() != candidate.accountId()
         || !"PENDING".equals(operation.status())
-        || operation.reconciliationAttemptCount() >= maxAttempts
         || operation.nextReconciliationAttemptAt() == null
         || operation.nextReconciliationAttemptAt().isAfter(now)) {
       return ReconciliationResult.SKIPPED;
@@ -182,7 +187,7 @@ public class AccountJoinReconciliationService {
     }
 
     JoinMembershipProof membership = null;
-    AccountAuditEnvelope envelope = null;
+    JoinAuditEvidence auditEvidence = null;
     MembershipTransitionReceipt transitionReceipt = null;
     String outcome = null;
     if (unresolvedReason == null) {
@@ -231,7 +236,7 @@ public class AccountJoinReconciliationService {
       if (unresolvedReason == null && transitionReceipt == null) {
         unresolvedReason = "MEMBERSHIP_TRANSITION_RECEIPT_ABSENT";
       } else if (unresolvedReason == null) {
-        envelope =
+        auditEvidence =
             auditOutboxRepository
                 .findJoinEnvelopeForUpdate(
                     joinAuditEventId(operation.requestId()), operation.tenantId())
@@ -239,16 +244,18 @@ public class AccountJoinReconciliationService {
         if (Objects.equals(operation.requestId(), transitionReceipt.requestId())) {
           if (!transitionReceiptMatches(operation, membership, transitionReceipt)) {
             unresolvedReason = "MEMBERSHIP_TRANSITION_RECEIPT_MISMATCH";
-          } else if (envelope == null) {
+          } else if (auditEvidence == null) {
             unresolvedReason = "JOIN_AUDIT_ENVELOPE_ABSENT";
-          } else if (!auditEnvelopeMatches(operation, membership, envelope)) {
+          } else if (!auditEnvelopeMatches(operation, membership, auditEvidence.envelope())) {
             unresolvedReason = "JOIN_AUDIT_ENVELOPE_UNCLEAR";
+          } else if (!verifiedJoinAuditDelivery(auditEvidence)) {
+            unresolvedReason = "JOIN_AUDIT_RECEIPT_UNVERIFIED";
           } else {
             outcome = "JOINED";
           }
         } else if (!existingMembershipHistoryMatches(operation, membership, transitionReceipt)) {
           unresolvedReason = "MEMBERSHIP_TRANSITION_RECEIPT_MISMATCH";
-        } else if (envelope != null) {
+        } else if (auditEvidence != null) {
           // A request-specific audit without its matching transition receipt is contradictory.
           unresolvedReason = "JOIN_AUDIT_ENVELOPE_UNCLEAR";
         } else {
@@ -458,6 +465,13 @@ public class AccountJoinReconciliationService {
             || "MEMBERSHIP_REACTIVATED".equals(receipt.transitionType()));
   }
 
+  private static boolean verifiedJoinAuditDelivery(JoinAuditEvidence evidence) {
+    return "COMMITTED".equals(evidence.deliveryStatus())
+        && Integer.valueOf(1).equals(evidence.auditProjectionVersion())
+        && hasText(evidence.receiptId())
+        && hasText(evidence.projectionId());
+  }
+
   private static JoinAuditPayload parseJoinAuditPayload(String json) {
     try {
       JsonNode root = AUDIT_JSON.readTree(json);
@@ -506,15 +520,17 @@ public class AccountJoinReconciliationService {
             operation.requestId(),
             operation.reconciliationAttemptCount(),
             maxAttempts,
+            operation.nextReconciliationAttemptAt(),
             now,
             reason,
             nextAttemptAt(now));
     if (!recorded) {
       return ReconciliationResult.SKIPPED;
     }
-    if (operation.reconciliationAttemptCount() + 1 >= maxAttempts) {
+    if (operation.reconciliationAttemptCount() < maxAttempts
+        && operation.reconciliationAttemptCount() + 1 >= maxAttempts) {
       logger.warn(
-          "JOIN reconciliation reached its attempt limit for request {}; it remains PENDING and caller-retryable (reason {})",
+          "JOIN reconciliation reached its diagnostic attempt threshold for request {}; exact readback will continue with backoff while it remains PENDING (reason {})",
           operation.requestId(),
           reason);
       return ReconciliationResult.MAX_ATTEMPTS_REACHED;
@@ -526,28 +542,30 @@ public class AccountJoinReconciliationService {
     return ReconciliationResult.ATTEMPT_RECORDED;
   }
 
-  private void recordUnavailableAttempt(JoinOperation candidate, Instant now) {
+  private ReconciliationResult recordUnavailableAttempt(JoinOperation candidate, Instant now) {
     try {
-      joinTransactionTemplate.execute(
-          transactionStatus -> {
-            joinOperationRepository.lockAccount(candidate.accountId());
-            JoinOperation operation =
-                joinOperationRepository.findForUpdate(candidate.requestId()).orElse(null);
-            if (operation == null
-                || operation.accountId() != candidate.accountId()
-                || !"PENDING".equals(operation.status())
-                || operation.reconciliationAttemptCount() >= maxAttempts
-                || operation.nextReconciliationAttemptAt() == null
-                || operation.nextReconciliationAttemptAt().isAfter(now)) {
-              return ReconciliationResult.SKIPPED;
-            }
-            return recordUnresolvedAttempt(operation, now, "JOIN_READBACK_UNAVAILABLE");
-          });
+      ReconciliationResult result =
+          joinTransactionTemplate.execute(
+              transactionStatus -> {
+                joinOperationRepository.lockAccount(candidate.accountId());
+                JoinOperation operation =
+                    joinOperationRepository.findForUpdate(candidate.requestId()).orElse(null);
+                if (operation == null
+                    || operation.accountId() != candidate.accountId()
+                    || !"PENDING".equals(operation.status())
+                    || operation.nextReconciliationAttemptAt() == null
+                    || operation.nextReconciliationAttemptAt().isAfter(now)) {
+                  return ReconciliationResult.SKIPPED;
+                }
+                return recordUnresolvedAttempt(operation, now, "JOIN_READBACK_UNAVAILABLE");
+              });
+      return result == null ? ReconciliationResult.SKIPPED : result;
     } catch (RuntimeException ex) {
       logger.warn(
           "JOIN reconciliation could not persist a retry diagnostic for request {} ({})",
           candidate.requestId(),
           ex.getClass().getSimpleName());
+      return ReconciliationResult.SKIPPED;
     }
   }
 

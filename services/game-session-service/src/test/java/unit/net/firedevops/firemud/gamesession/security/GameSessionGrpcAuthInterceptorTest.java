@@ -18,6 +18,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 class GameSessionGrpcAuthInterceptorTest {
+  private static final String ACCOUNT_ID = "018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a";
   private JwtUtil jwtUtil;
   private AuthTokenInterceptor interceptor;
 
@@ -81,7 +82,9 @@ class GameSessionGrpcAuthInterceptorTest {
 
   @Test
   void allowsValidTokenForMutableMethods() {
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("player")));
+    String token =
+        jwtUtil.generateToken(
+            ACCOUNT_ID, Map.of("accountId", ACCOUNT_ID, "globalRoles", List.of("player")));
     TestServerCall call =
         new TestServerCall(GameSessionServiceGrpc.getStartSessionMethod().getFullMethodName());
     Metadata headers = new Metadata();

@@ -348,6 +348,7 @@ jobs:
           bash ./dev-tools/tests/ci-lightweight-scope-contract.sh
           bash ./dev-tools/tests/workflow-version-authority-contract.sh
           bash ./dev-tools/tests/workflow-tool-updater-contract.sh
+          bash ./dev-tools/tests/publisher-checksum-contract.sh
           bash ./dev-tools/tests/jacoco-combined-report-contract.sh
           bash ./dev-tools/tests/pr-review-controller-contract.sh
           bash ./dev-tools/tests/testcontainers-disabled-contract.sh
@@ -382,6 +383,7 @@ jobs:
           bash ./dev-tools/tests/backup-verifier-image-contract.sh
           bash ./dev-tools/tests/kubectl-version-skew-contract.sh
           bash ./dev-tools/tests/helm-transaction-proof-contract.sh
+          bash ./dev-tools/tests/helm-entity-digest-baseline-migration-contract.sh
           bash ./dev-tools/tests/preview-image-tag-contract.sh
           bash ./dev-tools/tests/preview-merge-image-tag-contract.sh
           bash ./dev-tools/tests/overlay-preflight-contract.sh
@@ -499,7 +501,7 @@ jobs:
           node-version-file: '.node-version'
 
       - name: ⚙️ Set Up Gradle
-        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
         with:
           build-scan-publish: true
           build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
@@ -535,7 +537,7 @@ jobs:
           node-version-file: '.node-version'
 
       - name: ⚙️ Set Up Gradle
-        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
         with:
           build-scan-publish: true
           build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
@@ -932,7 +934,7 @@ jobs:
           java-version: ${{ matrix.java-version }}
 
       - name: ⚙️ Set Up Gradle
-        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
         with:
           build-scan-publish: true
           build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
@@ -949,6 +951,7 @@ jobs:
             --strict \
             --require-suite integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest \
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest#appliesAuditedAssociationForFreshAndRetainedGameSources()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest#versionLockRepositoryUsesConfiguredIsolatedOwnerSchema()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest#concurrentExactFirstWritersReturnOneImmutableReceipt()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest#ownerRollbackLeavesNoClaimAndLostAcknowledgementRetryReadsExactReceipt()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest#databaseRejectsAssociationUpdatesDeletesTruncatesAndContradictorySourceInsert()' \

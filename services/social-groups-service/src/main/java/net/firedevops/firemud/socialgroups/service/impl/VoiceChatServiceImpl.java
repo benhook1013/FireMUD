@@ -5,6 +5,7 @@ import java.time.Instant;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.socialgroups.dto.VoiceTokenDto;
 import net.firedevops.firemud.socialgroups.dto.VoiceTokenRequestDto;
@@ -27,11 +28,11 @@ public class VoiceChatServiceImpl implements VoiceChatService {
   @Override
   @Timed(value = "voice.token.create")
   public VoiceTokenDto createToken(VoiceTokenRequestDto request) {
-    logger.info("Issuing voice token for account {}", request.accountId());
+    String accountId = JwtClaims.requireAccountId(request.accountId(), "accountId");
+    logger.info("Issuing voice token for account {}", accountId);
     String token =
         jwtUtil.generateToken(
-            request.accountId().toString(),
-            Map.of("tenantId", request.tenantId(), "channelId", request.channelId()));
+            accountId, Map.of("tenantId", request.tenantId(), "channelId", request.channelId()));
     Instant expiresAt = Instant.ofEpochMilli(System.currentTimeMillis() + expirationMs);
     return new VoiceTokenDto(token, expiresAt);
   }

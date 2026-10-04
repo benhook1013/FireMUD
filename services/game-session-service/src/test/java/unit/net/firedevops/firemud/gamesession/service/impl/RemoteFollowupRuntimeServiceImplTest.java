@@ -162,16 +162,50 @@ class RemoteFollowupRuntimeServiceImplTest {
 
   @Test
   void scheduleFollowupRejectsPinnedPatchWithoutAnExactPositiveBase() {
+    for (Long scriptPatchBaseVersionId : new Long[] {null, 0L, -1L}) {
+      IllegalArgumentException error =
+          assertThrows(
+              IllegalArgumentException.class,
+              () ->
+                  service.scheduleFollowup(
+                      scheduleRequest(
+                          7L, 8L, 4L, 25L, "followup-1", "effect-1", scriptPatchBaseVersionId)));
+
+      assertEquals(
+          "script_patch_base_version_id must be positive when script_patch_version is present",
+          error.getMessage());
+    }
+
+    verifyNoInteractions(coordinatorRepository, followupRepository);
+  }
+
+  @Test
+  void scheduleFollowupRejectsSourceCommandWithDifferentPatch() {
+    GameplayCommand command = gameplayCommand();
+    command.setScriptPatchVersion("patch-2");
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+        .thenReturn(Optional.of(command));
+
     IllegalArgumentException error =
         assertThrows(
-            IllegalArgumentException.class,
-            () ->
-                service.scheduleFollowup(
-                    scheduleRequest(7L, 8L, 4L, 25L, "followup-1", "effect-1", null)));
+            IllegalArgumentException.class, () -> service.scheduleFollowup(scheduleRequest()));
 
-    assertEquals(
-        "script_patch_base_version_id must be positive when script_patch_version is present",
-        error.getMessage());
+    assertEquals("source script patch tuple does not match admitted command", error.getMessage());
+    verifyNoInteractions(coordinatorRepository, followupRepository);
+  }
+
+  @Test
+  void scheduleFollowupRejectsSourceCommandWithDifferentPatchBase() {
+    GameplayCommand command = gameplayCommand();
+    command.setScriptPatchBaseVersionId(101L);
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+        .thenReturn(Optional.of(command));
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class, () -> service.scheduleFollowup(scheduleRequest()));
+
+    assertEquals("source script patch tuple does not match admitted command", error.getMessage());
     verifyNoInteractions(coordinatorRepository, followupRepository);
   }
 
@@ -3501,6 +3535,7 @@ class RemoteFollowupRuntimeServiceImplTest {
     command.setAutomationWorkItemId("work-1");
     command.setScriptId("script-1");
     command.setScriptPatchVersion("patch-1");
+    command.setScriptPatchBaseVersionId(100L);
     command.setPluginId("plugin-1");
     command.setPluginVersionId("plugin-v1");
     return command;

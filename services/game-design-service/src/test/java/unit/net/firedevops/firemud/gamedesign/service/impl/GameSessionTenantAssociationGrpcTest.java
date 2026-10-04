@@ -9,6 +9,7 @@ import com.google.protobuf.UnknownFieldSet;
 import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import java.sql.SQLException;
 import java.util.Base64;
 import java.util.HashSet;
 import java.util.Optional;
@@ -23,10 +24,12 @@ import net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociation
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyGameSessionTenantAssociationRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyGameSessionTenantAssociationResponse;
+import org.jooq.exception.DataAccessException;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.env.YamlPropertySourceLoader;
 import org.springframework.core.env.PropertySource;
 import org.springframework.core.io.FileSystemResource;
+import org.springframework.dao.DataAccessResourceFailureException;
 
 class GameSessionTenantAssociationGrpcTest {
   private static final UUID OPERATION = UUID.fromString("11111111-1111-4111-8111-111111111111");
@@ -135,13 +138,64 @@ class GameSessionTenantAssociationGrpcTest {
     when(repository.read(OPERATION, TENANT, 41L, "test"))
         .thenReturn(Optional.empty())
         .thenThrow(new IllegalStateException("contradictory stored evidence"))
-        .thenThrow(new org.jooq.exception.DataAccessException("storage unavailable"));
+        .thenThrow(
+            new DataAccessException(
+                "private storage detail", new SQLException("private connection detail", "08006")));
     assertThat(call(request(), GAME_SESSION).error).isEqualTo(Status.Code.NOT_FOUND);
     assertThat(call(request(), GAME_SESSION).error).isEqualTo(Status.Code.FAILED_PRECONDITION);
     Observer unavailable = call(request(), GAME_SESSION);
     assertThat(unavailable.error).isEqualTo(Status.Code.UNAVAILABLE);
+    assertThat(unavailable.description)
+        .isEqualTo("Retained Game Session association could not be read");
     assertThat(unavailable.value).isNull();
     assertThat(unavailable.completed).isFalse();
+  }
+
+  @Test
+  void connectionSqlStateFailureIsSanitizedUnavailableWithoutPartialContent() {
+    when(repository.read(OPERATION, TENANT, 41L, "test"))
+        .thenThrow(
+            new DataAccessException(
+                "private jOOQ detail",
+                new IllegalStateException(
+                    "private wrapper detail", new SQLException("private SQL detail", "08006"))));
+
+    assertReadFailure(Status.Code.UNAVAILABLE);
+  }
+
+  @Test
+  void permanentSqlStateFailureIsSanitizedInternalWithoutPartialContent() {
+    when(repository.read(OPERATION, TENANT, 41L, "test"))
+        .thenThrow(
+            new DataAccessException(
+                "private jOOQ detail", new SQLException("private SQL detail", "42000")));
+
+    assertReadFailure(Status.Code.INTERNAL);
+  }
+
+  @Test
+  void genericNonconnectionJooqFailureIsSanitizedInternalWithoutPartialContent() {
+    when(repository.read(OPERATION, TENANT, 41L, "test"))
+        .thenThrow(new DataAccessException("private jOOQ detail"));
+
+    assertReadFailure(Status.Code.INTERNAL);
+  }
+
+  @Test
+  void springResourceFailureIsSanitizedUnavailableWithoutPartialContent() {
+    when(repository.read(OPERATION, TENANT, 41L, "test"))
+        .thenThrow(new DataAccessResourceFailureException("private resource detail"));
+
+    assertReadFailure(Status.Code.UNAVAILABLE);
+  }
+
+  private void assertReadFailure(Status.Code expectedCode) {
+    Observer observer = call(request(), GAME_SESSION);
+    assertThat(observer.error).isEqualTo(expectedCode);
+    assertThat(observer.description)
+        .isEqualTo("Retained Game Session association could not be read");
+    assertThat(observer.value).isNull();
+    assertThat(observer.completed).isFalse();
   }
 
   @Test
@@ -252,6 +306,7 @@ class GameSessionTenantAssociationGrpcTest {
       implements StreamObserver<ResolveLegacyGameSessionTenantAssociationResponse> {
     private ResolveLegacyGameSessionTenantAssociationResponse value;
     private Status.Code error;
+    private String description;
     private boolean completed;
 
     @Override
@@ -261,7 +316,9 @@ class GameSessionTenantAssociationGrpcTest {
 
     @Override
     public void onError(Throwable error) {
-      this.error = Status.fromThrowable(error).getCode();
+      Status status = Status.fromThrowable(error);
+      this.error = status.getCode();
+      this.description = status.getDescription();
     }
 
     @Override

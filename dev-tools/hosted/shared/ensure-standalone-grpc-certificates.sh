@@ -30,6 +30,7 @@ workloads=(
   automation-scripting-service
   account-service
   game-session-service
+  social-groups-service
 )
 
 write_certificates() {

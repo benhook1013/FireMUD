@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 
+import javax.sql.DataSource;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.gamedesign.service.impl.EntityDigestBaselineMigrationService;
 import org.junit.jupiter.api.Test;
@@ -74,6 +75,44 @@ class EntityDigestBaselineMigrationJobRunnerTest {
   }
 
   @Test
+  void requiresFlywayDisabledAndTheModeSpecificDatabaseRole() {
+    assertThatCode(
+            () ->
+                EntityDigestBaselineMigrationJobRunner.requireDatabaseAuthority(
+                    "enumerate", "firemud_game_design_baseline_reader", false))
+        .doesNotThrowAnyException();
+    assertThatCode(
+            () ->
+                EntityDigestBaselineMigrationJobRunner.requireDatabaseAuthority(
+                    "preflight", "firemud_game_design_baseline_reader", false))
+        .doesNotThrowAnyException();
+    assertThatCode(
+            () ->
+                EntityDigestBaselineMigrationJobRunner.requireDatabaseAuthority(
+                    "migrate", "firemud_game_design_baseline_writer", false))
+        .doesNotThrowAnyException();
+
+    assertThatThrownBy(
+            () ->
+                EntityDigestBaselineMigrationJobRunner.requireDatabaseAuthority(
+                    "enumerate", "firemud_game_design_baseline_writer", false))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("migration DB credential does not match the required mode");
+    assertThatThrownBy(
+            () ->
+                EntityDigestBaselineMigrationJobRunner.requireDatabaseAuthority(
+                    "migrate", "firemud", false))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("migration DB credential does not match the required mode");
+    assertThatThrownBy(
+            () ->
+                EntityDigestBaselineMigrationJobRunner.requireDatabaseAuthority(
+                    "migrate", "firemud_game_design_baseline_writer", true))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("migration Job requires Flyway to be disabled");
+  }
+
+  @Test
   void constructsWithTheRuntimeMapperWhenMigrationIsEnabled() {
     contextRunner
         .withPropertyValues("firemud.entity-baseline-migration.enabled=true")
@@ -100,6 +139,11 @@ class EntityDigestBaselineMigrationJobRunnerTest {
     @Bean
     EntityDigestBaselineMigrationService migrationService() {
       return mock(EntityDigestBaselineMigrationService.class);
+    }
+
+    @Bean
+    DataSource dataSource() {
+      return mock(DataSource.class);
     }
   }
 }

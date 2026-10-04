@@ -64,6 +64,7 @@ import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.accountservice.service.PingService;
 import net.firedevops.firemud.accountservice.service.exception.AccountAlreadyExistsException;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
+import net.firedevops.firemud.common.EmailCanonicalization;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.AuthorityTuple;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
@@ -84,6 +85,8 @@ import tools.jackson.databind.json.JsonMapper;
 public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBase {
   private static final Logger logger = LoggerFactory.getLogger(AccountGrpcService.class);
   private static final int MAX_ACCOUNT_IDS_PER_REQUEST = 100;
+  private static final String AUTHORITY_UNAVAILABLE_MESSAGE =
+      "Account authority unavailable; retry later";
   private final PingService pingService;
   private final AccountService accountService;
   private final MeterRegistry meterRegistry;
@@ -157,6 +160,10 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     } catch (InvalidRequestException | IllegalArgumentException ex) {
       response.setError(
           appError("IssueDirectTextConnectScope", "INVALID_ARGUMENT", ex.getMessage()));
+    } catch (RuntimeException ignored) {
+      response.setError(
+          appError(
+              "IssueDirectTextConnectScope", "AUTH_UNAVAILABLE", AUTHORITY_UNAVAILABLE_MESSAGE));
     }
     responseObserver.onNext(response.build());
     responseObserver.onCompleted();
@@ -173,6 +180,9 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       requireGameSessionPeer();
       DirectTextCallerContext caller = directTextCaller(request.getPlayerContext());
       String requestId = requireText(request.getRequestId(), "requestId");
+      if (requestId.length() > JoinPublicProductionRequest.MAX_REQUEST_ID_LENGTH) {
+        throw new InvalidRequestException("JOIN requestId exceeds the maximum length", null);
+      }
       if (!requestId.equals(caller.requestId())) {
         throw new InvalidRequestException("Player context and JOIN request ID disagree", null);
       }
@@ -198,6 +208,10 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     } catch (InvalidRequestException | IllegalArgumentException ex) {
       response.setError(
           appError("JoinPublicProductionMembership", "INVALID_ARGUMENT", ex.getMessage()));
+    } catch (RuntimeException ignored) {
+      response.setError(
+          appError(
+              "JoinPublicProductionMembership", "AUTH_UNAVAILABLE", AUTHORITY_UNAVAILABLE_MESSAGE));
     }
     responseObserver.onNext(response.build());
     responseObserver.onCompleted();
@@ -256,11 +270,11 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
         requirePositiveRequestId(context.getAccountId(), "accountId"),
         requirePositiveRequestId(context.getTenantId(), "tenantId"),
         requireCanonicalRealmId(context.getRealmId()),
-        requireText(context.getPlayableStateNamespaceId(), "playableStateNamespaceId"),
+        requireCanonicalPlayableStateNamespaceId(context.getPlayableStateNamespaceId()),
         requireText(context.getPlayableStateScope(), "playableStateScope"),
         requirePositiveRequestId(context.getGameInstanceId(), "gameInstanceId"),
         requireText(context.getSessionId(), "sessionId"),
-        context.getRequestId());
+        requireText(context.getRequestId(), "requestId"));
   }
 
   private UUID requireCanonicalRealmId(String value) {
@@ -275,6 +289,21 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       return realmId;
     } catch (IllegalArgumentException ex) {
       throw new IllegalArgumentException("realmId must be a canonical UUID", ex);
+    }
+  }
+
+  private String requireCanonicalPlayableStateNamespaceId(String value) {
+    if (value == null || value.isBlank()) {
+      throw new IllegalArgumentException("playableStateNamespaceId is required");
+    }
+    try {
+      UUID namespaceId = UUID.fromString(value);
+      if (!namespaceId.toString().equals(value)) {
+        throw new IllegalArgumentException("playableStateNamespaceId must be a canonical UUID");
+      }
+      return value;
+    } catch (IllegalArgumentException ex) {
+      throw new IllegalArgumentException("playableStateNamespaceId must be a canonical UUID", ex);
     }
   }
 
@@ -382,7 +411,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       StreamObserver<RequestEmailLoginOtpResponse> responseObserver) {
     try {
       requireGameSessionPeer();
-      accountService.requestEmailLoginOtp(request.getEmail());
+      accountService.requestEmailLoginOtp(requireEmail(request.getEmail()));
       responseObserver.onNext(RequestEmailLoginOtpResponse.newBuilder().setAccepted(true).build());
     } catch (AdminAuthorizationException ex) {
       responseObserver.onNext(
@@ -853,20 +882,20 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
         throw new InvalidRequestException(
             "accountIds must contain at most " + MAX_ACCOUNT_IDS_PER_REQUEST + " entries", null);
       }
-      java.util.List<Long> accountIds =
+      java.util.List<String> accountUuids =
           request.getAccountIdsList().stream()
-              .map(accountId -> requirePositiveRequestId(accountId, "accountId"))
+              .map(accountId -> requireCanonicalAccountUuid(accountId).toString())
               .distinct()
               .toList();
       var builder =
           net.firedevops.firemud.account.v1.ListPresenceVisibilityPoliciesResponse.newBuilder();
       accountService
-          .listPresenceVisibilityPolicies(tenantId, accountIds)
+          .listPresenceVisibilityPolicies(tenantId, accountUuids)
           .forEach(
-              (accountId, policy) ->
+              (accountUuid, policy) ->
                   builder.addPolicies(
                       net.firedevops.firemud.account.v1.PresenceVisibilityPolicyEntry.newBuilder()
-                          .setAccountId(Long.toString(accountId))
+                          .setAccountId(accountUuid)
                           .setPolicy(policy.name())
                           .build()));
       responseObserver.onNext(builder.build());
@@ -914,18 +943,29 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       String displayName = node.path("displayName").asText(null);
       String bio = node.path("bio").asText(null);
       String presenceVisibilityPolicy = node.path("presenceVisibilityPolicy").asText(null);
-      accountService.updateProfile(
-          accountId,
-          new net.firedevops.firemud.accountservice.dto.UpdateProfileRequest(
-              tenantId,
-              accountUuid.toString(),
-              displayName,
-              bio,
-              ProfilePresenceVisibilityPolicy.valueOf(
-                  presenceVisibilityPolicy == null
-                      ? ProfilePresenceVisibilityPolicy.FRIENDS_ONLY.name()
-                      : presenceVisibilityPolicy)));
-      UpdateProfileResponse response = UpdateProfileResponse.newBuilder().setSuccess(true).build();
+      var updatedProfile =
+          accountService.updateProfile(
+              accountId,
+              new net.firedevops.firemud.accountservice.dto.UpdateProfileRequest(
+                  tenantId,
+                  accountUuid.toString(),
+                  displayName,
+                  bio,
+                  ProfilePresenceVisibilityPolicy.valueOf(
+                      presenceVisibilityPolicy == null
+                          ? ProfilePresenceVisibilityPolicy.FRIENDS_ONLY.name()
+                          : presenceVisibilityPolicy)));
+      if (updatedProfile == null
+          || !accountUuid.toString().equals(updatedProfile.accountId())
+          || !Long.valueOf(tenantId).equals(updatedProfile.tenantId())) {
+        throw new IllegalStateException("Profile update readback did not match its request");
+      }
+      UpdateProfileResponse response =
+          UpdateProfileResponse.newBuilder()
+              .setSuccess(true)
+              .setAccountId(updatedProfile.accountId())
+              .setTenantId(updatedProfile.tenantId().toString())
+              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
@@ -1129,24 +1169,16 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   public void verifyEmail(
       net.firedevops.firemud.account.v1.VerifyEmailRequest request,
       StreamObserver<net.firedevops.firemud.account.v1.VerifyEmailResponse> responseObserver) {
-    try {
-      accountService.verifyEmail(
-          new net.firedevops.firemud.accountservice.dto.VerifyEmailRequest(request.getToken()));
-      var response =
-          net.firedevops.firemud.account.v1.VerifyEmailResponse.newBuilder()
-              .setSuccess(true)
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (Exception ex) {
-      var response =
-          net.firedevops.firemud.account.v1.VerifyEmailResponse.newBuilder()
-              .setSuccess(false)
-              .setError(appError("VerifyEmail", "INVALID_ARGUMENT", ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    }
+    responseObserver.onNext(
+        net.firedevops.firemud.account.v1.VerifyEmailResponse.newBuilder()
+            .setSuccess(false)
+            .setError(
+                appError(
+                    "VerifyEmail",
+                    "FAILED_PRECONDITION",
+                    "No authorized internal caller is configured"))
+            .build());
+    responseObserver.onCompleted();
   }
 
   private net.firedevops.firemud.shared.v1.ErrorDetail appError(
@@ -1162,6 +1194,14 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   private long requirePositiveRequestId(String value, String fieldName) {
     try {
       return RequestIdValidation.requirePositiveLong(value, fieldName);
+    } catch (IllegalArgumentException ex) {
+      throw new InvalidRequestException(ex.getMessage(), ex);
+    }
+  }
+
+  private String requireEmail(String value) {
+    try {
+      return EmailCanonicalization.normalize(value);
     } catch (IllegalArgumentException ex) {
       throw new InvalidRequestException(ex.getMessage(), ex);
     }

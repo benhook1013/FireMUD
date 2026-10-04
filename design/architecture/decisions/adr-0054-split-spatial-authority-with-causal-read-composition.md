@@ -50,7 +50,7 @@ For a root mutation, Game Session assigns one stable root `EffectId` to the logi
 
 - Same identity plus the same request returns the prior durable result.
 - Same identity with a different operation, target, or request digest fails closed.
-- Derived reactions use deterministic child effect identities rather than accidental reuse. Any future allocator or replay binding remains subject to the non-authoritative [ADR 0183 proposal](./adr-0183-deterministic-effect-id-allocation-and-replay-binding.md).
+- Derived reactions retain their owner-defined child ordinal and durably persist the complete owner-scope/root/parent/ordinal-to-child-`EffectId` mapping before enqueue/apply; retries and replay reuse that mapping. This accepted child-identity contract is owned by [ADR 0075](./adr-0075-depth-cost-and-count-bounds-for-generated-effect-chains.md). Pending [ADR 0183](./adr-0183-deterministic-effect-id-allocation-and-replay-binding.md) concerns additional command-plan ordering, command-root, scalar-format, and allocation mechanics; it does not gate or redefine the accepted child mapping.
 - Participant acknowledgement means the guard and effect-visible domain rows committed together.
 - Player success waits for all declared required participants under ADR 0053.
 

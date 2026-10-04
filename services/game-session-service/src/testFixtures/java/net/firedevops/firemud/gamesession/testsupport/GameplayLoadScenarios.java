@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import net.firedevops.firemud.entitymanagement.v1.Character;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerMutation;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
@@ -34,9 +35,11 @@ public final class GameplayLoadScenarios {
     stack.insertRunningGameInstance(tenantId, firstCharacterId, gameTemplateId, false);
 
     List<PlayerSeed> players = new ArrayList<>();
+    List<Character> characters = new ArrayList<>();
     for (int i = 0; i < count; i++) {
       long characterId = characterIds[i];
       String accountUuid = UUID.randomUUID().toString();
+      String label = "player-" + (i + 1);
       long bootstrapGameInstanceId =
           stack.insertRunningGameInstance(tenantId, characterId, gameTemplateId, false);
       // Admission pointers are uniquely identified by world/realm and runtime target. Give each
@@ -62,22 +65,22 @@ public final class GameplayLoadScenarios {
                       "ALLOW_NEW",
                       GameplayCrossServiceStack.SYNTHETIC_LOAD_ACTOR,
                       "Seed per-player load-test admission pointer",
-                      "load-test:" + characterId,
-                      null,
+                      "load-test:" + accountUuid,
+                      0L,
+                      0L,
                       null));
       long sessionId = firstCharacterId + 10_000L + i + 1;
       String email = "player" + (i + 1) + "@example.com";
       stack.accountStub().mapAccountUuid(email, accountUuid);
-      stack
-          .entityStub()
-          .registerCharacterForAccountUuid(
-              accountUuid,
-              net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
-                  .setId(Long.toString(characterId))
-                  .setTenantId(Long.toString(tenantId))
-                  .setAccountId(accountUuid)
-                  .setName("player-" + (i + 1))
-                  .build());
+      Character character =
+          Character.newBuilder()
+              .setId(Long.toString(characterId))
+              .setTenantId(Long.toString(tenantId))
+              .setAccountId(accountUuid)
+              .setName(label)
+              .build();
+      stack.entityStub().registerCharacterForAccountUuid(accountUuid, character);
+      characters.add(character);
       players.add(
           new PlayerSeed(
               sessionId,
@@ -85,10 +88,11 @@ public final class GameplayLoadScenarios {
               characterId,
               accountUuid,
               email,
-              "player-" + (i + 1),
+              label,
               bootstrapWorldSlug,
               pointer.pointerVersion()));
     }
+    stack.entityStub().setCharacters(characters);
     return List.copyOf(players);
   }
 
@@ -107,7 +111,8 @@ public final class GameplayLoadScenarios {
                 "X-Realm-Slug", DEFAULT_REALM_SLUG,
                 "X-Pointer-Version", Long.toString(player.bootstrapPointerVersion())));
     try {
-      driver.enterGameplayAndWaitReady(player.username(), "swordfish", world, readyText);
+      driver.enterGameplayAndWaitReady(
+          player.username(), "swordfish", world, player.label(), readyText);
       return driver;
     } catch (Exception ex) {
       driver.close();

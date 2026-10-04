@@ -1,5 +1,6 @@
 package net.firedevops.firemud.loggingadmin.controller;
 
+import static net.firedevops.firemud.loggingadmin.AccountJwtTestTokens.accountToken;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -46,7 +47,7 @@ class RemoteCommandCoordinatorControllerTest {
     when(remoteCommandCoordinatorService.getRemoteCommandCoordinator(2L, "coord-123"))
         .thenReturn(remoteCommandCoordinatorDto());
     SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -63,7 +64,7 @@ class RemoteCommandCoordinatorControllerTest {
   void getRemoteCommandCoordinatorRejectsCrossTenantScopedAdmin() throws Exception {
     SessionContext.setContext("user", List.of(), Map.of("8", List.of("tenantAdmin")));
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
+        accountToken(jwtUtil, Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(
@@ -77,7 +78,7 @@ class RemoteCommandCoordinatorControllerTest {
   @Test
   void getRemoteCommandCoordinatorRejectsMalformedTenantIdBeforeDispatch() throws Exception {
     SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -96,7 +97,7 @@ class RemoteCommandCoordinatorControllerTest {
             org.mockito.ArgumentMatchers.eq(2L), org.mockito.ArgumentMatchers.any()))
         .thenReturn(List.of(remoteCommandCoordinatorDto()));
     SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -111,7 +112,7 @@ class RemoteCommandCoordinatorControllerTest {
   @Test
   void listRemoteCommandCoordinatorsRejectsZeroTenantIdBeforeDispatch() throws Exception {
     SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(

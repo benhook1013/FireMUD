@@ -6,8 +6,8 @@ public record FriendRosterEntryDto(
     int ordinal,
     Long friendLinkId,
     Long tenantId,
-    Long accountId,
-    Long friendAccountId,
+    String accountId,
+    String friendAccountId,
     String status,
     Instant createdAt,
     FriendPresenceDto presence) {}

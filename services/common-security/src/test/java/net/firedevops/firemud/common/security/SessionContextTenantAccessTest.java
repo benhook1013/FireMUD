@@ -1,6 +1,7 @@
 package net.firedevops.firemud.common.security;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -13,6 +14,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.web.server.ResponseStatusException;
 
 class SessionContextTenantAccessTest {
+  private static final String ACCOUNT_ID = "1111111a-1111-4111-8111-111111111111";
+  private static final String OTHER_ACCOUNT_ID = "22222222-2222-4222-8222-222222222222";
 
   @AfterEach
   void clear() {
@@ -21,7 +24,8 @@ class SessionContextTenantAccessTest {
 
   @Test
   void allowsGlobalAdminAcrossTenants() {
-    SessionContext.setContext("1", List.of("platformAdmin"), Map.of("7", List.of("tenantAdmin")));
+    SessionContext.setContext(
+        ACCOUNT_ID, List.of("platformAdmin"), Map.of("7", List.of("tenantAdmin")));
 
     assertTrue(SessionContext.hasTenantAccess(42L));
     assertDoesNotThrow(() -> SessionContext.requireTenantAccess(42L));
@@ -29,7 +33,7 @@ class SessionContextTenantAccessTest {
 
   @Test
   void allowsMatchingScopedTenantOnly() {
-    SessionContext.setContext("1", List.of(), Map.of("7", List.of("moderator")));
+    SessionContext.setContext(ACCOUNT_ID, List.of(), Map.of("7", List.of("moderator")));
 
     assertTrue(SessionContext.hasTenantAccess(7L));
     assertDoesNotThrow(() -> SessionContext.requireTenantAccess(7L));
@@ -39,39 +43,45 @@ class SessionContextTenantAccessTest {
 
   @Test
   void allowsCurrentAccountWithoutTenantRole() {
+    SessionContext.setContext(ACCOUNT_ID, List.of(), Map.of());
+
+    assertTrue(SessionContext.hasAccountAccess(7L, ACCOUNT_ID));
+    assertTrue(SessionContext.isCurrentAccount(ACCOUNT_ID));
+    assertDoesNotThrow(() -> SessionContext.requireAccountAccess(7L, ACCOUNT_ID));
+    assertFalse(SessionContext.hasAccountAccess(7L, OTHER_ACCOUNT_ID));
+    assertFalse(SessionContext.isCurrentAccount(OTHER_ACCOUNT_ID));
+    assertThrows(
+        ResponseStatusException.class,
+        () -> SessionContext.requireAccountAccess(7L, OTHER_ACCOUNT_ID));
+  }
+
+  @Test
+  void currentAccountAccessRejectsNumericAndNilAccountIds() {
+    SessionContext.setContext(ACCOUNT_ID, List.of(), Map.of());
+
+    String nilAccountId = "00000000-0000-0000-0000-000000000000";
+    assertFalse(SessionContext.isCurrentAccount("42"));
+    assertFalse(SessionContext.hasAccountAccess(7L, "42"));
+    assertFalse(SessionContext.isCurrentAccount(nilAccountId));
+    assertThrows(
+        ResponseStatusException.class, () -> SessionContext.requireAccountAccess(7L, "42"));
+  }
+
+  @Test
+  void currentAccountAccessRejectsNumericCurrentAccountClaim() {
     SessionContext.setContext("42", List.of(), Map.of());
 
-    assertTrue(SessionContext.hasAccountAccess(7L, 42L));
-    assertTrue(SessionContext.isCurrentAccount(42L));
-    assertDoesNotThrow(() -> SessionContext.requireAccountAccess(7L, 42L));
-    assertFalse(SessionContext.hasAccountAccess(7L, 43L));
-    assertFalse(SessionContext.isCurrentAccount(43L));
-    assertThrows(ResponseStatusException.class, () -> SessionContext.requireAccountAccess(7L, 43L));
+    assertFalse(SessionContext.isCurrentAccount(ACCOUNT_ID));
+    assertFalse(SessionContext.hasAccountAccess(7L, ACCOUNT_ID));
+    assertThrows(
+        ResponseStatusException.class, () -> SessionContext.requireAccountAccess(7L, ACCOUNT_ID));
   }
 
   @Test
-  void currentAccountAccessRejectsNonPositiveAccountIds() {
-    SessionContext.setContext("0", List.of(), Map.of());
+  void currentAccountIdOrNullReturnsExactCanonicalUuid() {
+    SessionContext.setContext(ACCOUNT_ID, List.of(), Map.of());
 
-    assertFalse(SessionContext.isCurrentAccount(0L));
-    assertFalse(SessionContext.hasAccountAccess(7L, 0L));
-    assertThrows(ResponseStatusException.class, () -> SessionContext.requireAccountAccess(7L, 0L));
-  }
-
-  @Test
-  void currentAccountAccessRejectsNonPositiveCurrentAccountClaim() {
-    SessionContext.setContext("-42", List.of(), Map.of());
-
-    assertFalse(SessionContext.isCurrentAccount(42L));
-    assertFalse(SessionContext.hasAccountAccess(7L, 42L));
-    assertThrows(ResponseStatusException.class, () -> SessionContext.requireAccountAccess(7L, 42L));
-  }
-
-  @Test
-  void currentAccountIdOrNullReturnsParsedAccountId() {
-    SessionContext.setContext("42", List.of(), Map.of());
-
-    assertTrue(SessionContext.currentAccountIdOrNull() == 42L);
+    assertEquals(ACCOUNT_ID, SessionContext.currentAccountIdOrNull());
   }
 
   @Test
@@ -84,11 +94,17 @@ class SessionContextTenantAccessTest {
   }
 
   @Test
-  void currentAccountIdOrNullRejectsMalformedOrNonPositiveClaim() {
-    SessionContext.setContext("not-a-long", List.of(), Map.of());
+  void currentAccountIdOrNullRejectsMalformedNumericNilAndNoncanonicalClaims() {
+    SessionContext.setContext("not-a-uuid", List.of(), Map.of());
     assertThrows(IllegalArgumentException.class, SessionContext::currentAccountIdOrNull);
 
-    SessionContext.setContext("0", List.of(), Map.of());
+    SessionContext.setContext("42", List.of(), Map.of());
+    assertThrows(IllegalArgumentException.class, SessionContext::currentAccountIdOrNull);
+
+    SessionContext.setContext("00000000-0000-0000-0000-000000000000", List.of(), Map.of());
+    assertThrows(IllegalArgumentException.class, SessionContext::currentAccountIdOrNull);
+
+    SessionContext.setContext(ACCOUNT_ID.toUpperCase(java.util.Locale.ROOT), List.of(), Map.of());
     assertThrows(IllegalArgumentException.class, SessionContext::currentAccountIdOrNull);
   }
 
@@ -108,7 +124,7 @@ class SessionContextTenantAccessTest {
 
   @Test
   void hasAuthenticatedCallerContextTreatsMalformedAccountClaimAsPresent() {
-    SessionContext.setContext("not-a-long", List.of(), Map.of());
+    SessionContext.setContext("not-a-uuid", List.of(), Map.of());
 
     assertTrue(SessionContext.hasAuthenticatedCallerContext());
   }

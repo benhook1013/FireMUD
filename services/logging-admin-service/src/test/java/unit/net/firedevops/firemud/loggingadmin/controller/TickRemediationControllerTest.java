@@ -1,5 +1,6 @@
 package net.firedevops.firemud.loggingadmin.controller;
 
+import static net.firedevops.firemud.loggingadmin.AccountJwtTestTokens.accountToken;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -70,9 +71,7 @@ class TickRemediationControllerTest {
                 2L,
                 13L,
                 2000L));
-    String token =
-        jwtUtil.generateToken(
-            "42", Map.of("accountId", "42", "globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -89,7 +88,7 @@ class TickRemediationControllerTest {
   @Test
   void getRuntimeOwnershipStatusRejectsCrossTenantScopedAdmin() throws Exception {
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
+        accountToken(jwtUtil, Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(
@@ -102,9 +101,7 @@ class TickRemediationControllerTest {
 
   @Test
   void getRuntimeOwnershipStatusRejectsMalformedTenantIdBeforeDispatch() throws Exception {
-    String token =
-        jwtUtil.generateToken(
-            "42", Map.of("accountId", "42", "globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -121,9 +118,7 @@ class TickRemediationControllerTest {
 
   @Test
   void getRuntimeOwnershipStatusRejectsMalformedGameInstanceIdBeforeDispatch() throws Exception {
-    String token =
-        jwtUtil.generateToken(
-            "42", Map.of("accountId", "42", "globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -141,9 +136,7 @@ class TickRemediationControllerTest {
   @Test
   void pauseRejectsAuthorizedCallerWhileMutationGateIsUnavailable() throws Exception {
     TickRemediationRequest request = new TickRemediationRequest(1L, "7", null, "maintenance");
-    String token =
-        jwtUtil.generateToken(
-            "42", Map.of("accountId", "42", "globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -165,9 +158,7 @@ class TickRemediationControllerTest {
   @Test
   void resumeRejectsAuthorizedCallerWhileMutationGateIsUnavailable() throws Exception {
     TickRemediationRequest request = new TickRemediationRequest(1L, "7", null, "maintenance");
-    String token =
-        jwtUtil.generateToken(
-            "42", Map.of("accountId", "42", "globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -190,9 +181,7 @@ class TickRemediationControllerTest {
   void pauseRejectsRegionOnlyScopeBeforeUnavailableResponse() throws Exception {
     TickRemediationRequest request =
         new TickRemediationRequest(1L, null, "region-7", "maintenance");
-    String token =
-        jwtUtil.generateToken(
-            "42", Map.of("accountId", "42", "globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -215,9 +204,7 @@ class TickRemediationControllerTest {
   void resumeRejectsRegionOnlyScopeBeforeUnavailableResponse() throws Exception {
     TickRemediationRequest request =
         new TickRemediationRequest(1L, null, "region-7", "maintenance");
-    String token =
-        jwtUtil.generateToken(
-            "42", Map.of("accountId", "42", "globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -239,9 +226,7 @@ class TickRemediationControllerTest {
   @Test
   void pauseRejectsEmptyRegionIdBeforeUnavailableResponse() throws Exception {
     TickRemediationRequest request = new TickRemediationRequest(1L, "7", "", "maintenance");
-    String token =
-        jwtUtil.generateToken(
-            "42", Map.of("accountId", "42", "globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -262,9 +247,7 @@ class TickRemediationControllerTest {
   @Test
   void resumeRejectsBlankRegionIdBeforeUnavailableResponse() throws Exception {
     TickRemediationRequest request = new TickRemediationRequest(1L, "7", "   ", "maintenance");
-    String token =
-        jwtUtil.generateToken(
-            "42", Map.of("accountId", "42", "globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -286,7 +269,7 @@ class TickRemediationControllerTest {
   void resumeRejectsCrossTenantScopedAdmin() throws Exception {
     TickRemediationRequest request = new TickRemediationRequest(1L, "7", null, "maintenance");
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
+        accountToken(jwtUtil, Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(
@@ -300,9 +283,7 @@ class TickRemediationControllerTest {
   @Test
   void pauseRejectsZeroGameInstanceIdBeforeDispatch() throws Exception {
     TickRemediationRequest request = new TickRemediationRequest(1L, "0", null, "maintenance");
-    String token =
-        jwtUtil.generateToken(
-            "42", Map.of("accountId", "42", "globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -320,9 +301,7 @@ class TickRemediationControllerTest {
   @Test
   void pauseRejectsZeroTenantIdBeforeDispatch() throws Exception {
     TickRemediationRequest request = new TickRemediationRequest(0L, "7", null, "maintenance");
-    String token =
-        jwtUtil.generateToken(
-            "42", Map.of("accountId", "42", "globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(

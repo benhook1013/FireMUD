@@ -10,11 +10,7 @@ public record WorldsViewOutput(List<WorldEntry> worlds) implements PlayerOutputP
   }
 
   public record WorldEntry(
-      int ordinal,
-      String slug,
-      String displayName,
-      long gameInstanceId,
-      boolean requiresCharacterSelection) {
+      int ordinal, String slug, String displayName, boolean requiresCharacterSelection) {
     public WorldEntry {
       if (ordinal < 1) {
         throw new IllegalArgumentException("ordinal must be at least 1");

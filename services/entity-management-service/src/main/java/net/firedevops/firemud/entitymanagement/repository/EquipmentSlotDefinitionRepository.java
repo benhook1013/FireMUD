@@ -3,6 +3,7 @@ package net.firedevops.firemud.entitymanagement.repository;
 import static net.firedevops.firemud.entitymanagement.jooq.Tables.EQUIPMENT_SLOT_DEFINITIONS;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.entitymanagement.entity.EquipmentSlotDefinition;
 import org.jooq.DSLContext;
@@ -29,6 +30,18 @@ public class EquipmentSlotDefinitionRepository {
                     .TENANT_ID
                     .eq(tenantId)
                     .and(EQUIPMENT_SLOT_DEFINITIONS.VERSION_ID.eq(versionId))));
+  }
+
+  public List<EquipmentSlotDefinition> findByTenantIdAndVersionIdOrderBySlotKeyAsc(
+      Long tenantId, Long versionId) {
+    return dsl.selectFrom(EQUIPMENT_SLOT_DEFINITIONS)
+        .where(
+            EQUIPMENT_SLOT_DEFINITIONS
+                .TENANT_ID
+                .eq(tenantId)
+                .and(EQUIPMENT_SLOT_DEFINITIONS.VERSION_ID.eq(versionId)))
+        .orderBy(EQUIPMENT_SLOT_DEFINITIONS.SLOT_KEY.asc())
+        .fetch(this::toEntity);
   }
 
   public boolean existsByTenantIdAndVersionIdAndSlotKey(

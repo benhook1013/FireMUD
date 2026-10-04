@@ -37,8 +37,10 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
   private static final CloseStatus PLANNED_DRAIN =
       new CloseStatus(1000, "logout;subreason=gateway_restart");
   private static final String CONNECTION_MODE_HEADER = "X-Firemud-Connection-Mode";
+  private static final String TRUSTED_TCP_PROXY_MODE = "trusted_tcp_proxy";
   private static final String CONNECT_CONTEXT_HEADER = "X-Firemud-Connect-Context";
   private static final String TRANSPORT_SESSION_HEADER = "X-Firemud-Transport-Session-Id";
+  private static final String PROXY_CONNECTION_HEADER = "X-Proxy-Connection-Id";
   private static final String WORLD_SLUG_HEADER = "X-World-Slug";
   private static final String REALM_SLUG_HEADER = "X-Realm-Slug";
   private static final String POINTER_VERSION_HEADER = "X-Pointer-Version";
@@ -53,7 +55,7 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
           REALM_SLUG_HEADER,
           POINTER_VERSION_HEADER,
           "X-Requires-Solo-Tick",
-          "X-Proxy-Connection-Id",
+          PROXY_CONNECTION_HEADER,
           CONNECTION_MODE_HEADER,
           CONNECT_CONTEXT_HEADER,
           TRANSPORT_SESSION_HEADER);
@@ -97,6 +99,14 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
         return closeDownstream(state, plannedDrainClassification())
             .doFinally(signal -> activeBridges.remove(state));
       }
+    }
+    HttpHeaders sourceHeaders = downstream.getHandshakeInfo().getHeaders();
+    if (isTrustedTcpProxy(sourceHeaders)
+        && !StringUtils.hasText(sourceHeaders.getFirst(PROXY_CONNECTION_HEADER))) {
+      return closeDownstream(
+              state,
+              gameplayWebSocketObservability.classify(new CloseStatus(1008, "policy_violation")))
+          .doFinally(signal -> activeBridges.remove(state));
     }
     HttpHeaders upstreamHeaders = buildUpstreamHeaders(downstream);
     URI upstreamUri = URI.create(properties.upstreamUrl());
@@ -427,11 +437,21 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
             headers.set(name, value);
           }
         });
+    if (isTrustedTcpProxy(source)) {
+      // The authenticated proxy connection ID is stable across Gateway WebSocket replacements.
+      // Do not turn a Gateway hop ID or any received transport header into session identity.
+      headers.remove(TRANSPORT_SESSION_HEADER);
+      return headers;
+    }
     if (!StringUtils.hasText(headers.getFirst(TRANSPORT_SESSION_HEADER))) {
       headers.set(
           TRANSPORT_SESSION_HEADER, Long.toUnsignedString(stablePositiveLong(downstream.getId())));
     }
     return headers;
+  }
+
+  private static boolean isTrustedTcpProxy(HttpHeaders headers) {
+    return TRUSTED_TCP_PROXY_MODE.equals(headers.getFirst(CONNECTION_MODE_HEADER));
   }
 
   private long stablePositiveLong(String value) {

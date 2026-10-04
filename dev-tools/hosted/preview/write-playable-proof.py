@@ -10,7 +10,6 @@ import sys
 from pathlib import Path
 from typing import Any, NoReturn
 
-
 SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 IMAGE_TAG_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$")
 UID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
