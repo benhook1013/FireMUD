@@ -715,6 +715,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       PublishedReleaseBundleDto bundle =
           versionService.getPublishedReleaseBundle(request.getTenantId(), request.getVersionId());
       PublishedReleaseBundleContract.requireSupportedSchemaForRead(bundle);
+      requireCanonicalReleaseIdentityPair(bundle);
       TemporalVersionPublishWorkflowMetadataResolver.WorkflowMetadata workflowMetadata =
           publishWorkflowMetadataResolver.resolve(bundle.publishWorkflowId());
       var bundleBuilder =
@@ -754,6 +755,11 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               .setScriptPatchVersion(
                   bundle.scriptPatchVersion() == null ? "" : bundle.scriptPatchVersion())
               .setPublishedAt(bundle.publishedAt().toString());
+      if (bundle.canonicalTenantId() != null) {
+        bundleBuilder
+            .setCanonicalTenantId(bundle.canonicalTenantId().toString())
+            .setCanonicalVersionId(bundle.canonicalVersionId().toString());
+      }
       if (bundle.publishedReleaseBundleRef() != null) {
         bundleBuilder.setPublishedReleaseBundleRef(bundle.publishedReleaseBundleRef());
       }
@@ -794,6 +800,21 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
     }
     responseObserver.onNext(builder.build());
     responseObserver.onCompleted();
+  }
+
+  private void requireCanonicalReleaseIdentityPair(PublishedReleaseBundleDto bundle) {
+    UUID canonicalTenantId = bundle.canonicalTenantId();
+    UUID canonicalVersionId = bundle.canonicalVersionId();
+    if (canonicalTenantId == null && canonicalVersionId == null) {
+      return;
+    }
+    UUID nilUuid = new UUID(0L, 0L);
+    if (canonicalTenantId == null
+        || canonicalVersionId == null
+        || canonicalTenantId.equals(nilUuid)
+        || canonicalVersionId.equals(nilUuid)) {
+      throw new IllegalArgumentException("published release canonical identity pair is invalid");
+    }
   }
 
   @Override

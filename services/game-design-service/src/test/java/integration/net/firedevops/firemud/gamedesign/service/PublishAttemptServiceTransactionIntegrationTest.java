@@ -290,14 +290,15 @@ class PublishAttemptServiceTransactionIntegrationTest {
     changedReference.setPublishedReleaseBundleRef("replacement-opaque-release-reference");
     assertThatThrownBy(() -> publishedReleaseBundleRepository.save(changedReference))
         .isInstanceOf(IllegalStateException.class)
-        .hasMessage("published release bundle reference is immutable");
+        .hasMessageContaining("Published release bundle is immutable");
     PublishedReleaseBundle changedTuple =
         publishedReleaseBundleRepository
             .findByTenantIdAndVersionId(tenantId, publishedVersion.id())
             .orElseThrow();
     changedTuple.setManifestHash("changed-manifest");
     assertThatThrownBy(() -> publishedReleaseBundleRepository.save(changedTuple))
-        .hasStackTraceContaining("published release bundle attestation is immutable");
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Published release bundle is immutable");
     assertThatThrownBy(
             () ->
                 dsl.execute(
@@ -305,7 +306,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
                         + "SET published_release_bundle_ref = ? WHERE id = ?",
                     "replacement-opaque-release-reference",
                     durableBundle.getId()))
-        .hasStackTraceContaining("published release bundle reference is immutable");
+        .hasStackTraceContaining("published release bundle attestation is immutable");
     assertThat(
             publishedReleaseBundleRepository
                 .findByTenantIdAndVersionId(tenantId, publishedVersion.id())

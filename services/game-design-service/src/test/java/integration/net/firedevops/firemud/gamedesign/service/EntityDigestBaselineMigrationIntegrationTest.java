@@ -268,6 +268,7 @@ class EntityDigestBaselineMigrationIntegrationTest {
 
   @Test
   void competingSameEpochCasTransitionsAllowOnlyOneWriter() throws Exception {
+    createGame("cas-tenant");
     Version version = createVersion("cas-tenant", 1, VersionLifecycleState.PUBLISHED);
     CountDownLatch start = new CountDownLatch(1);
     try (ExecutorService executor = Executors.newFixedThreadPool(2)) {

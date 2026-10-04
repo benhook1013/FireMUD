@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamedesign.entity;
 
 import java.time.LocalDateTime;
+import java.util.UUID;
 import lombok.Data;
 
 @Data
@@ -9,6 +10,8 @@ public class PublishedReleaseBundle {
   private String publishedReleaseBundleRef;
   private String tenantId;
   private Long versionId;
+  private UUID canonicalTenantId;
+  private UUID canonicalVersionId;
   private int versionNumber;
   private String attestationSchemaVersion;
   private String publishWorkflowId;

@@ -48,6 +48,8 @@ class LaunchDescriptorServiceImplTest {
   private static final String NAMESPACE = "test";
   private static final UUID CANONICAL_TENANT_ID =
       UUID.fromString("12345678-1234-4234-8234-123456789abc");
+  private static final UUID CANONICAL_VERSION_ID =
+      UUID.fromString("c472ebd1-56d8-49df-b8fa-85963dd940f8");
   private static final UUID SOURCE_OPERATION_ID =
       UUID.fromString("22345678-1234-4234-8234-123456789abc");
   private static final UUID SOURCE_REGISTRATION_ID =
@@ -705,6 +707,8 @@ class LaunchDescriptorServiceImplTest {
         false,
         null,
         LocalDateTime.now(),
+        CANONICAL_TENANT_ID,
+        CANONICAL_VERSION_ID,
         publishedReleaseBundleRef);
   }
 

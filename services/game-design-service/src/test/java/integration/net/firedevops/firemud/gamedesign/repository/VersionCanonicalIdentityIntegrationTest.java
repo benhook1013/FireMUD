@@ -372,8 +372,7 @@ class VersionCanonicalIdentityIntegrationTest {
   }
 
   private Fixture fixtureWithRetainedGame() {
-    String schema =
-        "game_design_retained_version_identity_" + UUID.randomUUID().toString().replace("-", "");
+    String schema = "gd_retained_version_identity_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = dataSource(schema);
     migrate(dataSource, schema, MigrationVersion.fromVersion("29"));
     DSLContext legacyDsl =

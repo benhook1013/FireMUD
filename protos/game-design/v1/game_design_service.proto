@@ -561,6 +561,8 @@ message PublishedReleaseBundle {
   string workflow_family = 15;
   repeated string command_definitions = 16;
   string published_release_bundle_ref = 17;
+  string canonical_tenant_id = 18;
+  string canonical_version_id = 19;
 }
 
 message LaunchDescriptor {

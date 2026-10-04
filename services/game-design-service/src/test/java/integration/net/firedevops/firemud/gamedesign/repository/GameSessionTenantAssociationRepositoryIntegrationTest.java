@@ -100,21 +100,23 @@ class GameSessionTenantAssociationRepositoryIntegrationTest {
 
     try (Connection connection = dataSource.getConnection()) {
       DSLContext dsl = DSL.using(connection, SQLDialect.POSTGRES);
-      Table<?> versions = DSL.table(DSL.name(schema, "version"));
-      var idField = DSL.field(DSL.name("id"), Long.class);
-      Long versionId =
-          dsl.insertInto(versions)
-              .set(DSL.field(DSL.name("tenant_id"), String.class), "configured-schema-tenant")
-              .set(DSL.field(DSL.name("version_number"), Integer.class), 7)
-              .set(DSL.field(DSL.name("version_state"), String.class), "PUBLISHED")
-              .set(DSL.field(DSL.name("version_state_epoch"), Long.class), 9L)
-              .set(DSL.field(DSL.name("is_script_only"), Boolean.class), false)
-              .set(DSL.field(DSL.name("notes"), String.class), "configured owner schema lock proof")
-              .returning(idField)
-              .fetchOne(idField);
-      assertThat(versionId).isNotNull();
-
       VersionRepository repository = new VersionRepository(dsl, postgresProperties);
+      GameRepository gameRepository = new GameRepository(dsl);
+      Game game = new Game();
+      game.setTenantId("configured-schema-tenant");
+      game.setName("Configured owner schema lock proof");
+      game.setDescription("Version source for configured owner schema lock proof");
+      Game savedGame = gameRepository.save(game);
+
+      Version version = new Version();
+      version.setTenantId(savedGame.getTenantId());
+      version.setVersionNumber(7);
+      version.setVersionState(VersionLifecycleState.PUBLISHED);
+      version.setVersionStateEpoch(9L);
+      version.setNotes("configured owner schema lock proof");
+      Version savedVersion = repository.save(version);
+      Long versionId = savedVersion.getId();
+      assertThat(versionId).isNotNull();
 
       Version locked =
           repository

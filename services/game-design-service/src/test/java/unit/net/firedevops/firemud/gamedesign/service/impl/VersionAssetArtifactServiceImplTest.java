@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.entity.VersionAssetArtifact;
@@ -128,7 +129,9 @@ class VersionAssetArtifactServiceImplTest {
                 false,
                 null,
                 LocalDateTime.now(),
-                null));
+                UUID.fromString("67d7b75b-42d1-4ac6-9572-684c5e633cda"),
+                UUID.fromString("c472ebd1-56d8-49df-b8fa-85963dd940f8"),
+                "opaque-owner-issued-release-reference"));
     when(assetExportService.exportAssets("tenant-1", 8))
         .thenReturn(new ExportedAssetManifest("different", List.of("manifest.json")));
 
@@ -171,7 +174,9 @@ class VersionAssetArtifactServiceImplTest {
                 false,
                 null,
                 LocalDateTime.now(),
-                null));
+                UUID.fromString("67d7b75b-42d1-4ac6-9572-684c5e633cda"),
+                UUID.fromString("c472ebd1-56d8-49df-b8fa-85963dd940f8"),
+                "opaque-owner-issued-release-reference"));
     when(assetExportService.exportAssets("tenant-1", 8))
         .thenReturn(new ExportedAssetManifest("attested", List.of("manifest.json")));
 
