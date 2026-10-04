@@ -4439,6 +4439,6 @@ class PlayCommandHandlerTest {
   }
 
   private static String tenantForGameInstance(String gameInstanceId) {
-    return "2".equals(gameInstanceId) || "41".equals(gameInstanceId) ? "23" : "22";
+    return "22";
   }
 }

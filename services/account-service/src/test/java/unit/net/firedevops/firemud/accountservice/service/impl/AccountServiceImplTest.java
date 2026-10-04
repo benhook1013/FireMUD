@@ -913,18 +913,17 @@ class AccountServiceImplTest {
         gameSessionClient.listGameplayRealms("demo").getFirst();
     net.firedevops.firemud.gamesession.v1.GameplayRealm lateDuplicate =
         selectedRealm.toBuilder()
-            .setRealmSlug("staging")
-            .setDisplayName("Staging Realm")
+            .setRealmSlug(selectedRealm.getRealmSlug())
+            .setDisplayName("Duplicate Live Realm")
             .setRealmId("57c58f36-c5ea-4aa8-8ef7-91a45e407f01")
             .setGameInstanceId("45")
-            .setPlayableStateNamespaceId("staging-namespace-7")
+            .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
             .setCatalogRevision(24L)
             .setPointerVersion(1L)
             .build();
     when(gameSessionClient.listGameplayRealms("demo"))
         .thenReturn(java.util.List.of(selectedRealm, lateDuplicate));
-    when(gameSessionClient.getAdmissionPointer(7L, "demo", "production"))
-        .thenThrow(new IllegalStateException("ambiguous public-production realm catalog"));
+    org.mockito.Mockito.clearInvocations(gameSessionClient);
 
     JoinPublicProductionResult result =
         service.joinPublicProduction(
@@ -939,7 +938,7 @@ class AccountServiceImplTest {
     org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
         .save(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
     org.mockito.Mockito.verifyNoInteractions(accountAuditOutboxRepository);
-    org.mockito.Mockito.verify(gameSessionClient, org.mockito.Mockito.atLeastOnce())
+    org.mockito.Mockito.verify(gameSessionClient, org.mockito.Mockito.never())
         .getAdmissionPointer(7L, "demo", "production");
   }
 

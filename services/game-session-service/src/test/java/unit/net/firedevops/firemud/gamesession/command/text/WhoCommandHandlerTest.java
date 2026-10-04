@@ -49,7 +49,7 @@ class WhoCommandHandlerTest {
   }
 
   @Test
-  void whoKeepsTenantRoleClaimsInThePlayerListWithoutGrantEvidence() {
+  void whoPresentsJwtRoleClaimSessionsAsPlayersWithoutGrantEvidence() {
     FakeGameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService();
     WhoCommandHandler handler =
         new WhoCommandHandler(gameplayPresenceService, activityResolver, scriptEventPublisher);

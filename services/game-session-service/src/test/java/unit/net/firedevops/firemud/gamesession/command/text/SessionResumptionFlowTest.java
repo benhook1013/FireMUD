@@ -788,7 +788,7 @@ class SessionResumptionFlowTest {
   }
 
   @Test
-  void reconnectDoesNotRestoreElevationFromPriorTenantRoleClaims() {
+  void reconnectPresenceRemainsPlayerForPriorTenantRoleClaims() {
     String tenantAdminJwt =
         gameplayJwtUtil.generateToken(
             "77",
@@ -821,7 +821,7 @@ class SessionResumptionFlowTest {
   }
 
   @Test
-  void unavailableAccountAdmissionEvidenceDoesNotElevateReconnectPresence() {
+  void unavailableAccountMembershipEvidenceLeavesReconnectPresenceAsPlayer() {
     String tenantAdminJwt =
         gameplayJwtUtil.generateToken(
             "77", Map.of("accountId", "77", "scopedRoles", Map.of("22", List.of("tenantAdmin"))));
