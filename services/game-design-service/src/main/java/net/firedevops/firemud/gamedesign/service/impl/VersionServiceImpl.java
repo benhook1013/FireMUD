@@ -61,6 +61,8 @@ import org.springframework.transaction.annotation.Transactional;
 public class VersionServiceImpl implements VersionService {
   private static final int DEFAULT_PLUGIN_VERSION_STATUS_LIMIT = 100;
   private static final int MAX_PLUGIN_VERSION_STATUS_LIMIT = 200;
+  private static final String RETRYABLE_PARTICIPANT_DEPENDENCY_FAILURE_CODE =
+      "PARTICIPANT_DEPENDENCY_UNAVAILABLE_RETRYABLE";
 
   private static final Logger logger = LoggingUtil.getLogger(VersionServiceImpl.class);
 
@@ -170,11 +172,13 @@ public class VersionServiceImpl implements VersionService {
               "SCRIPT_PATCH_MANIFEST_UNAVAILABLE: the prior publish attempt may have dispatched readiness without a verifiable affected-script manifest"));
     }
 
+    boolean participantGatePassed = false;
     try {
       List<PublishParticipantDigestDto> participantDigests =
           publishGateService.collectScriptPatchParticipantDigests(
               reservation.versionDto(), patchBinding.publishRequestId(), publishWorkflowId);
       publishGateService.assertGatePassed(reservation.versionDto(), participantDigests);
+      participantGatePassed = true;
       recordedParticipantDigestService.assertMatchesRecordedDigests(
           tenantId, PublishType.SCRIPT_PATCH, participantDigests);
       throw new ScriptPatchPublishFailureException(
@@ -192,21 +196,28 @@ public class VersionServiceImpl implements VersionService {
                   .startsWith(PublishAttemptPendingReconciliationException.ERROR_CODE + ":"))) {
         throw operationFailure;
       }
-      if (PublicationFailureClassifier.isRetryableParticipantDependencyFailure(operationFailure)) {
+      boolean retryableParticipantDependencyFailure =
+          PublicationFailureClassifier.isRetryableParticipantDependencyFailure(operationFailure);
+      boolean retryablePreDispatchParticipantFailure =
+          !participantGatePassed && retryableParticipantDependencyFailure;
+      if (retryableParticipantDependencyFailure && !retryablePreDispatchParticipantFailure) {
         throw new IllegalStateException(
             "PUBLISH_ATTEMPT_PENDING_RECONCILIATION_REQUIRED: participant dependency is temporarily unavailable; retry exact publish request",
             operationFailure);
       }
+      String failureCode =
+          retryablePreDispatchParticipantFailure
+              ? RETRYABLE_PARTICIPANT_DEPENDENCY_FAILURE_CODE
+              : publishFailureCode(operationFailure);
+      String failureMessage =
+          retryablePreDispatchParticipantFailure
+              ? retryableParticipantDependencyFailureMessage()
+              : publishFailureMessage(operationFailure);
       ScriptPatchFinalization failure;
       try {
         failure =
             publishAttemptService.executeScriptPatchTransaction(
-                () ->
-                    failScriptPatch(
-                        patchBinding,
-                        reservation,
-                        publishFailureCode(operationFailure),
-                        publishFailureMessage(operationFailure)));
+                () -> failScriptPatch(patchBinding, reservation, failureCode, failureMessage));
       } catch (PublishAttemptService.ScriptPatchTransactionException cleanupFailure) {
         RuntimeException cleanupOperationFailure = cleanupFailure.causeException();
         cleanupOperationFailure.addSuppressed(operationFailure);
@@ -219,8 +230,12 @@ public class VersionServiceImpl implements VersionService {
         return failure.versionDto();
       }
       if (failure.status() == PublishAttemptStatus.FAILED) {
-        if (Objects.equals(failure.failureCode(), publishFailureCode(operationFailure))
-            && Objects.equals(failure.failureMessage(), publishFailureMessage(operationFailure))) {
+        if (Objects.equals(failure.failureCode(), failureCode)
+            && Objects.equals(failure.failureMessage(), failureMessage)) {
+          if (retryablePreDispatchParticipantFailure) {
+            throw new ScriptPatchPublishFailureException(
+                failure.failureCode(), failure.failureMessage(), operationFailure);
+          }
           throw operationFailure;
         }
         throw replayFailedScriptPatch(failure.failureCode(), failure.failureMessage());
@@ -821,6 +836,11 @@ public class VersionServiceImpl implements VersionService {
 
   private String publishFailureMessage(RuntimeException ex) {
     return ex.getMessage() == null ? publishFailureCode(ex) : ex.getMessage();
+  }
+
+  private String retryableParticipantDependencyFailureMessage() {
+    return RETRYABLE_PARTICIPANT_DEPENDENCY_FAILURE_CODE
+        + ": participant digest gating encountered a transient dependency failure before notification; exact retries replay this failed receipt, so retry with a new publish request ID after the dependency recovers";
   }
 
   private Version requireTenantVersion(String tenantId, long versionId) {
