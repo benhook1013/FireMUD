@@ -5,6 +5,7 @@ import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.time.Instant;
 import java.util.UUID;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
@@ -502,24 +503,47 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       GetRealmAccessGrantForRuntimeRequest request,
       StreamObserver<GetRealmAccessGrantForRuntimeResponse> responseObserver) {
     try {
+      requireGameSessionPeer();
+      UUID accountUuid = requireCanonicalAccountUuid(request.getAccountId());
+      long tenantId = requirePositiveRequestId(request.getTenantId(), "tenantId");
+      String worldSlug = requireText(request.getWorldSlug(), "worldSlug");
+      String realmSlug = requireText(request.getRealmSlug(), "realmSlug");
+      long accountStorageId = accountService.resolveAccountStorageId(accountUuid);
       var dto =
           accountService.getRealmAccessGrantForRuntime(
-              requirePositiveRequestId(request.getAccountId(), "accountId"),
-              requirePositiveRequestId(request.getTenantId(), "tenantId"),
-              request.getWorldSlug(),
-              request.getRealmSlug(),
-              request.getRequestId());
+              accountStorageId,
+              tenantId,
+              worldSlug,
+              realmSlug,
+              requireText(request.getRequestId(), "requestId"));
+      if (dto.accountId() != accountStorageId
+          || dto.tenantId() != tenantId
+          || !worldSlug.equals(dto.worldSlug())
+          || !realmSlug.equals(dto.realmSlug())
+          || (dto.granted() && dto.grantVersion() <= 0L)
+          || dto.evaluatedAt() == null
+          || dto.evaluatedAt().isBlank()
+          || Instant.parse(dto.evaluatedAt()).isAfter(Instant.now().plusSeconds(5))) {
+        throw new IllegalStateException("Account returned mismatched realm-grant authority");
+      }
       GetRealmAccessGrantForRuntimeResponse response =
           GetRealmAccessGrantForRuntimeResponse.newBuilder()
-              .setAccountId(String.valueOf(dto.accountId()))
-              .setTenantId(String.valueOf(dto.tenantId()))
-              .setWorldSlug(dto.worldSlug())
-              .setRealmSlug(dto.realmSlug())
+              .setAccountId(accountUuid.toString())
+              .setTenantId(Long.toString(tenantId))
+              .setWorldSlug(worldSlug)
+              .setRealmSlug(realmSlug)
               .setGranted(dto.granted())
               .setGrantVersion(dto.grantVersion())
               .setEvaluatedAt(dto.evaluatedAt())
               .build();
       responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      responseObserver.onNext(
+          GetRealmAccessGrantForRuntimeResponse.newBuilder()
+              .setError(
+                  appError("GetRealmAccessGrantForRuntime", "PERMISSION_DENIED", ex.getMessage()))
+              .build());
       responseObserver.onCompleted();
     } catch (InvalidRequestException ex) {
       GetRealmAccessGrantForRuntimeResponse response =
@@ -535,6 +559,16 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               .setError(appError("GetRealmAccessGrantForRuntime", "NOT_FOUND", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (RuntimeException ex) {
+      responseObserver.onNext(
+          GetRealmAccessGrantForRuntimeResponse.newBuilder()
+              .setError(
+                  appError(
+                      "GetRealmAccessGrantForRuntime",
+                      "AUTH_UNAVAILABLE",
+                      AUTHORITY_UNAVAILABLE_MESSAGE))
+              .build());
       responseObserver.onCompleted();
     }
   }

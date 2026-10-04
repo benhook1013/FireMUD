@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.command.text;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.HashSet;
@@ -740,7 +741,17 @@ public class PlayCommandHandler {
             authorityUnavailableFailure(
                 tenantTag, Long.toString(selectedRealm.gameInstanceId()), requestedCharacterId));
       }
-      if (grantError.isPresent() || !grantResponse.getGranted()) {
+      if (grantError.isPresent()) {
+        return Optional.of(
+            worldAccessDeniedFailure(
+                context, tenantTag, selectedWorld, selectedRealm, requestedCharacterId));
+      }
+      if (!isSafeRealmGrantResponse(grantResponse, context, selectedWorld, selectedRealm)) {
+        return Optional.of(
+            authorityUnavailableFailure(
+                tenantTag, Long.toString(selectedRealm.gameInstanceId()), requestedCharacterId));
+      }
+      if (!grantResponse.getGranted()) {
         return Optional.of(
             worldAccessDeniedFailure(
                 context, tenantTag, selectedWorld, selectedRealm, requestedCharacterId));
@@ -748,6 +759,30 @@ public class PlayCommandHandler {
       return Optional.empty();
     }
     return Optional.empty();
+  }
+
+  private boolean isSafeRealmGrantResponse(
+      GetRealmAccessGrantForRuntimeResponse response,
+      SessionContext context,
+      GameplayWorldCatalog.WorldView selectedWorld,
+      GameplayWorldCatalog.RealmView selectedRealm) {
+    if (!AccountIds.isCanonicalNonNilUuid(response.getAccountId())
+        || !context.accountId().equals(response.getAccountId())
+        || !Long.toString(selectedRealm.tenantId()).equals(response.getTenantId())
+        || !selectedWorld.slug().equals(response.getWorldSlug())
+        || !selectedRealm.slug().equals(response.getRealmSlug())
+        || (response.getGranted() && response.getGrantVersion() <= 0L)
+        || !StringUtils.hasText(response.getEvaluatedAt())) {
+      return false;
+    }
+    try {
+      Instant evaluatedAt = Instant.parse(response.getEvaluatedAt());
+      Instant now = Instant.now();
+      return !evaluatedAt.isAfter(now.plusSeconds(5))
+          && !evaluatedAt.isBefore(now.minus(Duration.ofMinutes(5)));
+    } catch (DateTimeParseException ex) {
+      return false;
+    }
   }
 
   private PlayCommandHandlingResult worldAccessDeniedFailure(

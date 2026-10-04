@@ -18,6 +18,7 @@ service AccountService {
   // resolves its private storage row internally and echoes the requested UUID in the response.
   // tenant_id remains a positive numeric tenant identifier and request_id is passed unchanged.
   rpc GetTenantMembershipForRuntime(GetTenantMembershipForRuntimeRequest) returns (GetTenantMembershipForRuntimeResponse);
+  // Exact same-namespace Game Session mTLS only; no end-user bearer token is required.
   rpc GetRealmAccessGrantForRuntime(GetRealmAccessGrantForRuntimeRequest) returns (GetRealmAccessGrantForRuntimeResponse);
   rpc GetTenantEntitlementsForRuntime(GetTenantEntitlementsForRuntimeRequest) returns (GetTenantEntitlementsForRuntimeResponse);
   rpc IssueDirectTextConnectScope(IssueDirectTextConnectScopeRequest) returns (IssueDirectTextConnectScopeResponse);
@@ -158,6 +159,7 @@ message GetTenantMembershipForRuntimeResponse {
 }
 
 message GetRealmAccessGrantForRuntimeRequest {
+  // Canonical non-nil Account UUID. Account resolves its private storage row internally.
   string account_id = 1;
   string tenant_id = 2;
   string world_slug = 3;
@@ -166,6 +168,7 @@ message GetRealmAccessGrantForRuntimeRequest {
 }
 
 message GetRealmAccessGrantForRuntimeResponse {
+  // Echoes the canonical UUID from the request; never a private Account row identifier.
   string account_id = 1;
   string tenant_id = 2;
   string world_slug = 3;

@@ -6,6 +6,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -131,7 +132,14 @@ class PlayCommandHandlerTest {
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.anyString()))
-        .thenReturn(GetRealmAccessGrantForRuntimeResponse.newBuilder().setGranted(true).build());
+        .thenAnswer(
+            invocation ->
+                realmGrantResponse(
+                    invocation.getArgument(0),
+                    invocation.getArgument(1),
+                    invocation.getArgument(2),
+                    invocation.getArgument(3),
+                    true));
     when(sessionRoutingNormalizationService.normalizeProjectedContext(
             Mockito.any(SessionContext.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
@@ -1549,7 +1557,7 @@ class PlayCommandHandlerTest {
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.anyString()))
-        .thenReturn(GetRealmAccessGrantForRuntimeResponse.newBuilder().setGranted(true).build());
+        .thenReturn(realmGrantResponse(true));
 
     PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
 
@@ -1573,7 +1581,7 @@ class PlayCommandHandlerTest {
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.anyString()))
-        .thenReturn(GetRealmAccessGrantForRuntimeResponse.newBuilder().setGranted(false).build());
+        .thenReturn(realmGrantResponse(false));
 
     PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
 
@@ -1599,7 +1607,7 @@ class PlayCommandHandlerTest {
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.anyString()))
-        .thenReturn(GetRealmAccessGrantForRuntimeResponse.newBuilder().setGranted(false).build());
+        .thenReturn(realmGrantResponse(false));
 
     PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
 
@@ -1662,6 +1670,44 @@ class PlayCommandHandlerTest {
     Mockito.verify(gameplayPresenceLifecycleService, never())
         .clearGameplayBinding(Mockito.any(), Mockito.anyString());
     Mockito.verify(sessionContextService, never()).save(Mockito.any());
+  }
+
+  @Test
+  void playMismatchedRealmGrantCorrelationFailsUnavailable() {
+    SessionContext context = previewRealmContext();
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getRealmAccessGrantForRuntime(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString()))
+        .thenReturn(realmGrantResponse(true).toBuilder().setRealmSlug("other-realm").build());
+
+    PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
+
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE);
+    verifyNoGameplayBindingSideEffects();
+  }
+
+  @Test
+  void playGrantedRealmWithoutGrantGenerationFailsUnavailable() {
+    SessionContext context = previewRealmContext();
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getRealmAccessGrantForRuntime(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString()))
+        .thenReturn(realmGrantResponse(true).toBuilder().setGrantVersion(0L).build());
+
+    PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
+
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE);
+    verifyNoGameplayBindingSideEffects();
   }
 
   @ParameterizedTest
@@ -2065,6 +2111,23 @@ class PlayCommandHandlerTest {
         TextCommandType.PLAY,
         List.of("sandbox", "preview", "Emberline"),
         "PLAY sandbox preview Emberline");
+  }
+
+  private static GetRealmAccessGrantForRuntimeResponse realmGrantResponse(boolean granted) {
+    return realmGrantResponse(ACCOUNT_ID, "22", "sandbox", "preview", granted);
+  }
+
+  private static GetRealmAccessGrantForRuntimeResponse realmGrantResponse(
+      String accountId, String tenantId, String worldSlug, String realmSlug, boolean granted) {
+    return GetRealmAccessGrantForRuntimeResponse.newBuilder()
+        .setAccountId(accountId)
+        .setTenantId(tenantId)
+        .setWorldSlug(worldSlug)
+        .setRealmSlug(realmSlug)
+        .setGranted(granted)
+        .setGrantVersion(granted ? 3L : 0L)
+        .setEvaluatedAt(Instant.now().toString())
+        .build();
   }
 
   private static GameplayCatalogProperties.World world(
