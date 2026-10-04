@@ -435,14 +435,22 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       GetTenantMembershipForRuntimeRequest request,
       StreamObserver<GetTenantMembershipForRuntimeResponse> responseObserver) {
     try {
+      requireGameSessionPeer();
+      UUID accountUuid = requireCanonicalAccountUuid(request.getAccountId());
+      long tenantId = requirePositiveRequestId(request.getTenantId(), "tenantId");
+      long accountStorageId = accountService.resolveAccountStorageId(accountUuid);
       var dto =
           accountService.getTenantMembershipForRuntime(
-              requirePositiveRequestId(request.getAccountId(), "accountId"),
-              requirePositiveRequestId(request.getTenantId(), "tenantId"),
-              request.getRequestId());
+              accountStorageId, tenantId, request.getRequestId());
+      if (dto == null
+          || !Long.valueOf(accountStorageId).equals(dto.accountId())
+          || !Long.valueOf(tenantId).equals(dto.tenantId())) {
+        throw new IllegalStateException(
+            "Account membership authority returned an inconsistent identity");
+      }
       GetTenantMembershipForRuntimeResponse response =
           GetTenantMembershipForRuntimeResponse.newBuilder()
-              .setAccountId(String.valueOf(dto.accountId()))
+              .setAccountId(accountUuid.toString())
               .setTenantId(String.valueOf(dto.tenantId()))
               .setMembershipExists(dto.membershipExists())
               .setGameplayAdmissionAllowed(dto.gameplayAdmissionAllowed())
@@ -452,6 +460,13 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               .setEvaluatedAt(dto.evaluatedAt())
               .build();
       responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      responseObserver.onNext(
+          GetTenantMembershipForRuntimeResponse.newBuilder()
+              .setError(
+                  appError("GetTenantMembershipForRuntime", "PERMISSION_DENIED", ex.getMessage()))
+              .build());
       responseObserver.onCompleted();
     } catch (InvalidRequestException ex) {
       GetTenantMembershipForRuntimeResponse response =
@@ -467,6 +482,16 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               .setError(appError("GetTenantMembershipForRuntime", "NOT_FOUND", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (RuntimeException ex) {
+      responseObserver.onNext(
+          GetTenantMembershipForRuntimeResponse.newBuilder()
+              .setError(
+                  appError(
+                      "GetTenantMembershipForRuntime",
+                      "AUTH_UNAVAILABLE",
+                      AUTHORITY_UNAVAILABLE_MESSAGE))
+              .build());
       responseObserver.onCompleted();
     }
   }
@@ -606,28 +631,66 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       StreamObserver<net.firedevops.firemud.account.v1.ListPresenceVisibilityPoliciesResponse>
           responseObserver) {
     try {
+      requireSocialGroupsPeer();
       long tenantId = requirePositiveRequestId(request.getTenantId(), "tenantId");
       if (request.getAccountIdsCount() > MAX_ACCOUNT_IDS_PER_REQUEST) {
         throw new InvalidRequestException(
             "accountIds must contain at most " + MAX_ACCOUNT_IDS_PER_REQUEST + " entries", null);
       }
-      java.util.List<Long> accountIds =
+      java.util.List<UUID> accountUuids =
           request.getAccountIdsList().stream()
-              .map(accountId -> requirePositiveRequestId(accountId, "accountId"))
+              .map(AccountGrpcService::requireCanonicalAccountUuid)
               .distinct()
               .toList();
+      java.util.Map<UUID, Long> storageIdsByAccountUuid = new java.util.LinkedHashMap<>();
+      java.util.Map<Long, UUID> accountUuidsByStorageId = new java.util.HashMap<>();
+      for (UUID accountUuid : accountUuids) {
+        Long storageId;
+        try {
+          storageId = accountService.resolveAccountStorageId(accountUuid);
+        } catch (IllegalArgumentException | IllegalStateException ex) {
+          // Unknown or unproven local subjects are omitted so Social applies complete PRIVATE
+          // redaction rather than receiving a guessed identity or a private storage key.
+          continue;
+        }
+        if (storageId == null || storageId <= 0L) {
+          continue;
+        }
+        UUID previousAccountUuid = accountUuidsByStorageId.putIfAbsent(storageId, accountUuid);
+        if (previousAccountUuid != null && !previousAccountUuid.equals(accountUuid)) {
+          throw new IllegalStateException("Account UUID resolution returned an ambiguous row");
+        }
+        storageIdsByAccountUuid.put(accountUuid, storageId);
+      }
+      java.util.List<Long> storageIds = java.util.List.copyOf(storageIdsByAccountUuid.values());
+      java.util.Map<Long, ProfilePresenceVisibilityPolicy> policies =
+          storageIds.isEmpty()
+              ? java.util.Map.of()
+              : accountService.listPresenceVisibilityPolicies(tenantId, storageIds);
+      for (java.util.Map.Entry<Long, ProfilePresenceVisibilityPolicy> policy :
+          policies.entrySet()) {
+        if (!accountUuidsByStorageId.containsKey(policy.getKey()) || policy.getValue() == null) {
+          throw new IllegalStateException(
+              "Presence visibility policy read returned an unexpected Account row");
+        }
+      }
       var builder =
           net.firedevops.firemud.account.v1.ListPresenceVisibilityPoliciesResponse.newBuilder();
-      accountService
-          .listPresenceVisibilityPolicies(tenantId, accountIds)
-          .forEach(
-              (accountId, policy) ->
-                  builder.addPolicies(
-                      net.firedevops.firemud.account.v1.PresenceVisibilityPolicyEntry.newBuilder()
-                          .setAccountId(Long.toString(accountId))
-                          .setPolicy(policy.name())
-                          .build()));
+      policies.forEach(
+          (storageId, policy) ->
+              builder.addPolicies(
+                  net.firedevops.firemud.account.v1.PresenceVisibilityPolicyEntry.newBuilder()
+                      .setAccountId(accountUuidsByStorageId.get(storageId).toString())
+                      .setPolicy(policy.name())
+                      .build()));
       responseObserver.onNext(builder.build());
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      responseObserver.onNext(
+          net.firedevops.firemud.account.v1.ListPresenceVisibilityPoliciesResponse.newBuilder()
+              .setError(
+                  appError("ListPresenceVisibilityPolicies", "PERMISSION_DENIED", ex.getMessage()))
+              .build());
       responseObserver.onCompleted();
     } catch (InvalidRequestException ex) {
       responseObserver.onNext(
@@ -645,7 +708,11 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     } catch (RuntimeException ex) {
       responseObserver.onNext(
           net.firedevops.firemud.account.v1.ListPresenceVisibilityPoliciesResponse.newBuilder()
-              .setError(appError("ListPresenceVisibilityPolicies", "INTERNAL", ex.getMessage()))
+              .setError(
+                  appError(
+                      "ListPresenceVisibilityPolicies",
+                      "INTERNAL",
+                      "Presence visibility policy lookup failed"))
               .build());
       responseObserver.onCompleted();
     }

@@ -797,13 +797,6 @@ public final class GameSessionGrpcService
     throw new AuthorizationException("Tenant access required");
   }
 
-  private void requireTenantOrCurrentAccountAccess(long tenantId, long accountId) {
-    if (SessionContext.hasTenantAccess(tenantId) || isCurrentAccount(accountId)) {
-      return;
-    }
-    throw new AuthorizationException("Account access required");
-  }
-
   private void requireTenantOrCurrentAccountAccess(long tenantId, String accountId) {
     String currentAccountId = SessionContext.getAccountId();
     if (SessionContext.hasTenantAccess(tenantId)

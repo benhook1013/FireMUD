@@ -1,5 +1,6 @@
 package net.firedevops.firemud.accountservice.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import java.sql.SQLException;
@@ -27,6 +28,10 @@ public class RuntimeAccountIdentityGrpcService
   private final AccountRepository accountRepository;
   private final String workloadNamespace;
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification =
+          "AccountRepository is an injected internal owner collaborator, not exposed state.")
   public RuntimeAccountIdentityGrpcService(
       AccountRepository accountRepository,
       @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace) {

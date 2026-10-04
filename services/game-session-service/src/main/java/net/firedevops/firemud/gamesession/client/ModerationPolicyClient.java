@@ -50,11 +50,12 @@ public class ModerationPolicyClient
         LoggingAdminServiceGrpc.newBlockingStub(channel).withCompression("gzip"));
   }
 
-  public EvaluateModerationPolicyResponse evaluateGameplayAdmission(long tenantId, long accountId) {
+  public EvaluateModerationPolicyResponse evaluateGameplayAdmission(
+      long tenantId, String accountId) {
     EvaluateModerationPolicyRequest request =
         EvaluateModerationPolicyRequest.newBuilder()
             .setTenantId(Long.toString(tenantId))
-            .setAccountId(Long.toString(accountId))
+            .setAccountId(accountId)
             .setScope(SCOPE_GAMEPLAY_ADMISSION)
             .build();
     return stub().evaluateModerationPolicy(request);

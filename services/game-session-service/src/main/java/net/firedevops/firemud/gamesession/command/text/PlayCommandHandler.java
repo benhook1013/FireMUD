@@ -25,6 +25,7 @@ import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
+import net.firedevops.firemud.gamesession.service.AccountIds;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
@@ -338,11 +339,14 @@ public class PlayCommandHandler {
 
   private Optional<PlayCommandHandlingResult> validateModerationPolicy(
       SessionContext context, GameplayWorldCatalog.RealmView selectedRealm, String tenantTag) {
+    if (!AccountIds.isCanonicalNonNilUuid(context.accountId())) {
+      return Optional.of(
+          authorityUnavailableFailure(
+              tenantTag, Long.toString(selectedRealm.gameInstanceId()), context.characterId()));
+    }
     var decision =
         moderationPolicyClient.evaluateGameplayAdmission(
-            selectedRealm.tenantId(),
-            PositiveLongParsing.requireOptionalText(context.accountId(), "accountId")
-                .orElseThrow(() -> new IllegalArgumentException("accountId must be positive")));
+            selectedRealm.tenantId(), context.accountId());
     if (decision.hasError()
         && decision.getError().getCode() != null
         && !decision.getError().getCode().isBlank()) {
@@ -912,8 +916,9 @@ public class PlayCommandHandler {
     }
     try {
       Instant.parse(response.getEvaluatedAt());
-      if (!PositiveLongParsing.requireOptionalText(response.getAccountId(), "accountId")
-              .equals(PositiveLongParsing.requireOptionalText(context.accountId(), "accountId"))
+      if (!AccountIds.isCanonicalNonNilUuid(response.getAccountId())
+          || !AccountIds.isCanonicalNonNilUuid(context.accountId())
+          || !response.getAccountId().equals(context.accountId())
           || Long.parseLong(response.getTenantId()) != selectedRealm.tenantId()) {
         return false;
       }

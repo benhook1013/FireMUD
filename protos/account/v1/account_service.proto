@@ -14,6 +14,9 @@ service AccountService {
   rpc Authenticate(AuthenticateRequest) returns (AuthenticateResponse);
   rpc RequestEmailLoginOtp(RequestEmailLoginOtpRequest) returns (RequestEmailLoginOtpResponse);
   rpc VerifyEmailLoginOtp(VerifyEmailLoginOtpRequest) returns (AuthenticateResponse);
+  // Exact Game Session workload only. account_id is the canonical non-nil Account UUID; Account
+  // resolves its private storage row internally and echoes the requested UUID in the response.
+  // tenant_id remains a positive numeric tenant identifier and request_id is passed unchanged.
   rpc GetTenantMembershipForRuntime(GetTenantMembershipForRuntimeRequest) returns (GetTenantMembershipForRuntimeResponse);
   rpc GetRealmAccessGrantForRuntime(GetRealmAccessGrantForRuntimeRequest) returns (GetRealmAccessGrantForRuntimeResponse);
   rpc GetTenantEntitlementsForRuntime(GetTenantEntitlementsForRuntimeRequest) returns (GetTenantEntitlementsForRuntimeResponse);
@@ -198,7 +201,9 @@ message GetProfileResponse {
   shared.v1.ErrorDetail error = 2;
 }
 
-// Internal bounded bulk read used by Social Groups when projecting friend presence.
+// Exact same-namespace Social & Groups mTLS workload only. Accepts at most 100 canonical non-nil
+// Account UUIDs; Account resolves private storage rows internally and returns UUID-keyed policies.
+// Unknown or unproven subjects are omitted so the caller applies complete PRIVATE redaction.
 message ListPresenceVisibilityPoliciesRequest {
   string tenant_id = 1;
   repeated string account_ids = 2;
