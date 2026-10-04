@@ -1,0 +1,6 @@
+#!/usr/bin/env python3
+"""Canonical FireController entrance."""
+from fire_controller.cli import main
+
+if __name__ == "__main__":
+    raise SystemExit(main())

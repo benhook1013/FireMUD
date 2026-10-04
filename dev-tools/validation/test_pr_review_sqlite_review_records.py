@@ -572,14 +572,14 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             attempt_id="coverage-200",
             source_pr=2893,
             channel="subagent",
-            metadata={"coverage_limits": ["n" * 200]},
+            metadata={"model": "gpt-test-model", "coverage_limits": ["n" * 200]},
         )
         with self.assertRaisesRegex(ReviewRecordsError, "at most 200"):
             self.records.start_attempt(
                 attempt_id="coverage-201",
                 source_pr=2893,
                 channel="subagent",
-                metadata={"coverage_limits": ["n" * 201]},
+                metadata={"model": "gpt-test-model", "coverage_limits": ["n" * 201]},
             )
         self.assertEqual([item["attempt_id"] for item in self.records.attempt_history(2893)], ["coverage-200"])
 
@@ -588,7 +588,9 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         note = "Original audit coverage and context retained. " * 7
         metadata = {"reviewer": "Sol medium", "scope": "narrow", "coverage_limits": [note]}
         # Reproduce metadata accepted by the old start path, without rewriting it.
-        with patch.object(sqlite_review_records, "_coverage_limits", return_value=(note,)):
+        with patch.object(sqlite_review_records, "_coverage_limits", return_value=(note,)), \
+                patch.object(sqlite_review_records, "_model_metadata"):
+            # Explicit old-writer fixture: retain unknown model without guessing.
             self.records.start_attempt(
                 attempt_id="legacy-long-note",
                 source_pr=2893,

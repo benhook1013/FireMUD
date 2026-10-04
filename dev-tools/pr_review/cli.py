@@ -88,7 +88,11 @@ def _source_fix_sha(value: str) -> str:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = _CliArgumentParser(prog="dev-tools/pr-review")
+    parser = _CliArgumentParser(
+        prog="dev-tools/pr-review",
+        description="The existing review engine, also available as firemud-pr-review or firemud-controller reviews.",
+        epilog="Use COMMAND --help for options; routes lists work, while records route resolve records a receiving-owner outcome.",
+    )
     parser.add_argument(
         "--acceptance-fixture",
         metavar="JSON",
@@ -129,7 +133,13 @@ def _parser() -> argparse.ArgumentParser:
         help="deeply fetch and reconcile every configured PR",
     )
 
-    routes = commands.add_parser("routes", help="list open incoming or unassigned finding routes")
+    routes = commands.add_parser(
+        "routes", help="list open incoming or unassigned finding routes",
+        description=("List open incoming or unassigned finding routes. For native SQLite receiving-owner outcomes, "
+                     "use records route resolve; records routes --status all also shows resolved history."),
+        epilog="Example: firemud-controller reviews routes --target-pr 123 --json",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     route_query = routes.add_mutually_exclusive_group(required=True)
     route_query.add_argument("--target-pr", type=_positive_int)
     route_query.add_argument("--unassigned", action="store_true")
@@ -164,7 +174,10 @@ def _parser() -> argparse.ArgumentParser:
     history_batch.add_argument("--pr", action="append", required=True, type=_positive_int)
     records_database(history_batch)
 
-    incoming = record_commands.add_parser("routes", help="list structured and migrated controller routes")
+    incoming = record_commands.add_parser(
+        "routes", help="list structured and migrated controller routes",
+        description="List recorded routes; use records route resolve to record a native receiving-owner outcome.",
+    )
     incoming_query = incoming.add_mutually_exclusive_group()
     incoming_query.add_argument("--target-pr", type=_positive_int)
     incoming_query.add_argument("--unassigned", action="store_true")
@@ -307,6 +320,8 @@ def _parser() -> argparse.ArgumentParser:
     subagent_start.add_argument("--pr", required=True, type=_positive_int)
     subagent_start.add_argument("--run-id", help="stable caller identity; generated when omitted")
     subagent_start.add_argument("--reviewer", required=True)
+    subagent_start.add_argument("--model", required=True, help="actual model identifier from tool metadata")
+    subagent_start.add_argument("--reasoning-effort", help="actual reasoning effort, when known")
     subagent_start.add_argument("--scope", required=True, choices=("broad", "narrow"))
     subagent_start.add_argument("--coverage-limit", action="append", default=[])
     subagent_start.add_argument("--head", help="reviewed commit, if the pass is pinned to one")
@@ -343,13 +358,22 @@ def _parser() -> argparse.ArgumentParser:
     route_decide.add_argument("--reason", required=True)
     route_decide.add_argument("--decided-at")
     records_database(route_decide)
-    route_resolve = route_subcommands.add_parser("resolve")
-    route_resolve.add_argument("--route-id", required=True)
-    route_resolve.add_argument("--resolution-id", required=True)
-    route_resolve.add_argument("--target-pr", required=True, type=_positive_int)
+    route_resolve = route_subcommands.add_parser(
+        "resolve", help="record a native receiving-owner fix or rejection",
+        description="Record a native SQLite route outcome with proof or a rejection reason; does not complete a review run.",
+        epilog=("Find the route ID with routes --target-pr PR or records routes.\n"
+                "Example: firemud-controller reviews records route resolve --route-id ROUTE_ID\n"
+                "  --resolution-id UNIQUE_ID --target-pr 123 --outcome accepted_fixed\n"
+                "  --actor General --proof-or-reason 'Verified fix and focused proof'\n"
+                "The example is one command; join its continuation lines."),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    route_resolve.add_argument("--route-id", required=True, help="stable route ID returned by route listing")
+    route_resolve.add_argument("--resolution-id", required=True, help="unique identity for this recorded resolution")
+    route_resolve.add_argument("--target-pr", required=True, type=_positive_int, help="receiving PR for this route")
     route_resolve.add_argument("--outcome", required=True, choices=("accepted_fixed", "rejected"))
     route_resolve.add_argument("--actor", required=True)
-    route_resolve.add_argument("--proof-or-reason", required=True)
+    route_resolve.add_argument("--proof-or-reason", required=True, help="verified fix evidence or bounded rejection reason")
     route_resolve.add_argument("--resolved-at")
     records_database(route_resolve)
     route_retarget = route_subcommands.add_parser("retarget")
@@ -402,9 +426,19 @@ def _parser() -> argparse.ArgumentParser:
     policy.add_argument("--reason", required=True)
     policy.add_argument("--json", action="store_true", dest="as_json")
     allocation = decide_commands.add_parser(
-        "allocation", help="grant, renew, or cancel one exact-bound channel review allocation"
+        "allocation", help="grant, renew, or cancel one exact-bound channel review allocation",
+        description=("Grant a new allocation, or renew to replace an existing allocation or human stop explicitly. "
+                     "Recording an allocation does not request a review. Exact rounds always preserve taper "
+                     "and cannot be combined with --fresh-taper."),
+        epilog=("Example: firemud-controller reviews decide allocation grant --pr 123 --channel cli\n"
+                "  --head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --exact-additional-completed 2\n"
+                "  --reason 'Human requested two further completed results'\n"
+                "Join continuation lines and replace the example head with the exact live SHA.\n"
+                "Use renew instead of grant when replacing an existing allocation or stop."),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    allocation.add_argument("action", choices=("grant", "renew", "cancel"))
+    allocation.add_argument("action", choices=("grant", "renew", "cancel"),
+                            help="grant new allowance; renew replaces allowance/stop; cancel removes allowance")
     allocation.add_argument("--pr", required=True, type=_positive_int)
     allocation.add_argument("--channel", required=True, choices=("hosted", "cli"))
     allocation.add_argument("--head", required=True, type=_exact_sha)
@@ -453,7 +487,11 @@ def _parser() -> argparse.ArgumentParser:
         help="acknowledge only current-head over-ceiling skip evidence for a direct human stop; requires --head",
     )
     stop.add_argument("--json", action="store_true", dest="as_json")
-    route = decide_commands.add_parser("route", help="record or disposition one stable routed finding")
+    route = decide_commands.add_parser(
+        "route", help="record or disposition one stable routed finding",
+        description=("Record controller route decisions. Native SQLite receiving-owner resolution uses "
+                     "records route resolve; the actions here are open, accepted-fixed, rejected and retargeted."),
+    )
     route.add_argument("action", choices=("open", "accepted-fixed", "rejected", "retargeted"))
     route.add_argument("--route-id")
     route.add_argument("--source-pr", type=_positive_int)
@@ -1142,6 +1180,8 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
                 candidate_sha=args.head,
                 metadata={
                     "reviewer": args.reviewer,
+                    "model": args.model,
+                    **({"reasoning_effort": args.reasoning_effort} if args.reasoning_effort else {}),
                     "scope": args.scope,
                     "coverage_limits": args.coverage_limit,
                 },
@@ -1350,7 +1390,7 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
             snapshot_matches = (
                 pull_request.get("headRefOid") == stack_item.get("head")
                 and pull_request.get("baseRefName") == stack_item.get("base")
-                and pull_request.get("baseRefOid") == stack_item.get("parent_head")
+                and pull_request.get("baseRefOid") == stack_item.get("pr_base_oid")
             )
             if not snapshot_matches:
                 review_reasons.append("PR base/head changed between status snapshots")
