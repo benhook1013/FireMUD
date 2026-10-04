@@ -50,6 +50,8 @@ The sections below define the target-state runtime contract. Current implementat
 
   Any returned tenant blocks activation until an operator completes exact data readback and owner disposition. Do not automatically update or delete rows; the V12 constraint fails closed on duplicates.
 
+The child migration sequence is V7 audit, V8 parent legacy-bootstrap repair, V9 parent admission-bind owner ledger, V10 parent run-owned launch identity, inherited V11 Account UUID storage, child V12 visible public-production cardinality guard, and child V13 audit-event tenant lookup index; V12/V13 preserve the child SQL bytes. Retained databases whose Flyway history records former child assignments (V7/V8/V9 cardinality or V9/V10 tenant lookup), including conflicting former child V11 cardinality/V12 lookup assignments, remain activation-blocked pending exact Flyway-history and data readback plus owner disposition. Do not manually repair data, run Flyway repair, rewrite history, enable out-of-order, or assume a no-data boundary. Existing duplicate visible-public rows fail V12 rather than selecting or deleting a survivor. Before activation, require evidence of an acceptable V12 lock budget or quiescence and an actual V13 event-index build/write-lock budget measurement or quiescence; do not infer online write availability from a small table.
+
 ## Runtime Details
 
 - Redis and PostgreSQL hold the meaningful gameplay-session, tick-coordination, and control-plane state needed for takeover.
