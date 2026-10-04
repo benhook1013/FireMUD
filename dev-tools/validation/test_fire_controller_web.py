@@ -476,6 +476,14 @@ class IsolatedWebsiteIntegrationTest(unittest.TestCase):
         )
         self.assertEqual(worker_names, ["Gameplay", "General", "Document", "Alpha", "Beta", "Zulu"])
 
+        paused = {**lane("Gameplay"), "status": "paused", "paused": True,
+                  "pause_reason": "Paused for FireController cutover."}
+        paused_card = self.page._render_controller_lane(paused)
+        self.assertIn('aria-label="PAUSED"', paused_card)
+        self.assertNotIn("Pause reason", paused_card)
+        self.assertNotIn("Paused for FireController cutover.", paused_card)
+        self.assertEqual(paused["pause_reason"], "Paused for FireController cutover.")
+
         card = self.page.render_controller_job(public_row())
         self.assertIn("<h4>Keep the lane moving</h4>", card)
         self.assertNotIn("<h4>Build the bridge</h4>", card)

@@ -32,7 +32,7 @@ Captured post-patch SHA-256 values for the isolated copy:
 
 | Source file | Post-patch SHA-256 |
 | --- | --- |
-| render.py | 51f9a81bd921c1e6c3d864236859404b4c238e8ec2c34d540c3f60ba05e66f23 |
+| render.py | f0bb04b1db9f85d18915a56fb4cca0e18563208bd77d48c08ba3dde6a5b31781 |
 | server.py | 2e585fafe4e0052e3eca1b347eadc564fa8cd0ac0cf6f43720b59b87f58c96a3 |
 | publish-hetzner.py | 6d3a4dad2de8cdccd760aaaa17843926cbbeb97db4b392d17227c6162dee4298 |
 | render_progress.py | d1f2b3bdc2862ba46166e8d30348920f0836e52eec1bdde28ed2378a0b0c47a2 |

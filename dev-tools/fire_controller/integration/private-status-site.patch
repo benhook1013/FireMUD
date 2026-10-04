@@ -290,7 +290,7 @@ diff --git a/render.py b/render.py
                  f'<div class="round-pills">{"".join(pills) if pills else "Unavailable" if incomplete_history else "None yet"}</div>{activity_note}</div>'
              )
      cards = "".join(activity_cards) + independent_card
-@@ -2286,11 +2335,95 @@
+@@ -2286,11 +2335,91 @@
              temporary_path.unlink(missing_ok=True)
 
 
@@ -345,10 +345,6 @@ diff --git a/render.py b/render.py
 +    if status not in {"ACTIVE", "BLOCKED", "PAUSED", "IDLE"}:
 +        raise ValueError("controller lane status is invalid")
 +    jobs_html = render_controller_jobs(lane["jobs"])
-+    reason = (
-+        f'<p class="lane-blocker"><strong>Pause reason</strong> · {safe(lane["pause_reason"])}</p>'
-+        if lane["paused"] and lane["pause_reason"] else ""
-+    )
 +    truncation = '<p class="lane-truncated">Additional jobs are not shown.</p>' if lane["jobs_truncated"] else ""
 +    worker_token = quote(worker, safe="")
 +    primary = lane["primary"]
@@ -362,7 +358,7 @@ diff --git a/render.py b/render.py
 +        f'<span class="lane-state-icon" aria-hidden="true"></span>{status}</span></div>'
 +        f'<div class="worker-actions">{details}'
 +        f'<span data-fire-controller-inbox-worker="{safe(worker_token)}"></span></div></div>'
-+        f'<div class="lane-content">{reason}{jobs_html}{truncation}</div></article>'
++        f'<div class="lane-content">{jobs_html}{truncation}</div></article>'
 +    )
 +
 +
@@ -389,7 +385,7 @@ diff --git a/render.py b/render.py
          raise ValueError("status file needs an ordered stack and Gameplay, Document, General lanes")
      if len({item["number"] for item in stack}) != len(stack):
          raise ValueError("duplicate PR in stack")
-@@ -2300,7 +2433,9 @@
+@@ -2300,7 +2429,9 @@
      if len(set(stages)) != sum(1 for _ in groupby(stages)):
          raise ValueError("programme stages must be contiguous in stack order")
      github = github or {"available": False, "states": {}, "lifecycle": {}, "merged_at": {}, "stats": {}}
@@ -400,7 +396,7 @@ diff --git a/render.py b/render.py
      front_number = selected_review_front(data, review, github)
      front_index = next((index for index, item in enumerate(stack) if item["number"] == front_number), None)
      front_item = stack[front_index] if front_index is not None else None
-@@ -2318,7 +2453,6 @@
+@@ -2318,7 +2449,6 @@
          len(stack) + 1,
      )
      front_size_html = "Diff size unavailable"
@@ -408,7 +404,7 @@ diff --git a/render.py b/render.py
      front_activity_grid = ""
      for position, item in enumerate(stack, 1):
          number = item["number"]
-@@ -2342,26 +2476,7 @@
+@@ -2342,26 +2472,7 @@
          channels = presentation_channels(queue_item) if queue_item else {}
          label_channels = channel_label_states(queue_item, channels) if queue_item else {}
          states = [label_channels.get(channel) for channel in ("hosted", "cli")] if isinstance(label_channels, dict) else []
@@ -436,7 +432,7 @@ diff --git a/render.py b/render.py
          merged_time = None
          if lifecycle == "MERGED":
              merged_at = github.get("merged_at", {}).get(number)
-@@ -2374,16 +2489,13 @@
+@@ -2374,16 +2485,13 @@
              status_html = f'<span class="sub">{channel_html}</span>'
              queue_badge_html = '<span class="queue-status queue-status-merged">MERGED</span>'
          elif lifecycle == "CLOSED":
@@ -456,7 +452,7 @@ diff --git a/render.py b/render.py
              if number in front_numbers:
                  badge_label, badge_class = "REVIEW FRONT", "front"
              elif has_controller_states and any(state in ACTIVE_REVIEW_STATES for state in states):
-@@ -2396,7 +2508,7 @@
+@@ -2396,7 +2504,7 @@
                  badge_label, badge_class = "QUEUED", "queued"
              queue_badge_html = f'<span class="queue-status queue-status-{badge_class}">{badge_label}</span>'
          else:
@@ -465,7 +461,7 @@ diff --git a/render.py b/render.py
              queue_badge_html = (
                  '<span class="queue-status queue-status-front">REVIEW FRONT</span>'
                  if number in front_numbers else
-@@ -2404,23 +2516,13 @@
+@@ -2404,23 +2512,13 @@
                  if number == next_pr else
                  '<span class="queue-status queue-status-pending">PENDING</span>'
              )
@@ -492,7 +488,7 @@ diff --git a/render.py b/render.py
              front_activity_grid = activity_grid
          row_classes = []
          if lifecycle == "MERGED":
-@@ -2481,40 +2583,50 @@
+@@ -2481,40 +2579,50 @@
              f'{safe(front_item["title"])}</span></a></h2>'
              f'</div><div class="front-evidence">'
              f'<div class="front-facts"><div class="front-fact"><strong>Diff size</strong>'
@@ -571,7 +567,7 @@ diff --git a/render.py b/render.py
      refreshed_at = (
          f'<time class="relative-age" datetime="{safe(now.isoformat())}" '
          f'title="{safe(local_time(now))}">just now</time>'
-@@ -2545,7 +2657,9 @@
+@@ -2545,7 +2653,9 @@
          "" if history_only else
          '<section id="workers"><div class="section-head"><h2>Worker lanes</h2>'
          '<p>Current focus across active workstreams</p></div>'
@@ -582,7 +578,7 @@ diff --git a/render.py b/render.py
      )
      queue_heading = "Queue history" if history_only else "Configured review queue"
      queue_link = (
-@@ -2560,7 +2674,6 @@
+@@ -2560,7 +2670,6 @@
  <div><dt>Reviewing</dt><dd>request is active</dd></div>
  <div><dt>Cooldown</dt><dd>provider rate limit</dd></div>
  <div><dt>Blocked</dt><dd>new request is held; a specific reason appears on the row when supplied</dd></div>
@@ -590,7 +586,7 @@ diff --git a/render.py b/render.py
  <div><dt>Human bypass / Review closed</dt><dd>intentionally stopped or completed</dd></div>
  </dl>'''
      )
-@@ -2636,7 +2749,7 @@
+@@ -2636,7 +2745,7 @@
  .front-copy h2 {{ margin: 1rem 0; font-size: clamp(1.5rem,3vw,2.75rem); line-height: 1.1; letter-spacing: -.04em; overflow-wrap: anywhere; }}
  .front-number {{ display: block; margin-bottom: .65rem; color: #ffc390; font-size: clamp(3rem,6vw,5.5rem); line-height: .95; letter-spacing: -.07em; }}
  .front-copy h2 a {{ color: #fff; text-decoration: none; }} .front-copy h2 a:hover {{ text-decoration: underline; }}
@@ -599,7 +595,7 @@ diff --git a/render.py b/render.py
  .front-fact {{ display: flex; min-width: 0; flex-direction: column; align-items: flex-start; gap: .35rem; padding: .6rem .75rem; border: 1px solid #f4c9c7; border-radius: 9px; background: var(--surface); color: var(--ink); font-size: .8rem; }}
  .front-fact > strong {{ color: #37414a; font-size: .8rem; font-weight: 700; }}
  .front-facts .sub {{ display: inline; margin: 0; font-size: .78rem; color: var(--ink); }}
-@@ -2693,6 +2806,23 @@
+@@ -2693,6 +2802,23 @@
  .queue-status-closed {{ background: #e7e9ed; border-color: #b9bec7; color: #454b56; }}
  .queue-stage > .stack li.merged .pr-main > a {{ color: #392451; }}
  .cards {{ margin-top: 0; }} .card {{ border-radius: 0; box-shadow: none; }} .card-top {{ background: var(--smoke); }}
@@ -623,7 +619,7 @@ diff --git a/render.py b/render.py
  @media (max-width: 900px) {{ .queue-stage {{ grid-template-columns: 1fr; gap: .45rem; }} .queue-stage > .queue-stage-title {{ margin: 0 0 0 3.5rem; }} }}
  @media (max-width: 760px) {{ .mast-inner > .repo-links {{ text-align: right; gap: .25rem .6rem; }} .front-board {{ grid-template-columns: 1fr; }} .front-copy {{ min-height: 250px; }} .front-facts {{ grid-template-columns: 1fr; }} .front-evidence > .activity-grid {{ grid-template-columns: 1fr; }} .section-head {{ display: block; }} .section-head p {{ margin-top: .55rem; }} .queue-stage {{ padding: .55rem .8rem; }} .cards {{ grid-template-columns: minmax(0,1fr); width: 100%; }} .lane-topline {{ padding-right: .75rem; }} .card-top .fresh {{ max-width: 100%; margin-right: .75rem; white-space: normal; text-align: right; }} }}
  </style></head><body>
-@@ -2705,24 +2835,45 @@
+@@ -2705,24 +2831,45 @@
 
 
  def main() -> None:
@@ -673,7 +669,7 @@ diff --git a/render.py b/render.py
 
      def fetch_github_listing() -> dict:
          with _TimedStage("github_listing"):
-@@ -2733,12 +2884,12 @@
+@@ -2733,12 +2880,12 @@
          github_future = pool.submit(fetch_github_listing)
          review = review_future.result()
          github = github_future.result()
@@ -690,7 +686,7 @@ diff --git a/render.py b/render.py
      with _TimedStage("queue_history"):
          enrich_merged_review_history(review_tool, review, github)
      now = datetime.now(timezone.utc)
-@@ -2748,9 +2899,15 @@
+@@ -2748,9 +2895,15 @@
          histories = records_history_snapshots(review_tool, history_prs)
      with _TimedStage("html_render"):
          args.output.parent.mkdir(parents=True, exist_ok=True)
