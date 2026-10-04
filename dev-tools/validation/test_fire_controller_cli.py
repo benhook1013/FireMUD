@@ -21,6 +21,66 @@ from pr_review.sqlite_store import SqliteStateStore
 TOOLS = Path(__file__).parents[1]
 
 
+class ControllerHelpTest(unittest.TestCase):
+    def help(self, *arguments):
+        from fire_controller.cli import main
+
+        output = io.StringIO()
+        # Help must work before a context, database, provider or Markdown checker is consulted.
+        environment = {key: value for key, value in os.environ.items() if key != "FIRE_CONTROLLER_CONTEXT"}
+        with (
+            patch.dict(os.environ, environment, clear=True),
+            patch("fire_controller.context.ProjectContext.load", side_effect=AssertionError("context consulted")),
+            patch("fire_controller.cli._precheck", side_effect=AssertionError("submission checked")),
+            patch("pr_review.cli._dispatch", side_effect=AssertionError("review dispatched")),
+            contextlib.redirect_stdout(output),
+            self.assertRaises(SystemExit) as exit_result,
+        ):
+            main([*arguments, "--help"])
+        self.assertEqual(exit_result.exception.code, 0)
+        return " ".join(output.getvalue().split())
+
+    def test_job_help_distinguishes_lookup_writes_and_guarded_private_changes(self):
+        read = self.help("jobs", "read")
+        self.assertIn("latest checkpoint", read)
+        self.assertIn("without writing", read)
+        self.assertIn("maximum newest updates", read)
+        checkpoint = self.help("jobs", "checkpoint")
+        self.assertIn("Write a private checkpoint", checkpoint)
+        self.assertIn("Use jobs read to retrieve", checkpoint)
+        revise = self.help("jobs", "revise")
+        self.assertIn("revision returned by jobs read", revise)
+        self.assertIn("stale revisions are refused", revise)
+        self.assertIn("public high-level assignment", revise)
+        self.assertIn("Private working brief", revise)
+        for command in ("checkpoint", "lane-pause", "lane-resume"):
+            with self.subTest(command=command):
+                detail = self.help("jobs", command)
+                self.assertIn("allowed keys: branch, worktree, pr, source, proof", detail)
+                self.assertIn("pr also accepts a positive integer", detail)
+                self.assertIn("extra head/CI evidence in checkpoint prose", detail)
+
+    def test_inbox_help_discloses_seen_acknowledgment_and_no_wake_semantics(self):
+        self.assertIn("without changing seen or acknowledged state", self.help("inbox", "list"))
+        self.assertIn("does not wake the recipient or complete work", self.help("inbox", "send"))
+        read = self.help("inbox", "read")
+        self.assertIn("mark it seen", read)
+        self.assertIn("does not acknowledge handling", read)
+        ack = self.help("inbox", "ack")
+        self.assertIn("acknowledged and seen", ack)
+        self.assertIn("not job completion", ack)
+
+    def test_review_help_points_to_native_resolution_and_exact_round_semantics(self):
+        self.assertIn("records route resolve", self.help("reviews", "routes"))
+        resolve = self.help("reviews", "records", "route", "resolve")
+        self.assertIn("native SQLite route outcome", resolve)
+        self.assertIn("does not complete a review run", resolve)
+        allocation = self.help("reviews", "decide", "allocation")
+        self.assertIn("renew to replace an existing allocation or human stop", allocation)
+        self.assertIn("does not request a review", allocation)
+        self.assertIn("Exact rounds do not reset taper unless", allocation)
+
+
 class ControllerCliTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
