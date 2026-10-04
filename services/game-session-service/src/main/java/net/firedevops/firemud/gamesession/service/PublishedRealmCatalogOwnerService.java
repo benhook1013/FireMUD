@@ -11,6 +11,9 @@ import net.firedevops.firemud.gamesession.entity.PublishedRealmCatalogSnapshot;
 import net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepository.RetainedTenantAssociationIdentity;
 import net.firedevops.firemud.gamesession.repository.InitialAdmissionBindCatalogRepository;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -26,6 +29,8 @@ import tools.jackson.databind.ObjectMapper;
     justification =
         "The workload namespace and collaborators are validated before use; this internal owner"
             + " service is intentionally not a startup or public admission trigger.")
+@Service
+@Lazy
 public final class PublishedRealmCatalogOwnerService {
   private static final UUID NIL_UUID = new UUID(0L, 0L);
   private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
@@ -41,7 +46,7 @@ public final class PublishedRealmCatalogOwnerService {
       GameSessionRetainedTenantAssociationRepository retainedAssociationRepository,
       InitialAdmissionBindCatalogRepository catalogRepository,
       PlatformTransactionManager transactionManager,
-      String workloadNamespace) {
+      @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace) {
     this.gameDesignClient = Objects.requireNonNull(gameDesignClient, "gameDesignClient");
     this.retainedAssociationRepository =
         Objects.requireNonNull(retainedAssociationRepository, "retainedAssociationRepository");

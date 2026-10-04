@@ -15,10 +15,11 @@ import net.firedevops.firemud.gamesession.entity.InitialAdmissionBindAttempt;
 import net.firedevops.firemud.gamesession.entity.InitialAdmissionBindAttempt.Status;
 import net.firedevops.firemud.gamesession.entity.InitialAdmissionBindCatalog;
 import net.firedevops.firemud.gamesession.jooq.tables.records.GameplayAdmissionPointerRecord;
-import net.firedevops.firemud.gamesession.jooq.tables.records.GameplayInitialAdmissionBindAttemptRecord;
 import org.jooq.DSLContext;
+import org.jooq.Field;
 import org.jooq.Record;
 import org.jooq.SQLDialect;
+import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
 
 @Repository
@@ -28,6 +29,19 @@ import org.springframework.stereotype.Repository;
 public class InitialAdmissionBindAttemptRepository {
   private static final String ATTEMPT_LOCK_PREFIX = "initial-admission-bind-attempt:";
   private static final String REALM_LOCK_PREFIX = "initial-admission-bind-realm:";
+  private static final Field<String> CATALOG_SOURCE_KIND = field("catalog_source_kind", String.class);
+  private static final Field<UUID> FIXTURE_CATALOG_REALM_ID =
+      field("fixture_catalog_realm_id", UUID.class);
+  private static final Field<String> PUBLISHED_TARGET_NAMESPACE =
+      field("published_target_namespace", String.class);
+  private static final Field<UUID> CANONICAL_TENANT_ID = field("canonical_tenant_id", UUID.class);
+  private static final Field<Long> GAME_TEMPLATE_ID = field("game_template_id", Long.class);
+  private static final Field<String> LAUNCH_DESCRIPTOR_ID =
+      field("launch_descriptor_id", String.class);
+  private static final Field<Long> RELEASE_BUNDLE_ID = field("release_bundle_id", Long.class);
+  private static final Field<String> PUBLISHED_RELEASE_BUNDLE_REF =
+      field("published_release_bundle_ref", String.class);
+  private static final Field<Long> VERSION_STATE_EPOCH = field("version_state_epoch", Long.class);
 
   private final DSLContext dsl;
 
@@ -49,7 +63,8 @@ public class InitialAdmissionBindAttemptRepository {
 
   public Optional<InitialAdmissionBindAttempt> findByTenantAndRequestId(
       long tenantId, String requestId) {
-    return dsl.selectFrom(GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT)
+    return dsl.select(DSL.asterisk())
+        .from(GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT)
         .where(
             GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT
                 .TENANT_ID
@@ -62,7 +77,8 @@ public class InitialAdmissionBindAttemptRepository {
 
   public Optional<InitialAdmissionBindAttempt> findByTenantAndRequestIdForUpdate(
       long tenantId, String requestId) {
-    return dsl.selectFrom(GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT)
+    return dsl.select(DSL.asterisk())
+        .from(GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT)
         .where(
             GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT
                 .TENANT_ID
@@ -76,7 +92,8 @@ public class InitialAdmissionBindAttemptRepository {
 
   public Optional<InitialAdmissionBindAttempt> findPendingByTenantAndRealmForUpdate(
       long tenantId, UUID realmId) {
-    return dsl.selectFrom(GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT)
+    return dsl.select(DSL.asterisk())
+        .from(GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT)
         .where(
             GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT
                 .TENANT_ID
@@ -88,25 +105,47 @@ public class InitialAdmissionBindAttemptRepository {
   }
 
   public InitialAdmissionBindAttempt insertPending(InitialAdmissionBindAttempt attempt) {
-    GameplayInitialAdmissionBindAttemptRecord record =
-        dsl.newRecord(GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT);
-    record.setAttemptId(attempt.attemptId());
-    record.setTenantId(attempt.tenantId());
-    record.setInitialAdmissionRequestId(attempt.initialAdmissionRequestId());
-    record.setRequestDigest(attempt.requestDigest());
-    record.setRealmId(attempt.realmId());
-    record.setPlayableStateNamespaceId(attempt.playableStateNamespaceId());
-    record.setPlayableStateScope(attempt.playableStateScope());
-    record.setExpectedNoPriorPointer(true);
-    record.setCatalogRevision(attempt.catalogRevision());
-    record.setGameInstanceId(attempt.gameInstanceId());
-    record.setVersionId(attempt.versionId());
-    record.setActiveLifecycleEpoch(attempt.activeLifecycleEpoch());
-    record.setStatus(Status.PENDING.name());
-    record.setCreatedAt(toLocalDateTime(attempt.createdAt()));
-    record.setUpdatedAt(toLocalDateTime(attempt.updatedAt()));
-    record.setTerminalAt(null);
-    record.store();
+    dsl.insertInto(GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT)
+        .set(GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT.ATTEMPT_ID, attempt.attemptId())
+        .set(GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT.TENANT_ID, attempt.tenantId())
+        .set(
+            GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT.INITIAL_ADMISSION_REQUEST_ID,
+            attempt.initialAdmissionRequestId())
+        .set(GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT.REQUEST_DIGEST, attempt.requestDigest())
+        .set(GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT.REALM_ID, attempt.realmId())
+        .set(
+            GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT.PLAYABLE_STATE_NAMESPACE_ID,
+            attempt.playableStateNamespaceId())
+        .set(
+            GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT.PLAYABLE_STATE_SCOPE,
+            attempt.playableStateScope())
+        .set(GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT.EXPECTED_NO_PRIOR_POINTER, true)
+        .set(GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT.CATALOG_REVISION, attempt.catalogRevision())
+        .set(GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT.GAME_INSTANCE_ID, attempt.gameInstanceId())
+        .set(GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT.VERSION_ID, attempt.versionId())
+        .set(
+            GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT.ACTIVE_LIFECYCLE_EPOCH,
+            attempt.activeLifecycleEpoch())
+        .set(GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT.STATUS, Status.PENDING.name())
+        .set(
+            GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT.CREATED_AT,
+            toLocalDateTime(attempt.createdAt()))
+        .set(
+            GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT.UPDATED_AT,
+            toLocalDateTime(attempt.updatedAt()))
+        .set(GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT.TERMINAL_AT, null)
+        .set(CATALOG_SOURCE_KIND, attempt.catalogSourceKind())
+        .set(
+            FIXTURE_CATALOG_REALM_ID,
+            "V9_FIXTURE".equals(attempt.catalogSourceKind()) ? attempt.realmId() : null)
+        .set(PUBLISHED_TARGET_NAMESPACE, attempt.publishedTargetNamespace())
+        .set(CANONICAL_TENANT_ID, attempt.canonicalTenantId())
+        .set(GAME_TEMPLATE_ID, attempt.gameTemplateId())
+        .set(LAUNCH_DESCRIPTOR_ID, attempt.launchDescriptorId())
+        .set(RELEASE_BUNDLE_ID, attempt.releaseBundleId())
+        .set(PUBLISHED_RELEASE_BUNDLE_REF, attempt.publishedReleaseBundleRef())
+        .set(VERSION_STATE_EPOCH, attempt.versionStateEpoch())
+        .execute();
     return findByTenantAndRequestId(attempt.tenantId(), attempt.initialAdmissionRequestId())
         .orElseThrow();
   }
@@ -224,7 +263,7 @@ public class InitialAdmissionBindAttemptRepository {
     record.setPublicProductionRealm(true);
     record.setRequiresCharacterSelection(catalog.requiresCharacterSelection());
     record.setStateScope("SHARED");
-    record.setCharacterCreationPolicy("ALLOW_NEW");
+    record.setCharacterCreationPolicy(catalog.characterCreationPolicy());
     record.setLastUpdatedBy("game-session-initial-admission-bind");
     record.setLastUpdateReason("initial admission pointer bind");
     record.setCreatedAt(toLocalDateTime(now));
@@ -265,7 +304,15 @@ public class InitialAdmissionBindAttemptRepository {
         record.get(GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT.AUDIT_EVENT_ID),
         toInstant(record.get(GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT.CREATED_AT)),
         toInstant(record.get(GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT.UPDATED_AT)),
-        toInstant(record.get(GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT.TERMINAL_AT)));
+        toInstant(record.get(GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT.TERMINAL_AT)),
+        record.get(CATALOG_SOURCE_KIND),
+        record.get(PUBLISHED_TARGET_NAMESPACE),
+        record.get(CANONICAL_TENANT_ID),
+        record.get(GAME_TEMPLATE_ID),
+        record.get(LAUNCH_DESCRIPTOR_ID),
+        record.get(RELEASE_BUNDLE_ID),
+        record.get(PUBLISHED_RELEASE_BUNDLE_REF),
+        record.get(VERSION_STATE_EPOCH));
   }
 
   private GameplayAdmissionPointer toPointer(Record record) {
@@ -295,5 +342,9 @@ public class InitialAdmissionBindAttemptRepository {
     pointer.setCreatedAt(toInstant(record.get(GAMEPLAY_ADMISSION_POINTER.CREATED_AT)));
     pointer.setUpdatedAt(toInstant(record.get(GAMEPLAY_ADMISSION_POINTER.UPDATED_AT)));
     return pointer;
+  }
+
+  private static <T> Field<T> field(String name, Class<T> type) {
+    return DSL.field(DSL.name(name), type);
   }
 }
