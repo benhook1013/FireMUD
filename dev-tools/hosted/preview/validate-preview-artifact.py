@@ -133,9 +133,33 @@ EXPECTED_OBJECTS = {
     for kind, names in EXPECTED_NAMES.items()
     for name in names
 }
+TRUSTED_HOSTED_VALUES = (
+    Path(__file__).resolve().parents[3]
+    / "k8s/helm/firemud/values-hosted-shared.example.yaml"
+)
+
+
+def _trusted_database_images(values_path: Path) -> dict[str, str]:
+    try:
+        values = yaml.safe_load(values_path.read_text(encoding="utf-8"))
+        stack = values["previewStack"]
+        images = {name: stack[name]["image"] for name in ("postgres", "redis", "seed")}
+    except (OSError, yaml.YAMLError, KeyError, TypeError) as exc:
+        raise ValueError(f"could not load trusted database images: {values_path}") from exc
+    for name, image in images.items():
+        repository = "redis" if name == "redis" else "postgres"
+        if not isinstance(image, str) or not re.fullmatch(
+            rf"{repository}:[0-9]+(?:\.[0-9]+)*(?:-[A-Za-z0-9._-]+)?(?:@sha256:[0-9a-f]{{64}})?", image
+        ):
+            raise ValueError(f"invalid trusted database image for {name}: {values_path}")
+    return images
+
+
+TRUSTED_DATABASE_IMAGES = _trusted_database_images(TRUSTED_HOSTED_VALUES)
 INFRASTRUCTURE_IMAGES = {
-    "postgres:16",
-    "redis:7.4.3",
+    TRUSTED_DATABASE_IMAGES["postgres"],
+    TRUSTED_DATABASE_IMAGES["redis"],
+    TRUSTED_DATABASE_IMAGES["seed"],
     "ghcr.io/benhook1013/minio-server@sha256:a091800eb1c700ea662634c9ad5d9e4cf6980a1f61027a9b80aef0163e66c22a",
     "ghcr.io/benhook1013/minio-client@sha256:28c57b6c6564fa6b39bb99a68cd61b3494a730b08938c9d97be14c2b6c9f1dcf",
 }
@@ -154,10 +178,6 @@ CERTIFICATE_IDENTITY_MODES = {"standalone", "hosted-controller"}
 EXPOSURE_MODES = {"private", "public"}
 CERTIFICATE_IDENTITY_LABEL = "firemud.dev/certificate-identity-mode"
 TCP_PROXY_IDENTITY_MODE_LABEL = CERTIFICATE_IDENTITY_LABEL
-TRUSTED_HOSTED_VALUES = (
-    Path(__file__).resolve().parents[3]
-    / "k8s/helm/firemud/values-hosted-shared.example.yaml"
-)
 HOSTED_REDACTED_CONFIG_KEYS = frozenset(
     {"ASSET_STORE_ACCESS_KEY", "ASSET_STORE_SECRET_KEY"}
 )
@@ -385,7 +405,7 @@ POSTGRES_DATA_LAYOUT_CHECK_INIT_CONTAINER = {
         "runAsGroup": 999,
         "capabilities": {"drop": ["ALL"]},
     },
-    "image": "postgres:16",
+    "image": TRUSTED_DATABASE_IMAGES["postgres"],
     "command": ["sh", "-ec"],
     "args": [
         """data_root="/var/lib/postgresql/data"
@@ -412,7 +432,7 @@ fi
 POSTGRES_INFRASTRUCTURE_DEPLOYMENT_SPEC = _infrastructure_deployment_spec(
     "postgres",
     999,
-    "postgres:16",
+    TRUSTED_DATABASE_IMAGES["postgres"],
     ["postgres", "-c", "max_connections=200"],
     5432,
     "postgres-data",
@@ -450,7 +470,7 @@ EXPECTED_INFRASTRUCTURE_DEPLOYMENT_SPECS = {
     "redis-coord": _infrastructure_deployment_spec(
         "redis-coord",
         999,
-        "redis:7.4.3",
+        TRUSTED_DATABASE_IMAGES["redis"],
         ["redis-server", "--appendonly", "yes"],
         6379,
         "redis-coord-data",
@@ -459,7 +479,7 @@ EXPECTED_INFRASTRUCTURE_DEPLOYMENT_SPECS = {
     "redis-cache": _infrastructure_deployment_spec(
         "redis-cache",
         999,
-        "redis:7.4.3",
+        TRUSTED_DATABASE_IMAGES["redis"],
         ["redis-server", "--appendonly", "yes"],
         6379,
         "redis-cache-data",

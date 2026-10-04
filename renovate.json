@@ -13,9 +13,13 @@
     "dependencies"
   ],
   "enabledManagers": [
+    "custom.regex",
+    "docker-compose",
     "dockerfile",
     "github-actions",
     "gradle",
+    "gradle-wrapper",
+    "helm-values",
     "helmv3",
     "kubernetes",
     "kustomize",
@@ -23,15 +27,18 @@
     "npm",
     "pip_requirements",
     "pyenv",
-    "terraform",
-    "custom.regex"
+    "terraform"
   ],
   "customManagers": [
     {
       "customType": "regex",
       "description": "Keep Actionlint version-only because it has no archive checksum authority",
-      "managerFilePatterns": ["/^config/workflow-tool-versions\\.env$/"],
-      "matchStrings": ["# renovate-version: datasource=github-releases depName=rhysd/actionlint extractVersion=\\^v(?<version>.*)\\$\\nACTIONLINT_VERSION=(?<currentValue>\\S+)"],
+      "managerFilePatterns": [
+        "/^config/workflow-tool-versions\\.env$/"
+      ],
+      "matchStrings": [
+        "# renovate-version: datasource=github-releases depName=rhysd/actionlint extractVersion=\\^v(?<version>.*)\\$\\nACTIONLINT_VERSION=(?<currentValue>\\S+)"
+      ],
       "datasourceTemplate": "github-releases",
       "depNameTemplate": "rhysd/actionlint",
       "versioningTemplate": "semver",
@@ -41,8 +48,12 @@
     {
       "customType": "regex",
       "description": "Update the exact kubectl version; installation verifies the matching publisher checksum",
-      "managerFilePatterns": ["/^config/workflow-tool-versions\\.env$/"],
-      "matchStrings": ["# renovate-version: datasource=github-releases depName=kubernetes/kubernetes extractVersion=\\^v(?<version>.*)\\$\\nKUBECTL_VERSION=(?<currentValue>\\S+)"],
+      "managerFilePatterns": [
+        "/^config/workflow-tool-versions\\.env$/"
+      ],
+      "matchStrings": [
+        "# renovate-version: datasource=github-releases depName=kubernetes/kubernetes extractVersion=\\^v(?<version>.*)\\$\\nKUBECTL_VERSION=(?<currentValue>\\S+)"
+      ],
       "datasourceTemplate": "github-releases",
       "depNameTemplate": "kubernetes/kubernetes",
       "versioningTemplate": "semver",
@@ -52,8 +63,12 @@
     {
       "customType": "regex",
       "description": "Update the exact Helm version; installation verifies the matching publisher checksum",
-      "managerFilePatterns": ["/^config/workflow-tool-versions\\.env$/"],
-      "matchStrings": ["# renovate-version: datasource=github-releases depName=helm/helm extractVersion=\\^v(?<version>.*)\\$\\nHELM_VERSION=(?<currentValue>\\S+)"],
+      "managerFilePatterns": [
+        "/^config/workflow-tool-versions\\.env$/"
+      ],
+      "matchStrings": [
+        "# renovate-version: datasource=github-releases depName=helm/helm extractVersion=\\^v(?<version>.*)\\$\\nHELM_VERSION=(?<currentValue>\\S+)"
+      ],
       "datasourceTemplate": "github-releases",
       "depNameTemplate": "helm/helm",
       "versioningTemplate": "semver",
@@ -63,8 +78,12 @@
     {
       "customType": "regex",
       "description": "Atomically update GitHub CLI and its archive checksum authority",
-      "managerFilePatterns": ["/^config/workflow-tool-versions\\.env$/"],
-      "matchStrings": ["# renovate-version: datasource=github-release-attachments depName=cli/cli\\nGH_VERSION=(?<currentValue>\\S+)\\nGH_LINUX_AMD64_CHECKSUM_VERSION=(?<currentChecksumVersion>\\S+)\\nGH_LINUX_AMD64_SHA256=(?<currentDigest>[0-9a-f]{64})"],
+      "managerFilePatterns": [
+        "/^config/workflow-tool-versions\\.env$/"
+      ],
+      "matchStrings": [
+        "# renovate-version: datasource=github-release-attachments depName=cli/cli\\nGH_VERSION=(?<currentValue>\\S+)\\nGH_LINUX_AMD64_CHECKSUM_VERSION=(?<currentChecksumVersion>\\S+)\\nGH_LINUX_AMD64_SHA256=(?<currentDigest>[0-9a-f]{64})"
+      ],
       "datasourceTemplate": "github-release-attachments",
       "depNameTemplate": "cli/cli",
       "versioningTemplate": "semver",
@@ -74,8 +93,12 @@
     {
       "customType": "regex",
       "description": "Atomically update Buf and its archive checksum authority",
-      "managerFilePatterns": ["/^config/workflow-tool-versions\\.env$/"],
-      "matchStrings": ["# renovate-version: datasource=github-release-attachments depName=bufbuild/buf\\nBUF_VERSION=(?<currentValue>\\S+)\\nBUF_LINUX_X86_64_CHECKSUM_VERSION=(?<currentChecksumVersion>\\S+)\\nBUF_LINUX_X86_64_SHA256=(?<currentDigest>[0-9a-f]{64})"],
+      "managerFilePatterns": [
+        "/^config/workflow-tool-versions\\.env$/"
+      ],
+      "matchStrings": [
+        "# renovate-version: datasource=github-release-attachments depName=bufbuild/buf\\nBUF_VERSION=(?<currentValue>\\S+)\\nBUF_LINUX_X86_64_CHECKSUM_VERSION=(?<currentChecksumVersion>\\S+)\\nBUF_LINUX_X86_64_SHA256=(?<currentDigest>[0-9a-f]{64})"
+      ],
       "datasourceTemplate": "github-release-attachments",
       "depNameTemplate": "bufbuild/buf",
       "versioningTemplate": "semver",
@@ -85,8 +108,12 @@
     {
       "customType": "regex",
       "description": "Atomically update Kubeconform and its archive checksum authority",
-      "managerFilePatterns": ["/^config/workflow-tool-versions\\.env$/"],
-      "matchStrings": ["# renovate-version: datasource=github-release-attachments depName=yannh/kubeconform\\nKUBECONFORM_VERSION=(?<currentValue>\\S+)\\nKUBECONFORM_LINUX_AMD64_CHECKSUM_VERSION=(?<currentChecksumVersion>\\S+)\\nKUBECONFORM_LINUX_AMD64_SHA256=(?<currentDigest>[0-9a-f]{64})"],
+      "managerFilePatterns": [
+        "/^config/workflow-tool-versions\\.env$/"
+      ],
+      "matchStrings": [
+        "# renovate-version: datasource=github-release-attachments depName=yannh/kubeconform\\nKUBECONFORM_VERSION=(?<currentValue>\\S+)\\nKUBECONFORM_LINUX_AMD64_CHECKSUM_VERSION=(?<currentChecksumVersion>\\S+)\\nKUBECONFORM_LINUX_AMD64_SHA256=(?<currentDigest>[0-9a-f]{64})"
+      ],
       "datasourceTemplate": "github-release-attachments",
       "depNameTemplate": "yannh/kubeconform",
       "versioningTemplate": "semver",
@@ -96,8 +123,12 @@
     {
       "customType": "regex",
       "description": "Atomically update Trivy and its archive checksum authority",
-      "managerFilePatterns": ["/^config/workflow-tool-versions\\.env$/"],
-      "matchStrings": ["# renovate-version: datasource=github-release-attachments depName=aquasecurity/trivy\\nTRIVY_VERSION=(?<currentValue>\\S+)\\nTRIVY_LINUX_AMD64_CHECKSUM_VERSION=(?<currentChecksumVersion>\\S+)\\nTRIVY_LINUX_AMD64_SHA256=(?<currentDigest>[0-9a-f]{64})"],
+      "managerFilePatterns": [
+        "/^config/workflow-tool-versions\\.env$/"
+      ],
+      "matchStrings": [
+        "# renovate-version: datasource=github-release-attachments depName=aquasecurity/trivy\\nTRIVY_VERSION=(?<currentValue>\\S+)\\nTRIVY_LINUX_AMD64_CHECKSUM_VERSION=(?<currentChecksumVersion>\\S+)\\nTRIVY_LINUX_AMD64_SHA256=(?<currentDigest>[0-9a-f]{64})"
+      ],
       "datasourceTemplate": "github-release-attachments",
       "depNameTemplate": "aquasecurity/trivy",
       "versioningTemplate": "semver",
@@ -107,8 +138,12 @@
     {
       "customType": "regex",
       "description": "Atomically update Lychee and its archive checksum authority",
-      "managerFilePatterns": ["/^config/workflow-tool-versions\\.env$/"],
-      "matchStrings": ["# renovate-version: datasource=github-release-attachments depName=lycheeverse/lychee\\nLYCHEE_VERSION=(?<currentValue>\\S+)\\nLYCHEE_LINUX_X86_64_MUSL_CHECKSUM_VERSION=(?<currentChecksumVersion>\\S+)\\nLYCHEE_LINUX_X86_64_MUSL_SHA256=(?<currentDigest>[0-9a-f]{64})"],
+      "managerFilePatterns": [
+        "/^config/workflow-tool-versions\\.env$/"
+      ],
+      "matchStrings": [
+        "# renovate-version: datasource=github-release-attachments depName=lycheeverse/lychee\\nLYCHEE_VERSION=(?<currentValue>\\S+)\\nLYCHEE_LINUX_X86_64_MUSL_CHECKSUM_VERSION=(?<currentChecksumVersion>\\S+)\\nLYCHEE_LINUX_X86_64_MUSL_SHA256=(?<currentDigest>[0-9a-f]{64})"
+      ],
       "datasourceTemplate": "github-release-attachments",
       "depNameTemplate": "lycheeverse/lychee",
       "versioningTemplate": "regex:^lychee-v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)$",
@@ -118,8 +153,12 @@
     {
       "customType": "regex",
       "description": "Update the exact Velero CLI version from the runtime image release",
-      "managerFilePatterns": ["/^config/workflow-tool-versions\\.env$/"],
-      "matchStrings": ["# renovate-version: datasource=docker depName=velero/velero\\nVELERO_VERSION=(?<currentValue>\\S+)"],
+      "managerFilePatterns": [
+        "/^config/workflow-tool-versions\\.env$/"
+      ],
+      "matchStrings": [
+        "# renovate-version: datasource=docker depName=velero/velero\\nVELERO_VERSION=(?<currentValue>\\S+)"
+      ],
       "depNameTemplate": "velero/velero",
       "datasourceTemplate": "docker",
       "versioningTemplate": "docker",
@@ -129,16 +168,90 @@
     {
       "customType": "regex",
       "description": "Update the digest-pinned Velero image projection in Terraform",
-      "managerFilePatterns": ["/^k8s/terraform-production/main\\.tf$/"],
-      "matchStrings": ["name\\s*=\\s*\"image\\.tag\"\\s+value\\s*=\\s*\"(?<currentValue>v[^\"]+)\"\\s+}\\s+set\\s*{\\s+name\\s*=\\s*\"image\\.digest\"\\s+value\\s*=\\s*\"(?<currentDigest>sha256:[0-9a-f]{64})\""],
+      "managerFilePatterns": [
+        "/^k8s/terraform-production/main\\.tf$/"
+      ],
+      "matchStrings": [
+        "name\\s*=\\s*\"image\\.tag\"\\s+value\\s*=\\s*\"(?<currentValue>v[^\"]+)\"\\s+}\\s+set\\s*{\\s+name\\s*=\\s*\"image\\.digest\"\\s+value\\s*=\\s*\"(?<currentDigest>sha256:[0-9a-f]{64})\""
+      ],
       "depNameTemplate": "velero/velero",
       "datasourceTemplate": "docker",
       "versioningTemplate": "docker"
     },
     {
       "customType": "regex",
-      "managerFilePatterns": ["/^config/workflow-tool-versions\\.env$/"],
-      "matchStrings": ["# renovate-image: datasource=(?<datasource>docker) depName=(?<depName>ghcr\\.io/(?:oss-review-toolkit/ort|zaproxy/zaproxy))\\n[A-Z][A-Z0-9_]*_VERSION=(?<currentValue>\\S+)\\n(?:[A-Z][A-Z0-9_]*=[^\\n]+\\n)*?[A-Z][A-Z0-9_]*_DIGEST=(?<currentDigest>sha256:[0-9a-f]{64})"],
+      "managerFilePatterns": [
+        "/^config/workflow-tool-versions\\.env$/"
+      ],
+      "matchStrings": [
+        "# renovate-image: datasource=(?<datasource>docker) depName=(?<depName>ghcr\\.io/(?:oss-review-toolkit/ort|zaproxy/zaproxy))\\n[A-Z][A-Z0-9_]*_VERSION=(?<currentValue>\\S+)\\n(?:[A-Z][A-Z0-9_]*=[^\\n]+\\n)*?[A-Z][A-Z0-9_]*_DIGEST=(?<currentDigest>sha256:[0-9a-f]{64})"
+      ],
+      "versioningTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "Update literal upstream database images used by Java Testcontainers",
+      "managerFilePatterns": [
+        "/^services\\/[^/]+\\/src\\/test\\/java\\/.*\\.java$/"
+      ],
+      "matchStrings": [
+        "\"(?<depName>postgres|redis):(?<currentValue>[0-9][^\"\\s]*)\""
+      ],
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "Update the PostgreSQL image used by ERD generation",
+      "managerFilePatterns": [
+        "/^dev-tools\\/docs\\/generate-erd\\.sh$/"
+      ],
+      "matchStrings": [
+        "\\b(?<depName>postgres):(?<currentValue>[0-9][^\\s\"\\x27]*)"
+      ],
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "Atomically update SHELLCHECK and its exact release asset checksum",
+      "managerFilePatterns": [
+        "/^config/workflow-tool-versions\\.env$/"
+      ],
+      "matchStrings": [
+        "# renovate-version: datasource=github-release-attachments depName=koalaman/shellcheck\\nSHELLCHECK_VERSION=(?<currentValue>\\S+)\\nSHELLCHECK_LINUX_X86_64_CHECKSUM_VERSION=(?<currentChecksumVersion>\\S+)\\nSHELLCHECK_LINUX_X86_64_SHA256=(?<currentDigest>[0-9a-f]{64})"
+      ],
+      "datasourceTemplate": "github-release-attachments",
+      "depNameTemplate": "koalaman/shellcheck",
+      "versioningTemplate": "semver",
+      "currentValueTemplate": "v{{{currentValue}}}",
+      "autoReplaceStringTemplate": "# renovate-version: datasource=github-release-attachments depName=koalaman/shellcheck\nSHELLCHECK_VERSION={{{replace '^v' '' newValue}}}\nSHELLCHECK_LINUX_X86_64_CHECKSUM_VERSION={{{replace '^v' '' newValue}}}\nSHELLCHECK_LINUX_X86_64_SHA256={{{newDigest}}}"
+    },
+    {
+      "customType": "regex",
+      "description": "Atomically update CLOC and its exact release asset checksum",
+      "managerFilePatterns": [
+        "/^config/workflow-tool-versions\\.env$/"
+      ],
+      "matchStrings": [
+        "# renovate-version: datasource=github-release-attachments depName=AlDanial/cloc\\nCLOC_VERSION=(?<currentValue>\\S+)\\nCLOC_SOURCE_CHECKSUM_VERSION=(?<currentChecksumVersion>\\S+)\\nCLOC_SOURCE_SHA256=(?<currentDigest>[0-9a-f]{64})"
+      ],
+      "datasourceTemplate": "github-release-attachments",
+      "depNameTemplate": "AlDanial/cloc",
+      "versioningTemplate": "loose",
+      "currentValueTemplate": "v{{{currentValue}}}",
+      "autoReplaceStringTemplate": "# renovate-version: datasource=github-release-attachments depName=AlDanial/cloc\nCLOC_VERSION={{{replace '^v' '' newValue}}}\nCLOC_SOURCE_CHECKSUM_VERSION={{{replace '^v' '' newValue}}}\nCLOC_SOURCE_SHA256={{{newDigest}}}"
+    },
+    {
+      "customType": "regex",
+      "description": "Update the embedded dev-demo bootstrap Pod runtime image",
+      "managerFilePatterns": [
+        "/^\\.github\\/workflows\\/dev-demo\\.yml$/"
+      ],
+      "matchStrings": [
+        "image:\\s+(?<depName>python):(?<currentValue>[0-9][^\\s]+)"
+      ],
+      "datasourceTemplate": "docker",
       "versioningTemplate": "docker"
     }
   ],
@@ -222,7 +335,9 @@
         "dockerfile",
         "helmv3",
         "kubernetes",
-        "kustomize"
+        "kustomize",
+        "docker-compose",
+        "helm-values"
       ],
       "matchUpdateTypes": [
         "minor",
@@ -261,6 +376,48 @@
       "groupName": "Velero runtime and chart",
       "pinDigests": true,
       "automerge": false
+    },
+    {
+      "description": "Repository-built images are updated by build and promotion workflows",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "/^ghcr\\.io/benhook1013/(?:firemud-base|firemud-hosted-identity-controller|account-service|automation-scripting-service|entity-management-service|game-design-service|game-logic-service|game-session-service|logging-admin-service|social-groups-service|spring-cloud-gateway|tcp-proxy-service|world-management-service|minio-server|minio-client|backup-verifier)$/",
+        "/^ghcr\\.io/example/",
+        "/^firemud/",
+        "/^(?:account-service|automation-scripting-service|entity-management-service|game-design-service|game-logic-service|game-session-service|logging-admin-service|social-groups-service|spring-cloud-gateway|tcp-proxy-service|world-management-service|pg-dump-cron)$/"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "Database major versions require migration and restore proof before manual merge",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "postgres",
+        "redis"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "automerge": false,
+      "prBodyNotes": [
+        "Database major updates remain visible proposals. PostgreSQL 16 remains the compatibility floor until a reviewed upgrade proves existing-data migrations, backup/restore compatibility, and fresh service startup; never activate a database major upgrade through dependency automation alone."
+      ]
+    },
+    {
+      "description": "Keep Testcontainers database image updates reviewable",
+      "matchManagers": [
+        "custom.regex"
+      ],
+      "matchPackageNames": [
+        "postgres",
+        "redis"
+      ],
+      "groupName": "Testcontainers database images",
+      "automerge": false
     }
   ],
   "lockFileMaintenance": {
@@ -268,5 +425,25 @@
     "automerge": true,
     "automergeType": "pr",
     "platformAutomerge": false
+  },
+  "kubernetes": {
+    "managerFilePatterns": [
+      "/^k8s\\/(?:base|monitoring|minio|postgres|velero|hosted-identity-controller)\\/.*\\.ya?ml$/"
+    ]
+  },
+  "ignorePaths": [
+    "**/node_modules/**",
+    "**/bower_components/**",
+    "**/vendor/**",
+    "**/examples/**",
+    "**/__tests__/**",
+    "**/tests/**",
+    "**/fixtures/**"
+  ],
+  "helm-values": {
+    "managerFilePatterns": [
+      "/^k8s\\/terraform(?:-production)?\\/.*values.*\\.ya?ml$/",
+      "/^k8s\\/helm\\/.*\\/values-[^/]+\\.ya?ml$/"
+    ]
   }
 }

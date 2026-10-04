@@ -4,7 +4,7 @@ This directory provides example Terraform configuration for deploying a producti
 It installs PostgreSQL plus separate Coordination and Cache/Rate-Limit Redis releases using Bitnami Helm charts.
 
 These modules assume an existing Kubernetes cluster and `kubectl` access via a kubeconfig file.
-The configuration is intentionally minimal and should be customized for real deployments.
+The configuration is intentionally minimal and should be customized for real deployments. PostgreSQL requires an operator-selected exact `postgres_chart_version` with no default; this input prevents implicit latest-chart selection and is intentionally outside automatic Renovate updates. The module is not deployment-ready PostgreSQL HA proof. The supported PostgreSQL 16 artifact source and chart/values compatibility remain unresolved in the [platform delivery tracker](../../design/project-management/implementation-tracking/platform-operations-and-delivery.md#postgresql-production-packaging-gap).
 
 Persistent volumes are configured via the included Helm values files:
 
@@ -18,6 +18,7 @@ Adjust these sizes to fit your production retention policy before applying the m
 
 The module exposes variables to configure Velero:
 
+- `postgres_chart_version` – Required exact PostgreSQL HA chart version, selected only after the packaging gap is resolved.
 - `postgres_superuser_password` – PostgreSQL superuser password for the Helm release.
 - `postgres_app_username` – Application PostgreSQL username.
 - `postgres_app_password` – Application PostgreSQL password.

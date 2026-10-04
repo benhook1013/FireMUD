@@ -1361,6 +1361,15 @@ def main() -> int:
         fail("Terraform HCL block extraction consumed a following resource")
 
     velero_terraform = (root / "k8s/terraform-production/main.tf").read_text()
+    postgres_release = extract_hcl_block(velero_terraform, 'resource "helm_release" "postgresql"')
+    if postgres_release is None or not re.search(r"(?m)^\s*version\s*=\s*var\.postgres_chart_version\s*$", postgres_release):
+        fail("Production PostgreSQL must require an explicit operator-selected chart version")
+    postgres_variables = (root / "k8s/terraform-production/variables.tf").read_text()
+    postgres_version_input = extract_hcl_block(postgres_variables, 'variable "postgres_chart_version"')
+    if postgres_version_input is None or re.search(r"(?m)^\s*default\s*=", postgres_version_input):
+        fail("Production PostgreSQL must not default to an unproven chart version")
+    if "validation {" not in postgres_version_input or "latest and version ranges are not allowed" not in postgres_version_input:
+        fail("Production PostgreSQL chart input must reject floating version selections")
     if velero_terraform.count('resource "helm_release" "velero"') != 1:
         fail("Terraform must define exactly one Velero Helm release")
     velero_release = extract_hcl_block(velero_terraform, 'resource "helm_release" "velero"')
@@ -1440,7 +1449,7 @@ def main() -> int:
         fail("backup verifier Dockerfile Velero projection is stale")
 
     renovate = json.loads((root / "renovate.json").read_text())
-    if not {"nodenv", "pyenv", "pip_requirements", "terraform", "custom.regex"} <= set(renovate["enabledManagers"]):
+    if not {"nodenv", "pyenv", "pip_requirements", "terraform", "custom.regex", "docker-compose", "gradle-wrapper", "helm-values", "kubernetes"} <= set(renovate["enabledManagers"]):
         fail("Renovate managers incomplete")
     kubectl_rules = [
         rule
@@ -1462,9 +1471,9 @@ def main() -> int:
     if len(pip_rebase_rules) != 1 or pip_rebase_rules[0].get("rebaseWhen") != "behind-base-branch":
         fail("Renovate hashed Python requirements must refresh behind-base branches")
     custom_managers = renovate.get("customManagers", [])
-    if len(custom_managers) != 11:
+    if len(custom_managers) != 16:
         fail(
-            "Renovate must define four version-only, five checksum-backed, one Velero Terraform image, and one ORT/ZAP image manager"
+            "Renovate must define workflow authority managers plus the bounded Testcontainers image manager"
         )
 
     def translate_renovate_pattern(pattern_source):
@@ -1501,6 +1510,8 @@ def main() -> int:
         "ACTIONLINT": "rhysd/actionlint",
         "TRIVY": "aquasecurity/trivy",
         "LYCHEE": "lycheeverse/lychee",
+        "SHELLCHECK": "koalaman/shellcheck",
+        "CLOC": "AlDanial/cloc",
     }
     expected_image_dep_names = {
         "ORT": "ghcr.io/oss-review-toolkit/ort",
@@ -1518,6 +1529,8 @@ def main() -> int:
         "ACTIONLINT": "rhysd/actionlint",
     }
     attachment_specs = {
+        "SHELLCHECK": ("koalaman/shellcheck", "v{{{currentValue}}}", "semver", "^v", "SHELLCHECK_LINUX_X86_64"),
+        "CLOC": ("AlDanial/cloc", "v{{{currentValue}}}", "loose", "^v", "CLOC_SOURCE"),
         "GH": ("cli/cli", "v{{{currentValue}}}", "semver", "^v", "GH_LINUX_AMD64"),
         "BUF": ("bufbuild/buf", "v{{{currentValue}}}", "semver", "^v", "BUF_LINUX_X86_64"),
         "KUBECONFORM": (
@@ -1696,7 +1709,9 @@ def main() -> int:
     docker_managers = [
         manager
         for manager in custom_managers
-        if manager.get("versioningTemplate") == "docker" and manager.get("depNameTemplate") != "velero/velero"
+        if manager.get("versioningTemplate") == "docker"
+        and manager.get("depNameTemplate") != "velero/velero"
+        and manager.get("managerFilePatterns") == ["/^config/workflow-tool-versions\\.env$/"]
     ]
     if len(docker_managers) != 1:
         fail("Renovate must define exactly one ORT/ZAP Docker manager")
@@ -1748,6 +1763,40 @@ def main() -> int:
                     matched.update(((dep_name, current_value),))
     if matched != expected_renovate_dependencies:
         fail("Renovate does not discover every workflow tool authority exactly once")
+    testcontainer_managers = [
+        manager for manager in custom_managers
+        if manager.get("description") == "Update literal upstream database images used by Java Testcontainers"
+    ]
+    if len(testcontainer_managers) != 1:
+        fail("Renovate must extract Testcontainers database images exactly once")
+    testcontainer_manager = testcontainer_managers[0]
+    if testcontainer_manager.get("datasourceTemplate") != "docker":
+        fail("Testcontainers database images must use the Docker datasource")
+    testcontainer_pattern = compile_re2_pattern(testcontainer_manager["matchStrings"][0])
+    fixture = 'new PostgreSQLContainer<>("postgres:16-alpine"); new GenericContainer<>("redis:7.2-alpine");'
+    expected_images = Counter((("postgres", "16-alpine"), ("redis", "7.2-alpine")))
+    if Counter((m.group("depName"), m.group("currentValue")) for m in testcontainer_pattern.finditer(fixture)) != expected_images:
+        fail("Testcontainers image extraction loses database version or image suffix")
+    if list(testcontainer_pattern.finditer('"ghcr.io/benhook1013/logging-admin-service:latest"')):
+        fail("Testcontainers manager must not update repository-built service images")
+    if "**/test/**" in renovate.get("ignorePaths", []):
+        fail("Renovate must include service test image authorities")
+    manifest_patterns = renovate.get("kubernetes", {}).get("managerFilePatterns", [])
+    if not manifest_patterns:
+        fail("Kubernetes has no default file coverage; explicit manifest patterns are required")
+    manifest_patterns = [compile_re2_pattern(pattern[1:-1]) for pattern in manifest_patterns]
+    for manifest in (root / "k8s").rglob("*.yaml"):
+        relative = manifest.relative_to(root).as_posix()
+        if (
+            "/helm/" not in relative
+            and "image:" in manifest.read_text()
+            and "{{" not in manifest.read_text()
+            and not any(pattern.search(relative) for pattern in manifest_patterns)
+        ):
+            fail(f"Renovate misses image-bearing Kubernetes manifest {relative}")
+    annotations_source = root / "buildSrc/src/main/kotlin/net/firedevops/firemud/FiremudServiceConventionsPlugin.kt"
+    if 'libs.findLibrary("spotbugs.annotations").get()' not in annotations_source.read_text():
+        fail("Service conventions must consume catalog-managed SpotBugs annotations")
     rules = renovate.get("packageRules", [])
     infra_rule = next((rule for rule in rules if rule.get("groupName") == "infrastructure non-major updates"), None)
     velero_rule = next(
