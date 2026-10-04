@@ -32,12 +32,14 @@ Captured post-patch SHA-256 values for the isolated copy:
 
 | Source file | Post-patch SHA-256 |
 | --- | --- |
-| render.py | 7bc70250ebf32a676138eeda82d1fa523033565d73d1ff5e589267e37dee206e |
-| server.py | a6326a7f568b9e22b368c05406b08c523f653e555bad8bcb64c794414cb55f01 |
+| render.py | 51f9a81bd921c1e6c3d864236859404b4c238e8ec2c34d540c3f60ba05e66f23 |
+| server.py | b53044ff02ef98508484689b590e18cef2f22087a4fb5a75cfb3c33af02ef9ce |
 | publish-hetzner.py | 6d3a4dad2de8cdccd760aaaa17843926cbbeb97db4b392d17227c6162dee4298 |
 | render_progress.py | d1f2b3bdc2862ba46166e8d30348920f0836e52eec1bdde28ed2378a0b0c47a2 |
 
 The renderer accepts `--jobs-database` and `--controller-tools` together. It loads the controller lane snapshot in one batched call and joins SQL map state to the repository-owned `progress.json` editorial headings and explanations. Public text uses the safe renderer’s HTTP(S)-only link policy, so local job, workstream, and inbox paths do not enter generated output. The server uses the same explicit database and tool paths, serves private detail pages from memory, and adds local links only to HTTP responses. The publisher scans staged pages, assets, and review pages and fails if a private `/jobs/`, `/workstreams/`, or `/inbox/` route appears.
+
+Worker cards use friendly standing-job titles, separate current next steps, and the stable Gameplay, General, Document order with other workers sorted by name. Local HTTP responses place matching Private details and Worker inbox links beside each worker heading. Private job, inbox, and workstream pages share the site banner and responsive styling; their no-store responses allow only same-origin stylesheets alongside inline styles. These links and private page bodies remain absent from public staging.
 
 The focused handoff proof is `python3 -m unittest discover -s dev-tools/validation -p test_fire_controller_web.py`. With the isolated copy prepared, it exercises the full website renderer, a loopback server with fake stores, and the existing public staging helpers without invoking the website refresh, publisher, scheduler, or provider operations. A normal checkout without that private copy runs the reusable component tests and explicitly skips the private adapter integration class; that skip does not establish adapter proof.
 

@@ -290,7 +290,7 @@ diff --git a/render.py b/render.py
                  f'<div class="round-pills">{"".join(pills) if pills else "Unavailable" if incomplete_history else "None yet"}</div>{activity_note}</div>'
              )
      cards = "".join(activity_cards) + independent_card
-@@ -2286,11 +2335,89 @@
+@@ -2286,11 +2335,95 @@
              temporary_path.unlink(missing_ok=True)
 
 
@@ -306,16 +306,16 @@ diff --git a/render.py b/render.py
 +    if job["summary"]:
 +        fields.append(f'<p class="job-summary">{_PUBLIC_INLINE(job["summary"])}</p>')
 +    if job["progress"]:
-+        fields.append(f'<p class="job-progress"><strong>Progress</strong> · {_PUBLIC_INLINE(job["progress"])}</p>')
++        fields.append(f'<p class="job-progress"><strong>Current next step</strong> · {_PUBLIC_INLINE(job["progress"])}</p>')
 +    if job["blocker"]:
 +        fields.append(f'<p class="job-blocker"><strong>Blocker</strong> · {_PUBLIC_INLINE(job["blocker"])}</p>')
 +    primary = '<span class="job-primary">Primary</span>' if job["primary"] else ""
 +    return (
 +        f'<article class="controller-job-card status-{safe(status)}" '
 +        f'data-fire-controller-job-id="{safe(job["id"])}">'
-+        f'<div class="controller-job-heading"><h4>{safe(job["name"])}</h4>'
++        f'<div class="controller-job-heading"><h4>{safe(job["title"])}</h4>'
 +        f'<span class="job-status">{safe(status)}</span>{primary}</div>'
-+        f'<p class="job-title">{safe(job["title"])}</p>{"".join(fields)}'
++        f'{"".join(fields)}'
 +        f'<ul class="controller-job-checklist">{checklist}</ul></article>'
 +    )
 +
@@ -351,11 +351,17 @@ diff --git a/render.py b/render.py
 +    )
 +    truncation = '<p class="lane-truncated">Additional jobs are not shown.</p>' if lane["jobs_truncated"] else ""
 +    worker_token = quote(worker, safe="")
++    primary = lane["primary"]
++    details = (
++        f'<span data-fire-controller-private-job-id="{safe(primary["id"])}"></span>'
++        if primary is not None else ""
++    )
 +    return (
 +        '<article class="card controller-job-lane"><div class="card-top"><div class="lane-topline">'
 +        f'<h3>{safe(worker)}</h3><span class="lane-state lane-state-{status.lower()}" aria-label="{status}">'
 +        f'<span class="lane-state-icon" aria-hidden="true"></span>{status}</span></div>'
-+        f'<span data-fire-controller-inbox-worker="{safe(worker_token)}"></span></div>'
++        f'<div class="worker-actions">{details}'
++        f'<span data-fire-controller-inbox-worker="{safe(worker_token)}"></span></div></div>'
 +        f'<div class="lane-content">{reason}{jobs_html}{truncation}</div></article>'
 +    )
 +
@@ -383,7 +389,7 @@ diff --git a/render.py b/render.py
          raise ValueError("status file needs an ordered stack and Gameplay, Document, General lanes")
      if len({item["number"] for item in stack}) != len(stack):
          raise ValueError("duplicate PR in stack")
-@@ -2300,7 +2427,9 @@
+@@ -2300,7 +2433,9 @@
      if len(set(stages)) != sum(1 for _ in groupby(stages)):
          raise ValueError("programme stages must be contiguous in stack order")
      github = github or {"available": False, "states": {}, "lifecycle": {}, "merged_at": {}, "stats": {}}
@@ -394,7 +400,7 @@ diff --git a/render.py b/render.py
      front_number = selected_review_front(data, review, github)
      front_index = next((index for index, item in enumerate(stack) if item["number"] == front_number), None)
      front_item = stack[front_index] if front_index is not None else None
-@@ -2318,7 +2447,6 @@
+@@ -2318,7 +2453,6 @@
          len(stack) + 1,
      )
      front_size_html = "Diff size unavailable"
@@ -402,7 +408,7 @@ diff --git a/render.py b/render.py
      front_activity_grid = ""
      for position, item in enumerate(stack, 1):
          number = item["number"]
-@@ -2342,26 +2470,7 @@
+@@ -2342,26 +2476,7 @@
          channels = presentation_channels(queue_item) if queue_item else {}
          label_channels = channel_label_states(queue_item, channels) if queue_item else {}
          states = [label_channels.get(channel) for channel in ("hosted", "cli")] if isinstance(label_channels, dict) else []
@@ -430,7 +436,7 @@ diff --git a/render.py b/render.py
          merged_time = None
          if lifecycle == "MERGED":
              merged_at = github.get("merged_at", {}).get(number)
-@@ -2374,16 +2483,13 @@
+@@ -2374,16 +2489,13 @@
              status_html = f'<span class="sub">{channel_html}</span>'
              queue_badge_html = '<span class="queue-status queue-status-merged">MERGED</span>'
          elif lifecycle == "CLOSED":
@@ -450,7 +456,7 @@ diff --git a/render.py b/render.py
              if number in front_numbers:
                  badge_label, badge_class = "REVIEW FRONT", "front"
              elif has_controller_states and any(state in ACTIVE_REVIEW_STATES for state in states):
-@@ -2396,7 +2502,7 @@
+@@ -2396,7 +2508,7 @@
                  badge_label, badge_class = "QUEUED", "queued"
              queue_badge_html = f'<span class="queue-status queue-status-{badge_class}">{badge_label}</span>'
          else:
@@ -459,7 +465,7 @@ diff --git a/render.py b/render.py
              queue_badge_html = (
                  '<span class="queue-status queue-status-front">REVIEW FRONT</span>'
                  if number in front_numbers else
-@@ -2404,23 +2510,13 @@
+@@ -2404,23 +2516,13 @@
                  if number == next_pr else
                  '<span class="queue-status queue-status-pending">PENDING</span>'
              )
@@ -486,7 +492,7 @@ diff --git a/render.py b/render.py
              front_activity_grid = activity_grid
          row_classes = []
          if lifecycle == "MERGED":
-@@ -2481,40 +2577,45 @@
+@@ -2481,40 +2583,50 @@
              f'{safe(front_item["title"])}</span></a></h2>'
              f'</div><div class="front-evidence">'
              f'<div class="front-facts"><div class="front-fact"><strong>Diff size</strong>'
@@ -529,6 +535,11 @@ diff --git a/render.py b/render.py
 +    for job in jobs or []:
 +        jobs_by_worker.setdefault(job["worker"].casefold(), []).append(job)
 +    if lanes_snapshot is not None:
++        worker_order = {"gameplay": 0, "general": 1, "document": 2}
++        lanes = sorted(lanes, key=lambda lane: (
++            worker_order.get(lane["worker"].casefold(), 3),
++            lane["worker"].casefold(), lane["worker"],
++        ))
 +        cards = [_render_controller_lane(lane) for lane in lanes]
 +    else:
 +        for lane in lanes:
@@ -560,7 +571,7 @@ diff --git a/render.py b/render.py
      refreshed_at = (
          f'<time class="relative-age" datetime="{safe(now.isoformat())}" '
          f'title="{safe(local_time(now))}">just now</time>'
-@@ -2545,7 +2646,9 @@
+@@ -2545,7 +2657,9 @@
          "" if history_only else
          '<section id="workers"><div class="section-head"><h2>Worker lanes</h2>'
          '<p>Current focus across active workstreams</p></div>'
@@ -571,7 +582,7 @@ diff --git a/render.py b/render.py
      )
      queue_heading = "Queue history" if history_only else "Configured review queue"
      queue_link = (
-@@ -2560,7 +2663,6 @@
+@@ -2560,7 +2674,6 @@
  <div><dt>Reviewing</dt><dd>request is active</dd></div>
  <div><dt>Cooldown</dt><dd>provider rate limit</dd></div>
  <div><dt>Blocked</dt><dd>new request is held; a specific reason appears on the row when supplied</dd></div>
@@ -579,7 +590,7 @@ diff --git a/render.py b/render.py
  <div><dt>Human bypass / Review closed</dt><dd>intentionally stopped or completed</dd></div>
  </dl>'''
      )
-@@ -2636,7 +2738,7 @@
+@@ -2636,7 +2749,7 @@
  .front-copy h2 {{ margin: 1rem 0; font-size: clamp(1.5rem,3vw,2.75rem); line-height: 1.1; letter-spacing: -.04em; overflow-wrap: anywhere; }}
  .front-number {{ display: block; margin-bottom: .65rem; color: #ffc390; font-size: clamp(3rem,6vw,5.5rem); line-height: .95; letter-spacing: -.07em; }}
  .front-copy h2 a {{ color: #fff; text-decoration: none; }} .front-copy h2 a:hover {{ text-decoration: underline; }}
@@ -588,7 +599,7 @@ diff --git a/render.py b/render.py
  .front-fact {{ display: flex; min-width: 0; flex-direction: column; align-items: flex-start; gap: .35rem; padding: .6rem .75rem; border: 1px solid #f4c9c7; border-radius: 9px; background: var(--surface); color: var(--ink); font-size: .8rem; }}
  .front-fact > strong {{ color: #37414a; font-size: .8rem; font-weight: 700; }}
  .front-facts .sub {{ display: inline; margin: 0; font-size: .78rem; color: var(--ink); }}
-@@ -2693,6 +2795,21 @@
+@@ -2693,6 +2806,23 @@
  .queue-status-closed {{ background: #e7e9ed; border-color: #b9bec7; color: #454b56; }}
  .queue-stage > .stack li.merged .pr-main > a {{ color: #392451; }}
  .cards {{ margin-top: 0; }} .card {{ border-radius: 0; box-shadow: none; }} .card-top {{ background: var(--smoke); }}
@@ -607,10 +618,12 @@ diff --git a/render.py b/render.py
 +.lane-state-idle .lane-state-icon {{ width: .48rem; height: .48rem; border-radius: 50%; background: #dfe2e6; }}
 +.lane-truncated {{ color: var(--muted); font-size: .72rem; }}
 +.job-detail-link {{ display: inline-block; margin-top: .4rem; font-size: .72rem; font-weight: 750; }}
++.worker-actions {{ display: flex; flex-wrap: wrap; gap: .4rem 1rem; align-items: center; }}
++.card-top .worker-actions .job-detail-link {{ color: #fff; margin-top: 0; font-size: .8rem; font-weight: 600; text-underline-offset: 3px; }}
  @media (max-width: 900px) {{ .queue-stage {{ grid-template-columns: 1fr; gap: .45rem; }} .queue-stage > .queue-stage-title {{ margin: 0 0 0 3.5rem; }} }}
  @media (max-width: 760px) {{ .mast-inner > .repo-links {{ text-align: right; gap: .25rem .6rem; }} .front-board {{ grid-template-columns: 1fr; }} .front-copy {{ min-height: 250px; }} .front-facts {{ grid-template-columns: 1fr; }} .front-evidence > .activity-grid {{ grid-template-columns: 1fr; }} .section-head {{ display: block; }} .section-head p {{ margin-top: .55rem; }} .queue-stage {{ padding: .55rem .8rem; }} .cards {{ grid-template-columns: minmax(0,1fr); width: 100%; }} .lane-topline {{ padding-right: .75rem; }} .card-top .fresh {{ max-width: 100%; margin-right: .75rem; white-space: normal; text-align: right; }} }}
  </style></head><body>
-@@ -2705,24 +2822,45 @@
+@@ -2705,24 +2835,45 @@
 
 
  def main() -> None:
@@ -660,7 +673,7 @@ diff --git a/render.py b/render.py
 
      def fetch_github_listing() -> dict:
          with _TimedStage("github_listing"):
-@@ -2733,12 +2871,12 @@
+@@ -2733,12 +2884,12 @@
          github_future = pool.submit(fetch_github_listing)
          review = review_future.result()
          github = github_future.result()
@@ -677,7 +690,7 @@ diff --git a/render.py b/render.py
      with _TimedStage("queue_history"):
          enrich_merged_review_history(review_tool, review, github)
      now = datetime.now(timezone.utc)
-@@ -2748,9 +2886,15 @@
+@@ -2748,9 +2899,15 @@
          histories = records_history_snapshots(review_tool, history_prs)
      with _TimedStage("html_render"):
          args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -699,16 +712,56 @@ diff --git a/render.py b/render.py
 diff --git a/server.py b/server.py
 --- a/server.py
 +++ b/server.py
-@@ -16,7 +16,7 @@
+@@ -16,7 +16,9 @@
  from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
  from pathlib import Path
  from typing import Callable
 -from urllib.parse import urlsplit
 +from urllib.parse import quote, unquote, urlsplit
++
++from mast import render_mast
 
  ROOT = Path(__file__).resolve().parent
  OUTPUT = ROOT / "output"
-@@ -74,7 +74,7 @@
+@@ -39,6 +41,37 @@
+ })
+
+
++def private_site_document(body: bytes) -> bytes:
++    """Apply the existing local site's shared banner and spacing to private HTML."""
++    document = body.decode("utf-8")
++    banner = render_mast(
++        "FireMUD Delivery Status", "Private page · Local only", "mast-meta",
++        (("/", "Delivery Status ↗", "Delivery ↗"),
++         ("/progress.html", "Project Map ↗", "Map ↗")),
++    )
++    style = (
++        '<style id="private-site-style">'
++        'body.private-site{background:var(--ash);color:var(--ink);font:16px ui-sans-serif,system-ui,sans-serif}'
++        '.private-site main{max-width:1440px;padding:1rem clamp(1rem,4vw,3.5rem) 4rem}'
++        '.private-site .job-private,.private-site .job-history-entry{background:var(--surface);'
++        'border-color:var(--line);border-radius:9px;padding:clamp(.85rem,2vw,1.5rem);line-height:1.5}'
++        '.private-site .job-private h1,.private-site main>h1{font-size:clamp(1.4rem,3vw,2rem);line-height:1.2}'
++        '.private-site main section>h2{font-size:1.15rem;letter-spacing:normal;margin-top:1.5rem}'
++        '.private-site .job-private h3{font-size:1rem;margin-top:1.25rem}'
++        '.private-site main a{color:var(--ink);text-underline-offset:3px}'
++        '.private-site pre{max-width:100%;white-space:pre-wrap;overflow-wrap:anywhere;background:var(--surface-muted);padding:.75rem;border-radius:6px}'
++        '.private-site table{display:block;max-width:100%;overflow-x:auto;border-collapse:collapse}'
++        '.private-site th,.private-site td{padding:.45rem .6rem;border:1px solid var(--line);text-align:left}'
++        '.private-site .job-meta{gap:.5rem 1rem}.private-site .job-meta h1{margin:.25rem 0}'
++        '.private-site .job-links,.private-site .job-history-paging{gap:.5rem 1rem;flex-wrap:wrap}'
++        '.private-site .job-blocker{border-color:var(--fire)}'
++        '</style>'
++    )
++    return document.replace("</head>", style + "</head>", 1).replace(
++        "<body>", '<body class="private-site">' + banner, 1,
++    ).encode("utf-8")
++
++
+ def _log_timing(stage: str, elapsed: float, outcome: str) -> None:
+     LOG.info("status-page timing stage=%s elapsed_seconds=%.3f outcome=%s", stage, elapsed, outcome)
+
+@@ -74,7 +107,7 @@
              _log_timing(f"render.{match.group(1)}", elapsed, match.group(3))
 
 
@@ -717,7 +770,7 @@ diff --git a/server.py b/server.py
      started_at = time.monotonic()
      stage = (
          "render_process" if script == RENDER_SCRIPT
-@@ -83,7 +83,7 @@
+@@ -83,7 +116,7 @@
      )
      try:
          result = subprocess.run(
@@ -726,7 +779,7 @@ diff --git a/server.py b/server.py
              cwd=ROOT,
              capture_output=True,
              text=True,
-@@ -101,8 +101,11 @@
+@@ -101,8 +134,11 @@
          raise RuntimeError(f"{Path(script).name} exited {result.returncode}: {result.stderr[-1200:]}")
 
 
@@ -740,7 +793,7 @@ diff --git a/server.py b/server.py
 
 
  def publish_snapshot() -> None:
-@@ -191,7 +194,9 @@
+@@ -191,7 +227,9 @@
                   publish: Callable[[], None] = publish_snapshot,
                   auto_refresh_interval: float = AUTO_REFRESH_INTERVAL_SECONDS,
                   external_origin: str = DEFAULT_EXTERNAL_ORIGIN,
@@ -751,7 +804,7 @@ diff --git a/server.py b/server.py
          parsed_origin = urlsplit(external_origin)
          if (parsed_origin.scheme != "http" or not parsed_origin.netloc or parsed_origin.path
                  or parsed_origin.query or parsed_origin.fragment or parsed_origin.username
-@@ -203,6 +208,11 @@
+@@ -203,6 +241,11 @@
          self.hosted_sync_status = "not_run"
          self.external_origin = external_origin.rstrip("/")
          self.external_host = parsed_origin.netloc
@@ -763,19 +816,28 @@ diff --git a/server.py b/server.py
          self.phase = "idle"
          self.refresh_lock = threading.Lock()
          self.next_refresh_at = 0.0
-@@ -332,6 +342,52 @@
+@@ -332,6 +375,61 @@
          self.end_headers()
          self.wfile.write(body)
 
 +    def _private_job_links(self, document: str) -> str:
 +        if self.server.jobs_store is None:
 +            return document
++        header = re.compile(r'<span data-fire-controller-private-job-id="([A-Za-z0-9._-]{1,128})"></span>')
++        header_jobs = set()
++        def header_link(match):
++            job_id = quote(match.group(1), safe="")
++            header_jobs.add(job_id)
++            return f'<a class="job-detail-link" href="/jobs/{job_id}">Private details</a>'
++        document = header.sub(header_link, document)
 +        card = re.compile(
 +            r'(<article class="controller-job-card[^"]*" '
 +            r'data-fire-controller-job-id="([A-Za-z0-9._-]{1,128})">)'
 +        )
 +        def add_link(match):
 +            job_id = quote(match.group(2), safe="")
++            if job_id in header_jobs:
++                return match.group(0)
 +            return f'{match.group(1)}<a class="job-detail-link" href="/jobs/{job_id}">Private details</a>'
 +        return card.sub(add_link, document)
 +
@@ -816,7 +878,7 @@ diff --git a/server.py b/server.py
      def do_POST(self) -> None:
          if self.path != "/refresh":
              self._message(404, "Not found", "This server only refreshes the status page.")
-@@ -365,6 +421,34 @@
+@@ -365,6 +463,42 @@
          self.end_headers()
 
      def do_GET(self) -> None:
@@ -830,6 +892,14 @@ diff --git a/server.py b/server.py
 +            )
 +            if response is not None:
 +                status, headers, body = response
++                if headers.get("Content-Type", "").startswith("text/html"):
++                    body = private_site_document(body)
++                    headers = {**headers, "Content-Length": str(len(body))}
++                    policy = headers.get("Content-Security-Policy")
++                    if policy:
++                        headers["Content-Security-Policy"] = policy.replace(
++                            "style-src 'unsafe-inline'", "style-src 'self' 'unsafe-inline'",
++                        )
 +                self.send_response(status)
 +                for name, value in headers.items():
 +                    if name.lower() != "cache-control":
@@ -851,7 +921,7 @@ diff --git a/server.py b/server.py
          if self.path == "/refresh-status":
              body = json.dumps({"phase": self.server.phase,
                                 "hosted_sync": self.server.hosted_sync_status}).encode()
-@@ -387,10 +471,35 @@
+@@ -387,10 +521,35 @@
      parser.add_argument("--port", type=int, default=8877)
      parser.add_argument("--directory", type=Path, default=OUTPUT)
      parser.add_argument("--external-origin", default=DEFAULT_EXTERNAL_ORIGIN)
