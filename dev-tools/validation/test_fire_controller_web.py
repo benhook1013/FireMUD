@@ -923,6 +923,38 @@ class IsolatedWebsiteIntegrationTest(unittest.TestCase):
                 thread.join(timeout=5)
                 server.server_close()
 
+    def test_private_inbox_links_support_full_unicode_worker_aliases(self):
+        jobs = importlib.import_module("fire_controller.jobs")
+        handler = object.__new__(self.server_module.StatusHandler)
+        handler.server = types.SimpleNamespace(
+            jobs_store=None, workstreams_store=None, inbox_store=object(),
+        )
+        for worker in ("Gameplay", "界" * 40, "😀" * 100, 'Build "& Tools'):
+            with self.subTest(worker=worker):
+                self.assertEqual(jobs._worker(worker), worker)
+                lane = {**self.public_lanes[0], "worker": worker}
+                document = self.page._render_controller_lane(lane)
+                target = self.server_module.quote(worker, safe="")
+                self.assertIn(f'data-fire-controller-inbox-worker="{target}"', document)
+                local = handler._local_private_links(document)
+                self.assertIn(f'href="/inbox/{target}">Worker inbox</a>', local)
+                self.assertNotIn('data-fire-controller-inbox-worker=', local)
+                self.assertNotIn('href="/inbox/', document)
+
+    def test_private_inbox_links_reject_malformed_or_noncanonical_markers(self):
+        handler = object.__new__(self.server_module.StatusHandler)
+        handler.server = types.SimpleNamespace(
+            jobs_store=None, workstreams_store=None, inbox_store=object(),
+        )
+        tokens = ("", "%", "%ZZ", "%FF", "%41", "%f0%9f%98%80", "x" * 1201,
+                  'worker" onclick="alert(1)')
+        for token in tokens:
+            with self.subTest(token=token):
+                document = f'<span data-fire-controller-inbox-worker="{token}"></span>'
+                self.assertEqual(handler._local_private_links(document), document)
+        document = '<span data-fire-controller-inbox-worker="Gameplay" class="extra"></span>'
+        self.assertEqual(handler._local_private_links(document), document)
+
 
 if __name__ == "__main__":
     unittest.main()

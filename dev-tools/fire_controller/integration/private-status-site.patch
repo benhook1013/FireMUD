@@ -763,7 +763,7 @@ diff --git a/server.py b/server.py
          self.phase = "idle"
          self.refresh_lock = threading.Lock()
          self.next_refresh_at = 0.0
-@@ -332,6 +342,47 @@
+@@ -332,6 +342,52 @@
          self.end_headers()
          self.wfile.write(body)
 
@@ -792,10 +792,15 @@ diff --git a/server.py b/server.py
 +                document,
 +            )
 +        if self.server.inbox_store is not None:
-+            pattern = re.compile(r'<span data-fire-controller-inbox-worker="([A-Za-z0-9%._~-]{1,300})"></span>')
++            pattern = re.compile(r'<span data-fire-controller-inbox-worker="([A-Za-z0-9%._~-]{1,1200})"></span>')
 +            def inbox_link(match):
-+                worker = unquote(match.group(1))
++                try:
++                    worker = unquote(match.group(1), errors="strict")
++                except UnicodeDecodeError:
++                    return match.group(0)
 +                target = quote(worker, safe="")
++                if target != match.group(1):
++                    return match.group(0)
 +                return f'<a class="job-detail-link" href="/inbox/{target}">Worker inbox</a>'
 +            document = pattern.sub(inbox_link, document)
 +        return document
@@ -811,7 +816,7 @@ diff --git a/server.py b/server.py
      def do_POST(self) -> None:
          if self.path != "/refresh":
              self._message(404, "Not found", "This server only refreshes the status page.")
-@@ -365,6 +416,34 @@
+@@ -365,6 +421,34 @@
          self.end_headers()
 
      def do_GET(self) -> None:
@@ -846,7 +851,7 @@ diff --git a/server.py b/server.py
          if self.path == "/refresh-status":
              body = json.dumps({"phase": self.server.phase,
                                 "hosted_sync": self.server.hosted_sync_status}).encode()
-@@ -387,10 +466,35 @@
+@@ -387,10 +471,35 @@
      parser.add_argument("--port", type=int, default=8877)
      parser.add_argument("--directory", type=Path, default=OUTPUT)
      parser.add_argument("--external-origin", default=DEFAULT_EXTERNAL_ORIGIN)
