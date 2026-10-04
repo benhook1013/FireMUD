@@ -2063,6 +2063,33 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+      - name: Verify Account initial private-token identity fence PostgreSQL proof
+        if: ${{ !cancelled() && matrix.module == 'account-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.accountservice.AccountBareLoginTokenIdentityFencePostgresIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountBareLoginTokenIdentityFencePostgresIntegrationTest#initialCapturePersistsExactSyntheticEvidenceAndExactRetriesDoNotChurn()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountBareLoginTokenIdentityFencePostgresIntegrationTest#missingRequireInitialDoesNotCreateOrBackfillEvidence()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountBareLoginTokenIdentityFencePostgresIntegrationTest#changedRequestOperationAccountOrTokenEvidenceCannotReplaceCapture()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountBareLoginTokenIdentityFencePostgresIntegrationTest#captureRequiresOutgoingTokenBindingAndRejectsLateTerminalCapture()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountBareLoginTokenIdentityFencePostgresIntegrationTest#missingAccountAndMismatchedCanonicalAccountIdentityAreDenied()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountBareLoginTokenIdentityFencePostgresIntegrationTest#rollbackLeavesNoPartialInitialCapture()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountBareLoginTokenIdentityFencePostgresIntegrationTest#concurrentExactInitialCapturesConvergeOnOneImmutableRow()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountBareLoginTokenIdentityFencePostgresIntegrationTest#accountFenceAdvanceSerializesCaptureAndMakesHistoricalCurrentEvidenceStale()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountBareLoginTokenIdentityFencePostgresIntegrationTest#actualOwnerTransactionMustBeWritableReadCommittedAndConnectionBound()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountBareLoginTokenIdentityFencePostgresIntegrationTest#directSqlMismatchedCurrentFenceInsertAndCaptureMutationAreDenied()' \
+            account-service
+
+      - name: Upload Account initial private-token identity fence PostgreSQL proof
+        if: ${{ !cancelled() && matrix.module == 'account-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: account-initial-private-token-fence-postgresql-proof-${{ github.sha }}
+          path: services/account-service/build/test-results/integrationTest/TEST-*AccountBareLoginTokenIdentityFencePostgresIntegrationTest.xml
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: 🔎 Verify Account authority exhaustion rollback proof
         if: ${{ matrix.module == 'account-service' }}
         run: |
