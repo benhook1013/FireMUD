@@ -379,11 +379,14 @@ Packet 2 historical-alias rule: `MS-AA-TOKEN-REVOCATION` is a superseded service
 
 ### Post-Archive Direct Human Decisions
 
+`AUTH-GLOBAL-ROLE-WRITER-01` is the sixth post-archive direct human decision recorded in this unmerged candidate. It records approval of the authority boundary only; it does not claim merged application, runtime implementation, or proof completion.
+
 - [x] `COMMERCE-02` — `accepted` on 2026-08-25; initial human approval on 2026-08-23 and final refinement/application on 2026-08-25; [ADR 0179](../../architecture/decisions/adr-0179-firemud-managed-creator-commerce-boundary.md)
 - [x] `HOSTED-TERMS-01` — `accepted` on 2026-08-25; initial human approval on 2026-08-24 and final refinement/application on 2026-08-25; [ADR 0180](../../architecture/decisions/adr-0180-account-owned-hosted-terms-acceptance-gate.md)
 - [x] `HOSTED-TERMS-02` — `accepted` on 2026-08-25; initial human approval on 2026-08-24 and final refinement/application on 2026-08-25; [ADR 0181](../../architecture/decisions/adr-0181-changed-hosted-terms-decline-and-existing-content-continuity.md)
 - [x] `OPS-07` — `revised` on 2026-09-06; [ADR 0182](../../architecture/decisions/adr-0182-separated-hosted-runtime-and-certificate-identity-lifecycles.md)
 - [x] `EDGE-WITHDRAWAL-01` — `accepted` on 2026-09-24; human-approved emergency cutoff despite possible service interruption; [ADR 0184](../../architecture/decisions/adr-0184-emergency-tcp-proxy-identity-withdrawal.md)
+- [x] `AUTH-GLOBAL-ROLE-WRITER-01` — `accepted` on 2026-10-04; Ben explicitly selected “Approve this boundary (Recommended),” relayed through Overseer inbox `0f5ec31e-db81-4b31-ab9c-7e94b257cd62`; [ADR 0185](../../architecture/decisions/adr-0185-account-owned-global-role-administration-and-bootstrap.md)
 
 ### Allocation Notes
 

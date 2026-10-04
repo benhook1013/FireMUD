@@ -279,6 +279,7 @@ Validation precedence is fixed: first parse every checked queue row and validate
 | [ADR 0182](./adr-0182-separated-hosted-runtime-and-certificate-identity-lifecycles.md) | Accepted | `PO-3.2` | `PO-3.1`, `PO-4.4`, `SF-1.3`, `PO-1.1` | Separated hosted runtime and certificate-identity lifecycles |
 | [ADR 0183](./adr-0183-deterministic-effect-id-allocation-and-replay-binding.md) | Proposed - Pending Human Review | `GR-1.2` | `GR-1.4`, `GR-4.1`, `AS-1.2`, `AS-1.4`, `SF-1.4`, `SF-2.3`, `PO-4.2` | Pending deterministic command-plan and generated-child EffectId allocation and replay binding |
 | [ADR 0184](./adr-0184-emergency-tcp-proxy-identity-withdrawal.md) | Accepted | `SF-1.3` | `PO-2.1`, `PO-2.2`, `PO-3.2`, `PO-4.4` | Emergency trust cutoff for a withdrawn TCP Proxy bridge identity |
+| [ADR 0185](./adr-0185-account-owned-global-role-administration-and-bootstrap.md) | Accepted | `AA-1.1` | `SF-1.1`, `PO-1.1` | Account-owned human global-role administration and protected first-administrator bootstrap boundary |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../../product/capability-taxonomy.md).
 
