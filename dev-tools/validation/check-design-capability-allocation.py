@@ -686,7 +686,7 @@ ADR_ALLOCATION_EXPECTATIONS = {
     ),
     "design/architecture/decisions/adr-0183-deterministic-effect-id-allocation-and-replay-binding.md": adr_allocation(
         "GR-1",
-        "Proposed - Pending Human Review",
+        "Accepted",
         "GR-4",
         "AS-1",
         "SF-1",
