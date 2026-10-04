@@ -53,7 +53,8 @@ class LoggingAccountUuidMigrationIntegrationTest {
     assertThat(columnType(schema, "moderation_actions", "id")).isEqualTo("int8");
     assertThat(columnType(schema, "player_reports", "id")).isEqualTo("int8");
     assertThat(columnType(schema, "log_events", "account_id")).isEqualTo("int8");
-    assertThat(history(schema)).hasSize(6);
+    // Runtime discovery includes Saga migrations V1000–V1002 after service migration V6.
+    assertThat(history(schema)).hasSize(9);
   }
 
   @Test
@@ -77,7 +78,8 @@ class LoggingAccountUuidMigrationIntegrationTest {
             scalarLong(
                 schema, "SELECT account_id FROM log_events WHERE message = 'preserve generic log'"))
         .isEqualTo(42L);
-    assertThat(history(schema)).hasSize(6);
+    // The fixture applies the same Saga migrations as the full runtime discovery.
+    assertThat(history(schema)).hasSize(9);
   }
 
   @Test
