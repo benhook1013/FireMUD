@@ -19,6 +19,7 @@ import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
 import net.firedevops.firemud.worldmanagement.client.GameSessionClient;
+import net.firedevops.firemud.worldmanagement.client.GrpcGameSessionInitialAdmissionBindProofClient;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeReceipt;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceEvidence;
@@ -74,6 +75,9 @@ class WorldDesignPublicationFenceIntegrationTest {
   @Autowired private PlatformTransactionManager transactionManager;
 
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
+  @MockitoBean(enforceOverride = true)
+  private GrpcGameSessionInitialAdmissionBindProofClient bindProofClient;
+
   @MockitoBean private GameDesignClient gameDesignClient;
   @MockitoBean private GameSessionClient gameSessionClient;
   @MockitoBean private EntityManagementClient entityManagementClient;
