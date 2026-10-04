@@ -381,6 +381,32 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
                 .fetchOne(PUBLISHED_RELEASE_BUNDLE_REF))
         .isNull();
 
+    Map<String, Object> retainedTupleBeforeV38 = retainedTuple(fixture.dsl(), retainedBundleId);
+    String retainedXminBeforeV38 = bundleXmin(fixture.dsl(), retainedBundleId);
+    migrate(fixture.dataSource(), fixture.schema(), V38);
+    assertThat(retainedTuple(fixture.dsl(), retainedBundleId)).isEqualTo(retainedTupleBeforeV38);
+    assertThat(bundleXmin(fixture.dsl(), retainedBundleId)).isEqualTo(retainedXminBeforeV38);
+    assertThat(
+            fixture
+                .dsl()
+                .select(
+                    CANONICAL_TENANT_ID,
+                    CANONICAL_VERSION_ID,
+                    PUBLISHED_RELEASE_BUNDLE_REF,
+                    MANIFEST_SCHEMA_VERSION,
+                    ARTIFACT_DIGESTS_JSON)
+                .from(RELEASE_BUNDLE)
+                .where(ID.eq(retainedBundleId))
+                .fetchOne())
+        .satisfies(
+            row -> {
+              assertThat(row.get(CANONICAL_TENANT_ID)).isNull();
+              assertThat(row.get(CANONICAL_VERSION_ID)).isNull();
+              assertThat(row.get(PUBLISHED_RELEASE_BUNDLE_REF)).isNull();
+              assertThat(row.get(MANIFEST_SCHEMA_VERSION)).isNull();
+              assertThat(row.get(ARTIFACT_DIGESTS_JSON)).isNull();
+            });
+
     Version mappedVersion = saveVersion(fixture, game);
     PublishedReleaseBundle mapped =
         fixture.releaseBundleRepository().save(bundle(game.getTenantId(), mappedVersion.getId()));
