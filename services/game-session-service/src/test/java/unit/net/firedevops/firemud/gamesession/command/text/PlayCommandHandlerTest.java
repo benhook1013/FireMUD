@@ -4413,8 +4413,7 @@ class PlayCommandHandlerTest {
       String gameInstanceId, PlayableStateScope scope, Character... characters) {
     Mockito.doReturn(roster(characters))
         .when(entityManagementClient)
-        .listCharactersByAccount(
-            tenantForGameInstance(gameInstanceId), "123", gameInstanceId, scope);
+        .listCharactersByAccount("22", "123", gameInstanceId, scope);
   }
 
   private static ListCharactersByAccountResponse roster(Character... characters) {
@@ -4436,9 +4435,5 @@ class PlayCommandHandlerTest {
         .setName(name)
         .setPlayableStateScope(scope)
         .build();
-  }
-
-  private static String tenantForGameInstance(String gameInstanceId) {
-    return "22";
   }
 }

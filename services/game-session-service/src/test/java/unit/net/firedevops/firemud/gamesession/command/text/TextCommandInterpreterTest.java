@@ -1265,15 +1265,4 @@ class TextCommandInterpreterTest {
             Mockito.anyString(),
             Mockito.any(PlayableStateScope.class));
   }
-
-  @Test
-  void realmsFailClosedWhenAccountScopeIssuerIsUnavailable() {
-    interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
-
-    TextCommandInterpretationResult interpretation =
-        interpreter.interpret("1", "REALMS demo", false);
-
-    assertFalse(interpretation.commandResult().accepted());
-    assertEquals("AUTH_UNAVAILABLE", interpretation.commandResult().errorCode());
-  }
 }

@@ -628,7 +628,12 @@ public final class GameSessionGrpcService
       long tenantId =
           ControlPlaneRequestParser.parsePositiveLong(request.getTenantId(), "tenantId");
       List<GameplayAdmissionPointerSnapshot> pointerSnapshot =
-          readGameplayAdmissionPointerSnapshots();
+          readGameplayAdmissionPointerSnapshots(tenantId);
+      if (pointerSnapshot.stream()
+          .anyMatch(pointer -> pointer == null || pointer.tenantId() != tenantId)) {
+        throw new CatalogRevisionUnavailableException(
+            "Authoritative gameplay pointer snapshot escaped the requested tenant scope");
+      }
       gameplayWorldCatalog.requireHealthyPointerCatalog(pointerSnapshot, tenantId);
       List<GameplayAdmissionPointerSnapshot> selectedRealms =
           pointerSnapshot.stream()
@@ -740,6 +745,22 @@ public final class GameSessionGrpcService
     } catch (DataAccessException ex) {
       throw new GameplayWorldCatalog.AuthorityPointerReadUnavailableException(
           "Authoritative gameplay pointer list is unavailable", ex);
+    }
+  }
+
+  private List<GameplayAdmissionPointerSnapshot> readGameplayAdmissionPointerSnapshots(
+      long tenantId) {
+    try {
+      List<GameplayAdmissionPointerSnapshot> pointerSnapshots =
+          gameplayAdmissionPointerAuthorityService.listPointersByTenant(tenantId);
+      if (pointerSnapshots == null) {
+        throw new GameplayWorldCatalog.AuthorityPointerReadUnavailableException(
+            "Authoritative tenant gameplay pointer list is unavailable");
+      }
+      return pointerSnapshots;
+    } catch (DataAccessException ex) {
+      throw new GameplayWorldCatalog.AuthorityPointerReadUnavailableException(
+          "Authoritative tenant gameplay pointer list is unavailable", ex);
     }
   }
 
