@@ -1,0 +1,1070 @@
+diff --git a/render.py b/render.py
+--- a/render.py
++++ b/render.py
+@@ -21,6 +21,7 @@
+ from functools import lru_cache
+ from itertools import groupby
+ from pathlib import Path
++from urllib.parse import quote
+ from zoneinfo import ZoneInfo
+
+ from mast import render_mast
+@@ -80,6 +81,9 @@
+ ACTIVITY_CSS = """.activity-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .6rem; margin-top: .7rem; }
+ .activity-card { min-width: 0; padding: .6rem .75rem; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-muted); }
+ .activity-top { display: flex; justify-content: space-between; gap: .5rem; font-size: .8rem; }
++.activity-next { border: 1px solid currentColor; border-radius: .3rem; padding: 0 .35rem; font-weight: 600; }
++.activity-progress { display: flex; flex-wrap: wrap; gap: .12rem .7rem; margin: .24rem 0 0; color: #626b77; font-size: .68rem; line-height: 1.3; overflow-wrap: anywhere; }
++.activity-progress strong { color: #434c57; font-weight: 700; }
+ .activity-caption { display: block; color: #626b77; font-size: .7rem; margin-top: .32rem; }
+ .activity-note { margin: .3rem 0 0; color: #626b77; font-size: .68rem; line-height: 1.25; overflow-wrap: anywhere; }
+ .round-pills { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .35rem; font-size: .77rem; }
+@@ -372,6 +376,9 @@
+     return html.escape(str(value), quote=True)
+
+
++_PUBLIC_INLINE = safe
++
++
+ def presentation_channels(row: dict) -> dict:
+     """Expose an authoritative audited allocation stop in request presentation."""
+     channels = row.get("channels", {})
+@@ -556,7 +563,7 @@
+     return f"{safe(subject)} checked {relative_time(observed, now)}"
+
+
+-def review_snapshot(tool: Path | None, pr: int, expected_head: str, now: datetime) -> dict:
++def review_snapshot(tool: Path | None, pr: int | None, expected_head: str | None, now: datetime) -> dict:
+     source = "Repository PR-review controller"
+     unavailable = {"available": False, "source": source, "as_of": now.isoformat(), "reason": "No review-status tool configured"}
+     if tool is None:
+@@ -594,26 +601,29 @@
+             if type(number) is not int or number in queue or not isinstance(item["head"], str):
+                 raise ValueError("invalid review stack record")
+             queue[number] = item
+-        if pr not in queue:
++        if pr is not None and pr not in queue:
+             raise ValueError("review front missing from stack")
+         if set(ordered_prs) != set(queue):
+             raise ValueError("review queue and status records disagree")
+-        live_head = queue[pr]["head"]
++        selected_pr = pr if pr is not None else (ordered_prs[0] if ordered_prs else None)
++        live_head = queue[selected_pr]["head"] if selected_pr is not None else ""
++        expected = expected_head if expected_head is not None else live_head
+         return {
+             "available": True,
+             "source": source,
+             "as_of": now.isoformat(),
+             "head": live_head,
+-            "saved_head_stale": live_head != expected_head,
++            "saved_head_stale": live_head != expected,
+             "mode": report.get("mode"),
+             "controller_status": report.get("status"),
+             "detail_window": report.get("detail_window", {}),
+             "review_targets": report.get("review_targets", {}),
++            "review_fronts": report.get("review_fronts", {}),
+             "queue": queue,
+             "ordered_prs": ordered_prs,
+         }
+     except (ValueError, KeyError, TypeError, AttributeError):
+-        return {**unavailable, "reason": "Status fetch malformed or review front missing"}
++        return {**unavailable, "reason": "Status fetch malformed or controller queue is inconsistent"}
+
+
+ def _timestamp_key(value: object) -> str | None:
+@@ -958,62 +968,46 @@
+
+
+ def controller_stack(data: dict, review: dict, github: dict, now: datetime) -> dict:
+-    """Use the live queue for PR order while retaining manual programme labels."""
++    """Build queue order and PR identity from controller and GitHub snapshots."""
+     if not review["available"] or not github["available"]:
+-        return data
+-    saved = {item["number"]: item for item in data["stack"]}
++        raise ValueError("controller queue and GitHub snapshots are required")
+     ordered = review["ordered_prs"]
+     identities = github.get("identity", {})
+     if not ordered or any(number not in identities for number in ordered):
+         raise ValueError("GitHub identities missing for a configured PR; existing page preserved")
+     entries = []
+-    for position, number in enumerate(ordered):
+-        old = saved.get(number)
+-        stage = old["stage"] if old else (
+-            entries[-1]["stage"] if entries else
+-            next((saved[later]["stage"] for later in ordered[position + 1:] if later in saved), "Review queue")
+-        )
+-        entries.append({"number": number, **identities[number], "stage": stage,
++    for number in ordered:
++        entries.append({"number": number, **identities[number], "stage": "Review queue",
+                         "verified_at": now.isoformat()})
+     return {**data, "stack": entries}
+
+
++def selected_review_channels(review: dict, ordered: list[int], lifecycle: dict) -> dict[str, int]:
++    """Project only the controller's known logical fronts for open queue PRs."""
++    fronts = review.get("review_fronts", {})
++    if not review.get("available") or not isinstance(fronts, dict):
++        return {}
++    selected = {}
++    for channel in ("hosted", "cli"):
++        front = fronts.get(channel)
++        if not isinstance(front, dict) or front.get("status") in {None, "UNKNOWN"}:
++            continue
++        number = front.get("pr")
++        if type(number) is int and number in ordered and lifecycle.get(number) == "OPEN":
++            selected[channel] = number
++    return selected
++
++
+ def selected_review_fronts(data: dict, review: dict, github: dict) -> set[int]:
+-    """Keep each controller-selected channel target visible as a review front."""
+-    manual = data["review_front"]
+-    if not review["available"] or not github.get("available"):
+-        return {manual}
+-    ordered = [item["number"] for item in data["stack"]]
+-    queue = review.get("queue", {})
+-    lifecycle = github.get("lifecycle", {})
+-
+-    def unfinished(number: int) -> bool:
+-        channels = presentation_channels(queue.get(number, {}))
+-        return (lifecycle.get(number) == "OPEN" and isinstance(channels, dict)
+-                and any(channels.get(channel) not in REVIEW_FINISHED_STATES
+-                        for channel in ("hosted", "cli")))
+-
+-    targets = review.get("review_targets", {})
+-    selected = set()
+-    if isinstance(targets, dict):
+-        for channel in ("hosted", "cli"):
+-            target = targets.get(channel, {})
+-            if isinstance(target, dict) and type(target.get("pr")) is int:
+-                number = target["pr"]
+-                channels = presentation_channels(queue.get(number, {}))
+-                if (number in ordered and unfinished(number) and isinstance(channels, dict)
+-                        and channels.get(channel) not in REVIEW_FINISHED_STATES):
+-                    selected.add(number)
+-    if selected:
+-        return selected
+-    if manual in ordered and unfinished(manual):
+-        return {manual}
+-    fallback = next((number for number in ordered if unfinished(number)), None)
+-    return {fallback} if fallback is not None else set()
++    """Keep each known controller logical front visible independently of admission."""
++    if not github.get("available"):
++        return set()
++    return set(selected_review_channels(
++        review, [item["number"] for item in data["stack"]], github.get("lifecycle", {})).values())
+
+
+ def selected_review_front(data: dict, review: dict, github: dict) -> int | None:
+-    """Feature the first selected channel target in queue order."""
++    """Feature the first known logical front in queue order."""
+     selected = selected_review_fronts(data, review, github)
+     return next((item["number"] for item in data["stack"] if item["number"] in selected), None)
+
+@@ -1480,6 +1474,13 @@
+     return ""
+
+
++def _no_review_model_label(_run, _attempts) -> str:
++    return ""
++
++
++_REVIEW_MODEL_LABEL = _no_review_model_label
++
++
+ def _decision_identity(record: dict) -> tuple[str, object]:
+     decision_id = record.get("decision_id")
+     if decision_id is not None and decision_id != "":
+@@ -1633,6 +1634,11 @@
+     target_pr = route.get("target_pr")
+     source = f'PR #{route_source_pr}' if type(route_source_pr) is int and route_source_pr > 0 else "Unknown source"
+     target = f'PR #{target_pr}' if type(target_pr) is int and target_pr > 0 else "Unassigned target"
++    if type(source_pr) is int and source_pr > 0:
++        if route_source_pr == source_pr:
++            source = f'<strong>{source}</strong>'
++        if type(target_pr) is int and target_pr == source_pr:
++            target = f'<strong>{target}</strong>'
+     kind, status = _route_status(route)
+     label = f"Route {number}" if number is not None else "Route"
+     route_id = _record_text(route.get("route_id"))
+@@ -1812,11 +1818,12 @@
+         duration = _run_duration_label(run, attempts)
+         age_html = _run_age_html(run, now)
+         runtime_html = f'<span class="run-runtime" title="Runtime">Runtime {duration}</span>' if duration else ""
++        model_html = _REVIEW_MODEL_LABEL(run, attempts)
+         run_header = (
+             f'<summary class="run-header"><div class="run-heading">'
+             f'<span class="run-name"><strong>{source} {review_numbers[source]}</strong></span>'
+             f' <span class="review-outcome review-outcome-{outcome_tone}">{_status_label(run.get("outcome"))}</span>'
+-            f'{age_html}{runtime_html}</div>'
++            f'{age_html}{runtime_html}{model_html}</div>'
+             f'<span class="record-counts">{_run_counts(run)}</span>'
+             f'</summary>'
+         )
+@@ -1994,8 +2001,12 @@
+         raise ValueError("review details require a configured queue PR")
+     queue_item = review.get("queue", {}).get(pr) if review.get("available") else None
+     history = history or {"state": "unavailable"}
++    detail_fronts = selected_review_channels(
++        review, [entry["number"] for entry in data["stack"]],
++        {number: row.get("state") for number, row in review.get("queue", {}).items()})
+     activity_html = render_activity_cards(
+-        queue_item, now, independent_card=render_independent_activity(history, now))
++        queue_item, now, independent_card=render_independent_activity(history, now),
++        next_channels={channel for channel, selected in detail_fronts.items() if selected == pr})
+     state = history.get("state")
+     if state == "unavailable":
+         records_html = ('<p class="history-note">Finding and decision history is unavailable until compatible '
+@@ -2087,7 +2098,7 @@
+ .route-body {{ margin-top: .35rem; }} .route-topline {{ display: block; }} .route-id {{ color: var(--muted); font-size: .78rem; overflow-wrap: anywhere; }}
+ .route-finding-title {{ display: block; margin: .25rem 0 0 1rem; font-weight: 750; overflow-wrap: anywhere; }}
+ .route-reference {{ display: block; overflow-wrap: anywhere; }} .route-reference .route-topline {{ display: inline; }}
+-.route-reference-reason {{ margin-left: .3rem; }} .route-reference-link {{ display: inline-block; margin-left: .35rem; font-size: .82rem; }}
++.route-reference-reason {{ margin-left: .3rem; }} .route-reference-link {{ display: inline-block; margin-left: .35rem; color: #222; font: inherit; font-weight: 400; text-decoration: underline; }}
+ .route-description, .route-outcome {{ margin: .3rem 0; overflow-wrap: anywhere; }} .route-description {{ color: var(--muted); }}
+ .route-history {{ margin-top: .35rem; overflow-wrap: anywhere; }} .route-history > summary {{ width: fit-content; color: var(--muted); cursor: pointer; font-size: .82rem; }}
+ .route-history ul {{ margin: .25rem 0 0; padding-left: 1.2rem; }} .route-history li {{ margin-top: .2rem; }}
+@@ -2106,7 +2117,7 @@
+ .run-header strong {{ color: #333d48; }}
+ .run-header .record-counts {{ margin-left: auto; }}
+ .run-runtime {{ color: var(--muted); font-size: .8rem; font-variant-numeric: tabular-nums; white-space: nowrap; }}
+-.run-age {{ display: inline; margin: 0; color: var(--muted); font-size: .8rem; font-variant-numeric: tabular-nums; white-space: nowrap; }}
++.run-header .run-age {{ display: inline; margin: 0; color: var(--muted); font-size: .8rem; font-variant-numeric: tabular-nums; white-space: nowrap; }}
+ @media (max-width: 760px) {{ .run-header .record-counts {{ margin-left: 0; }} }}
+ .run-header .record-counts span {{ padding: .14rem .55rem; border: 1px solid; border-radius: 999px; font-weight: 650; }}
+ .run-header .record-counts .review-count-found {{ background: #edf0f4; border-color: #c7cdd5; color: #43505d; }}
+@@ -2147,7 +2158,8 @@
+ </main><script id="review-run-toggles">{REVIEW_TOGGLE_SCRIPT}</script><script id="local-refresh-progress">{REFRESH_SCRIPT}</script><script id="relative-age-updates">{AGE_SCRIPT}</script></body></html>'''
+
+
+-def render_activity_cards(queue_item: dict | None, now: datetime, *, independent_card: str = "") -> str:
++def render_activity_cards(queue_item: dict | None, now: datetime, *, independent_card: str = "",
++                          show_progress: bool = True, next_channels: set[str] | None = None) -> str:
+     """Render the current compact Hosted/CLI round summaries for reuse on detail pages."""
+     activity_cards = []
+     if queue_item and isinstance(queue_item.get("review_activity"), dict):
+@@ -2218,9 +2230,46 @@
+                 total = 0
+             total_label = (f"at least {total} recorded" if incomplete_history and total
+                            else "history unavailable" if incomplete_history else f"{total} completed")
++            review_progress = queue_item.get("review_progress")
++            channel_progress = review_progress.get(channel) if isinstance(review_progress, dict) else None
++            progress_label = (
++                channel_progress.get("label")
++                if isinstance(channel_progress, dict) and isinstance(channel_progress.get("label"), str)
++                and channel_progress["label"].strip()
++                else "Progress not checked"
++            )
++            rule = channel_progress.get("rule") if isinstance(channel_progress, dict) else None
++            rule_label = (
++                rule.get("label")
++                if isinstance(rule, dict) and isinstance(rule.get("label"), str) and rule["label"].strip()
++                else "Policy not checked"
++            )
++            rule_description = (
++                rule.get("description")
++                if isinstance(rule, dict) and isinstance(rule.get("description"), str)
++                and rule["description"].strip() else None
++            )
++            accessible_progress = f"Progress: {progress_label}; governing rule: {rule_label}"
++            if rule_description:
++                accessible_progress += f"; {rule_description}"
++            progress_accessibility = (
++                f' role="group" aria-label="{safe(accessible_progress)}"'
++                + (f' title="{safe(rule_description)}"' if rule_description else "")
++            )
++            progress_html = (
++                f'<div class="activity-progress"{progress_accessibility}>'
++                f'<span><strong>Progress:</strong> {safe(progress_label)}</span>'
++                f'<span><strong>Rule:</strong> {safe(rule_label)}</span></div>'
++            )
++            if not show_progress or queue_item.get("merged") is True:
++                progress_html = ""
++            next_badge = ('<span class="activity-next" title="Next in this review queue; request availability is separate">Next</span>'
++                          if next_channels and channel in next_channels else "")
+             activity_cards.append(
+                 f'<div class="activity-card"><div class="activity-top"><strong>{channel_name}</strong>'
++                f'{next_badge}'
+                 f'<span>{safe(total_label)}</span></div>'
++                f'{progress_html}'
+                 f'<div class="round-pills">{"".join(pills) if pills else "Unavailable" if incomplete_history else "None yet"}</div>{activity_note}</div>'
+             )
+     cards = "".join(activity_cards) + independent_card
+@@ -2286,11 +2335,89 @@
+             temporary_path.unlink(missing_ok=True)
+
+
++def render_controller_job(job: dict) -> str:
++    """Render only fields already selected by FireController's public projection."""
++    status = job["status"]
++    checklist = "".join(
++        f'<li><span class="job-check-state">{"Done" if item["done"] else "Open"}</span> '
++        f'{_PUBLIC_INLINE(item["text"])}</li>'
++        for item in job["checklist"]
++    )
++    fields = []
++    if job["summary"]:
++        fields.append(f'<p class="job-summary">{_PUBLIC_INLINE(job["summary"])}</p>')
++    if job["progress"]:
++        fields.append(f'<p class="job-progress"><strong>Progress</strong> · {_PUBLIC_INLINE(job["progress"])}</p>')
++    if job["blocker"]:
++        fields.append(f'<p class="job-blocker"><strong>Blocker</strong> · {_PUBLIC_INLINE(job["blocker"])}</p>')
++    primary = '<span class="job-primary">Primary</span>' if job["primary"] else ""
++    return (
++        f'<article class="controller-job-card status-{safe(status)}" '
++        f'data-fire-controller-job-id="{safe(job["id"])}">'
++        f'<div class="controller-job-heading"><h4>{safe(job["name"])}</h4>'
++        f'<span class="job-status">{safe(status)}</span>{primary}</div>'
++        f'<p class="job-title">{safe(job["title"])}</p>{"".join(fields)}'
++        f'<ul class="controller-job-checklist">{checklist}</ul></article>'
++    )
++
++
++def render_controller_jobs(jobs: list[dict]) -> str:
++    if not jobs:
++        return ""
++    return (
++        '<section class="controller-job-list" aria-label="FireController jobs">'
++        '<h4>FireController jobs</h4>'
++        f'{"".join(render_controller_job(job) for job in jobs)}'
++        '</section>'
++    )
++
++
++def _render_unmatched_job_lane(worker: str, jobs: list[dict]) -> str:
++    return (
++        f'<article class="card controller-job-lane"><div class="card-top">'
++        f'<div class="lane-topline"><h3>{safe(worker)}</h3><span class="lane-state">JOBS</span></div>'
++        f'</div><div class="lane-content">{render_controller_jobs(jobs)}</div></article>'
++    )
++
++
++def _render_controller_lane(lane: dict) -> str:
++    worker = lane["worker"]
++    status = lane["status"].upper()
++    if status not in {"ACTIVE", "BLOCKED", "PAUSED", "IDLE"}:
++        raise ValueError("controller lane status is invalid")
++    jobs_html = render_controller_jobs(lane["jobs"])
++    reason = (
++        f'<p class="lane-blocker"><strong>Pause reason</strong> · {safe(lane["pause_reason"])}</p>'
++        if lane["paused"] and lane["pause_reason"] else ""
++    )
++    truncation = '<p class="lane-truncated">Additional jobs are not shown.</p>' if lane["jobs_truncated"] else ""
++    worker_token = quote(worker, safe="")
++    return (
++        '<article class="card controller-job-lane"><div class="card-top"><div class="lane-topline">'
++        f'<h3>{safe(worker)}</h3><span class="lane-state lane-state-{status.lower()}" aria-label="{status}">'
++        f'<span class="lane-state-icon" aria-hidden="true"></span>{status}</span></div>'
++        f'<span data-fire-controller-inbox-worker="{safe(worker_token)}"></span></div>'
++        f'<div class="lane-content">{reason}{jobs_html}{truncation}</div></article>'
++    )
++
++
++def _unmatched_job_groups(jobs: list[dict] | None, lanes: list[dict]) -> list[tuple[str, list[dict]]]:
++    grouped = {}
++    for job in jobs or []:
++        grouped.setdefault(job["worker"].casefold(), []).append(job)
++    existing_workers = {lane["name"].casefold() for lane in lanes}
++    return [
++        (worker_jobs[0]["worker"], worker_jobs)
++        for worker, worker_jobs in grouped.items() if worker not in existing_workers
++    ]
++
++
+ def render(data: dict, review: dict, now: datetime, github: dict | None = None, *,
+-           history_only: bool = False, histories: dict[int, dict] | None = None) -> str:
++           history_only: bool = False, histories: dict[int, dict] | None = None,
++           jobs: list[dict] | None = None, lanes_snapshot: list[dict] | None = None) -> str:
+     stack = data["stack"]
+-    lanes = data["lanes"]
+-    if not stack or [lane["name"] for lane in lanes] != ["Gameplay", "Document", "General"]:
++    lanes = data["lanes"] if lanes_snapshot is None else lanes_snapshot
++    if not stack or (lanes_snapshot is None and [lane["name"] for lane in lanes] != ["Gameplay", "Document", "General"]):
+         raise ValueError("status file needs an ordered stack and Gameplay, Document, General lanes")
+     if len({item["number"] for item in stack}) != len(stack):
+         raise ValueError("duplicate PR in stack")
+@@ -2300,7 +2427,9 @@
+     if len(set(stages)) != sum(1 for _ in groupby(stages)):
+         raise ValueError("programme stages must be contiguous in stack order")
+     github = github or {"available": False, "states": {}, "lifecycle": {}, "merged_at": {}, "stats": {}}
+-    front_numbers = selected_review_fronts(data, review, github)
++    channel_fronts = selected_review_channels(
++        review, [item["number"] for item in stack], github.get("lifecycle", {})) if github.get("available") else {}
++    front_numbers = set(channel_fronts.values())
+     front_number = selected_review_front(data, review, github)
+     front_index = next((index for index, item in enumerate(stack) if item["number"] == front_number), None)
+     front_item = stack[front_index] if front_index is not None else None
+@@ -2318,7 +2447,6 @@
+         len(stack) + 1,
+     )
+     front_size_html = "Diff size unavailable"
+-    front_controller_html = '<span class="front-controller-unavailable">Hosted/CLI states unavailable</span>'
+     front_activity_grid = ""
+     for position, item in enumerate(stack, 1):
+         number = item["number"]
+@@ -2342,26 +2470,7 @@
+         channels = presentation_channels(queue_item) if queue_item else {}
+         label_channels = channel_label_states(queue_item, channels) if queue_item else {}
+         states = [label_channels.get(channel) for channel in ("hosted", "cli")] if isinstance(label_channels, dict) else []
+-        named_states = []
+-        for channel, state in zip(("hosted", "cli"), states):
+-            if not isinstance(state, str) or not state:
+-                continue
+-            label_state = label_channels.get(channel, state)
+-            activity_label = channel_activity_label(queue_item, channel, label_state)
+-            label = activity_label or channel_label(channel, label_state, number, review.get("review_targets", {}))
+-            reason = held_request_reason(review, channel, number, label_state)
+-            if activity_label and reason == f"{number} has an active review or reservation in a review channel":
+-                reason = None
+-            named_states.append(f"{label} · {reason}" if reason else label)
+-        has_controller_states = len(named_states) == 2
+-        if has_controller_states:
+-            controller_text = " · ".join(named_states)
+-        elif named_states:
+-            missing_channel = "CLI" if isinstance(states[0], str) and states[0] else "Hosted"
+-            controller_text = f'{" · ".join(named_states)} · Review state unavailable ({missing_channel})'
+-        else:
+-            controller_text = "Review state unavailable"
+-        controller_status_html = f'<span class="sub">{safe(controller_text)}</span>'
++        has_controller_states = sum(isinstance(state, str) and bool(state) for state in states) == 2
+         merged_time = None
+         if lifecycle == "MERGED":
+             merged_at = github.get("merged_at", {}).get(number)
+@@ -2374,16 +2483,13 @@
+             status_html = f'<span class="sub">{channel_html}</span>'
+             queue_badge_html = '<span class="queue-status queue-status-merged">MERGED</span>'
+         elif lifecycle == "CLOSED":
+-            status_html = (
+-                '<span class="sub"><strong>Closed</strong> · Historical review record</span>'
+-                f'{controller_status_html}'
+-            )
++            status_html = '<span class="sub"><strong>Closed</strong> · Historical review record</span>'
+             queue_badge_html = '<span class="queue-status queue-status-closed">CLOSED</span>'
+         elif lifecycle == "OPEN" and github.get("states", {}).get(number) is True:
+-            status_html = controller_status_html
++            status_html = ""
+             queue_badge_html = '<span class="queue-status queue-status-draft">DRAFT</span>'
+         elif queue_item:
+-            status_html = controller_status_html
++            status_html = ""
+             if number in front_numbers:
+                 badge_label, badge_class = "REVIEW FRONT", "front"
+             elif has_controller_states and any(state in ACTIVE_REVIEW_STATES for state in states):
+@@ -2396,7 +2502,7 @@
+                 badge_label, badge_class = "QUEUED", "queued"
+             queue_badge_html = f'<span class="queue-status queue-status-{badge_class}">{badge_label}</span>'
+         else:
+-            status_html = controller_status_html
++            status_html = ""
+             queue_badge_html = (
+                 '<span class="queue-status queue-status-front">REVIEW FRONT</span>'
+                 if number in front_numbers else
+@@ -2404,23 +2510,13 @@
+                 if number == next_pr else
+                 '<span class="queue-status queue-status-pending">PENDING</span>'
+             )
+-        channels_closed = bool(states) and all(state in REVIEW_FINISHED_STATES for state in states)
+-        if lifecycle != "MERGED" and queue_item and queue_item.get("detail_level") == "identity_only" and not channels_closed:
+-            evidence = queue_item.get("evidence_status")
+-            label = (
+-                "Review evidence stale after identity or parent movement"
+-                if evidence == "stale" else "Review evidence not checked in this refresh"
+-            )
+-            status_html += f'<span class="sub">{label} · identity only</span>'
+-        elif lifecycle != "MERGED" and queue_item and queue_item.get("detail_level") == "unknown" and not channels_closed:
+-            status_html += '<span class="sub">Review evidence unavailable · identity unknown</span>'
+         history = (histories or {}).get(number)
+         activity_grid = render_activity_cards(
+-            queue_item, now, independent_card=render_independent_activity(history, now))
++            queue_item, now, independent_card=render_independent_activity(history, now),
++            show_progress=lifecycle != "MERGED",
++            next_channels={channel for channel, selected in channel_fronts.items() if selected == number})
+         if number == front_number:
+             front_size_html = size_html
+-            if lifecycle != "MERGED" and has_controller_states:
+-                front_controller_html = f'<span class="front-controller-state">{safe(controller_text)}</span>'
+             front_activity_grid = activity_grid
+         row_classes = []
+         if lifecycle == "MERGED":
+@@ -2481,40 +2577,45 @@
+             f'{safe(front_item["title"])}</span></a></h2>'
+             f'</div><div class="front-evidence">'
+             f'<div class="front-facts"><div class="front-fact"><strong>Diff size</strong>'
+-            f'<span class="sub front-fact-value">{front_size_html}</span></div>'
+-            f'<div class="front-fact"><strong>Controller</strong>'
+-            f'{front_controller_html}</div></div>'
++            f'<span class="sub front-fact-value">{front_size_html}</span></div></div>'
+             f'{front_activity_grid or "<p>Review activity unavailable</p>"}'
+             f'<a class="front-review-detail-link" href="review/pr-{front_item["number"]}.html">Review details ↗</a>'
+             f'</div>'
+             f'</section>'
+         )
+     cards = []
+-    for lane in lanes:
+-        status = lane.get("status", "RUNNING")
+-        if status not in ("RUNNING", "PAUSED", "COMPLETED"):
+-            raise ValueError("lane status must be RUNNING, PAUSED, or COMPLETED")
+-        details = [f'<li>{safe(item)}</li>' for item in lane_items(lane["task"])]
+-        sections = []
+-        for field, label, class_name in (
+-            ("up_next", "Queued next", "lane-queued"),
+-            ("blocker", "Blocker", "lane-blocker"),
+-        ):
+-            items = lane_items(lane[field]) if lane.get(field) is not None else []
+-            if items:
+-                sections.append(
+-                    f'<div class="{class_name}"><h4>{label}</h4><ul>'
+-                    f'{"".join(f"<li>{safe(item)}</li>" for item in items)}</ul></div>'
+-                )
+-        cards.append(
+-            f'<article class="card"><div class="card-top"><div class="lane-topline">'
+-            f'<h3>{safe(lane["name"])}</h3>'
+-            f'<span class="lane-state lane-state-{status.lower()}" aria-label="{status}">'
+-            f'<span class="lane-state-icon" aria-hidden="true"></span>{status}</span></div>'
+-            f'<span class="fresh">{time_label(lane["verified_at"], now, "Lane note")}</span></div>'
+-            f'<div class="lane-content"><ul class="lane-task">{"".join(details)}</ul>'
+-            f'{"".join(sections)}</div></article>'
+-        )
++    jobs_by_worker = {}
++    for job in jobs or []:
++        jobs_by_worker.setdefault(job["worker"].casefold(), []).append(job)
++    if lanes_snapshot is not None:
++        cards = [_render_controller_lane(lane) for lane in lanes]
++    else:
++        for lane in lanes:
++            status = lane.get("status", "RUNNING")
++            if status not in ("RUNNING", "PAUSED", "COMPLETED"):
++                raise ValueError("lane status must be RUNNING, PAUSED, or COMPLETED")
++            details = [f'<li>{safe(item)}</li>' for item in lane_items(lane["task"])]
++            sections = []
++            for field, label, class_name in (
++                ("up_next", "Queued next", "lane-queued"),
++                ("blocker", "Blocker", "lane-blocker"),
++            ):
++                items = lane_items(lane[field]) if lane.get(field) is not None else []
++                if items:
++                    sections.append(
++                        f'<div class="{class_name}"><h4>{label}</h4><ul>'
++                        f'{"".join(f"<li>{safe(item)}</li>" for item in items)}</ul></div>'
++                    )
++            lane_jobs = jobs_by_worker.pop(lane["name"].casefold(), [])
++            cards.append(
++                f'<article class="card"><div class="card-top"><div class="lane-topline">'
++                f'<h3>{safe(lane["name"])}</h3>'
++                f'<span class="lane-state lane-state-{status.lower()}" aria-label="{status}">'
++                f'<span class="lane-state-icon" aria-hidden="true"></span>{status}</span></div>'
++                f'<span class="fresh">{time_label(lane["verified_at"], now, "Lane note")}</span></div>'
++                f'<div class="lane-content"><ul class="lane-task">{"".join(details)}</ul>'
++                f'{"".join(sections)}{render_controller_jobs(lane_jobs)}</div></article>'
++            )
+     refreshed_at = (
+         f'<time class="relative-age" datetime="{safe(now.isoformat())}" '
+         f'title="{safe(local_time(now))}">just now</time>'
+@@ -2545,7 +2646,9 @@
+         "" if history_only else
+         '<section id="workers"><div class="section-head"><h2>Worker lanes</h2>'
+         '<p>Current focus across active workstreams</p></div>'
+-        f'<div class="cards">{"".join(cards)}</div></section>'
++        f'<div class="cards">{"".join(cards)}'
++        f'{"" if lanes_snapshot is not None else "".join(_render_unmatched_job_lane(worker, worker_jobs) for worker, worker_jobs in _unmatched_job_groups(jobs, lanes))}'
++        f'</div></section>'
+     )
+     queue_heading = "Queue history" if history_only else "Configured review queue"
+     queue_link = (
+@@ -2560,7 +2663,6 @@
+ <div><dt>Reviewing</dt><dd>request is active</dd></div>
+ <div><dt>Cooldown</dt><dd>provider rate limit</dd></div>
+ <div><dt>Blocked</dt><dd>new request is held; a specific reason appears on the row when supplied</dd></div>
+-<div><dt>Parent changed / needs reconciliation</dt><dd>re-prove branch before requesting</dd></div>
+ <div><dt>Human bypass / Review closed</dt><dd>intentionally stopped or completed</dd></div>
+ </dl>'''
+     )
+@@ -2636,7 +2738,7 @@
+ .front-copy h2 {{ margin: 1rem 0; font-size: clamp(1.5rem,3vw,2.75rem); line-height: 1.1; letter-spacing: -.04em; overflow-wrap: anywhere; }}
+ .front-number {{ display: block; margin-bottom: .65rem; color: #ffc390; font-size: clamp(3rem,6vw,5.5rem); line-height: .95; letter-spacing: -.07em; }}
+ .front-copy h2 a {{ color: #fff; text-decoration: none; }} .front-copy h2 a:hover {{ text-decoration: underline; }}
+-.front-facts {{ display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .6rem; width: 100%; }}
++.front-facts {{ display: grid; grid-template-columns: minmax(0,1fr); gap: .6rem; width: 100%; }}
+ .front-fact {{ display: flex; min-width: 0; flex-direction: column; align-items: flex-start; gap: .35rem; padding: .6rem .75rem; border: 1px solid #f4c9c7; border-radius: 9px; background: var(--surface); color: var(--ink); font-size: .8rem; }}
+ .front-fact > strong {{ color: #37414a; font-size: .8rem; font-weight: 700; }}
+ .front-facts .sub {{ display: inline; margin: 0; font-size: .78rem; color: var(--ink); }}
+@@ -2693,6 +2795,21 @@
+ .queue-status-closed {{ background: #e7e9ed; border-color: #b9bec7; color: #454b56; }}
+ .queue-stage > .stack li.merged .pr-main > a {{ color: #392451; }}
+ .cards {{ margin-top: 0; }} .card {{ border-radius: 0; box-shadow: none; }} .card-top {{ background: var(--smoke); }}
++.controller-job-list {{ margin-top: .8rem; padding-top: .6rem; border-top: 1px solid var(--line); }}
++.controller-job-list > h4 {{ margin: 0 0 .45rem; font-size: .82rem; }}
++.controller-job-card {{ margin-top: .45rem; padding: .6rem .7rem; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); }}
++.controller-job-heading {{ display: flex; flex-wrap: wrap; align-items: center; gap: .35rem .55rem; }}
++.controller-job-heading h4 {{ margin: 0; font-size: .9rem; }}
++.job-status, .job-primary {{ border: 1px solid var(--line); border-radius: 999px; padding: .08rem .38rem; font-size: .65rem; font-weight: 750; text-transform: capitalize; }}
++.controller-job-card.status-blocked {{ border-left: 4px solid var(--fire); }}
++.controller-job-card .job-title, .controller-job-card .job-summary, .controller-job-card .job-progress, .controller-job-card .job-blocker {{ margin: .35rem 0 0; font-size: .76rem; line-height: 1.35; }}
++.controller-job-checklist {{ margin: .4rem 0 0; padding-left: 1.1rem; font-size: .72rem; }}
++.job-check-state {{ color: var(--muted); font-weight: 700; }}
++.lane-state-active .lane-state-icon {{ width: .48rem; height: .48rem; border-radius: 50%; background: var(--ember); }}
++.lane-state-blocked .lane-state-icon {{ width: .48rem; height: .48rem; border-radius: 50%; background: var(--fire); }}
++.lane-state-idle .lane-state-icon {{ width: .48rem; height: .48rem; border-radius: 50%; background: #dfe2e6; }}
++.lane-truncated {{ color: var(--muted); font-size: .72rem; }}
++.job-detail-link {{ display: inline-block; margin-top: .4rem; font-size: .72rem; font-weight: 750; }}
+ @media (max-width: 900px) {{ .queue-stage {{ grid-template-columns: 1fr; gap: .45rem; }} .queue-stage > .queue-stage-title {{ margin: 0 0 0 3.5rem; }} }}
+ @media (max-width: 760px) {{ .mast-inner > .repo-links {{ text-align: right; gap: .25rem .6rem; }} .front-board {{ grid-template-columns: 1fr; }} .front-copy {{ min-height: 250px; }} .front-facts {{ grid-template-columns: 1fr; }} .front-evidence > .activity-grid {{ grid-template-columns: 1fr; }} .section-head {{ display: block; }} .section-head p {{ margin-top: .55rem; }} .queue-stage {{ padding: .55rem .8rem; }} .cards {{ grid-template-columns: minmax(0,1fr); width: 100%; }} .lane-topline {{ padding-right: .75rem; }} .card-top .fresh {{ max-width: 100%; margin-right: .75rem; white-space: normal; text-align: right; }} }}
+ </style></head><body>
+@@ -2705,24 +2822,45 @@
+
+
+ def main() -> None:
++    global _REVIEW_MODEL_LABEL, _PUBLIC_INLINE
+     parser = argparse.ArgumentParser(description=__doc__)
+     parser.add_argument("--input", type=Path, default=DEFAULT_INPUT)
+     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+     parser.add_argument("--review-tool", type=Path, help="optional read-only repository PR-review controller")
++    parser.add_argument("--jobs-database", type=Path, required=True, help="local FireController SQLite database")
++    parser.add_argument("--controller-tools", type=Path, required=True,
++                        help="absolute dev-tools package root for FireController")
+     args = parser.parse_args()
++    if not args.jobs_database.is_absolute():
++        parser.error("--jobs-database must be an absolute path")
++    if not args.controller_tools.is_absolute() or not args.controller_tools.is_dir():
++        parser.error("--controller-tools must be an existing absolute dev-tools directory")
++    sys.path.insert(0, str(args.controller_tools.resolve()))
++    try:
++        from fire_controller.web import (
++            load_public_lanes, load_public_workstreams, render_public_inline, review_model_label,
++        )
++        _REVIEW_MODEL_LABEL = review_model_label
++        _PUBLIC_INLINE = render_public_inline
++        public_lanes = load_public_lanes(args.jobs_database)
++        project_editorial = json.loads((ROOT / "progress.json").read_text(encoding="utf-8"))
++        project_map = load_public_workstreams(args.jobs_database, project_editorial)
++        project_jobs = [job for lane in public_lanes for job in lane["jobs"]]
++    except (ImportError, OSError, RuntimeError, ValueError) as error:
++        parser.error(f"FireController project data is unavailable: {error}")
+     now = datetime.now(timezone.utc)
+     data = json.loads(args.input.read_text(encoding="utf-8"))
+-    front = next(item for item in data["stack"] if item["number"] == data["review_front"])
+     configured_tool = data.get("review_tool")
+     if configured_tool is not None and (not isinstance(configured_tool, str) or not Path(configured_tool).is_absolute()):
+         raise ValueError("review_tool must be an absolute path")
+     # Resolve the stable WSL entrypoint before using its package and worktree.
+     review_tool = (args.review_tool or (Path(configured_tool) if configured_tool else None))
+-    if review_tool is not None:
+-        review_tool = review_tool.resolve()
++    if review_tool is None:
++        parser.error("review-tool configuration is required for the controller-backed queue")
++    review_tool = review_tool.resolve()
+     def fetch_review_status() -> dict:
+         with _TimedStage("controller_status"):
+-            return review_snapshot(review_tool, front["number"], front["head"], now)
++            return review_snapshot(review_tool, None, None, now)
+
+     def fetch_github_listing() -> dict:
+         with _TimedStage("github_listing"):
+@@ -2733,12 +2871,12 @@
+         github_future = pool.submit(fetch_github_listing)
+         review = review_future.result()
+         github = github_future.result()
+-    if review_tool is not None and not review["available"] and args.output.exists():
+-        raise RuntimeError(f"review status unavailable; existing page preserved: {review['reason']}")
++    if not review["available"]:
++        raise RuntimeError(f"controller queue unavailable; rendered output was not replaced: {review['reason']}")
+     with _TimedStage("routed_enrichment"):
+         enrich_public_routed_counts(review_tool, review)
+-    if not github["available"] and args.output.exists():
+-        raise RuntimeError("GitHub PR details unavailable; existing page preserved")
++    if not github["available"]:
++        raise RuntimeError("GitHub PR details unavailable; rendered output was not replaced")
+     with _TimedStage("queue_history"):
+         enrich_merged_review_history(review_tool, review, github)
+     now = datetime.now(timezone.utc)
+@@ -2748,9 +2886,15 @@
+         histories = records_history_snapshots(review_tool, history_prs)
+     with _TimedStage("html_render"):
+         args.output.parent.mkdir(parents=True, exist_ok=True)
+-        rendered = render(data, review, now, github, histories=histories)
+-        history_rendered = render(data, review, now, github, history_only=True, histories=histories)
+-        progress_rendered = render_project_map(now)
++        rendered = render(data, review, now, github, histories=histories,
++                          jobs=project_jobs, lanes_snapshot=public_lanes)
++        history_rendered = render(
++            data, review, now, github, history_only=True, histories=histories,
++            jobs=project_jobs, lanes_snapshot=public_lanes,
++        )
++        progress_rendered = render_project_map(
++            now, map_state=project_map, jobs=project_jobs, public_inline=render_public_inline,
++        )
+         write_review_detail_pages(args.output.parent, data, review, now, histories)
+         for name in ASSET_FILES:
+             source = ROOT / "assets" / name
+diff --git a/server.py b/server.py
+--- a/server.py
++++ b/server.py
+@@ -16,7 +16,7 @@
+ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+ from pathlib import Path
+ from typing import Callable
+-from urllib.parse import urlsplit
++from urllib.parse import quote, unquote, urlsplit
+
+ ROOT = Path(__file__).resolve().parent
+ OUTPUT = ROOT / "output"
+@@ -74,7 +74,7 @@
+             _log_timing(f"render.{match.group(1)}", elapsed, match.group(3))
+
+
+-def run_local_script(script: Path, timeout: int) -> None:
++def run_local_script(script: Path, timeout: int, arguments: tuple[str, ...] | list[str] = ()) -> None:
+     started_at = time.monotonic()
+     stage = (
+         "render_process" if script == RENDER_SCRIPT
+@@ -83,7 +83,7 @@
+     )
+     try:
+         result = subprocess.run(
+-            [sys.executable, str(script)],
++            [sys.executable, str(script), *arguments],
+             cwd=ROOT,
+             capture_output=True,
+             text=True,
+@@ -101,8 +101,11 @@
+         raise RuntimeError(f"{Path(script).name} exited {result.returncode}: {result.stderr[-1200:]}")
+
+
+-def render_snapshot() -> None:
+-    run_local_script(RENDER_SCRIPT, 180)
++def render_snapshot(jobs_database: Path | None = None, controller_tools: Path | None = None) -> None:
++    if jobs_database is None or controller_tools is None:
++        raise ValueError("local refresh requires the FireController database and tools path")
++    arguments = ["--jobs-database", str(jobs_database), "--controller-tools", str(controller_tools)]
++    run_local_script(RENDER_SCRIPT, 180, arguments)
+
+
+ def publish_snapshot() -> None:
+@@ -191,7 +194,9 @@
+                  publish: Callable[[], None] = publish_snapshot,
+                  auto_refresh_interval: float = AUTO_REFRESH_INTERVAL_SECONDS,
+                  external_origin: str = DEFAULT_EXTERNAL_ORIGIN,
+-                 sync_hosted: Callable[[], str] = sync_hosted_reviews):
++                 sync_hosted: Callable[[], str] = sync_hosted_reviews,
++                 jobs_store=None, job_web=None, inbox_store=None,
++                 workstreams_store=None, editorial=None):
+         parsed_origin = urlsplit(external_origin)
+         if (parsed_origin.scheme != "http" or not parsed_origin.netloc or parsed_origin.path
+                 or parsed_origin.query or parsed_origin.fragment or parsed_origin.username
+@@ -203,6 +208,11 @@
+         self.hosted_sync_status = "not_run"
+         self.external_origin = external_origin.rstrip("/")
+         self.external_host = parsed_origin.netloc
++        self.jobs_store = jobs_store
++        self.job_web = job_web
++        self.inbox_store = inbox_store
++        self.workstreams_store = workstreams_store
++        self.editorial = editorial
+         self.phase = "idle"
+         self.refresh_lock = threading.Lock()
+         self.next_refresh_at = 0.0
+@@ -332,6 +342,52 @@
+         self.end_headers()
+         self.wfile.write(body)
+
++    def _private_job_links(self, document: str) -> str:
++        if self.server.jobs_store is None:
++            return document
++        card = re.compile(
++            r'(<article class="controller-job-card[^"]*" '
++            r'data-fire-controller-job-id="([A-Za-z0-9._-]{1,128})">)'
++        )
++        def add_link(match):
++            job_id = quote(match.group(2), safe="")
++            return f'{match.group(1)}<a class="job-detail-link" href="/jobs/{job_id}">Private details</a>'
++        return card.sub(add_link, document)
++
++    def _local_private_links(self, document: str) -> str:
++        document = self._private_job_links(document)
++        if self.server.workstreams_store is not None:
++            pattern = re.compile(
++                r'<span data-fire-controller-workstream-id="([a-z0-9][a-z0-9-]{0,99})"></span>'
++            )
++            document = pattern.sub(
++                lambda match: (
++                    f'<a class="job-detail-link" href="/workstreams/{match.group(1)}">Local notes and history</a>'
++                ),
++                document,
++            )
++        if self.server.inbox_store is not None:
++            pattern = re.compile(r'<span data-fire-controller-inbox-worker="([A-Za-z0-9%._~-]{1,1200})"></span>')
++            def inbox_link(match):
++                try:
++                    worker = unquote(match.group(1), errors="strict")
++                except UnicodeDecodeError:
++                    return match.group(0)
++                target = quote(worker, safe="")
++                if target != match.group(1):
++                    return match.group(0)
++                return f'<a class="job-detail-link" href="/inbox/{target}">Worker inbox</a>'
++            document = pattern.sub(inbox_link, document)
++        return document
++
++    def _send_document(self, document: str) -> None:
++        body = document.encode("utf-8")
++        self.send_response(200)
++        self.send_header("Content-Type", "text/html; charset=utf-8")
++        self.send_header("Content-Length", str(len(body)))
++        self.end_headers()
++        self.wfile.write(body)
++
+     def do_POST(self) -> None:
+         if self.path != "/refresh":
+             self._message(404, "Not found", "This server only refreshes the status page.")
+@@ -365,6 +421,34 @@
+         self.end_headers()
+
+     def do_GET(self) -> None:
++        if self.server.job_web is not None and self.server.jobs_store is not None:
++            response = self.server.job_web.private_route(
++                self.path,
++                self.server.jobs_store,
++                inbox=self.server.inbox_store,
++                workstreams=self.server.workstreams_store,
++                editorial=self.server.editorial,
++            )
++            if response is not None:
++                status, headers, body = response
++                self.send_response(status)
++                for name, value in headers.items():
++                    if name.lower() != "cache-control":
++                        self.send_header(name, value)
++                self.end_headers()
++                self.wfile.write(body)
++                return
++            route_path = urlsplit(self.path).path
++            if route_path in {"/", "/progress.html"}:
++                try:
++                    filename = "index.html" if route_path == "/" else "progress.html"
++                    index = Path(self.directory) / filename
++                    document = index.read_text(encoding="utf-8")
++                except (OSError, UnicodeError):
++                    self._message(404, "Status page unavailable", "The local status snapshot could not be read.")
++                    return
++                self._send_document(self._local_private_links(document))
++                return
+         if self.path == "/refresh-status":
+             body = json.dumps({"phase": self.server.phase,
+                                "hosted_sync": self.server.hosted_sync_status}).encode()
+@@ -387,10 +471,35 @@
+     parser.add_argument("--port", type=int, default=8877)
+     parser.add_argument("--directory", type=Path, default=OUTPUT)
+     parser.add_argument("--external-origin", default=DEFAULT_EXTERNAL_ORIGIN)
++    parser.add_argument("--jobs-database", type=Path, required=True, help="local FireController SQLite database")
++    parser.add_argument("--controller-tools", type=Path, required=True,
++                        help="absolute dev-tools package root for FireController")
+     args = parser.parse_args()
+     if not (args.directory / "index.html").is_file():
+         parser.error("rendered index.html is missing")
+-    with StatusServer((args.bind, args.port), args.directory, external_origin=args.external_origin) as server:
++    if not args.jobs_database.is_absolute():
++        parser.error("--jobs-database must be an absolute path")
++    if not args.controller_tools.is_absolute() or not args.controller_tools.is_dir():
++        parser.error("--controller-tools must be an existing absolute dev-tools directory")
++    tools_root = args.controller_tools.resolve()
++    sys.path.insert(0, str(tools_root))
++    try:
++        from fire_controller import web as job_web
++        from fire_controller.inbox import InboxStore
++        from fire_controller.jobs import JobStore
++        from fire_controller.map import WorkstreamStore
++        jobs_store = JobStore(args.jobs_database)
++        inbox_store = InboxStore(args.jobs_database)
++        workstreams_store = WorkstreamStore(args.jobs_database)
++        editorial = json.loads((ROOT / "progress.json").read_text(encoding="utf-8"))
++    except (ImportError, OSError, RuntimeError, ValueError) as error:
++        parser.error(f"FireController private pages are unavailable: {error}")
++    def render():
++        render_snapshot(args.jobs_database, tools_root)
++    with StatusServer((args.bind, args.port), args.directory, render=render,
++                      external_origin=args.external_origin, jobs_store=jobs_store, job_web=job_web,
++                      inbox_store=inbox_store, workstreams_store=workstreams_store,
++                      editorial=editorial) as server:
+         print(f"FireMUD local status page at http://{args.bind}:{args.port}/", flush=True)
+         server.serve_forever(poll_interval=0.25)
+
+diff --git a/publish-hetzner.py b/publish-hetzner.py
+--- a/publish-hetzner.py
++++ b/publish-hetzner.py
+@@ -43,6 +43,7 @@
+ SNAPSHOT_SCRIPT = re.compile(r'<script id="snapshot-updates">(.*?)</script>', re.DOTALL)
+ REVIEW_LINK = re.compile(r'href="review/pr-(\d+)\.html"')
+ LOCAL_PUBLIC_LINK = re.compile(r'<a class="local-public-link"[^>]*>.*?</a>', re.DOTALL)
++PRIVATE_ROUTE = re.compile(r"/(?:jobs|workstreams|inbox)(?:/|[?#\"'<> ]|$)", re.IGNORECASE)
+
+
+ def local_wifi_url() -> str:
+@@ -95,6 +96,8 @@
+     )
+     if any(marker not in result for marker in required):
+         raise ValueError("the rendered status page is incomplete")
++    if PRIVATE_ROUTE.search(result):
++        raise ValueError("the public status page contains a private FireController route")
+     return result
+
+
+@@ -103,7 +106,10 @@
+             or 'href="/"' not in source or "<form" in source
+             or "/home/ben/" in source or "../../task-briefs/" in source):
+         raise ValueError("the project map is incomplete or contains a private local path")
+-    return LOCAL_PUBLIC_LINK.sub("", source)
++    result = LOCAL_PUBLIC_LINK.sub("", source)
++    if PRIVATE_ROUTE.search(result):
++        raise ValueError("the public project map contains a private FireController route")
++    return result
+
+
+ def review_public_html(source: str) -> str:
+@@ -130,6 +136,8 @@
+     )
+     if 'action="/refresh"' in result or 'id="local-refresh-progress"' in result:
+         raise ValueError("the public review detail page contains a local refresh control")
++    if PRIVATE_ROUTE.search(result):
++        raise ValueError("the public review detail page contains a private FireController route")
+     return result
+
+
+@@ -169,6 +177,9 @@
+         if not re.fullmatch(r"review-pr-[1-9]\d*\.html", key):
+             raise ValueError("review page has an invalid ConfigMap key")
+     pages.update({name: (ROOT / "assets" / name).read_text(encoding="utf-8") for name in ASSET_FILES})
++    for name, content in {**pages, **review_pages}.items():
++        if PRIVATE_ROUTE.search(content):
++            raise ValueError(f"public page or asset {name} contains a private FireController route")
+     digest = hashlib.sha256(json.dumps({**pages, **review_pages}, sort_keys=True).encode()).hexdigest()
+     review_chunks: list[dict[str, str]] = []
+     for key, content in sorted(review_pages.items()):
+diff --git a/render_progress.py b/render_progress.py
+--- a/render_progress.py
++++ b/render_progress.py
+@@ -8,6 +8,7 @@
+ import html
+ import json
+ import re
++import copy
+ from collections import Counter
+ from datetime import datetime
+ from pathlib import Path
+@@ -94,9 +95,61 @@
+     return int((weighted / total * 100 + 5) // 10 * 10)
+
+
+-def render(data: dict, now: datetime, tracker_root: Path = TRACKERS) -> str:
++def _job_cards(workstream_id: str, jobs: list[dict], public_inline=safe) -> str:
++    selected = [job for job in jobs if job.get("workstream_id") == workstream_id]
++    if not selected:
++        return ""
++    cards = []
++    for job in selected:
++        checklist = "".join(
++            f'<li><span class="job-check-state">{"Done" if item["done"] else "Open"}</span> '
++            f'{public_inline(item["text"])}</li>'
++            for item in job.get("checklist", [])
++        )
++        fields = []
++        for key, label in (("summary", ""), ("progress", "Progress"), ("blocker", "Blocker")):
++            value = job.get(key, "")
++            if value:
++                prefix = f'<strong>{safe(label)}</strong> · ' if label else ""
++                fields.append(f'<p class="job-{safe(key)}">{prefix}{public_inline(value)}</p>')
++        primary = '<span class="job-primary">Primary</span>' if job.get("primary") else ""
++        cards.append(
++            f'<article class="controller-job-card status-{safe(job["status"])}" '
++            f'data-fire-controller-job-id="{safe(job["id"])}">'
++            f'<div class="controller-job-heading"><h4>{safe(job["name"])}</h4>'
++            f'<span class="job-status">{safe(job["status"])}</span>{primary}</div>'
++            f'<p class="job-title">{safe(job["title"])}</p>{"".join(fields)}'
++            f'<ul class="controller-job-checklist">{checklist}</ul></article>'
++        )
++    return f'<section class="controller-job-list"><h4>Assigned work</h4>{"".join(cards)}</section>'
++
++
++def render(data: dict, now: datetime, tracker_root: Path = TRACKERS, *, map_state=None, jobs=(),
++           public_inline=safe) -> str:
++    selected = copy.deepcopy(data)
++    if map_state is not None:
++        if not isinstance(map_state, dict):
++            raise ValueError("SQL-backed project-map state must be an object")
++        state_by_id = {item["id"]: item for item in map_state.get("workstreams", [])}
++        point_by_name = {item["name"]: item["state"] for item in map_state.get("return_points", [])}
++        if set(state_by_id) != {track["id"] for track in selected["tracks"]}:
++            raise ValueError("project-map workstream IDs do not match repository editorial data")
++        if set(point_by_name) != {point["name"] for point in selected["return_points"]}:
++            raise ValueError("project-map return-point headings do not match repository editorial data")
++        for track in selected["tracks"]:
++            mutable = state_by_id[track["id"]]
++            track["state"] = mutable["state"]
++            track["now"] = mutable["now"]
++            track["milestone"] = mutable["milestone"]
++            if set(mutable["phase_states"]) != {phase["name"] for phase in track["phases"]}:
++                raise ValueError(f"project-map phases do not match repository editorial data for {track['id']}")
++            for phase in track["phases"]:
++                phase["state"] = mutable["phase_states"][phase["name"]]
++        for point in selected["return_points"]:
++            point["state"] = point_by_name[point["name"]]
++
+     tracks = []
+-    for track in data["tracks"]:
++    for track in selected["tracks"]:
+         phases = "".join(
+             f'<li><span>{safe(phase["name"])}</span><b>{safe(phase["state"])}</b></li>'
+             for phase in track["phases"]
+@@ -105,13 +158,13 @@
+         tracks.append(f'''<article class="track" id="{safe(track["id"])}">
+ <div class="track-head"><div><span class="eyebrow">Programme track</span><h3>{safe(track["name"])}</h3></div><span class="state {safe(track["tone"])}">{safe(track["state"])}</span></div>
+ <p class="purpose">{safe(track["purpose"])}</p>
+-<div class="track-body"><div><h4>Where it stands</h4><p>{safe(track["now"])}</p><h4>Next milestone</h4><p>{safe(track["milestone"])}</p><h4>Return when</h4><p>{safe(track["return_when"])}</p></div><ol class="phases">{phases}</ol></div>
+-<div class="track-links">{links}</div></article>''')
++<div class="track-body"><div><h4>Where it stands</h4><p>{public_inline(track["now"])}</p><h4>Next milestone</h4><p>{public_inline(track["milestone"])}</p><h4>Return when</h4><p>{safe(track["return_when"])}</p></div><ol class="phases">{phases}</ol></div>
++<div class="track-links">{links}<span data-fire-controller-workstream-id="{safe(track["id"])}"></span></div>{_job_cards(track["id"], jobs, public_inline)}</article>''')
+
+     domains = []
+     overall_implementation: Counter = Counter()
+     overall_verification: Counter = Counter()
+-    for domain in data["domains"]:
++    for domain in selected["domains"]:
+         filename = domain["file"]
+         if Path(filename).name != filename or not filename.endswith(".md"):
+             raise ValueError("domain file must be a tracker basename")
+@@ -133,9 +186,9 @@
+ <div class="summary-stats"><div><strong>{overall_implementation["implemented"]}/{total}</strong><span>fully implemented</span></div><div><strong>{overall_implementation["partial"]}</strong><span>partial</span></div><div><strong>{overall_implementation["not-implemented"]}</strong><span>not started</span></div><div><strong>{overall_verification["proven"]}/{total}</strong><span>proven</span></div></div></div>'''
+     returns = "".join(
+         f'<li><div><strong>{safe(item["name"])}</strong><span>{safe(item["state"])}</span></div><p>{safe(item["trigger"])}</p></li>'
+-        for item in data["return_points"]
++        for item in selected["return_points"]
+     )
+-    reviewed_at = datetime.fromisoformat(data["reviewed_at"].replace("Z", "+00:00"))
++    reviewed_at = datetime.fromisoformat(selected["reviewed_at"].replace("Z", "+00:00"))
+     age_hash = base64.b64encode(hashlib.sha256(AGE_SCRIPT.encode()).digest()).decode()
+     reviewed = f'<time class="relative-age" datetime="{safe(reviewed_at.isoformat())}">checked recently</time>'
+     refreshed = f'<time class="relative-age" datetime="{safe(now.isoformat())}">just now</time>'
+@@ -160,17 +213,20 @@
+ .purpose {{ margin:0; padding:.75rem 1.2rem; color:#4f5963; border-bottom:1px solid var(--line); }} .track-body {{ display:grid; grid-template-columns:minmax(0,1.5fr) minmax(260px,1fr); gap:1.5rem; padding:.2rem 1.2rem 1rem; }} .track-body p {{ margin:.2rem 0 .65rem; }} .phases {{ list-style:none; margin:1rem 0 0; padding:0; }} .phases li {{ display:flex; justify-content:space-between; gap:1rem; padding:.6rem 0; border-bottom:1px solid var(--line); font-size:.84rem; }} .phases b {{ color:#8b2636; font-size:.68rem; white-space:nowrap; }} .track-links {{ padding:.75rem 1.2rem; border-top:1px solid var(--line); font-size:.8rem; }}
+ .domains {{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.75rem; }} .domain {{ padding:1rem 1.15rem; }} .domain-top {{ display:flex; justify-content:space-between; align-items:baseline; gap:.75rem; }} .domain-top strong {{ color:#a51f27; font-size:1.45rem; }} .domain h3 a {{ color:#242832; }} .bar {{ height:6px; background:#d5d5d5; border-radius:9px; overflow:hidden; margin:.7rem 0; }} .bar span {{ display:block; height:100%; background:var(--fire); }} .domain p {{ margin:.45rem 0 0; font-size:.84rem; }} .domain-counts {{ color:#59636e; }} .domain-counts span {{ white-space:nowrap; }}
+ .domain-summary {{ display:grid; grid-template-columns:minmax(200px,.7fr) minmax(0,1.3fr); gap:1.2rem; align-items:center; padding:1rem 1.15rem; margin-bottom:.8rem; background:var(--paper); border:1px solid var(--line); border-radius:0; }} .summary-lead>div:first-child {{ display:flex; align-items:baseline; flex-wrap:wrap; gap:.35rem .65rem; }} .summary-lead strong {{ font-size:1.75rem; color:#a51f27; line-height:1; }} .summary-lead>div:first-child>span:last-child {{ color:#57636c; font-size:.78rem; }} .summary-stats {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:.5rem; }} .summary-stats>div {{ display:flex; flex-direction:column; gap:.15rem; padding:.5rem .65rem; background:var(--surface-muted); border:1px solid var(--line); border-radius:0; }} .summary-stats strong {{ color:#a51f27; font-size:1rem; }} .summary-stats span {{ color:#57636c; font-size:.71rem; white-space:nowrap; }}
++.controller-job-list {{ margin:0 1.2rem .9rem; padding-top:.6rem; border-top:1px solid var(--line); }} .controller-job-list > h4 {{ margin:.2rem 0 .45rem; }} .controller-job-card {{ margin-top:.45rem; padding:.6rem .7rem; border:1px solid var(--line); background:var(--surface); }} .controller-job-card.status-blocked {{ border-left:4px solid var(--fire); }} .controller-job-heading {{ display:flex; flex-wrap:wrap; align-items:center; gap:.35rem .55rem; }} .controller-job-heading h4 {{ margin:0; }} .job-status,.job-primary {{ border:1px solid var(--line); padding:.08rem .38rem; font-size:.65rem; font-weight:750; text-transform:capitalize; }} .controller-job-card .job-title,.controller-job-card .job-summary,.controller-job-card .job-progress,.controller-job-card .job-blocker {{ margin:.35rem 0 0; font-size:.76rem; line-height:1.35; }} .controller-job-checklist {{ margin:.4rem 0 0; padding-left:1.1rem; font-size:.72rem; }} .job-check-state {{ color:var(--muted); font-weight:700; }}
+ .returns {{ list-style:none; padding:0; margin:0; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.65rem; }} .returns li {{ background:var(--paper); border:1px solid var(--line); border-radius:0; padding:.85rem 1rem; }} .returns li>div {{ display:flex; justify-content:space-between; gap:.7rem; }} .returns span {{ font-size:.67rem; font-weight:850; color:#9a1e31; }} .returns p {{ margin:.4rem 0 0; font-size:.82rem; }} footer {{ margin-top:2rem; color:#57636c; font-size:.8rem; }}
+ @media(max-width:900px) {{ .mast-meta {{ text-align:left; white-space:normal; }} }}
+ @media(max-width:780px) {{ .track-head {{ align-items:flex-start; flex-direction:column; }} .track-body,.domains,.returns,.domain-summary {{ grid-template-columns:1fr; }} .summary-stats {{ grid-template-columns:repeat(2,minmax(0,1fr)); }} .domain-top {{ align-items:flex-start; }} .returns li>div {{ flex-wrap:wrap; }} }}
+ </style></head><body>{mast_html}
+-<main><div class="hero"><h1>{safe(data["headline"])}</h1><p>{safe(data["orientation"])}</p></div>
++<main><div class="hero"><h1>{safe(selected["headline"])}</h1><p>{safe(selected["orientation"])}</p></div>
+ <section><h2>Programme tracks</h2><div class="tracks">{"".join(tracks)}</div></section>
+ <section id="domains"><h2>Implementation by domain</h2><p class="section-intro">A very rough status proxy from the ten primary implementation trackers. Each complete row counts as 1 and each partial row as ½, rounded to the nearest 10%. Capabilities differ greatly in size, so this is a reading aid, not measured effort remaining or a release-readiness score. Proof is counted separately. Tracker changes appear after this local checkout is updated.</p>{summary}<div class="domains">{"".join(domains)}</div></section>
+-<section><h2>Return points</h2><p class="section-intro">These remain visible when a worker follows a different tangent for weeks or months. {safe(data["parked_note"])}</p><ul class="returns">{returns}</ul></section>
++<section><h2>Return points</h2><p class="section-intro">These remain visible when a worker follows a different tangent for weeks or months. {safe(selected["parked_note"])}</p><ul class="returns">{returns}</ul></section>
+ <footer>Programme notes are manually curated. Capability counts come from the tracker rows in this checkout; the linked trackers and <a href="/">PR Delivery Page</a> hold the detailed evidence.</footer></main><script id="relative-age-updates">{AGE_SCRIPT}</script></body></html>'''
+
+
+-def render_current(now: datetime) -> str:
++def render_current(now: datetime, map_state=None, jobs=(), public_inline=safe) -> str:
++    if not isinstance(map_state, dict):
++        raise ValueError("SQL-backed project-map state is required")
+     data = json.loads((ROOT / "progress.json").read_text(encoding="utf-8"))
+-    return render(data, now)
++    return render(data, now, map_state=map_state, jobs=jobs, public_inline=public_inline)
