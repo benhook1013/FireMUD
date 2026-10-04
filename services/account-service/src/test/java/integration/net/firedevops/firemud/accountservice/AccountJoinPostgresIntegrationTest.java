@@ -1228,16 +1228,32 @@ class AccountJoinPostgresIntegrationTest {
                 .fetchOne(0, Long.class))
         .isEqualTo(1L);
 
-    dsl.execute(
-        "UPDATE account_tenant_membership SET lifecycle_state = 'INACTIVE', "
-            + "gameplay_admission_allowed = FALSE WHERE account_id = ? AND tenant_id = ?",
-        initialJoin.accountId(),
-        initialJoin.tenantId());
+    String leftRequestId = "leave-proof-" + UUID.randomUUID();
+    MembershipTransitionReceipt left = leave(initialJoin, leftRequestId);
+    assertThat(left.transitionType()).isEqualTo("MEMBERSHIP_LEFT");
+    assertThat(left.requestId()).isEqualTo(leftRequestId);
+    assertThat(left.receiptSequence()).isEqualTo(2L);
+    assertMembershipTransitionReceipt(initialJoin, "MEMBERSHIP_LEFT", 2L);
+    assertThat(membershipSnapshot(initialJoin))
+        .containsEntry("lifecycle_state", "INACTIVE")
+        .containsEntry("gameplay_admission_allowed", false)
+        .containsEntry("membership_version", 3L)
+        .containsEntry("membership_authority_generation", 2L);
+    assertThat(countAuthorityMembershipEvents(initialJoin)).isEqualTo(2L);
+    assertLeftAuthorityMembershipEvent(initialJoin, leftRequestId, 2L, 3L);
+
     JoinFixture reactivation = fixtureForMembership(initialJoin);
 
     assertThat(join(reactivation).success()).isTrue();
-    assertMembershipTransitionReceipt(reactivation, "MEMBERSHIP_REACTIVATED", 2L);
-    assertThat(countMembershipTransitionReceipts(reactivation)).isEqualTo(2L);
+    assertMembershipTransitionReceipt(reactivation, "MEMBERSHIP_REACTIVATED", 3L);
+    assertThat(membershipSnapshot(reactivation))
+        .containsEntry("lifecycle_state", "ACTIVE")
+        .containsEntry("gameplay_admission_allowed", true)
+        .containsEntry("membership_version", 4L)
+        .containsEntry("membership_authority_generation", 3L);
+    assertThat(countAuthorityMembershipEvents(reactivation)).isEqualTo(3L);
+    assertAuthorityMembershipEvent(reactivation, 3L, 4L, true);
+    assertThat(countMembershipTransitionReceipts(reactivation)).isEqualTo(3L);
     assertThat(
             dsl.resultQuery(
                     "SELECT last_receipt_sequence "
@@ -1246,7 +1262,7 @@ class AccountJoinPostgresIntegrationTest {
                     reactivation.accountId(),
                     reactivation.tenantId())
                 .fetchOne(0, Long.class))
-        .isEqualTo(2L);
+        .isEqualTo(3L);
   }
 
   @Test
