@@ -53,6 +53,18 @@ _RECORDS_TABLES = {
 }
 
 
+def _model_metadata(metadata: Mapping[str, Any]) -> None:
+    """Validate declared tool identifiers without guessing or pinning versions."""
+    model = metadata.get("model")
+    if (not isinstance(model, str) or not model.strip() or len(model) > 200
+            or any(character.isspace() or ord(character) < 32 for character in model)):
+        raise ReviewRecordsError("new subagent attempts require a nonblank model identifier of at most 200 characters")
+    effort = metadata.get("reasoning_effort")
+    if effort is not None and (not isinstance(effort, str) or not effort.strip() or len(effort) > 32
+                               or any(character.isspace() or ord(character) < 32 for character in effort)):
+        raise ReviewRecordsError("reasoning effort must be a bounded nonblank identifier when supplied")
+
+
 class ReviewRecordsError(ValueError):
     """Raised when review records are invalid or the database is incompatible."""
 
@@ -514,8 +526,12 @@ class SqliteReviewRecords:
             raise ReviewRecordsError("attempt channel is invalid")
         if candidate_sha is not None and not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", candidate_sha):
             raise ReviewRecordsError("attempt candidate SHA is invalid")
-        if channel == "subagent" and metadata is not None and "coverage_limits" in metadata:
-            _coverage_limits(metadata["coverage_limits"])
+        if channel == "subagent":
+            if not isinstance(metadata, Mapping):
+                raise ReviewRecordsError("new subagent attempts require actual model metadata")
+            _model_metadata(metadata)
+            if "coverage_limits" in metadata:
+                _coverage_limits(metadata["coverage_limits"])
         started_at_was_supplied = started_at is not None
         started_at = _timestamp(started_at, "attempt start")
         try:
@@ -3001,6 +3017,8 @@ class SqliteReviewRecords:
                             "origin": metadata.get("origin"),
                             "legacy_outcome": metadata.get("legacy_outcome"),
                             "repository": metadata.get("repository"),
+                            **({"model": metadata["model"]} if row[1] == "subagent" and isinstance(metadata.get("model"), str) else {}),
+                            **({"reasoning_effort": metadata["reasoning_effort"]} if row[1] == "subagent" and isinstance(metadata.get("reasoning_effort"), str) else {}),
                         }
                     )
                 corrections = [

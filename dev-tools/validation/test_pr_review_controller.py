@@ -6030,6 +6030,45 @@ class ControllerTests(unittest.TestCase):
         controller.github.batch_pull_requests = fetch
         return calls
 
+    def test_status_overview_distinguishes_retained_pr_base_from_current_parent(self):
+        values = {1: pr(1, HEAD_1)}
+        evidence = CountingEvidence()
+        controller = self.make(values, evidence, heads={"develop": PARENT})
+        controller.set_stack([1])
+        batch_calls = self._enable_batch_status(controller, values)
+        before = controller.store.load().to_dict()
+
+        report = controller.status_overview()
+        row = report["prs"][0]
+
+        self.assertEqual(row["pr_base_oid"], BASE)
+        self.assertEqual(row["parent_head"], PARENT)
+        self.assertEqual(row["reconciliation"], "PARENT_MOVED")
+        self.assertEqual(row["evidence_status"], "current")
+        self.assertNotIn("between", row["reason"])
+        self.assertEqual(batch_calls, [(1,)])
+        self.assertEqual(controller.store.load().to_dict(), before)
+        for channel in ("hosted", "cli"):
+            self.assertNotEqual(report["review_targets"][channel]["status"], "UNKNOWN")
+        with self.assertRaises(ControllerError):
+            controller.resolve_cli_target()
+
+    def test_status_overview_detects_changed_published_identity_with_stable_parent(self):
+        for field, replacement in (("head", HEAD_2), ("base_tip", PARENT), ("base_ref", "other")):
+            with self.subTest(field=field):
+                values = {1: pr(1, HEAD_1)}
+                controller = self.make(values)
+                controller.set_stack([1])
+                self._enable_batch_status(controller, values, batch_values=dict(values))
+                values[1] = dataclasses.replace(values[1], **{field: replacement})
+
+                report = controller.status_overview()
+
+                self.assertEqual(report["prs"][0]["evidence_status"], "stale")
+                self.assertIn("identity changed between", report["prs"][0]["reason"])
+                for channel in ("hosted", "cli"):
+                    self.assertEqual(report["review_targets"][channel]["status"], "UNKNOWN")
+
     def test_status_overview_retains_prior_closures_when_expanded_deep_read_fails(self):
         values, heads = _stacked_prs(5)
         evidence = CountingEvidence()
@@ -6085,6 +6124,8 @@ class ControllerTests(unittest.TestCase):
         row = report["prs"][0]
         self.assertEqual(calls, 1)
         self.assertEqual(report["review_targets"]["cli"]["status"], "UNKNOWN")
+        self.assertEqual(report["review_fronts"]["cli"]["status"], "UNKNOWN")
+        self.assertIsNone(report["review_fronts"]["cli"]["pr"])
         self.assertEqual(row["detail_level"], "identity_only")
         self.assertEqual(row["evidence_status"], "stale")
         self.assertEqual(row["reconciliation"], "UNRECONCILED")
@@ -6313,6 +6354,98 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(report["ordered_prs"], [1, 2, 3])
         self.assertEqual(batch_calls, [tuple(values)])
 
+    def test_status_overview_keeps_split_fronts_with_known_parent_reconciliation(self):
+        values, heads = _stacked_prs(3)
+        evidence = CountingEvidence()
+        controller = self.make(values, evidence, heads=heads, sqlite=True)
+        controller.set_stack(list(values))
+        evidence[(1, "hosted")] = [self.review_evidence(controller, 1, "hosted", "hosted-dry")]
+        evidence[(1, "cli")] = [self.review_evidence(controller, 1, "cli", "cli-first")]
+        useful = self.review_evidence(controller, 2, "hosted", "hosted-useful")
+        useful.update({"raw": 1, "accepted": 1, "source_resolution_status": "pending"})
+        evidence[(2, "hosted")] = [useful]
+        original_evidence = dict(useful)
+        values[2] = dataclasses.replace(values[2], base_tip="9" * 40)
+        self._enable_batch_status(controller, values)
+
+        report = controller.status_overview()
+
+        self.assertEqual(report["review_targets"]["hosted"]["status"], "PARENT_MOVED")
+        self.assertEqual(report["review_targets"]["hosted"]["pr"], 2)
+        self.assertEqual(report["review_fronts"]["hosted"]["pr"], 2)
+        self.assertEqual(report["review_fronts"]["cli"]["pr"], 1)
+        self.assertEqual(report["review_targets"]["cli"]["pr"], 1)
+        rows = {row["pr"]: row for row in report["prs"]}
+        self.assertEqual(rows[1]["channels"]["hosted"], "COMPLETE")
+        self.assertEqual(rows[2]["review_progress"]["cli"]["label"], "Waiting turn")
+        self.assertNotIn("waiting_for_pr", rows[2]["review_progress"]["hosted"])
+        self.assertNotIn("Reviewing", rows[2]["review_progress"]["hosted"]["label"])
+        self.assertEqual(useful, original_evidence)
+        self.assertEqual(len(evidence.history_reads), 6)
+        # The display selection is neither a request permission nor shared state.
+        self.assertEqual(controller.store.load().ordered_prs, (1, 2, 3))
+        with self.assertRaises(ControllerError):
+            controller.resolve_hosted_target()
+
+    def test_status_overview_clears_only_fronts_affected_by_lifecycle_disagreement(self):
+        for merged in (False, True):
+            with self.subTest(merged=merged):
+                values, heads = _stacked_prs(3)
+                evidence = CountingEvidence()
+                controller = self.make(values, evidence, heads=heads)
+                controller.set_stack(list(values))
+                evidence[(1, "hosted")] = [
+                    self.review_evidence(controller, 1, "hosted", "hosted-dry")]
+                evidence[(1, "cli")] = [self.review_evidence(controller, 1, "cli", "cli-first")]
+                batch_values = dict(values)
+                values[2] = dataclasses.replace(values[2], state="CLOSED", merged=merged)
+                self._enable_batch_status(controller, values, batch_values=batch_values)
+                saved_state = controller.store.load().to_dict()
+
+                report = controller.status_overview()
+
+                self.assertEqual(controller.store.load().to_dict(), saved_state)
+                self.assertEqual(report["review_fronts"]["cli"]["pr"], 1)
+                self.assertIsNone(report["review_fronts"]["hosted"]["pr"])
+                self.assertEqual(report["review_fronts"]["hosted"]["status"], "UNKNOWN")
+                self.assertIn("lifecycle changed", report["review_fronts"]["hosted"]["reason"])
+                self.assertEqual(report["review_targets"]["hosted"]["status"], "UNKNOWN")
+
+    def test_status_overview_cap_front_advances_with_fixes_pending_but_retains_running_review(self):
+        values, heads = _stacked_prs(2)
+        evidence = CountingEvidence()
+        evidence[(1, "cli")] = [self.allocation_evidence(checkpoint="cli-baseline", channel="cli")]
+        controller = self.grant_bounded_allocation(
+            channel="cli", checkpoint="cli-baseline", cap=1, minimum=1,
+            evidence=evidence, values=values, heads=heads, sqlite=True,
+        )
+        evidence[(1, "hosted")] = [self.review_evidence(controller, 1, "hosted", "hosted-dry")]
+        active = self.allocation_evidence(
+            checkpoint="cli-running", channel="cli", completed=False,
+            active_review=True, active_reservation=True,
+        )
+        evidence[(1, "cli")].append(active)
+        self._enable_batch_status(controller, values)
+
+        running = controller.status_overview()
+
+        self.assertEqual(running["review_fronts"]["cli"]["pr"], 1)
+        self.assertEqual(running["review_fronts"]["cli"]["status"], "HELD")
+        self.assertEqual(running["review_fronts"]["hosted"]["pr"], 2)
+        active.update({"completed": True, "active_review": False, "active_reservation": False,
+                       "accepted": 1, "raw": 1, "source_resolution_status": "pending"})
+
+        exhausted = controller.status_overview()
+
+        for channel in ("hosted", "cli"):
+            self.assertEqual(exhausted["review_fronts"][channel]["pr"], 2)
+        row = exhausted["prs"][0]
+        self.assertEqual(row["allocations"]["cli"]["status"], "CAP_EXHAUSTED_PENDING")
+        self.assertEqual(row["review_progress"]["cli"]["label"], "Pending fixes")
+        self.assertEqual(row["review_progress"]["cli"]["rule"]["request_slots_remaining"], 0)
+        with self.assertRaisesRegex(ControllerError, "expected PR"):
+            controller.resolve_cli_target(expected_pr=1)
+
     def test_status_overview_keeps_front_target_when_downstream_parent_is_stale(self):
         values, heads = _stacked_prs(6)
         values[2] = dataclasses.replace(values[2], base_tip="9" * 40)
@@ -6328,10 +6461,11 @@ class ControllerTests(unittest.TestCase):
         report = controller.status_overview()
 
         self.assertEqual(report["prs"][0]["reconciliation"], "COHERENT")
-        self.assertEqual(report["prs"][1]["reconciliation"], "UNRECONCILED")
+        self.assertEqual(report["prs"][1]["reconciliation"], "PARENT_MOVED")
         for channel in ("hosted", "cli"):
             self.assertEqual(report["review_targets"][channel]["pr"], 1)
             self.assertEqual(report["review_targets"][channel]["status"], "READY")
+            self.assertEqual(report["review_fronts"][channel]["pr"], 1)
 
     def test_status_overview_keeps_selected_target_fail_closed_when_its_parent_is_stale(self):
         values, heads = _stacked_prs(4)
@@ -6343,8 +6477,11 @@ class ControllerTests(unittest.TestCase):
         report = controller.status_overview()
 
         for channel in ("hosted", "cli"):
-            self.assertIsNone(report["review_targets"][channel]["pr"])
-            self.assertEqual(report["review_targets"][channel]["status"], "UNKNOWN")
+            self.assertEqual(report["review_targets"][channel]["pr"], 1)
+            self.assertEqual(report["review_targets"][channel]["status"], "PARENT_MOVED")
+            self.assertEqual(report["review_fronts"][channel]["pr"], 1)
+        with self.assertRaises(ControllerError):
+            controller.resolve_cli_target()
 
     def test_status_overview_keeps_coherent_deep_target_with_historic_saved_identity(self):
         values, heads = _stacked_prs(3)
@@ -6808,6 +6945,9 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(report["detail_window"]["batch_status"], "failed")
         self.assertTrue(all(item["evidence_status"] == "unknown" for item in report["prs"]))
         self.assertEqual(evidence.history_reads, [])
+        for front in report["review_fronts"].values():
+            self.assertEqual(front["status"], "UNKNOWN")
+            self.assertIsNone(front["pr"])
 
     def test_selected_tail_status_reads_ancestors_but_no_later_prs(self):
         values, heads = _stacked_prs(7)
@@ -10152,6 +10292,136 @@ class ControllerTests(unittest.TestCase):
         unreconciled = self.make({1: pr(1, HEAD_1)}, unreconciled_evidence)
         unreconciled.set_stack([1])
         self.assertEqual(unreconciled.status()["prs"][0]["reconciliation"], "UNRECONCILED")
+
+
+class ReviewProgressPresentationTests(unittest.TestCase):
+    def project(self, status="READY", **changes):
+        view = {"status": "CAP_ACTIVE", "minimum_additional_completed": 0,
+                "maximum_additional_completed": 2, "completed_count": 0,
+                "in_flight": 1, "remaining": 1}
+        view.update(changes.pop("view", {}))
+        return ReviewController._review_progress_view(None, view, changes.pop("history", []), status, **changes)
+
+    def test_maximum_includes_running_round_without_changing_request_slots(self):
+        value = self.project(history=[{"active_review": True}])
+        self.assertEqual(value["label"], "Reviewing")
+        self.assertEqual(value["rule"]["label"], "Maximum 2 rounds remaining")
+        self.assertEqual(value["rule"]["request_slots_remaining"], 1)
+        self.assertEqual(value["rule"]["in_flight"], 1)
+        self.assertIn("before the maximum", value["rule"]["description"])
+
+    def test_exact_required_and_differing_floor_cap(self):
+        exact = self.project(history=[{"active_review": True}], view={
+            "minimum_additional_completed": 1, "maximum_additional_completed": 1})
+        self.assertEqual(exact["rule"]["label"], "1 required round remaining")
+        differing = self.project(view={"minimum_additional_completed": 1})
+        self.assertEqual(differing["rule"]["label"], "1 required round remaining · Maximum 2 rounds remaining")
+
+    def test_completion_stop_and_non_ancestry_blockers(self):
+        cases = [
+            ({"status": "STOPPED"}, "READY", "Stopped", "Human stop"),
+            ({"status": "CAP_TAPERED"}, "READY", "Review complete", "Taper met · Maximum 2 rounds"),
+            ({"status": "CAP_AUDITED_STOP", "minimum_additional_completed": 2},
+             "READY", "Review complete", "Required rounds complete"),
+            ({}, "RATE_LIMITED", "Cooldown active", "Maximum 2 rounds remaining"),
+            ({}, "HELD", "Pending adjudication", "Maximum 2 rounds remaining"),
+        ]
+        for view, status, label, rule in cases:
+            with self.subTest(label=label):
+                value = self.project(status, view=view)
+                self.assertEqual((value["label"], value["rule"]["label"]), (label, rule))
+        self.assertEqual(self.project(pending_findings=True)["label"], "Pending fixes")
+
+    def test_unchecked_retains_configuration_but_not_counters(self):
+        value = self.project(checked=False)
+        self.assertEqual(value["label"], "Progress not checked")
+        self.assertEqual(value["rule"]["label"], "Maximum 2 rounds configured")
+        for field in ("completed", "maximum_remaining", "in_flight", "request_slots_remaining"):
+            self.assertIsNone(value["rule"][field])
+        normal = ReviewController._review_progress_view(None, {}, [], "NOT_CHECKED", checked=False)
+        self.assertEqual(normal["rule"]["label"], "Normal taper")
+        retained = self.project("COMPLETE", checked=False, view={
+            "status": "CAP_AUDITED_STOP", "minimum_additional_completed": 2})
+        self.assertEqual(retained["rule"]["label"], "Required rounds complete")
+        self.assertIsNone(retained["rule"]["completed"])
+
+    def test_current_required_allocation_supersedes_unchecked_prior_closure(self):
+        current = SimpleNamespace(min_additional_completed=2, max_additional_completed=2,
+                                  stop_basis=None, reopens_taper=True,
+                                  baseline_checkpoint="new-baseline", head=HEAD_1)
+        for prior in ({}, {"status": "CAP_TAPERED", "minimum_additional_completed": 1,
+                           "maximum_additional_completed": 1, "completed_count": 1},
+                      {"status": "HANDED_OFF"}):
+            with self.subTest(prior=prior):
+                value = ReviewController._review_progress_view(
+                    current, prior, [], "COMPLETE", checked=False)
+                self.assertEqual(value["label"], "Progress not checked")
+                self.assertEqual(value["rule"]["label"], "2 required rounds configured")
+                self.assertIsNone(value["rule"]["required_remaining"])
+
+    def test_split_fronts_use_authoritative_projection(self):
+        waiting, active = self.project(), self.project(history=[{"active_review": True}])
+        report = {"prs": [{"pr": 2, "review_progress": {"hosted": waiting, "cli": active}}],
+                  "review_fronts": {"hosted": {"pr": 1, "status": "READY"},
+                                     "cli": {"pr": 2, "status": "HELD"}}}
+        ReviewController._present_review_turns(report)
+        self.assertEqual(waiting["label"], "Waiting turn")
+        self.assertEqual(waiting["waiting_for_pr"], 1)
+        self.assertEqual(active["label"], "Reviewing")
+
+    def test_same_pr_typed_hold_is_visible_without_ancestry_preparation(self):
+        for status, label in (("HELD", "Review held"), ("JUDGMENT_REQUIRED", "Needs decision"),
+                              ("RATE_LIMITED", "Cooldown active"), ("UNSTABLE", "Evidence unclear")):
+            with self.subTest(status=status):
+                progress = self.project()
+                ReviewController._present_review_turns({
+                    "prs": [{"pr": 1, "review_progress": {"hosted": progress}}],
+                    "review_fronts": {"hosted": {"pr": 1, "status": status}},
+                })
+                self.assertEqual(progress["label"], label)
+                self.assertEqual(progress["rule"]["label"], "Maximum 2 rounds remaining")
+        progress = self.project()
+        ReviewController._present_review_turns({
+            "prs": [{"pr": 1, "review_progress": {"hosted": progress}}],
+            "review_fronts": {"hosted": {"pr": 1, "status": "UNRECONCILED"}},
+        })
+        self.assertEqual(progress["label"], "Needs review")
+
+    def test_hosted_acknowledged_running_and_posting_reservation_differ(self):
+        active = self.project(history=[{"active_reservation": True,
+                                        "reason": HOSTED_ACTIVE_RESPONSE_REASON}])
+        pending = self.project(history=[{"active_reservation": True,
+                                         "reason": "no attributable terminal response"}])
+        self.assertEqual(active["label"], "Reviewing")
+        self.assertEqual(pending["label"], "Request reserved")
+        self.assertEqual(active["rule"], pending["rule"])
+
+    def test_unknown_policy_front_clears_prior_waiting_turn(self):
+        progress = self.project()
+        report = {"prs": [{"pr": 2, "review_progress": {"hosted": progress}}],
+                  "review_fronts": {"hosted": {"pr": 1, "status": "READY"}}}
+        ReviewController._present_review_turns(report)
+        self.assertEqual(progress["label"], "Waiting turn")
+        report["review_fronts"]["hosted"] = {"pr": None, "status": "UNKNOWN"}
+        ReviewController._present_review_turns(report)
+        self.assertEqual(progress["label"], "Needs review")
+        self.assertNotIn("waiting_for_pr", progress)
+        self.assertEqual(progress["rule"]["label"], "Maximum 2 rounds remaining")
+
+    def test_ancestry_request_status_and_original_evidence_are_unchanged(self):
+        factory = ControllerTests()
+        self.addCleanup(factory.doCleanups)
+        values = {1: pr(1, HEAD_1)}
+        row = {"pr": 1, "head": HEAD_1, "checkpoint": "preparation",
+               "parent_moved": True, "completed": False}
+        provider = {(1, "hosted"): [row]}
+        controller = factory.make(values, provider, heads={"feature-1": HEAD_1})
+        controller.set_stack([1])
+        result = controller.status()["prs"][0]
+        self.assertEqual(result["channels"]["hosted"], "PARENT_MOVED")
+        self.assertEqual(result["review_progress"]["hosted"]["label"], "Needs review")
+        self.assertEqual(result["review_progress"]["hosted"]["rule"]["label"], "Normal taper")
+        self.assertTrue(row["parent_moved"])
 
 
 if __name__ == "__main__":
