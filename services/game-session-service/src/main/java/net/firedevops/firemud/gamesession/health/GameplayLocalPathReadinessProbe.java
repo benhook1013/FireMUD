@@ -18,7 +18,7 @@ import org.springframework.stereotype.Component;
 public final class GameplayLocalPathReadinessProbe {
   private static final long PROBE_TENANT_ID = 0L;
   private static final long PROBE_SESSION_ID = 9_223_372_036_854_770_000L;
-  private static final long PROBE_ACCOUNT_ID = 9_223_372_036_854_770_001L;
+  private static final String PROBE_ACCOUNT_ID = "00000000-0000-4000-8000-000000000001";
   private static final long PROBE_CHARACTER_ID = 9_223_372_036_854_770_002L;
   private static final long PROBE_GAME_INSTANCE_ID = 0L;
   private static final String PROBE_ROOM_INSTANCE_ID_PREFIX = "readiness-room-";
@@ -44,7 +44,7 @@ public final class GameplayLocalPathReadinessProbe {
         new SessionContext(
             probeSessionId,
             PROBE_TENANT_ID,
-            Long.toString(PROBE_ACCOUNT_ID),
+            PROBE_ACCOUNT_ID,
             PROBE_CHARACTER_ID,
             PROBE_GAME_INSTANCE_ID,
             probeRoomInstanceId,
