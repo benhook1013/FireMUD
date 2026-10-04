@@ -79,6 +79,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 class LoggingAdminApplicationIntegrationTest {
   private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
   private static final Duration HTTP_REQUEST_TIMEOUT = Duration.ofSeconds(10);
+  private static final String ACCOUNT_UUID = "550e8400-e29b-41d4-a716-446655440000";
   private static final JwtUtil JWT_UTIL =
       new JwtUtil("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 3600000L);
 
@@ -975,7 +976,8 @@ class LoggingAdminApplicationIntegrationTest {
   void pingEndpointReturnsPong() throws Exception {
     String token =
         JWT_UTIL.generateToken(
-            "logging-admin-test", Map.of("globalRoles", java.util.List.of("platformAdmin")));
+            ACCOUNT_UUID,
+            Map.of("accountId", ACCOUNT_UUID, "globalRoles", java.util.List.of("platformAdmin")));
     HttpRequest request =
         HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/ping"))
             .timeout(HTTP_REQUEST_TIMEOUT)
@@ -1116,9 +1118,9 @@ class LoggingAdminApplicationIntegrationTest {
 
   private String tenantAdminToken(long tenantId) {
     return JWT_UTIL.generateToken(
-        "logging-admin-test",
+        ACCOUNT_UUID,
         Map.of(
-            "accountId", "42",
+            "accountId", ACCOUNT_UUID,
             "globalRoles", java.util.List.of("platformAdmin"),
             "scopedRoles", Map.of(Long.toString(tenantId), java.util.List.of("tenantAdmin"))));
   }

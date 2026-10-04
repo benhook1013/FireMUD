@@ -271,7 +271,8 @@ class AdmissionPointerServiceImplTest {
 
   @Test
   void setPointerUsesSessionAccountIdAsActorPrincipal() {
-    SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
+    SessionContext.setContext(
+        "018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a", List.of("platformAdmin"), Map.of());
     when(gameSessionControlPlaneClient.setAdmissionPointer(any()))
         .thenReturn(
             SetAdmissionPointerResponse.newBuilder()
@@ -304,7 +305,7 @@ class AdmissionPointerServiceImplTest {
         .setAdmissionPointer(
             org.mockito.ArgumentMatchers.argThat(
                 request ->
-                    request.getActorPrincipal().equals("42")
+                    request.getActorPrincipal().equals("018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a")
                         && request.getExpectedPointerVersion() == 3L
                         && request.getExpectedCatalogRevision() == 4L
                         && request.getPreparedVersionUpgradeId().equals("pvu-1")));
@@ -312,7 +313,8 @@ class AdmissionPointerServiceImplTest {
 
   @Test
   void setPointerMapsVersionMismatchToConflict() {
-    SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
+    SessionContext.setContext(
+        "018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a", List.of("platformAdmin"), Map.of());
     when(gameSessionControlPlaneClient.setAdmissionPointer(any()))
         .thenReturn(
             SetAdmissionPointerResponse.newBuilder()
@@ -382,7 +384,8 @@ class AdmissionPointerServiceImplTest {
 
   @Test
   void executePreparedVersionCutoverUsesSessionAccountIdAsActorPrincipal() {
-    SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
+    SessionContext.setContext(
+        "018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a", List.of("platformAdmin"), Map.of());
     when(gameSessionControlPlaneClient.executePreparedVersionCutover(any()))
         .thenReturn(
             ExecutePreparedVersionCutoverResponse.newBuilder()
@@ -400,7 +403,7 @@ class AdmissionPointerServiceImplTest {
         .executePreparedVersionCutover(
             org.mockito.ArgumentMatchers.argThat(
                 request ->
-                    request.getActorPrincipal().equals("42")
+                    request.getActorPrincipal().equals("018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a")
                         && request.getPreparedVersionUpgradeId().equals("pvu-1")
                         && request.getExpectedPointerVersion() == 3L
                         && request.getExpectedCatalogRevision() == 4L));

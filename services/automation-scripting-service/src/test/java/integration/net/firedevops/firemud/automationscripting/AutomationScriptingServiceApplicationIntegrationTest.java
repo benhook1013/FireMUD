@@ -150,7 +150,12 @@ class AutomationScriptingServiceApplicationIntegrationTest {
   void unsupportedFormationRestRoutesRejectCrossTenantSelectorsByBeingAbsent() throws Exception {
     String token =
         JWT_UTIL.generateToken(
-            "automation-test", Map.of("scopedRoles", Map.of("1", List.of("tenantAdmin"))));
+            "018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a",
+            Map.of(
+                "accountId",
+                "018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a",
+                "scopedRoles",
+                Map.of("1", List.of("tenantAdmin"))));
     HttpRequest request =
         HttpRequest.newBuilder(
                 URI.create("http://localhost:" + port + "/formations/7/members?tenantId=2"))
@@ -167,7 +172,12 @@ class AutomationScriptingServiceApplicationIntegrationTest {
   void removedFactionRestEndpointReturnsNotFound() throws Exception {
     String token =
         JWT_UTIL.generateToken(
-            "automation-test", Map.of("scopedRoles", Map.of("1", List.of("tenantAdmin"))));
+            "018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a",
+            Map.of(
+                "accountId",
+                "018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a",
+                "scopedRoles",
+                Map.of("1", List.of("tenantAdmin"))));
     HttpRequest request =
         HttpRequest.newBuilder(
                 URI.create(

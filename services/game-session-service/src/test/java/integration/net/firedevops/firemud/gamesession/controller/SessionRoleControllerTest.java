@@ -55,7 +55,13 @@ class SessionRoleControllerTest {
   @Test
   void refreshRolesRejectsScopedTenantAdmin() throws Exception {
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("1", List.of("tenantAdmin"))));
+        jwtUtil.generateToken(
+            "018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a",
+            Map.of(
+                "accountId",
+                "018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a",
+                "scopedRoles",
+                Map.of("1", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(

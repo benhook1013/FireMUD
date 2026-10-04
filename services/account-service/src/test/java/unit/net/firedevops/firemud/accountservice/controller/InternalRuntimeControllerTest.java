@@ -28,6 +28,7 @@ import tools.jackson.databind.ObjectMapper;
 @Import({CommonSecurityAutoConfiguration.class, CommonSecurityServletAutoConfiguration.class})
 @WithFiremudPrivilegedHttpAuthTestProperties
 class InternalRuntimeControllerTest {
+  private static final String ACCOUNT_UUID = "550e8400-e29b-41d4-a716-446655440000";
 
   @Autowired private MockMvc mockMvc;
   @Autowired private JwtUtil jwtUtil;
@@ -45,7 +46,9 @@ class InternalRuntimeControllerTest {
   void grantRealmAccessRejectsZeroAccountIdBeforeDispatch() throws Exception {
     String token =
         jwtUtil.generateToken(
-            "user", java.util.Map.of("globalRoles", java.util.List.of("platformAdmin")));
+            ACCOUNT_UUID,
+            java.util.Map.of(
+                "accountId", ACCOUNT_UUID, "globalRoles", java.util.List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -75,7 +78,9 @@ class InternalRuntimeControllerTest {
   void revokeRealmAccessRejectsMalformedAccountIdBeforeDispatch() throws Exception {
     String token =
         jwtUtil.generateToken(
-            "user", java.util.Map.of("globalRoles", java.util.List.of("platformAdmin")));
+            ACCOUNT_UUID,
+            java.util.Map.of(
+                "accountId", ACCOUNT_UUID, "globalRoles", java.util.List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -168,7 +173,9 @@ class InternalRuntimeControllerTest {
   }
 
   private String jwtTokenWithGlobalRole(String role) {
-    return jwtUtil.generateToken("user", java.util.Map.of("globalRoles", java.util.List.of(role)));
+    return jwtUtil.generateToken(
+        ACCOUNT_UUID,
+        java.util.Map.of("accountId", ACCOUNT_UUID, "globalRoles", java.util.List.of(role)));
   }
 
   private String validGrantRequestBody() throws Exception {
