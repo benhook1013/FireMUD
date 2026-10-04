@@ -560,6 +560,8 @@ message PublishedReleaseBundle {
   string workflow_status = 14;
   string workflow_family = 15;
   repeated string command_definitions = 16;
+  string canonical_tenant_id = 18;
+  string canonical_version_id = 19;
 }
 
 message LaunchDescriptor {

@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamedesign.dto;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 
 public record PublishedReleaseBundleDto(
     Long id,
@@ -17,7 +18,9 @@ public record PublishedReleaseBundleDto(
     String generationConfigRevision,
     boolean scriptOnly,
     String scriptPatchVersion,
-    LocalDateTime publishedAt) {
+    LocalDateTime publishedAt,
+    UUID canonicalTenantId,
+    UUID canonicalVersionId) {
   public PublishedReleaseBundleDto {
     requiredManifestAssetKeys =
         List.copyOf(requiredManifestAssetKeys == null ? List.of() : requiredManifestAssetKeys);
@@ -38,7 +41,9 @@ public record PublishedReleaseBundleDto(
       String generationConfigRevision,
       boolean scriptOnly,
       String scriptPatchVersion,
-      LocalDateTime publishedAt) {
+      LocalDateTime publishedAt,
+      UUID canonicalTenantId,
+      UUID canonicalVersionId) {
     this(
         id,
         tenantId,
@@ -53,6 +58,8 @@ public record PublishedReleaseBundleDto(
         generationConfigRevision,
         scriptOnly,
         scriptPatchVersion,
-        publishedAt);
+        publishedAt,
+        canonicalTenantId,
+        canonicalVersionId);
   }
 }

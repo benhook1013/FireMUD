@@ -657,7 +657,9 @@ class LaunchDescriptorServiceImplTest {
         "genrev-1",
         false,
         null,
-        LocalDateTime.now());
+        LocalDateTime.now(),
+        null,
+        null);
   }
 
   @SuppressWarnings("removal")

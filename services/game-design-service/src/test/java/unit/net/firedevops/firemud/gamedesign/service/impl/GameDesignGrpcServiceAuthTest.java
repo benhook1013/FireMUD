@@ -96,7 +96,9 @@ class GameDesignGrpcServiceAuthTest {
                 "genrev-1",
                 false,
                 null,
-                java.time.LocalDateTime.parse("2026-04-14T12:00:00")));
+                java.time.LocalDateTime.parse("2026-04-14T12:00:00"),
+                null,
+                null));
     GameDesignGrpcService service =
         new GameDesignGrpcService(
             Mockito.mock(PingService.class),
