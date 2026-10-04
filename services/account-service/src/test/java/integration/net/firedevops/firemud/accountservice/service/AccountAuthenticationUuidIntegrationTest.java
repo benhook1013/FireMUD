@@ -106,15 +106,13 @@ class AccountAuthenticationUuidIntegrationTest {
 
   @BeforeEach
   void observeOwnerTransaction() {
-    AccountEmailLoginChallengeRepository challengeRepositoryTarget =
-        AopTestUtils.getUltimateTargetObject(challengeRepositorySpy);
     doAnswer(
             invocation -> {
               assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
               invocation.callRealMethod();
               return null;
             })
-        .when(challengeRepositoryTarget)
+        .when(challengeRepositorySpy)
         .lockAccountChallenge(anyLong());
   }
 
