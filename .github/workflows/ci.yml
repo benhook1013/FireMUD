@@ -321,6 +321,18 @@ jobs:
         with:
           requirements: ${{ (needs.changes.outputs.lightweight_only == 'true' && needs.changes.outputs.design_docs_changed == 'true' && needs.changes.outputs.validation_python_changed != 'true') && 'yaml' || 'ci' }}
 
+      - name: Set up Node for Python Markdown contracts
+        if: ${{ needs.changes.outputs.lightweight_only != 'true' || needs.changes.outputs.validation_python_changed == 'true' }}
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: '.node-version'
+          cache: npm
+          cache-dependency-path: config/openapi/package-lock.json
+
+      - name: Install pinned Markdown contract dependencies
+        if: ${{ needs.changes.outputs.lightweight_only != 'true' || needs.changes.outputs.validation_python_changed == 'true' }}
+        run: npm ci --ignore-scripts --no-audit --no-fund --prefix config/openapi
+
       - name: 📦 Install cloc
         if: ${{ needs.changes.outputs.lightweight_only != 'true' }}
         env:

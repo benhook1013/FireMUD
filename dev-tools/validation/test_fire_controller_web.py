@@ -669,7 +669,7 @@ class IsolatedWebsiteIntegrationTest(unittest.TestCase):
         ]}
         review = {
             "available": True, "ordered_prs": list(queue), "queue": queue,
-            "review_targets": {
+            "review_fronts": {
                 "hosted": {"pr": 42, "status": "READY"},
                 "cli": {"pr": 43, "status": "READY"},
             },
@@ -731,6 +731,101 @@ class IsolatedWebsiteIntegrationTest(unittest.TestCase):
         self.assertIn("Review in progress", detail)
         self.assertIn("Policy not checked", self.page.render_activity_cards(queue[47], self.now))
         self.assertNotIn("Needs reconciliation", detail)
+
+    def front_fixture(self, fronts):
+        base = self.data["stack"][0]
+        data = {**self.data, "stack": [
+            {**base, "number": number, "title": f"PR {number}", "stage": "Review queue"}
+            for number in (42, 43)
+        ]}
+        queue = {number: {
+            "state": "OPEN", "channels": {"hosted": "READY", "cli": "READY"},
+            "review_activity": {channel: {"total": 0, "recent": []} for channel in ("hosted", "cli")},
+            "review_progress": {channel: {"label": "Needs review", "rule": {"label": "Normal taper"}}
+                                for channel in ("hosted", "cli")},
+        } for number in (42, 43)}
+        review = {"available": True, "ordered_prs": [42, 43], "queue": queue,
+                  "review_fronts": fronts, "review_targets": {
+                      channel: {"pr": None, "status": "UNKNOWN"} for channel in ("hosted", "cli")}}
+        github = {"available": True, "states": {}, "lifecycle": {42: "OPEN", 43: "OPEN"},
+                  "merged_at": {}, "stats": {}}
+        return data, review, github
+
+    @staticmethod
+    def channel_card(document, number, channel):
+        row = document.split(f'<li id="pr-{number}"', 1)[1].split("</li>", 1)[0]
+        name = "Hosted CodeRabbit" if channel == "hosted" else "CLI CodeRabbit"
+        return row.split(f"<strong>{name}</strong>", 1)[1].split('class="activity-card"', 1)[0]
+
+    def test_controller_snapshot_retains_fronts_separately_from_request_targets(self):
+        _data, review, _github = self.front_fixture({"hosted": {"pr": 42, "status": "READY"}})
+        report = {"ordered_prs": review["ordered_prs"],
+                  "prs": [{"pr": number, "head": "a" * 40, **row}
+                          for number, row in review["queue"].items()],
+                  "review_fronts": review["review_fronts"], "review_targets": review["review_targets"]}
+        result = subprocess.CompletedProcess([], 0, json.dumps(report), "")
+        with patch.object(self.page.subprocess, "run", return_value=result):
+            snapshot = self.page.review_snapshot(Path("/fake/tools/pr-review"), None, None, self.now)
+        self.assertTrue(snapshot["available"])
+        self.assertEqual(snapshot["review_fronts"], report["review_fronts"])
+        self.assertEqual(snapshot["review_targets"], report["review_targets"])
+
+    def test_known_split_fronts_have_channel_next_badges_despite_unknown_requests(self):
+        data, review, github = self.front_fixture({
+            "hosted": {"pr": 42, "status": "UNRECONCILED"},
+            "cli": {"pr": 43, "status": "HELD"},
+        })
+        # A request blocker and running activity never redefine the logical front.
+        review["queue"][43]["review_progress"]["cli"]["label"] = "Reviewing"
+        document = self.page.render(data, review, self.now, github)
+        self.assertEqual(self.page.selected_review_fronts(data, review, github), {42, 43})
+        for number, channel in ((42, "hosted"), (43, "cli")):
+            self.assertIn('class="activity-next"', self.channel_card(document, number, channel))
+        for number, channel in ((42, "cli"), (43, "hosted")):
+            self.assertNotIn('class="activity-next"', self.channel_card(document, number, channel))
+        self.assertIn("Progress:</strong> Reviewing", self.channel_card(document, 43, "cli"))
+        self.assertIn("Progress:</strong> Needs review", self.channel_card(document, 42, "hosted"))
+        self.assertEqual(document.count('queue-status-front">REVIEW FRONT'), 2)
+        detail = self.page.render_review_detail(data, review, self.now, 43)
+        self.assertEqual(detail.count('class="activity-next"'), 1)
+
+    def test_same_pr_front_has_next_badge_on_both_channels(self):
+        data, review, github = self.front_fixture({
+            channel: {"pr": 42, "status": "READY"} for channel in ("hosted", "cli")})
+        document = self.page.render(data, review, self.now, github)
+        self.assertEqual(self.page.selected_review_fronts(data, review, github), {42})
+        for channel in ("hosted", "cli"):
+            self.assertIn('class="activity-next"', self.channel_card(document, 42, channel))
+            self.assertNotIn('class="activity-next"', self.channel_card(document, 43, channel))
+
+    def test_missing_or_unknown_fronts_never_fall_back_to_requests_or_unfinished_rows(self):
+        for fronts in (None, {}, {"hosted": {"pr": 42, "status": "UNKNOWN"}},
+                       {"hosted": {"pr": None, "status": "COMPLETE"}}):
+            with self.subTest(fronts=fronts):
+                data, review, github = self.front_fixture(fronts)
+                if fronts is None:
+                    review.pop("review_fronts")
+                review["review_targets"] = {channel: {"pr": 42, "status": "READY"}
+                                            for channel in ("hosted", "cli")}
+                data["review_front"] = 42
+                document = self.page.render(data, review, self.now, github)
+                self.assertEqual(self.page.selected_review_fronts(data, review, github), set())
+                self.assertNotIn('class="activity-next"', document)
+                self.assertNotIn('queue-status-front">REVIEW FRONT', document)
+
+    def test_merged_and_closed_fronts_have_no_next_badges(self):
+        data, review, github = self.front_fixture({
+            "hosted": {"pr": 42, "status": "READY"}, "cli": {"pr": 43, "status": "READY"}})
+        github["lifecycle"] = {42: "MERGED", 43: "CLOSED"}
+        for number, lifecycle in github["lifecycle"].items():
+            review["queue"][number]["state"] = lifecycle
+            review["queue"][number]["merged"] = lifecycle == "MERGED"
+        document = self.page.render(data, review, self.now, github)
+        self.assertEqual(self.page.selected_review_fronts(data, review, github), set())
+        self.assertNotIn('class="activity-next"', document)
+        for number in (42, 43):
+            detail = self.page.render_review_detail(data, review, self.now, number)
+            self.assertNotIn('class="activity-next"', detail)
 
     def test_merged_channel_cards_preserve_history_without_request_progress(self):
         queue_item = {

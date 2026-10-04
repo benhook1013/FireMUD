@@ -4767,7 +4767,7 @@ class ReviewController:
     @staticmethod
     def _present_review_turns(report: Mapping[str, Any]) -> None:
         """Use the already selected channel fronts; never select a display target."""
-        targets = report.get("review_targets", {})
+        targets = report.get("review_fronts", {})
         for row in report.get("prs", []):
             for channel, progress in row.get("review_progress", {}).items():
                 target = targets.get(channel, {})
@@ -4822,6 +4822,7 @@ class ReviewController:
             }
             if review_target_prs is not None:
                 report["review_targets"] = self._empty_review_targets(state)
+                report["review_fronts"] = self._empty_review_targets(state)
             return report
         refresh_prs = evidence_prs
         selected_live_identities = live_identities
@@ -5059,6 +5060,12 @@ class ReviewController:
                 stop_audit_cache=stop_audit_cache,
                 history_cache=history_cache,
             )
+            # PR-level queue selection survives request-only identity warnings.
+            # Keep a separate snapshot; neither presentation nor later request
+            # invalidation may select a replacement or change policy admission.
+            report["review_fronts"] = {
+                channel: dict(target) for channel, target in report["review_targets"].items()
+            }
         self._present_review_turns(report)
         return report
 
@@ -5126,6 +5133,7 @@ class ReviewController:
             },
             "prs": prs,
             "review_targets": ReviewController._unknown_review_targets(reason),
+            "review_fronts": ReviewController._unknown_review_targets(reason),
             "legacy_transitions": [item.to_dict() for item in state.legacy_transitions],
         }
 
@@ -5220,6 +5228,7 @@ class ReviewController:
                 "detail_window": {"unmerged_limit": 4, "batch_status": "complete", "deep_prs": []},
                 "prs": [],
                 "review_targets": self._empty_review_targets(state),
+                "review_fronts": self._empty_review_targets(state),
                 "legacy_transitions": [item.to_dict() for item in state.legacy_transitions],
             }
 
@@ -5383,12 +5392,16 @@ class ReviewController:
         if not scoped_prs and deep_error is None:
             # The configured stack may contain only merged PRs; policy selection
             # then has no live candidate and returns its canonical no-target result.
-            scoped_report = {"review_targets": self._empty_review_targets(state)}
+            scoped_report = {
+                "review_targets": self._empty_review_targets(state),
+                "review_fronts": self._empty_review_targets(state),
+            }
 
         deep_by_pr = {
             item.get("pr"): item for item in (scoped_report or {}).get("prs", []) if isinstance(item, Mapping)
         }
         mismatch: set[int] = set(remote_affected)
+        lifecycle_mismatch: set[int] = set()
         for pr in scoped_prs:
             if pr not in deep_prs:
                 continue
@@ -5396,6 +5409,8 @@ class ReviewController:
             if detailed is None:
                 continue
             item = batch_live[pr]
+            if detailed.get("state") != item.state or detailed.get("merged") != item.merged:
+                lifecycle_mismatch.add(pr)
             if (
                 not isinstance(detailed.get("head"), str)
                 or detailed["head"].casefold() != item.head.casefold()
@@ -5601,10 +5616,16 @@ class ReviewController:
             },
             "prs": values,
             "review_targets": (scoped_report or {}).get("review_targets", self._empty_review_targets(state)),
+            "review_fronts": (scoped_report or {}).get(
+                "review_fronts", self._unknown_review_targets("review policy selection is unavailable")
+            ),
             "legacy_transitions": [item.to_dict() for item in state.legacy_transitions],
         }
         if deep_error is not None:
             report["review_targets"] = self._unknown_review_targets(
+                f"deep review evidence is unavailable: {deep_error}"
+            )
+            report["review_fronts"] = self._unknown_review_targets(
                 f"deep review evidence is unavailable: {deep_error}"
             )
         elif remote_recheck_error is not None:
@@ -5637,6 +5658,19 @@ class ReviewController:
                 else:
                     stable_targets[channel] = unknown_targets[channel]
             report["review_targets"] = stable_targets
+        if lifecycle_mismatch:
+            # Opening/closing/merging a PR can change queue membership. Unlike
+            # request-only ancestry movement, that makes the logical choice
+            # uncertain from this inconsistent snapshot; never reselect here.
+            positions = {pr: index for index, pr in enumerate(state.ordered_prs)}
+            changed_position = min(positions[pr] for pr in lifecycle_mismatch)
+            unknown_fronts = self._unknown_review_targets(
+                "live PR lifecycle changed between batch overview and deep reconciliation"
+            )
+            for channel, front in report["review_fronts"].items():
+                selected_position = positions.get(front.get("pr"))
+                if selected_position is None or selected_position >= changed_position:
+                    report["review_fronts"][channel] = unknown_fronts[channel]
         self._present_review_turns(report)
         return report
 
