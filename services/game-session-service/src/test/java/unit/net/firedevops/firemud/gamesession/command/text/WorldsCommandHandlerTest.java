@@ -232,6 +232,68 @@ class WorldsCommandHandlerTest {
   }
 
   @Test
+  void joinRejectsStaleRealmSnapshotBeforeCallingAccount() {
+    GameplayCatalogProperties properties = publicProductionProperties();
+    GameplayCatalogProperties.Realm publicRealm =
+        properties.getWorlds().getFirst().getRealms().getFirst();
+    AccountClient accountClient = Mockito.mock(AccountClient.class);
+    stubPublicConnectScope(accountClient, "scope-public");
+    WorldsCommandHandler localHandler = authenticatedHandler(properties, accountClient);
+
+    assertThat(localHandler.browseRealms(authenticatedSession(), "demo"))
+        .isInstanceOf(WorldsCommandHandler.RealmBrowseResult.Success.class);
+    publicRealm.setPointerVersion(2L);
+    Mockito.clearInvocations(accountClient);
+
+    assertThat(localHandler.joinPublicProductionMembership(authenticatedSession(), "demo"))
+        .isEqualTo(WorldsCommandHandler.JoinMembershipResult.failure("CONNECT_SCOPE_MISMATCH"));
+    Mockito.verifyNoInteractions(accountClient);
+  }
+
+  @Test
+  void joinMapsRealmSnapshotRevalidationOutageToAuthUnavailableWithoutAccountCall() {
+    GameplayAdmissionPointerAuthorityService authorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    GameplayAdmissionPointerSnapshot pointer =
+        new GameplayAdmissionPointerSnapshot(
+            "demo",
+            "demo",
+            "production",
+            "production",
+            22L,
+            1L,
+            1L,
+            true,
+            true,
+            false,
+            "SHARED",
+            "ALLOW_NEW",
+            1L,
+            UUID.fromString("00000000-0000-0000-0000-000000000001"),
+            UUID.fromString("00000000-0000-0000-0000-000000000002"));
+    Mockito.when(authorityService.listPointers()).thenReturn(List.of(pointer));
+    AccountClient accountClient = Mockito.mock(AccountClient.class);
+    stubPublicConnectScope(accountClient, "scope-public");
+    GameplayWorldCatalog catalog = Mockito.spy(new GameplayWorldCatalog(authorityService));
+    WorldsCommandHandler localHandler =
+        new WorldsCommandHandler(
+            catalog, accountClient, DirectTextConnectScopeSessionStore.inMemoryForTest());
+
+    assertThat(localHandler.browseRealms(authenticatedSession(), "demo"))
+        .isInstanceOf(WorldsCommandHandler.RealmBrowseResult.Success.class);
+    Mockito.doThrow(
+            new GameplayWorldCatalog.AuthorityPointerReadUnavailableException(
+                "pointer authority unavailable"))
+        .when(catalog)
+        .revalidateRealmDiscoverySnapshot(Mockito.any(), Mockito.anyList());
+    Mockito.clearInvocations(accountClient);
+
+    assertThat(localHandler.joinPublicProductionMembership(authenticatedSession(), "demo"))
+        .isEqualTo(WorldsCommandHandler.JoinMembershipResult.failure("AUTH_UNAVAILABLE"));
+    Mockito.verifyNoInteractions(accountClient);
+  }
+
+  @Test
   void numericRealmSelectorRejectsCatalogReorderInsteadOfSelectingNewTenant() {
     GameplayWorldCatalog.RealmView realmA =
         new GameplayWorldCatalog.RealmView(
