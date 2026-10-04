@@ -214,6 +214,20 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     }
   }
 
+  private void requireRuntimeEntitlementsPeer() {
+    GrpcPeerIdentity peer = GrpcPeerIdentity.current();
+    String namespace = workloadNamespace;
+    if (peer == null
+        || namespace == null
+        || namespace.isBlank()
+        || !(peer.uri().equals("spiffe://firemud/ns/" + namespace + "/sa/game-session-service")
+            || peer.uri()
+                .equals("spiffe://firemud/ns/" + namespace + "/sa/world-management-service"))) {
+      throw new AdminAuthorizationException(
+          "Verified Game Session or World Management workload identity is required");
+    }
+  }
+
   private void requireSocialGroupsPeer() {
     GrpcPeerIdentity peer = GrpcPeerIdentity.current();
     if (peer == null
@@ -588,9 +602,10 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       GetTenantEntitlementsForRuntimeRequest request,
       StreamObserver<GetTenantEntitlementsForRuntimeResponse> responseObserver) {
     try {
-      var dto =
-          accountService.getTenantEntitlementsForRuntime(
-              requirePositiveRequestId(request.getTenantId(), "tenantId"), request.getRequestId());
+      requireRuntimeEntitlementsPeer();
+      long tenantId = requirePositiveRequestId(request.getTenantId(), "tenantId");
+      String requestId = requireText(request.getRequestId(), "requestId");
+      var dto = accountService.getTenantEntitlementsForRuntime(tenantId, requestId);
       GetTenantEntitlementsForRuntimeResponse response =
           GetTenantEntitlementsForRuntimeResponse.newBuilder()
               .setTenantId(String.valueOf(dto.tenantId()))
@@ -599,6 +614,14 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               .setEntitlementVersion(dto.entitlementVersion())
               .setTenantBillingSequence(dto.tenantBillingSequence())
               .setEvaluatedAt(dto.evaluatedAt())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      GetTenantEntitlementsForRuntimeResponse response =
+          GetTenantEntitlementsForRuntimeResponse.newBuilder()
+              .setError(
+                  appError("GetTenantEntitlementsForRuntime", "PERMISSION_DENIED", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();

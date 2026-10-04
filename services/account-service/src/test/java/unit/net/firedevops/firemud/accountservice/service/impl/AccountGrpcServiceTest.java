@@ -86,6 +86,11 @@ class AccountGrpcServiceTest {
           "spiffe://firemud/ns/test/sa/social-groups-service",
           WORKLOAD_NAMESPACE,
           "social-groups-service");
+  private static final GrpcPeerIdentity WORLD_MANAGEMENT_PEER =
+      new GrpcPeerIdentity(
+          "spiffe://firemud/ns/test/sa/world-management-service",
+          WORKLOAD_NAMESPACE,
+          "world-management-service");
 
   private static PlayerExecutionContext validPlayerContext() {
     return PlayerExecutionContext.newBuilder()
@@ -1761,32 +1766,126 @@ class AccountGrpcServiceTest {
         .thenReturn(
             new net.firedevops.firemud.accountservice.dto.RuntimeEntitlementsDto(
                 1L, true, true, 19L, 311L, "2026-03-30T00:00:00Z"));
-    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+    AccountGrpcService service =
+        new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
 
-    AtomicReference<GetTenantEntitlementsForRuntimeResponse> ref = new AtomicReference<>();
-    service.getTenantEntitlementsForRuntime(
-        GetTenantEntitlementsForRuntimeRequest.newBuilder()
-            .setTenantId("1")
-            .setRequestId("req-2")
-            .build(),
-        new StreamObserver<GetTenantEntitlementsForRuntimeResponse>() {
-          @Override
-          public void onNext(GetTenantEntitlementsForRuntimeResponse value) {
-            ref.set(value);
-          }
+    RecordingObserver<GetTenantEntitlementsForRuntimeResponse> observer = new RecordingObserver<>();
+    withPeer(
+        GAME_SESSION_PEER,
+        () ->
+            service.getTenantEntitlementsForRuntime(
+                GetTenantEntitlementsForRuntimeRequest.newBuilder()
+                    .setTenantId("1")
+                    .setRequestId("req-2")
+                    .build(),
+                observer));
 
-          @Override
-          public void onError(Throwable t) {}
+    assertNotNull(observer.response());
+    assertEquals("1", observer.response().getTenantId());
+    assertTrue(observer.response().getGameplayAvailable());
+    assertTrue(observer.response().getAllowPublicJoin());
+    assertEquals(19L, observer.response().getEntitlementVersion());
+    assertTrue(observer.completed());
+    Mockito.verify(accountService).getTenantEntitlementsForRuntime(1L, "req-2");
+  }
 
-          @Override
-          public void onCompleted() {}
-        });
+  @Test
+  void getTenantEntitlementsForRuntimeAllowsWorldManagementPeer() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(accountService.getTenantEntitlementsForRuntime(1L, "req-world"))
+        .thenReturn(
+            new net.firedevops.firemud.accountservice.dto.RuntimeEntitlementsDto(
+                1L, true, true, 19L, 311L, "2026-03-30T00:00:00Z"));
+    AccountGrpcService service =
+        new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
+    RecordingObserver<GetTenantEntitlementsForRuntimeResponse> observer = new RecordingObserver<>();
 
-    assertNotNull(ref.get());
-    assertEquals("1", ref.get().getTenantId());
-    assertTrue(ref.get().getGameplayAvailable());
-    assertTrue(ref.get().getAllowPublicJoin());
-    assertEquals(19L, ref.get().getEntitlementVersion());
+    withPeer(
+        WORLD_MANAGEMENT_PEER,
+        () ->
+            service.getTenantEntitlementsForRuntime(
+                GetTenantEntitlementsForRuntimeRequest.newBuilder()
+                    .setTenantId("1")
+                    .setRequestId("req-world")
+                    .build(),
+                observer));
+
+    assertEquals("1", observer.response().getTenantId());
+    assertTrue(observer.completed());
+    Mockito.verify(accountService).getTenantEntitlementsForRuntime(1L, "req-world");
+  }
+
+  @Test
+  void getTenantEntitlementsForRuntimeRejectsAbsentWrongAndCrossNamespacePeers() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    AccountGrpcService service =
+        new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
+    List<GrpcPeerIdentity> rejectedPeers =
+        java.util.Arrays.asList(
+            null,
+            SOCIAL_GROUPS_PEER,
+            new GrpcPeerIdentity(
+                "spiffe://firemud/ns/other/sa/game-session-service",
+                "other",
+                "game-session-service"),
+            new GrpcPeerIdentity(
+                "spiffe://firemud/ns/other/sa/world-management-service",
+                "other",
+                "world-management-service"));
+
+    RecordingObserver<GetTenantEntitlementsForRuntimeResponse> absentPeerObserver =
+        new RecordingObserver<>();
+    service.getTenantEntitlementsForRuntime(validEntitlementRequest(), absentPeerObserver);
+    assertEquals("PERMISSION_DENIED", absentPeerObserver.response().getError().getCode());
+    for (GrpcPeerIdentity peer : rejectedPeers) {
+      RecordingObserver<GetTenantEntitlementsForRuntimeResponse> observer =
+          new RecordingObserver<>();
+      withPeer(
+          peer, () -> service.getTenantEntitlementsForRuntime(validEntitlementRequest(), observer));
+      assertEquals("PERMISSION_DENIED", observer.response().getError().getCode());
+      assertTrue(observer.completed());
+    }
+    Mockito.verifyNoInteractions(accountService);
+  }
+
+  @Test
+  void getTenantEntitlementsForRuntimeRejectsMalformedTenantOrRequestBeforeLookup() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    AccountGrpcService service =
+        new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
+    List<GetTenantEntitlementsForRuntimeRequest> malformedRequests =
+        List.of(
+            GetTenantEntitlementsForRuntimeRequest.newBuilder()
+                .setTenantId("0")
+                .setRequestId("req-1")
+                .build(),
+            GetTenantEntitlementsForRuntimeRequest.newBuilder()
+                .setTenantId("1")
+                .setRequestId(" ")
+                .build(),
+            GetTenantEntitlementsForRuntimeRequest.newBuilder()
+                .setTenantId("1")
+                .setRequestId("x".repeat(129))
+                .build());
+
+    for (GetTenantEntitlementsForRuntimeRequest request : malformedRequests) {
+      RecordingObserver<GetTenantEntitlementsForRuntimeResponse> observer =
+          new RecordingObserver<>();
+      withPeer(GAME_SESSION_PEER, () -> service.getTenantEntitlementsForRuntime(request, observer));
+      assertEquals("INVALID_ARGUMENT", observer.response().getError().getCode());
+      assertTrue(observer.completed());
+    }
+    Mockito.verifyNoInteractions(accountService);
+  }
+
+  private static GetTenantEntitlementsForRuntimeRequest validEntitlementRequest() {
+    return GetTenantEntitlementsForRuntimeRequest.newBuilder()
+        .setTenantId("1")
+        .setRequestId("req-2")
+        .build();
   }
 
   @Test
@@ -1798,26 +1897,30 @@ class AccountGrpcServiceTest {
             new AuthenticationException(
                 "ENTITLEMENT_UNAVAILABLE",
                 "Tenant entitlement authority is missing or ambiguous; retry later"));
-    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+    AccountGrpcService service =
+        new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
 
     AtomicReference<GetTenantEntitlementsForRuntimeResponse> ref = new AtomicReference<>();
-    service.getTenantEntitlementsForRuntime(
-        GetTenantEntitlementsForRuntimeRequest.newBuilder()
-            .setTenantId("1")
-            .setRequestId("req-ambiguous")
-            .build(),
-        new StreamObserver<GetTenantEntitlementsForRuntimeResponse>() {
-          @Override
-          public void onNext(GetTenantEntitlementsForRuntimeResponse value) {
-            ref.set(value);
-          }
+    withPeer(
+        GAME_SESSION_PEER,
+        () ->
+            service.getTenantEntitlementsForRuntime(
+                GetTenantEntitlementsForRuntimeRequest.newBuilder()
+                    .setTenantId("1")
+                    .setRequestId("req-ambiguous")
+                    .build(),
+                new StreamObserver<GetTenantEntitlementsForRuntimeResponse>() {
+                  @Override
+                  public void onNext(GetTenantEntitlementsForRuntimeResponse value) {
+                    ref.set(value);
+                  }
 
-          @Override
-          public void onError(Throwable t) {}
+                  @Override
+                  public void onError(Throwable t) {}
 
-          @Override
-          public void onCompleted() {}
-        });
+                  @Override
+                  public void onCompleted() {}
+                }));
 
     assertNotNull(ref.get());
     assertTrue(ref.get().hasError());
@@ -1828,26 +1931,30 @@ class AccountGrpcServiceTest {
   void getTenantEntitlementsForRuntimeRejectsZeroTenantIdBeforeLookup() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
-    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+    AccountGrpcService service =
+        new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
 
     AtomicReference<GetTenantEntitlementsForRuntimeResponse> ref = new AtomicReference<>();
-    service.getTenantEntitlementsForRuntime(
-        GetTenantEntitlementsForRuntimeRequest.newBuilder()
-            .setTenantId("0")
-            .setRequestId("req-2")
-            .build(),
-        new StreamObserver<GetTenantEntitlementsForRuntimeResponse>() {
-          @Override
-          public void onNext(GetTenantEntitlementsForRuntimeResponse value) {
-            ref.set(value);
-          }
+    withPeer(
+        GAME_SESSION_PEER,
+        () ->
+            service.getTenantEntitlementsForRuntime(
+                GetTenantEntitlementsForRuntimeRequest.newBuilder()
+                    .setTenantId("0")
+                    .setRequestId("req-2")
+                    .build(),
+                new StreamObserver<GetTenantEntitlementsForRuntimeResponse>() {
+                  @Override
+                  public void onNext(GetTenantEntitlementsForRuntimeResponse value) {
+                    ref.set(value);
+                  }
 
-          @Override
-          public void onError(Throwable t) {}
+                  @Override
+                  public void onError(Throwable t) {}
 
-          @Override
-          public void onCompleted() {}
-        });
+                  @Override
+                  public void onCompleted() {}
+                }));
 
     assertNotNull(ref.get());
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
