@@ -78,7 +78,7 @@ class PublishedRealmAdmissionOwnerReadGrpcServiceTest {
         () -> grpcService.getPublishedRealmAdmissionOwnerRead(request(), capture(response)));
 
     GetPublishedRealmAdmissionOwnerReadResponse result = response.value;
-    assertThat(response.failure).isNull();
+    assertThat(response.failureCode).isNull();
     assertThat(result).isNotNull();
     assertThat(result.getProof().getTargetNamespace()).isEqualTo(NAMESPACE);
     assertThat(result.getProof().getCanonicalTenantId()).isEqualTo(CANONICAL_TENANT_ID.toString());
@@ -137,8 +137,7 @@ class PublishedRealmAdmissionOwnerReadGrpcServiceTest {
         () -> grpcService.getPublishedRealmAdmissionOwnerRead(malformed, capture(response)));
 
     assertThat(response.value).isNull();
-    assertThat(Status.fromThrowable(response.failure).getCode())
-        .isEqualTo(Status.Code.INVALID_ARGUMENT);
+    assertThat(response.failureCode).isEqualTo(Status.Code.INVALID_ARGUMENT);
     verifyNoInteractions(ownerReadService);
   }
 
@@ -153,7 +152,7 @@ class PublishedRealmAdmissionOwnerReadGrpcServiceTest {
         () -> grpcService.getPublishedRealmAdmissionOwnerRead(request(), capture(response)));
 
     assertThat(response.value).isNull();
-    assertThat(Status.fromThrowable(response.failure).getCode()).isEqualTo(Status.Code.UNAVAILABLE);
+    assertThat(response.failureCode).isEqualTo(Status.Code.UNAVAILABLE);
   }
 
   @Test
@@ -169,8 +168,7 @@ class PublishedRealmAdmissionOwnerReadGrpcServiceTest {
                 "world-management-service"))
         .run(() -> grpcService.getPublishedRealmAdmissionOwnerRead(request(), capture(denied)));
     assertThat(denied.value).isNull();
-    assertThat(Status.fromThrowable(denied.failure).getCode())
-        .isEqualTo(Status.Code.PERMISSION_DENIED);
+    assertThat(denied.failureCode).isEqualTo(Status.Code.PERMISSION_DENIED);
 
     CapturingObserver<GetPublishedRealmAdmissionOwnerReadResponse> wrongTarget =
         new CapturingObserver<>();
@@ -180,8 +178,7 @@ class PublishedRealmAdmissionOwnerReadGrpcServiceTest {
                 request().toBuilder().setTargetNamespace("other-namespace").build(),
                 capture(wrongTarget)));
     assertThat(wrongTarget.value).isNull();
-    assertThat(Status.fromThrowable(wrongTarget.failure).getCode())
-        .isEqualTo(Status.Code.PERMISSION_DENIED);
+    assertThat(wrongTarget.failureCode).isEqualTo(Status.Code.PERMISSION_DENIED);
     verifyNoInteractions(ownerReadService);
 
     grpcService.configurePublishedRealmAdmissionOwnerReadBoundary(null, NAMESPACE);
@@ -190,8 +187,7 @@ class PublishedRealmAdmissionOwnerReadGrpcServiceTest {
     runAsEntityManagementPeer(
         () -> grpcService.getPublishedRealmAdmissionOwnerRead(request(), capture(unavailable)));
     assertThat(unavailable.value).isNull();
-    assertThat(Status.fromThrowable(unavailable.failure).getCode())
-        .isEqualTo(Status.Code.UNAVAILABLE);
+    assertThat(unavailable.failureCode).isEqualTo(Status.Code.UNAVAILABLE);
   }
 
   private static StreamObserver<GetPublishedRealmAdmissionOwnerReadResponse> capture(
@@ -201,7 +197,7 @@ class PublishedRealmAdmissionOwnerReadGrpcServiceTest {
 
   private static final class CapturingObserver<T> implements StreamObserver<T> {
     private T value;
-    private Throwable failure;
+    private Status.Code failureCode;
 
     @Override
     public void onNext(T next) {
@@ -210,7 +206,7 @@ class PublishedRealmAdmissionOwnerReadGrpcServiceTest {
 
     @Override
     public void onError(Throwable throwable) {
-      failure = throwable;
+      failureCode = Status.fromThrowable(throwable).getCode();
     }
 
     @Override

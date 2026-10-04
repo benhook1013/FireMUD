@@ -70,17 +70,26 @@ class EntityManagementStubServerTest {
 
         assertThat(
                 listCharacters(
-                    stub, "1", accountUuid(101L), PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                        stub,
+                        "1",
+                        accountUuid(101L),
+                        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                     .getCharactersList())
             .containsExactly(sharedCharacter(firstPlayer));
         assertThat(
                 listCharacters(
-                    stub, "1", accountUuid(102L), PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                        stub,
+                        "1",
+                        accountUuid(102L),
+                        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                     .getCharactersList())
             .containsExactly(sharedCharacter(secondPlayer));
         assertThat(
                 listCharacters(
-                    stub, "2", accountUuid(101L), PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                        stub,
+                        "2",
+                        accountUuid(101L),
+                        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                     .getCharactersList())
             .isEmpty();
       } finally {
@@ -100,10 +109,7 @@ class EntityManagementStubServerTest {
 
         assertThat(
                 listCharacters(
-                        stub,
-                        "2",
-                        accountUuid(7L),
-                        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                        stub, "2", accountUuid(7L), PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                     .getCharactersList())
             .isEmpty();
         assertThat(

@@ -88,10 +88,12 @@ class InitialAdmissionOwnerReadAuthWiringTest {
           PublishedDispatchResult published = dispatchPublished(interceptor, service, ENTITY_URI);
 
           assertThat(initial.handlerDispatched()).isTrue();
+          assertThat(initial.observer().statusCode).isNull();
           assertThat(initial.observer().response.getError().getCode()).isEqualTo("INTERNAL");
           verify(proofReader).read(binding());
 
           assertThat(published.handlerDispatched()).isTrue();
+          assertThat(published.observer().response).isNull();
           assertThat(published.observer().statusCode).isEqualTo(Status.Code.UNAVAILABLE);
           verify(ownerReadService).read(any(PublishedRealmAdmissionOwnerReadRequest.class));
         });

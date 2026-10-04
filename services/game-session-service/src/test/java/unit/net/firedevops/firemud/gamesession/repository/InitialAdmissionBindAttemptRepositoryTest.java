@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.time.Instant;
+import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.gamesession.entity.InitialAdmissionBindAttempt;
 import net.firedevops.firemud.gamesession.entity.InitialAdmissionBindAttempt.Status;
@@ -36,10 +37,11 @@ class InitialAdmissionBindAttemptRepositoryTest {
       assertNull(historical.canonicalTenantId());
       assertEquals(
           historicalRealmId,
-          dsl.fetchOne(
-                  "SELECT fixture_catalog_realm_id FROM gameplay_initial_admission_bind_attempt "
-                      + "WHERE initial_admission_request_id = ?",
-                  "request-historical")
+          Objects.requireNonNull(
+                  dsl.fetchOne(
+                      "SELECT fixture_catalog_realm_id FROM gameplay_initial_admission_bind_attempt "
+                          + "WHERE initial_admission_request_id = ?",
+                      "request-historical"))
               .get(0, UUID.class));
 
       UUID publishedRealmId = UUID.randomUUID();
@@ -79,10 +81,11 @@ class InitialAdmissionBindAttemptRepositoryTest {
       assertEquals("V14_PUBLISHED", published.catalogSourceKind());
       assertEquals(Instant.parse("2026-10-03T00:00:00Z"), published.createdAt());
       assertNull(
-          dsl.fetchOne(
-                  "SELECT fixture_catalog_realm_id FROM gameplay_initial_admission_bind_attempt "
-                      + "WHERE initial_admission_request_id = ?",
-                  "request-published")
+          Objects.requireNonNull(
+                  dsl.fetchOne(
+                      "SELECT fixture_catalog_realm_id FROM gameplay_initial_admission_bind_attempt "
+                          + "WHERE initial_admission_request_id = ?",
+                      "request-published"))
               .get(0, UUID.class));
       assertEquals("prod-west", published.publishedTargetNamespace());
       assertEquals(canonicalTenantId, published.canonicalTenantId());
