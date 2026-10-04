@@ -968,6 +968,11 @@ class GameSessionGrpcServiceTest {
   void privateAdmissionDoesNotUsePublicRealmFromAnotherTenantToSatisfyCardinality() {
     GameplayAdmissionPointerAuthorityService pointerAuthorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    Mockito.when(pointerAuthorityService.listPointers())
+        .thenReturn(
+            List.of(
+                authorityPointer("private", "preview", 7L, 66L, true, false),
+                authorityPointer("public-world", "live", 8L, 44L, true, true)));
     Mockito.when(pointerAuthorityService.listPointersByTenant(7L))
         .thenReturn(List.of(authorityPointer("private", "preview", 7L, 66L, true, false)));
     GameSessionGrpcService service = catalogService(pointerAuthorityService);
@@ -976,6 +981,7 @@ class GameSessionGrpcServiceTest {
 
     assertEquals("ADMISSION_POINTER_UNAVAILABLE", response.getError().getCode());
     assertFalse(response.hasAdmissionPointer());
+    Mockito.verify(pointerAuthorityService, Mockito.never()).listPointers();
     Mockito.verify(pointerAuthorityService, Mockito.times(1)).listPointersByTenant(7L);
     Mockito.verify(pointerAuthorityService, Mockito.never())
         .findPointer(Mockito.anyLong(), Mockito.anyString(), Mockito.anyString());
@@ -987,12 +993,10 @@ class GameSessionGrpcServiceTest {
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     GameplayAdmissionPointerSnapshot privateRealm =
         authorityPointer("private", "preview", 7L, 66L, true, false);
-    GameplayAdmissionPointerSnapshot publicRealm =
-        authorityPointer("public-world", "live", 7L, 44L, true, true);
     GameplayAdmissionPointerSnapshot hiddenPublicRealm =
         authorityPointer("public-world", "live", 7L, 44L, false, true);
     Mockito.when(pointerAuthorityService.listPointers())
-        .thenReturn(List.of(privateRealm, publicRealm), List.of(privateRealm, hiddenPublicRealm));
+        .thenReturn(List.of(privateRealm, hiddenPublicRealm));
     Mockito.when(pointerAuthorityService.listPointersByTenant(7L))
         .thenReturn(List.of(privateRealm, hiddenPublicRealm));
     GameSessionGrpcService service = catalogService(pointerAuthorityService);
@@ -1001,7 +1005,7 @@ class GameSessionGrpcServiceTest {
     GetAdmissionPointerResponse pointerResponse =
         getAdmissionPointer(service, "7", "private", "preview");
 
-    assertEquals("INVALID_ARGUMENT", catalogResponse.getError().getCode());
+    assertEquals("ADMISSION_POINTER_UNAVAILABLE", catalogResponse.getError().getCode());
     assertEquals(0, catalogResponse.getRealmsCount());
     assertEquals("ADMISSION_POINTER_UNAVAILABLE", pointerResponse.getError().getCode());
     assertFalse(pointerResponse.hasAdmissionPointer());

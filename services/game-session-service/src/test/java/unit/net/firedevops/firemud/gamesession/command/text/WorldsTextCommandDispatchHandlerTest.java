@@ -15,7 +15,6 @@ import net.firedevops.firemud.account.v1.JoinPublicProductionMembershipResponse;
 import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.DirectTextConnectScopeTarget;
-import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
@@ -34,8 +33,6 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mockito;
 
 class WorldsTextCommandDispatchHandlerTest {
-  private final EntityManagementClient entityManagementClient =
-      Mockito.mock(EntityManagementClient.class);
   private final GameplayCatalogProperties gameplayCatalogProperties =
       new GameplayCatalogProperties();
   private final ScriptEventPublisher scriptEventPublisher =
@@ -123,7 +120,7 @@ class WorldsTextCommandDispatchHandlerTest {
     assertThat(outageResult.commandResult().errorCode()).isEqualTo("AUTH_UNAVAILABLE");
     assertThat(malformedResult.commandResult().errorCode())
         .isEqualTo("ADMISSION_POINTER_UNAVAILABLE");
-    Mockito.verifyNoInteractions(accountClient, entityManagementClient, scriptEventPublisher);
+    Mockito.verifyNoInteractions(accountClient, scriptEventPublisher);
   }
 
   @ParameterizedTest
@@ -146,8 +143,7 @@ class WorldsTextCommandDispatchHandlerTest {
         scopedHandler.handle(worldsRequest(transportSessionId));
 
     assertThat(result.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
-    Mockito.verifyNoInteractions(
-        authorityService, store, entityManagementClient, scriptEventPublisher);
+    Mockito.verifyNoInteractions(authorityService, store, scriptEventPublisher);
   }
 
   @Test
@@ -276,7 +272,6 @@ class WorldsTextCommandDispatchHandlerTest {
             Mockito.anyString());
     Mockito.verify(accountClient, Mockito.never())
         .getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString());
-    Mockito.verifyNoInteractions(entityManagementClient);
     Mockito.verify(scriptEventPublisher)
         .publishCommandEvent(
             Mockito.eq(context),
@@ -332,7 +327,7 @@ class WorldsTextCommandDispatchHandlerTest {
     assertThat(result.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
     assertThat(result.outputs())
         .noneMatch(output -> output.payload() instanceof RealmBrowseViewOutput);
-    Mockito.verifyNoInteractions(accountClient, entityManagementClient, scriptEventPublisher);
+    Mockito.verifyNoInteractions(accountClient, scriptEventPublisher);
   }
 
   @Test
@@ -366,7 +361,7 @@ class WorldsTextCommandDispatchHandlerTest {
 
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("CHARACTER_LIST_UNAVAILABLE");
-    Mockito.verifyNoInteractions(accountClient, entityManagementClient, scriptEventPublisher);
+    Mockito.verifyNoInteractions(accountClient, scriptEventPublisher);
   }
 
   @Test
@@ -411,7 +406,7 @@ class WorldsTextCommandDispatchHandlerTest {
       assertThat(deniedRealm.outputs()).isEqualTo(unknownRealm.outputs());
     }
 
-    Mockito.verifyNoInteractions(accountClient, entityManagementClient, scriptEventPublisher);
+    Mockito.verifyNoInteractions(accountClient, scriptEventPublisher);
   }
 
   @Test
@@ -447,7 +442,7 @@ class WorldsTextCommandDispatchHandlerTest {
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("CHARACTER_LIST_UNAVAILABLE");
     assertThat(result.outputs()).singleElement().extracting(output -> output.payload()).isNotNull();
-    Mockito.verifyNoInteractions(accountClient, entityManagementClient, scriptEventPublisher);
+    Mockito.verifyNoInteractions(accountClient, scriptEventPublisher);
   }
 
   @Test
@@ -1001,6 +996,6 @@ class WorldsTextCommandDispatchHandlerTest {
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("AUTH_UNAVAILABLE");
     Mockito.verify(accountClient).issueDirectTextConnectScope(Mockito.any(), Mockito.any());
-    Mockito.verifyNoInteractions(entityManagementClient, scriptEventPublisher);
+    Mockito.verifyNoInteractions(scriptEventPublisher);
   }
 }
