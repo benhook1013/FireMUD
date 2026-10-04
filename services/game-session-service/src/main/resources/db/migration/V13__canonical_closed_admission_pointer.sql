@@ -40,8 +40,7 @@ ALTER TABLE gameplay_admission_pointer
             AND state_scope IS NOT NULL
             AND character_creation_policy IS NOT NULL
             AND last_updated_by IS NOT NULL
-            AND last_update_reason IS NOT NULL
-            AND ((realm_id IS NULL) = (playable_state_namespace_id IS NULL)))
+            AND last_update_reason IS NOT NULL)
         OR (representation_version = 2
             AND target_namespace IS NOT NULL
             AND canonical_tenant_id IS NOT NULL
@@ -63,6 +62,13 @@ ALTER TABLE gameplay_admission_pointer
             AND last_updated_by IS NULL
             AND last_update_reason IS NULL))
     ,
+    ADD CONSTRAINT gameplay_admission_pointer_identity_pair_complete CHECK (
+        (representation_version = 1
+            AND ((realm_id IS NULL) = (playable_state_namespace_id IS NULL)))
+        OR (representation_version = 2
+            AND realm_id IS NOT NULL
+            AND playable_state_namespace_id IS NULL))
+    ,
     ADD CONSTRAINT chk_gameplay_admission_pointer_canonical_identity CHECK (
         representation_version <> 2
         OR (octet_length(target_namespace) BETWEEN 1 AND 63
@@ -78,8 +84,6 @@ ALTER TABLE gameplay_admission_pointer_event
     ADD COLUMN representation_version integer NOT NULL DEFAULT 1,
     ADD COLUMN target_namespace character varying(63),
     ADD COLUMN canonical_tenant_id uuid,
-    ADD COLUMN realm_id uuid,
-    ADD COLUMN catalog_revision bigint,
     ADD COLUMN admission_state character varying(16);
 
 ALTER TABLE gameplay_admission_pointer_event
@@ -95,12 +99,13 @@ ALTER TABLE gameplay_admission_pointer_event
     ALTER COLUMN character_creation_policy DROP NOT NULL;
 
 ALTER TABLE gameplay_admission_pointer_event
+    DROP CONSTRAINT gameplay_admission_pointer_event_identity_pair_complete;
+
+ALTER TABLE gameplay_admission_pointer_event
     ADD CONSTRAINT chk_gameplay_admission_pointer_event_representation CHECK (
         (representation_version = 1
             AND target_namespace IS NULL
             AND canonical_tenant_id IS NULL
-            AND realm_id IS NULL
-            AND catalog_revision IS NULL
             AND admission_state IS NULL
             AND tenant_id IS NOT NULL
             AND game_instance_id IS NOT NULL
@@ -115,6 +120,7 @@ ALTER TABLE gameplay_admission_pointer_event
             AND target_namespace IS NOT NULL
             AND canonical_tenant_id IS NOT NULL
             AND realm_id IS NOT NULL
+            AND playable_state_namespace_id IS NULL
             AND catalog_revision IS NOT NULL
             AND catalog_revision = 1
             AND admission_state IS NOT NULL
@@ -130,6 +136,13 @@ ALTER TABLE gameplay_admission_pointer_event
             AND state_scope IS NULL
             AND character_creation_policy IS NULL
             AND prepared_version_upgrade_id IS NULL))
+    ,
+    ADD CONSTRAINT gameplay_admission_pointer_event_identity_pair_complete CHECK (
+        (representation_version = 1
+            AND ((realm_id IS NULL) = (playable_state_namespace_id IS NULL)))
+        OR (representation_version = 2
+            AND realm_id IS NOT NULL
+            AND playable_state_namespace_id IS NULL))
     ,
     ADD CONSTRAINT chk_gameplay_admission_pointer_event_canonical_identity CHECK (
         representation_version <> 2
