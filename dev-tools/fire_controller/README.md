@@ -4,9 +4,13 @@ FireController keeps current jobs and handoffs in the same private SQLite databa
 
 The generic entrance provides `jobs …`, `reviews …`, `inbox …` and `map …` under `dev-tools/fire-controller`. Existing `dev-tools/pr-review` and installed project review wrappers continue to work during rollout. Review commands delegate to the existing `pr_review` engine; it is not renamed or duplicated.
 
+For daily use, start with the installed project wrapper's `jobs assigned --worker WORKER` and `jobs read JOB --json`; the latter includes the latest checkpoint and current revision. Use `AREA COMMAND --help` for the relevant options and examples instead of relying on remembered syntax. Installed FireMUD review commands are `firemud-controller reviews …` and `firemud-pr-review …`; their delegated help retains the existing `dev-tools/pr-review` usage label.
+
 ## Project-specific installation
 
 Each project selects its own reviewed checkout through its WSL wrapper (for example `firemud-controller`). A private JSON context contains only absolute `root` and `database` paths and the `repository` owner/name. Pass it through `--context /absolute/project-context.json` or `FIRE_CONTROLLER_CONTEXT`. The wrapper invokes the selected checkout’s `dev-tools/fire-controller`; upgrades are independent per project. There is no project registry, project positional dispatch, tenant service or automatic live promotion.
+
+The FireMUD WSL installation exposes `firemud-controller` and `firemud-pr-review` through stable `/usr/local/bin` symlinks to the existing `~/.local/bin` project entries. This makes the native names available in non-login shells without requiring shell-profile initialization or changing the selected runtime. Verify both names with `--version` and `--help`; refuse to overwrite a different existing installation entry.
 
 ```json
 {
@@ -42,6 +46,8 @@ dev-tools/fire-controller jobs --database /tmp/example-controller.sqlite3 --json
 Primary designation is independent of active/parked/blocked/completed status. A blocked primary stays visible with its blocker. One primary job exists per worker; `--secondary` creates other work without the designation. An explicit `revise … --primary` switches the primary atomically; parking or completing clears it. A checklist item does not force the whole job’s state. `revise` can change current instructions and public fields together. Current-state mutations require `--expect-revision`, so concurrent edits fail clearly rather than overwrite newer instructions. Appended updates, checkpoints and notes do not replace the brief.
 
 Use `read` for the current full brief, relevant pending reminders and latest checkpoint/updates. `assigned` retrieves designated primary jobs by default; `assigned --all-jobs` explicitly includes parked and secondary full briefs. Use the lightweight `list` to select other work before reading it. `list`, `search`, `assigned`, `assign`, `park`, `resume`, `block`, `complete`, `checklist add|change|done`, `history` and `diff` cover the normal lifecycle; consult `--help` for exact options. `history` defaults to a bounded page; `--all` opts into full revision history. Brief versions are stored only when the brief changes, while automatic state revisions and chronological updates remain available. `read --full-history` is explicitly unbounded. A checkpoint supplies context pointers and does not automatically restore an AI chat’s context.
+
+Checkpoint `--pointers` accepts only a JSON object with `branch`, `worktree`, `pr`, `source` and `proof` keys. Values are nonblank strings of at most 1000 characters; `pr` also accepts a positive integer, and null or empty values are omitted. Extra evidence such as exact SHAs or CI results belongs in the checkpoint's `--done`/`--next` prose or the working brief, rather than invented pointer keys. The same allowlist applies when a lane pause/resume writes a combined checkpoint with `--job`, `--done` and `--next`; supplying pointers alone does not write a checkpoint.
 
 ## Deferred reminders and source inputs
 

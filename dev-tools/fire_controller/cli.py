@@ -26,10 +26,10 @@ def _body(args, *, optional=False):
     return None if optional else ""
 
 
-def _body_options(parser):
+def _body_options(parser, *, label="Markdown"):
     group = parser.add_mutually_exclusive_group()
-    group.add_argument("--body", help="Markdown text")
-    group.add_argument("--body-file", help="Markdown file, or - for stdin")
+    group.add_argument("--body", help=f"{label} text")
+    group.add_argument("--body-file", help=f"{label} file, or - for stdin")
 
 
 def _object_file(path, label):
@@ -40,7 +40,12 @@ def _object_file(path, label):
 
 
 def _parser():
-    parser = argparse.ArgumentParser(prog="fire-controller", description=__doc__)
+    parser = argparse.ArgumentParser(
+        prog="fire-controller", description=__doc__,
+        epilog=("Use AREA COMMAND --help for details and examples. Installed FireMUD aliases: "
+                "firemud-controller reviews ... and firemud-pr-review ... use the same review engine. "
+                "Project wrappers select their own context; --context is for the generic entrypoint."),
+    )
     parser.add_argument("--version", action="store_true")
     parser.add_argument("--context", type=Path, default=os.environ.get("FIRE_CONTROLLER_CONTEXT"),
                         help="single-project JSON configuration selected by the project wrapper")
@@ -48,7 +53,10 @@ def _parser():
                         help="worker metadata for unread inbox notices; grants no authority")
     areas = parser.add_subparsers(dest="area")
     areas.add_parser("reviews", help="delegate all following arguments to the existing review engine")
-    jobs = areas.add_parser("jobs", help="local SQLite jobs; never changes review policy")
+    jobs = areas.add_parser(
+        "jobs", help="local SQLite jobs; never changes review policy",
+        description="Read assigned work with assigned/read; revise standing instructions and write checkpoints explicitly.",
+    )
     jobs.add_argument("--database", type=Path, help="explicit controller SQLite path; required without --context")
     jobs.add_argument("--json", action="store_true", help="structured output for agents")
     commands = jobs.add_subparsers(dest="command", required=True)
@@ -56,45 +64,70 @@ def _parser():
     create = commands.add_parser("create", help="create a job and its initial working brief")
     create.add_argument("name")
     create.add_argument("--worker", required=True)
-    create.add_argument("--title", required=True)
+    create.add_argument("--title", required=True, help="public standing-job title")
     create.add_argument("--status", choices=["active", "parked", "blocked", "completed"], default="active")
-    create.add_argument("--summary", default="")
-    create.add_argument("--progress", default="")
-    create.add_argument("--blocker", default="")
+    create.add_argument("--summary", default="", help="public high-level assignment")
+    create.add_argument("--progress", default="", help="public current next step")
+    create.add_argument("--blocker", default="", help="public blocker")
     create.add_argument("--chat-id")
     create.add_argument("--workstream-id", help="curated project-map track association")
     create.add_argument("--secondary", action="store_true", help="create without the primary designation")
     create.add_argument("--checklist", type=json.loads, default=[])
-    _body_options(create)
+    _body_options(create, label="Private working brief (Markdown)")
     for name in ("list", "assigned", "search", "public-export"):
-        command = commands.add_parser(name)
-        command.add_argument("--worker")
+        description = {
+            "list": "List lightweight job state before selecting a job to read.",
+            "assigned": "Read designated primary jobs with full briefs and latest checkpoints by default.",
+            "search": "Search public job fields before selecting a job to read.",
+            "public-export": "Export only allowlisted public job fields; excludes working briefs and checkpoints.",
+        }[name]
+        command = commands.add_parser(name, help=description, description=description)
+        command.add_argument("--worker", help="exact worker name or alias")
         command.add_argument("--status", choices=["active", "parked", "blocked", "completed"])
         command.add_argument("--workstream-id", help="select associated project-map track")
         command.add_argument("--primary", action="store_true", help="select designated primary jobs")
         if name == "assigned":
             command.add_argument("--all-jobs", action="store_true", help="include secondary and parked jobs with full briefs")
+            command.epilog = "Example: firemud-controller jobs assigned --worker General --json"
+            command.formatter_class = argparse.RawDescriptionHelpFormatter
         if name == "search":
             command.add_argument("query")
-    read = commands.add_parser("read", help="current brief, notes, checkpoint and newest updates")
-    read.add_argument("job")
-    read.add_argument("--latest", type=int, default=10)
-    read.add_argument("--full-history", action="store_true")
+    read = commands.add_parser(
+        "read", help="current brief, notes, checkpoint and newest updates",
+        description="Read the full current brief, latest checkpoint, relevant notes and current revision without writing.",
+        epilog="Example: firemud-controller jobs read current-general --json",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    read.add_argument("job", help="stable job ID or exact friendly name")
+    read.add_argument("--latest", type=int, default=10,
+                      help="maximum newest updates to include (default: 10); does not limit the brief or latest checkpoint")
+    read.add_argument("--full-history", action="store_true",
+                      help="include all updates, checkpoints and notes without the usual history bounds")
     for name in ("revise", "assign", "park", "resume", "complete", "block"):
-        command = commands.add_parser(name, help="change current state with a revision guard")
-        command.add_argument("job")
-        command.add_argument("--expect-revision", type=int, required=True)
+        command = commands.add_parser(
+            name, help="change current state with a revision guard",
+            description="Change job state with a revision guard; omitted text fields retain their current values.",
+        )
+        command.add_argument("job", help="stable job ID or exact friendly name")
+        command.add_argument("--expect-revision", type=int, required=True,
+                             help="current revision returned by jobs read; stale revisions are refused")
         command.add_argument("--worker", required=name == "assign")
-        command.add_argument("--title")
-        command.add_argument("--summary")
-        command.add_argument("--progress")
-        command.add_argument("--blocker")
-        command.add_argument("--chat-id")
+        command.add_argument("--title", help="public standing-job title")
+        command.add_argument("--summary", help="public high-level assignment")
+        command.add_argument("--progress", help="public current next step")
+        command.add_argument("--blocker", help="public blocker")
+        command.add_argument("--chat-id", help="private chat context pointer")
         command.add_argument("--workstream-id")
         command.add_argument("--status", choices=["active", "parked", "blocked", "completed"])
         command.add_argument("--primary", action="store_true", default=None, help="explicitly switch the worker primary job")
-        command.add_argument("--checklist", type=json.loads)
-        _body_options(command)
+        command.add_argument("--checklist", type=json.loads, help="JSON checklist; selected item text is public")
+        _body_options(command, label="Private working brief (Markdown)")
+        if name == "revise":
+            command.epilog = (
+                "Read the job first, then use its revision in --expect-revision. Example if revision is 1: "
+                "firemud-controller jobs revise current-general --expect-revision 1 --body-file /tmp/revised-brief.md"
+            )
+            command.formatter_class = argparse.RawDescriptionHelpFormatter
     update = commands.add_parser("update", help="append a meaningful update without replacing the brief")
     update.add_argument("job")
     update.add_argument("--kind", default="progress")
@@ -105,23 +138,39 @@ def _parser():
     checklist.add_argument("--expect-revision", type=int, required=True)
     checklist.add_argument("--item-id")
     checklist.add_argument("--text")
-    checkpoint = commands.add_parser("checkpoint", help="record done/next/blocker and handoff pointers")
-    checkpoint.add_argument("job")
-    checkpoint.add_argument("--done", required=True)
-    checkpoint.add_argument("--next", dest="next_steps", required=True)
-    checkpoint.add_argument("--blocker", default="")
-    checkpoint.add_argument("--pointers", type=json.loads, default={})
-    history = commands.add_parser("history", help="list/show/search automatic revisions")
-    history.add_argument("job")
-    history.add_argument("--revision", type=int)
+    pointer_help = (
+        "JSON object; allowed keys: branch, worktree, pr, source, proof. "
+        "Values are nonblank strings up to 1000 characters; pr also accepts a positive integer. "
+        "Null/empty values are ignored. Put extra head/CI evidence in checkpoint prose."
+    )
+    checkpoint = commands.add_parser(
+        "checkpoint", help="write a private done/next/blocker checkpoint",
+        description="Write a private checkpoint without replacing the working brief. Use jobs read to retrieve the latest checkpoint.",
+        epilog=("Example: firemud-controller jobs checkpoint current-general --done 'Focused proof' "
+                "--next 'Handover' --pointers '{\"branch\":\"codex/example\",\"proof\":\"focused test\"}'"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    checkpoint.add_argument("job", help="stable job ID or exact friendly name")
+    checkpoint.add_argument("--done", required=True, help="private completed-work summary")
+    checkpoint.add_argument("--next", dest="next_steps", required=True, help="private resume or handoff next step")
+    checkpoint.add_argument("--blocker", default="", help="private checkpoint blocker")
+    checkpoint.add_argument("--pointers", type=json.loads, default={}, help=pointer_help)
+    history = commands.add_parser(
+        "history", help="list/show/search automatic revisions",
+        description="Read automatic job state revisions; a bounded page is returned by default.",
+        epilog="Example: firemud-controller jobs history current-general --revision 1 --json",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    history.add_argument("job", help="stable job ID or exact friendly name")
+    history.add_argument("--revision", type=int, help="show one exact state revision and its brief")
     history.add_argument("--search")
-    history.add_argument("--limit", type=int, default=50)
+    history.add_argument("--limit", type=int, default=50, help="maximum revisions per page (default: 50)")
     history.add_argument("--offset", type=int, default=0)
-    history.add_argument("--all", action="store_true")
-    diff = commands.add_parser("diff")
-    diff.add_argument("job")
-    diff.add_argument("old", type=int)
-    diff.add_argument("new", type=int)
+    history.add_argument("--all", action="store_true", help="read full unbounded revision history")
+    diff = commands.add_parser("diff", help="compare two recorded job revisions")
+    diff.add_argument("job", help="stable job ID or exact friendly name")
+    diff.add_argument("old", type=int, help="older state revision number")
+    diff.add_argument("new", type=int, help="newer state revision number")
     note = commands.add_parser("note", help="deferred reminder or source input")
     note.add_argument("--worker")
     note.add_argument("--job")
@@ -160,15 +209,26 @@ def _parser():
     lanes = commands.add_parser("lanes", help="derived public worker activity and explicit pauses")
     lanes.add_argument("--worker", action="append", help="select aliases; repeat for multiple workers")
     for action in ("lane-pause", "lane-resume"):
-        lane = commands.add_parser(action, help="explicitly pause/resume a worker; jobs never override a pause")
-        lane.add_argument("worker")
+        description = (
+            "Explicitly pause a worker lane; job changes do not clear the pause."
+            if action == "lane-pause" else
+            "Explicitly clear a worker lane pause; does not change job status or review policy."
+        )
+        lane = commands.add_parser(action, help=description, description=description)
+        lane.add_argument("worker", help="exact worker name or alias")
         lane.add_argument("--job", help="optional job for a combined update/checkpoint")
         if action == "lane-pause":
             lane.add_argument("--reason", default="", help="short public pause explanation")
-        lane.add_argument("--done")
-        lane.add_argument("--next", dest="next_steps")
+        lane.add_argument("--done", help="private checkpoint summary; requires --job and --next")
+        lane.add_argument("--next", dest="next_steps", help="private checkpoint next step; requires --job and --done")
         lane.add_argument("--blocker", default="")
-        lane.add_argument("--pointers", type=json.loads, default={})
+        lane.add_argument("--pointers", type=json.loads, default={}, help=pointer_help)
+        lane.epilog = (
+            f"Example: firemud-controller jobs {action} General"
+            + (" --reason 'Paused for handoff'" if action == "lane-pause" else "")
+            + "\nOptional pointers accompany --job JOB --done TEXT --next TEXT; they do not create a checkpoint alone."
+        )
+        lane.formatter_class = argparse.RawDescriptionHelpFormatter
         _body_options(lane)
     for command_parser in commands.choices.values():
         command_parser.add_argument("--json", action="store_true", default=argparse.SUPPRESS,
@@ -180,21 +240,37 @@ def _parser():
     inbox.add_argument("--json", action="store_true")
     inbox_commands = inbox.add_subparsers(dest="command", required=True)
     inbox_commands.add_parser("bootstrap")
-    send = inbox_commands.add_parser("send")
-    send.add_argument("recipient")
+    send = inbox_commands.add_parser(
+        "send", help="store a private message without waking the recipient",
+        description="Store a private message; does not wake the recipient or complete work.",
+        epilog=("Example: firemud-controller --worker-identity General inbox send Overseer "
+                "--body 'The isolated proof is ready.'"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    send.add_argument("recipient", help="exact recipient worker name or alias")
     send.add_argument("--author", help="supplied metadata, not human permission")
     send.add_argument("--job")
     send.add_argument("--pr", type=int)
     send.add_argument("--reply-to")
     _body_options(send)
-    messages = inbox_commands.add_parser("list")
+    messages = inbox_commands.add_parser(
+        "list", help="list messages without marking them seen",
+        description="List private messages without changing seen or acknowledged state.",
+        epilog="Example: firemud-controller --worker-identity General inbox list --unread --json",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     messages.add_argument("--worker", help="recipient; defaults to configured worker identity")
     messages.add_argument("--unread", action="store_true")
     messages.add_argument("--limit", type=int, default=50)
     messages.add_argument("--offset", type=int, default=0)
     for action in ("read", "ack"):
-        message = inbox_commands.add_parser(action)
-        message.add_argument("message_id")
+        description = (
+            "Return a private message and mark it seen; does not acknowledge handling or complete a job."
+            if action == "read" else
+            "Mark a private message acknowledged and seen; records handling, not job completion."
+        )
+        message = inbox_commands.add_parser(action, help=description, description=description)
+        message.add_argument("message_id", help="message ID returned by inbox list or send")
         message.add_argument("--worker", help="optional recipient selector, not authentication")
     for command_parser in inbox_commands.choices.values():
         command_parser.add_argument("--database", type=Path, default=argparse.SUPPRESS)
