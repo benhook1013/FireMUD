@@ -82,6 +82,9 @@ class AccountClientTest {
         .extracting(ListPresenceVisibilityPoliciesRequest::getAccountIdsCount)
         .containsExactly(100, 1);
     assertThat(requests.getAllValues())
+        .extracting(request -> List.copyOf(request.getAccountIdsList()))
+        .containsExactly(accountIds.subList(0, 100), accountIds.subList(100, 101));
+    assertThat(requests.getAllValues())
         .extracting(ListPresenceVisibilityPoliciesRequest::getTenantId)
         .containsOnly("11");
   }
