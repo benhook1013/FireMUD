@@ -19,6 +19,8 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 
 class HttpJwtAuthInterceptorTest {
+  private static final String ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
+
   private final JwtUtil jwtUtil = new JwtUtil("testsecretkeytestsecretkeytest1234", 3600000L);
 
   @AfterEach
@@ -78,8 +80,8 @@ class HttpJwtAuthInterceptorTest {
         new HttpJwtAuthInterceptor(jwtUtil, authenticatedProperties());
     String token =
         jwtUtil.generateToken(
-            "user",
-            Map.of("accountId", "user", "scopedRoles", Map.of("7", List.of("tenantAdmin"))));
+            ACCOUNT_ID,
+            Map.of("accountId", ACCOUNT_ID, "scopedRoles", Map.of("7", List.of("tenantAdmin"))));
     MockHttpServletRequest request = new MockHttpServletRequest();
     request.addHeader(HttpHeaders.AUTHORIZATION, "Bearer " + token);
     MockHttpServletResponse response = new MockHttpServletResponse();
@@ -87,7 +89,7 @@ class HttpJwtAuthInterceptorTest {
     boolean result = interceptor.preHandle(request, response, new Object());
 
     assertTrue(result);
-    assertEquals("user", SessionContext.getAccountId());
+    assertEquals(ACCOUNT_ID, SessionContext.getAccountId());
     assertEquals(List.of("tenantAdmin"), SessionContext.getScopedRoles("7"));
     interceptor.afterCompletion(request, response, new Object(), null);
     assertTrue(SessionContext.getGlobalRoles().isEmpty());
@@ -97,7 +99,7 @@ class HttpJwtAuthInterceptorTest {
   void privilegedModeRejectsNonPrivilegedCaller() throws Exception {
     HttpJwtAuthInterceptor interceptor =
         new HttpJwtAuthInterceptor(jwtUtil, privilegedProperties());
-    String token = jwtUtil.generateToken("user", Map.of("accountId", "user"));
+    String token = jwtUtil.generateToken(ACCOUNT_ID, Map.of("accountId", ACCOUNT_ID));
     MockHttpServletRequest request = new MockHttpServletRequest();
     request.addHeader(HttpHeaders.AUTHORIZATION, "Bearer " + token);
     MockHttpServletResponse response = new MockHttpServletResponse();
@@ -140,10 +142,10 @@ class HttpJwtAuthInterceptorTest {
         new HttpJwtAuthInterceptor(jwtUtil, authenticatedProperties());
     String token =
         jwtUtil.generateToken(
-            "user",
+            ACCOUNT_ID,
             Map.of(
                 "accountId",
-                "user",
+                ACCOUNT_ID,
                 "globalRoles",
                 "platformAdmin",
                 "scopedRoles",

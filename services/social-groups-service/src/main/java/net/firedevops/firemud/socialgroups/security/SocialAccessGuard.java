@@ -14,14 +14,13 @@ public class SocialAccessGuard {
   }
 
   public boolean hasAccountAccess(long tenantId, long accountId) {
-    return SessionContext.hasTenantAccess(tenantId) || isCurrentAccount(accountId);
+    // Social still exposes legacy numeric account selectors. They cannot prove self access under
+    // the canonical Account UUID identity contract, so only the existing tenant-role gate applies
+    // until Social's account UUID migration is complete.
+    return accountId > 0L && SessionContext.hasTenantAccess(tenantId);
   }
 
   public void requireTenantAccess(long tenantId) {
     SessionContext.requireTenantAccess(tenantId);
-  }
-
-  private boolean isCurrentAccount(long accountId) {
-    return SessionContext.isCurrentAccount(accountId);
   }
 }

@@ -3182,7 +3182,12 @@ class ScriptEventIngressServiceImplTest {
   @Test
   void dryRunBudgetDenialStopsBeforeHandlerResolution() {
     SessionContext.setContext(
-        "41", List.of("platformAdmin"), Map.of(), true, "game-session-service", "gs-1");
+        "018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a",
+        List.of("platformAdmin"),
+        Map.of(),
+        true,
+        "game-session-service",
+        "gs-1");
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
     stubClaimRepository(repository);
@@ -3202,7 +3207,9 @@ class ScriptEventIngressServiceImplTest {
                         .setScriptPatchPinnedControlPlaneRequestId("pin-request-1")
                         .build())
                 .build());
-    when(dryRunQuotaService.tryAcquire("1", "script-1", "account:41")).thenReturn(false);
+    when(dryRunQuotaService.tryAcquire(
+            "1", "script-1", "account:018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a"))
+        .thenReturn(false);
     ScriptEventBindingRepository bindingRepository =
         Mockito.mock(ScriptEventBindingRepository.class);
     ScriptEventIngressService service =

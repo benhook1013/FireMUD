@@ -97,20 +97,33 @@ class ProfileControllerTest {
   @Test
   void getProfileRejectsCrossTenantScopedAdmin() throws Exception {
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
+        jwtUtil.generateToken(
+            OTHER_ACCOUNT_UUID,
+            Map.of(
+                "accountId",
+                OTHER_ACCOUNT_UUID,
+                "scopedRoles",
+                Map.of("8", List.of("tenantAdmin"))));
     mockMvc
         .perform(
             get("/profiles/" + ACCOUNT_UUID)
                 .param("tenantId", "1")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isForbidden());
+
+    verifyNoInteractions(accountService);
   }
 
   @Test
   void getProfileRejectsSameTenantAdminForAnotherAccount() throws Exception {
     String token =
         jwtUtil.generateToken(
-            OTHER_ACCOUNT_UUID, Map.of("scopedRoles", Map.of("1", List.of("tenantAdmin"))));
+            OTHER_ACCOUNT_UUID,
+            Map.of(
+                "accountId",
+                OTHER_ACCOUNT_UUID,
+                "scopedRoles",
+                Map.of("1", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(
@@ -125,7 +138,9 @@ class ProfileControllerTest {
   @Test
   void getProfileRejectsGlobalAdminForAnotherAccount() throws Exception {
     String token =
-        jwtUtil.generateToken(OTHER_ACCOUNT_UUID, Map.of("globalRoles", List.of("platformAdmin")));
+        jwtUtil.generateToken(
+            OTHER_ACCOUNT_UUID,
+            Map.of("accountId", OTHER_ACCOUNT_UUID, "globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -146,7 +161,7 @@ class ProfileControllerTest {
             get("/profiles/" + ACCOUNT_UUID)
                 .param("tenantId", "1")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
-        .andExpect(status().isForbidden());
+        .andExpect(status().isUnauthorized());
 
     verifyNoInteractions(accountService);
   }
@@ -170,7 +185,9 @@ class ProfileControllerTest {
   @Test
   void getProfileRejectsMalformedAccountIdBeforeDispatch() throws Exception {
     String token =
-        jwtUtil.generateToken(OTHER_ACCOUNT_UUID, Map.of("globalRoles", List.of("platformAdmin")));
+        jwtUtil.generateToken(
+            OTHER_ACCOUNT_UUID,
+            Map.of("accountId", OTHER_ACCOUNT_UUID, "globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -187,7 +204,9 @@ class ProfileControllerTest {
   @Test
   void getProfileRejectsZeroTenantIdBeforeDispatch() throws Exception {
     String token =
-        jwtUtil.generateToken(OTHER_ACCOUNT_UUID, Map.of("globalRoles", List.of("platformAdmin")));
+        jwtUtil.generateToken(
+            OTHER_ACCOUNT_UUID,
+            Map.of("accountId", OTHER_ACCOUNT_UUID, "globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -310,7 +329,12 @@ class ProfileControllerTest {
             1L, ACCOUNT_UUID, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE);
     String token =
         jwtUtil.generateToken(
-            OTHER_ACCOUNT_UUID, Map.of("scopedRoles", Map.of("1", List.of("tenantAdmin"))));
+            OTHER_ACCOUNT_UUID,
+            Map.of(
+                "accountId",
+                OTHER_ACCOUNT_UUID,
+                "scopedRoles",
+                Map.of("1", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(
@@ -329,7 +353,9 @@ class ProfileControllerTest {
         new UpdateProfileRequest(
             1L, ACCOUNT_UUID, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE);
     String token =
-        jwtUtil.generateToken(OTHER_ACCOUNT_UUID, Map.of("globalRoles", List.of("platformAdmin")));
+        jwtUtil.generateToken(
+            OTHER_ACCOUNT_UUID,
+            Map.of("accountId", OTHER_ACCOUNT_UUID, "globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -347,7 +373,10 @@ class ProfileControllerTest {
     UpdateProfileRequest req =
         new UpdateProfileRequest(
             1L, ACCOUNT_UUID, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE);
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token =
+        jwtUtil.generateToken(
+            ACCOUNT_UUID,
+            Map.of("accountId", ACCOUNT_UUID, "globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(

@@ -44,6 +44,7 @@ import tools.jackson.databind.ObjectMapper;
 })
 @WithFiremudHttpAuthTestProperties
 class FriendControllerTest {
+  private static final String ACCOUNT_UUID = "c41744c9-285e-4ed0-9fb4-0f0acb7a0123";
 
   @Autowired private MockMvc mockMvc;
   @Autowired private JwtUtil jwtUtil;
@@ -58,7 +59,7 @@ class FriendControllerTest {
     FriendLinkDto response = new FriendLinkDto(1L, 1L, 2L, 3L, "active", null);
     when(friendService.addFriend(request)).thenReturn(response);
 
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token = accountToken();
     mockMvc
         .perform(
             post("/friends")
@@ -77,7 +78,7 @@ class FriendControllerTest {
         .thenThrow(
             new IllegalArgumentException("Cannot add or remove your own account as a friend"));
 
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token = accountToken();
     mockMvc
         .perform(
             post("/friends")
@@ -94,7 +95,7 @@ class FriendControllerTest {
   @Test
   void addFriendRejectsZeroTenantIdBeforeAccessCheck() throws Exception {
     AddFriendRequest request = new AddFriendRequest(0L, 2L, 3L);
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token = accountToken();
 
     mockMvc
         .perform(
@@ -112,7 +113,7 @@ class FriendControllerTest {
 
   @Test
   void removeFriendReturnsSuccess() throws Exception {
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token = accountToken();
     mockMvc
         .perform(
             delete("/friends/3")
@@ -125,7 +126,7 @@ class FriendControllerTest {
 
   @Test
   void removeFriendRejectsSelfLinkAsBadRequest() throws Exception {
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token = accountToken();
     org.mockito.Mockito.doThrow(
             new IllegalArgumentException("Cannot add or remove your own account as a friend"))
         .when(friendService)
@@ -146,7 +147,7 @@ class FriendControllerTest {
 
   @Test
   void removeFriendRejectsMalformedFriendAccountIdBeforeAccessCheck() throws Exception {
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token = accountToken();
 
     mockMvc
         .perform(
@@ -190,7 +191,7 @@ class FriendControllerTest {
                         null,
                         null))));
 
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token = accountToken();
     mockMvc
         .perform(
             get("/friends/3")
@@ -233,7 +234,7 @@ class FriendControllerTest {
                         null,
                         null))));
 
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token = accountToken();
     mockMvc
         .perform(
             get("/friends/entry/1")
@@ -248,7 +249,7 @@ class FriendControllerTest {
 
   @Test
   void getFriendByOrdinalRejectsMalformedOrdinalBeforeAccessCheck() throws Exception {
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token = accountToken();
 
     mockMvc
         .perform(
@@ -287,7 +288,7 @@ class FriendControllerTest {
                         null,
                         null))));
 
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token = accountToken();
     mockMvc
         .perform(
             get("/friends/presence")
@@ -311,7 +312,7 @@ class FriendControllerTest {
     when(friendService.getFriendPresencePolicy(1L, 2L))
         .thenReturn(new FriendPresencePolicyViewDto(FriendPresenceVisibilityPolicyValue.PRIVATE));
 
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token = accountToken();
     mockMvc
         .perform(
             get("/friends/visibility")
@@ -325,7 +326,7 @@ class FriendControllerTest {
 
   @Test
   void getFriendPresencePolicyRejectsMalformedAccountIdBeforeAccessCheck() throws Exception {
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token = accountToken();
 
     mockMvc
         .perform(
@@ -350,7 +351,7 @@ class FriendControllerTest {
         .thenReturn(
             new FriendPresencePolicyViewDto(FriendPresenceVisibilityPolicyValue.FRIENDS_ONLY));
 
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token = accountToken();
     mockMvc
         .perform(
             put("/friends/visibility")
@@ -373,7 +374,7 @@ class FriendControllerTest {
             new IllegalArgumentException(
                 "Friend presence visibility policy HIDDEN_STAFF is reserved"));
 
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token = accountToken();
     mockMvc
         .perform(
             put("/friends/visibility")
@@ -421,7 +422,7 @@ class FriendControllerTest {
                             null,
                             null)))));
 
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token = accountToken();
     mockMvc
         .perform(
             get("/friends")
@@ -442,7 +443,7 @@ class FriendControllerTest {
 
   @Test
   void listFriendsRejectsZeroTenantIdBeforeAccessCheck() throws Exception {
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token = accountToken();
 
     mockMvc
         .perform(
@@ -462,7 +463,7 @@ class FriendControllerTest {
     when(friendService.getFriendRosterSummary(1L, 2L))
         .thenReturn(new FriendRosterSummaryDto(4, 1, 3, 2, 1, 2, 1, 0, 0, 2, 1, 1));
 
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token = accountToken();
     mockMvc
         .perform(
             get("/friends/summary")
@@ -502,7 +503,7 @@ class FriendControllerTest {
                         3L, false, null, null, null, null, null, null, null, null, null, null, null,
                         null, null))));
 
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token = accountToken();
     mockMvc
         .perform(
             delete("/friends/entry/1")
@@ -516,7 +517,7 @@ class FriendControllerTest {
 
   @Test
   void removeFriendByOrdinalRejectsMalformedOrdinalBeforeAccessCheck() throws Exception {
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token = accountToken();
 
     mockMvc
         .perform(
@@ -529,5 +530,10 @@ class FriendControllerTest {
         .andExpect(jsonPath("$.error.message").value("ordinal must be numeric"));
 
     verifyNoInteractions(friendService, socialAccessGuard);
+  }
+
+  private String accountToken() {
+    return jwtUtil.generateToken(
+        ACCOUNT_UUID, Map.of("accountId", ACCOUNT_UUID, "globalRoles", List.of()));
   }
 }
