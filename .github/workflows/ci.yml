@@ -1455,6 +1455,29 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+      - name: Run Game Session canonical launch preparation PostgreSQL component proof
+        if: ${{ matrix.module == 'game-session-service' }}
+        run: |
+          ./gradlew :game-session-service:integrationTest \
+            --tests integration.net.firedevops.firemud.gamesession.service.GameSessionCanonicalLaunchPreparationServiceIntegrationTest \
+            -PfullCheck --no-build-cache --no-configuration-cache
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.gamesession.service.GameSessionCanonicalLaunchPreparationServiceIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.gamesession.service.GameSessionCanonicalLaunchPreparationServiceIntegrationTest#commitsExactFreshSourceCatalogAndSyntheticDescriptorThenReplaysWithoutChangingRetainedRows()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.service.GameSessionCanonicalLaunchPreparationServiceIntegrationTest#ownerRollbackLeavesNoPartialPreparationAndImmutableRowsRejectMutation()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.service.GameSessionCanonicalLaunchPreparationServiceIntegrationTest#concurrentExactPreparationsReturnOneImmutableOperation()' \
+            game-session-service
+
+      - name: Upload Game Session canonical launch preparation PostgreSQL proof results
+        if: ${{ always() && matrix.module == 'game-session-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: game-session-canonical-launch-preparation-postgresql-proof-${{ github.sha }}
+          path: services/game-session-service/build/test-results/integrationTest/TEST-*GameSessionCanonicalLaunchPreparationServiceIntegrationTest.xml
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Run Game Session canonical CLOSED pointer PostgreSQL component proof
         if: ${{ matrix.module == 'game-session-service' }}
         run: |
