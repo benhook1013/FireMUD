@@ -2490,13 +2490,17 @@ class WorldsCommandHandlerTest {
         .getRealms()
         .getFirst()
         .setPublicProductionRealm(true);
+    AccountClient accountClient = Mockito.mock(AccountClient.class);
+    WorldsCommandHandler localHandler =
+        authenticatedHandler(gameplayCatalogProperties, accountClient);
 
     WorldsCommandHandler.CharacterBrowseResult result =
-        handler.browseCharacters(
+        localHandler.browseCharacters(
             new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt"),
             "demo",
             "production");
 
     assertThat(result).isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.Unavailable.class);
+    Mockito.verifyNoInteractions(accountClient);
   }
 }
