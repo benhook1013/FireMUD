@@ -4,6 +4,7 @@ import io.grpc.Server;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.stub.StreamObserver;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -61,6 +62,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
   private final AtomicLong defaultAccountId = new AtomicLong(1L);
   private final AtomicLong nextConnectScopeId = new AtomicLong(1L);
   private final Map<String, Long> accountIdsByEmail = new ConcurrentHashMap<>();
+  private final Map<String, Long> accountIdsByUuid = new ConcurrentHashMap<>();
   private final Map<Long, StubProfile> profilesByAccountId = new ConcurrentHashMap<>();
   private final Map<String, StubConnectScope> connectScopesById = new ConcurrentHashMap<>();
 
@@ -84,8 +86,19 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     defaultAccountId.set(accountId);
   }
 
+  /** Returns the stable UUID used by this fake for a numeric test account key. */
+  public static String accountUuidForTestFixture(long accountId) {
+    if (accountId <= 0L) {
+      throw new IllegalArgumentException("accountId must be positive");
+    }
+    return UUID.nameUUIDFromBytes(
+            ("firemud-test-account:" + accountId).getBytes(StandardCharsets.UTF_8))
+        .toString();
+  }
+
   public void mapAccountId(String email, long accountId) {
     accountIdsByEmail.put(EmailCanonicalization.normalize(email), accountId);
+    accountIdsByUuid.put(accountUuidForTestFixture(accountId), accountId);
   }
 
   public void setPresenceVisibilityPolicy(long accountId, String visibilityPolicy) {
@@ -137,6 +150,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     allowPublicJoin.set(true);
     realmAccessGranted.set(true);
     profilesByAccountId.clear();
+    accountIdsByUuid.clear();
     connectScopesById.clear();
   }
 
@@ -153,9 +167,11 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     String canonicalEmail = EmailCanonicalization.normalize(request.getEmail());
     long accountId = accountIdsByEmail.getOrDefault(canonicalEmail, defaultAccountId.get());
     profilesByAccountId.computeIfAbsent(accountId, StubProfile::defaultFor);
+    String accountUuid = accountUuidForTestFixture(accountId);
+    accountIdsByUuid.put(accountUuid, accountId);
     responseObserver.onNext(
         AuthenticateResponse.newBuilder()
-            .setAccountId(Long.toString(accountId))
+            .setAccountId(accountUuid)
             .setAuthToken("stub-token-" + accountId)
             .build());
     responseObserver.onCompleted();
@@ -338,7 +354,15 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
   @Override
   public void getProfile(
       GetProfileRequest request, StreamObserver<GetProfileResponse> responseObserver) {
-    long accountId = Long.parseLong(request.getAccountId());
+    Long accountId = resolveRegisteredAccountId(request.getAccountId());
+    if (accountId == null) {
+      responseObserver.onNext(
+          GetProfileResponse.newBuilder()
+              .setError(ErrorDetail.newBuilder().setCode("ACCOUNT_NOT_FOUND"))
+              .build());
+      responseObserver.onCompleted();
+      return;
+    }
     StubProfile profile = profilesByAccountId.computeIfAbsent(accountId, StubProfile::defaultFor);
     try {
       responseObserver.onNext(
@@ -359,7 +383,15 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
   public void updateProfile(
       UpdateProfileRequest request, StreamObserver<UpdateProfileResponse> responseObserver) {
     try {
-      long accountId = Long.parseLong(request.getAccountId());
+      Long accountId = resolveRegisteredAccountId(request.getAccountId());
+      if (accountId == null) {
+        responseObserver.onNext(
+            UpdateProfileResponse.newBuilder()
+                .setError(ErrorDetail.newBuilder().setCode("ACCOUNT_NOT_FOUND"))
+                .build());
+        responseObserver.onCompleted();
+        return;
+      }
       AccountProfileJson profile =
           AccountProfileJson.parse(request.getProfileJson(), StubProfile.DEFAULT_VISIBILITY_POLICY);
       StubProfile existing =
@@ -377,6 +409,18 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     } catch (Exception ex) {
       responseObserver.onNext(UpdateProfileResponse.newBuilder().setSuccess(false).build());
       responseObserver.onCompleted();
+    }
+  }
+
+  private Long resolveRegisteredAccountId(String accountUuid) {
+    try {
+      UUID parsed = UUID.fromString(accountUuid);
+      if (parsed.equals(new UUID(0L, 0L)) || !parsed.toString().equals(accountUuid)) {
+        return null;
+      }
+      return accountIdsByUuid.get(accountUuid);
+    } catch (IllegalArgumentException ex) {
+      return null;
     }
   }
 
