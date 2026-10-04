@@ -6,7 +6,9 @@ import html
 import json
 import posixpath
 import re
+from datetime import datetime
 from urllib.parse import parse_qs, quote, unquote, urlsplit
+from zoneinfo import ZoneInfo
 
 from .context import worker_alias as _worker_alias
 
@@ -25,6 +27,7 @@ _MARKDOWN_TOKEN = re.compile(
 )
 _CHECKLIST_ITEM = re.compile(r"^\s*(?:[-*+]\s+|\d+\.\s+)(.*)$")
 _HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
+_LOCAL_TIMEZONE = ZoneInfo("Pacific/Auckland")
 
 
 
@@ -361,6 +364,21 @@ def _private_document(title: str, content: str) -> str:
     )
 
 
+def _time_metadata(value) -> str:
+    """Render a validated ISO timestamp as an NZ-local time with machine-readable source."""
+
+    timestamp = str(value or "")
+    try:
+        parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            return html.escape(timestamp, quote=True)
+        local = parsed.astimezone(_LOCAL_TIMEZONE)
+        display = local.strftime("%d %b %Y %H:%M %Z").lstrip("0")
+    except (ValueError, OverflowError):
+        return html.escape(timestamp, quote=True)
+    return f'<time datetime="{html.escape(timestamp, quote=True)}">{html.escape(display, quote=True)}</time>'
+
+
 def _field(label: str, value) -> str:
     if not isinstance(value, str) or not value:
         return ""
@@ -427,7 +445,7 @@ def render_job(job, history=False) -> str:
             content.append(
                 '<article class="job-update"><div class="job-update-head">'
                 f'<strong>{html.escape(str(update.get("kind", "update")), quote=True)}</strong>'
-                f'<time>{html.escape(str(update.get("created_at", "")), quote=True)}</time></div>'
+                f'{_time_metadata(update.get("created_at", ""))}</div>'
                 f'{_markdown(update.get("body", ""))}</article>'
             )
     else:
@@ -460,7 +478,7 @@ def _render_history(data: dict) -> str:
         revision = entry.get("revision", "?")
         body = [
             f'<article class="job-history-entry"><h1>{name} · Revision {html.escape(str(revision), quote=True)}</h1>',
-            f'<p>{html.escape(str(entry.get("created_at", "")), quote=True)}</p>',
+            f'<p>{_time_metadata(entry.get("created_at", ""))}</p>',
         ]
         body.append(
             f'<p class="job-state">{html.escape(str(entry.get("status", "")), quote=True)} · '
@@ -488,7 +506,7 @@ def _render_history(data: dict) -> str:
             revision_url = f"/jobs/{job_id}/history?revision={quote(str(revision), safe='')}"
             content.append(
                 f'<li><a href="{revision_url}">Revision {html.escape(str(revision), quote=True)}</a>'
-                f' · {html.escape(str(row.get("created_at", "")), quote=True)}'
+                f' · {_time_metadata(row.get("created_at", ""))}'
                 f' · {html.escape(str(row.get("status", "")), quote=True)}'
                 f' · {html.escape(str(row.get("title", "")), quote=True)}</li>'
             )
@@ -536,7 +554,7 @@ def render_workstream(record: dict, notes=(), history=False) -> str:
                 revision = html.escape(str(item.get("revision", "?")), quote=True)
                 entries.append(
                     f'<article class="job-history-entry"><h2>Revision {revision}</h2>'
-                    f'<time>{html.escape(str(item.get("created_at", "")), quote=True)}</time>'
+                    f'{_time_metadata(item.get("created_at", ""))}'
                     f'{_field("Status", item.get("state"))}{_field("Where it stands", item.get("now"))}'
                     f'{_field("Next milestone", item.get("milestone"))}'
                     f'{_render_phases(item.get("phase_states", {}))}</article>'
@@ -573,7 +591,7 @@ def render_workstream(record: dict, notes=(), history=False) -> str:
                 '<article class="job-update"><div class="job-update-head">'
                 f'<strong>{html.escape(str(note.get("kind", "note")), quote=True)} · '
                 f'{html.escape(str(note.get("status", "")), quote=True)}</strong>'
-                f'<time>{html.escape(str(note.get("created_at", "")), quote=True)}</time></div>'
+                f'{_time_metadata(note.get("created_at", ""))}</div>'
                 f'{_markdown(note.get("body", ""))}</article>'
             )
     else:
@@ -614,7 +632,7 @@ def render_inbox(worker: str, messages, *, offset: int = 0, unread_count: int | 
         if isinstance(message.get("reply_to"), str) and message["reply_to"]:
             refs.append(f'Reply to: {html.escape(message["reply_to"], quote=True)}')
         entries.append(
-            f'<li><a href="{message_url}">{html.escape(str(message.get("created_at", "Message")), quote=True)}</a>'
+            f'<li><a href="{message_url}">{_time_metadata(message.get("created_at", "Message"))}</a>'
             f' · {state} · {html.escape(str(message.get("author") or "Unspecified sender"), quote=True)}'
             f'{(" · " + " · ".join(refs)) if refs else ""}</li>'
         )
@@ -643,7 +661,7 @@ def render_inbox_message(worker: str, message: dict) -> str:
     content = [
         '<article class="job-private"><h1>Private worker message</h1>',
         (
-            f'<p>{html.escape(str(message.get("created_at", "")), quote=True)} · '
+            f'<p>{_time_metadata(message.get("created_at", ""))} · '
             f'{html.escape(str(message.get("author") or "Unspecified sender"), quote=True)}</p>'
         ),
     ]
