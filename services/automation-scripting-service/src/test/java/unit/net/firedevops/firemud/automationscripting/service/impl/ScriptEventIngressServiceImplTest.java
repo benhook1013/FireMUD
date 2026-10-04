@@ -3263,8 +3263,9 @@ class ScriptEventIngressServiceImplTest {
   }
 
   @Test
-  void dryRunRejectsMalformedCurrentAccountClaimBeforeQuotaLookup() {
-    SessionContext.setContext("not-a-long", List.of(), Map.of());
+  void dryRunPersistsRejectionForMalformedCurrentAccountClaimBeforeQuotaLookup() {
+    SessionContext.setContext(
+        "not-a-uuid", List.of(), Map.of(), true, "game-session-service", "game-session-1");
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
     stubClaimRepository(repository);
@@ -3286,12 +3287,14 @@ class ScriptEventIngressServiceImplTest {
                 .build());
     ScriptEventBindingRepository bindingRepository =
         Mockito.mock(ScriptEventBindingRepository.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository eventAuditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     ScriptEventIngressService service =
         new ScriptEventIngressServiceImpl(
             repository,
             bindingRepository,
-            Mockito.mock(ScriptWorkItemRepository.class),
-            Mockito.mock(ScriptEventAuditRepository.class),
+            workItemRepository,
+            eventAuditRepository,
             new BuiltInScriptEventRegistryService(),
             Mockito.mock(AutomationQueueService.class),
             outputProperties(),
@@ -3304,27 +3307,40 @@ class ScriptEventIngressServiceImplTest {
             allowingQuotaService(),
             dryRunQuotaService);
 
-    assertThrows(
-        IllegalArgumentException.class,
-        () ->
-            service.admit(
-                gameplayRequestBuilder()
-                    .setTenantId("1")
-                    .setGameInstanceId("game-1")
-                    .setRegionId("region-1")
-                    .setRegionEpoch(7)
-                    .setEntityId("entity-1")
-                    .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
-                    .setScriptId("script-1")
-                    .setEventType("onCommand")
-                    .setScriptPatchVersion("patch-1")
-                    .setScriptEventId("event-dry-run-invalid-account")
-                    .setReadSnapshotToken("snapshot-1")
-                    .setIsDryRun(true)
-                    .build(),
-                "game-session-service"));
+    ScriptEventIngressService.TriggerAdmission admission =
+        service.admit(
+            gameplayRequestBuilder()
+                .setTenantId("1")
+                .setGameInstanceId("game-1")
+                .setRegionId("region-1")
+                .setRegionEpoch(7)
+                .setEntityId("entity-1")
+                .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                .setScriptId("script-1")
+                .setEventType("onCommand")
+                .setScriptPatchVersion("patch-1")
+                .setScriptEventId("event-dry-run-invalid-account")
+                .setReadSnapshotToken("snapshot-1")
+                .setIsDryRun(true)
+                .build(),
+            "game-session-service");
 
+    assertThat(admission.admitted()).isFalse();
+    assertThat(admission.outcome())
+        .isEqualTo(
+            TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_EVENT_REGISTRY_REJECTED.name());
+    assertThat(admission.reason()).isEqualTo("dry_run_principal_invalid");
+    ArgumentCaptor<ScriptEventIngressAudit> auditCaptor =
+        ArgumentCaptor.forClass(ScriptEventIngressAudit.class);
+    verify(repository).save(auditCaptor.capture());
+    assertThat(auditCaptor.getValue().getAdmitted()).isFalse();
+    assertThat(auditCaptor.getValue().getAdmissionOutcome())
+        .isEqualTo(
+            TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_EVENT_REGISTRY_REJECTED.name());
+    assertThat(auditCaptor.getValue().getAdmissionReason()).isEqualTo("dry_run_principal_invalid");
+    assertThat(auditCaptor.getValue().getSourceState()).isEqualTo("TRIGGER_REJECTED");
     verifyNoInteractions(dryRunQuotaService);
+    verifyNoInteractions(workItemRepository, eventAuditRepository);
     verify(bindingRepository, never())
         .findByTenantIdAndScriptPatchVersionAndEventTypeAndEventSchemaVersionAndEnabledTrueOrderByPriorityAscScriptIdAsc(
             Mockito.anyLong(),
