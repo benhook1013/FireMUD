@@ -18,6 +18,29 @@ CREATE TABLE entity_playable_state_namespace_scopes (
         UNIQUE (tenant_uuid, playable_state_namespace_id, playable_state_scope)
 );
 
+/* [jooq ignore start] */
+CREATE FUNCTION reject_entity_playable_state_namespace_scope_change()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF (NEW.tenant_uuid, NEW.playable_state_namespace_id, NEW.playable_state_scope)
+        IS DISTINCT FROM
+       (OLD.tenant_uuid, OLD.playable_state_namespace_id, OLD.playable_state_scope) THEN
+        RAISE EXCEPTION 'entity playable-state namespace identity is immutable'
+            USING ERRCODE = '23514';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER trg_entity_playable_state_namespace_scopes_immutable
+    BEFORE UPDATE OF tenant_uuid, playable_state_namespace_id, playable_state_scope
+    ON entity_playable_state_namespace_scopes
+    FOR EACH ROW
+    EXECUTE FUNCTION reject_entity_playable_state_namespace_scope_change();
+/* [jooq ignore stop] */
+
 ALTER TABLE characters
     ADD COLUMN character_uuid UUID,
     ADD COLUMN account_uuid UUID,
@@ -32,22 +55,23 @@ UPDATE characters
 SET character_uuid = gen_random_uuid(),
     actor_identity_quarantine_reason = 'OWNER_PROVENANCE_MISSING';
 
+-- This retained-row backfill updates every existing character in one migration transaction.
+-- Quiesce Entity character writes for this migration; it is not an online activation procedure.
 ALTER TABLE characters
     ALTER COLUMN character_uuid SET DEFAULT gen_random_uuid();
 
+/* [jooq ignore start] */
 ALTER TABLE characters
-    ALTER COLUMN character_uuid SET NOT NULL;
-
-ALTER TABLE characters
-    ADD CONSTRAINT ux_characters_character_uuid UNIQUE (character_uuid);
+    ADD CONSTRAINT ck_characters_character_uuid_nonnull
+        CHECK (character_uuid IS NOT NULL) NOT VALID;
 
 ALTER TABLE characters
     ADD CONSTRAINT ck_characters_character_uuid_non_nil
-        CHECK (character_uuid <> '00000000-0000-0000-0000-000000000000'::UUID);
+        CHECK (character_uuid <> '00000000-0000-0000-0000-000000000000'::UUID) NOT VALID;
 
 ALTER TABLE characters
     ADD CONSTRAINT ck_characters_actor_identity_status
-        CHECK (actor_identity_status IN ('OWNER_RESOLVED', 'QUARANTINED'));
+        CHECK (actor_identity_status IN ('OWNER_RESOLVED', 'QUARANTINED')) NOT VALID;
 
 ALTER TABLE characters
     ADD CONSTRAINT ck_characters_actor_identity_quarantine_reason
@@ -57,7 +81,7 @@ ALTER TABLE characters
                 AND length(trim(actor_identity_quarantine_reason)) > 0)
             OR (actor_identity_status = 'OWNER_RESOLVED'
                 AND actor_identity_quarantine_reason IS NULL)
-        );
+        ) NOT VALID;
 
 ALTER TABLE characters
     ADD CONSTRAINT ck_characters_actor_identity_uuid_non_nil
@@ -65,7 +89,7 @@ ALTER TABLE characters
             (account_uuid IS NULL OR account_uuid <> '00000000-0000-0000-0000-000000000000'::UUID)
             AND (tenant_uuid IS NULL OR tenant_uuid <> '00000000-0000-0000-0000-000000000000'::UUID)
             AND (playable_state_namespace_id IS NULL OR playable_state_namespace_id <> '00000000-0000-0000-0000-000000000000'::UUID)
-        );
+        ) NOT VALID;
 
 ALTER TABLE characters
     ADD CONSTRAINT ck_characters_actor_identity_scope
@@ -75,7 +99,7 @@ ALTER TABLE characters
                 'PLAYABLE_STATE_SCOPE_SHARED',
                 'PLAYABLE_STATE_SCOPE_ISOLATED'
             )
-        );
+        ) NOT VALID;
 
 ALTER TABLE characters
     ADD CONSTRAINT ck_characters_owner_resolved_provenance
@@ -87,7 +111,7 @@ ALTER TABLE characters
                 AND playable_state_namespace_id IS NOT NULL
                 AND playable_state_scope IS NOT NULL
             )
-        );
+        ) NOT VALID;
 
 ALTER TABLE characters
     ADD CONSTRAINT fk_characters_owner_resolved_namespace_scope
@@ -96,17 +120,8 @@ ALTER TABLE characters
             tenant_uuid,
             playable_state_namespace_id,
             playable_state_scope
-        );
-
-CREATE INDEX idx_characters_owner_resolved_roster
-    ON characters (
-        tenant_uuid,
-        account_uuid,
-        playable_state_namespace_id,
-        playable_state_scope,
-        character_uuid
-    )
-    WHERE actor_identity_status = 'OWNER_RESOLVED';
+        ) NOT VALID;
+/* [jooq ignore stop] */
 
 /* [jooq ignore start] */
 CREATE VIEW entity_quarantined_actor_item_instances AS

@@ -105,21 +105,19 @@ class AccountApplicationIntegrationTest {
     assertThat(accountId).isNotNull();
     assertThat(accountUuid)
         .isEqualTo(
-            dsl.fetchValue(
-                "SELECT account_uuid FROM accounts WHERE id = ?",
-                UUID.class,
-                accountId.longValue()));
+            dsl.resultQuery("SELECT account_uuid FROM accounts WHERE id = ?", accountId.longValue())
+                .fetchOne(0, UUID.class));
     assertThat(
-            dsl.fetchValue(
-                "SELECT account_uuid_source_numeric_id FROM accounts WHERE id = ?",
-                Long.class,
-                accountId.longValue()))
+            dsl.resultQuery(
+                    "SELECT account_uuid_source_numeric_id FROM accounts WHERE id = ?",
+                    accountId.longValue())
+                .fetchOne(0, Long.class))
         .isEqualTo(accountId.longValue());
     assertThat(
-            dsl.fetchValue(
-                "SELECT account_uuid_provenance FROM accounts WHERE id = ?",
-                String.class,
-                accountId.longValue()))
+            dsl.resultQuery(
+                    "SELECT account_uuid_provenance FROM accounts WHERE id = ?",
+                    accountId.longValue())
+                .fetchOne(0, String.class))
         .isEqualTo("ACCOUNT_REPOSITORY_INSERT");
     assertThat(dsl.fetchValue("SELECT tenant_id FROM accounts WHERE id = ?", accountId.longValue()))
         .isNull();
@@ -147,7 +145,10 @@ class AccountApplicationIntegrationTest {
     assertThat(accountExport.profiles()).isEmpty();
 
     dsl.execute(
-        "INSERT INTO account_tenant_membership (account_id, tenant_id) VALUES (?, ?)",
+        "INSERT INTO account_tenant_membership (account_id, tenant_id, lifecycle_state, "
+            + "gameplay_admission_allowed, membership_version, "
+            + "membership_authority_generation, authority_provenance) "
+            + "VALUES (?, ?, 'LEGACY_UNVERIFIED', FALSE, 1, 1, 'LEGACY_UNVERIFIED')",
         accountId.longValue(),
         999L);
     var tenantExport = accountService.exportTenantData(999L, accountId.longValue());

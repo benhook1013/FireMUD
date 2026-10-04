@@ -37,10 +37,6 @@ public class ActorIdentityRepository {
     UUID namespace =
         ActorIdentity.parseRequiredUuid(playableStateNamespaceId, "playableStateNamespaceId");
     PlayableStateScope scope = ActorIdentity.requireScope(playableStateScope);
-    if (scope != PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED
-        && scope != PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED) {
-      throw new IllegalArgumentException("playableStateScope is not a supported resolved scope");
-    }
     return dsl.select(
             CHARACTERS.CHARACTER_UUID,
             CHARACTERS.ACCOUNT_UUID,

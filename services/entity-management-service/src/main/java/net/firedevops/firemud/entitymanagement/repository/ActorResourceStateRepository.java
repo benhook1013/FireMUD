@@ -32,16 +32,7 @@ public class ActorResourceStateRepository {
                 .eq(tenantId)
                 .and(ACTOR_RESOURCE_STATES.PLAYABLE_STATE_KEY.eq(playableStateKey))
                 .and(ACTOR_RESOURCE_STATES.CHARACTER_ID.eq(characterId))
-                .and(
-                    DSL.exists(
-                        dsl.selectOne()
-                            .from(CHARACTERS)
-                            .where(
-                                CHARACTERS
-                                    .ID
-                                    .eq(ACTOR_RESOURCE_STATES.CHARACTER_ID)
-                                    .and(CHARACTERS.TENANT_ID.eq(ACTOR_RESOURCE_STATES.TENANT_ID))
-                                    .and(CHARACTERS.ACTOR_IDENTITY_STATUS.eq("OWNER_RESOLVED"))))))
+                .and(ownerResolvedActorExists()))
         .orderBy(ACTOR_RESOURCE_STATES.STAT_KEY.asc())
         .fetch(this::toEntity);
   }
@@ -67,16 +58,27 @@ public class ActorResourceStateRepository {
       entity.setId(id);
       return entity;
     }
-    dsl.update(ACTOR_RESOURCE_STATES)
-        .set(ACTOR_RESOURCE_STATES.CURRENT_VALUE, entity.getCurrentValue())
-        .set(ACTOR_RESOURCE_STATES.MAX_VALUE, entity.getMaxValue())
-        .set(ACTOR_RESOURCE_STATES.BASE_VALUE, entity.getBaseValue())
-        .set(ACTOR_RESOURCE_STATES.SOURCE_TYPE, entity.getSourceType())
-        .set(ACTOR_RESOURCE_STATES.SOURCE_ID, entity.getSourceId())
-        .set(ACTOR_RESOURCE_STATES.UPDATED_AT, toOffsetDateTime(entity.getUpdatedAt()))
-        .set(ACTOR_RESOURCE_STATES.VERSION, entity.getVersion() + 1)
-        .where(ACTOR_RESOURCE_STATES.ID.eq(entity.getId()))
-        .execute();
+    int updatedRows =
+        dsl.update(ACTOR_RESOURCE_STATES)
+            .set(ACTOR_RESOURCE_STATES.CURRENT_VALUE, entity.getCurrentValue())
+            .set(ACTOR_RESOURCE_STATES.MAX_VALUE, entity.getMaxValue())
+            .set(ACTOR_RESOURCE_STATES.BASE_VALUE, entity.getBaseValue())
+            .set(ACTOR_RESOURCE_STATES.SOURCE_TYPE, entity.getSourceType())
+            .set(ACTOR_RESOURCE_STATES.SOURCE_ID, entity.getSourceId())
+            .set(ACTOR_RESOURCE_STATES.UPDATED_AT, toOffsetDateTime(entity.getUpdatedAt()))
+            .set(ACTOR_RESOURCE_STATES.VERSION, entity.getVersion() + 1)
+            .where(
+                ACTOR_RESOURCE_STATES
+                    .ID
+                    .eq(entity.getId())
+                    .and(ACTOR_RESOURCE_STATES.TENANT_ID.eq(entity.getTenantId()))
+                    .and(ACTOR_RESOURCE_STATES.PLAYABLE_STATE_KEY.eq(entity.getPlayableStateKey()))
+                    .and(ACTOR_RESOURCE_STATES.CHARACTER_ID.eq(entity.getCharacterId()))
+                    .and(ownerResolvedActorExists()))
+            .execute();
+    if (updatedRows != 1) {
+      throw new IllegalStateException("ACTOR_IDENTITY_NOT_OWNER_RESOLVED");
+    }
     entity.setVersion(entity.getVersion() + 1);
     return entity;
   }
@@ -93,6 +95,18 @@ public class ActorResourceStateRepository {
     if (ownerResolvedCount != 1) {
       throw new IllegalStateException("ACTOR_IDENTITY_NOT_OWNER_RESOLVED");
     }
+  }
+
+  private org.jooq.Condition ownerResolvedActorExists() {
+    return DSL.exists(
+        dsl.selectOne()
+            .from(CHARACTERS)
+            .where(
+                CHARACTERS
+                    .ID
+                    .eq(ACTOR_RESOURCE_STATES.CHARACTER_ID)
+                    .and(CHARACTERS.TENANT_ID.eq(ACTOR_RESOURCE_STATES.TENANT_ID))
+                    .and(CHARACTERS.ACTOR_IDENTITY_STATUS.eq("OWNER_RESOLVED"))));
   }
 
   private ActorResourceState toEntity(Record record) {

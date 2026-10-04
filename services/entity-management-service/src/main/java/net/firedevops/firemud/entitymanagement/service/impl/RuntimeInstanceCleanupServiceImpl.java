@@ -1,37 +1,17 @@
 package net.firedevops.firemud.entitymanagement.service.impl;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import net.firedevops.firemud.entitymanagement.dto.RuntimeInstanceCleanupResultDto;
-import net.firedevops.firemud.entitymanagement.repository.ContainerInstanceRepository;
-import net.firedevops.firemud.entitymanagement.repository.ItemInstanceRepository;
-import net.firedevops.firemud.entitymanagement.repository.ItemStackRepository;
 import net.firedevops.firemud.entitymanagement.repository.QuarantinedActorRetentionRepository;
-import net.firedevops.firemud.entitymanagement.repository.RoomGroundInventoryRepository;
 import net.firedevops.firemud.entitymanagement.service.RuntimeInstanceCleanupService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
-@SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification = "Injected repositories are managed dependencies kept internal.")
 public class RuntimeInstanceCleanupServiceImpl implements RuntimeInstanceCleanupService {
-  private final RoomGroundInventoryRepository roomGroundInventoryRepository;
-  private final ItemStackRepository itemStackRepository;
-  private final ItemInstanceRepository itemInstanceRepository;
-  private final ContainerInstanceRepository containerInstanceRepository;
   private final QuarantinedActorRetentionRepository quarantinedActorRetentionRepository;
 
   public RuntimeInstanceCleanupServiceImpl(
-      RoomGroundInventoryRepository roomGroundInventoryRepository,
-      ItemStackRepository itemStackRepository,
-      ItemInstanceRepository itemInstanceRepository,
-      ContainerInstanceRepository containerInstanceRepository,
       QuarantinedActorRetentionRepository quarantinedActorRetentionRepository) {
-    this.roomGroundInventoryRepository = roomGroundInventoryRepository;
-    this.itemStackRepository = itemStackRepository;
-    this.itemInstanceRepository = itemInstanceRepository;
-    this.containerInstanceRepository = containerInstanceRepository;
     this.quarantinedActorRetentionRepository = quarantinedActorRetentionRepository;
   }
 
@@ -48,24 +28,11 @@ public class RuntimeInstanceCleanupServiceImpl implements RuntimeInstanceCleanup
     if (terminationRequestId == null || terminationRequestId.isBlank()) {
       throw new IllegalArgumentException("INVALID_ARGUMENT: terminationRequestId is required");
     }
-    if (quarantinedActorRetentionRepository.hasUnresolvedRuntimeEvidence(
+    if (quarantinedActorRetentionRepository.hasUnclassifiedOrQuarantinedRuntimeEvidence(
         tenantId, gameInstanceId)) {
       throw new IllegalStateException(
-          "ENTITY_RETAINED_ACTOR_EVIDENCE_BLOCKS_CLEANUP: runtime holder ownership or quarantined actor audit evidence is unresolved");
+          "ENTITY_UNCLASSIFIED_OR_QUARANTINED_EVIDENCE_BLOCKS_CLEANUP: runtime rows lack owner classification or quarantined actor audit evidence is present");
     }
-    long deletedRoomGroundEntries =
-        roomGroundInventoryRepository.deleteByIdTenantIdAndIdGameInstanceId(
-            tenantId, gameInstanceId);
-    long deletedItemStacks =
-        itemStackRepository.deleteByTenantIdAndGameInstanceId(tenantId, gameInstanceId);
-    long deletedItemInstances =
-        itemInstanceRepository.deleteByTenantIdAndGameInstanceId(tenantId, gameInstanceId);
-    long deletedContainerInstances =
-        containerInstanceRepository.deleteByTenantIdAndGameInstanceId(tenantId, gameInstanceId);
-    return new RuntimeInstanceCleanupResultDto(
-        deletedRoomGroundEntries,
-        deletedItemStacks,
-        deletedItemInstances,
-        deletedContainerInstances);
+    return new RuntimeInstanceCleanupResultDto(0, 0, 0, 0);
   }
 }

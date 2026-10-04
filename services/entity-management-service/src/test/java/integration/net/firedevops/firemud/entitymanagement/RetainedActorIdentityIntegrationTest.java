@@ -7,7 +7,10 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.time.Instant;
+import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.entitymanagement.entity.ActorActiveCondition;
 import net.firedevops.firemud.entitymanagement.entity.ActorResourceState;
 import net.firedevops.firemud.entitymanagement.entity.Character;
@@ -24,8 +27,10 @@ import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.flywaydb.core.api.configuration.FluentConfiguration;
+import org.flywaydb.database.postgresql.PostgreSQLConfigurationExtension;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
@@ -263,6 +268,72 @@ class RetainedActorIdentityIntegrationTest {
   }
 
   @Test
+  void namespaceIdentityAndScopeAreImmutableWithoutActorReferences() {
+    for (PlayableStateScope scope :
+        new PlayableStateScope[] {
+          PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+          PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED
+        }) {
+      UUID tenantUuid = UUID.randomUUID();
+      UUID namespaceUuid = UUID.randomUUID();
+      UUID changedTenantUuid = UUID.randomUUID();
+      UUID changedNamespaceUuid = UUID.randomUUID();
+      PlayableStateScope changedScope =
+          scope == PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED
+              ? PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED
+              : PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+      insertNamespace(tenantUuid, namespaceUuid, scope);
+
+      assertThat(
+              jdbcTemplate.queryForObject(
+                  "SELECT count(*) FROM characters WHERE tenant_uuid = ? AND playable_state_namespace_id = ?",
+                  Integer.class,
+                  tenantUuid,
+                  namespaceUuid))
+          .isZero();
+      assertThat(
+              jdbcTemplate.update(
+                  "UPDATE entity_playable_state_namespace_scopes "
+                      + "SET tenant_uuid = ?, playable_state_namespace_id = ?, playable_state_scope = ? "
+                      + "WHERE tenant_uuid = ? AND playable_state_namespace_id = ?",
+                  tenantUuid,
+                  namespaceUuid,
+                  scope.name(),
+                  tenantUuid,
+                  namespaceUuid))
+          .isOne();
+
+      assertNamespaceIdentityUpdateRejected(
+          "UPDATE entity_playable_state_namespace_scopes SET tenant_uuid = ? "
+              + "WHERE tenant_uuid = ? AND playable_state_namespace_id = ?",
+          changedTenantUuid,
+          tenantUuid,
+          namespaceUuid);
+      assertNamespaceIdentityUpdateRejected(
+          "UPDATE entity_playable_state_namespace_scopes SET playable_state_namespace_id = ? "
+              + "WHERE tenant_uuid = ? AND playable_state_namespace_id = ?",
+          changedNamespaceUuid,
+          tenantUuid,
+          namespaceUuid);
+      assertNamespaceIdentityUpdateRejected(
+          "UPDATE entity_playable_state_namespace_scopes SET playable_state_scope = ? "
+              + "WHERE tenant_uuid = ? AND playable_state_namespace_id = ?",
+          changedScope.name(),
+          tenantUuid,
+          namespaceUuid);
+
+      assertThat(
+              jdbcTemplate.queryForObject(
+                  "SELECT playable_state_scope FROM entity_playable_state_namespace_scopes "
+                      + "WHERE tenant_uuid = ? AND playable_state_namespace_id = ?",
+                  String.class,
+                  tenantUuid,
+                  namespaceUuid))
+          .isEqualTo(scope.name());
+    }
+  }
+
+  @Test
   void quarantinedActorLookupMutationExpiryAndCleanupRemainHeld() {
     Character actor = new Character();
     actor.setTenantId(TENANT_ID);
@@ -398,10 +469,10 @@ class RetainedActorIdentityIntegrationTest {
                 runtimeInstanceCleanupService.cleanupRuntimeInstance(
                     TENANT_ID, INSTANCE_ID, "termination-retained"))
         .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("ENTITY_RETAINED_ACTOR_EVIDENCE_BLOCKS_CLEANUP");
+        .hasMessageContaining("ENTITY_UNCLASSIFIED_OR_QUARANTINED_EVIDENCE_BLOCKS_CLEANUP");
 
     assertThat(
-            quarantinedActorRetentionRepository.hasUnresolvedRuntimeEvidence(
+            quarantinedActorRetentionRepository.hasUnclassifiedOrQuarantinedRuntimeEvidence(
                 TENANT_ID, INSTANCE_ID))
         .isTrue();
     assertThat(
@@ -516,7 +587,7 @@ class RetainedActorIdentityIntegrationTest {
         INSTANCE_ID);
 
     assertThat(
-            quarantinedActorRetentionRepository.hasUnresolvedRuntimeEvidence(
+            quarantinedActorRetentionRepository.hasUnclassifiedOrQuarantinedRuntimeEvidence(
                 TENANT_ID, INSTANCE_ID))
         .isTrue();
     assertThatThrownBy(
@@ -524,7 +595,7 @@ class RetainedActorIdentityIntegrationTest {
                 runtimeInstanceCleanupService.cleanupRuntimeInstance(
                     TENANT_ID, INSTANCE_ID, "termination-unresolved-ground"))
         .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("ENTITY_RETAINED_ACTOR_EVIDENCE_BLOCKS_CLEANUP");
+        .hasMessageContaining("ENTITY_UNCLASSIFIED_OR_QUARANTINED_EVIDENCE_BLOCKS_CLEANUP");
     assertThat(
             jdbcTemplate.queryForObject(
                 "SELECT quantity FROM room_ground_inventory WHERE tenant_id = ? AND game_instance_id = ?",
@@ -535,7 +606,8 @@ class RetainedActorIdentityIntegrationTest {
   }
 
   @Test
-  void flywayV1ToV2RetainsLegacyRowsAndEveryDependentStateFamily() throws SQLException {
+  @Timeout(value = 3, unit = TimeUnit.MINUTES)
+  void flywayV1ToLatestRetainsLegacyRowsAndValidatesConstraints() throws SQLException {
     migrateLegacySchemaToV1();
     try (Connection connection = connectToMigrationSchema()) {
       var statement = connection.createStatement();
@@ -578,6 +650,38 @@ class RetainedActorIdentityIntegrationTest {
 
     try (Connection connection = connectToMigrationSchema();
         var statement = connection.createStatement()) {
+      assertThat(
+              readLong(
+                  statement,
+                  "SELECT count(*) FROM pg_constraint "
+                      + "WHERE conrelid = 'characters'::regclass AND convalidated "
+                      + "AND conname IN ('ck_characters_actor_identity_status', "
+                      + "'ck_characters_actor_identity_quarantine_reason', "
+                      + "'ck_characters_actor_identity_uuid_non_nil', "
+                      + "'ck_characters_actor_identity_scope', "
+                      + "'ck_characters_owner_resolved_provenance', "
+                      + "'fk_characters_owner_resolved_namespace_scope', "
+                      + "'ck_characters_character_uuid_non_nil', "
+                      + "'ux_characters_character_uuid')"))
+          .isEqualTo(8L);
+      assertThat(
+              readLong(
+                  statement,
+                  "SELECT count(*) FROM pg_index indexes "
+                      + "JOIN pg_class index_relation ON index_relation.oid = indexes.indexrelid "
+                      + "JOIN pg_namespace index_schema ON index_schema.oid = index_relation.relnamespace "
+                      + "WHERE index_schema.nspname = current_schema() "
+                      + "AND index_relation.relname IN ('ux_characters_character_uuid', "
+                      + "'idx_characters_owner_resolved_roster') "
+                      + "AND indexes.indisvalid AND indexes.indisready"))
+          .isEqualTo(2L);
+      assertThat(
+              readLong(
+                  statement,
+                  "SELECT count(*) FROM pg_attribute "
+                      + "WHERE attrelid = 'characters'::regclass AND attname = 'character_uuid' "
+                      + "AND attnotnull AND NOT attisdropped"))
+          .isEqualTo(1L);
       try (var rows =
           statement.executeQuery(
               "SELECT id, account_id, name, tenant_id, playable_state_key, level, experience, strength, agility, intelligence, stamina, health, mana, version, body_layout_key, character_uuid, account_uuid, tenant_uuid, playable_state_namespace_id, playable_state_scope, actor_identity_status, actor_identity_quarantine_reason FROM characters ORDER BY id")) {
@@ -747,6 +851,55 @@ class RetainedActorIdentityIntegrationTest {
         scope.name());
   }
 
+  private void assertNamespaceIdentityUpdateRejected(String sql, Object... arguments) {
+    assertThatThrownBy(() -> jdbcTemplate.update(sql, arguments))
+        .hasMessageContaining("entity playable-state namespace identity is immutable");
+  }
+
+  @Test
+  void characterUpdateRequiresExactTenantAndPreservesOwnerResolvedRowOnMismatch() {
+    UUID characterUuid = UUID.fromString("40000000-0000-4000-8000-000000000010");
+    long actorId =
+        insertActor(
+            "Tenant-owned actor",
+            characterUuid,
+            ACCOUNT_UUID,
+            TENANT_UUID,
+            NAMESPACE_UUID,
+            PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+            "shared-live",
+            "OWNER_RESOLVED",
+            null,
+            ACCOUNT_ID,
+            TENANT_ID);
+
+    Character crossTenantUpdate =
+        characterRepository.findByIdAndTenantId(actorId, TENANT_ID).orElseThrow();
+    int originalVersion = crossTenantUpdate.getVersion();
+    int originalExperience = crossTenantUpdate.getExperience();
+    crossTenantUpdate.setTenantId(TENANT_ID + 1);
+    crossTenantUpdate.setName("Cross-tenant overwrite");
+    crossTenantUpdate.setExperience(originalExperience + 99);
+
+    assertThatThrownBy(() -> characterRepository.save(crossTenantUpdate))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("CHARACTER_IDENTITY_NOT_OWNER_RESOLVED");
+
+    Character unchanged = characterRepository.findByIdAndTenantId(actorId, TENANT_ID).orElseThrow();
+    assertThat(unchanged.getTenantId()).isEqualTo(TENANT_ID);
+    assertThat(unchanged.getName()).isEqualTo("Tenant-owned actor");
+    assertThat(unchanged.getExperience()).isEqualTo(originalExperience);
+    assertThat(unchanged.getVersion()).isEqualTo(originalVersion);
+
+    Character validUpdate =
+        characterRepository.findByIdAndTenantId(actorId, TENANT_ID).orElseThrow();
+    validUpdate.setName("Tenant-owned actor updated");
+    Character saved = characterRepository.save(validUpdate);
+    assertThat(saved.getTenantId()).isEqualTo(TENANT_ID);
+    assertThat(saved.getName()).isEqualTo("Tenant-owned actor updated");
+    assertThat(saved.getVersion()).isEqualTo(originalVersion + 1);
+  }
+
   private long insertActor(
       String name,
       UUID characterUuid,
@@ -759,21 +912,24 @@ class RetainedActorIdentityIntegrationTest {
       String quarantineReason,
       long legacyAccountId,
       long legacyTenantId) {
-    return jdbcTemplate.queryForObject(
-        "INSERT INTO characters (account_id, name, tenant_id, playable_state_key, character_uuid, account_uuid, tenant_uuid, playable_state_namespace_id, playable_state_scope, actor_identity_status, actor_identity_quarantine_reason) "
-            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
-        Long.class,
-        legacyAccountId,
-        name,
-        legacyTenantId,
-        legacyStateKey,
-        characterUuid,
-        accountUuid,
-        tenantUuid,
-        namespaceUuid,
-        scope == null ? null : scope.name(),
-        status,
-        quarantineReason);
+    Long actorId =
+        jdbcTemplate.queryForObject(
+            "INSERT INTO characters (account_id, name, tenant_id, playable_state_key, character_uuid, account_uuid, tenant_uuid, playable_state_namespace_id, playable_state_scope, actor_identity_status, actor_identity_quarantine_reason) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+            Long.class,
+            legacyAccountId,
+            name,
+            legacyTenantId,
+            legacyStateKey,
+            characterUuid,
+            accountUuid,
+            tenantUuid,
+            namespaceUuid,
+            scope == null ? null : scope.name(),
+            status,
+            quarantineReason);
+    return Objects.requireNonNull(
+        actorId, "Character INSERT ... RETURNING id must return the inserted actor ID");
   }
 
   private void insertItemInstance(
@@ -813,11 +969,18 @@ class RetainedActorIdentityIntegrationTest {
   }
 
   private FluentConfiguration migrationFlyway() {
-    return Flyway.configure()
-        .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
-        .schemas(migrationSchema)
-        .defaultSchema(migrationSchema)
-        .locations("classpath:db/migration");
+    FluentConfiguration configuration =
+        Flyway.configure()
+            .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
+            .schemas(migrationSchema)
+            .defaultSchema(migrationSchema)
+            .locations("classpath:db/migration")
+            .placeholders(Map.of("serviceSchema", migrationSchema));
+    configuration
+        .getConfigurationExtension(PostgreSQLConfigurationExtension.class)
+        .setTransactionalLock(false);
+    return configuration.jdbcProperties(
+        Map.of("options", "-c lock_timeout=30s -c statement_timeout=120s"));
   }
 
   private Connection connectToMigrationSchema() throws SQLException {

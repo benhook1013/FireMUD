@@ -188,13 +188,13 @@ public class CharacterRepository {
             .set(CHARACTERS.STAMINA, entity.getStamina())
             .set(CHARACTERS.HEALTH, entity.getHealth())
             .set(CHARACTERS.MANA, entity.getMana())
-            .set(CHARACTERS.BODY_LAYOUT_KEY, entity.getBodyLayoutKey())
             .set(CHARACTERS.LAST_LOGIN_AT, toLocalDateTime(entity.getLastLoginAt()))
             .set(CHARACTERS.VERSION, entity.getVersion() + 1)
             .where(
                 CHARACTERS
                     .ID
                     .eq(entity.getId())
+                    .and(CHARACTERS.TENANT_ID.eq(entity.getTenantId()))
                     .and(CHARACTERS.ACTOR_IDENTITY_STATUS.eq("OWNER_RESOLVED")))
             .execute();
     if (updatedRows != 1) {

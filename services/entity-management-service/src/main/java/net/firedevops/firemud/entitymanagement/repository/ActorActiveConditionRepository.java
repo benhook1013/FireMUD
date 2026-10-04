@@ -92,18 +92,30 @@ public class ActorActiveConditionRepository {
       entity.setId(id);
       return entity;
     }
-    dsl.update(ACTOR_ACTIVE_CONDITIONS)
-        .set(ACTOR_ACTIVE_CONDITIONS.CONDITION_KEY, entity.getConditionKey())
-        .set(ACTOR_ACTIVE_CONDITIONS.STACK_COUNT, entity.getStackCount())
-        .set(ACTOR_ACTIVE_CONDITIONS.SOURCE_TYPE, entity.getSourceType())
-        .set(ACTOR_ACTIVE_CONDITIONS.SOURCE_ID, entity.getSourceId())
-        .set(ACTOR_ACTIVE_CONDITIONS.STARTED_AT, toOffsetDateTime(entity.getStartedAt()))
-        .set(ACTOR_ACTIVE_CONDITIONS.EXPIRES_AT, toOffsetDateTime(entity.getExpiresAt()))
-        .set(ACTOR_ACTIVE_CONDITIONS.EFFECT_PAYLOAD_JSON, entity.getEffectPayloadJson())
-        .set(ACTOR_ACTIVE_CONDITIONS.UPDATED_AT, toOffsetDateTime(entity.getUpdatedAt()))
-        .set(ACTOR_ACTIVE_CONDITIONS.VERSION, entity.getVersion() + 1)
-        .where(ACTOR_ACTIVE_CONDITIONS.ID.eq(entity.getId()))
-        .execute();
+    int updatedRows =
+        dsl.update(ACTOR_ACTIVE_CONDITIONS)
+            .set(ACTOR_ACTIVE_CONDITIONS.CONDITION_KEY, entity.getConditionKey())
+            .set(ACTOR_ACTIVE_CONDITIONS.STACK_COUNT, entity.getStackCount())
+            .set(ACTOR_ACTIVE_CONDITIONS.SOURCE_TYPE, entity.getSourceType())
+            .set(ACTOR_ACTIVE_CONDITIONS.SOURCE_ID, entity.getSourceId())
+            .set(ACTOR_ACTIVE_CONDITIONS.STARTED_AT, toOffsetDateTime(entity.getStartedAt()))
+            .set(ACTOR_ACTIVE_CONDITIONS.EXPIRES_AT, toOffsetDateTime(entity.getExpiresAt()))
+            .set(ACTOR_ACTIVE_CONDITIONS.EFFECT_PAYLOAD_JSON, entity.getEffectPayloadJson())
+            .set(ACTOR_ACTIVE_CONDITIONS.UPDATED_AT, toOffsetDateTime(entity.getUpdatedAt()))
+            .set(ACTOR_ACTIVE_CONDITIONS.VERSION, entity.getVersion() + 1)
+            .where(
+                ACTOR_ACTIVE_CONDITIONS
+                    .ID
+                    .eq(entity.getId())
+                    .and(ACTOR_ACTIVE_CONDITIONS.TENANT_ID.eq(entity.getTenantId()))
+                    .and(
+                        ACTOR_ACTIVE_CONDITIONS.PLAYABLE_STATE_KEY.eq(entity.getPlayableStateKey()))
+                    .and(ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID.eq(entity.getCharacterId()))
+                    .and(ownerResolvedActorExists()))
+            .execute();
+    if (updatedRows != 1) {
+      throw new IllegalStateException("ACTOR_IDENTITY_NOT_OWNER_RESOLVED");
+    }
     entity.setVersion(entity.getVersion() + 1);
     return entity;
   }
