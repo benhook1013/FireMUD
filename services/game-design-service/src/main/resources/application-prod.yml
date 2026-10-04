@@ -52,6 +52,8 @@ firemud:
       public-methods:
         - gamedesign.v1.TenantIdentityService/ResolveRuntimeTenantIdentity
         - gamedesign.v1.TenantIdentityService/ResolveLegacyGameSessionTenantAssociation
+        - gamedesign.v1.TenantIdentityService/ResolvePublishedRealmEntryPolicy
+        - gamedesign.v1.TenantIdentityService/ListPublishedRealmEntryPolicies
   grpc:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}

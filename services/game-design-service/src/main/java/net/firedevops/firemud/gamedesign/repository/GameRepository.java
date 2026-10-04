@@ -138,6 +138,25 @@ public class GameRepository {
         .fetchOptional(this::toRuntimeTenantIdentity);
   }
 
+  /**
+   * Resolves the exact existing owner tenant key to its persisted canonical UUID and provenance.
+   */
+  public Optional<GameTenantIdentity> findRuntimeTenantIdentityByTenantKey(String tenantKey) {
+    if (tenantKey == null || tenantKey.isBlank()) {
+      throw new IllegalArgumentException("Exact Game Design tenant key is required");
+    }
+    return dsl.select(
+            ID,
+            TENANT_ID,
+            CANONICAL_TENANT_ID,
+            TENANT_IDENTITY_PROVENANCE_KIND,
+            TENANT_IDENTITY_SOURCE_GAME_ID,
+            TENANT_IDENTITY_SOURCE_LEGACY_TENANT_ID)
+        .from(GAME_TABLE)
+        .where(TENANT_ID.eq(tenantKey))
+        .fetchOptional(this::toRuntimeTenantIdentity);
+  }
+
   private Game toEntity(Record record) {
     if (record == null) {
       return null;

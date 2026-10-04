@@ -80,6 +80,14 @@ class GameTenantIdentityRepositoryIntegrationTest {
                   GameTenantIdentity.ProvenanceKind.RETAINED_GAME_V29,
                   retainedGameId,
                   "legacy-owner-alpha"));
+      assertThat(repository.findRuntimeTenantIdentityByTenantKey("legacy-owner-alpha"))
+          .contains(
+              new GameTenantIdentity(
+                  retainedTenantId,
+                  GameTenantIdentity.ProvenanceKind.RETAINED_GAME_V29,
+                  retainedGameId,
+                  "legacy-owner-alpha"));
+      assertThat(repository.findRuntimeTenantIdentityByTenantKey("missing-owner-key")).isEmpty();
       assertThat(
               dsl.select(
                       CANONICAL_TENANT_ID, PROVENANCE_KIND, SOURCE_GAME_ID, SOURCE_LEGACY_TENANT_ID)
@@ -104,6 +112,13 @@ class GameTenantIdentityRepositoryIntegrationTest {
       assertThat(saved.getId()).isPositive();
       assertThat(
               repository.findRuntimeTenantIdentityByCanonicalTenantId(saved.getCanonicalTenantId()))
+          .contains(
+              new GameTenantIdentity(
+                  saved.getCanonicalTenantId(),
+                  GameTenantIdentity.ProvenanceKind.NEW_GAME_ROW,
+                  saved.getId(),
+                  "new-owner-key"));
+      assertThat(repository.findRuntimeTenantIdentityByTenantKey("new-owner-key"))
           .contains(
               new GameTenantIdentity(
                   saved.getCanonicalTenantId(),

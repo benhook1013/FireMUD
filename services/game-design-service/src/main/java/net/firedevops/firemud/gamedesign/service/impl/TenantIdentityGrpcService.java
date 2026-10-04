@@ -6,14 +6,24 @@ import java.sql.SQLException;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.publication.PublishedRealmEntryPolicyEvidence;
+import net.firedevops.firemud.common.publication.PublishedRealmEntryPolicySetEvidence;
+import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.common.tenant.GameSessionTenantAssociationEvidence;
 import net.firedevops.firemud.common.tenant.RuntimeTenantIdentityEvidence;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTenantIdentity;
+import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
 import net.firedevops.firemud.gamedesign.v1.GameSessionTenantAssociationManifestEvidence;
+import net.firedevops.firemud.gamedesign.v1.ListPublishedRealmEntryPoliciesRequest;
+import net.firedevops.firemud.gamedesign.v1.ListPublishedRealmEntryPoliciesResponse;
+import net.firedevops.firemud.gamedesign.v1.PublishedRealmEntryPolicyKind;
+import net.firedevops.firemud.gamedesign.v1.PublishedRealmEntryStateScope;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyGameSessionTenantAssociationRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyGameSessionTenantAssociationResponse;
+import net.firedevops.firemud.gamedesign.v1.ResolvePublishedRealmEntryPolicyRequest;
+import net.firedevops.firemud.gamedesign.v1.ResolvePublishedRealmEntryPolicyResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveRuntimeTenantIdentityRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveRuntimeTenantIdentityResponse;
 import net.firedevops.firemud.gamedesign.v1.TenantIdentityServiceGrpc;
@@ -22,6 +32,7 @@ import org.jooq.exception.TooManyRowsException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.grpc.server.service.GrpcService;
+import tools.jackson.databind.ObjectMapper;
 
 /** Authenticated read of Game Design's own retained tenant identity provenance. */
 @GrpcService
@@ -29,15 +40,21 @@ public class TenantIdentityGrpcService
     extends TenantIdentityServiceGrpc.TenantIdentityServiceImplBase {
   private final GameRepository gameRepository;
   private final GameSessionTenantAssociationRepository gameSessionAssociationRepository;
+  private final PublishedReleaseBundleService publishedReleaseBundleService;
   private final String workloadNamespace;
+  private final ObjectMapper objectMapper;
 
   public TenantIdentityGrpcService(
       GameRepository gameRepository,
       GameSessionTenantAssociationRepository gameSessionAssociationRepository,
-      @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace) {
+      PublishedReleaseBundleService publishedReleaseBundleService,
+      @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace,
+      ObjectMapper objectMapper) {
     this.gameRepository = gameRepository;
     this.gameSessionAssociationRepository = gameSessionAssociationRepository;
+    this.publishedReleaseBundleService = publishedReleaseBundleService;
     this.workloadNamespace = workloadNamespace;
+    this.objectMapper = objectMapper;
   }
 
   @Override
@@ -234,6 +251,246 @@ public class TenantIdentityGrpcService
             .setEd25519Signature(receipt.ed25519Signature())
             .build());
     responseObserver.onCompleted();
+  }
+
+  @Override
+  public void resolvePublishedRealmEntryPolicy(
+      ResolvePublishedRealmEntryPolicyRequest request,
+      StreamObserver<ResolvePublishedRealmEntryPolicyResponse> responseObserver) {
+    if (!isGameSessionPeer()) {
+      responseObserver.onError(
+          Status.PERMISSION_DENIED
+              .withDescription("Verified same-namespace Game Session workload identity is required")
+              .asRuntimeException());
+      return;
+    }
+
+    UUID canonicalTenantId = parseCanonicalNonNilUuid(request.getCanonicalTenantId());
+    if (canonicalTenantId == null
+        || request.getVersionId() <= 0
+        || !RealmEntryPolicy.isCanonicalSlug(request.getWorldSlug())
+        || !RealmEntryPolicy.isCanonicalSlug(request.getRealmSlug())
+        || !request.getUnknownFields().asMap().isEmpty()) {
+      responseObserver.onError(
+          Status.INVALID_ARGUMENT
+              .withDescription(
+                  "Canonical tenant UUID, positive version, exact slugs, and the v1 request schema are required")
+              .asRuntimeException());
+      return;
+    }
+
+    PublishedRealmEntryPolicyEvidence evidence;
+    try {
+      evidence =
+          publishedReleaseBundleService.resolvePublishedRealmEntryPolicy(
+              canonicalTenantId,
+              request.getVersionId(),
+              request.getWorldSlug(),
+              request.getRealmSlug());
+    } catch (PublishedRealmEntryPolicyNotFoundException ex) {
+      responseObserver.onError(
+          Status.NOT_FOUND
+              .withDescription("Published realm-entry policy is unavailable for the exact scope")
+              .asRuntimeException());
+      return;
+    } catch (IllegalArgumentException | IllegalStateException ex) {
+      responseObserver.onError(
+          Status.FAILED_PRECONDITION
+              .withDescription("Published realm-entry policy evidence is inconsistent")
+              .asRuntimeException());
+      return;
+    } catch (DataAccessResourceFailureException ex) {
+      responseObserver.onError(
+          Status.UNAVAILABLE
+              .withDescription("Published realm-entry policy is temporarily unavailable")
+              .asRuntimeException());
+      return;
+    } catch (DataAccessException ex) {
+      Status.Code code =
+          hasConnectionFailureSqlState(ex) ? Status.Code.UNAVAILABLE : Status.Code.INTERNAL;
+      responseObserver.onError(
+          Status.fromCode(code)
+              .withDescription(
+                  code == Status.Code.UNAVAILABLE
+                      ? "Published realm-entry policy is temporarily unavailable"
+                      : "Published realm-entry policy could not be read")
+              .asRuntimeException());
+      return;
+    } catch (RuntimeException ex) {
+      responseObserver.onError(
+          Status.INTERNAL
+              .withDescription("Published realm-entry policy could not be read")
+              .asRuntimeException());
+      return;
+    }
+
+    if (evidence == null
+        || !evidence.canonicalTenantId().equals(canonicalTenantId)
+        || evidence.versionId() != request.getVersionId()
+        || !evidence.policy().worldSlug().equals(request.getWorldSlug())
+        || !evidence.policy().realmSlug().equals(request.getRealmSlug())) {
+      responseObserver.onError(
+          Status.FAILED_PRECONDITION
+              .withDescription("Published realm-entry policy readback does not match the request")
+              .asRuntimeException());
+      return;
+    }
+    try {
+      evidence.requireValidDigest(objectMapper);
+    } catch (IllegalArgumentException ex) {
+      responseObserver.onError(
+          Status.FAILED_PRECONDITION
+              .withDescription(
+                  "Published realm-entry policy evidence failed canonical verification")
+              .asRuntimeException());
+      return;
+    }
+    responseObserver.onNext(toPolicyResponse(evidence));
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  public void listPublishedRealmEntryPolicies(
+      ListPublishedRealmEntryPoliciesRequest request,
+      StreamObserver<ListPublishedRealmEntryPoliciesResponse> responseObserver) {
+    if (!isGameSessionPeer()) {
+      responseObserver.onError(
+          Status.PERMISSION_DENIED
+              .withDescription("Verified same-namespace Game Session workload identity is required")
+              .asRuntimeException());
+      return;
+    }
+
+    UUID canonicalTenantId = parseCanonicalNonNilUuid(request.getCanonicalTenantId());
+    if (canonicalTenantId == null
+        || request.getVersionId() <= 0
+        || !request.getUnknownFields().asMap().isEmpty()) {
+      responseObserver.onError(
+          Status.INVALID_ARGUMENT
+              .withDescription(
+                  "Canonical tenant UUID, positive version, and the v1 request schema are required")
+              .asRuntimeException());
+      return;
+    }
+
+    PublishedRealmEntryPolicySetEvidence evidence;
+    try {
+      evidence =
+          publishedReleaseBundleService.listPublishedRealmEntryPolicies(
+              canonicalTenantId, request.getVersionId());
+    } catch (PublishedRealmEntryPolicyNotFoundException ex) {
+      responseObserver.onError(
+          Status.NOT_FOUND
+              .withDescription(
+                  "Complete published realm-entry policy set is unavailable for the exact scope")
+              .asRuntimeException());
+      return;
+    } catch (IllegalArgumentException | IllegalStateException ex) {
+      responseObserver.onError(
+          Status.FAILED_PRECONDITION
+              .withDescription(
+                  "Complete published realm-entry policy set is inconsistent or unsupported")
+              .asRuntimeException());
+      return;
+    } catch (DataAccessResourceFailureException ex) {
+      responseObserver.onError(
+          Status.UNAVAILABLE
+              .withDescription("Published realm-entry policy set is temporarily unavailable")
+              .asRuntimeException());
+      return;
+    } catch (DataAccessException ex) {
+      Status.Code code =
+          hasConnectionFailureSqlState(ex) ? Status.Code.UNAVAILABLE : Status.Code.INTERNAL;
+      responseObserver.onError(
+          Status.fromCode(code)
+              .withDescription(
+                  code == Status.Code.UNAVAILABLE
+                      ? "Published realm-entry policy set is temporarily unavailable"
+                      : "Published realm-entry policy set could not be read")
+              .asRuntimeException());
+      return;
+    } catch (RuntimeException ex) {
+      responseObserver.onError(
+          Status.INTERNAL
+              .withDescription("Published realm-entry policy set could not be read")
+              .asRuntimeException());
+      return;
+    }
+
+    if (evidence == null
+        || !evidence.canonicalTenantId().equals(canonicalTenantId)
+        || evidence.versionId() != request.getVersionId()
+        || evidence.policies().isEmpty()
+        || evidence.policies().size() > PublishedRealmEntryPolicySetEvidence.MAX_POLICIES) {
+      responseObserver.onError(
+          Status.FAILED_PRECONDITION
+              .withDescription(
+                  "Complete published realm-entry policy set does not match the request")
+              .asRuntimeException());
+      return;
+    }
+    try {
+      evidence.requireValidDigest(objectMapper);
+    } catch (IllegalArgumentException ex) {
+      responseObserver.onError(
+          Status.FAILED_PRECONDITION
+              .withDescription(
+                  "Complete published realm-entry policy set failed canonical verification")
+              .asRuntimeException());
+      return;
+    }
+
+    ListPublishedRealmEntryPoliciesResponse.Builder response =
+        ListPublishedRealmEntryPoliciesResponse.newBuilder()
+            .setSchemaVersion(RealmEntryPolicy.SCHEMA_VERSION)
+            .setTargetNamespace(workloadNamespace)
+            .setCanonicalTenantId(evidence.canonicalTenantId().toString())
+            .setVersionId(evidence.versionId())
+            .setVersionNumber(evidence.versionNumber())
+            .setReleaseBundleIdentity(evidence.releaseBundleIdentity())
+            .setPublishWorkflowId(evidence.publishWorkflowId())
+            .setManifestHash(evidence.manifestHash())
+            .setPolicyCount(evidence.policies().size())
+            .setPolicySetDigest(evidence.policySetDigest());
+    evidence.policies().stream().map(this::toPolicyResponse).forEach(response::addPolicies);
+    responseObserver.onNext(response.build());
+    responseObserver.onCompleted();
+  }
+
+  private ResolvePublishedRealmEntryPolicyResponse toPolicyResponse(
+      PublishedRealmEntryPolicyEvidence evidence) {
+    RealmEntryPolicy policy = evidence.policy();
+    return ResolvePublishedRealmEntryPolicyResponse.newBuilder()
+        .setSchemaVersion(RealmEntryPolicy.SCHEMA_VERSION)
+        .setTargetNamespace(workloadNamespace)
+        .setCanonicalTenantId(evidence.canonicalTenantId().toString())
+        .setVersionId(evidence.versionId())
+        .setVersionNumber(evidence.versionNumber())
+        .setPolicyId(evidence.policyId().toString())
+        .setSourceRevisionId(evidence.sourceRevisionId())
+        .setSourceGameRowId(evidence.sourceGameRowId())
+        .setSourceGameTenantKey(evidence.sourceGameTenantKey())
+        .setTenantIdentityProvenanceKind(evidence.tenantIdentityProvenanceKind())
+        .setReleaseBundleIdentity(evidence.releaseBundleIdentity())
+        .setPublishWorkflowId(evidence.publishWorkflowId())
+        .setManifestHash(evidence.manifestHash())
+        .setWorldSlug(policy.worldSlug())
+        .setWorldDisplayName(policy.worldDisplayName())
+        .setRealmSlug(policy.realmSlug())
+        .setRealmDisplayName(policy.realmDisplayName())
+        .setVisible(policy.visible())
+        .setPublicProduction(policy.publicProduction())
+        .setStateScope(
+            switch (policy.stateScope()) {
+              case SHARED -> PublishedRealmEntryStateScope.PUBLISHED_REALM_ENTRY_STATE_SCOPE_SHARED;
+              case ISOLATED ->
+                  PublishedRealmEntryStateScope.PUBLISHED_REALM_ENTRY_STATE_SCOPE_ISOLATED;
+            })
+        .setEntryPolicy(
+            PublishedRealmEntryPolicyKind.PUBLISHED_REALM_ENTRY_POLICY_KIND_PRESEEDED_ONLY)
+        .setPolicyJson(policy.canonicalJson())
+        .setPolicyDigest(evidence.policyDigest())
+        .build();
   }
 
   private boolean isGameSessionPeer() {

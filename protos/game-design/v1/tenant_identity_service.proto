@@ -12,6 +12,12 @@ service TenantIdentityService {
   // Exact audited retained Game Session association; never an Account manifest or admission.
   rpc ResolveLegacyGameSessionTenantAssociation(ResolveLegacyGameSessionTenantAssociationRequest)
       returns (ResolveLegacyGameSessionTenantAssociationResponse);
+  // Same-namespace Game Session read of immutable, version-scoped Game Design policy evidence.
+  rpc ResolvePublishedRealmEntryPolicy(ResolvePublishedRealmEntryPolicyRequest)
+      returns (ResolvePublishedRealmEntryPolicyResponse);
+  // Complete bounded policy set; required for catalog cardinality and public-production proof.
+  rpc ListPublishedRealmEntryPolicies(ListPublishedRealmEntryPoliciesRequest)
+      returns (ListPublishedRealmEntryPoliciesResponse);
 }
 
 message ResolveRuntimeTenantIdentityRequest {
@@ -58,4 +64,67 @@ message ResolveLegacyGameSessionTenantAssociationResponse {
   GameSessionTenantAssociationManifestEvidence manifest = 2;
   string manifest_digest = 3;
   string ed25519_signature = 4;
+}
+
+message ResolvePublishedRealmEntryPolicyRequest {
+  string canonical_tenant_id = 1;
+  int64 version_id = 2;
+  string world_slug = 3;
+  string realm_slug = 4;
+}
+
+enum PublishedRealmEntryStateScope {
+  PUBLISHED_REALM_ENTRY_STATE_SCOPE_UNSPECIFIED = 0;
+  PUBLISHED_REALM_ENTRY_STATE_SCOPE_SHARED = 1;
+  PUBLISHED_REALM_ENTRY_STATE_SCOPE_ISOLATED = 2;
+}
+
+enum PublishedRealmEntryPolicyKind {
+  PUBLISHED_REALM_ENTRY_POLICY_KIND_UNSPECIFIED = 0;
+  PUBLISHED_REALM_ENTRY_POLICY_KIND_PRESEEDED_ONLY = 1;
+}
+
+message ResolvePublishedRealmEntryPolicyResponse {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string canonical_tenant_id = 3;
+  int64 version_id = 4;
+  int32 version_number = 5;
+  string policy_id = 6;
+  int64 source_revision_id = 7;
+  int64 source_game_row_id = 8;
+  string source_game_tenant_key = 9;
+  string tenant_identity_provenance_kind = 10;
+  string release_bundle_identity = 11;
+  string publish_workflow_id = 12;
+  string manifest_hash = 13;
+  string world_slug = 14;
+  string world_display_name = 15;
+  string realm_slug = 16;
+  string realm_display_name = 17;
+  bool visible = 18;
+  bool public_production = 19;
+  PublishedRealmEntryStateScope state_scope = 20;
+  PublishedRealmEntryPolicyKind entry_policy = 21;
+  string policy_json = 22;
+  string policy_digest = 23;
+}
+
+message ListPublishedRealmEntryPoliciesRequest {
+  string canonical_tenant_id = 1;
+  int64 version_id = 2;
+}
+
+message ListPublishedRealmEntryPoliciesResponse {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string canonical_tenant_id = 3;
+  int64 version_id = 4;
+  int32 version_number = 5;
+  string release_bundle_identity = 6;
+  string publish_workflow_id = 7;
+  string manifest_hash = 8;
+  uint32 policy_count = 9;
+  string policy_set_digest = 10;
+  repeated ResolvePublishedRealmEntryPolicyResponse policies = 11;
 }
