@@ -1,5 +1,8 @@
 apiVersion: apps/v1
 kind: Deployment
+{{- if hasKey (.Values.extraEnv | default dict) "FIREMUD_GRPC_WORKLOAD_NAMESPACE" }}
+{{- fail "extraEnv must not set controller-owned FIREMUD_GRPC_WORKLOAD_NAMESPACE" }}
+{{- end }}
 metadata:
   name: account-service
 spec:
@@ -23,6 +26,10 @@ spec:
           ports:
             - containerPort: 8080
           env:
+            - name: FIREMUD_GRPC_WORKLOAD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             {{- range $key, $value := .Values.extraEnv }}
             - name: {{ $key }}
               value: "{{ $value }}"

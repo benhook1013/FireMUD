@@ -107,6 +107,10 @@ public class LoggingAdminClient
       }
       throw new IllegalStateException("Account audit receiver returned error code " + errorCode);
     }
+    if (response.getAuditProjectionVersion() != 1) {
+      throw new IllegalStateException(
+          "Account audit receiver did not prove a supported audit projection version");
+    }
     if (!response.getAuditEventId().equals(envelope.auditEventId().toString())
         || !response.getPayloadDigest().equals(envelope.payloadDigest())
         || response.getSchemaVersion() != envelope.schemaVersion()

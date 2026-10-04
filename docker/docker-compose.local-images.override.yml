@@ -1,8 +1,11 @@
 x-local-java-env: &local-java-env
   BPL_JAVA_NMT_ENABLED: "false"
   BPL_JVM_THREAD_COUNT: "20"
-  FIREMUD_GRPC_PLAINTEXT: "true"
-  GRPC_SERVER_TLS_ENABLED: "false"
+  FIREMUD_GRPC_PLAINTEXT: "false"
+  GRPC_SERVER_TLS_ENABLED: "true"
+
+x-local-runtime-volumes: &local-runtime-volumes
+  - ../dev-tools/certs/local-runtime/default:/app/certs:ro
 
 services:
   account-service:
@@ -12,6 +15,12 @@ services:
     mem_limit: 768m
     environment:
       <<: *local-java-env
+      FIREMUD_GRPC_CERT_CHAIN_PATH: /app/certs/workloads/account-service.crt
+      FIREMUD_GRPC_PRIVATE_KEY_PATH: /app/certs/workloads/account-service.key
+      FIREMUD_GRPC_CA_CERT_PATH: /app/certs/ca.crt
+      FIREMUD_GRPC_WORKLOAD_NAMESPACE: local
+    volumes:
+      - ../dev-tools/certs/local-runtime/account-service:/app/certs:ro
 
   gateway:
     build: null
@@ -22,6 +31,7 @@ services:
       <<: *local-java-env
       FIREMUD_GATEWAY_HEADER_TRUST_TCP_PROXY_ALLOW_INSECURE_HEADERS_FROM_TRUSTED_CIDRS: "true"
       FIREMUD_GATEWAY_HEADER_TRUST_TCP_PROXY_INSECURE_TRUSTED_CIDRS_0: 172.16.0.0/12
+    volumes: *local-runtime-volumes
 
   automation-scripting-service:
     build: null
@@ -30,6 +40,7 @@ services:
     mem_limit: 768m
     environment:
       <<: *local-java-env
+    volumes: *local-runtime-volumes
 
   entity-management-service:
     build: null
@@ -38,6 +49,7 @@ services:
     mem_limit: 768m
     environment:
       <<: *local-java-env
+    volumes: *local-runtime-volumes
 
   game-design-service:
     build: null
@@ -46,6 +58,7 @@ services:
     mem_limit: 768m
     environment:
       <<: *local-java-env
+    volumes: *local-runtime-volumes
 
   game-logic-service:
     build: null
@@ -54,6 +67,7 @@ services:
     mem_limit: 768m
     environment:
       <<: *local-java-env
+    volumes: *local-runtime-volumes
 
   game-session-service:
     build: null
@@ -63,6 +77,11 @@ services:
     environment:
       <<: *local-java-env
       GAME_LOGIC_DEFAULT_ROOM_ID: "1"
+      FIREMUD_GRPC_CERT_CHAIN_PATH: /app/certs/workloads/game-session-service.crt
+      FIREMUD_GRPC_PRIVATE_KEY_PATH: /app/certs/workloads/game-session-service.key
+      FIREMUD_GRPC_CA_CERT_PATH: /app/certs/ca.crt
+    volumes:
+      - ../dev-tools/certs/local-runtime/game-session-service:/app/certs:ro
 
   logging-admin-service:
     build: null
@@ -71,6 +90,8 @@ services:
     mem_limit: 768m
     environment:
       <<: *local-java-env
+      FIREMUD_GRPC_WORKLOAD_NAMESPACE: local
+    volumes: *local-runtime-volumes
 
   social-groups-service:
     build: null
@@ -79,6 +100,11 @@ services:
     mem_limit: 768m
     environment:
       <<: *local-java-env
+      FIREMUD_GRPC_CERT_CHAIN_PATH: /app/certs/workloads/social-groups-service.crt
+      FIREMUD_GRPC_PRIVATE_KEY_PATH: /app/certs/workloads/social-groups-service.key
+      FIREMUD_GRPC_CA_CERT_PATH: /app/certs/ca.crt
+    volumes:
+      - ../dev-tools/certs/local-runtime/social-groups-service:/app/certs:ro
 
   tcp-proxy-service:
     build: null
@@ -88,6 +114,7 @@ services:
     environment:
       <<: *local-java-env
       GATEWAY_WS_URL: ws://gateway:8080/ws/game
+    volumes: *local-runtime-volumes
 
   world-management-service:
     build: null
@@ -96,6 +123,7 @@ services:
     mem_limit: 768m
     environment:
       <<: *local-java-env
+    volumes: *local-runtime-volumes
 
   pg-dump-cron:
     build: null

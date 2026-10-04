@@ -3,7 +3,9 @@ package net.firedevops.firemud.springcloudgateway.config;
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertHasMethod;
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertHasPath;
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertHasStripPrefix;
+import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertNoConfiguredPath;
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertNoConfiguredPathStartsWith;
+import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertNoRouteWithPathAndMethod;
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertSocialChatAndFriendsAreEdgeGated;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -46,7 +48,8 @@ class GatewayRoutesConfigurationTestProfileTest {
           "admin-remote-followups",
           "admin-sagas",
           "admin-tick-remediation",
-          "design",
+          "design-ping",
+          "design-templates-read",
           "account-auth",
           "account-accounts",
           "account-profiles",
@@ -111,7 +114,14 @@ class GatewayRoutesConfigurationTestProfileTest {
     assertHasPath(gatewayProperties, "admin-tick-remediation", "/api/admin/tick-remediation/**");
     assertHasMethod(gatewayProperties, "admin-tick-remediation", "GET");
 
-    assertHasPath(gatewayProperties, "design", "/api/design/**");
+    assertHasPath(gatewayProperties, "design-ping", "/api/design/ping");
+    assertHasMethod(gatewayProperties, "design-ping", "GET");
+    assertHasPath(gatewayProperties, "design-templates-read", "/api/design/templates");
+    assertHasMethod(gatewayProperties, "design-templates-read", "GET");
+    assertNoConfiguredPath(gatewayProperties, "/api/design/**");
+    assertNoConfiguredPath(gatewayProperties, "/api/design/assets");
+    assertNoRouteWithPathAndMethod(gatewayProperties, "/api/design/templates", "POST");
+    assertNoRouteWithPathAndMethod(gatewayProperties, "/api/design/assets", "POST");
 
     assertHasPath(gatewayProperties, "session-ping", "/api/session/ping");
 
@@ -133,7 +143,8 @@ class GatewayRoutesConfigurationTestProfileTest {
     assertHasStripPrefix(gatewayProperties, "admin-remote-followups", "2");
     assertHasStripPrefix(gatewayProperties, "admin-sagas", "2");
     assertHasStripPrefix(gatewayProperties, "admin-tick-remediation", "2");
-    assertHasStripPrefix(gatewayProperties, "design", "2");
+    assertHasStripPrefix(gatewayProperties, "design-ping", "2");
+    assertHasStripPrefix(gatewayProperties, "design-templates-read", "2");
     assertHasStripPrefix(gatewayProperties, "account-auth", "2");
     assertHasStripPrefix(gatewayProperties, "account-accounts", "2");
     assertHasStripPrefix(gatewayProperties, "account-profiles", "2");

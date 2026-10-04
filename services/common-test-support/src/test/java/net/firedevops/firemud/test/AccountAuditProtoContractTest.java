@@ -53,6 +53,7 @@ class AccountAuditProtoContractTest {
     assertField(descriptor, "payload_digest", 9, FieldDescriptor.Type.STRING);
     assertField(descriptor, "status", 10, FieldDescriptor.Type.ENUM);
     assertField(descriptor, "outcome", 11, FieldDescriptor.Type.ENUM);
+    assertField(descriptor, "audit_projection_version", 12, FieldDescriptor.Type.INT32);
     assertThat(descriptor.findFieldByName("scope").getEnumType())
         .isEqualTo(AccountAuditScope.getDescriptor());
     assertThat(descriptor.findFieldByName("status").getEnumType())
@@ -76,6 +77,7 @@ class AccountAuditProtoContractTest {
     assertField(descriptor, "status", 9, FieldDescriptor.Type.ENUM);
     assertField(descriptor, "outcome", 10, FieldDescriptor.Type.ENUM);
     assertErrorField(descriptor, "error", 11);
+    assertField(descriptor, "audit_projection_version", 12, FieldDescriptor.Type.INT32);
   }
 
   private static void assertField(
