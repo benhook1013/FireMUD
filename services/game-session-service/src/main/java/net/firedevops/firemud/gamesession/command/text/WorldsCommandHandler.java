@@ -488,7 +488,7 @@ public class WorldsCommandHandler {
     if (parsedSessionId.isEmpty() || parsedSessionId.getAsLong() != sessionContext.sessionId()) {
       return JoinMembershipResult.failure("CONNECT_SCOPE_MISMATCH");
     }
-    if (!sessionContext.hasAccountIdentity() || sessionContext.sessionId() <= 0L) {
+    if (!sessionContext.hasAccountIdentity() || sessionContext.sessionId() <= 0) {
       return JoinMembershipResult.failure("LOGIN_REQUIRED");
     }
     if (accountClient == null || connectScopeSessionStore == null) {

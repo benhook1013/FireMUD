@@ -18,15 +18,14 @@ import org.springframework.data.redis.core.script.RedisScript;
 import tools.jackson.databind.ObjectMapper;
 
 class DirectTextConnectScopeSessionStoreTest {
-  private static final String ACCOUNT_UUID_A = "11111111-1111-4111-8111-111111111111";
-  private static final String ACCOUNT_UUID_B = "22222222-2222-4222-8222-222222222222";
-
+  private static final String ACCOUNT_UUID = "11111111-1111-4111-8111-111111111111";
+  private static final String OTHER_ACCOUNT_UUID = "22222222-2222-4222-8222-222222222222";
   private final DirectTextConnectScopeSessionStore store =
       DirectTextConnectScopeSessionStore.inMemoryForTest();
 
   @Test
   void resolvesOpaqueScopeOnlyForTheIssuingAccountAndTransportSession() {
-    SessionContext caller = session(7L, ACCOUNT_UUID_A);
+    SessionContext caller = session(7L, ACCOUNT_UUID);
     Instant now = Instant.now();
     Instant expiry = now.plusSeconds(3600);
     store.replaceWorldScopes(
@@ -39,15 +38,15 @@ class DirectTextConnectScopeSessionStoreTest {
 
     assertThat(store.publicProductionScope(caller, 22L, "demo-world", now))
         .hasValueSatisfying(scope -> assertThat(scope.connectScopeId()).isEqualTo("scope-secret"));
-    assertThat(store.publicProductionScope(session(8L, ACCOUNT_UUID_A), 22L, "demo-world", now))
+    assertThat(store.publicProductionScope(session(8L, ACCOUNT_UUID), 22L, "demo-world", now))
         .isEmpty();
-    assertThat(store.publicProductionScope(session(7L, ACCOUNT_UUID_B), 22L, "demo-world", now))
+    assertThat(store.publicProductionScope(session(7L, OTHER_ACCOUNT_UUID), 22L, "demo-world", now))
         .isEmpty();
   }
 
   @Test
   void refusesExpiredAndAmbiguousPublicScopes() {
-    SessionContext caller = session(7L, ACCOUNT_UUID_A);
+    SessionContext caller = session(7L, ACCOUNT_UUID);
     Instant now = Instant.now();
     store.replaceWorldScopes(
         caller,
@@ -74,7 +73,7 @@ class DirectTextConnectScopeSessionStoreTest {
 
   @Test
   void clearsPriorScopeBeforeReplacingTheWorldBinding() {
-    SessionContext caller = session(7L, ACCOUNT_UUID_A);
+    SessionContext caller = session(7L, ACCOUNT_UUID);
     Instant now = Instant.now();
     store.replaceWorldScopes(
         caller,
@@ -91,7 +90,7 @@ class DirectTextConnectScopeSessionStoreTest {
 
   @Test
   void reusesJoinRequestIdForScopeRetryAndStartsANewIdAfterFreshRealms() {
-    SessionContext caller = session(7L, ACCOUNT_UUID_A);
+    SessionContext caller = session(7L, ACCOUNT_UUID);
     Instant now = Instant.now();
     Instant expiry = now.plusSeconds(3600);
     store.replaceRealmSnapshot(
@@ -138,7 +137,7 @@ class DirectTextConnectScopeSessionStoreTest {
 
   @Test
   void clearingTransportLobbyRemovesScopeAndBoundJoinIdentityBeforeReuse() {
-    SessionContext caller = session(7L, ACCOUNT_UUID_A);
+    SessionContext caller = session(7L, ACCOUNT_UUID);
     Instant now = Instant.now();
     store.replaceRealmSnapshot(
         caller,
@@ -179,13 +178,13 @@ class DirectTextConnectScopeSessionStoreTest {
 
   @Test
   void storesExactPublicOrdinalSnapshotAndBoundsAccountScopeExpiry() {
-    SessionContext caller = session(41L, ACCOUNT_UUID_A);
+    SessionContext caller = session(41L, ACCOUNT_UUID);
     Instant now = Instant.now();
     DirectTextConnectScopeSessionStore.WorldOrdinalTarget target =
         new DirectTextConnectScopeSessionStore.WorldOrdinalTarget(
             1, "demo-world", 22L, 13L, "target-fingerprint");
     store.replaceWorldSnapshot(
-        caller.sessionId(), null, "catalog-fingerprint", List.of(target), now);
+        caller.sessionId(), caller.accountId(), "catalog-fingerprint", List.of(target), now);
 
     assertThat(store.worldsSnapshot(caller, now))
         .hasValueSatisfying(
@@ -208,20 +207,20 @@ class DirectTextConnectScopeSessionStoreTest {
         store.publicProductionScopeForJoin(caller, "1", 22L, "demo-world", now).orElseThrow();
 
     assertThat(selected.scope().expiresAt()).isBeforeOrEqualTo(now.plusSeconds(901));
-    assertThat(selected.scope().playerContext().getAccountId()).isEqualTo(ACCOUNT_UUID_A);
+    assertThat(selected.scope().playerContext().getAccountId()).isEqualTo(ACCOUNT_UUID);
     assertThat(selected.scope().playerContext().getSessionId()).isEqualTo("41");
   }
 
   @Test
   @SuppressWarnings("unchecked")
   void readsLegacyLobbyJsonAcrossProductionStoreInstances() throws Exception {
-    SessionContext caller = session(41L, ACCOUNT_UUID_A);
+    SessionContext caller = session(41L, ACCOUNT_UUID);
     Instant now = Instant.now();
     long expiresAt = now.plusSeconds(600).toEpochMilli();
     String worldKey = "22:ZGVtby13b3JsZA";
     PlayerExecutionContext playerContext =
         PlayerExecutionContext.newBuilder()
-            .setAccountId(caller.accountId())
+            .setAccountId("7")
             .setSessionId(Long.toString(caller.sessionId()))
             .setTenantId(Long.toString(caller.tenantId()))
             .setRealmId("4c4b57d8-e3a2-48fe-9977-e7df0fdce901")
@@ -234,7 +233,7 @@ class DirectTextConnectScopeSessionStoreTest {
             .writeValueAsString(
                 Map.of(
                     "sessionId", caller.sessionId(),
-                    "accountId", caller.accountId(),
+                    "accountId", "7",
                     "worldsExpiresAtEpochMs", expiresAt,
                     "catalogFingerprint", "catalog-fingerprint-v13",
                     "ordinalTargets", List.of(),
@@ -273,62 +272,75 @@ class DirectTextConnectScopeSessionStoreTest {
                                 "ordinalTargets",
                                 List.of()))));
     AtomicReference<String> sharedRedisValue = new AtomicReference<>(legacyJson);
-    StringRedisTemplate redisTemplate = Mockito.mock(StringRedisTemplate.class);
-    ValueOperations<String, String> valueOperations = Mockito.mock(ValueOperations.class);
-    Mockito.when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-    Mockito.when(valueOperations.get(Mockito.anyString()))
-        .thenAnswer(invocation -> sharedRedisValue.get());
-    Mockito.doAnswer(
-            invocation -> {
-              Object[] arguments =
-                  java.util.Arrays.copyOfRange(
-                      invocation.getArguments(), 2, invocation.getArguments().length);
-              String expectedValue = "1".equals(arguments[0]) ? (String) arguments[1] : null;
-              if (!Objects.equals(sharedRedisValue.get(), expectedValue)) {
-                return 0L;
-              }
-              sharedRedisValue.set("1".equals(arguments[2]) ? (String) arguments[3] : null);
-              return 1L;
-            })
-        .when(redisTemplate)
-        .execute(Mockito.any(RedisScript.class), Mockito.anyList(), Mockito.any(Object[].class));
+    StringRedisTemplate redisTemplate = redisTemplate(sharedRedisValue);
 
     DirectTextConnectScopeSessionStore firstInstance =
         new DirectTextConnectScopeSessionStore(redisTemplate, new ObjectMapper());
     DirectTextConnectScopeSessionStore replacementInstance =
         new DirectTextConnectScopeSessionStore(redisTemplate, new ObjectMapper());
 
-    assertThat(firstInstance.realmsSnapshot(caller, 22L, "demo-world", now))
+    assertThatThrownBy(() -> firstInstance.realmsSnapshot(caller, 22L, "demo-world", now))
+        .isInstanceOf(DirectTextConnectScopeSessionStore.StoreUnavailableException.class);
+    assertThatThrownBy(
+            () ->
+                replacementInstance.publicProductionScopeForJoin(
+                    caller, "1", 22L, "demo-world", now))
+        .isInstanceOf(DirectTextConnectScopeSessionStore.StoreUnavailableException.class);
+    assertThat(sharedRedisValue.get()).isEqualTo(legacyJson);
+  }
+
+  @Test
+  void readsUuidLobbySnapshotAcrossProductionStoreInstances() {
+    SessionContext caller = session(41L, ACCOUNT_UUID);
+    Instant now = Instant.now();
+    AtomicReference<String> sharedRedisValue = new AtomicReference<>();
+    StringRedisTemplate redisTemplate = redisTemplate(sharedRedisValue);
+    DirectTextConnectScopeSessionStore firstInstance =
+        new DirectTextConnectScopeSessionStore(redisTemplate, new ObjectMapper());
+    DirectTextConnectScopeSessionStore replacementInstance =
+        new DirectTextConnectScopeSessionStore(redisTemplate, new ObjectMapper());
+    DirectTextConnectScopeSessionStore.RealmOrdinalTarget target =
+        new DirectTextConnectScopeSessionStore.RealmOrdinalTarget(
+            1, "production", 22L, 29L, 3L, "uuid-realm-target-fingerprint");
+    firstInstance.replaceRealmSnapshot(
+        caller,
+        "1",
+        22L,
+        "demo-world",
+        "uuid-catalog-fingerprint",
+        List.of(target),
+        List.of(scopedRealm(caller, "production", "uuid-connect-scope", now.plusSeconds(600))),
+        now);
+
+    assertThat(replacementInstance.realmsSnapshot(caller, 22L, "demo-world", now))
         .hasValueSatisfying(
             snapshot -> {
-              assertThat(snapshot.tenantId()).isEqualTo(22L);
-              assertThat(snapshot.requestedWorldSelector()).isEqualTo("1");
+              assertThat(snapshot.ordinalTargets()).containsExactly(target);
+              assertThat(snapshot.catalogFingerprint()).isEqualTo("uuid-catalog-fingerprint");
             });
     DirectTextConnectScopeSessionStore.JoinScope selected =
         replacementInstance
             .publicProductionScopeForJoin(caller, "1", 22L, "demo-world", now)
             .orElseThrow();
-    assertThat(selected.scope().connectScopeId()).isEqualTo("account-connect-scope-legacy");
-    assertThat(selected.scope().playerContext().getAccountId()).isEqualTo(ACCOUNT_UUID_A);
+    assertThat(selected.scope().connectScopeId()).isEqualTo("uuid-connect-scope");
+    assertThat(selected.scope().playerContext().getAccountId()).isEqualTo(ACCOUNT_UUID);
     assertThat(selected.scope().playerContext().getSessionId()).isEqualTo("41");
     assertThat(selected.scope().playerContext().getTenantId()).isEqualTo("22");
-    assertThat(selected.requestId()).isEqualTo("join-request-already-bound");
     assertThat(
             firstInstance
                 .publicProductionScopeForJoin(caller, "1", 22L, "demo-world", now)
                 .orElseThrow()
                 .requestId())
-        .isEqualTo("join-request-already-bound");
-    assertThat(sharedRedisValue.get()).doesNotContain("worldBySelector");
+        .isEqualTo(selected.requestId());
   }
 
   @Test
   void sameWorldSlugInDifferentTenantsKeepsOrdinalScopesIsolated() {
-    SessionContext caller = session(41L, ACCOUNT_UUID_A);
+    SessionContext caller = session(41L, ACCOUNT_UUID);
     Instant now = Instant.now();
     store.replaceWorldSnapshot(
         caller.sessionId(),
-        null,
+        caller.accountId(),
         "catalog-fingerprint",
         List.of(
             new DirectTextConnectScopeSessionStore.WorldOrdinalTarget(
@@ -374,7 +386,7 @@ class DirectTextConnectScopeSessionStoreTest {
 
   @Test
   void storesRealmsResponseSnapshotOnlyForTheIssuingAccountAndBeforeExpiry() {
-    SessionContext caller = session(41L, ACCOUNT_UUID_A);
+    SessionContext caller = session(41L, ACCOUNT_UUID);
     Instant now = Instant.now();
     DirectTextConnectScopeSessionStore.RealmOrdinalTarget target =
         new DirectTextConnectScopeSessionStore.RealmOrdinalTarget(
@@ -392,14 +404,14 @@ class DirectTextConnectScopeSessionStoreTest {
               assertThat(snapshot.ordinalTargets()).containsExactly(target);
               assertThat(snapshot.expiresAt()).isBeforeOrEqualTo(now.plusSeconds(301));
             });
-    assertThat(store.realmsSnapshot(session(41L, ACCOUNT_UUID_B), 22L, "demo", now)).isEmpty();
-    assertThat(store.realmsSnapshot(session(42L, ACCOUNT_UUID_A), 22L, "demo", now)).isEmpty();
+    assertThat(store.realmsSnapshot(session(41L, OTHER_ACCOUNT_UUID), 22L, "demo", now)).isEmpty();
+    assertThat(store.realmsSnapshot(session(42L, ACCOUNT_UUID), 22L, "demo", now)).isEmpty();
     assertThat(store.realmsSnapshot(caller, 22L, "demo", now.plusSeconds(301))).isEmpty();
   }
 
   @Test
   void replacingWorldScopesClearsOnlyThatWorldsRealmsSnapshotAndKeepsJoinScopes() {
-    SessionContext caller = session(41L, ACCOUNT_UUID_A);
+    SessionContext caller = session(41L, ACCOUNT_UUID);
     Instant now = Instant.now();
     store.replaceRealmSnapshot(
         caller, "demo", 22L, "demo", "demo-catalog", List.of(), List.of(), now);
@@ -430,7 +442,7 @@ class DirectTextConnectScopeSessionStoreTest {
 
   @Test
   void replacingWorldScopesUsesCallerTimeWhenPruningUnrelatedScopes() {
-    SessionContext caller = session(41L, ACCOUNT_UUID_A);
+    SessionContext caller = session(41L, ACCOUNT_UUID);
     Instant now = Instant.parse("2000-01-01T00:00:00Z");
     Instant scopeExpiry = now.plusSeconds(600);
     store.replaceRealmSnapshot(
@@ -472,7 +484,7 @@ class DirectTextConnectScopeSessionStoreTest {
 
   @Test
   void clearingWorldScopesUsesCallerTimeWhenPruningUnrelatedScopes() {
-    SessionContext caller = session(41L, ACCOUNT_UUID_A);
+    SessionContext caller = session(41L, ACCOUNT_UUID);
     Instant now = Instant.parse("2000-01-01T00:00:00Z");
     Instant scopeExpiry = now.plusSeconds(600);
     store.replaceRealmSnapshot(
@@ -506,7 +518,7 @@ class DirectTextConnectScopeSessionStoreTest {
 
   @Test
   void worldScopeMutationsRejectNullCallerTime() {
-    SessionContext caller = session(41L, ACCOUNT_UUID_A);
+    SessionContext caller = session(41L, ACCOUNT_UUID);
 
     assertThatThrownBy(() -> store.replaceWorldScopes(caller, "demo", 22L, "demo", List.of(), null))
         .isInstanceOf(NullPointerException.class)
@@ -518,8 +530,8 @@ class DirectTextConnectScopeSessionStoreTest {
 
   @Test
   void replacingWorldScopesForAnotherAccountClearsPriorLobbyAuthority() {
-    SessionContext previousCaller = session(41L, ACCOUNT_UUID_A);
-    SessionContext currentCaller = session(41L, ACCOUNT_UUID_B);
+    SessionContext previousCaller = session(41L, ACCOUNT_UUID);
+    SessionContext currentCaller = session(41L, OTHER_ACCOUNT_UUID);
     Instant now = Instant.now();
     Instant expiresAt = now.plusSeconds(60);
     store.replaceRealmSnapshot(
@@ -562,10 +574,10 @@ class DirectTextConnectScopeSessionStoreTest {
   void rejectsInvalidTransportIdsAndScopesBoundToAnotherIdentity() {
     assertThatThrownBy(() -> store.clearSession(0L)).isInstanceOf(IllegalArgumentException.class);
 
-    SessionContext caller = session(7L, ACCOUNT_UUID_A);
+    SessionContext caller = session(7L, ACCOUNT_UUID);
     Instant now = Instant.now();
     DirectTextConnectScopeSessionStore.ScopedRealm mismatchedScope =
-        scopedRealm(session(8L, ACCOUNT_UUID_A), "production", "scope-secret", now.plusSeconds(60));
+        scopedRealm(session(8L, ACCOUNT_UUID), "production", "scope-secret", now.plusSeconds(60));
     assertThatThrownBy(
             () -> store.replaceWorldScopes(caller, "demo", "demo", List.of(mismatchedScope), now))
         .isInstanceOf(DirectTextConnectScopeSessionStore.ConflictingIdentityException.class);
@@ -573,6 +585,30 @@ class DirectTextConnectScopeSessionStoreTest {
 
   private static SessionContext session(long sessionId, String accountId) {
     return new SessionContext(sessionId, 22L, accountId, 7001L, 9L, "jwt");
+  }
+
+  @SuppressWarnings("unchecked")
+  private static StringRedisTemplate redisTemplate(AtomicReference<String> sharedRedisValue) {
+    StringRedisTemplate redisTemplate = Mockito.mock(StringRedisTemplate.class);
+    ValueOperations<String, String> valueOperations = Mockito.mock(ValueOperations.class);
+    Mockito.when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+    Mockito.when(valueOperations.get(Mockito.anyString()))
+        .thenAnswer(invocation -> sharedRedisValue.get());
+    Mockito.doAnswer(
+            invocation -> {
+              Object[] arguments =
+                  java.util.Arrays.copyOfRange(
+                      invocation.getArguments(), 2, invocation.getArguments().length);
+              String expectedValue = "1".equals(arguments[0]) ? (String) arguments[1] : null;
+              if (!Objects.equals(sharedRedisValue.get(), expectedValue)) {
+                return 0L;
+              }
+              sharedRedisValue.set("1".equals(arguments[2]) ? (String) arguments[3] : null);
+              return 1L;
+            })
+        .when(redisTemplate)
+        .execute(Mockito.any(RedisScript.class), Mockito.anyList(), Mockito.any(Object[].class));
+    return redisTemplate;
   }
 
   private static DirectTextConnectScopeSessionStore.ScopedRealm scopedRealm(

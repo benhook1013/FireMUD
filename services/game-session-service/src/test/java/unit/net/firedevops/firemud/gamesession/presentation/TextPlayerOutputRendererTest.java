@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 class TextPlayerOutputRendererTest {
   private static final String STRIDE_COMMAND_ID = "stride";
   private static final String SORA_ACCOUNT_ID = "5f7624ca-8aee-4d34-9cd8-3ba3a1815f30";
+  private static final String OTHER_FRIEND_ACCOUNT_ID = "f2ed193b-12c1-4c96-bcad-c162229af440";
 
   @Test
   void characterRosterExplainsCurrentNameOnlySelection() {
@@ -1207,7 +1208,7 @@ class TextPlayerOutputRendererTest {
                         new FriendPresenceViewOutput.Entry(
                             1,
                             null,
-                            SORA_ACCOUNT_ID,
+                            OTHER_FRIEND_ACCOUNT_ID,
                             "active",
                             null,
                             "Sora",
@@ -1224,7 +1225,7 @@ class TextPlayerOutputRendererTest {
                             "PUBLIC")))));
 
     assertThat(rendered)
-        .contains("Friends ONLINE:\n", "1) Sora [acct #" + SORA_ACCOUNT_ID + "] - online")
+        .contains("Friends ONLINE:\n", "1) Sora [acct #" + OTHER_FRIEND_ACCOUNT_ID + "] - online")
         .doesNotContain("[1/2]", "[0/2]");
   }
 

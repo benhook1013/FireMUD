@@ -28,7 +28,7 @@ import tools.jackson.databind.ObjectMapper;
 @SuppressWarnings("resource")
 class RedisDirectTextConnectScopeSessionStoreTest {
   private static final long SESSION_ID = 4401L;
-  private static final String ACCOUNT_ID = "c91fb96e-5ad8-4e4e-a12d-2838640093b2";
+  private static final String ACCOUNT_UUID = "7c74170e-7755-4d3a-8f12-3d2839b835de";
   private static final String REDIS_KEY = "gamesession:lobby:4401";
 
   @Container
@@ -201,7 +201,7 @@ class RedisDirectTextConnectScopeSessionStoreTest {
                     "sessionId",
                     SESSION_ID,
                     "accountId",
-                    ACCOUNT_ID,
+                    ACCOUNT_UUID,
                     "worldsExpiresAtEpochMs",
                     expiresAt,
                     "catalogFingerprint",
@@ -262,7 +262,7 @@ class RedisDirectTextConnectScopeSessionStoreTest {
             selected -> {
               assertThat(selected.scope().connectScopeId())
                   .isEqualTo("account-connect-scope-legacy");
-              assertThat(selected.scope().playerContext().getAccountId()).isEqualTo(ACCOUNT_ID);
+              assertThat(selected.scope().playerContext().getAccountId()).isEqualTo(ACCOUNT_UUID);
               assertThat(selected.scope().playerContext().getSessionId())
                   .isEqualTo(Long.toString(SESSION_ID));
               assertThat(selected.scope().playerContext().getTenantId()).isEqualTo("22");
@@ -276,7 +276,7 @@ class RedisDirectTextConnectScopeSessionStoreTest {
   }
 
   private static SessionContext session() {
-    return new SessionContext(SESSION_ID, 22L, ACCOUNT_ID, 7001L, 9L, "R-1", "unused-test-jwt");
+    return new SessionContext(SESSION_ID, 22L, ACCOUNT_UUID, 7001L, 9L, "R-1", "unused-test-jwt");
   }
 
   private static PlayerExecutionContext playerContext(SessionContext caller) {

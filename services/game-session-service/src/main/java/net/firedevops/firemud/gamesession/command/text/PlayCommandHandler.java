@@ -685,6 +685,7 @@ public class PlayCommandHandler {
       long characterId = requireResolvedCharacterId(character.getId());
       if (!Long.toString(selectedRealm.tenantId()).equals(character.getTenantId())
           || !context.accountId().equals(character.getAccountId())
+          || !AccountIds.isCanonicalNonNilUuid(character.getAccountId())
           || character.getPlayableStateScope() != playableStateScope
           || !StringUtils.hasText(character.getName())
           || !characterIds.add(characterId)) {
@@ -1035,7 +1036,7 @@ public class PlayCommandHandler {
       return false;
     }
     if (!AccountIds.isCanonicalNonNilUuid(response.getAccountId())
-        || !AccountIds.isCanonicalNonNilUuid(response.getTenantId())) {
+        || !isCanonicalUuid(response.getTenantId())) {
       return false;
     }
     if (!response

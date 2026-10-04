@@ -877,7 +877,7 @@ public final class GameSessionGrpcService
     if (SessionContext.hasTenantAccess(tenantId)) {
       return;
     }
-    if (accountId.equals(SessionContext.getAccountId())) {
+    if (SessionContext.isCurrentAccount(accountId)) {
       return;
     }
     throw new AuthorizationException("Account access required");

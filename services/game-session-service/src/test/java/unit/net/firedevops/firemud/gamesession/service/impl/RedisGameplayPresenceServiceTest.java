@@ -97,11 +97,10 @@ class RedisGameplayPresenceServiceTest {
         jwtUtil.generateToken(
             ACCOUNT_GOD,
             Map.of("accountId", ACCOUNT_GOD, "scopedRoles", Map.of("22", List.of("god"))));
-    SessionContext context =
+    SessionContext godContext =
         new SessionContext(
             1L, 22L, ACCOUNT_GOD, "god@example.com", 101L, "Aster", 7L, "R-1", tenantAdminJwt);
-
-    service.registerConnected(context);
+    service.registerConnected(godContext);
 
     verify(valueOperations)
         .set(
@@ -492,11 +491,11 @@ class RedisGameplayPresenceServiceTest {
 
     assertEquals(1, result.size());
     assertEquals(2, result.get(ACCOUNT_PLAYER).size());
+    assertEquals(4L, result.get(ACCOUNT_PLAYER).get(0).sessionId());
+    assertEquals(3L, result.get(ACCOUNT_PLAYER).get(1).sessionId());
     assertTrue(
         result.get(ACCOUNT_PLAYER).stream()
             .allMatch(presence -> presence.role() == GameplayPresenceRole.PLAYER));
-    assertEquals(4L, result.get(ACCOUNT_PLAYER).get(0).sessionId());
-    assertEquals(3L, result.get(ACCOUNT_PLAYER).get(1).sessionId());
     Mockito.verify(valueOperations, Mockito.never())
         .set(Mockito.anyString(), Mockito.any(), Mockito.any(Duration.class));
     Mockito.verify(redisTemplate, Mockito.never())

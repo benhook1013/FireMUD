@@ -330,7 +330,9 @@ public final class LoginCommandHandler {
             ? projectedExisting
             : null;
     boolean sameAuthenticatedAccount =
-        existing != null && Objects.equals(existing.accountId(), accountId);
+        existing != null
+            && existing.hasAccountIdentity()
+            && Objects.equals(existing.accountId(), accountId);
     Optional<SessionContext> reusableBootstrapShell =
         sameAuthenticatedAccount
             ? Optional.empty()
@@ -388,7 +390,9 @@ public final class LoginCommandHandler {
                     existing.playableStateScope(),
                     existing.connectScopeId(),
                     existing.connectRequestId());
-    if (projectedExisting != null && !Objects.equals(projectedExisting.accountId(), accountId)) {
+    if (projectedExisting != null
+        && projectedExisting.hasAccountIdentity()
+        && !Objects.equals(projectedExisting.accountId(), accountId)) {
       gameplayPresenceLifecycleService.clearGameplayBinding(
           projectedExisting, "LOGIN_ACCOUNT_CHANGED");
     } else if (projectedExisting != null && projectedExisting.tenantId() != tenantId) {

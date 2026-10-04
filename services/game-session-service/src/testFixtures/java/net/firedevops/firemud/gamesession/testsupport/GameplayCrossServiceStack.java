@@ -190,7 +190,6 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
         socialStub.setFriendPresenceResponse(baselineFriendPresenceResponse);
       }
     }
-    entityStub.resetCharacters();
     entityStub.resetSyntheticAccountCharacters();
   }
 

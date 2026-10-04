@@ -432,8 +432,45 @@ class FriendsCommandHandlerTest {
                     new net.firedevops.firemud.gamesession.config.PresentationProperties())
                 .render(result.outputs().getFirst()))
         .contains("Friends " + filter + ": no matching friends.")
-        .doesNotContain("[0/2]", "[0/0]");
+        .doesNotContain("Secret", SECOND_FRIEND_ACCOUNT_ID, "[1/2]", "[0/2]", "[0/0]");
     Mockito.verify(socialGroupsClient).listFriends(1L, CALLER_ACCOUNT_ID, rosterFilter);
+  }
+
+  @Test
+  void friendsOnlineWithNoMatchesKeepsRosterTotalOutOfPlayerText() {
+    SocialGroupsClient socialGroupsClient = Mockito.mock(SocialGroupsClient.class);
+    EntityManagementClient entityManagementClient = Mockito.mock(EntityManagementClient.class);
+    FriendsCommandHandler handler =
+        newHandler(
+            socialGroupsClient, entityManagementClient, Mockito.mock(ScriptEventPublisher.class));
+    when(socialGroupsClient.listFriends(
+            1L, CALLER_ACCOUNT_ID, FriendRosterFilter.FRIEND_ROSTER_FILTER_ONLINE))
+        .thenReturn(
+            ListFriendsResponse.newBuilder()
+                .setFilter(FriendRosterFilter.FRIEND_ROSTER_FILTER_ONLINE)
+                .setTotalCount(2)
+                .setMatchCount(0)
+                .build());
+
+    TextCommandInterpretationResult result =
+        handler.handle(
+            new TextCommand(TextCommandType.FRIENDS, java.util.List.of("ONLINE"), "FRIENDS ONLINE"),
+            GAMEPLAY_CONTEXT);
+
+    assertThat(result.commandResult().accepted()).isTrue();
+    FriendPresenceViewOutput view =
+        (FriendPresenceViewOutput) result.outputs().getFirst().payload();
+    assertThat(view.filter()).isEqualTo("ONLINE");
+    assertThat(view.totalCount()).isEqualTo(2);
+    assertThat(view.friends()).isEmpty();
+    assertThat(
+            new TextPlayerOutputRenderer(
+                    new net.firedevops.firemud.gamesession.config.PresentationProperties())
+                .render(result.outputs().getFirst()))
+        .contains("Friends ONLINE: no matching friends.")
+        .doesNotContain("[0/2]", "[0/0]");
+    Mockito.verify(socialGroupsClient)
+        .listFriends(1L, CALLER_ACCOUNT_ID, FriendRosterFilter.FRIEND_ROSTER_FILTER_ONLINE);
   }
 
   @Test

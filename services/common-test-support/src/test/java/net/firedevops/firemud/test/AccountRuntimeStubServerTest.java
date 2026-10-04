@@ -142,7 +142,7 @@ class AccountRuntimeStubServerTest {
         var grant =
             stub.getRealmAccessGrantForRuntime(
                 GetRealmAccessGrantForRuntimeRequest.newBuilder()
-                    .setAccountId("7")
+                    .setAccountId(ACCOUNT_UUID)
                     .setTenantId("1")
                     .setWorldSlug("demo")
                     .setRealmSlug("production")

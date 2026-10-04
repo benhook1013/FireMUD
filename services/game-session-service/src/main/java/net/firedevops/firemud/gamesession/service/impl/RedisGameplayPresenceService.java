@@ -201,7 +201,7 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
       GameplayPresence presence;
       try {
         presence = readPresenceForMutation(presenceKey);
-      } catch (SerializationException | ClassCastException ex) {
+      } catch (SerializationException | ClassCastException | UnreadablePresenceException ex) {
         // Keep the index member until its retained presence value can be read safely.
         continue;
       }
@@ -251,7 +251,7 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
         GameplayPresence presence;
         try {
           presence = readPresenceForMutation(presenceKey);
-        } catch (SerializationException | ClassCastException ex) {
+        } catch (SerializationException | ClassCastException | UnreadablePresenceException ex) {
           // Keep the index member until its retained presence value can be read safely.
           continue;
         }
@@ -275,17 +275,15 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
 
   @Override
   public Optional<GameplayPresence> findConnectedBySessionId(long sessionId) {
-    return Optional.ofNullable(readPresence(presenceKey(sessionId)));
+    return Optional.ofNullable(readPresence(presenceKey(sessionId)))
+        .map(RedisGameplayPresenceService::playerPresence);
   }
 
   private GameplayPresence readPresence(String key) {
     ValueOperations<String, Object> valueOps = redisTemplate.opsForValue();
     try {
       GameplayPresence presence = (GameplayPresence) valueOps.get(key);
-      if (presence != null && !AccountIds.isCanonicalNonNilUuid(presence.accountId())) {
-        throw new SerializationException("retained Account identity is not a canonical UUID");
-      }
-      return presence == null ? null : playerPresence(presence);
+      return hasCurrentAccountIdentity(presence) ? presence : null;
     } catch (SerializationException | ClassCastException ex) {
       // An older numeric Account carrier cannot be mapped to a UUID. Fail closed without
       // mutating the retained record; the session must authenticate through its context path.
@@ -299,10 +297,14 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
     // that cannot be decoded under the current Account carrier. Propagate these decode failures
     // so callers do not delete or overwrite the record or its indexes.
     GameplayPresence presence = (GameplayPresence) valueOps.get(key);
-    if (presence != null && !AccountIds.isCanonicalNonNilUuid(presence.accountId())) {
-      throw new SerializationException("retained Account identity is not a canonical UUID");
+    if (presence != null && !hasCurrentAccountIdentity(presence)) {
+      throw new UnreadablePresenceException();
     }
     return presence;
+  }
+
+  private static boolean hasCurrentAccountIdentity(GameplayPresence presence) {
+    return presence == null || AccountIds.isCanonicalNonNilUuid(presence.accountId());
   }
 
   private static GameplayPresence playerPresence(GameplayPresence presence) {
@@ -326,6 +328,8 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
         presence.lastAcceptedCommandAtEpochMs(),
         presence.lastMeaningfulActivityAtEpochMs());
   }
+
+  private static final class UnreadablePresenceException extends RuntimeException {}
 
   private String presenceKey(long sessionId) {
     return String.format(PRESENCE_KEY_TEMPLATE, sessionId);

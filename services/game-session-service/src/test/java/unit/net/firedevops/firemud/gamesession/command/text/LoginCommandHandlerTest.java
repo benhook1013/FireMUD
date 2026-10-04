@@ -585,12 +585,12 @@ class LoginCommandHandlerTest {
     TextCommand credentialLogin =
         new TextCommand(
             TextCommandType.LOGIN,
-            List.of("demo@example.com", "swordfish"),
-            "LOGIN demo@example.com swordfish");
+            List.of("other@example.com", "swordfish"),
+            "LOGIN other@example.com swordfish");
     GameInstance instance = buildInstance(1L, 22L, OWNER_ACCOUNT_UUID);
     FirstPartyConnectContext accountAContext =
         new FirstPartyConnectContext(
-            ACCOUNT_99,
+            ACCOUNT_77,
             22L,
             "demo",
             "production",
@@ -638,7 +638,15 @@ class LoginCommandHandlerTest {
             "subject-99-scope",
             "subject-99-request"));
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    when(accountClient.authenticate("other@example.com", "swordfish"))
+        .thenReturn(
+            AuthenticateResponse.newBuilder()
+                .setAuthToken(AUTH_TOKEN)
+                .setAccountId(ACCOUNT_99)
+                .build());
     LoginCommandHandlingResult firstPartyResult = handler.handle("1", bareLogin, false);
+    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 1L))
+        .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 3L)));
     LoginCommandHandlingResult credentialResult = handler.handle("1", credentialLogin, false);
     LoginCommandHandlingResult subsequentBareResult = handler.handle("1", bareLogin, false);
 
@@ -653,21 +661,40 @@ class LoginCommandHandlerTest {
     assertEquals(
         List.of("find-account-a", "find-account-a", "unregister", "find-empty"), registryEvents);
     ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
-    verify(sessionContextService, times(2)).save(captor.capture());
-    SessionContext credentialIdentity = captor.getAllValues().get(0);
-    assertEquals(22L, credentialIdentity.tenantId());
-    assertEquals(ACCOUNT_77, credentialIdentity.accountId());
-    assertEquals("demo@example.com", credentialIdentity.loginName());
-    assertEquals(AUTH_TOKEN, credentialIdentity.jwt());
-    assertNull(credentialIdentity.localeTag());
-    assertEquals(1L, credentialIdentity.bootstrapGameInstanceId());
-    assertNull(credentialIdentity.worldSlug());
-    assertNull(credentialIdentity.realmSlug());
-    assertEquals(0L, credentialIdentity.pointerVersion());
-    assertNull(credentialIdentity.playableStateScope());
-    assertNull(credentialIdentity.connectScopeId());
-    assertNull(credentialIdentity.connectRequestId());
-    assertClearedSessionContext(captor.getAllValues().get(1), 0L, null, null, null);
+    verify(sessionContextService, Mockito.times(2)).save(captor.capture());
+    List<SessionContext> savedContexts = captor.getAllValues();
+    SessionContext credentialContext = savedContexts.get(0);
+    assertEquals(22L, credentialContext.tenantId());
+    assertEquals(ACCOUNT_99, credentialContext.accountId());
+    assertEquals("other@example.com", credentialContext.loginName());
+    assertEquals(AUTH_TOKEN, credentialContext.jwt());
+    assertEquals(1L, credentialContext.bootstrapGameInstanceId());
+    assertEquals("demo", credentialContext.worldSlug());
+    assertEquals("production", credentialContext.realmSlug());
+    assertEquals(3L, credentialContext.pointerVersion());
+    assertEquals("SHARED", credentialContext.playableStateScope());
+    assertNull(credentialContext.connectScopeId());
+    assertNull(credentialContext.connectRequestId());
+    assertEquals(0L, credentialContext.characterId());
+    assertEquals(0L, credentialContext.gameInstanceId());
+
+    SessionContext unsupportedLoginShell = savedContexts.get(1);
+    assertFalse(unsupportedLoginShell.hasAccountIdentity());
+    assertNull(unsupportedLoginShell.accountId());
+    assertNull(unsupportedLoginShell.loginName());
+    assertNull(unsupportedLoginShell.jwt());
+    assertEquals(22L, unsupportedLoginShell.tenantId());
+    assertEquals("en-NZ", unsupportedLoginShell.localeTag());
+    assertEquals(1L, unsupportedLoginShell.bootstrapGameInstanceId());
+    assertEquals("demo", unsupportedLoginShell.worldSlug());
+    assertEquals("production", unsupportedLoginShell.realmSlug());
+    assertEquals(3L, unsupportedLoginShell.pointerVersion());
+    assertNull(unsupportedLoginShell.playableStateScope());
+    assertNull(unsupportedLoginShell.connectScopeId());
+    assertNull(unsupportedLoginShell.connectRequestId());
+    assertEquals(0L, unsupportedLoginShell.characterId());
+    assertEquals(0L, unsupportedLoginShell.gameInstanceId());
+    assertNull(unsupportedLoginShell.roomInstanceId());
   }
 
   @Test

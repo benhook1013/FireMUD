@@ -36,6 +36,8 @@ import org.mockito.Mockito;
 
 class WorldsTextCommandDispatchHandlerTest {
   private static final String ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
+  private static final String ACCOUNT_A_UUID = "d0c68a37-5126-42d2-9506-8df13e97699e";
+  private static final String ACCOUNT_B_UUID = "f2ed193b-12c1-4c96-bcad-c162229af440";
 
   private final EntityManagementClient entityManagementClient =
       Mockito.mock(EntityManagementClient.class);
@@ -319,7 +321,7 @@ class WorldsTextCommandDispatchHandlerTest {
             Mockito.anyString()))
         .thenReturn(
             GetRealmAccessGrantForRuntimeResponse.newBuilder()
-                .setAccountId("41")
+                .setAccountId(ACCOUNT_A_UUID)
                 .setTenantId("22")
                 .setWorldSlug("sandbox")
                 .setRealmSlug("production")
@@ -336,7 +338,7 @@ class WorldsTextCommandDispatchHandlerTest {
             scriptEventPublisher);
     SessionContext context =
         new SessionContext(
-            7L, 22L, ACCOUNT_ID, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+            7L, 22L, ACCOUNT_A_UUID, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
 
     TextCommandInterpretationResult result =
         scopedHandler.handle(
@@ -417,7 +419,7 @@ class WorldsTextCommandDispatchHandlerTest {
             scriptEventPublisher);
     SessionContext context =
         new SessionContext(
-            7L, 22L, ACCOUNT_ID, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+            7L, 22L, ACCOUNT_B_UUID, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
 
     TextCommandInterpretationResult unknownRealm =
         scopedHandler.handle(charsRequest("guessed", context));
@@ -459,7 +461,7 @@ class WorldsTextCommandDispatchHandlerTest {
             scriptEventPublisher);
     SessionContext context =
         new SessionContext(
-            7L, 22L, ACCOUNT_ID, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+            7L, 22L, ACCOUNT_B_UUID, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
 
     TextCommandInterpretationResult result =
         scopedHandler.handle(
@@ -694,7 +696,7 @@ class WorldsTextCommandDispatchHandlerTest {
                 .setOutcomeCode("MEMBERSHIP_RECONCILIATION_REQUIRED")
                 .build());
     SessionContext context =
-        new SessionContext(7L, 22L, ACCOUNT_ID, "emberline@example.com", 0L, null, 0L, "jwt");
+        new SessionContext(7L, 22L, ACCOUNT_A_UUID, "emberline@example.com", 0L, null, 0L, "jwt");
 
     scopedHandler.handle(
         new TextCommandDispatchRequest(
@@ -944,7 +946,7 @@ class WorldsTextCommandDispatchHandlerTest {
                 catalog, accountClient, DirectTextConnectScopeSessionStore.inMemoryForTest()),
             scriptEventPublisher);
     SessionContext context =
-        new SessionContext(7L, 22L, ACCOUNT_ID, "emberline@example.com", 0L, null, 0L, "jwt");
+        new SessionContext(7L, 22L, ACCOUNT_A_UUID, "emberline@example.com", 0L, null, 0L, "jwt");
     scopedHandler.handle(
         new TextCommandDispatchRequest(
             "7",
@@ -1014,7 +1016,7 @@ class WorldsTextCommandDispatchHandlerTest {
             scriptEventPublisher);
     SessionContext context =
         new SessionContext(
-            7L, 22L, ACCOUNT_ID, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+            7L, 22L, ACCOUNT_A_UUID, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
 
     TextCommandInterpretationResult result =
         scopedHandler.handle(
@@ -1041,7 +1043,7 @@ class WorldsTextCommandDispatchHandlerTest {
         .setPublicProductionRealm(true);
     SessionContext context =
         new SessionContext(
-            7L, 22L, ACCOUNT_ID, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+            7L, 22L, ACCOUNT_B_UUID, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
 
     TextCommandInterpretationResult result =
         handler.handle(

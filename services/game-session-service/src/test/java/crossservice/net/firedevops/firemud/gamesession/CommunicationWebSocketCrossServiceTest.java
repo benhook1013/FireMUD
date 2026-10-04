@@ -543,7 +543,13 @@ class CommunicationWebSocketCrossServiceTest {
             gameSession()
                 .bean(net.firedevops.firemud.gamesession.service.SessionContextService.class)
                 .findByTenantAndSessionId(TENANT_ID, sessionId))
-        .satisfies(saved -> saved.ifPresent(context -> assertThat(context.accountId()).isNull()));
+        .satisfies(
+            saved ->
+                saved.ifPresent(
+                    context -> {
+                      assertThat(context.accountId()).isNull();
+                      assertThat(context.hasAccountIdentity()).isFalse();
+                    }));
     assertThat(entityStub().lastListCharactersByAccountRequest())
         .isEqualTo(previousCharacterLookup);
   }

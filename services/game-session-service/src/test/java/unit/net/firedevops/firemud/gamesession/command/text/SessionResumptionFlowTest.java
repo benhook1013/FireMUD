@@ -172,7 +172,7 @@ class SessionResumptionFlowTest {
         .thenReturn(
             AuthenticateResponse.newBuilder()
                 .setAuthToken("jwt")
-                .setAccountId(OWNER_ACCOUNT_UUID)
+                .setAccountId("550e8400-e29b-41d4-a716-446655440000")
                 .build());
     when(accountClient.getTenantMembershipForRuntime(
             Mockito.any(net.firedevops.firemud.shared.v1.PlayerExecutionContext.class)))
@@ -180,7 +180,7 @@ class SessionResumptionFlowTest {
             invocation -> {
               var response =
                   net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures.active(
-                          OWNER_ACCOUNT_UUID, 22L, "1")
+                          "550e8400-e29b-41d4-a716-446655440000", 22L, "1")
                       .toBuilder()
                       .setEvaluatedAt(Instant.now().toString())
                       .build();
@@ -220,7 +220,7 @@ class SessionResumptionFlowTest {
                     net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
                         .setId("7001")
                         .setTenantId("22")
-                        .setAccountId(OWNER_ACCOUNT_UUID)
+                        .setAccountId("550e8400-e29b-41d4-a716-446655440000")
                         .setName("Emberline")
                         .setLevel(12)
                         .setPlayableStateScope(
@@ -491,21 +491,28 @@ class SessionResumptionFlowTest {
     when(accountClient.getTenantMembershipForRuntime(
             Mockito.any(net.firedevops.firemud.shared.v1.PlayerExecutionContext.class)))
         .thenAnswer(
-            invocation ->
-                net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                    .echoRequestId(
-                        net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                            .inactive(OWNER_ACCOUNT_UUID, 22L, "2"),
-                        invocation.getArgument(0)));
+            invocation -> {
+              var response =
+                  net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures.left(
+                      "550e8400-e29b-41d4-a716-446655440000", 22L, List.of("player"));
+              return net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                  .echoRequestId(response, invocation.getArgument(0));
+            });
 
     TextCommandInterpretationResult secondLogin = interpreter.interpret("1", LOGIN_PAYLOAD, false);
     assertTrue(secondLogin.commandResult().accepted());
     SessionContext authenticatedContextBeforeDeniedPlay =
         sessionContextService.findByTenantAndSessionId(22L, 1L).orElseThrow();
-    assertEquals(OWNER_ACCOUNT_UUID, authenticatedContextBeforeDeniedPlay.accountId());
+    assertEquals(
+        "550e8400-e29b-41d4-a716-446655440000", authenticatedContextBeforeDeniedPlay.accountId());
+    assertTrue(authenticatedContextBeforeDeniedPlay.hasAccountIdentity());
     assertEquals("demo@example.com", authenticatedContextBeforeDeniedPlay.loginName());
     assertEquals("jwt", authenticatedContextBeforeDeniedPlay.jwt());
     assertTrue(authenticatedContextBeforeDeniedPlay.hasGameplayRegionBinding());
+    assertEquals(1L, authenticatedContextBeforeDeniedPlay.bootstrapGameInstanceId());
+    assertEquals("demo", authenticatedContextBeforeDeniedPlay.worldSlug());
+    assertEquals("production", authenticatedContextBeforeDeniedPlay.realmSlug());
+    assertEquals(1L, authenticatedContextBeforeDeniedPlay.pointerVersion());
 
     TextCommandInterpretationResult deniedPlay = interpreter.interpret("1", PLAY_PAYLOAD, false);
     assertFalse(deniedPlay.commandResult().accepted());
@@ -518,6 +525,11 @@ class SessionResumptionFlowTest {
     assertEquals(
         authenticatedContextBeforeDeniedPlay.loginName(), authenticatedLobbyContext.loginName());
     assertEquals(authenticatedContextBeforeDeniedPlay.jwt(), authenticatedLobbyContext.jwt());
+    assertTrue(authenticatedLobbyContext.hasAccountIdentity());
+    assertEquals(1L, authenticatedLobbyContext.bootstrapGameInstanceId());
+    assertEquals("demo", authenticatedLobbyContext.worldSlug());
+    assertEquals("production", authenticatedLobbyContext.realmSlug());
+    assertEquals(1L, authenticatedLobbyContext.pointerVersion());
     assertEquals(0L, authenticatedLobbyContext.gameInstanceId());
     assertEquals(0L, authenticatedLobbyContext.characterId());
     assertNull(authenticatedLobbyContext.characterName());
@@ -536,14 +548,32 @@ class SessionResumptionFlowTest {
     assertEquals("PLAY_REQUIRED", lookAfterDeniedReconnect.commandResult().errorCode());
     assertTrue(sessionAuthenticationService.isAuthenticated("1"));
     assertEquals(
-        OWNER_ACCOUNT_UUID,
+        "550e8400-e29b-41d4-a716-446655440000",
         sessionContextService.findByTenantAndSessionId(22L, 1L).orElseThrow().accountId());
+    SessionContext lobbyContextBeforeDeniedJoin =
+        sessionAuthenticationService.resolveSessionContext("1").orElseThrow();
+    Mockito.clearInvocations(accountClient, moderationPolicyClient, entityManagementClient);
     TextCommandInterpretationResult joinAfterDeniedPlay =
         interpreter.interpret("1", "JOIN demo", false);
+    assertFalse(joinAfterDeniedPlay.commandResult().accepted());
     assertEquals("CONNECT_SCOPE_MISMATCH", joinAfterDeniedPlay.commandResult().errorCode());
+    assertEquals(
+        lobbyContextBeforeDeniedJoin,
+        sessionAuthenticationService.resolveSessionContext("1").orElseThrow());
+    assertFalse(
+        gameplayPresenceService.listConnectedByGameInstance(22L, 1L).stream()
+            .anyMatch(presence -> presence.sessionId() == 1L));
     Mockito.verify(accountClient, Mockito.never())
         .joinPublicProductionMembership(
             Mockito.any(), Mockito.anyString(), Mockito.anyString(), Mockito.any(Instant.class));
+    Mockito.verify(moderationPolicyClient, Mockito.never())
+        .evaluateGameplayAdmission(Mockito.anyLong(), Mockito.anyString());
+    Mockito.verify(entityManagementClient, Mockito.never())
+        .listCharactersByAccount(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.any(net.firedevops.firemud.entitymanagement.v1.PlayableStateScope.class));
   }
 
   @Test
@@ -801,17 +831,17 @@ class SessionResumptionFlowTest {
   void reconnectDoesNotRestoreElevationFromPriorTenantRoleClaims() {
     String tenantAdminJwt =
         gameplayJwtUtil.generateToken(
-            OWNER_ACCOUNT_UUID,
+            "550e8400-e29b-41d4-a716-446655440000",
             Map.of(
                 "accountId",
-                OWNER_ACCOUNT_UUID,
+                "550e8400-e29b-41d4-a716-446655440000",
                 "scopedRoles",
                 Map.of("22", List.of("tenantAdmin", "moderator"))));
     when(accountClient.authenticate(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             AuthenticateResponse.newBuilder()
                 .setAuthToken(tenantAdminJwt)
-                .setAccountId(OWNER_ACCOUNT_UUID)
+                .setAccountId("550e8400-e29b-41d4-a716-446655440000")
                 .build());
 
     assertTrue(interpreter.interpret("1", LOGIN_PAYLOAD, false).commandResult().accepted());
@@ -834,17 +864,17 @@ class SessionResumptionFlowTest {
   void unavailableAccountAdmissionEvidenceDoesNotElevateReconnectPresence() {
     String tenantAdminJwt =
         gameplayJwtUtil.generateToken(
-            OWNER_ACCOUNT_UUID,
+            "550e8400-e29b-41d4-a716-446655440000",
             Map.of(
                 "accountId",
-                OWNER_ACCOUNT_UUID,
+                "550e8400-e29b-41d4-a716-446655440000",
                 "scopedRoles",
                 Map.of("22", List.of("tenantAdmin"))));
     when(accountClient.authenticate(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             AuthenticateResponse.newBuilder()
                 .setAuthToken(tenantAdminJwt)
-                .setAccountId(OWNER_ACCOUNT_UUID)
+                .setAccountId("550e8400-e29b-41d4-a716-446655440000")
                 .build());
 
     assertTrue(interpreter.interpret("1", LOGIN_PAYLOAD, false).commandResult().accepted());

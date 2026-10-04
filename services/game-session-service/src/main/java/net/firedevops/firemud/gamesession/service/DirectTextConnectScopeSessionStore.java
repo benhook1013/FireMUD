@@ -89,7 +89,7 @@ public final class DirectTextConnectScopeSessionStore {
             throw new ConflictingIdentityException("lobby record transport session did not match");
           }
           if (authenticatedAccountId != null
-              && record.accountId() != null
+              && !record.accountId().isEmpty()
               && !record.accountId().equals(authenticatedAccountId)) {
             record = LobbyRecord.empty(transportSessionId);
           }
@@ -107,7 +107,7 @@ public final class DirectTextConnectScopeSessionStore {
     LobbyRecord record = readRecord(caller.sessionId());
     if (record == null
         || record.sessionId() != caller.sessionId()
-        || (record.accountId() != null && !record.accountId().equals(caller.accountId()))) {
+        || (!record.accountId().isEmpty() && !record.accountId().equals(caller.accountId()))) {
       return Optional.empty();
     }
     return asWorldsSnapshot(record, now);
@@ -169,7 +169,7 @@ public final class DirectTextConnectScopeSessionStore {
           if (record.sessionId() != caller.sessionId()) {
             throw new ConflictingIdentityException("lobby record transport session did not match");
           }
-          if (record.accountId() != null && !record.accountId().equals(caller.accountId())) {
+          if (!record.accountId().isEmpty() && !record.accountId().equals(caller.accountId())) {
             record = LobbyRecord.empty(caller.sessionId());
           }
           Map<String, List<StoredScopedRealm>> byWorld = new HashMap<>(record.scopesByWorld());
@@ -249,7 +249,7 @@ public final class DirectTextConnectScopeSessionStore {
           if (record.sessionId() != caller.sessionId()) {
             throw new ConflictingIdentityException("lobby record transport session did not match");
           }
-          if (record.accountId() != null && !record.accountId().equals(caller.accountId())) {
+          if (!record.accountId().isEmpty() && !record.accountId().equals(caller.accountId())) {
             record = LobbyRecord.empty(caller.sessionId());
           }
           Map<String, List<StoredScopedRealm>> byWorld = new HashMap<>(record.scopesByWorld());
@@ -364,7 +364,7 @@ public final class DirectTextConnectScopeSessionStore {
             throw new ConflictingIdentityException("lobby record transport session did not match");
           }
           LobbyRecord record = current;
-          if (record.accountId() != null && !record.accountId().equals(caller.accountId())) {
+          if (!record.accountId().isEmpty() && !record.accountId().equals(caller.accountId())) {
             record = LobbyRecord.empty(caller.sessionId());
           }
           Map<String, List<StoredScopedRealm>> byWorld = new HashMap<>(record.scopesByWorld());
@@ -420,7 +420,8 @@ public final class DirectTextConnectScopeSessionStore {
     String worldKey = worldIdentityKey(tenantId, worldSlug);
     List<ScopedRealm> publicScopes =
         record.scopesByWorld().getOrDefault(worldKey, List.of()).stream()
-            .map(scope -> fromStoredScope(scope, caller, tenantId))
+            .map(DirectTextConnectScopeSessionStore::fromStoredScope)
+            .peek(scope -> validateScopeIdentity(caller, tenantId, scope))
             .filter(scope -> scope.expiresAt().isAfter(now))
             .filter(ScopedRealm::publicProductionRealm)
             .toList();
@@ -495,7 +496,9 @@ public final class DirectTextConnectScopeSessionStore {
             byWorld.put(worldKey, updatedScopes);
             current = current.withScopes(byWorld);
           }
-          selected[0] = new JoinScope(fromStoredScope(boundScope, caller, tenantId), requestId);
+          ScopedRealm resolvedScope = fromStoredScope(boundScope);
+          validateScopeIdentity(caller, tenantId, resolvedScope);
+          selected[0] = new JoinScope(resolvedScope, requestId);
           return current;
         });
     return Optional.ofNullable(selected[0]);
@@ -655,13 +658,6 @@ public final class DirectTextConnectScopeSessionStore {
     }
   }
 
-  private static ScopedRealm fromStoredScope(
-      StoredScopedRealm stored, SessionContext caller, long tenantId) {
-    ScopedRealm scope = fromStoredScope(stored);
-    validateScopeIdentity(caller, tenantId, scope);
-    return scope;
-  }
-
   private static void validateScopeIdentity(
       SessionContext caller, long tenantId, ScopedRealm scope) {
     Objects.requireNonNull(scope, "scope must not be null");
@@ -749,7 +745,7 @@ public final class DirectTextConnectScopeSessionStore {
   private static boolean matchesCaller(LobbyRecord record, SessionContext caller) {
     return record != null
         && record.sessionId() == caller.sessionId()
-        && Objects.equals(record.accountId(), caller.accountId());
+        && record.accountId().equals(caller.accountId());
   }
 
   private static void validateOrdinalTargets(List<WorldOrdinalTarget> targets) {
@@ -1099,6 +1095,10 @@ public final class DirectTextConnectScopeSessionStore {
       Map<String, List<StoredScopedRealm>> scopesByWorld,
       Map<String, StoredRealmsSnapshot> realmsByWorld) {
     private LobbyRecord {
+      if (accountId == null
+          || (!accountId.isEmpty() && !AccountIds.isCanonicalNonNilUuid(accountId))) {
+        throw new ConflictingIdentityException("lobby Account identity was invalid or unmapped");
+      }
       ordinalTargets = ordinalTargets == null ? List.of() : List.copyOf(ordinalTargets);
       Map<String, List<StoredScopedRealm>> scopesCopy = new HashMap<>();
       if (scopesByWorld != null) {
@@ -1109,11 +1109,11 @@ public final class DirectTextConnectScopeSessionStore {
     }
 
     private static LobbyRecord empty(long sessionId) {
-      return new LobbyRecord(sessionId, null, 0L, null, List.of(), Map.of(), Map.of());
+      return new LobbyRecord(sessionId, "", 0L, null, List.of(), Map.of(), Map.of());
     }
 
     private LobbyRecord normalized() {
-      if (sessionId <= 0L || (accountId != null && !AccountIds.isCanonicalNonNilUuid(accountId))) {
+      if (sessionId <= 0L) {
         throw new ConflictingIdentityException("lobby state identity was invalid");
       }
       return new LobbyRecord(

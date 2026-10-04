@@ -10,11 +10,15 @@ final class AccountAuthorityEvidence {
   private AccountAuthorityEvidence() {}
 
   static boolean hasMatchingAccountAndTenant(
-      String accountId, String tenantId, String expectedAccountUuid, long expectedTenantId) {
-    return AccountIds.isCanonicalNonNilUuid(accountId)
-        && AccountIds.isCanonicalNonNilUuid(expectedAccountUuid)
-        && expectedAccountUuid.equals(accountId)
-        && hasMatchingTenant(tenantId, expectedTenantId);
+      String accountId, String tenantId, String expectedAccountId, long expectedTenantId) {
+    try {
+      return AccountIds.isCanonicalNonNilUuid(accountId)
+          && AccountIds.isCanonicalNonNilUuid(expectedAccountId)
+          && accountId.equals(expectedAccountId)
+          && Long.parseLong(tenantId) == expectedTenantId;
+    } catch (NumberFormatException ex) {
+      return false;
+    }
   }
 
   static boolean hasMatchingTenant(String tenantId, long expectedTenantId) {
@@ -35,14 +39,14 @@ final class AccountAuthorityEvidence {
 
   static boolean isValidRealmAccessGrant(
       GetRealmAccessGrantForRuntimeResponse response,
-      String expectedAccountUuid,
+      String expectedAccountId,
       long expectedTenantId,
       String expectedWorldSlug,
       String expectedRealmSlug,
       Clock clock) {
     return response.getGrantVersion() > 0L
         && hasMatchingAccountAndTenant(
-            response.getAccountId(), response.getTenantId(), expectedAccountUuid, expectedTenantId)
+            response.getAccountId(), response.getTenantId(), expectedAccountId, expectedTenantId)
         && expectedWorldSlug.equals(response.getWorldSlug())
         && expectedRealmSlug.equals(response.getRealmSlug())
         && AuthorityEvaluationFreshness.isFresh(response.getEvaluatedAt(), clock);

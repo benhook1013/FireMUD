@@ -406,9 +406,10 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
       IssueDirectTextConnectScopeRequest request,
       StreamObserver<IssueDirectTextConnectScopeResponse> responseObserver) {
     PlayerExecutionContext caller = request.getPlayerContext();
-    if (caller.getAccountId().isBlank()
+    if (!isCanonicalNonNilUuid(caller.getAccountId())
         || caller.getTenantId().isBlank()
         || caller.getRealmId().isBlank()
+        || caller.getSessionId().isBlank()
         || caller.getRequestId().isBlank()
         || caller.getGameInstanceId().isBlank()
         || caller.getPlayableStateNamespaceId().isBlank()
@@ -445,6 +446,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
           scopeId,
           new StubConnectScope(
               caller.getAccountId(),
+              caller.getSessionId(),
               request.getTenantId(),
               request.getRealmId(),
               request.getGameInstanceId(),
@@ -471,6 +473,14 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     }
   }
 
+  private static boolean isCanonicalNonNilUuid(String value) {
+    if (!isCanonicalUuid(value)) {
+      return false;
+    }
+    UUID parsed = UUID.fromString(value);
+    return parsed.getMostSignificantBits() != 0L || parsed.getLeastSignificantBits() != 0L;
+  }
+
   @Override
   public void joinPublicProductionMembership(
       JoinPublicProductionMembershipRequest request,
@@ -480,12 +490,13 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     if (request.getConnectScopeId().isBlank()
         || request.getRequestId().isBlank()
         || !request.getRequestId().equals(caller.getRequestId())
-        || caller.getAccountId().isBlank()
+        || !isCanonicalNonNilUuid(caller.getAccountId())
         || caller.getTenantId().isBlank()
         || caller.getSessionId().isBlank()
         || scope == null
         || !scope.expiresAt().isAfter(Instant.now())
         || !scope.accountId().equals(caller.getAccountId())
+        || !scope.sessionId().equals(caller.getSessionId())
         || !scope.tenantId().equals(caller.getTenantId())
         || !scope.realmId().equals(caller.getRealmId())
         || !scope.gameInstanceId().equals(caller.getGameInstanceId())
@@ -674,6 +685,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
 
   private record StubConnectScope(
       String accountId,
+      String sessionId,
       String tenantId,
       String realmId,
       String gameInstanceId,
