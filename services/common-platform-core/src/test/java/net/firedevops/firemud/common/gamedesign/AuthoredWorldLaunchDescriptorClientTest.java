@@ -15,6 +15,7 @@ import java.util.UUID;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorRequest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -68,11 +69,23 @@ class AuthoredWorldLaunchDescriptorClientTest {
     var getRequest =
         new AuthoredWorldLaunchDescriptorGrpcCodec.GetRequest(
             READ_REQUEST_ID, request, "sha256:" + "b".repeat(64));
+    var completeRequest =
+        GetLaunchDescriptorRequest.newBuilder()
+            .setRequestId(READ_REQUEST_ID.toString())
+            .setCanonicalTenantId(TENANT_ID.toString())
+            .setWorldSlug("copper-coast")
+            .setControlPlaneRequestId("launch-operation-7")
+            .setExpectedRequestDigest("sha256:" + "a".repeat(64))
+            .setExpectedResultDigest("sha256:" + "b".repeat(64))
+            .build();
 
     assertThatThrownBy(() -> client.resolve(request))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("not initialized and available");
     assertThatThrownBy(() -> client.get(getRequest))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("not initialized and available");
+    assertThatThrownBy(() -> client.getComplete(completeRequest))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("not initialized and available");
     verifyNoInteractions(channelFactory);

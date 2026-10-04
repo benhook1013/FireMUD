@@ -17,6 +17,7 @@ import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.settings.GameDesignSettingsProtoMapper;
+import net.firedevops.firemud.gamedesign.dto.CompleteLaunchBindingDto;
 import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
 import net.firedevops.firemud.gamedesign.dto.HelpTopicDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedPluginVersionDto;
@@ -25,6 +26,7 @@ import net.firedevops.firemud.gamedesign.dto.RevisionDto;
 import net.firedevops.firemud.gamedesign.dto.TemplateRemapEntryDto;
 import net.firedevops.firemud.gamedesign.dto.TemplateRemapSetDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
+import net.firedevops.firemud.gamedesign.service.CompleteLaunchBindingService;
 import net.firedevops.firemud.gamedesign.service.GameAuthoredHelpTopicService;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.PingService;
@@ -55,6 +57,7 @@ import net.firedevops.firemud.gamedesign.v1.DeleteSettingsDomainOverrideResponse
 import net.firedevops.firemud.gamedesign.v1.FinalizePurgeVersionAssetsRequest;
 import net.firedevops.firemud.gamedesign.v1.FinalizePurgeVersionAssetsResponse;
 import net.firedevops.firemud.gamedesign.v1.GameDesignServiceGrpc;
+import net.firedevops.firemud.gamedesign.v1.GetCompleteLaunchBindingResponse;
 import net.firedevops.firemud.gamedesign.v1.GetDesignControlPlaneDigestRequest;
 import net.firedevops.firemud.gamedesign.v1.GetDesignControlPlaneDigestResponse;
 import net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorRequest;
@@ -133,6 +136,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
   private final RevisionService revisionService;
   private final VersionService versionService;
   private final LaunchDescriptorService launchDescriptorService;
+  private final CompleteLaunchBindingService completeLaunchBindingService;
   private final TemplateRemapSetService templateRemapSetService;
   private final VersionAssetArtifactService versionAssetArtifactService;
   private final SettingsAuthorityService settingsAuthorityService;
@@ -1022,6 +1026,85 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               ex.getMessage()));
     } catch (Exception ex) {
       builder.setError(GrpcAppErrors.internal(meterRegistry, logger, "GetLaunchDescriptor", ex));
+    }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "gamedesignGrpc.getCompleteLaunchBinding")
+  public void getCompleteLaunchBinding(
+      GetLaunchDescriptorRequest request,
+      StreamObserver<GetCompleteLaunchBindingResponse> responseObserver) {
+    GetCompleteLaunchBindingResponse.Builder builder =
+        GetCompleteLaunchBindingResponse.newBuilder();
+    try {
+      requireLaunchDescriptorReadAccess();
+      UUID readRequestId = parseCanonicalNonNilUuid(request.getRequestId());
+      UUID canonicalTenantId = parseCanonicalNonNilUuid(request.getCanonicalTenantId());
+      if (readRequestId == null
+          || canonicalTenantId == null
+          || request.getWorldSlug().isBlank()
+          || request.getControlPlaneRequestId().isBlank()
+          || request.getExpectedRequestDigest().isBlank()
+          || request.getExpectedResultDigest().isBlank()
+          || !request.getUnknownFields().asMap().isEmpty()) {
+        throw new IllegalArgumentException(
+            "Canonical exact complete launch binding read is required");
+      }
+      CompleteLaunchBindingDto binding =
+          completeLaunchBindingService.getCompleteLaunchBinding(
+              readRequestId,
+              canonicalTenantId,
+              request.getWorldSlug(),
+              request.getControlPlaneRequestId(),
+              request.getExpectedRequestDigest(),
+              request.getExpectedResultDigest());
+      AuthoredWorldLaunchDescriptorEvidence descriptorEvidence = binding.descriptor();
+      var descriptorDto =
+          new net.firedevops.firemud.gamedesign.dto.ResolvedLaunchDescriptorDto(
+              descriptorEvidence.launchDescriptorId(),
+              descriptorEvidence.canonicalTenantId().toString(),
+              descriptorEvidence.gameTemplateId(),
+              descriptorEvidence.controlPlaneRequestId(),
+              descriptorEvidence.versionId(),
+              descriptorEvidence.scriptPatchVersionPresent()
+                  ? descriptorEvidence.scriptPatchVersion()
+                  : null,
+              descriptorEvidence.runtimeFlagsJson(),
+              descriptorEvidence.generationConfigRevision(),
+              descriptorEvidence.versionStateEpoch(),
+              descriptorEvidence.releaseBundleId(),
+              descriptorEvidence.publishedReleaseBundleRef(),
+              descriptorEvidence.remapSetIdPresent() ? descriptorEvidence.remapSetId() : null,
+              descriptorEvidence);
+      var protoDescriptor = toProtoLaunchDescriptor(descriptorDto);
+      var protoReleaseAttestation =
+          net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec
+              .toReleaseAttestation(binding.releaseAttestation());
+      builder
+          .setRequestId(readRequestId.toString())
+          .setLaunchDescriptor(protoDescriptor)
+          .setReleaseAttestation(protoReleaseAttestation);
+    } catch (AdminAuthorizationException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "GetCompleteLaunchBinding",
+              "PERMISSION_DENIED",
+              ex.getMessage()));
+    } catch (IllegalArgumentException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "GetCompleteLaunchBinding",
+              completeLaunchBindingErrorCode(ex.getMessage()),
+              ex.getMessage()));
+    } catch (Exception ex) {
+      builder.setError(
+          GrpcAppErrors.internal(meterRegistry, logger, "GetCompleteLaunchBinding", ex));
     }
     responseObserver.onNext(builder.build());
     responseObserver.onCompleted();
@@ -2160,6 +2243,16 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       return "FAILED_PRECONDITION";
     }
     return "INVALID_ARGUMENT";
+  }
+
+  private String completeLaunchBindingErrorCode(String message) {
+    if (message != null && message.startsWith("COMPLETE_LAUNCH_BINDING_")) {
+      int delimiter = message.indexOf(':');
+      if (delimiter > 0) {
+        return message.substring(0, delimiter);
+      }
+    }
+    return launchDescriptorErrorCode(message, true);
   }
 
   private String remapSetErrorCode(String message) {

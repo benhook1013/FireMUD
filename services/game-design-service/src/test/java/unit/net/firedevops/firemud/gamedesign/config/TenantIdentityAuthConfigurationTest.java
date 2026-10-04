@@ -46,6 +46,8 @@ class TenantIdentityAuthConfigurationTest {
       "gamedesign.v1.GameDesignService/ResolveLaunchDescriptor";
   private static final String GET_LAUNCH_DESCRIPTOR_METHOD =
       "gamedesign.v1.GameDesignService/GetLaunchDescriptor";
+  private static final String GET_COMPLETE_LAUNCH_BINDING_METHOD =
+      "gamedesign.v1.GameDesignService/GetCompleteLaunchBinding";
 
   @Test
   void baseConfigurationExemptsOnlyTheIntendedTenantIdentityMethods() throws IOException {
@@ -85,7 +87,8 @@ class TenantIdentityAuthConfigurationTest {
             AUTHORED_WORLD_SOURCE_METHOD,
             GAME_SESSION_ASSOCIATION_METHOD,
             RESOLVE_LAUNCH_DESCRIPTOR_METHOD,
-            GET_LAUNCH_DESCRIPTOR_METHOD);
+            GET_LAUNCH_DESCRIPTOR_METHOD,
+            GET_COMPLETE_LAUNCH_BINDING_METHOD);
 
     AuthTokenInterceptor interceptor =
         new AuthTokenInterceptor(null, Set.copyOf(properties.getPublicMethods()));

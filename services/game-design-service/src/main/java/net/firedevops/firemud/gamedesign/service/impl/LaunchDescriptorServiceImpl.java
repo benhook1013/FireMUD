@@ -27,7 +27,10 @@ import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
 import net.firedevops.firemud.gamedesign.service.TemplateRemapSetService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import tools.jackson.databind.ObjectMapper;
 
 @Service
@@ -241,6 +244,86 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
       String controlPlaneRequestId,
       String expectedRequestDigest,
       String expectedResultDigest) {
+    DescriptorReadContext context =
+        findExactSuccessfulDescriptor(
+            readRequestId,
+            canonicalTenantId,
+            worldSlug,
+            controlPlaneRequestId,
+            expectedRequestDigest,
+            expectedResultDigest);
+    LaunchDescriptor descriptor = context.descriptor();
+    AuthoredWorldLaunchDescriptorEvidence.Request storedRequest = context.request();
+    AuthoredWorldSourceEvidence source = readExactSource(storedRequest);
+    String sourceJson = writeJson(source);
+    if (!sourceJson.equals(descriptor.getSourceEvidenceJson())) {
+      throw new IllegalArgumentException(
+          "AUTHORED_WORLD_SOURCE_CHANGED: committed source differs from descriptor history");
+    }
+    return readStored(
+        descriptor,
+        storedRequest,
+        descriptor.getOriginalRequestJson(),
+        descriptor.getSourceEvidenceJson());
+  }
+
+  @Override
+  @Transactional(propagation = Propagation.MANDATORY, readOnly = true)
+  @Timed(value = "gamedesign.launchDescriptor.readOwnerSnapshot")
+  public ResolvedLaunchDescriptorDto getLaunchDescriptorInOwnerSnapshot(
+      UUID readRequestId,
+      UUID canonicalTenantId,
+      String worldSlug,
+      String controlPlaneRequestId,
+      String expectedRequestDigest,
+      String expectedResultDigest) {
+    requireOwnerSnapshot();
+    DescriptorReadContext context =
+        findExactSuccessfulDescriptor(
+            readRequestId,
+            canonicalTenantId,
+            worldSlug,
+            controlPlaneRequestId,
+            expectedRequestDigest,
+            expectedResultDigest);
+    LaunchDescriptor descriptor = context.descriptor();
+    AuthoredWorldLaunchDescriptorEvidence.Request storedRequest = context.request();
+    var sourceSnapshot =
+        authoredWorldSourceRepository
+            .readVersionStateSnapshot(
+                workloadNamespace,
+                readRequestId,
+                canonicalTenantId,
+                worldSlug,
+                storedRequest.authoredWorldSourceOperationId(),
+                storedRequest.authoredWorldSourceEvidenceDigest(),
+                Objects.requireNonNull(descriptor.getVersionId(), "descriptor versionId"))
+            .orElseThrow(
+                () ->
+                    new IllegalArgumentException(
+                        "AUTHORED_WORLD_SOURCE_NOT_FOUND: exact committed source or version is missing"));
+    AuthoredWorldSourceEvidence source = sourceSnapshot.sourceEvidence();
+    requireExactSource(storedRequest, source);
+    String sourceJson = writeJson(source);
+    if (!sourceJson.equals(descriptor.getSourceEvidenceJson())
+        || !Objects.equals(source.sourceGameTenantKey(), descriptor.getTenantId())) {
+      throw new IllegalArgumentException(
+          "AUTHORED_WORLD_SOURCE_CHANGED: committed source differs from descriptor history");
+    }
+    return readStored(
+        descriptor,
+        storedRequest,
+        descriptor.getOriginalRequestJson(),
+        descriptor.getSourceEvidenceJson());
+  }
+
+  private DescriptorReadContext findExactSuccessfulDescriptor(
+      UUID readRequestId,
+      UUID canonicalTenantId,
+      String worldSlug,
+      String controlPlaneRequestId,
+      String expectedRequestDigest,
+      String expectedResultDigest) {
     if (readRequestId == null || NIL_UUID.equals(readRequestId)) {
       throw new IllegalArgumentException("Canonical nonnil read request ID is required");
     }
@@ -276,17 +359,7 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
     }
     AuthoredWorldLaunchDescriptorEvidence.Request storedRequest =
         readRequest(descriptor.getOriginalRequestJson());
-    AuthoredWorldSourceEvidence source = readExactSource(storedRequest);
-    String sourceJson = writeJson(source);
-    if (!sourceJson.equals(descriptor.getSourceEvidenceJson())) {
-      throw new IllegalArgumentException(
-          "AUTHORED_WORLD_SOURCE_CHANGED: committed source differs from descriptor history");
-    }
-    return readStored(
-        descriptor,
-        storedRequest,
-        descriptor.getOriginalRequestJson(),
-        descriptor.getSourceEvidenceJson());
+    return new DescriptorReadContext(descriptor, storedRequest);
   }
 
   private AuthoredWorldSourceEvidence readExactSource(
@@ -302,6 +375,12 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
                 () ->
                     new IllegalArgumentException(
                         "AUTHORED_WORLD_SOURCE_NOT_FOUND: exact committed source evidence is missing"));
+    requireExactSource(request, source);
+    return source;
+  }
+
+  private void requireExactSource(
+      AuthoredWorldLaunchDescriptorEvidence.Request request, AuthoredWorldSourceEvidence source) {
     if (!workloadNamespace.equals(source.targetNamespace())
         || !request.canonicalTenantId().equals(source.canonicalTenantId())
         || !request.worldSlug().equals(source.worldSlug())
@@ -310,8 +389,20 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
       throw new IllegalArgumentException(
           "AUTHORED_WORLD_SOURCE_CHANGED: source evidence does not match the exact request");
     }
-    return source;
   }
+
+  private void requireOwnerSnapshot() {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || !TransactionSynchronizationManager.isCurrentTransactionReadOnly()
+        || !Integer.valueOf(TransactionDefinition.ISOLATION_REPEATABLE_READ)
+            .equals(TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())) {
+      throw new IllegalStateException(
+          "Launch descriptor snapshot read requires a read-only REPEATABLE_READ owner snapshot");
+    }
+  }
+
+  private record DescriptorReadContext(
+      LaunchDescriptor descriptor, AuthoredWorldLaunchDescriptorEvidence.Request request) {}
 
   private ResolvedLaunchDescriptorDto readStored(
       LaunchDescriptor descriptor,

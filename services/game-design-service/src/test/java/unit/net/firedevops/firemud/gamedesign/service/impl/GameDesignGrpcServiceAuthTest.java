@@ -13,6 +13,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
+import net.firedevops.firemud.gamedesign.service.CompleteLaunchBindingService;
 import net.firedevops.firemud.gamedesign.service.GameAuthoredHelpTopicService;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.PingService;
@@ -21,6 +22,7 @@ import net.firedevops.firemud.gamedesign.service.SettingsAuthorityService;
 import net.firedevops.firemud.gamedesign.service.TemplateRemapSetService;
 import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
 import net.firedevops.firemud.gamedesign.service.VersionService;
+import net.firedevops.firemud.gamedesign.v1.GetCompleteLaunchBindingResponse;
 import net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorRequest;
 import net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorResponse;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleRequest;
@@ -51,6 +53,7 @@ class GameDesignGrpcServiceAuthTest {
             Mockito.mock(RevisionService.class),
             Mockito.mock(VersionService.class),
             Mockito.mock(LaunchDescriptorService.class),
+            Mockito.mock(CompleteLaunchBindingService.class),
             Mockito.mock(TemplateRemapSetService.class),
             Mockito.mock(VersionAssetArtifactService.class),
             Mockito.mock(SettingsAuthorityService.class),
@@ -83,6 +86,8 @@ class GameDesignGrpcServiceAuthTest {
   void launchDescriptorRejectsJwtOnlyInternalServiceIdentity() {
     VersionService versionService = Mockito.mock(VersionService.class);
     LaunchDescriptorService launchDescriptorService = Mockito.mock(LaunchDescriptorService.class);
+    CompleteLaunchBindingService completeLaunchBindingService =
+        Mockito.mock(CompleteLaunchBindingService.class);
     Mockito.when(versionService.getPublishedReleaseBundle("1", 7L))
         .thenReturn(
             new PublishedReleaseBundleDto(
@@ -110,6 +115,7 @@ class GameDesignGrpcServiceAuthTest {
             Mockito.mock(RevisionService.class),
             versionService,
             launchDescriptorService,
+            completeLaunchBindingService,
             Mockito.mock(TemplateRemapSetService.class),
             Mockito.mock(VersionAssetArtifactService.class),
             Mockito.mock(SettingsAuthorityService.class),
@@ -165,7 +171,10 @@ class GameDesignGrpcServiceAuthTest {
     assertEquals("", bundleRef.get().getBundle().getPublishedReleaseBundleRef());
     assertNotNull(descriptorRef.get());
     assertEquals("PERMISSION_DENIED", descriptorRef.get().getError().getCode());
+    GetCompleteLaunchBindingResponse completeBindingResponse = readCompleteBinding(service, null);
+    assertEquals("PERMISSION_DENIED", completeBindingResponse.getError().getCode());
     Mockito.verifyNoInteractions(launchDescriptorService);
+    Mockito.verifyNoInteractions(completeLaunchBindingService);
   }
 
   @Test
@@ -178,6 +187,7 @@ class GameDesignGrpcServiceAuthTest {
             Mockito.mock(RevisionService.class),
             Mockito.mock(VersionService.class),
             launchDescriptorService,
+            Mockito.mock(CompleteLaunchBindingService.class),
             Mockito.mock(TemplateRemapSetService.class),
             Mockito.mock(VersionAssetArtifactService.class),
             Mockito.mock(SettingsAuthorityService.class),
@@ -202,12 +212,15 @@ class GameDesignGrpcServiceAuthTest {
   @Test
   void launchDescriptorReadRejectsWrongWorkloadAndNamespacePeersBeforeServiceAccess() {
     LaunchDescriptorService launchDescriptorService = Mockito.mock(LaunchDescriptorService.class);
+    CompleteLaunchBindingService completeLaunchBindingService =
+        Mockito.mock(CompleteLaunchBindingService.class);
     GameDesignGrpcService service =
         new GameDesignGrpcService(
             Mockito.mock(PingService.class),
             Mockito.mock(RevisionService.class),
             Mockito.mock(VersionService.class),
             launchDescriptorService,
+            completeLaunchBindingService,
             Mockito.mock(TemplateRemapSetService.class),
             Mockito.mock(VersionAssetArtifactService.class),
             Mockito.mock(SettingsAuthorityService.class),
@@ -227,7 +240,18 @@ class GameDesignGrpcServiceAuthTest {
         readDescriptor(service, "spiffe://firemud/ns/other/sa/world-management-service")
             .getError()
             .getCode());
+    assertEquals(
+        "PERMISSION_DENIED",
+        readCompleteBinding(service, "spiffe://firemud/ns/test/sa/game-design-service")
+            .getError()
+            .getCode());
+    assertEquals(
+        "PERMISSION_DENIED",
+        readCompleteBinding(service, "spiffe://firemud/ns/other/sa/world-management-service")
+            .getError()
+            .getCode());
     Mockito.verifyNoInteractions(launchDescriptorService);
+    Mockito.verifyNoInteractions(completeLaunchBindingService);
   }
 
   private ResolveLaunchDescriptorResponse resolve(GameDesignGrpcService service, String peerUri) {
@@ -254,6 +278,25 @@ class GameDesignGrpcServiceAuthTest {
     Runnable call =
         () ->
             service.getLaunchDescriptor(
+                GetLaunchDescriptorRequest.newBuilder()
+                    .setRequestId("32345678-1234-4234-8234-123456789abc")
+                    .setCanonicalTenantId("12345678-1234-4234-8234-123456789abc")
+                    .setWorldSlug("silver-march")
+                    .setControlPlaneRequestId("cp-auth")
+                    .setExpectedRequestDigest("sha256:" + "a".repeat(64))
+                    .setExpectedResultDigest("sha256:" + "b".repeat(64))
+                    .build(),
+                observerFor(response));
+    runAsPeer(peerUri, call);
+    return response.get();
+  }
+
+  private GetCompleteLaunchBindingResponse readCompleteBinding(
+      GameDesignGrpcService service, String peerUri) {
+    AtomicReference<GetCompleteLaunchBindingResponse> response = new AtomicReference<>();
+    Runnable call =
+        () ->
+            service.getCompleteLaunchBinding(
                 GetLaunchDescriptorRequest.newBuilder()
                     .setRequestId("32345678-1234-4234-8234-123456789abc")
                     .setCanonicalTenantId("12345678-1234-4234-8234-123456789abc")

@@ -52,12 +52,15 @@ import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorClient;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
 import net.firedevops.firemud.common.security.AuthTokenInterceptor;
 import net.firedevops.firemud.common.security.JwtUtil;
+import net.firedevops.firemud.gamedesign.dto.CompleteLaunchBindingDto;
 import net.firedevops.firemud.gamedesign.dto.ResolvedLaunchDescriptorDto;
+import net.firedevops.firemud.gamedesign.service.CompleteLaunchBindingService;
 import net.firedevops.firemud.gamedesign.service.GameAuthoredHelpTopicService;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.PingService;
@@ -67,6 +70,7 @@ import net.firedevops.firemud.gamedesign.service.TemplateRemapSetService;
 import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
 import net.firedevops.firemud.gamedesign.service.VersionService;
 import net.firedevops.firemud.gamedesign.v1.GameDesignServiceGrpc;
+import net.firedevops.firemud.gamedesign.v1.GetCompleteLaunchBindingResponse;
 import net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorRequest;
 import net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorRequest;
@@ -111,7 +115,10 @@ class AuthoredWorldLaunchDescriptorMtlsTest {
   private static final String RESOLVE_METHOD =
       "gamedesign.v1.GameDesignService/ResolveLaunchDescriptor";
   private static final String READ_METHOD = "gamedesign.v1.GameDesignService/GetLaunchDescriptor";
-  private static final Set<String> DESCRIPTOR_METHODS = Set.of(RESOLVE_METHOD, READ_METHOD);
+  private static final String COMPLETE_READ_METHOD =
+      "gamedesign.v1.GameDesignService/GetCompleteLaunchBinding";
+  private static final Set<String> DESCRIPTOR_METHODS =
+      Set.of(RESOLVE_METHOD, READ_METHOD, COMPLETE_READ_METHOD);
   private static final Metadata.Key<String> AUTHORIZATION =
       Metadata.Key.of("authorization", Metadata.ASCII_STRING_MARSHALLER);
   private static final UUID TENANT_ID = UUID.fromString("c7a1b80e-a5fa-4fc9-9fc4-cab3cbe44b21");
@@ -151,9 +158,16 @@ class AuthoredWorldLaunchDescriptorMtlsTest {
           "release-bundle:" + TENANT_ID + ":12:29",
           true,
           "remap-set-4");
+  private static final AuthoredWorldReleaseAttestationEvidence RELEASE_ATTESTATION =
+      releaseAttestation(BOUND_EVIDENCE);
+  private static final AuthoredWorldLaunchDescriptorEvidence SWAPPED_DESCRIPTOR =
+      swappedDescriptor();
+  private static final AuthoredWorldReleaseAttestationEvidence SWAPPED_RELEASE_ATTESTATION =
+      releaseAttestation(SWAPPED_DESCRIPTOR);
   private static TestPki pki;
 
   private LaunchDescriptorService launchDescriptorService;
+  private CompleteLaunchBindingService completeLaunchBindingService;
   private Server server;
   private AtomicReference<ResponseMutation> responseMutation;
 
@@ -214,6 +228,7 @@ class AuthoredWorldLaunchDescriptorMtlsTest {
   @BeforeEach
   void startPhysicalReceiver() throws Exception {
     launchDescriptorService = Mockito.mock(LaunchDescriptorService.class);
+    completeLaunchBindingService = Mockito.mock(CompleteLaunchBindingService.class);
     responseMutation = new AtomicReference<>(ResponseMutation.NONE);
     server = startReceiver(pki.serverCertificate());
   }
@@ -230,6 +245,7 @@ class AuthoredWorldLaunchDescriptorMtlsTest {
             Mockito.mock(RevisionService.class),
             Mockito.mock(VersionService.class),
             launchDescriptorService,
+            completeLaunchBindingService,
             Mockito.mock(TemplateRemapSetService.class),
             Mockito.mock(VersionAssetArtifactService.class),
             Mockito.mock(SettingsAuthorityService.class),
@@ -327,12 +343,53 @@ class AuthoredWorldLaunchDescriptorMtlsTest {
   }
 
   @Test
+  void gameSessionAndWorldPeersReadExactCompleteBindingAndEchoReadRequestIdentity()
+      throws Exception {
+    when(completeLaunchBindingService.getCompleteLaunchBinding(
+            any(UUID.class), any(UUID.class), anyString(), anyString(), anyString(), anyString()))
+        .thenReturn(completeBinding());
+
+    for (TestCertificate certificate :
+        List.of(pki.gameSessionCertificate(), pki.worldManagementCertificate())) {
+      ManagedChannel channel = channel(certificate, false);
+      try {
+        GetCompleteLaunchBindingResponse response =
+            stub(channel).getCompleteLaunchBinding(readRequest());
+
+        assertThat(response.getError().getCode()).isEmpty();
+        assertThat(response.getRequestId()).isEqualTo(READ_REQUEST_ID.toString());
+        assertThat(response.hasLaunchDescriptor()).isTrue();
+        assertThat(response.getLaunchDescriptor()).isEqualTo(expectedProtoDescriptor());
+        assertThat(response.hasReleaseAttestation()).isTrue();
+        assertThat(response.getReleaseAttestation().getEvidenceDigest())
+            .isEqualTo(RELEASE_ATTESTATION.evidenceDigest());
+        assertThat(response.getReleaseAttestation().getDescriptorResultDigest())
+            .isEqualTo(BOUND_EVIDENCE.resultDigest());
+      } finally {
+        stopChannel(channel);
+      }
+    }
+
+    verify(completeLaunchBindingService, Mockito.times(2))
+        .getCompleteLaunchBinding(
+            READ_REQUEST_ID,
+            TENANT_ID,
+            BOUND_REQUEST.worldSlug(),
+            BOUND_REQUEST.controlPlaneRequestId(),
+            BOUND_EVIDENCE.requestDigest(),
+            BOUND_EVIDENCE.resultDigest());
+  }
+
+  @Test
   void sharedClientResolvesAndReadsExactDescriptorOverPhysicalMtlsSocket(@TempDir Path directory)
       throws Exception {
     when(launchDescriptorService.resolveLaunchDescriptor(any())).thenReturn(resolvedDescriptor());
     when(launchDescriptorService.getLaunchDescriptor(
             any(UUID.class), any(UUID.class), anyString(), anyString(), anyString(), anyString()))
         .thenReturn(resolvedDescriptor());
+    when(completeLaunchBindingService.getCompleteLaunchBinding(
+            any(UUID.class), any(UUID.class), anyString(), anyString(), anyString(), anyString()))
+        .thenReturn(completeBinding());
 
     AuthoredWorldLaunchDescriptorClient client = newSharedClient(directory, server);
     try {
@@ -344,12 +401,24 @@ class AuthoredWorldLaunchDescriptorMtlsTest {
       AuthoredWorldLaunchDescriptorEvidence readBack = client.get(readClientRequest());
       assertThat(readBack).isEqualTo(BOUND_EVIDENCE);
 
+      var completeReadBack = client.getComplete(readRequest());
+      assertThat(completeReadBack.descriptor()).isEqualTo(BOUND_EVIDENCE);
+      assertThat(completeReadBack.releaseAttestation()).isEqualTo(RELEASE_ATTESTATION);
+
       ArgumentCaptor<AuthoredWorldLaunchDescriptorEvidence.Request> requestCaptor =
           ArgumentCaptor.forClass(AuthoredWorldLaunchDescriptorEvidence.Request.class);
       verify(launchDescriptorService).resolveLaunchDescriptor(requestCaptor.capture());
       assertThat(requestCaptor.getValue()).isEqualTo(BOUND_REQUEST);
       verify(launchDescriptorService)
           .getLaunchDescriptor(
+              READ_REQUEST_ID,
+              TENANT_ID,
+              BOUND_REQUEST.worldSlug(),
+              BOUND_REQUEST.controlPlaneRequestId(),
+              BOUND_EVIDENCE.requestDigest(),
+              BOUND_EVIDENCE.resultDigest());
+      verify(completeLaunchBindingService)
+          .getCompleteLaunchBinding(
               READ_REQUEST_ID,
               TENANT_ID,
               BOUND_REQUEST.worldSlug(),
@@ -379,6 +448,7 @@ class AuthoredWorldLaunchDescriptorMtlsTest {
         client.init();
         assertServerPeerRefused(() -> client.resolve(BOUND_REQUEST));
         assertServerPeerRefused(() -> client.get(readClientRequest()));
+        assertServerPeerRefused(() -> client.getComplete(readRequest()));
         inboundRpcCapture.assertNoInboundRequests();
       } finally {
         client.close();
@@ -386,6 +456,7 @@ class AuthoredWorldLaunchDescriptorMtlsTest {
       }
     }
     verifyNoInteractions(launchDescriptorService);
+    verifyNoInteractions(completeLaunchBindingService);
   }
 
   @Test
@@ -395,6 +466,9 @@ class AuthoredWorldLaunchDescriptorMtlsTest {
     when(launchDescriptorService.getLaunchDescriptor(
             any(UUID.class), any(UUID.class), anyString(), anyString(), anyString(), anyString()))
         .thenReturn(resolvedDescriptor());
+    when(completeLaunchBindingService.getCompleteLaunchBinding(
+            any(UUID.class), any(UUID.class), anyString(), anyString(), anyString(), anyString()))
+        .thenReturn(completeBinding());
 
     AuthoredWorldLaunchDescriptorClient client = newSharedClient(directory, server);
     try {
@@ -411,6 +485,18 @@ class AuthoredWorldLaunchDescriptorMtlsTest {
       responseMutation.set(ResponseMutation.CHANGE_RESULT_DIGEST);
       assertClientCodecRejected(
           () -> client.get(readClientRequest()), "Authored-world launch evidence is invalid");
+
+      responseMutation.set(ResponseMutation.CHANGE_COMPLETE_READ_REQUEST_ID);
+      assertCompleteClientCodecRejected(() -> client.getComplete(readRequest()));
+
+      responseMutation.set(ResponseMutation.SWAP_COMPLETE_RELEASE_ATTESTATION);
+      assertCompleteClientCodecRejected(() -> client.getComplete(readRequest()));
+
+      responseMutation.set(ResponseMutation.MISSING_COMPLETE_RELEASE_ATTESTATION);
+      assertCompleteClientCodecRejected(() -> client.getComplete(readRequest()));
+
+      responseMutation.set(ResponseMutation.MISSING_COMPLETE_DESCRIPTOR);
+      assertCompleteClientCodecRejected(() -> client.getComplete(readRequest()));
     } finally {
       client.close();
     }
@@ -427,6 +513,7 @@ class AuthoredWorldLaunchDescriptorMtlsTest {
       stopChannel(channel);
     }
     verifyNoInteractions(launchDescriptorService);
+    verifyNoInteractions(completeLaunchBindingService);
   }
 
   @Test
@@ -437,10 +524,12 @@ class AuthoredWorldLaunchDescriptorMtlsTest {
       var stub = stub(channel);
       assertTlsDenied(() -> stub.resolveLaunchDescriptor(resolveRequest()), RESOLVE_METHOD);
       assertTlsDenied(() -> stub.getLaunchDescriptor(readRequest()), READ_METHOD);
+      assertTlsDenied(() -> stub.getCompleteLaunchBinding(readRequest()), COMPLETE_READ_METHOD);
     } finally {
       stopChannel(channel);
     }
     verifyNoInteractions(launchDescriptorService);
+    verifyNoInteractions(completeLaunchBindingService);
   }
 
   @Test
@@ -450,10 +539,12 @@ class AuthoredWorldLaunchDescriptorMtlsTest {
       var stub = stub(channel);
       assertTlsDenied(() -> stub.resolveLaunchDescriptor(resolveRequest()), RESOLVE_METHOD);
       assertTlsDenied(() -> stub.getLaunchDescriptor(readRequest()), READ_METHOD);
+      assertTlsDenied(() -> stub.getCompleteLaunchBinding(readRequest()), COMPLETE_READ_METHOD);
     } finally {
       stopChannel(channel);
     }
     verifyNoInteractions(launchDescriptorService);
+    verifyNoInteractions(completeLaunchBindingService);
   }
 
   @Test
@@ -483,15 +574,26 @@ class AuthoredWorldLaunchDescriptorMtlsTest {
                     .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
                     .build())
             .build();
+    GetLaunchDescriptorRequest malformedCompleteRequest =
+        readRequest().toBuilder().setCanonicalTenantId("not-a-canonical-uuid").build();
+    GetLaunchDescriptorRequest unknownCompleteRequest =
+        readRequest().toBuilder().setUnknownFields(unknownField.getUnknownFields()).build();
     try {
       assertThat(stub(channel).resolveLaunchDescriptor(malformed).getError().getCode())
           .isEqualTo("INVALID_ARGUMENT");
       assertThat(stub(channel).resolveLaunchDescriptor(unknownField).getError().getCode())
           .isEqualTo("INVALID_ARGUMENT");
+      assertThat(
+              stub(channel).getCompleteLaunchBinding(malformedCompleteRequest).getError().getCode())
+          .isEqualTo("INVALID_ARGUMENT");
+      assertThat(
+              stub(channel).getCompleteLaunchBinding(unknownCompleteRequest).getError().getCode())
+          .isEqualTo("INVALID_ARGUMENT");
     } finally {
       stopChannel(channel);
     }
     verifyNoInteractions(launchDescriptorService);
+    verifyNoInteractions(completeLaunchBindingService);
   }
 
   @Test
@@ -515,10 +617,13 @@ class AuthoredWorldLaunchDescriptorMtlsTest {
           .isEqualTo("PERMISSION_DENIED");
       assertThat(stub.getLaunchDescriptor(readRequest()).getError().getCode())
           .isEqualTo("PERMISSION_DENIED");
+      assertThat(stub.getCompleteLaunchBinding(readRequest()).getError().getCode())
+          .isEqualTo("PERMISSION_DENIED");
     } finally {
       stopChannel(channel);
     }
     verifyNoInteractions(launchDescriptorService);
+    verifyNoInteractions(completeLaunchBindingService);
   }
 
   private static ServerInterceptor responseMutationInterceptor(
@@ -569,6 +674,25 @@ class AuthoredWorldLaunchDescriptorMtlsTest {
           descriptor.toBuilder().setAuthoredWorldBinding(changedBinding).build();
       return (Response) read.toBuilder().setLaunchDescriptor(changedDescriptor).build();
     }
+    if (mutation == ResponseMutation.CHANGE_COMPLETE_READ_REQUEST_ID
+        && response instanceof GetCompleteLaunchBindingResponse read) {
+      return (Response)
+          read.toBuilder().setRequestId("44444444-4444-4444-8444-444444444444").build();
+    }
+    if (mutation == ResponseMutation.SWAP_COMPLETE_RELEASE_ATTESTATION
+        && response instanceof GetCompleteLaunchBindingResponse read) {
+      var swappedEvidence =
+          AuthoredWorldLaunchDescriptorGrpcCodec.toReleaseAttestation(SWAPPED_RELEASE_ATTESTATION);
+      return (Response) read.toBuilder().setReleaseAttestation(swappedEvidence).build();
+    }
+    if (mutation == ResponseMutation.MISSING_COMPLETE_RELEASE_ATTESTATION
+        && response instanceof GetCompleteLaunchBindingResponse read) {
+      return (Response) read.toBuilder().clearReleaseAttestation().build();
+    }
+    if (mutation == ResponseMutation.MISSING_COMPLETE_DESCRIPTOR
+        && response instanceof GetCompleteLaunchBindingResponse read) {
+      return (Response) read.toBuilder().clearLaunchDescriptor().build();
+    }
     throw new IllegalStateException("Response mutation does not match the physical RPC response");
   }
 
@@ -614,6 +738,12 @@ class AuthoredWorldLaunchDescriptorMtlsTest {
     assertThat(failure.getCause())
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining(expectedCauseMessage);
+  }
+
+  private static void assertCompleteClientCodecRejected(Runnable call) {
+    Throwable failure = catchFailure(call);
+    assertThat(failure).isInstanceOf(IllegalStateException.class);
+    assertThat(failure.getCause()).isInstanceOf(IllegalArgumentException.class);
   }
 
   private static AuthoredWorldLaunchDescriptorClient newSharedClient(
@@ -720,6 +850,93 @@ class AuthoredWorldLaunchDescriptorMtlsTest {
   private static AuthoredWorldLaunchDescriptorGrpcCodec.GetRequest readClientRequest() {
     return new AuthoredWorldLaunchDescriptorGrpcCodec.GetRequest(
         READ_REQUEST_ID, BOUND_REQUEST, BOUND_EVIDENCE.resultDigest());
+  }
+
+  private static CompleteLaunchBindingDto completeBinding() {
+    return new CompleteLaunchBindingDto(BOUND_EVIDENCE, RELEASE_ATTESTATION);
+  }
+
+  private static AuthoredWorldReleaseAttestationEvidence releaseAttestation(
+      AuthoredWorldLaunchDescriptorEvidence descriptor) {
+    List<AuthoredWorldReleaseAttestationEvidence.Participant> participants =
+        AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
+            .map(
+                participantKey -> {
+                  boolean abilityPresent = "GAME_LOGIC".equals(participantKey);
+                  return new AuthoredWorldReleaseAttestationEvidence.Participant(
+                      participantKey,
+                      Long.toString(descriptor.versionId()),
+                      false,
+                      null,
+                      "commit-17",
+                      "b".repeat(64),
+                      AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                          participantKey),
+                      abilityPresent,
+                      abilityPresent ? "sha256:" + "c".repeat(64) : null);
+                })
+            .toList();
+    AuthoredWorldReleaseAttestationEvidence.Artifact artifact =
+        new AuthoredWorldReleaseAttestationEvidence.Artifact(
+            "world.fixture",
+            "WORLD_FIXTURE",
+            "artifacts/sha256/" + "d".repeat(64),
+            "sha256:" + "d".repeat(64),
+            "application/octet-stream",
+            1);
+    return AuthoredWorldReleaseAttestationEvidence.create(
+        descriptor.targetNamespace(),
+        descriptor.resultDigest(),
+        descriptor.canonicalTenantId(),
+        UUID.fromString("d7a1b80e-a5fa-4fc9-9fc4-cab3cbe44b21"),
+        descriptor.worldSlug(),
+        descriptor.authoredWorldSourceOperationId(),
+        descriptor.authoredWorldSourceEvidenceDigest(),
+        descriptor.launchDescriptorId(),
+        descriptor.publishedReleaseBundleRef(),
+        descriptor.versionStateEpoch(),
+        "publish-workflow-opaque-17",
+        "commit-17",
+        participants,
+        "sha256:" + "e".repeat(64),
+        1,
+        List.of("world.fixture"),
+        List.of(artifact),
+        List.of("LOOK"),
+        descriptor.generationConfigRevision());
+  }
+
+  private static AuthoredWorldLaunchDescriptorEvidence swappedDescriptor() {
+    AuthoredWorldLaunchDescriptorEvidence.Request request =
+        new AuthoredWorldLaunchDescriptorEvidence.Request(
+            NAMESPACE,
+            "launch-request-swapped",
+            TENANT_ID,
+            "other-harbor-world",
+            SOURCE_OPERATION_ID,
+            "sha256:" + "a".repeat(64),
+            17L,
+            true,
+            "requested-patch-2",
+            true,
+            9L,
+            true,
+            12L,
+            true,
+            "{\"requested\":true}");
+    return AuthoredWorldLaunchDescriptorEvidence.create(
+        request,
+        "launch-descriptor-swapped",
+        12L,
+        true,
+        "resolved-patch-2",
+        "{\"runtime\":true}",
+        "generation-revision-3",
+        6L,
+        29L,
+        "release-bundle:" + TENANT_ID + ":12:29",
+        true,
+        "remap-set-4");
   }
 
   private static ResolvedLaunchDescriptorDto resolvedDescriptor() {
@@ -942,7 +1159,11 @@ class AuthoredWorldLaunchDescriptorMtlsTest {
     NONE,
     CHANGE_DESCRIPTOR_DUPLICATE,
     CHANGE_READ_REQUEST_ID,
-    CHANGE_RESULT_DIGEST
+    CHANGE_RESULT_DIGEST,
+    CHANGE_COMPLETE_READ_REQUEST_ID,
+    SWAP_COMPLETE_RELEASE_ATTESTATION,
+    MISSING_COMPLETE_RELEASE_ATTESTATION,
+    MISSING_COMPLETE_DESCRIPTOR
   }
 
   private record TestPki(

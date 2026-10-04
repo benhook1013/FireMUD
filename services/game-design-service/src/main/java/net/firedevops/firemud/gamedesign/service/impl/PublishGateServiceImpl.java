@@ -5,6 +5,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.stream.Collectors;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.gamedesign.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamedesign.client.EntityManagementClient;
@@ -23,19 +25,15 @@ import org.springframework.stereotype.Service;
 @Service
 public class PublishGateServiceImpl implements PublishGateService {
   private static final Map<String, Integer> SUPPORTED_DIGEST_SCHEMA_VERSIONS =
-      Map.of(
-          PublishParticipantKey.WORLD_MANAGEMENT.name(), 2,
-          PublishParticipantKey.ENTITY_MANAGEMENT.name(), 2,
-          PublishParticipantKey.GAME_LOGIC.name(), 1,
-          PublishParticipantKey.AUTOMATION_SCRIPTING.name(), 5,
-          PublishParticipantKey.GAME_DESIGN_CONTROL_PLANE.name(), 1);
+      AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
+          .collect(
+              Collectors.toUnmodifiableMap(
+                  participantKey -> participantKey,
+                  AuthoredWorldReleaseAttestationEvidence::supportedParticipantDigestSchema));
   private static final List<PublishParticipantKey> FULL_VERSION_PARTICIPANTS =
-      List.of(
-          PublishParticipantKey.WORLD_MANAGEMENT,
-          PublishParticipantKey.ENTITY_MANAGEMENT,
-          PublishParticipantKey.GAME_LOGIC,
-          PublishParticipantKey.AUTOMATION_SCRIPTING,
-          PublishParticipantKey.GAME_DESIGN_CONTROL_PLANE);
+      AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
+          .map(PublishParticipantKey::valueOf)
+          .toList();
 
   private static final List<PublishParticipantKey> SCRIPT_PATCH_PARTICIPANTS =
       List.of(

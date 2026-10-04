@@ -31,6 +31,7 @@ import net.firedevops.firemud.gamedesign.dto.VersionStateDto;
 import net.firedevops.firemud.gamedesign.model.PublishGateFailureCode;
 import net.firedevops.firemud.gamedesign.model.TemplateRemapSetStatus;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
+import net.firedevops.firemud.gamedesign.service.CompleteLaunchBindingService;
 import net.firedevops.firemud.gamedesign.service.GameAuthoredHelpTopicService;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.PingService;
@@ -103,6 +104,8 @@ class GameDesignGrpcServiceTest {
   private final VersionService versionService = Mockito.mock(VersionService.class);
   private final LaunchDescriptorService launchDescriptorService =
       Mockito.mock(LaunchDescriptorService.class);
+  private final CompleteLaunchBindingService completeLaunchBindingService =
+      Mockito.mock(CompleteLaunchBindingService.class);
   private final TemplateRemapSetService templateRemapSetService =
       Mockito.mock(TemplateRemapSetService.class);
   private final VersionAssetArtifactService versionAssetArtifactService =
@@ -119,6 +122,7 @@ class GameDesignGrpcServiceTest {
           revisionService,
           versionService,
           launchDescriptorService,
+          completeLaunchBindingService,
           templateRemapSetService,
           versionAssetArtifactService,
           settingsAuthorityService,

@@ -1089,6 +1089,32 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+      - name: Run Game Design complete launch binding PostgreSQL component proof
+        if: ${{ matrix.module == 'game-design-service' }}
+        run: |
+          ./gradlew :game-design-service:integrationTest \
+            --tests integration.net.firedevops.firemud.gamedesign.service.CompleteLaunchBindingServiceIntegrationTest \
+            -PfullCheck --no-build-cache --no-configuration-cache
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.gamedesign.service.CompleteLaunchBindingServiceIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.service.CompleteLaunchBindingServiceIntegrationTest#returnsAndRetriesThePersistedCompletePairWithoutChangingOwnerRows()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.service.CompleteLaunchBindingServiceIntegrationTest#retainsTheHistoricalAttestationWhenCurrentVersionStateAdvances()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.service.CompleteLaunchBindingServiceIntegrationTest#deniesCrossTenantAndSubstitutedSourceSelectorsWithoutMutatingPersistedEvidence()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.service.CompleteLaunchBindingServiceIntegrationTest#deniesPersistedDescriptorWhoseBundleLacksCompleteOwnerEvidenceWithoutMutation()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.service.CompleteLaunchBindingServiceIntegrationTest#descriptorSnapshotRejectsNonRepeatableReadBeforeAnyWrite()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.service.CompleteLaunchBindingServiceIntegrationTest#concurrentVersionAdvanceCannotSplitTheCompleteOwnerSnapshot()' \
+            game-design-service
+
+      - name: Capture Game Design complete launch binding PostgreSQL raw XML
+        if: ${{ always() && matrix.module == 'game-design-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: game-design-complete-launch-binding-postgresql-proof-${{ github.sha }}
+          path: services/game-design-service/build/test-results/integrationTest/TEST-*CompleteLaunchBindingServiceIntegrationTest.xml
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Run Game Design authored-source read socket mTLS proof
         if: ${{ !cancelled() && matrix.module == 'game-design-service' }}
         run: |
@@ -1190,6 +1216,32 @@ jobs:
           name: world-authored-source-intake-proof-${{ github.sha }}
           path: services/world-management-service/build/test-results/integrationTest/TEST-*WorldAuthoredSourceIntakeIntegrationTest.xml
           if-no-files-found: warn
+          retention-days: 7
+
+      - name: Run World complete launch binding PostgreSQL component proof
+        if: ${{ matrix.module == 'world-management-service' }}
+        run: |
+          ./gradlew :world-management-service:integrationTest \
+            --tests net.firedevops.firemud.worldmanagement.WorldCompleteLaunchBindingIntegrationTest \
+            -PfullCheck --no-build-cache --no-configuration-cache
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite net.firedevops.firemud.worldmanagement.WorldCompleteLaunchBindingIntegrationTest \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldCompleteLaunchBindingIntegrationTest#persistsCompletePairReadsItBackAndLeavesUnmappedRetainedRowsUntouched()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldCompleteLaunchBindingIntegrationTest#forwardV26MigrationPreservesUnmappedRetainedWorldRows()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldCompleteLaunchBindingIntegrationTest#deniesMissingOrSubstitutedSourceBeforeAnyWorldOwnerWrite()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldCompleteLaunchBindingIntegrationTest#concurrentExactAndChangedClaimsKeepOneImmutableBinding()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldCompleteLaunchBindingIntegrationTest#simultaneousExactRetriesReturnTheSameDurableReceiptAndOwnerOperation()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldCompleteLaunchBindingIntegrationTest#recoversCommittedBindingWhenOwnerCommitAcknowledgmentIsLost()' \
+            world-management-service
+
+      - name: Capture World complete launch binding PostgreSQL raw XML
+        if: ${{ always() && matrix.module == 'world-management-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: world-complete-launch-binding-postgresql-proof-${{ github.sha }}
+          path: services/world-management-service/build/test-results/integrationTest/TEST-*WorldCompleteLaunchBindingIntegrationTest.xml
+          if-no-files-found: error
           retention-days: 7
 
       - name: Run World shared publication-fence PostgreSQL prerequisite proof

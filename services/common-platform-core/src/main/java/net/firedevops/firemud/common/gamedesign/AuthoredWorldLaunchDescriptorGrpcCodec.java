@@ -1,12 +1,16 @@
 package net.firedevops.firemud.common.gamedesign;
 
 import com.google.protobuf.Message;
+import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.regex.Pattern;
+import net.firedevops.firemud.gamedesign.v1.GetCompleteLaunchBindingResponse;
 import net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorRequest;
 import net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorResponse;
 import net.firedevops.firemud.gamedesign.v1.LaunchDescriptor;
+import net.firedevops.firemud.gamedesign.v1.ParticipantDigest;
+import net.firedevops.firemud.gamedesign.v1.PublishedArtifactDigest;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorResponse;
 
@@ -123,8 +127,121 @@ public final class AuthoredWorldLaunchDescriptorGrpcCodec {
     return evidence;
   }
 
+  /**
+   * Validates the complete owner response as one atomic descriptor and attestation pair. The
+   * request is the exact immutable read selector; neither component is accepted alone.
+   */
+  public static CompleteLaunchBindingEvidence fromCompleteResponse(
+      GetLaunchDescriptorRequest request, GetCompleteLaunchBindingResponse response) {
+    Objects.requireNonNull(request, "request");
+    Objects.requireNonNull(response, "response");
+    requireNoUnknownFields(request, "GetCompleteLaunchBinding request");
+    requireNoUnknownFields(response, "GetCompleteLaunchBinding response");
+    if (response.hasError()) {
+      requireNoUnknownFields(response.getError(), "GetCompleteLaunchBinding error");
+      throw new IllegalArgumentException("Game Design rejected the complete launch binding read");
+    }
+    UUID readRequestId = parseCanonicalNonNilUuid(request.getRequestId(), "read request ID");
+    UUID echoedRequestId =
+        parseCanonicalNonNilUuid(response.getRequestId(), "read request ID echo");
+    if (!readRequestId.equals(echoedRequestId)) {
+      throw new IllegalArgumentException("Complete launch binding read request ID echo changed");
+    }
+    if (!response.hasLaunchDescriptor() || !response.hasReleaseAttestation()) {
+      throw new IllegalArgumentException(
+          "Complete launch binding read must return both descriptor and release attestation");
+    }
+
+    AuthoredWorldLaunchDescriptorEvidence descriptor =
+        decodeDescriptor(response.getLaunchDescriptor());
+    if (readRequestId.equals(descriptor.authoredWorldSourceOperationId())
+        || readRequestId.toString().equals(descriptor.controlPlaneRequestId())) {
+      throw new IllegalArgumentException(
+          "Complete launch binding read request ID must be distinct from the original request");
+    }
+    if (!descriptor.canonicalTenantId().toString().equals(request.getCanonicalTenantId())
+        || !descriptor.worldSlug().equals(request.getWorldSlug())
+        || !descriptor.controlPlaneRequestId().equals(request.getControlPlaneRequestId())
+        || !descriptor.requestDigest().equals(request.getExpectedRequestDigest())
+        || !descriptor.resultDigest().equals(request.getExpectedResultDigest())) {
+      throw new IllegalArgumentException(
+          "Complete launch binding does not match the exact read selector");
+    }
+
+    AuthoredWorldReleaseAttestationEvidence releaseAttestation =
+        decodeReleaseAttestation(response.getReleaseAttestation());
+    try {
+      return new CompleteLaunchBindingEvidence(descriptor, releaseAttestation);
+    } catch (IllegalArgumentException exception) {
+      throw new IllegalArgumentException("Complete launch binding evidence is invalid", exception);
+    }
+  }
+
+  /** Encodes the separate closed release attestation without changing descriptor/v1. */
+  public static net.firedevops.firemud.gamedesign.v1.AuthoredWorldReleaseAttestationEvidence
+      toReleaseAttestation(AuthoredWorldReleaseAttestationEvidence evidence) {
+    Objects.requireNonNull(evidence, "evidence");
+    evidence.requireValid();
+    var builder =
+        net.firedevops.firemud.gamedesign.v1.AuthoredWorldReleaseAttestationEvidence.newBuilder()
+            .setSchemaVersion(evidence.schemaVersion())
+            .setTargetNamespace(evidence.targetNamespace())
+            .setDescriptorResultDigest(evidence.descriptorResultDigest())
+            .setCanonicalTenantId(evidence.canonicalTenantId().toString())
+            .setCanonicalVersionId(evidence.canonicalVersionId().toString())
+            .setWorldSlug(evidence.worldSlug())
+            .setAuthoredWorldSourceOperationId(evidence.authoredWorldSourceOperationId().toString())
+            .setAuthoredWorldSourceEvidenceDigest(evidence.authoredWorldSourceEvidenceDigest())
+            .setLaunchDescriptorId(evidence.launchDescriptorId())
+            .setPublishedReleaseBundleRef(evidence.publishedReleaseBundleRef())
+            .setVersionStateEpoch(evidence.versionStateEpoch())
+            .setPublishWorkflowId(evidence.publishWorkflowId())
+            .setCommitId(evidence.commitId())
+            .setManifestHash(evidence.manifestHash())
+            .setManifestSchemaVersion(evidence.manifestSchemaVersion())
+            .addAllRequiredManifestAssetKeys(evidence.requiredManifestAssetKeys())
+            .addAllCommandDefinitions(evidence.commandDefinitions())
+            .setGenerationConfigRevision(evidence.generationConfigRevision())
+            .setEvidenceDigest(evidence.evidenceDigest());
+    for (AuthoredWorldReleaseAttestationEvidence.Participant participant :
+        evidence.participantDigests()) {
+      ParticipantDigest.Builder participantBuilder =
+          ParticipantDigest.newBuilder()
+              .setParticipantKey(participant.participantKey())
+              .setScopeValue(participant.scopeValue())
+              .setAppliedCommitId(participant.appliedCommitId())
+              .setContentDigest(participant.contentDigest())
+              .setDigestSchemaVersion(participant.digestSchemaVersion());
+      if (participant.abilitySchemaDigestPresent()) {
+        participantBuilder.setAbilitySchemaDigest(participant.abilitySchemaDigest());
+      }
+      builder.addParticipantDigests(participantBuilder);
+    }
+    for (AuthoredWorldReleaseAttestationEvidence.Artifact artifact : evidence.artifactDigests()) {
+      builder.addArtifactDigests(
+          PublishedArtifactDigest.newBuilder()
+              .setUsageKey(artifact.usageKey())
+              .setArtifactKind(artifact.artifactKind())
+              .setImmutableObjectKey(artifact.immutableObjectKey())
+              .setContentDigest(artifact.contentDigest())
+              .setContentType(artifact.contentType())
+              .setArtifactSchemaVersion(artifact.artifactSchemaVersion()));
+    }
+    return builder.build();
+  }
+
   private static AuthoredWorldLaunchDescriptorEvidence decodeDescriptor(
       AuthoredWorldLaunchDescriptorEvidence.Request expectedRequest, LaunchDescriptor descriptor) {
+    AuthoredWorldLaunchDescriptorEvidence evidence = decodeDescriptor(descriptor);
+    if (!evidence.request().equals(expectedRequest)) {
+      throw new IllegalArgumentException(
+          "Launch descriptor does not match the exact authored-world resolve request");
+    }
+    return evidence;
+  }
+
+  private static AuthoredWorldLaunchDescriptorEvidence decodeDescriptor(
+      LaunchDescriptor descriptor) {
     requireNoUnknownFields(descriptor, "LaunchDescriptor");
     if (!descriptor.hasAuthoredWorldBinding()) {
       throw new IllegalArgumentException("Launch descriptor has no authored-world binding");
@@ -176,10 +293,6 @@ public final class AuthoredWorldLaunchDescriptorGrpcCodec {
       throw new IllegalArgumentException("Authored-world launch evidence is invalid", exception);
     }
 
-    if (!evidence.request().equals(expectedRequest)) {
-      throw new IllegalArgumentException(
-          "Launch descriptor does not match the exact authored-world resolve request");
-    }
     requireFlatDuplicate(
         descriptor.getLaunchDescriptorId(), evidence.launchDescriptorId(), "launchDescriptorId");
     requireFlatDuplicate(
@@ -216,6 +329,67 @@ public final class AuthoredWorldLaunchDescriptorGrpcCodec {
         evidence.remapSetIdPresent() ? evidence.remapSetId() : "",
         "remapSetId");
     return evidence;
+  }
+
+  private static AuthoredWorldReleaseAttestationEvidence decodeReleaseAttestation(
+      net.firedevops.firemud.gamedesign.v1.AuthoredWorldReleaseAttestationEvidence wire) {
+    requireNoUnknownFields(wire, "AuthoredWorldReleaseAttestationEvidence");
+    List<AuthoredWorldReleaseAttestationEvidence.Participant> participants =
+        new java.util.ArrayList<>(wire.getParticipantDigestsCount());
+    for (ParticipantDigest participant : wire.getParticipantDigestsList()) {
+      requireNoUnknownFields(participant, "ParticipantDigest");
+      participants.add(
+          new AuthoredWorldReleaseAttestationEvidence.Participant(
+              participant.getParticipantKey(),
+              participant.getScopeValue(),
+              false,
+              null,
+              participant.getAppliedCommitId(),
+              participant.getContentDigest(),
+              participant.getDigestSchemaVersion(),
+              participant.hasAbilitySchemaDigest(),
+              participant.hasAbilitySchemaDigest() ? participant.getAbilitySchemaDigest() : null));
+    }
+    List<AuthoredWorldReleaseAttestationEvidence.Artifact> artifacts =
+        new java.util.ArrayList<>(wire.getArtifactDigestsCount());
+    for (PublishedArtifactDigest artifact : wire.getArtifactDigestsList()) {
+      requireNoUnknownFields(artifact, "PublishedArtifactDigest");
+      artifacts.add(
+          new AuthoredWorldReleaseAttestationEvidence.Artifact(
+              artifact.getUsageKey(),
+              artifact.getArtifactKind(),
+              artifact.getImmutableObjectKey(),
+              artifact.getContentDigest(),
+              artifact.getContentType(),
+              artifact.getArtifactSchemaVersion()));
+    }
+    try {
+      return new AuthoredWorldReleaseAttestationEvidence(
+          wire.getSchemaVersion(),
+          wire.getTargetNamespace(),
+          wire.getDescriptorResultDigest(),
+          parseCanonicalNonNilUuid(wire.getCanonicalTenantId(), "canonical tenant ID"),
+          parseCanonicalNonNilUuid(wire.getCanonicalVersionId(), "canonical version ID"),
+          wire.getWorldSlug(),
+          parseCanonicalNonNilUuid(
+              wire.getAuthoredWorldSourceOperationId(), "authored-world source operation ID"),
+          wire.getAuthoredWorldSourceEvidenceDigest(),
+          wire.getLaunchDescriptorId(),
+          wire.getPublishedReleaseBundleRef(),
+          wire.getVersionStateEpoch(),
+          wire.getPublishWorkflowId(),
+          wire.getCommitId(),
+          participants,
+          wire.getManifestHash(),
+          wire.getManifestSchemaVersion(),
+          wire.getRequiredManifestAssetKeysList(),
+          artifacts,
+          wire.getCommandDefinitionsList(),
+          wire.getGenerationConfigRevision(),
+          wire.getEvidenceDigest());
+    } catch (IllegalArgumentException exception) {
+      throw new IllegalArgumentException("Release-attestation evidence is invalid", exception);
+    }
   }
 
   private static void requireNoUnknownFields(Message message, String label) {
