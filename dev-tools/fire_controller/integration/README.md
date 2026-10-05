@@ -13,6 +13,7 @@ python3 -m unittest discover -s dev-tools/validation -p 'test_fire_controller_we
 Run the private renderer, project-map, publisher, and server suite from `tmp/local-status-page` in the project-direction checkout. The private `FireMUD-status-page` subtree mirror stores those same files at its repository root:
 
 ```sh
+export FIREMUD_CONTROLLER_TOOLS=/absolute/path/to/FireMUD/dev-tools
 python3 -m unittest discover -p 'test_*.py'
 ```
 
