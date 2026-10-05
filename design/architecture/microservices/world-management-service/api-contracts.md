@@ -110,6 +110,8 @@ World Management also exposes a read-only design-time synchronization surface so
 - Revision-level ledgers may exist for replay and diagnostics, but they are not part of the publish-gate response. World Management must not expose `lastAppliedRevisionId` as a substitute convergence token for multi-revision commits.
 - `contentDigest` must cover only version-scoped template/binding rows and must exclude runtime/instance rows and audit metadata.
 
+The current registered handler returns `FAILED_PRECONDITION` until authenticated complete World commit/publication checkpoint evidence is available; see [World Runtime and Movement implementation status](../../../project-management/implementation-tracking/world-runtime-and-movement.md#current-status).
+
 Digest input manifest rules live in [`runtime-and-data.md`](./runtime-and-data.md#digest-input-manifest), while generation-input ownership lives in [`procedural-generation-control.md`](./procedural-generation-control.md).
 
 ## ValidateWorldUpgradeMappings Minimum Contract

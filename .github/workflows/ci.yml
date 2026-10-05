@@ -2157,6 +2157,27 @@ jobs:
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyCommitPostgresIntegrationTest#immutableHistoryAndEveryStoredPayloadAreVerifiedOnIndependentReadback()' \
             world-management-service
 
+      - name: Capture World legacy preparation PostgreSQL XML
+        if: ${{ always() && matrix.module == 'world-management-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: world-legacy-preparation-postgresql-proof-${{ github.sha }}-${{ github.run_attempt }}
+          path: services/world-management-service/build/test-results/integrationTest/TEST-*WorldLifecyclePreparationPostgresIntegrationTest.xml
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Verify World legacy preparation PostgreSQL proof
+        if: ${{ !cancelled() && matrix.module == 'world-management-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite net.firedevops.firemud.worldmanagement.WorldLifecyclePreparationPostgresIntegrationTest \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldLifecyclePreparationPostgresIntegrationTest#materializesEverySelectedLegacyRowAndExactRetryAddsNoRows()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldLifecyclePreparationPostgresIntegrationTest#rejectsSelectedRoomWhoseZoneBelongsToAnotherVersionBeforeRuntimeWrites()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldLifecyclePreparationPostgresIntegrationTest#rejectsSelectedExitWhoseEndpointBelongsToAnotherVersionBeforeRuntimeWrites()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldLifecyclePreparationPostgresIntegrationTest#lateExitPersistenceFailureRollsBackWorldAndAllEarlierRuntimeRows()' \
+            world-management-service
+
       - name: Capture World canonical frozen topology PostgreSQL XML
         if: ${{ always() && matrix.module == 'world-management-service' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
