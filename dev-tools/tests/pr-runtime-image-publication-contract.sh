@@ -159,7 +159,7 @@ cat > "$artifact_dir/pr-runtime-provenance.json" <<EOF
 EOF
 
 cat > "$fixture_dir/source-run.json" <<EOF
-{"id":${source_run_id},"workflow_id":${workflow_id},"name":"${source_title}","path":".github/workflows/runtime-images.yml","event":"pull_request","status":"completed","conclusion":"success","display_title":"${source_title}","head_sha":"${head_sha}","head_branch":"feature/ci","repository":{"full_name":"${repository}"},"head_repository":{"full_name":"${repository}"}}
+{"id":${source_run_id},"workflow_id":${workflow_id},"name":"Build Runtime Images","path":".github/workflows/runtime-images.yml","event":"pull_request","status":"completed","conclusion":"success","display_title":"${source_title}","head_sha":"${head_sha}","head_branch":"feature/ci","repository":{"full_name":"${repository}"},"head_repository":{"full_name":"${repository}"}}
 EOF
 cat > "$fixture_dir/pull-request.json" <<EOF
 {"number":${pr_number},"state":"open","user":{"login":"human"},"labels":[],"mergeable":true,"mergeable_state":"clean","head":{"sha":"${head_sha}","ref":"feature/ci","repo":{"full_name":"${repository}"}},"base":{"sha":"${base_sha}","ref":"develop","repo":{"full_name":"${repository}"}},"merge_commit_sha":"${merge_sha}"}
@@ -241,6 +241,33 @@ run_validation() {
   python3 "$validation_script"
 }
 
+run_validation
+# Both API name representations are valid; display_title remains the exact identity.
+python3 - "$fixture_dir/source-run.json" "$source_title" <<'PY'
+import json
+import sys
+from pathlib import Path
+p = Path(sys.argv[1]); data = json.loads(p.read_text()); data["name"] = sys.argv[2]; p.write_text(json.dumps(data))
+PY
+run_validation
+for mutation in name display_title; do
+  python3 - "$fixture_dir/source-run.json" "$mutation" <<'PY'
+import json
+import sys
+from pathlib import Path
+p = Path(sys.argv[1]); data = json.loads(p.read_text()); data[sys.argv[2]] = "forged"; p.write_text(json.dumps(data))
+PY
+  if run_validation; then
+    echo "publisher accepted forged source $mutation" >&2
+    exit 1
+  fi
+  python3 - "$fixture_dir/source-run.json" "$source_title" <<'PY'
+import json
+import sys
+from pathlib import Path
+p = Path(sys.argv[1]); data = json.loads(p.read_text()); data["name"] = "Build Runtime Images"; data["display_title"] = sys.argv[2]; p.write_text(json.dumps(data))
+PY
+done
 run_validation
 grep -Fxq "IMAGE_TAG=pr-merge-$merge_sha" "$fixture_dir/github-env"
 grep -Fxq "PR_RUNTIME_ARTIFACT_DIR=$artifact_dir" "$fixture_dir/github-env"
