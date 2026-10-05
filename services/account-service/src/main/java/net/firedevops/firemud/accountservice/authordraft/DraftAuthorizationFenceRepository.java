@@ -55,6 +55,12 @@ public final class DraftAuthorizationFenceRepository {
     FAILED_NONPUBLICATION
   }
 
+  /** Terminal reason for an Account source change that made no source mutation. */
+  public enum SourceChangeAbortReason {
+    EXPIRED,
+    DEFINITIVE_ABORT
+  }
+
   public record FenceSnapshot(
       Ordering ordering, byte[] binding, OffsetDateTime reservedAt, OffsetDateTime orderedAt) {
     public FenceSnapshot {
@@ -83,7 +89,9 @@ public final class DraftAuthorizationFenceRepository {
       byte[] binding,
       String status,
       OffsetDateTime requestedAt,
-      OffsetDateTime committedAt) {
+      OffsetDateTime committedAt,
+      OffsetDateTime abortedAt,
+      SourceChangeAbortReason abortReason) {
     public SourceChangeSnapshot {
       binding = binding.clone();
     }
@@ -233,8 +241,15 @@ public final class DraftAuthorizationFenceRepository {
     Record prior = readChange(change.changeId());
     if (prior != null) {
       requireChange(prior, change);
-      if ("SOURCE_COMMITTED".equals(prior.get("status", String.class))) {
+      String priorStatus = prior.get("status", String.class);
+      if ("SOURCE_COMMITTED".equals(priorStatus)) {
         return true;
+      }
+      if ("SOURCE_ABORTED".equals(priorStatus)) {
+        throw new IllegalStateException("Aborted source change cannot be requested again");
+      }
+      if (!"WAITING".equals(priorStatus)) {
+        throw new IllegalStateException("Source change has an unsupported terminal state");
       }
     } else {
       if (hasWaitingChange(change.sources())) {
@@ -275,6 +290,16 @@ public final class DraftAuthorizationFenceRepository {
         && allAffectedSettled(change.sources());
   }
 
+  /** A no-mutation cancellation is safe only after every affected owner operation is settled. */
+  public boolean sourceAbortPermitted(SourceChange change) {
+    requireTransaction();
+    lockSources(change.sources());
+    Record row = readChange(change.changeId());
+    requireChange(row, change);
+    return "WAITING".equals(row.get("status", String.class))
+        && allAffectedSettled(change.sources());
+  }
+
   /**
    * Same transaction as actual source mutation/event/readback. No RPC or fake source write here.
    */
@@ -283,18 +308,69 @@ public final class DraftAuthorizationFenceRepository {
     lockSources(change.sources());
     Record row = readChange(change.changeId());
     requireChange(row, change);
-    if ("SOURCE_COMMITTED".equals(row.get("status", String.class))) {
+    String status = row.get("status", String.class);
+    if ("SOURCE_COMMITTED".equals(status)) {
       return;
+    }
+    if ("SOURCE_ABORTED".equals(status)) {
+      throw new IllegalStateException("Aborted source change cannot be committed");
+    }
+    if (!"WAITING".equals(status)) {
+      throw new IllegalStateException("Source change is not waiting");
     }
     if (!allAffectedSettled(change.sources())) {
       throw new IllegalStateException("Owner outcomes unresolved");
     }
-    dsl.execute(
-        "UPDATE "
-            + CHANGES
-            + " SET status = 'SOURCE_COMMITTED', committed_at = CURRENT_TIMESTAMP"
-            + " WHERE change_id = ? AND status = 'WAITING'",
-        change.changeId());
+    int updated =
+        dsl.execute(
+            "UPDATE "
+                + CHANGES
+                + " SET status = 'SOURCE_COMMITTED', committed_at = CURRENT_TIMESTAMP"
+                + " WHERE change_id = ? AND status = 'WAITING'",
+            change.changeId());
+    if (updated != 1) {
+      throw new IllegalStateException("Draft source change did not commit exactly once");
+    }
+  }
+
+  /**
+   * Records a terminal no-mutation result. The same ordering-aware settlement predicate used for
+   * source commit applies: revoke order requires two definitive aborts; commit order requires two
+   * exact terminal owner readbacks, including a mixed vector.
+   */
+  public void markSourceAborted(SourceChange change, SourceChangeAbortReason reason) {
+    requireTransaction();
+    Objects.requireNonNull(reason, "source-change abort reason");
+    lockSources(change.sources());
+    Record row = readChange(change.changeId());
+    requireChange(row, change);
+    String status = row.get("status", String.class);
+    if ("SOURCE_ABORTED".equals(status)) {
+      if (!reason.name().equals(row.get("abort_reason", String.class))) {
+        throw new IllegalArgumentException("Source change abort reason differs from readback");
+      }
+      return;
+    }
+    if ("SOURCE_COMMITTED".equals(status)) {
+      throw new IllegalStateException("Committed source change cannot be aborted");
+    }
+    if (!"WAITING".equals(status)) {
+      throw new IllegalStateException("Source change is not waiting");
+    }
+    if (!allAffectedSettled(change.sources())) {
+      throw new IllegalStateException("Owner outcomes unresolved");
+    }
+    int updated =
+        dsl.execute(
+            "UPDATE "
+                + CHANGES
+                + " SET status = 'SOURCE_ABORTED', aborted_at = CURRENT_TIMESTAMP, abort_reason = ?"
+                + " WHERE change_id = ? AND status = 'WAITING'",
+            reason.name(),
+            change.changeId());
+    if (updated != 1) {
+      throw new IllegalStateException("Draft source change did not abort exactly once");
+    }
   }
 
   /** Exact durable owner readback, supplied only by the future authenticated owner verifier. */
@@ -372,7 +448,9 @@ public final class DraftAuthorizationFenceRepository {
                     row.get("binding", byte[].class),
                     row.get("status", String.class),
                     row.get("requested_at", OffsetDateTime.class),
-                    row.get("committed_at", OffsetDateTime.class)))
+                    row.get("committed_at", OffsetDateTime.class),
+                    row.get("aborted_at", OffsetDateTime.class),
+                    abortReason(row.get("abort_reason", String.class))))
         .toList();
   }
 
@@ -380,12 +458,36 @@ public final class DraftAuthorizationFenceRepository {
     requireTransaction();
     Record row = readChange(change.changeId());
     requireChange(row, change);
+    return sourceChangeSnapshot(row);
+  }
+
+  /**
+   * Non-locking exact inspection for callers that must preserve Account/envelope/V57 lock order.
+   */
+  public SourceChangeSnapshot inspectSourceChange(SourceChange change) {
+    requireTransaction();
+    Record row =
+        dsl.fetchOne("SELECT * FROM " + CHANGES + " WHERE change_id = ?", change.changeId());
+    if (row == null) {
+      throw new IllegalArgumentException("Absent or changed immutable source mutation intent");
+    }
+    requireChange(row, change);
+    return sourceChangeSnapshot(row);
+  }
+
+  private SourceChangeSnapshot sourceChangeSnapshot(Record row) {
     return new SourceChangeSnapshot(
-        change.changeId(),
+        row.get("change_id", UUID.class),
         row.get("binding", byte[].class),
         row.get("status", String.class),
         row.get("requested_at", OffsetDateTime.class),
-        row.get("committed_at", OffsetDateTime.class));
+        row.get("committed_at", OffsetDateTime.class),
+        row.get("aborted_at", OffsetDateTime.class),
+        abortReason(row.get("abort_reason", String.class)));
+  }
+
+  private SourceChangeAbortReason abortReason(String value) {
+    return value == null ? null : SourceChangeAbortReason.valueOf(value);
   }
 
   private void lockSources(List<SourceEvidence> sources) {

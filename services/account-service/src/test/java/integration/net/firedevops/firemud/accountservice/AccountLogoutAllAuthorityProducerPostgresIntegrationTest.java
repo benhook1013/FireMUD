@@ -334,7 +334,9 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
             transaction(fixture.transaction(), () -> draftFences(fixture).read(binding).ordering()))
         .isEqualTo(Ordering.COMMIT_ORDER);
 
-    syntheticOwnerReadback(fixture, binding, Owner.WORLD, Outcome.COMMITTED, new byte[] {41});
+    OwnerReadback expectedWorldReadback =
+        syntheticOwnerReadback(fixture, binding, Owner.WORLD, Outcome.COMMITTED, new byte[] {41});
+    byte[] expectedWorldReadbackBytes = expectedWorldReadback.canonicalBytes();
     assertPending(fixture, seed, requestId, requestDigest, tokenHash, seed.initialState());
     assertThat(snapshot(fixture, seed)).isEqualTo(before);
     assertThat(
@@ -352,7 +354,7 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
                 () -> draftFences(fixture).readOwnerResult(binding, Owner.WORLD))
             .orElseThrow();
     assertThat(originalWorldResult.outcome()).isEqualTo(Outcome.COMMITTED);
-    assertThat(originalWorldResult.readback()).containsExactly(new byte[] {41});
+    assertThat(originalWorldResult.readback()).containsExactly(expectedWorldReadbackBytes);
 
     assertThat(commit(fixture, seed, requestId, requestDigest, tokenHash, seed.initialState()))
         .isEqualTo(LogoutAllResult.LOGOUT_ALL_COMMITTED);
@@ -372,7 +374,7 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
                 () -> draftFences(fixture).readOwnerResult(binding, Owner.WORLD))
             .orElseThrow();
     assertThat(replayedWorldResult.outcome()).isEqualTo(originalWorldResult.outcome());
-    assertThat(replayedWorldResult.readback()).containsExactly(originalWorldResult.readback());
+    assertThat(replayedWorldResult.readback()).containsExactly(expectedWorldReadbackBytes);
     assertThat(replayedWorldResult.recordedAt()).isEqualTo(originalWorldResult.recordedAt());
     assertThat(count(fixture, "account_authority_outbox_events")).isEqualTo(1L);
     assertThat(count(fixture, "account_logout_all_operation_receipts")).isEqualTo(1L);
@@ -1204,7 +1206,7 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
         List.of(accountSource));
   }
 
-  private void syntheticOwnerReadback(
+  private OwnerReadback syntheticOwnerReadback(
       Fixture fixture,
       DraftAuthorizationFenceBinding binding,
       Owner owner,
@@ -1226,6 +1228,7 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
           draftFences(fixture).recordOwnerReadback(binding, readback);
           return null;
         });
+    return readback;
   }
 
   private void installLateLogoutFailureTrigger(Fixture fixture, UUID requestId) {
