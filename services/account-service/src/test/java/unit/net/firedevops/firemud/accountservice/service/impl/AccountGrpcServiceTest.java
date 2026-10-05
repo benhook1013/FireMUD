@@ -2582,17 +2582,14 @@ class AccountGrpcServiceTest {
   @Test
   void encodeRuntimeMembershipCandidateRejectsIncompleteCheckpointOrSourceEvidence() {
     List<OutboxCheckpointEntry> completeCheckpoints = runtimeMembershipCheckpoints("1");
-    RuntimeMembershipSnapshotDto missingCheckpoint =
-        runtimeMembershipSnapshot(
-            ACCOUNT_UUID,
-            true,
-            completeCheckpoints.subList(0, completeCheckpoints.size() - 1),
-            runtimeMembershipSourceEvidence());
     assertThrows(
         IllegalArgumentException.class,
         () ->
-            AccountGrpcService.encodeRuntimeMembershipCandidate(
-                validRuntimeMembershipContext(), missingCheckpoint));
+            runtimeMembershipSnapshot(
+                ACCOUNT_UUID,
+                true,
+                completeCheckpoints.subList(0, completeCheckpoints.size() - 1),
+                runtimeMembershipSourceEvidence()));
     assertThrows(
         IllegalArgumentException.class,
         () -> runtimeMembershipSnapshot(ACCOUNT_UUID, true, completeCheckpoints, List.of()));
@@ -2651,30 +2648,48 @@ class AccountGrpcServiceTest {
     assertThrows(
         IllegalArgumentException.class,
         () ->
-            new OutboxSourceEvidence(
-                event.outboxStreamKey(),
-                event.outboxSequence(),
-                event.eventId(),
-                event.eventDigest(),
-                changedContent));
+            runtimeMembershipSnapshot(
+                ACCOUNT_UUID,
+                true,
+                runtimeMembershipCheckpoints("1"),
+                List.of(
+                    new OutboxSourceEvidence(
+                        event.outboxStreamKey(),
+                        event.outboxSequence(),
+                        event.eventId(),
+                        event.eventDigest(),
+                        changedContent)),
+                event));
     assertThrows(
         IllegalArgumentException.class,
         () ->
-            new OutboxSourceEvidence(
-                event.outboxStreamKey(),
-                event.outboxSequence(),
-                event.eventId(),
-                event.eventDigest(),
-                changedDigest));
+            runtimeMembershipSnapshot(
+                ACCOUNT_UUID,
+                true,
+                runtimeMembershipCheckpoints("1"),
+                List.of(
+                    new OutboxSourceEvidence(
+                        event.outboxStreamKey(),
+                        event.outboxSequence(),
+                        event.eventId(),
+                        event.eventDigest(),
+                        changedDigest)),
+                event));
     assertThrows(
         IllegalArgumentException.class,
         () ->
-            new OutboxSourceEvidence(
-                event.outboxStreamKey(),
-                "2",
-                event.eventId(),
-                event.eventDigest(),
-                event.canonicalJson()));
+            runtimeMembershipSnapshot(
+                ACCOUNT_UUID,
+                true,
+                runtimeMembershipCheckpoints("1"),
+                List.of(
+                    new OutboxSourceEvidence(
+                        event.outboxStreamKey(),
+                        "2",
+                        event.eventId(),
+                        event.eventDigest(),
+                        event.canonicalJson())),
+                event));
   }
 
   private static final class RecordingObserver<T> implements StreamObserver<T> {

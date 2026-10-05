@@ -81,6 +81,7 @@ import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepos
 import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.JoinOperation;
+import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipTransitionReceiptRepository;
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository.PasswordResetReceipt;
@@ -95,6 +96,7 @@ import net.firedevops.firemud.accountservice.repository.PasswordResetTokenReposi
 import net.firedevops.firemud.accountservice.repository.PaymentTransactionRepository;
 import net.firedevops.firemud.accountservice.repository.ProfileRepository;
 import net.firedevops.firemud.accountservice.repository.SubscriptionRepository;
+import net.firedevops.firemud.accountservice.service.AccountAuthoritySourceEventReadback;
 import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.accountservice.service.EmailService;
@@ -155,6 +157,7 @@ public class AccountServiceImpl implements AccountService {
   private final AccountAuthorityGenerationRepository accountAuthorityGenerationRepository;
   private final AccountAuthorityOutboxRepository accountAuthorityOutboxRepository;
   private final AccountPasswordResetOperationRepository passwordResetOperationRepository;
+  private final AccountAuthoritySourceEventReadback accountAuthoritySourceEventReadback;
   private final AccountAuditOutboxRepository accountAuditOutboxRepository;
   private final AccountConnectScopeRepository accountConnectScopeRepository;
   private final AccountJoinOperationRepository accountJoinOperationRepository;
@@ -192,6 +195,7 @@ public class AccountServiceImpl implements AccountService {
       AccountAuthorityGenerationRepository accountAuthorityGenerationRepository,
       AccountAuthorityOutboxRepository accountAuthorityOutboxRepository,
       AccountPasswordResetOperationRepository passwordResetOperationRepository,
+      AccountLogoutAllOperationRepository logoutAllOperationRepository,
       AccountAuditOutboxRepository accountAuditOutboxRepository,
       AccountConnectScopeRepository accountConnectScopeRepository,
       AccountJoinOperationRepository accountJoinOperationRepository,
@@ -223,6 +227,11 @@ public class AccountServiceImpl implements AccountService {
     this.accountAuthorityGenerationRepository = accountAuthorityGenerationRepository;
     this.accountAuthorityOutboxRepository = accountAuthorityOutboxRepository;
     this.passwordResetOperationRepository = passwordResetOperationRepository;
+    this.accountAuthoritySourceEventReadback =
+        new AccountAuthoritySourceEventReadback(
+            accountAuthorityOutboxRepository,
+            passwordResetOperationRepository,
+            logoutAllOperationRepository);
     this.accountAuditOutboxRepository = accountAuditOutboxRepository;
     this.accountConnectScopeRepository = accountConnectScopeRepository;
     this.accountJoinOperationRepository = accountJoinOperationRepository;
@@ -2842,6 +2851,7 @@ public class AccountServiceImpl implements AccountService {
 
     AuthorityScope accountScope = AuthorityScope.account(account.getAccountUuid());
     ScopeState currentAuthority = readPasswordResetAccountAuthority(accountScope);
+    accountAuthoritySourceEventReadback.requireCurrentLatest(account, currentAuthority);
     requireReceiptAuthorityIsCurrentOrEarlier(receipt, currentAuthority);
     Event event =
         accountAuthorityOutboxRepository
@@ -2863,58 +2873,7 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private void requireProvenPasswordResetSource(Account account, ScopeState state) {
-    AuthorityScope expectedScope = AuthorityScope.account(account.getAccountUuid());
-    if (!expectedScope.equals(state.scope())
-        || state.generation() <= 0L
-        || state.sourceVersion() <= 0L) {
-      throw new IllegalStateException("Account password-reset source scope is missing or invalid");
-    }
-    requirePositiveAccountFence(state.issuanceFence(), account.getAccountUuid());
-
-    String streamKey = passwordResetStreamKey(account.getAccountUuid());
-    Optional<Checkpoint> checkpoint = accountAuthorityOutboxRepository.readCheckpoint(streamKey);
-    if (state.generation() == 1L && state.sourceVersion() == 1L) {
-      if (checkpoint.isPresent()) {
-        throw new IllegalStateException(
-            "Pristine Account password-reset source has contradictory event history");
-      }
-      return;
-    }
-    if (state.generation() <= 1L || state.sourceVersion() <= 1L || checkpoint.isEmpty()) {
-      throw new IllegalStateException("Account password-reset source history is not proven");
-    }
-
-    Checkpoint latestCheckpoint = checkpoint.get();
-    Event latestEvent =
-        accountAuthorityOutboxRepository
-            .findEvent(streamKey, latestCheckpoint.outboxSequence())
-            .orElseThrow(
-                () -> new IllegalStateException("Account password-reset source event is missing"));
-    requireCheckpointMatches(latestCheckpoint, latestEvent);
-    PasswordResetAuthorityEvent verified =
-        verifyPasswordResetEvent(latestEvent, account.getAccountUuid());
-    if (!Long.toString(state.generation()).equals(verified.accountAuthorityGeneration())
-        || !Long.toString(state.sourceVersion()).equals(verified.sourceVersion())) {
-      throw new IllegalStateException(
-          "Latest Account password-reset event does not match its progressed source state");
-    }
-    PasswordResetReceipt priorReceipt =
-        passwordResetOperationRepository
-            .findByRequestId(latestEvent.requestId())
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        "Latest Account password-reset event has no immutable operation receipt"));
-    requireReceiptAccountBinding(priorReceipt, account);
-    requireReceiptEventBinding(priorReceipt, latestEvent);
-    requireReceiptAuthorityMatchesCurrent(priorReceipt, state);
-    String currentVerifier = account.getPasswordHash();
-    if (currentVerifier == null
-        || !constantTimeTextEquals(
-            sha256Hex(currentVerifier), priorReceipt.passwordVerifierDigest())) {
-      throw new IllegalStateException(
-          "Latest Account password-reset event does not match the current password verifier");
-    }
+    accountAuthoritySourceEventReadback.requireCurrentLatest(account, state);
   }
 
   private ScopeState readPasswordResetAccountAuthority(AuthorityScope accountScope) {
@@ -2993,16 +2952,6 @@ public class AccountServiceImpl implements AccountService {
         || !Long.toString(receipt.accountSourceVersion()).equals(verified.sourceVersion())) {
       throw new IllegalStateException("Password-reset receipt does not match its source event");
     }
-  }
-
-  private void requireReceiptAuthorityMatchesCurrent(
-      PasswordResetReceipt receipt, ScopeState state) {
-    if (receipt.accountAuthorityGeneration() != state.generation()
-        || receipt.accountSourceVersion() != state.sourceVersion()) {
-      throw new IllegalStateException(
-          "Latest password-reset receipt differs from Account authority");
-    }
-    requireReceiptAuthorityIsCurrentOrEarlier(receipt, state);
   }
 
   private void requireReceiptAuthorityIsCurrentOrEarlier(

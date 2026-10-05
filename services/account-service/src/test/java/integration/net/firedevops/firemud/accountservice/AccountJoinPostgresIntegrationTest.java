@@ -2157,8 +2157,7 @@ class AccountJoinPostgresIntegrationTest {
         .isZero();
     assertThatThrownBy(() -> readNeverJoinedMembershipSnapshot(advancedTenant))
         .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining(
-            "tenant authority generation cannot prove its sequence-zero baseline");
+        .hasMessageContaining("tenant source history is missing");
   }
 
   private AccountMembershipAuthorityEventProducer.PositiveMembershipSnapshot

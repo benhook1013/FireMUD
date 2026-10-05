@@ -4,10 +4,6 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
-import java.util.Map;
 import java.util.TreeMap;
 import java.util.UUID;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
@@ -65,7 +61,6 @@ import net.firedevops.firemud.accountservice.service.PingService;
 import net.firedevops.firemud.accountservice.service.exception.AccountAlreadyExistsException;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.common.EmailCanonicalization;
-import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.AuthorityTuple;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
@@ -543,9 +538,10 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     return response.build();
   }
 
-  private static void requireCompleteRuntimePlayerContext(
+  static void requireCompleteRuntimePlayerContext(
       net.firedevops.firemud.shared.v1.PlayerExecutionContext playerContext) {
     if (playerContext == null
+        || !playerContext.getUnknownFields().asMap().isEmpty()
         || !hasText(playerContext.getAccountId())
         || !hasText(playerContext.getTenantId())
         || !hasText(playerContext.getRealmId())
@@ -572,96 +568,6 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
 
   private static void requireRuntimeMembershipEvidence(RuntimeMembershipSnapshotDto snapshot) {
     snapshot.requireConsistentSourceEvent();
-    String tenantUuid = snapshot.tenantUuid();
-    Map<String, String> version = snapshot.membershipBaseline().membershipVersion();
-    AuthorityTuple tuple = snapshot.authorityTuple();
-    if (version.size() != 1
-        || !version.containsKey(tenantUuid)
-        || !tuple.tenantAuthorityGeneration().keySet().equals(java.util.Set.of(tenantUuid))
-        || !tuple.membershipAuthorityGeneration().keySet().equals(java.util.Set.of(tenantUuid))
-        || !snapshot
-            .membershipBaseline()
-            .membershipAuthorityGeneration()
-            .equals(tuple.membershipAuthorityGeneration().get(tenantUuid))
-        || !snapshot.issuanceFence().matches("[1-9][0-9]*")) {
-      throw new IllegalArgumentException("Runtime membership authority evidence is incomplete");
-    }
-    ArrayList<OutboxCheckpointEntry> ordered = new ArrayList<>(snapshot.outboxCheckpoints());
-    ordered.sort(
-        Comparator.comparing(
-            OutboxCheckpointEntry::outboxStreamKey, AccountGrpcService::compareUnsignedUtf8));
-    if (!ordered.equals(snapshot.outboxCheckpoints()) || ordered.size() != 4) {
-      throw new IllegalArgumentException(
-          "Runtime membership checkpoints are not complete and ordered");
-    }
-
-    String membershipStreamKey =
-        MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX
-            + "membership/"
-            + snapshot.accountUuid()
-            + "/"
-            + tenantUuid;
-    String accountStreamKey =
-        MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX + "account/" + snapshot.accountUuid();
-    String issuerStreamKey =
-        MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX
-            + "issuer/"
-            + AccountServiceImpl.ACCOUNT_JWT_ISSUER;
-    String tenantStreamKey =
-        MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX + "tenant/" + tenantUuid;
-    List<OutboxCheckpointEntry> expectedZeroCheckpoints =
-        orderedCheckpoints(
-            List.of(
-                new OutboxCheckpointEntry(accountStreamKey, "0"),
-                new OutboxCheckpointEntry(issuerStreamKey, "0"),
-                new OutboxCheckpointEntry(membershipStreamKey, "0"),
-                new OutboxCheckpointEntry(tenantStreamKey, "0")));
-    if (!snapshot.membershipExists()) {
-      if (!"MISSING".equals(snapshot.membershipBaseline().membershipLifecycleState())
-          || snapshot.gameplayAdmissionAllowed()
-          || !snapshot.roles().isEmpty()
-          || !snapshot.outboxCheckpoints().equals(expectedZeroCheckpoints)
-          || !snapshot.outboxSourceEvidence().isEmpty()) {
-        throw new IllegalArgumentException("Sequence-zero membership snapshot is not nonadmitting");
-      }
-      return;
-    }
-
-    List<OutboxCheckpointEntry> expectedPositiveCheckpoints =
-        orderedCheckpoints(
-            List.of(
-                new OutboxCheckpointEntry(accountStreamKey, "0"),
-                new OutboxCheckpointEntry(issuerStreamKey, "0"),
-                new OutboxCheckpointEntry(
-                    membershipStreamKey,
-                    snapshot.outboxCheckpoints().stream()
-                        .filter(item -> item.outboxStreamKey().equals(membershipStreamKey))
-                        .map(OutboxCheckpointEntry::outboxSequence)
-                        .findFirst()
-                        .orElse("0")),
-                new OutboxCheckpointEntry(tenantStreamKey, "0")));
-    String lifecycleState = snapshot.membershipBaseline().membershipLifecycleState();
-    boolean activeMembership = "ACTIVE".equals(lifecycleState);
-    if ((!activeMembership && !"INACTIVE".equals(lifecycleState))
-        || snapshot.gameplayAdmissionAllowed() != activeMembership
-        || (activeMembership && !snapshot.roles().contains("player"))
-        || !snapshot.outboxCheckpoints().equals(expectedPositiveCheckpoints)
-        || snapshot.outboxSourceEvidence().size() != 1) {
-      throw new IllegalArgumentException("Positive runtime membership snapshot is incomplete");
-    }
-    OutboxSourceEvidence source = snapshot.outboxSourceEvidence().getFirst();
-    OutboxCheckpointEntry membershipCheckpoint =
-        expectedPositiveCheckpoints.stream()
-            .filter(item -> item.outboxStreamKey().equals(membershipStreamKey))
-            .findFirst()
-            .orElseThrow();
-    if (!membershipStreamKey.equals(source.outboxStreamKey())
-        || !membershipCheckpoint.outboxSequence().equals(source.outboxSequence())
-        || !source.eventId().matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
-        || !source.eventDigest().matches("sha256:[0-9a-f]{64}")) {
-      throw new IllegalArgumentException(
-          "Runtime membership event source differs from its checkpoint");
-    }
   }
 
   private static RuntimeAuthorityTuple toRuntimeAuthorityTuple(AuthorityTuple tuple) {
@@ -712,29 +618,6 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               result.setTenantBillingCutoff(billing);
             });
     return result.build();
-  }
-
-  private static List<OutboxCheckpointEntry> orderedCheckpoints(
-      List<OutboxCheckpointEntry> checkpoints) {
-    return checkpoints.stream()
-        .sorted(
-            Comparator.comparing(
-                OutboxCheckpointEntry::outboxStreamKey, AccountGrpcService::compareUnsignedUtf8))
-        .toList();
-  }
-
-  private static int compareUnsignedUtf8(String first, String second) {
-    byte[] left = first.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-    byte[] right = second.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-    int length = Math.min(left.length, right.length);
-    for (int index = 0; index < length; index++) {
-      int comparison =
-          Integer.compare(Byte.toUnsignedInt(left[index]), Byte.toUnsignedInt(right[index]));
-      if (comparison != 0) {
-        return comparison;
-      }
-    }
-    return Integer.compare(left.length, right.length);
   }
 
   private static long parseCanonicalPositiveId(String value, String field) {

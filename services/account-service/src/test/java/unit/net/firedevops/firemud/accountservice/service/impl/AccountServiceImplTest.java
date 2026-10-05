@@ -75,6 +75,7 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRe
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipTransitionReceiptRepository;
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository.OperationConflictException;
@@ -131,6 +132,7 @@ class AccountServiceImplTest {
   @Mock private AccountAuthorityGenerationRepository accountAuthorityGenerationRepository;
   @Mock private AccountAuthorityOutboxRepository accountAuthorityOutboxRepository;
   @Mock private AccountPasswordResetOperationRepository passwordResetOperationRepository;
+  @Mock private AccountLogoutAllOperationRepository logoutAllOperationRepository;
   @Mock private AccountAuditOutboxRepository accountAuditOutboxRepository;
   @Mock private AccountConnectScopeRepository accountConnectScopeRepository;
   @Mock private AccountJoinOperationRepository accountJoinOperationRepository;
@@ -277,6 +279,7 @@ class AccountServiceImplTest {
             accountAuthorityGenerationRepository,
             accountAuthorityOutboxRepository,
             passwordResetOperationRepository,
+            logoutAllOperationRepository,
             accountAuditOutboxRepository,
             accountConnectScopeRepository,
             accountJoinOperationRepository,
@@ -3154,6 +3157,7 @@ class AccountServiceImplTest {
             accountAuthorityGenerationRepository,
             accountAuthorityOutboxRepository,
             passwordResetOperationRepository,
+            logoutAllOperationRepository,
             accountAuditOutboxRepository,
             accountConnectScopeRepository,
             accountJoinOperationRepository,
@@ -8120,8 +8124,13 @@ class AccountServiceImplTest {
 
     when(passwordResetOperationRepository.findByTokenHash(tokenHash))
         .thenAnswer(ignored -> Optional.ofNullable(receiptReadback.get()));
+    when(passwordResetOperationRepository.findByRequestId(requestId))
+        .thenAnswer(ignored -> Optional.ofNullable(receiptReadback.get()));
     when(accountRepository.findByIdForUpdate(accountId)).thenReturn(Optional.of(account));
     when(accountAuthorityGenerationRepository.read(scope)).thenReturn(committedAuthority);
+    when(accountAuthorityOutboxRepository.readCheckpoint(streamKey))
+        .thenReturn(
+            Optional.of(new Checkpoint(streamKey, 1L, event.eventId(), event.eventDigest())));
     when(accountAuthorityOutboxRepository.findEvent(streamKey, 1L)).thenReturn(Optional.of(event));
     return new PasswordResetRetryHarness(account, receipt, receiptReadback);
   }

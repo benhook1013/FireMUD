@@ -1,0 +1,169 @@
+{
+  "schemaVersion": "account-auth-tenant-generation-event-vectors/v1",
+  "validEvents": [
+    {
+      "name": "tenant-generation-advance",
+      "event": {
+        "schemaVersion": "account-auth-tenant-generation-event/v1",
+        "eventType": "TENANT_GENERATION_ADVANCED",
+        "eventId": "account-tenant-generation-event-v1:11111111-2222-4333-8444-555555555555",
+        "requestId": "11111111-2222-4333-8444-555555555555",
+        "tenantId": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+        "sourceScope": "tenant/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+        "outboxStreamKey": "account:auth-authority:v1:tenant/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+        "outboxSequence": "7",
+        "tenantAuthorityGeneration": "5",
+        "sourceVersion": "6",
+        "eventDigest": "sha256:b2045381c7e4106b9e07a4c2ab4b0ccb83dabe30bf37267e3a223117fa5ef8db"
+      },
+      "expectedEventDigest": "sha256:b2045381c7e4106b9e07a4c2ab4b0ccb83dabe30bf37267e3a223117fa5ef8db",
+      "expectedCanonicalJson": "{\"eventDigest\":\"sha256:b2045381c7e4106b9e07a4c2ab4b0ccb83dabe30bf37267e3a223117fa5ef8db\",\"eventId\":\"account-tenant-generation-event-v1:11111111-2222-4333-8444-555555555555\",\"eventType\":\"TENANT_GENERATION_ADVANCED\",\"outboxSequence\":\"7\",\"outboxStreamKey\":\"account:auth-authority:v1:tenant/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee\",\"requestId\":\"11111111-2222-4333-8444-555555555555\",\"schemaVersion\":\"account-auth-tenant-generation-event/v1\",\"sourceScope\":\"tenant/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee\",\"sourceVersion\":\"6\",\"tenantAuthorityGeneration\":\"5\",\"tenantId\":\"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee\"}"
+    },
+    {
+      "name": "arbitrary-precision-counters",
+      "event": {
+        "schemaVersion": "account-auth-tenant-generation-event/v1",
+        "eventType": "TENANT_GENERATION_ADVANCED",
+        "eventId": "account-tenant-generation-event-v1:22222222-3333-4444-8555-666666666666",
+        "requestId": "22222222-3333-4444-8555-666666666666",
+        "tenantId": "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff",
+        "sourceScope": "tenant/bbbbbbbb-cccc-4ddd-8eee-ffffffffffff",
+        "outboxStreamKey": "account:auth-authority:v1:tenant/bbbbbbbb-cccc-4ddd-8eee-ffffffffffff",
+        "outboxSequence": "18446744073709551616000000000000000001",
+        "tenantAuthorityGeneration": "92233720368547758081234567890123456789",
+        "sourceVersion": "90071992547409931234567890123456789",
+        "eventDigest": "sha256:f4b19a099b5db15cb76888e65c35c9f10369e9191564c972bc289340ff4908a2"
+      },
+      "expectedEventDigest": "sha256:f4b19a099b5db15cb76888e65c35c9f10369e9191564c972bc289340ff4908a2",
+      "expectedCanonicalJson": "{\"eventDigest\":\"sha256:f4b19a099b5db15cb76888e65c35c9f10369e9191564c972bc289340ff4908a2\",\"eventId\":\"account-tenant-generation-event-v1:22222222-3333-4444-8555-666666666666\",\"eventType\":\"TENANT_GENERATION_ADVANCED\",\"outboxSequence\":\"18446744073709551616000000000000000001\",\"outboxStreamKey\":\"account:auth-authority:v1:tenant/bbbbbbbb-cccc-4ddd-8eee-ffffffffffff\",\"requestId\":\"22222222-3333-4444-8555-666666666666\",\"schemaVersion\":\"account-auth-tenant-generation-event/v1\",\"sourceScope\":\"tenant/bbbbbbbb-cccc-4ddd-8eee-ffffffffffff\",\"sourceVersion\":\"90071992547409931234567890123456789\",\"tenantAuthorityGeneration\":\"92233720368547758081234567890123456789\",\"tenantId\":\"bbbbbbbb-cccc-4ddd-8eee-ffffffffffff\"}"
+    }
+  ],
+  "canonicalReorderedPropertyOrder": [
+    "sourceVersion",
+    "sourceScope",
+    "schemaVersion",
+    "requestId",
+    "outboxStreamKey",
+    "outboxSequence",
+    "tenantId",
+    "tenantAuthorityGeneration",
+    "eventType",
+    "eventId",
+    "eventDigest"
+  ],
+  "changedDeclaredFieldMutations": [
+    {
+      "name": "schema-version",
+      "sealValid": false,
+      "changes": {"schemaVersion": "account-auth-tenant-generation-event/v2"}
+    },
+    {
+      "name": "event-type",
+      "sealValid": false,
+      "changes": {"eventType": "TENANT_GENERATION_RESET"}
+    },
+    {
+      "name": "event-id-bound-to-request-id",
+      "sealValid": true,
+      "changes": {
+        "eventId": "account-tenant-generation-event-v1:22222222-3333-4444-8555-666666666666",
+        "requestId": "22222222-3333-4444-8555-666666666666"
+      }
+    },
+    {
+      "name": "request-id-bound-to-event-id",
+      "sealValid": true,
+      "changes": {
+        "requestId": "22222222-3333-4444-8555-666666666666",
+        "eventId": "account-tenant-generation-event-v1:22222222-3333-4444-8555-666666666666"
+      }
+    },
+    {
+      "name": "tenant-id-binds-source-scope-and-stream",
+      "sealValid": true,
+      "changes": {
+        "tenantId": "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff",
+        "sourceScope": "tenant/bbbbbbbb-cccc-4ddd-8eee-ffffffffffff",
+        "outboxStreamKey": "account:auth-authority:v1:tenant/bbbbbbbb-cccc-4ddd-8eee-ffffffffffff"
+      }
+    },
+    {
+      "name": "source-scope",
+      "sealValid": false,
+      "changes": {"sourceScope": "tenant/bbbbbbbb-cccc-4ddd-8eee-ffffffffffff"}
+    },
+    {
+      "name": "outbox-stream-key",
+      "sealValid": false,
+      "changes": {"outboxStreamKey": "account:auth-authority:v1:tenant/bbbbbbbb-cccc-4ddd-8eee-ffffffffffff"}
+    },
+    {
+      "name": "outbox-sequence",
+      "sealValid": true,
+      "changes": {"outboxSequence": "8"}
+    },
+    {
+      "name": "tenant-authority-generation",
+      "sealValid": true,
+      "changes": {"tenantAuthorityGeneration": "6"}
+    },
+    {
+      "name": "source-version",
+      "sealValid": true,
+      "changes": {"sourceVersion": "7"}
+    }
+  ],
+  "invalidMutations": [
+    {"name": "missing-schema-version", "op": "remove", "path": "/schemaVersion"},
+    {"name": "missing-event-type", "op": "remove", "path": "/eventType"},
+    {"name": "missing-event-id", "op": "remove", "path": "/eventId"},
+    {"name": "missing-request-id", "op": "remove", "path": "/requestId"},
+    {"name": "missing-required-tenant-id", "op": "remove", "path": "/tenantId"},
+    {"name": "missing-source-scope", "op": "remove", "path": "/sourceScope"},
+    {"name": "missing-outbox-stream-key", "op": "remove", "path": "/outboxStreamKey"},
+    {"name": "missing-outbox-sequence", "op": "remove", "path": "/outboxSequence"},
+    {"name": "missing-tenant-authority-generation", "op": "remove", "path": "/tenantAuthorityGeneration"},
+    {"name": "missing-source-version", "op": "remove", "path": "/sourceVersion"},
+    {"name": "missing-event-digest", "op": "remove", "path": "/eventDigest"},
+    {"name": "unknown-top-level-property", "op": "add", "path": "/unexpected", "value": true},
+    {"name": "recipient-account-extra", "op": "add", "path": "/accountId", "value": "cccccccc-dddd-4eee-8fff-000000000000"},
+    {"name": "recipient-authority-tuple-extra", "op": "add", "path": "/authorityTuple", "value": {}},
+    {"name": "recipient-issuance-fence-extra", "op": "add", "path": "/issuanceFence", "value": "1"},
+    {"name": "billing-cutoff-extra", "op": "add", "path": "/tenantBillingCutoff", "value": {}},
+    {"name": "billing-sequence-extra", "op": "add", "path": "/tenantBillingSequence", "value": "1"},
+    {"name": "null-schema-version", "op": "replace", "path": "/schemaVersion", "value": null},
+    {"name": "null-event-type", "op": "replace", "path": "/eventType", "value": null},
+    {"name": "null-event-id", "op": "replace", "path": "/eventId", "value": null},
+    {"name": "null-request-id", "op": "replace", "path": "/requestId", "value": null},
+    {"name": "null-tenant-id", "op": "replace", "path": "/tenantId", "value": null},
+    {"name": "null-source-scope", "op": "replace", "path": "/sourceScope", "value": null},
+    {"name": "null-outbox-stream-key", "op": "replace", "path": "/outboxStreamKey", "value": null},
+    {"name": "null-outbox-sequence", "op": "replace", "path": "/outboxSequence", "value": null},
+    {"name": "null-generation", "op": "replace", "path": "/tenantAuthorityGeneration", "value": null},
+    {"name": "null-source-version", "op": "replace", "path": "/sourceVersion", "value": null},
+    {"name": "null-event-digest", "op": "replace", "path": "/eventDigest", "value": null},
+    {"name": "numeric-outbox-sequence", "op": "replace", "path": "/outboxSequence", "value": 7},
+    {"name": "numeric-generation", "op": "replace", "path": "/tenantAuthorityGeneration", "value": 5},
+    {"name": "numeric-source-version", "op": "replace", "path": "/sourceVersion", "value": 6},
+    {"name": "array-source-version", "op": "replace", "path": "/sourceVersion", "value": ["6"]},
+    {"name": "wrong-schema-version", "op": "replace", "path": "/schemaVersion", "value": "account-auth-tenant-generation-event/v2"},
+    {"name": "wrong-event-type", "op": "replace", "path": "/eventType", "value": "TENANT_BILLING_CUTOFF"},
+    {"name": "empty-event-id", "op": "replace", "path": "/eventId", "value": ""},
+    {"name": "event-id-not-derived-from-request", "op": "replace", "path": "/eventId", "value": "account-tenant-generation-event-v1:22222222-3333-4444-8555-666666666666"},
+    {"name": "non-uuid-request-id", "op": "replace", "path": "/requestId", "value": "request-tenant-generation-001"},
+    {"name": "uppercase-request-uuid", "op": "replace", "path": "/requestId", "value": "11111111-2222-4333-8444-55555555555A"},
+    {"name": "nil-request-uuid", "op": "replace", "path": "/requestId", "value": "00000000-0000-0000-0000-000000000000"},
+    {"name": "uppercase-tenant-uuid", "op": "replace", "path": "/tenantId", "value": "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE"},
+    {"name": "nil-tenant-uuid", "op": "replace", "path": "/tenantId", "value": "00000000-0000-0000-0000-000000000000"},
+    {"name": "malformed-tenant-uuid", "op": "replace", "path": "/tenantId", "value": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeee"},
+    {"name": "mismatched-source-scope", "op": "replace", "path": "/sourceScope", "value": "tenant/bbbbbbbb-cccc-4ddd-8eee-ffffffffffff"},
+    {"name": "mismatched-stream-key", "op": "replace", "path": "/outboxStreamKey", "value": "account:auth-authority:v1:tenant/bbbbbbbb-cccc-4ddd-8eee-ffffffffffff"},
+    {"name": "zero-sequence", "op": "replace", "path": "/outboxSequence", "value": "0"},
+    {"name": "leading-zero-generation", "op": "replace", "path": "/tenantAuthorityGeneration", "value": "05"},
+    {"name": "negative-source-version", "op": "replace", "path": "/sourceVersion", "value": "-1"},
+    {"name": "decimal-sequence", "op": "replace", "path": "/outboxSequence", "value": "7.0"},
+    {"name": "empty-generation", "op": "replace", "path": "/tenantAuthorityGeneration", "value": ""},
+    {"name": "malformed-digest", "op": "replace", "path": "/eventDigest", "value": "SHA256:b2045381c7e4106b9e07a4c2ab4b0ccb83dabe30bf37267e3a223117fa5ef8db"},
+    {"name": "changed-digest", "op": "replace", "path": "/eventDigest", "value": "sha256:1111111111111111111111111111111111111111111111111111111111111111"}
+  ]
+}
