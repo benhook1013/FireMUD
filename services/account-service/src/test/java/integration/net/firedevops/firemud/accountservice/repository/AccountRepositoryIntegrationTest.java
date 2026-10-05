@@ -19,14 +19,21 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import net.firedevops.firemud.accountservice.config.PlatformAuthRateLimitProperties;
 import net.firedevops.firemud.accountservice.dto.AccountAuditDigest;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
+import net.firedevops.firemud.accountservice.dto.RealmAccessGrantRequest;
 import net.firedevops.firemud.accountservice.dto.VerifiedJoinScope;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
 import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
+import net.firedevops.firemud.accountservice.entity.AccountRealmAccessGrant;
 import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
+import net.firedevops.firemud.accountservice.entity.Subscription;
 import net.firedevops.firemud.accountservice.service.ExpiredConnectScopeCleanupJob;
+import net.firedevops.firemud.accountservice.service.PlatformAuthBucketStore;
+import net.firedevops.firemud.accountservice.service.impl.AccountPlatformAuthAbuseLimiter;
+import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.FlywayException;
 import org.jooq.DSLContext;
@@ -69,28 +76,39 @@ class AccountRepositoryIntegrationTest {
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
+  private DriverManagerDataSource rootDataSource;
   private DriverManagerDataSource dataSource;
   private DSLContext dsl;
   private AccountRepository repository;
 
   @BeforeAll
-  void setUpRepository() {
-    dataSource = new DriverManagerDataSource();
-    dataSource.setDriverClassName(postgres.getDriverClassName());
-    dataSource.setUrl(postgres.getJdbcUrl());
-    dataSource.setUsername(postgres.getUsername());
-    dataSource.setPassword(postgres.getPassword());
-
-    Flyway.configure().dataSource(dataSource).locations(MIGRATION_LOCATION).load().migrate();
-
-    dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
-    repository = new AccountRepository(dsl);
+  void setUpDataSource() {
+    rootDataSource = new DriverManagerDataSource();
+    rootDataSource.setDriverClassName(postgres.getDriverClassName());
+    rootDataSource.setUrl(postgres.getJdbcUrl());
+    rootDataSource.setUsername(postgres.getUsername());
+    rootDataSource.setPassword(postgres.getPassword());
   }
 
   @BeforeEach
-  void cleanTables() {
-    dsl.execute("TRUNCATE TABLE account_audit_outbox");
-    dsl.execute("TRUNCATE TABLE accounts RESTART IDENTITY CASCADE");
+  void createIsolatedMainSchema() {
+    String schema = "account_repository_test_" + UUID.randomUUID().toString().replace("-", "");
+    new JdbcTemplate(rootDataSource).execute("CREATE SCHEMA " + schema);
+    dataSource = new DriverManagerDataSource();
+    dataSource.setDriverClassName(postgres.getDriverClassName());
+    dataSource.setUrl(postgres.getJdbcUrl() + "?currentSchema=" + schema);
+    dataSource.setUsername(postgres.getUsername());
+    dataSource.setPassword(postgres.getPassword());
+    Flyway.configure()
+        .dataSource(dataSource)
+        .locations(MIGRATION_LOCATION)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .placeholders(java.util.Map.of("serviceSchema", schema))
+        .load()
+        .migrate();
+    dsl = DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+    repository = new AccountRepository(dsl);
   }
 
   @Test
@@ -103,7 +121,11 @@ class AccountRepositoryIntegrationTest {
     AccountJoinOperationRepository joinOperations =
         new AccountJoinOperationRepository(transactionAwareDsl);
     AccountTenantMembershipRepository memberships =
-        new AccountTenantMembershipRepository(transactionAwareDsl);
+        new AccountTenantMembershipRepository(
+            transactionAwareDsl,
+            new AccountRepository(transactionAwareDsl),
+            new FreshTenantIdentityAssociationRepository(transactionAwareDsl, "prod"),
+            new AccountMembershipPairAuthorityRepository(transactionAwareDsl));
     AccountAuditOutboxRepository outbox = new AccountAuditOutboxRepository(transactionAwareDsl);
     AccountConnectScopeRepository scopes = new AccountConnectScopeRepository(transactionAwareDsl);
     long accountId =
@@ -508,6 +530,174 @@ class AccountRepositoryIntegrationTest {
   }
 
   @Test
+  void persistedTenantAuthorityGenerationChangesOnEverySubscriptionMutation() {
+    JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+    long accountId =
+        Objects.requireNonNull(
+            jdbc.queryForObject(
+                "INSERT INTO accounts (username, email, password_hash) VALUES (?, ?, ?) RETURNING id",
+                Long.class,
+                "tenant-authority-generation",
+                "tenant-authority-generation@example.com",
+                "hash"));
+    long tenantId = 7654322L;
+    jdbc.update(
+        "INSERT INTO subscription (account_id, plan_id, status, tenant_id, entitlement_version) "
+            + "VALUES (?, 'test-plan', 'active', ?, 1)",
+        accountId,
+        tenantId);
+
+    SubscriptionRepository subscriptions = new SubscriptionRepository(dsl);
+    Subscription original = subscriptions.findByTenantId(tenantId).getFirst();
+    UUID originalGeneration = original.getTenantAuthorityGeneration();
+    assertThat(originalGeneration).isNotNull();
+    assertThat(original.getEntitlementVersion()).isEqualTo(1L);
+
+    original.setStatus("past_due");
+    subscriptions.save(original);
+    Subscription repositoryUpdated = subscriptions.findByTenantId(tenantId).getFirst();
+    assertThat(repositoryUpdated.getTenantAuthorityGeneration()).isNotEqualTo(originalGeneration);
+    assertThat(repositoryUpdated.getEntitlementVersion()).isEqualTo(2L);
+
+    jdbc.update("UPDATE subscription SET status = 'active' WHERE tenant_id = ?", tenantId);
+    Subscription directlyUpdated = subscriptions.findByTenantId(tenantId).getFirst();
+    assertThat(directlyUpdated.getTenantAuthorityGeneration())
+        .isNotEqualTo(repositoryUpdated.getTenantAuthorityGeneration());
+    assertThat(directlyUpdated.getEntitlementVersion()).isEqualTo(3L);
+  }
+
+  @Test
+  void privateRealmGrantRevocationRetainsMonotonicCurrentnessForRevalidation() {
+    JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+    long accountId =
+        Objects.requireNonNull(
+            jdbc.queryForObject(
+                "INSERT INTO accounts (username, email, password_hash) VALUES (?, ?, ?) RETURNING id",
+                Long.class,
+                "realm-grant-currentness",
+                "realm-grant-currentness@example.com",
+                "hash"));
+    DSLContext transactionAwareDsl =
+        DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+    AccountRealmAccessGrantRepository grants =
+        new AccountRealmAccessGrantRepository(transactionAwareDsl);
+    DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
+    TransactionTemplate transaction = new TransactionTemplate(transactionManager);
+    AccountServiceImpl accountService =
+        new AccountServiceImpl(
+            new AccountRepository(transactionAwareDsl),
+            null,
+            null,
+            null,
+            null,
+            grants,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            transactionManager,
+            testAbuseLimiter());
+    Account account = new Account();
+    account.setId(accountId);
+    AccountRealmAccessGrant grant = new AccountRealmAccessGrant();
+    grant.setAccount(account);
+    grant.setTenantId(7654323L);
+    grant.setWorldSlug("world");
+    grant.setRealmSlug("private");
+    grant.setGrantVersion(1L);
+    grant.setGrantedBy("test");
+    grant.setGrantReason("test grant");
+    grant.setCreatedAt(Instant.now());
+    grant.setUpdatedAt(Instant.now());
+    grants.save(grant);
+
+    AccountRealmAccessGrant original =
+        grants
+            .findByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
+                accountId, 7654323L, "world", "private")
+            .orElseThrow();
+    UUID originalGeneration = original.getGrantAuthorityGeneration();
+    assertThat(grant.getGrantAuthorityGeneration()).isEqualTo(originalGeneration);
+    transaction.executeWithoutResult(
+        status -> accountService.revokeRealmAccess(accountId, 7654323L, "world", "private"));
+    AccountRealmAccessGrant revoked =
+        grants
+            .findByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
+                accountId, 7654323L, "world", "private")
+            .orElseThrow();
+
+    assertThat(originalGeneration).isNotNull();
+    assertThat(revoked.isGranted()).isFalse();
+    assertThat(revoked.getGrantVersion()).isEqualTo(2L);
+    assertThat(revoked.getGrantAuthorityGeneration()).isNotEqualTo(originalGeneration);
+
+    UUID revokedGeneration = revoked.getGrantAuthorityGeneration();
+    var regrantResult =
+        transaction.execute(
+            status ->
+                accountService.grantRealmAccess(
+                    new RealmAccessGrantRequest(
+                        accountId,
+                        7654323L,
+                        "world",
+                        "private",
+                        "test",
+                        "regrant",
+                        "req-regrant-1")));
+    AccountRealmAccessGrant regranted =
+        grants
+            .findByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
+                accountId, 7654323L, "world", "private")
+            .orElseThrow();
+    assertThat(regranted.isGranted()).isTrue();
+    assertThat(regranted.getGrantVersion()).isEqualTo(3L);
+    assertThat(regranted.getGrantAuthorityGeneration()).isNotEqualTo(revokedGeneration);
+    assertThat(regrantResult).isNotNull();
+    assertThat(regrantResult.granted()).isTrue();
+    assertThat(regrantResult.grantVersion()).isEqualTo(regranted.getGrantVersion());
+    assertThat(regranted.getGrantAuthorityGeneration()).isNotEqualTo(originalGeneration);
+  }
+
+  private Account saveInTransaction(Account account) {
+    return Objects.requireNonNull(
+        new TransactionTemplate(new DataSourceTransactionManager(dataSource))
+            .execute(status -> repository.save(account)));
+  }
+
+  private AccountPlatformAuthAbuseLimiter testAbuseLimiter() {
+    PlatformAuthRateLimitProperties properties = new PlatformAuthRateLimitProperties();
+    properties.setHmacKeyId("integration-test");
+    properties.setHmacKeyBase64(java.util.Base64.getEncoder().encodeToString(new byte[32]));
+    PlatformAuthBucketStore store =
+        new PlatformAuthBucketStore() {
+          @Override
+          public long increment(String key, String fingerprint, Duration ttl, long cap) {
+            return 1L;
+          }
+
+          @Override
+          public long count(String key, String fingerprint) {
+            return 0L;
+          }
+        };
+    return new AccountPlatformAuthAbuseLimiter(properties, store);
+  }
+
+  @Test
   void connectScopeRepositoryRetainsCanonicalRealmUuidAndDetectsTampering() {
     JdbcTemplate jdbc = new JdbcTemplate(dataSource);
     long accountId =
@@ -540,7 +730,12 @@ class AccountRepositoryIntegrationTest {
     JdbcTemplate jdbc = new JdbcTemplate(dataSource);
     AccountConnectScopeRepository scopes = new AccountConnectScopeRepository(dsl);
     AccountJoinOperationRepository joinOperations = new AccountJoinOperationRepository(dsl);
-    AccountTenantMembershipRepository memberships = new AccountTenantMembershipRepository(dsl);
+    AccountTenantMembershipRepository memberships =
+        new AccountTenantMembershipRepository(
+            dsl,
+            new AccountRepository(dsl),
+            new FreshTenantIdentityAssociationRepository(dsl, "prod"),
+            new AccountMembershipPairAuthorityRepository(dsl));
     long accountId =
         Objects.requireNonNull(
             jdbc.queryForObject(
@@ -733,11 +928,11 @@ class AccountRepositoryIntegrationTest {
       names = {"SECURITY_LOCKED", "DEACTIVATED_PENDING_DELETE", "DELETED"})
   void genericUpdatePreservesProtectedLifecycleState(AccountLifecycleState lifecycleState) {
     Account persisted = account("original", "original@example.com", lifecycleState);
-    Account saved = repository.save(persisted);
+    Account saved = saveInTransaction(persisted);
 
     Account staleUpdate = account("updated", "updated@example.com", AccountLifecycleState.ACTIVE);
     staleUpdate.setId(saved.getId());
-    repository.save(staleUpdate);
+    saveInTransaction(staleUpdate);
 
     Account loaded = repository.findById(saved.getId()).orElseThrow();
     assertThat(loaded.getUsername()).isEqualTo("updated");
@@ -747,7 +942,7 @@ class AccountRepositoryIntegrationTest {
   @Test
   void saveCanonicalizesEmail() {
     Account saved =
-        repository.save(
+        saveInTransaction(
             account("canonical", "  Player@Example.COM ", AccountLifecycleState.ACTIVE));
 
     assertThat(saved.getEmail()).isEqualTo("player@example.com");
@@ -757,7 +952,7 @@ class AccountRepositoryIntegrationTest {
   @Test
   void repositoryPersistsAndReadsBackUniqueAccountUuidAndProvenance() {
     Account saved =
-        repository.save(
+        saveInTransaction(
             account("uuid-account", "uuid-account@example.com", AccountLifecycleState.ACTIVE));
     UUID accountUuid = saved.getAccountUuid();
 
@@ -775,7 +970,7 @@ class AccountRepositoryIntegrationTest {
     assertThat(foundByUuid.getAccountUuidSourceNumericId()).isEqualTo(saved.getId());
 
     saved.setUsername("uuid-account-updated");
-    Account updated = repository.save(saved);
+    Account updated = saveInTransaction(saved);
     assertThat(updated.getAccountUuid()).isEqualTo(accountUuid);
     assertThat(updated.getAccountUuidProvenance())
         .isEqualTo(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
@@ -851,7 +1046,7 @@ class AccountRepositoryIntegrationTest {
         .isEqualTo(0L);
 
     saved.setAccountUuid(UUID.randomUUID());
-    assertThatThrownBy(() -> repository.save(saved))
+    assertThatThrownBy(() -> saveInTransaction(saved))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageStartingWith("Failed to update accounts id=");
     assertThat(repository.findById(saved.getId()).orElseThrow().getAccountUuid())

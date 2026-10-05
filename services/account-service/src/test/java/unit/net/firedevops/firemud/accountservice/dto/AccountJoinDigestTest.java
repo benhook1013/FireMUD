@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.util.UUID;
+import net.firedevops.firemud.accountservice.dto.AccountJoinDigest.EntitlementAvailabilityV2;
 import org.junit.jupiter.api.Test;
 
 class AccountJoinDigestTest {
@@ -60,6 +61,70 @@ class AccountJoinDigestTest {
     assertThrows(
         IllegalArgumentException.class,
         () -> AccountJoinDigest.request(scope("scope-token", "production"), "caller", true, null));
+  }
+
+  @Test
+  void canonicalV2ScopeAndIntentMatchUtf8GoldenVectors() {
+    CanonicalJoinScopeV2 scope = canonicalScope();
+
+    assertEquals(
+        "sha256:f1a0f168078ccedfba6c418648e1ff9d7dcf80d7df8a87016a81e0ccdb9ec312",
+        AccountJoinDigest.scopeV2(scope));
+    assertEquals(
+        "sha256:8e550967de5a3b9e4db453fda8b8ae8f9dcf0b82bfe2d747e7513a5435554b97",
+        AccountJoinDigest.intentV2("request-42", scope, "caller-binding-42"));
+    assertEquals(
+        "sha256:8f3d27ab24423eb49e8f7b7f85110457f10a470003a1a7dde514b27b88deb606",
+        AccountJoinDigest.intentV2("request-42", scope, "bootstrap-jti-α"));
+    assertNotEquals(
+        AccountJoinDigest.intentV2("request-42", scope, "caller-binding-42"),
+        AccountJoinDigest.intentV2("request-43", scope, "caller-binding-42"));
+  }
+
+  @Test
+  void canonicalV2PolicyDigestRequiresAndBindsAvailableEvidence() {
+    CanonicalJoinScopeV2 scope = canonicalScope();
+    String digest =
+        AccountJoinDigest.requestV2(
+            scope, "bootstrap-jti-α", EntitlementAvailabilityV2.AVAILABLE, true, 9L);
+
+    assertEquals("sha256:90dd727af35a10f3c0532383cec9d4813654fd4b903bc551eb99af5ffbe8614f", digest);
+    assertNotEquals(
+        digest,
+        AccountJoinDigest.requestV2(
+            scope, "bootstrap-jti-α", EntitlementAvailabilityV2.AVAILABLE, false, 9L));
+    assertNotEquals(
+        digest,
+        AccountJoinDigest.requestV2(
+            scope, "bootstrap-jti-α", EntitlementAvailabilityV2.AVAILABLE, true, 10L));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            AccountJoinDigest.requestV2(
+                scope, "caller", EntitlementAvailabilityV2.UNAVAILABLE, true, 9L));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            AccountJoinDigest.requestV2(
+                scope, "caller", EntitlementAvailabilityV2.AVAILABLE, true, 0L));
+  }
+
+  private static CanonicalJoinScopeV2 canonicalScope() {
+    return new CanonicalJoinScopeV2(
+        "connect-scope-42",
+        UUID.fromString("11111111-1111-4111-8111-111111111111"),
+        UUID.fromString("22222222-2222-4222-8222-222222222222"),
+        UUID.fromString("33333333-3333-4333-8333-333333333333"),
+        "acme-worlds",
+        "demo",
+        "main",
+        UUID.fromString("44444444-4444-4444-8444-444444444444"),
+        "SHARED",
+        UUID.fromString("55555555-5555-4555-8555-555555555555"),
+        9_007_199_254_740_993L,
+        Long.MAX_VALUE,
+        "2026-10-03T01:02:03.120Z",
+        "2026-10-03T01:04:03Z");
   }
 
   private static VerifiedJoinScope withGameInstance(VerifiedJoinScope scope, long gameInstanceId) {

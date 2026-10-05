@@ -59,6 +59,9 @@ server:
 
 firemud:
   auth:
+    grpc:
+      public-methods:
+        - gamedesign.v1.TenantIdentityService/ResolveFreshTenantCreation
     http:
       enabled: true
       role-requirement: PRIVILEGED

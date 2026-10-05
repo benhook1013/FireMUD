@@ -2,6 +2,7 @@ package net.firedevops.firemud.accountservice.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -18,12 +19,19 @@ import net.firedevops.firemud.accountservice.dto.AccountAuditEnvelope;
 import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+import org.springframework.scheduling.annotation.Scheduled;
 
 class AccountAuditDeliveryJobTest {
   private final AccountAuditOutboxRepository outbox =
       Mockito.mock(AccountAuditOutboxRepository.class);
   private final LoggingAdminClient client = Mockito.mock(LoggingAdminClient.class);
   private final AccountAuditDeliveryJob job = new AccountAuditDeliveryJob(outbox, client);
+
+  @Test
+  void deliveryRemainsExternallyInvokedRatherThanAutomaticallyScheduled() throws Exception {
+    assertNull(
+        AccountAuditDeliveryJob.class.getMethod("deliverPending").getAnnotation(Scheduled.class));
+  }
 
   @Test
   void marksOnlyAnExactReceiverReceiptDelivered() {
@@ -103,7 +111,7 @@ class AccountAuditDeliveryJobTest {
     return new AccountAuditEnvelope(
         auditEventId,
         "platform",
-        null,
+        (Long) null,
         "account-service",
         "ACCOUNT_REGISTERED",
         Instant.parse("2026-09-24T00:00:00Z"),

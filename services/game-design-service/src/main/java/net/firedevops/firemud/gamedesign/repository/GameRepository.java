@@ -2,7 +2,9 @@ package net.firedevops.firemud.gamedesign.repository;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.List;
+import java.util.UUID;
 import net.firedevops.firemud.gamedesign.entity.Game;
+import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record;
@@ -18,6 +20,14 @@ public class GameRepository {
   private static final Table<?> GAME_TABLE = DSL.table(DSL.name("game"));
   private static final Field<Long> ID = DSL.field(DSL.name("id"), Long.class);
   private static final Field<String> TENANT_ID = DSL.field(DSL.name("tenant_id"), String.class);
+  private static final Field<UUID> CANONICAL_TENANT_ID =
+      DSL.field(DSL.name("canonical_tenant_id"), UUID.class);
+  private static final Field<String> TENANT_IDENTITY_PROVENANCE_KIND =
+      DSL.field(DSL.name("tenant_identity_provenance_kind"), String.class);
+  private static final Field<Long> TENANT_IDENTITY_SOURCE_GAME_ID =
+      DSL.field(DSL.name("tenant_identity_source_game_id"), Long.class);
+  private static final Field<String> TENANT_IDENTITY_SOURCE_LEGACY_TENANT_ID =
+      DSL.field(DSL.name("tenant_identity_source_legacy_tenant_id"), String.class);
   private static final Field<String> NAME = DSL.field(DSL.name("name"), String.class);
   private static final Field<String> DESCRIPTION = DSL.field(DSL.name("description"), String.class);
 
@@ -33,22 +43,66 @@ public class GameRepository {
 
   public Game save(Game game) {
     if (game.getId() == null) {
+      if (game.getCanonicalTenantId() != null) {
+        throw new IllegalArgumentException("Canonical tenant identity is issued by Game Design");
+      }
       Record record =
           dsl.insertInto(GAME_TABLE)
               .set(TENANT_ID, game.getTenantId())
               .set(NAME, game.getName())
               .set(DESCRIPTION, game.getDescription())
-              .returning(ID, TENANT_ID, NAME, DESCRIPTION)
+              .returning(
+                  ID,
+                  TENANT_ID,
+                  CANONICAL_TENANT_ID,
+                  TENANT_IDENTITY_PROVENANCE_KIND,
+                  TENANT_IDENTITY_SOURCE_GAME_ID,
+                  TENANT_IDENTITY_SOURCE_LEGACY_TENANT_ID,
+                  NAME,
+                  DESCRIPTION)
               .fetchOne();
-      return toEntity(record);
+      if (record == null) {
+        throw new IllegalStateException("Game insert did not return its persisted row");
+      }
+      Game saved = toEntity(record);
+      GameTenantIdentity identity = toTenantIdentity(record);
+      if (saved == null
+          || saved.getId() == null
+          || !saved.getId().equals(identity.sourceGameId())
+          || !saved.getTenantId().equals(identity.sourceLegacyTenantId())
+          || identity.provenanceKind() != GameTenantIdentity.ProvenanceKind.NEW_GAME_ROW) {
+        throw new IllegalStateException(
+            "Persisted game tenant identity did not match its owner row");
+      }
+      return saved;
     }
-    dsl.update(GAME_TABLE)
-        .set(TENANT_ID, game.getTenantId())
-        .set(NAME, game.getName())
-        .set(DESCRIPTION, game.getDescription())
-        .where(ID.eq(game.getId()))
-        .execute();
-    return findByTenantId(game.getTenantId());
+    Condition identityCondition = ID.eq(game.getId());
+    if (game.getTenantId() != null) {
+      identityCondition = identityCondition.and(TENANT_ID.eq(game.getTenantId()));
+    }
+    if (game.getCanonicalTenantId() != null) {
+      identityCondition =
+          identityCondition.and(CANONICAL_TENANT_ID.eq(game.getCanonicalTenantId()));
+    }
+    Record record =
+        dsl.update(GAME_TABLE)
+            .set(NAME, game.getName())
+            .set(DESCRIPTION, game.getDescription())
+            .where(identityCondition)
+            .returning(
+                ID,
+                TENANT_ID,
+                CANONICAL_TENANT_ID,
+                TENANT_IDENTITY_PROVENANCE_KIND,
+                TENANT_IDENTITY_SOURCE_GAME_ID,
+                TENANT_IDENTITY_SOURCE_LEGACY_TENANT_ID,
+                NAME,
+                DESCRIPTION)
+            .fetchOne();
+    if (record == null) {
+      throw new IllegalStateException("Game update identity does not match a persisted game row");
+    }
+    return toEntity(record);
   }
 
   public Game findByTenantId(String tenantId) {
@@ -72,8 +126,33 @@ public class GameRepository {
     Game game = new Game();
     game.setId(record.get(ID));
     game.setTenantId(record.get(TENANT_ID));
+    game.setCanonicalTenantId(record.get(CANONICAL_TENANT_ID));
     game.setName(record.get(NAME));
     game.setDescription(record.get(DESCRIPTION));
     return game;
+  }
+
+  private GameTenantIdentity toTenantIdentity(Record record) {
+    UUID canonicalTenantId = record.get(CANONICAL_TENANT_ID);
+    String provenanceKindValue = record.get(TENANT_IDENTITY_PROVENANCE_KIND);
+    Long sourceGameId = record.get(TENANT_IDENTITY_SOURCE_GAME_ID);
+    String sourceLegacyTenantId = record.get(TENANT_IDENTITY_SOURCE_LEGACY_TENANT_ID);
+    if (canonicalTenantId == null
+        || provenanceKindValue == null
+        || sourceGameId == null
+        || sourceGameId <= 0
+        || sourceLegacyTenantId == null
+        || sourceLegacyTenantId.isBlank()) {
+      throw new IllegalStateException("Persisted game tenant identity provenance is incomplete");
+    }
+    GameTenantIdentity.ProvenanceKind provenanceKind;
+    try {
+      provenanceKind = GameTenantIdentity.ProvenanceKind.valueOf(provenanceKindValue);
+    } catch (IllegalArgumentException exception) {
+      throw new IllegalStateException(
+          "Persisted game tenant identity provenance kind is unknown", exception);
+    }
+    return new GameTenantIdentity(
+        canonicalTenantId, provenanceKind, sourceGameId, sourceLegacyTenantId);
   }
 }
