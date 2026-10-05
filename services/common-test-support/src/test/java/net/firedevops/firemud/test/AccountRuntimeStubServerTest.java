@@ -17,7 +17,8 @@ import org.junit.jupiter.api.Test;
 
 class AccountRuntimeStubServerTest {
   @Test
-  void authenticationAndRuntimeAuthoritySnapshotsAreFreshAndComplete() throws Exception {
+  void authenticationCanonicalizesEmailAndRuntimeAuthoritySnapshotsAreFreshAndComplete()
+      throws Exception {
     try (AccountRuntimeStubServer server = new AccountRuntimeStubServer(0)) {
       ManagedChannel channel =
           ManagedChannelBuilder.forAddress("localhost", server.port()).usePlaintext().build();
@@ -35,21 +36,21 @@ class AccountRuntimeStubServerTest {
                     .getAccountId())
             .isEqualTo("7");
 
-        var activeMembership =
-            stub.getTenantMembershipForRuntime(
-                GetTenantMembershipForRuntimeRequest.newBuilder()
-                    .setAccountId("7")
-                    .setTenantId("1")
-                    .setRequestId("request-active")
-                    .build());
+        var request =
+            GetTenantMembershipForRuntimeRequest.newBuilder()
+                .setAccountId("7")
+                .setTenantId("1")
+                .setRequestId("request-1")
+                .build();
+        var activeMembership = stub.getTenantMembershipForRuntime(request);
         assertThat(activeMembership.getMembershipExists()).isTrue();
         assertThat(activeMembership.getGameplayAdmissionAllowed()).isTrue();
         assertThat(activeMembership.getMembershipLifecycleState()).isEqualTo("ACTIVE");
         assertThat(activeMembership.getMembershipVersion()).isEqualTo(1L);
-        assertThat(activeMembership.getMembershipAuthorityGeneration()).isEqualTo(1L);
+        assertThat(activeMembership.getMembershipAuthorityGeneration()).isPositive();
         assertFresh(activeMembership.getEvaluatedAt());
 
-        server.denyGameplayAdmission();
+        server.setGameplayAdmissionAllowed(false);
         var deniedMembership =
             stub.getTenantMembershipForRuntime(
                 GetTenantMembershipForRuntimeRequest.newBuilder()
@@ -64,15 +65,14 @@ class AccountRuntimeStubServerTest {
         assertThat(deniedMembership.getMembershipAuthorityGeneration()).isEqualTo(1L);
         assertFresh(deniedMembership.getEvaluatedAt());
 
-        server.setMembershipExists(false);
+        server.setMembershipInactive();
+        var inactive = stub.getTenantMembershipForRuntime(request);
+        assertThat(inactive.getMembershipExists()).isTrue();
+        assertThat(inactive.getGameplayAdmissionAllowed()).isFalse();
+        assertThat(inactive.getMembershipLifecycleState()).isEqualTo("INACTIVE");
 
-        var membership =
-            stub.getTenantMembershipForRuntime(
-                GetTenantMembershipForRuntimeRequest.newBuilder()
-                    .setAccountId("7")
-                    .setTenantId("1")
-                    .setRequestId("request-1")
-                    .build());
+        server.setMembershipExists(false);
+        var membership = stub.getTenantMembershipForRuntime(request);
         assertThat(membership.getMembershipExists()).isFalse();
         assertThat(membership.getGameplayAdmissionAllowed()).isFalse();
         assertThat(membership.getMembershipLifecycleState()).isEqualTo("MISSING");

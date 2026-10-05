@@ -28,10 +28,12 @@ public record GrpcPeerIdentity(String uri, String namespace, String service) {
   public static final Set<String> ALLOWED_SERVICE_NAMES =
       Set.of(
           "account-service",
+          "account-tenant-migrator",
           "automation-scripting-service",
           "entity-management-service",
           "game-design-baseline-migrator",
           "game-design-service",
+          "game-design-tenant-migrator",
           "game-logic-service",
           "game-session-service",
           "logging-admin-service",

@@ -184,9 +184,9 @@ class TextCommandInterpreterTest {
                 .setAccountId("123")
                 .setTenantId("22")
                 .setMembershipExists(true)
+                .setMembershipLifecycleState("ACTIVE")
                 .setGameplayAdmissionAllowed(true)
                 .setMembershipVersion(1L)
-                .setMembershipLifecycleState("ACTIVE")
                 .setMembershipAuthorityGeneration(1L)
                 .setEvaluatedAt(Instant.now().toString())
                 .build());

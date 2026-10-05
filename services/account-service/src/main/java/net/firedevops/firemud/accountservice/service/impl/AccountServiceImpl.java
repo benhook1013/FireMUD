@@ -69,6 +69,7 @@ import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepos
 import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.JoinOperation;
+import net.firedevops.firemud.accountservice.repository.AccountMembershipTransitionReceiptRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRealmAccessGrantRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
@@ -127,6 +128,7 @@ public class AccountServiceImpl implements AccountService {
   private final AccountAuditOutboxRepository accountAuditOutboxRepository;
   private final AccountConnectScopeRepository accountConnectScopeRepository;
   private final AccountJoinOperationRepository accountJoinOperationRepository;
+  private final AccountMembershipTransitionReceiptRepository membershipTransitionReceiptRepository;
   private final AccountEmailLoginChallengeRepository accountEmailLoginChallengeRepository;
   private final AccountRealmAccessGrantRepository accountRealmAccessGrantRepository;
   private final AccountTenantMembershipRepository accountTenantMembershipRepository;
@@ -157,6 +159,7 @@ public class AccountServiceImpl implements AccountService {
       AccountAuditOutboxRepository accountAuditOutboxRepository,
       AccountConnectScopeRepository accountConnectScopeRepository,
       AccountJoinOperationRepository accountJoinOperationRepository,
+      AccountMembershipTransitionReceiptRepository membershipTransitionReceiptRepository,
       AccountEmailLoginChallengeRepository accountEmailLoginChallengeRepository,
       AccountRealmAccessGrantRepository accountRealmAccessGrantRepository,
       AccountTenantMembershipRepository accountTenantMembershipRepository,
@@ -182,6 +185,7 @@ public class AccountServiceImpl implements AccountService {
     this.accountAuditOutboxRepository = accountAuditOutboxRepository;
     this.accountConnectScopeRepository = accountConnectScopeRepository;
     this.accountJoinOperationRepository = accountJoinOperationRepository;
+    this.membershipTransitionReceiptRepository = membershipTransitionReceiptRepository;
     this.accountEmailLoginChallengeRepository = accountEmailLoginChallengeRepository;
     this.accountRealmAccessGrantRepository = accountRealmAccessGrantRepository;
     this.accountTenantMembershipRepository = accountTenantMembershipRepository;
@@ -750,7 +754,10 @@ public class AccountServiceImpl implements AccountService {
       return pendingJoinFailure(scope, "AUTH_UNAVAILABLE");
     }
     boolean transitioned = false;
+    String membershipTransitionType = null;
     if (membership == null) {
+      membershipTransitionReceiptRepository.assertNewMembershipTransitionCanStart(
+          accountId, scope.tenantId());
       membership = new AccountTenantMembership();
       membership.setAccount(requireAccount(accountId));
       membership.setTenantId(scope.tenantId());
@@ -761,7 +768,9 @@ public class AccountServiceImpl implements AccountService {
       membership.setAuthorityProvenance("EXPLICIT_JOIN");
       accountTenantMembershipRepository.save(membership);
       transitioned = true;
+      membershipTransitionType = "MEMBERSHIP_JOINED";
     } else if ("INACTIVE".equals(membership.getLifecycleState())) {
+      membershipTransitionReceiptRepository.requireInactiveMembershipHistory(membership);
       accountJoinOperationRepository.recordCallerBoundAuthorityInvalidation(requestId);
       membership.setLifecycleState("ACTIVE");
       membership.setGameplayAdmissionAllowed(true);
@@ -771,11 +780,21 @@ public class AccountServiceImpl implements AccountService {
       membership.setAuthorityProvenance("EXPLICIT_JOIN");
       accountTenantMembershipRepository.save(membership);
       transitioned = true;
-    } else if (!"ACTIVE".equals(membership.getLifecycleState())
-        || !membership.isGameplayAdmissionAllowed()) {
+      membershipTransitionType = "MEMBERSHIP_REACTIVATED";
+    } else if ("ACTIVE".equals(membership.getLifecycleState())
+        && membership.isGameplayAdmissionAllowed()) {
+      membershipTransitionReceiptRepository
+          .findLatestReceipt(accountId, scope.tenantId())
+          .orElseThrow(
+              () ->
+                  new IllegalStateException(
+                      "Active Account membership lacks a provisional transition receipt"));
+    } else {
       return failedJoin(requestId, scope, "MEMBERSHIP_RECONCILIATION_REQUIRED");
     }
     if (transitioned) {
+      membershipTransitionReceiptRepository.appendTransition(
+          membership, membershipTransitionType, requestId);
       String payload =
           AUDIT_JSON.writeValueAsString(
               new JoinAuditPayload(
@@ -1121,6 +1140,7 @@ public class AccountServiceImpl implements AccountService {
     if (cachedReplay.isPresent()) {
       var replay = cachedReplay.orElseThrow();
       if (replay.success()) {
+        requireCurrentConnectTokenEligibility(bootstrapContext, scopeContext, request, true);
         logger.info(
             "Replayed connect-token attempt for account {} tenant {} world {} realm {} requestId {}",
             bootstrapContext.accountId(),
@@ -1162,52 +1182,17 @@ public class AccountServiceImpl implements AccountService {
       BootstrapContext bootstrapContext,
       ConnectScopeContext scopeContext,
       ConnectTokenRequest request) {
-    RuntimeRealmTarget realm = requireCurrentConnectScopeTarget(scopeContext);
-    RuntimeEntitlementsDto entitlements =
-        getTenantEntitlementsForRuntime(scopeContext.tenantId(), request.requestId());
-    if (!entitlements.gameplayAvailable()) {
+    RuntimeRealmTarget realm =
+        requireCurrentConnectTokenEligibility(bootstrapContext, scopeContext, request, false);
+    if (!isPublicProductionRealm(realm)
+        && !hasRealmAccessGrant(
+            bootstrapContext.accountId(),
+            scopeContext.tenantId(),
+            scopeContext.worldSlug(),
+            scopeContext.realmSlug())) {
       throw new AuthenticationException(
-          "TENANT_BILLING_BLOCKED", "Gameplay is not available for this tenant");
-    }
-    RuntimeMembershipDto membership =
-        getTenantMembershipForRuntime(
-            bootstrapContext.accountId(), scopeContext.tenantId(), request.requestId());
-
-    if (membership.membershipExists()
-        && !"ACTIVE".equals(membership.membershipLifecycleState())
-        && !"INACTIVE".equals(membership.membershipLifecycleState())) {
-      throw new AuthenticationException(
-          "CONNECT_TOKEN_REJECTED", "Membership authority requires reconciliation");
-    }
-    if (membership.membershipExists()
-        && "INACTIVE".equals(membership.membershipLifecycleState())
-        && isPublicProductionRealm(realm)) {
-      if (!entitlements.allowPublicJoin()) {
-        throw new AuthenticationException(
-            "PUBLIC_PRODUCTION_ADMISSION_DENIED",
-            "Public joining is not allowed for the selected game");
-      }
-      throw new AuthenticationException(
-          "JOIN_REQUIRED", "Join the selected world before requesting a connect token");
-    }
-    if (membership.membershipExists() && !membership.gameplayAdmissionAllowed()) {
-      throw new AuthenticationException(
-          "CONNECT_TOKEN_REJECTED", "Gameplay admission is not allowed for this account");
-    }
-
-    if (!membership.membershipExists()) {
-      if (!isPublicProductionRealm(realm)) {
-        throw new AuthenticationException(
-            "NON_PUBLIC_ENROLLMENT_REQUIRED",
-            "Existing game membership is required for this non-public realm");
-      }
-      if (!entitlements.allowPublicJoin()) {
-        throw new AuthenticationException(
-            "PUBLIC_PRODUCTION_ADMISSION_DENIED",
-            "Public joining is not allowed for the selected game");
-      }
-      throw new AuthenticationException(
-          "JOIN_REQUIRED", "Join the selected world before requesting a connect token");
+          "REALM_ACCESS_DENIED",
+          "The selected non-public realm does not have an active access grant");
     }
 
     String jti =
@@ -1283,6 +1268,72 @@ public class AccountServiceImpl implements AccountService {
         request.requestId(),
         jti);
     return result;
+  }
+
+  private RuntimeRealmTarget requireCurrentConnectTokenEligibility(
+      BootstrapContext bootstrapContext,
+      ConnectScopeContext scopeContext,
+      ConnectTokenRequest request,
+      boolean cachedSuccessReplay) {
+    RuntimeRealmTarget realm = requireCurrentConnectScopeTarget(scopeContext);
+    boolean publicProductionRealm = isPublicProductionRealm(realm);
+    if (cachedSuccessReplay && !publicProductionRealm) {
+      throw new AuthenticationException(
+          "REALM_ACCESS_DENIED",
+          "The selected non-public realm does not have an active access grant");
+    }
+
+    RuntimeEntitlementsDto entitlements =
+        getTenantEntitlementsForRuntime(scopeContext.tenantId(), request.requestId());
+    if (!entitlements.gameplayAvailable()) {
+      throw new AuthenticationException(
+          "TENANT_BILLING_BLOCKED", "Gameplay is not available for this tenant");
+    }
+    RuntimeMembershipDto membership =
+        getTenantMembershipForRuntime(
+            bootstrapContext.accountId(), scopeContext.tenantId(), request.requestId());
+
+    if (membership.membershipExists()
+        && !"ACTIVE".equals(membership.membershipLifecycleState())
+        && !"INACTIVE".equals(membership.membershipLifecycleState())) {
+      throw new AuthenticationException(
+          "CONNECT_TOKEN_REJECTED", "Membership authority requires reconciliation");
+    }
+    if (membership.membershipExists()
+        && "INACTIVE".equals(membership.membershipLifecycleState())
+        && publicProductionRealm) {
+      if (!entitlements.allowPublicJoin()) {
+        throw new AuthenticationException(
+            "PUBLIC_PRODUCTION_ADMISSION_DENIED",
+            "Public joining is not allowed for the selected game");
+      }
+      throw new AuthenticationException(
+          "JOIN_REQUIRED", "Join the selected world before requesting a connect token");
+    }
+    if (membership.membershipExists() && "INACTIVE".equals(membership.membershipLifecycleState())) {
+      throw new AuthenticationException(
+          "CONNECT_TOKEN_REJECTED", "Gameplay admission is not allowed for this account");
+    }
+    if (membership.membershipExists() && !membership.gameplayAdmissionAllowed()) {
+      throw new AuthenticationException(
+          "CONNECT_TOKEN_REJECTED", "Gameplay admission is not allowed for this account");
+    }
+
+    if (!membership.membershipExists()) {
+      if (!publicProductionRealm) {
+        throw new AuthenticationException(
+            "NON_PUBLIC_ENROLLMENT_REQUIRED",
+            "Existing game membership is required for this non-public realm");
+      }
+      if (!entitlements.allowPublicJoin()) {
+        throw new AuthenticationException(
+            "PUBLIC_PRODUCTION_ADMISSION_DENIED",
+            "Public joining is not allowed for the selected game");
+      }
+      throw new AuthenticationException(
+          "JOIN_REQUIRED", "Join the selected world before requesting a connect token");
+    }
+    return realm;
   }
 
   @Override
@@ -1634,13 +1685,19 @@ public class AccountServiceImpl implements AccountService {
   private boolean hasRealmAdmissionAccess(
       BootstrapContext bootstrapContext, RuntimeRealmTarget realm) {
     long tenantId = realm.tenantId();
-    if (!isPublicProductionRealm(realm)) {
-      if (accountTenantMembershipRepository
-          .findByAccountIdAndTenantId(bootstrapContext.accountId(), tenantId)
-          .filter(AccountTenantMembership::isGameplayAdmissionAllowed)
-          .isEmpty()) {
-        return false;
-      }
+    boolean publicProductionRealm = isPublicProductionRealm(realm);
+    Optional<AccountTenantMembership> membership =
+        accountTenantMembershipRepository.findByAccountIdAndTenantId(
+            bootstrapContext.accountId(), tenantId);
+    if (membership.isPresent()
+        && (!membership.orElseThrow().isGameplayAdmissionAllowed()
+            || !"ACTIVE".equals(membership.orElseThrow().getLifecycleState()))) {
+      return false;
+    }
+    if (membership.isEmpty() && !publicProductionRealm) {
+      return false;
+    }
+    if (!publicProductionRealm) {
       if (!hasRealmAccessGrant(
           bootstrapContext.accountId(), tenantId, realm.worldSlug(), realm.realmSlug())) {
         return false;
@@ -1868,7 +1925,8 @@ public class AccountServiceImpl implements AccountService {
       throw new AuthenticationException("JOIN_REQUIRED", JOIN_REQUIRED_CHARACTERS_MESSAGE);
     }
     if (maybeMembership.isPresent()
-        && !maybeMembership.orElseThrow().isGameplayAdmissionAllowed()) {
+        && (!maybeMembership.orElseThrow().isGameplayAdmissionAllowed()
+            || "INACTIVE".equals(maybeMembership.orElseThrow().getLifecycleState()))) {
       throw new AuthenticationException(
           "CONNECT_TOKEN_REJECTED", "Gameplay admission is not allowed for this account");
     }
@@ -2001,8 +2059,9 @@ public class AccountServiceImpl implements AccountService {
 
   private boolean hasRealmAccessGrant(
       Long accountId, Long tenantId, String worldSlug, String realmSlug) {
-    return accountRealmAccessGrantRepository.existsByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
-        accountId, tenantId, worldSlug, realmSlug);
+    // The retained four-field row cannot prove the current playtest lifecycle and state generation.
+    // Keep legacy grant records for write/history paths, but do not use them as REST authority.
+    return false;
   }
 
   private String mintToken(String subject, long expirationMs, Map<String, Object> claims) {

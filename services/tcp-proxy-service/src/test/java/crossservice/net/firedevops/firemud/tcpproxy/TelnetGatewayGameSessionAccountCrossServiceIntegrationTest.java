@@ -170,7 +170,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     ensureTestServicesStarted();
     try (GameplayTelnetDriver firstClient = openAdmittedTelnetClient()) {}
 
-    accountStub().setGameplayAdmissionAllowed(false);
+    accountStub().setMembershipInactive();
 
     try (GameplayTelnetScenarios.LoginThenPlayScenario scenario =
         GameplayTelnetScenarios.loginThenAttemptPlay(
@@ -489,7 +489,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
           .anyMatch(response -> response.contains(LookTestFixtures.DESTINATION_ROOM_ID));
     }
 
-    accountStub().setGameplayAdmissionAllowed(false);
+    accountStub().setMembershipInactive();
 
     try (GameplayTelnetScenarios.LoginThenPlayScenario scenario =
         GameplayTelnetScenarios.loginThenAttemptPlay(

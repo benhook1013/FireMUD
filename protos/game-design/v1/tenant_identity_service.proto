@@ -1,0 +1,48 @@
+syntax = "proto3";
+
+package gamedesign.v1;
+
+option java_package = "net.firedevops.firemud.gamedesign.v1";
+option java_multiple_files = true;
+
+// Owner-local legacy source read. This does not attest an Account numeric tenant key.
+service TenantIdentityService {
+  rpc ResolveLegacyGameTenantIdentity(ResolveLegacyGameTenantIdentityRequest)
+      returns (ResolveLegacyGameTenantIdentityResponse);
+  // Owner-approved cross-service legacy association; Account is the sole caller.
+  rpc ResolveLegacyAccountTenantAssociation(ResolveLegacyAccountTenantAssociationRequest)
+      returns (ResolveLegacyAccountTenantAssociationResponse);
+}
+
+message ResolveLegacyGameTenantIdentityRequest {
+  string legacy_game_tenant_id = 1;
+}
+
+message ResolveLegacyGameTenantIdentityResponse {
+  string canonical_tenant_id = 1;
+  string source_legacy_game_tenant_id = 2;
+  int64 source_game_row_id = 3;
+  string provenance_kind = 4;
+}
+
+message ResolveLegacyAccountTenantAssociationRequest {
+  int64 legacy_account_tenant_id = 1;
+}
+
+message ResolveLegacyAccountTenantAssociationResponse {
+  int64 legacy_account_tenant_id = 1;
+  string source_legacy_game_tenant_id = 2;
+  string canonical_tenant_id = 3;
+  int64 source_game_row_id = 4;
+  string account_evidence_digest = 5;
+  string operation_id = 6;
+  string manifest_digest = 7;
+  string target_namespace = 8;
+  string signer_key_id = 9;
+  string approved_by = 10;
+  string approval_reference = 11;
+  string signed_at = 12;
+  int32 operation_entry_count = 13;
+  string manifest_signature = 14;
+  int32 manifest_schema_version = 15;
+}

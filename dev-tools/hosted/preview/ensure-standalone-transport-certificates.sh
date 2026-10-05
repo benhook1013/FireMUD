@@ -27,10 +27,28 @@ elif [[ $# -eq 2 && "$1" == --migrator ]]; then
 elif [[ $# -eq 2 && "$1" == --verify-migrator ]]; then
   transport_operation='verify-migrator'
   namespace="$2"
+elif [[ $# -eq 2 && "$1" == --account-tenant-migrator ]]; then
+  transport_operation='write-migrator'
+  migrator_identity='account-tenant-migrator'
+  namespace="$2"
+elif [[ $# -eq 2 && "$1" == --verify-account-tenant-migrator ]]; then
+  transport_operation='verify-migrator'
+  migrator_identity='account-tenant-migrator'
+  namespace="$2"
+elif [[ $# -eq 2 && "$1" == --game-design-tenant-migrator ]]; then
+  transport_operation='write-migrator'
+  migrator_identity='game-design-tenant-migrator'
+  namespace="$2"
+elif [[ $# -eq 2 && "$1" == --verify-game-design-tenant-migrator ]]; then
+  transport_operation='verify-migrator'
+  migrator_identity='game-design-tenant-migrator'
+  namespace="$2"
 else
-  echo "usage: $0 [--wait|--migrator|--verify-migrator] <runtime-namespace>" >&2
+  echo "usage: $0 [--wait|--migrator|--verify-migrator|--account-tenant-migrator|--verify-account-tenant-migrator|--game-design-tenant-migrator|--verify-game-design-tenant-migrator] <runtime-namespace>" >&2
   exit 2
 fi
+
+migrator_identity="${migrator_identity:-game-design-baseline-migrator}"
 
 if [[ "$transport_operation" == write || "$transport_operation" == wait ]] &&
   [[ ! "$namespace" =~ ^pr-[1-9][0-9]{0,50}$ ]]; then
@@ -49,9 +67,14 @@ bridge_certificate="${namespace}-tcp-proxy-bridge"
 public_hostname="${namespace}.${PREVIEW_DOMAIN}"
 gateway_dns_name="spring-cloud-gateway-mtls.${namespace}.svc.cluster.local"
 bridge_uri_san="spiffe://firemud/ns/${namespace}/sa/tcp-proxy-service"
-migrator_certificate="${namespace}-grpc-game-design-baseline-migrator"
-migrator_secret='firemud-grpc-game-design-baseline-migrator'
-migrator_uri_san="spiffe://firemud/ns/${namespace}/sa/game-design-baseline-migrator"
+migrator_certificate="${namespace}-grpc-${migrator_identity}"
+migrator_secret="firemud-grpc-${migrator_identity}"
+migrator_uri_san="spiffe://firemud/ns/${namespace}/sa/${migrator_identity}"
+migrator_role="grpc-${migrator_identity}"
+migrator_managed_by='entity-baseline-migration'
+if [[ "$migrator_identity" == account-tenant-migrator || "$migrator_identity" == game-design-tenant-migrator ]]; then
+  migrator_managed_by='tenant-association-migration'
+fi
 deadline=$((SECONDS + certificate_wait_timeout_seconds))
 
 write_certificates() {
@@ -148,8 +171,8 @@ spec:
   secretTemplate:
     metadata:
       labels:
-        firemud.dev/managed-by: entity-baseline-migration
-        firemud.dev/role: grpc-game-design-baseline-migrator
+        firemud.dev/managed-by: ${migrator_managed_by}
+        firemud.dev/role: ${migrator_role}
         firemud.dev/retention: ephemeral
       annotations:
         firemud.dev/provenance: cert-manager

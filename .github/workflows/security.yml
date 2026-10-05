@@ -113,6 +113,7 @@ jobs:
         uses: ./.github/actions/setup-trivy
 
       - name: 🔍 Run Trivy and Save Report
+        shell: bash
         run: |
           echo "::group::Run Trivy"
           trivy fs --config config/security/trivy.yaml . | tee trivy-report.txt
@@ -207,7 +208,7 @@ jobs:
       contents: read
       pull-requests: write # Publishes the consolidated security result on the PR.
     needs: [changes, trivy-scan, secret-compliance, security-gate]
-    if: ${{ always() && github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
