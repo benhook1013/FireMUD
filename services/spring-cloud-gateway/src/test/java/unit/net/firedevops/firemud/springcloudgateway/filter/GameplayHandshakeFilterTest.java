@@ -1,12 +1,10 @@
 package net.firedevops.firemud.springcloudgateway.filter;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import io.jsonwebtoken.Claims;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.net.InetSocketAddress;
 import java.time.Instant;
@@ -421,7 +419,7 @@ class GameplayHandshakeFilterTest {
   }
 
   @Test
-  void promotesFirstPartyHandshakeWithCookieCarrier() {
+  void deniesFirstPartyHandshakeUntilGatewayContextSignerIsProvisioned() {
     GameplayHandshakeFilter filter =
         new GameplayHandshakeFilter(
             new JwtUtil(SECRET, 30_000L),
@@ -451,18 +449,19 @@ class GameplayHandshakeFilterTest {
             .header("Cookie", "duplicate=second")
             .build();
 
-    ServerWebExchange mutatedExchange =
-        filterThroughChain(filter, MockServerWebExchange.from(request));
+    MockServerWebExchange exchange = MockServerWebExchange.from(request);
+    filter.filter(exchange, e -> Mono.empty()).block();
 
-    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Connection-Mode"))
-        .isEqualTo(GameplayHandshakeFilter.CONNECTION_MODE_FIRST_PARTY_WEB);
-    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Tenant-Id")).isEqualTo("1");
-    assertThat(mutatedExchange.getRequest().getHeaders().get("Cookie"))
-        .containsExactly("session=\"quoted%20value\"; duplicate=first", "duplicate=second");
+    assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    assertThat(exchange.getResponse().getHeaders().getFirst("X-Firemud-Handshake-Error-Class"))
+        .isEqualTo("POLICY_DENY");
+    assertThat(exchange.getResponse().getHeaders().getFirst("X-Firemud-Handshake-Error-Reason"))
+        .isNull();
+    assertThat(exchange.getRequest().getHeaders().getFirst("X-Firemud-Connect-Context")).isNull();
   }
 
   @Test
-  void removesConnectTokenFromMalformedQuotedCookiePair() {
+  void deniesBeforeMutatingMalformedCookieCarrierWithoutGatewayContextSigner() {
     GameplayHandshakeFilter filter =
         new GameplayHandshakeFilter(
             new JwtUtil(SECRET, 30_000L),
@@ -491,11 +490,12 @@ class GameplayHandshakeFilterTest {
             .header("Cookie", "unmatched=\"unterminated; Firemud-Connect-Token=shadow")
             .build();
 
-    ServerWebExchange mutatedExchange =
-        filterThroughChain(filter, MockServerWebExchange.from(request));
+    MockServerWebExchange exchange = MockServerWebExchange.from(request);
+    filter.filter(exchange, e -> Mono.empty()).block();
 
-    assertThat(mutatedExchange.getRequest().getHeaders().get("Cookie"))
-        .containsExactly("unmatched=\"unterminated");
+    assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    assertThat(exchange.getResponse().getHeaders().getFirst("X-Firemud-Handshake-Error-Class"))
+        .isEqualTo("POLICY_DENY");
   }
 
   @Test
@@ -563,7 +563,7 @@ class GameplayHandshakeFilterTest {
   }
 
   @Test
-  void promotesFirstPartyHandshakeWithValidToken() {
+  void deniesValidFirstPartyTokenBeforeContextForwardingWithoutGatewaySigner() {
     GameplayHandshakeFilter filter =
         new GameplayHandshakeFilter(
             new JwtUtil(SECRET, 30_000L),
@@ -593,63 +593,16 @@ class GameplayHandshakeFilterTest {
             .header(GameplayHandshakeFilter.HANDSHAKE_ERROR_REASON_HEADER, "stale-reason")
             .build();
 
-    ServerWebExchange mutatedExchange =
-        filterThroughChain(filter, MockServerWebExchange.from(request));
+    MockServerWebExchange exchange = MockServerWebExchange.from(request);
+    filter.filter(exchange, e -> Mono.empty()).block();
 
-    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Connection-Mode"))
-        .isEqualTo(GameplayHandshakeFilter.CONNECTION_MODE_FIRST_PARTY_WEB);
-    assertThat(
-            mutatedExchange
-                .getRequest()
-                .getHeaders()
-                .getFirst(GameplayHandshakeFilter.HANDSHAKE_ERROR_CLASS_HEADER))
+    assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    assertThat(exchange.getResponse().getHeaders().getFirst("X-Firemud-Handshake-Error-Class"))
+        .isEqualTo("POLICY_DENY");
+    assertThat(exchange.getResponse().getHeaders().getFirst("X-Firemud-Handshake-Error-Reason"))
         .isNull();
-    assertThat(
-            mutatedExchange
-                .getRequest()
-                .getHeaders()
-                .getFirst(GameplayHandshakeFilter.HANDSHAKE_ERROR_REASON_HEADER))
-        .isNull();
-    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Tenant-Id")).isEqualTo("1");
-    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Game-Instance-Id"))
-        .isEqualTo("42");
-    assertThat(
-            mutatedExchange
-                .getRequest()
-                .getHeaders()
-                .getFirst(GameplayHandshakeFilter.WORLD_SLUG_HEADER))
-        .isEqualTo("demo");
-    assertThat(
-            mutatedExchange
-                .getRequest()
-                .getHeaders()
-                .getFirst(GameplayHandshakeFilter.REALM_SLUG_HEADER))
-        .isEqualTo("production");
-    assertThat(
-            mutatedExchange
-                .getRequest()
-                .getHeaders()
-                .getFirst(GameplayHandshakeFilter.POINTER_VERSION_HEADER))
-        .isEqualTo("18");
-    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Connect-Context"))
-        .isNotBlank();
-    Claims connectContextClaims =
-        new JwtUtil(SECRET, 30_000L)
-            .parseToken(
-                mutatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Connect-Context"))
-            .getPayload();
-    assertThat(connectContextClaims.get("worldSlug")).isEqualTo("demo");
-    assertThat(connectContextClaims.get("realmSlug")).isEqualTo("production");
-    assertThat(connectContextClaims.get("pointerVersion")).isEqualTo("18");
-    assertThat(connectContextClaims.get("connectScopeId")).isEqualTo("scope-2");
-    assertThat(connectContextClaims.get("connectRequestId")).isEqualTo("req-2");
-    assertThat(
-            mutatedExchange
-                .getRequest()
-                .getHeaders()
-                .getFirst(GameplayHandshakeFilter.TRANSPORT_SESSION_HEADER))
-        .matches("\\d+");
-    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("Cookie")).isNull();
+    assertThat(exchange.getRequest().getHeaders().getFirst("X-Firemud-Connect-Context")).isNull();
+    assertThat(exchange.getRequest().getHeaders().getFirst("X-Firemud-Connection-Mode")).isNull();
   }
 
   @Test
@@ -1040,14 +993,11 @@ class GameplayHandshakeFilterTest {
   }
 
   @Test
-  void rejectsReplayedConnectToken() {
+  void deniesBeforeReplayMutationUntilGatewayContextSignerIsProvisioned() {
     ReactiveStringRedisTemplate redisTemplate = mock(ReactiveStringRedisTemplate.class);
     @SuppressWarnings("unchecked")
     ReactiveValueOperations<String, String> valueOps = mock(ReactiveValueOperations.class);
     when(redisTemplate.opsForValue()).thenReturn(valueOps);
-    when(valueOps.setIfAbsent(
-            eq("gateway:connect-token:jti:jti-replay"), eq("1"), any(java.time.Duration.class)))
-        .thenReturn(Mono.just(true), Mono.just(false));
     GameplayHandshakeFilter filter =
         new GameplayHandshakeFilter(
             new JwtUtil(SECRET, 30_000L),
@@ -1084,13 +1034,17 @@ class GameplayHandshakeFilterTest {
     filter.filter(first, e -> Mono.empty()).block();
     filter.filter(second, e -> Mono.empty()).block();
 
+    assertThat(first.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
     assertThat(second.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    assertThat(first.getResponse().getHeaders().getFirst("X-Firemud-Handshake-Error-Class"))
+        .isEqualTo("POLICY_DENY");
     assertThat(second.getResponse().getHeaders().getFirst("X-Firemud-Handshake-Error-Class"))
-        .isEqualTo(GameplayHandshakeFilter.CONNECT_TOKEN_REPLAYED);
+        .isEqualTo("POLICY_DENY");
+    verifyNoInteractions(redisTemplate, valueOps);
   }
 
   @Test
-  void rejectsWhenReplayProtectionStorageIsMissingOutsideDevOrTest() {
+  void deniesBeforeReplayStorageCheckUntilGatewayContextSignerIsProvisioned() {
     GameplayHandshakeFilter filter =
         new GameplayHandshakeFilter(
             new JwtUtil(SECRET, 30_000L),
@@ -1123,7 +1077,9 @@ class GameplayHandshakeFilterTest {
 
     assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
     assertThat(exchange.getResponse().getHeaders().getFirst("X-Firemud-Handshake-Error-Class"))
-        .isEqualTo(GameplayHandshakeFilter.CONNECT_REPLAY_PROTECTION_UNAVAILABLE);
+        .isEqualTo("POLICY_DENY");
+    assertThat(exchange.getResponse().getHeaders().getFirst("X-Firemud-Handshake-Error-Reason"))
+        .isNull();
   }
 
   private ServerWebExchange filterThroughChain(WebFilter filter, ServerWebExchange exchange) {

@@ -3,7 +3,9 @@ package net.firedevops.firemud.accountservice.service;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -12,6 +14,7 @@ import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.dto.MembershipTransitionReceipt;
 import net.firedevops.firemud.accountservice.dto.MembershipTransitionReceiptDigest;
+import net.firedevops.firemud.accountservice.dto.RuntimeMembershipSnapshotDto;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
@@ -52,6 +55,11 @@ import org.springframework.transaction.annotation.Transactional;
     value = "EI_EXPOSE_REP2",
     justification = "Injected repositories are internal Spring collaborators.")
 public class AccountMembershipAuthorityEventProducer {
+  private static final Comparator<OutboxCheckpointEntry> OUTBOX_CHECKPOINT_ORDER =
+      Comparator.comparing(
+          OutboxCheckpointEntry::outboxStreamKey,
+          AccountMembershipAuthorityEventProducer::compareUnsignedUtf8);
+
   private final AccountJoinOperationRepository joinOperationRepository;
   private final AccountMembershipPairAuthorityRepository pairAuthorityRepository;
   private final AccountRepository accountRepository;
@@ -173,6 +181,8 @@ public class AccountMembershipAuthorityEventProducer {
       throw new IllegalStateException(
           "Current Account membership differs from its V31 authority generation");
     }
+    List<OutboxCheckpointEntry> upstreamCheckpoints =
+        readBaselineUpstreamCheckpoints(identity, authoritySnapshot);
 
     String streamKey = membershipStreamKey(identity);
     Checkpoint checkpoint =
@@ -211,19 +221,25 @@ public class AccountMembershipAuthorityEventProducer {
         "MEMBERSHIP_REACTIVATED".equals(transitionReceipt.transitionType()),
         authoritySnapshot);
 
+    List<OutboxCheckpointEntry> checkpoints = new ArrayList<>(upstreamCheckpoints);
+    checkpoints.add(
+        new OutboxCheckpointEntry(
+            checkpoint.outboxStreamKey(), Long.toString(checkpoint.outboxSequence())));
+    checkpoints = orderedCheckpoints(checkpoints);
     return new PositiveMembershipSnapshot(
         true,
         verified.accountId(),
         verified.tenantId(),
         verified.membershipLifecycleState(),
         verified.gameplayAdmissionAllowed(),
-        membershipVersionValue(verified, identity),
+        membershipVersionMap(verified, identity),
         verified.membershipAuthorityGeneration(),
         verified.roles(),
         verified.authorityTuple(),
         verified.issuanceFence(),
         Instant.now(),
-        List.of(checkpoint),
+        checkpoints,
+        List.of(sourceEvidence(checkpoint, event)),
         transitionReceipt,
         verified);
   }
@@ -244,7 +260,9 @@ public class AccountMembershipAuthorityEventProducer {
         identity.tenantUuid(),
         verifiedProvenance(identity),
         new ProvenPositiveCheckpoint(
-            Long.parseLong(positive.membershipVersion()),
+            Long.parseLong(
+                membershipVersionValue(
+                    positive.membershipVersion(), identity.tenantUuid().toString())),
             Long.parseLong(positive.membershipAuthorityGeneration()),
             Long.parseLong(event.outboxSequence()),
             event.eventId(),
@@ -268,7 +286,10 @@ public class AccountMembershipAuthorityEventProducer {
     MembershipEvent event = positive.authorityEvent();
     if (!verifiedProvenance(identity).equals(pair.provenance())
         || !pair.membershipExists()
-        || pair.membershipVersion() != Long.parseLong(positive.membershipVersion())
+        || pair.membershipVersion()
+            != Long.parseLong(
+                membershipVersionValue(
+                    positive.membershipVersion(), identity.tenantUuid().toString()))
         || pair.membershipAuthorityGeneration()
             != Long.parseLong(positive.membershipAuthorityGeneration())
         || pair.lastEventSequence() != Long.parseLong(event.outboxSequence())
@@ -282,6 +303,66 @@ public class AccountMembershipAuthorityEventProducer {
   }
 
   /**
+   * Reads one same-fence runtime membership result from the proved active-positive or never-joined
+   * sequence-zero path.
+   *
+   * <p>This deliberately has no inactive, unproved, or synthesized fallback. The caller owns the
+   * Account transaction and the RPC remains unavailable until its consumer validates this whole
+   * evidence bundle.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public RuntimeMembershipSnapshotDto readRuntimeMembershipSnapshot(
+      long accountId, long legacyTenantId) {
+    if (accountId <= 0L || legacyTenantId <= 0L) {
+      throw new IllegalArgumentException("Account and retained tenant identities must be positive");
+    }
+    preparePairAuthorityForRuntimeSnapshot(accountId, legacyTenantId);
+    if (membershipRepository.findJoinProofForUpdate(accountId, legacyTenantId).isPresent()) {
+      PositiveMembershipSnapshot positive =
+          readCurrentPairBoundPositiveMembershipSnapshot(accountId, legacyTenantId);
+      return new RuntimeMembershipSnapshotDto(
+          accountId,
+          legacyTenantId,
+          positive.accountId(),
+          positive.tenantId(),
+          positive.membershipExists(),
+          positive.gameplayAdmissionAllowed(),
+          new RuntimeMembershipSnapshotDto.MembershipBaseline(
+              positive.membershipLifecycleState(),
+              positive.membershipVersion(),
+              positive.membershipAuthorityGeneration()),
+          positive.roles(),
+          positive.authorityTuple(),
+          positive.issuanceFence(),
+          positive.evaluatedAt(),
+          positive.outboxCheckpoints(),
+          positive.outboxSourceEvidence(),
+          positive.authorityEvent());
+    }
+
+    NeverJoinedMembershipSnapshot absent =
+        readNeverJoinedMembershipSnapshot(accountId, legacyTenantId);
+    return new RuntimeMembershipSnapshotDto(
+        accountId,
+        legacyTenantId,
+        absent.accountId(),
+        absent.tenantId(),
+        absent.membershipExists(),
+        absent.gameplayAdmissionAllowed(),
+        new RuntimeMembershipSnapshotDto.MembershipBaseline(
+            absent.membershipLifecycleState(),
+            absent.membershipVersion(),
+            absent.membershipAuthorityGeneration()),
+        absent.roles(),
+        absent.authorityTuple(),
+        absent.issuanceFence(),
+        absent.evaluatedAt(),
+        absent.outboxCheckpoints(),
+        absent.outboxSourceEvidence(),
+        null);
+  }
+
+  /**
    * Reads an explicit sequence-zero checkpoint only from a durable verified pair baseline, after
    * the no-membership and no-committed-history proof under one Account-row fence. It never admits
    * gameplay and is not exposed through the still-denied runtime membership RPC.
@@ -289,17 +370,15 @@ public class AccountMembershipAuthorityEventProducer {
   @Transactional(propagation = Propagation.MANDATORY)
   public NeverJoinedMembershipSnapshot readNeverJoinedMembershipSnapshot(
       long accountId, long legacyTenantId) {
+    if (accountId <= 0L || legacyTenantId <= 0L) {
+      throw new IllegalArgumentException("Account and retained tenant identities must be positive");
+    }
     joinOperationRepository.lockAccount(accountId);
     Identity identity = resolveIdentity(accountId, legacyTenantId);
     if (membershipRepository.findJoinProofForUpdate(accountId, legacyTenantId).isPresent()) {
       throw new IllegalStateException("Never-joined Account membership row is not absent");
     }
     transitionReceiptRepository.assertNewMembershipTransitionCanStart(accountId, legacyTenantId);
-    String streamKey = membershipStreamKey(identity);
-    if (authorityOutboxRepository.readCheckpoint(streamKey).isPresent()) {
-      throw new IllegalStateException(
-          "Never-joined Account membership has committed event history");
-    }
     PairAuthority pair =
         pairAuthorityRepository
             .readForUpdate(identity.accountUuid(), identity.tenantUuid())
@@ -307,7 +386,11 @@ public class AccountMembershipAuthorityEventProducer {
     CompositeSnapshot authority = readSnapshot(identity);
     ScopeState member = only(authority.memberships(), "membership");
     requireMatchingFence(authority, member, identity.accountUuid());
-    requireNoUnmodeledCutoff(identity);
+    List<OutboxCheckpointEntry> upstreamCheckpoints =
+        readBaselineUpstreamCheckpoints(identity, authority);
+    String streamKey = membershipStreamKey(identity);
+    OutboxCheckpointEntry membershipCheckpoint =
+        requireSequenceZeroCheckpoint(streamKey, member, "membership");
     if (!verifiedProvenance(identity).equals(pair.provenance())
         || pair.membershipExists()
         || pair.lastEventSequence() != 0L
@@ -327,15 +410,20 @@ public class AccountMembershipAuthorityEventProducer {
             List.of(),
             Optional.empty(),
             Optional.empty());
+    List<OutboxCheckpointEntry> checkpoints = new ArrayList<>(upstreamCheckpoints);
+    checkpoints.add(membershipCheckpoint);
+    checkpoints = orderedCheckpoints(checkpoints);
     return new NeverJoinedMembershipSnapshot(
         identity.accountUuid().toString(),
         identity.tenantUuid().toString(),
-        decimal(pair.membershipVersion()),
+        Map.of(identity.tenantUuid().toString(), decimal(pair.membershipVersion())),
         decimal(pair.membershipAuthorityGeneration()),
         tuple,
         decimal(authority.issuanceFence().value()),
         Instant.now(),
-        streamKey);
+        streamKey,
+        checkpoints,
+        List.of());
   }
 
   /**
@@ -748,7 +836,7 @@ public class AccountMembershipAuthorityEventProducer {
     if (!newMembership && !callerBoundAuthorityInvalidated) {
       throw new IllegalStateException("Membership reactivation must invalidate caller authority");
     }
-    requireNoUnmodeledCutoff(identity);
+    readBaselineUpstreamCheckpoints(identity, snapshot);
     RoleSnapshot roles = requireRoleSnapshot(identity, membership);
     String streamKey = membershipStreamKey(identity);
     String expectedEventId = eventIdForRequest(requestId);
@@ -983,13 +1071,16 @@ public class AccountMembershipAuthorityEventProducer {
     return verified;
   }
 
-  /**
-   * Extracts Account's local numeric membership value only after validating the complete canonical
-   * one-tenant event carrier. The event itself and all equality checks retain the map unchanged.
-   */
-  private String membershipVersionValue(MembershipEvent event, Identity identity) {
+  /** Retains the verified event's exact immutable one-tenant map in the local snapshot. */
+  private Map<String, String> membershipVersionMap(MembershipEvent event, Identity identity) {
     String tenantId = identity.tenantUuid().toString();
     Map<String, String> versions = event.membershipVersion();
+    membershipVersionValue(versions, tenantId);
+    return Map.copyOf(versions);
+  }
+
+  /** Extracts a process-local scalar only after validating the complete map. */
+  private String membershipVersionValue(Map<String, String> versions, String tenantId) {
     String version = versions.get(tenantId);
     if (versions.size() != 1
         || !versions.containsKey(tenantId)
@@ -1001,15 +1092,88 @@ public class AccountMembershipAuthorityEventProducer {
     return version;
   }
 
-  private void requireNoUnmodeledCutoff(Identity identity) {
-    Optional<Checkpoint> accountCutoff =
-        authorityOutboxRepository.readCheckpoint(accountStreamKey(identity.accountUuid()));
-    Optional<Checkpoint> tenantCutoff =
-        authorityOutboxRepository.readCheckpoint(tenantStreamKey(identity.tenantUuid()));
-    if (accountCutoff.isPresent() || tenantCutoff.isPresent()) {
-      throw new IllegalStateException(
-          "Account JOIN cannot form optional security or billing cutoff evidence from retained events");
+  private static int compareUnsignedUtf8(String left, String right) {
+    byte[] leftBytes = left.getBytes(StandardCharsets.UTF_8);
+    byte[] rightBytes = right.getBytes(StandardCharsets.UTF_8);
+    int commonLength = Math.min(leftBytes.length, rightBytes.length);
+    for (int index = 0; index < commonLength; index++) {
+      int comparison =
+          Integer.compare(
+              Byte.toUnsignedInt(leftBytes[index]), Byte.toUnsignedInt(rightBytes[index]));
+      if (comparison != 0) {
+        return comparison;
+      }
     }
+    return Integer.compare(leftBytes.length, rightBytes.length);
+  }
+
+  private List<OutboxCheckpointEntry> readBaselineUpstreamCheckpoints(
+      Identity identity, CompositeSnapshot snapshot) {
+    ScopeState tenant = only(snapshot.tenants(), "tenant");
+    if (!AuthorityScope.issuer(AccountServiceImpl.ACCOUNT_JWT_ISSUER)
+            .equals(snapshot.issuer().scope())
+        || !AuthorityScope.account(identity.accountUuid()).equals(snapshot.account().scope())
+        || !AuthorityScope.tenant(identity.tenantUuid()).equals(tenant.scope())
+        || !AuthorityScope.membership(identity.accountUuid(), identity.tenantUuid())
+            .equals(only(snapshot.memberships(), "membership").scope())) {
+      throw new IllegalStateException(
+          "Account authority snapshot does not cover the exact issuer/account/tenant scopes");
+    }
+
+    return orderedCheckpoints(
+        List.of(
+            requireSequenceZeroCheckpoint(
+                accountStreamKey(identity.accountUuid()), snapshot.account(), "account"),
+            requireSequenceZeroCheckpoint(issuerStreamKey(), snapshot.issuer(), "issuer"),
+            requireSequenceZeroCheckpoint(
+                tenantStreamKey(identity.tenantUuid()), tenant, "tenant")));
+  }
+
+  private OutboxCheckpointEntry requireSequenceZeroCheckpoint(
+      String streamKey, ScopeState scope, String scopeLabel) {
+    // The composite generation read holds the source rows. V31 advances source_version with every
+    // generation change; V33 keeps committed streams/events immutable and authority writers commit
+    // them with the applicable source generation. Both pristine generation state and an absent
+    // V33 head are required before zero is reported.
+    if (scope.generation() != 1L || scope.sourceVersion() != 1L) {
+      throw new IllegalStateException(
+          "Account "
+              + scopeLabel
+              + " authority generation cannot prove its sequence-zero baseline");
+    }
+    if (authorityOutboxRepository.readCheckpoint(streamKey).isPresent()) {
+      throw new IllegalStateException(
+          "Account " + scopeLabel + " authority stream has committed history");
+    }
+    return new OutboxCheckpointEntry(streamKey, "0");
+  }
+
+  private List<OutboxCheckpointEntry> orderedCheckpoints(List<OutboxCheckpointEntry> checkpoints) {
+    if (checkpoints == null || checkpoints.isEmpty()) {
+      throw new IllegalArgumentException("Account authority checkpoints are required");
+    }
+    ArrayList<OutboxCheckpointEntry> ordered = new ArrayList<>(checkpoints);
+    ordered.sort(OUTBOX_CHECKPOINT_ORDER);
+    for (int index = 1; index < ordered.size(); index++) {
+      if (ordered.get(index - 1).outboxStreamKey().equals(ordered.get(index).outboxStreamKey())) {
+        throw new IllegalArgumentException(
+            "Account authority checkpoint stream keys must be unique");
+      }
+    }
+    return List.copyOf(ordered);
+  }
+
+  private OutboxSourceEvidence sourceEvidence(Checkpoint checkpoint, Event event) {
+    if (!checkpointMatches(checkpoint, event)) {
+      throw new IllegalStateException(
+          "Account authority source event differs from its exact outbox checkpoint");
+    }
+    return new OutboxSourceEvidence(
+        checkpoint.outboxStreamKey(),
+        Long.toString(checkpoint.outboxSequence()),
+        event.eventId(),
+        event.eventDigest(),
+        new String(event.payload(), StandardCharsets.UTF_8));
   }
 
   private RoleSnapshot requireRoleSnapshot(Identity identity, AccountTenantMembership membership) {
@@ -1129,6 +1293,10 @@ public class AccountMembershipAuthorityEventProducer {
         + identity.tenantUuid();
   }
 
+  private String issuerStreamKey() {
+    return canonicalIssuerStreamKey();
+  }
+
   private String accountStreamKey(UUID accountUuid) {
     return MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX + "account/" + accountUuid;
   }
@@ -1176,22 +1344,75 @@ public class AccountMembershipAuthorityEventProducer {
   }
 
   /**
-   * Local V36 absence evidence. Its scalar version is not the canonical durable/wire carrier, and
-   * it carries no event identity/digest or gameplay admission.
+   * One immutable Account authority checkpoint; event identity remains separate source evidence.
    */
+  public record OutboxCheckpointEntry(String outboxStreamKey, String outboxSequence) {
+    public OutboxCheckpointEntry {
+      Objects.requireNonNull(outboxStreamKey, "authority outbox stream key is required");
+      Objects.requireNonNull(outboxSequence, "authority outbox sequence is required");
+      if (!outboxStreamKey.startsWith(MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX)
+          || !isNonnegativeCanonicalDecimal(outboxSequence)) {
+        throw new IllegalArgumentException("Account authority checkpoint is not canonical");
+      }
+    }
+  }
+
+  /** Positive committed source-event identity kept outside the two-field checkpoint carrier. */
+  public record OutboxSourceEvidence(
+      String outboxStreamKey,
+      String outboxSequence,
+      String eventId,
+      String eventDigest,
+      String canonicalEventJson) {
+    public OutboxSourceEvidence {
+      Objects.requireNonNull(outboxStreamKey, "authority outbox stream key is required");
+      Objects.requireNonNull(outboxSequence, "authority outbox sequence is required");
+      if (eventId == null || eventId.isBlank()) {
+        throw new IllegalArgumentException("source event ID is required");
+      }
+      Objects.requireNonNull(eventDigest, "source event digest is required");
+      if (!outboxStreamKey.startsWith(MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX)
+          || !isPositiveCanonicalDecimal(outboxSequence)
+          || !eventDigest.matches("sha256:[0-9a-f]{64}")) {
+        throw new IllegalArgumentException(
+            "Account authority source event evidence is not canonical");
+      }
+      Objects.requireNonNull(canonicalEventJson, "canonical source event JSON is required");
+      MembershipEvent event = MembershipAuthorityEventV1Codec.verify(canonicalEventJson);
+      if (!event.canonicalJson().equals(canonicalEventJson)
+          || !event.eventId().equals(eventId)
+          || !event.eventDigest().equals(eventDigest)
+          || !event.outboxStreamKey().equals(outboxStreamKey)
+          || !event.outboxSequence().equals(outboxSequence)) {
+        throw new IllegalArgumentException(
+            "Account authority source event JSON differs from its exact identity");
+      }
+    }
+  }
+
+  /**
+   * Local V36 absence evidence with an exact one-tenant membership-version map. The sequence-zero
+   * checkpoints carry no source event identity or digest and never authorize gameplay.
+   */
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP",
+      justification = "The constructor stores immutable Map.copyOf and List.copyOf values.")
   public record NeverJoinedMembershipSnapshot(
       String accountId,
       String tenantId,
-      String membershipVersion,
+      Map<String, String> membershipVersion,
       String membershipAuthorityGeneration,
       AuthorityTuple authorityTuple,
       String issuanceFence,
       Instant evaluatedAt,
-      String outboxStreamKey) {
+      String outboxStreamKey,
+      List<OutboxCheckpointEntry> outboxCheckpoints,
+      List<OutboxSourceEvidence> outboxSourceEvidence) {
     public NeverJoinedMembershipSnapshot {
       accountId = requireCanonicalUuid(accountId, "canonical Account UUID");
       tenantId = requireCanonicalUuid(tenantId, "canonical tenant UUID");
-      membershipVersion = requirePositiveCanonicalDecimal(membershipVersion, "membership version");
+      membershipVersion =
+          requireExactPositiveVersionMap(membershipVersion, tenantId, "membership version");
       membershipAuthorityGeneration =
           requirePositiveCanonicalDecimal(
               membershipAuthorityGeneration, "membership authority generation");
@@ -1200,16 +1421,19 @@ public class AccountMembershipAuthorityEventProducer {
       Objects.requireNonNull(evaluatedAt, "Account evaluation time is required");
       outboxStreamKey =
           Objects.requireNonNull(outboxStreamKey, "membership stream key is required");
+      outboxCheckpoints = requireOrderedCheckpointSet(outboxCheckpoints);
+      outboxSourceEvidence = List.copyOf(outboxSourceEvidence);
 
-      if (!isPositiveCanonicalDecimal(authorityTuple.issuerAuthGeneration())
-          || !isPositiveCanonicalDecimal(authorityTuple.accountAuthorityGeneration())
+      if (!"1".equals(authorityTuple.issuerAuthGeneration())
+          || !"1".equals(authorityTuple.accountAuthorityGeneration())
           || authorityTuple.tenantAuthorityGeneration().size() != 1
           || authorityTuple.membershipAuthorityGeneration().size() != 1
           || !authorityTuple.tenantAuthorityGeneration().containsKey(tenantId)
           || !authorityTuple.membershipAuthorityGeneration().containsKey(tenantId)
-          || !isPositiveCanonicalDecimal(authorityTuple.tenantAuthorityGeneration().get(tenantId))
+          || !"1".equals(authorityTuple.tenantAuthorityGeneration().get(tenantId))
           || !membershipAuthorityGeneration.equals(
               authorityTuple.membershipAuthorityGeneration().get(tenantId))
+          || !"1".equals(membershipVersion.get(tenantId))
           || !authorityTuple.privateRealmGrantVersions().isEmpty()
           || authorityTuple.accountSecurityCutoff().isPresent()
           || authorityTuple.tenantBillingCutoff().isPresent()) {
@@ -1227,10 +1451,17 @@ public class AccountMembershipAuthorityEventProducer {
         throw new IllegalArgumentException(
             "Never-joined Account membership stream key is not canonical");
       }
-    }
-
-    public long outboxSequence() {
-      return 0L;
+      List<OutboxCheckpointEntry> expectedCheckpoints =
+          requireOrderedCheckpointSet(
+              List.of(
+                  new OutboxCheckpointEntry(accountStreamKey(accountId), "0"),
+                  new OutboxCheckpointEntry(canonicalIssuerStreamKey(), "0"),
+                  new OutboxCheckpointEntry(outboxStreamKey, "0"),
+                  new OutboxCheckpointEntry(tenantStreamKey(tenantId), "0")));
+      if (!expectedCheckpoints.equals(outboxCheckpoints) || !outboxSourceEvidence.isEmpty()) {
+        throw new IllegalArgumentException(
+            "Never-joined Account snapshot must contain only four sequence-zero checkpoints");
+      }
     }
 
     public boolean membershipExists() {
@@ -1248,91 +1479,181 @@ public class AccountMembershipAuthorityEventProducer {
     public boolean gameplayAdmissionAllowed() {
       return false;
     }
-
-    private static String requireCanonicalUuid(String value, String field) {
-      Objects.requireNonNull(value, field + " is required");
-      try {
-        if (!UUID.fromString(value).toString().equals(value)) {
-          throw new IllegalArgumentException(field + " must be a canonical lowercase UUID");
-        }
-      } catch (IllegalArgumentException exception) {
-        throw new IllegalArgumentException(
-            field + " must be a canonical lowercase UUID", exception);
-      }
-      return value;
-    }
-
-    private static String requirePositiveCanonicalDecimal(String value, String field) {
-      Objects.requireNonNull(value, field + " is required");
-      if (!isPositiveCanonicalDecimal(value)) {
-        throw new IllegalArgumentException(
-            field + " must be a positive canonical unsigned decimal string");
-      }
-      return value;
-    }
-
-    private static boolean isPositiveCanonicalDecimal(String value) {
-      return value != null && value.matches("[1-9][0-9]*");
-    }
   }
 
   /** Immutable positive membership evidence assembled from one fenced Account transaction. */
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP",
+      justification = "The constructor stores immutable Map.copyOf and List.copyOf values.")
   public record PositiveMembershipSnapshot(
       boolean membershipExists,
       String accountId,
       String tenantId,
       String membershipLifecycleState,
       boolean gameplayAdmissionAllowed,
-      String membershipVersion,
+      Map<String, String> membershipVersion,
       String membershipAuthorityGeneration,
       List<String> roles,
       AuthorityTuple authorityTuple,
       String issuanceFence,
       Instant evaluatedAt,
-      List<Checkpoint> outboxCheckpoints,
+      List<OutboxCheckpointEntry> outboxCheckpoints,
+      List<OutboxSourceEvidence> outboxSourceEvidence,
       MembershipTransitionReceipt transitionReceipt,
       MembershipEvent authorityEvent) {
     public PositiveMembershipSnapshot {
-      Objects.requireNonNull(accountId, "canonical Account UUID is required");
-      Objects.requireNonNull(tenantId, "canonical tenant UUID is required");
+      accountId = requireCanonicalUuid(accountId, "canonical Account UUID");
+      tenantId = requireCanonicalUuid(tenantId, "canonical tenant UUID");
       Objects.requireNonNull(membershipLifecycleState, "membership lifecycle is required");
-      Objects.requireNonNull(membershipVersion, "membership version is required");
+      membershipVersion =
+          requireExactPositiveVersionMap(membershipVersion, tenantId, "membership version");
       Objects.requireNonNull(
           membershipAuthorityGeneration, "membership authority generation is required");
+      membershipAuthorityGeneration =
+          requirePositiveCanonicalDecimal(
+              membershipAuthorityGeneration, "membership authority generation");
       roles = List.copyOf(roles);
       Objects.requireNonNull(authorityTuple, "complete authority tuple is required");
-      Objects.requireNonNull(issuanceFence, "Account issuance fence is required");
+      issuanceFence = requirePositiveCanonicalDecimal(issuanceFence, "Account issuance fence");
       Objects.requireNonNull(evaluatedAt, "Account evaluation time is required");
-      outboxCheckpoints = List.copyOf(outboxCheckpoints);
+      outboxCheckpoints = requireOrderedCheckpointSet(outboxCheckpoints);
+      outboxSourceEvidence = List.copyOf(outboxSourceEvidence);
       Objects.requireNonNull(transitionReceipt, "membership transition receipt is required");
       Objects.requireNonNull(authorityEvent, "canonical membership authority event is required");
+
+      String membershipStreamKey = membershipStreamKey(accountId, tenantId);
+      String membershipSequence = authorityEvent.outboxSequence();
+      if (!isPositiveCanonicalDecimal(membershipSequence)) {
+        throw new IllegalArgumentException(
+            "Positive Account membership event sequence must be canonical and positive");
+      }
+      List<OutboxCheckpointEntry> expectedCheckpoints =
+          requireOrderedCheckpointSet(
+              List.of(
+                  new OutboxCheckpointEntry(accountStreamKey(accountId), "0"),
+                  new OutboxCheckpointEntry(canonicalIssuerStreamKey(), "0"),
+                  new OutboxCheckpointEntry(membershipStreamKey, membershipSequence),
+                  new OutboxCheckpointEntry(tenantStreamKey(tenantId), "0")));
+      List<OutboxSourceEvidence> expectedSourceEvidence =
+          List.of(
+              new OutboxSourceEvidence(
+                  membershipStreamKey,
+                  membershipSequence,
+                  authorityEvent.eventId(),
+                  authorityEvent.eventDigest(),
+                  authorityEvent.canonicalJson()));
 
       if (!membershipExists
           || !"ACTIVE".equals(membershipLifecycleState)
           || !gameplayAdmissionAllowed
           || !accountId.equals(authorityEvent.accountId())
           || !tenantId.equals(authorityEvent.tenantId())
+          || !membershipStreamKey.equals(authorityEvent.outboxStreamKey())
           || !membershipLifecycleState.equals(authorityEvent.membershipLifecycleState())
-          || !membershipVersion.matches("[1-9][0-9]*")
-          || !Map.of(tenantId, membershipVersion).equals(authorityEvent.membershipVersion())
+          || !membershipVersion.equals(authorityEvent.membershipVersion())
           || !membershipAuthorityGeneration.equals(authorityEvent.membershipAuthorityGeneration())
           || !roles.equals(authorityEvent.roles())
+          || gameplayAdmissionAllowed != authorityEvent.gameplayAdmissionAllowed()
           || !authorityTuple.equals(authorityEvent.authorityTuple())
           || !issuanceFence.equals(authorityEvent.issuanceFence())
+          || !"1".equals(authorityTuple.issuerAuthGeneration())
+          || !"1".equals(authorityTuple.accountAuthorityGeneration())
+          || !Map.of(tenantId, "1").equals(authorityTuple.tenantAuthorityGeneration())
+          || !Map.of(tenantId, membershipAuthorityGeneration)
+              .equals(authorityTuple.membershipAuthorityGeneration())
           || !membershipAuthorityGeneration.equals(
               authorityTuple.membershipAuthorityGeneration().get(tenantId))
-          || outboxCheckpoints.size() != 1
-          || !outboxCheckpoints.contains(
-              new Checkpoint(
-                  authorityEvent.outboxStreamKey(),
-                  Long.parseLong(authorityEvent.outboxSequence()),
-                  authorityEvent.eventId(),
-                  authorityEvent.eventDigest()))
+          || !authorityTuple.privateRealmGrantVersions().isEmpty()
+          || authorityTuple.accountSecurityCutoff().isPresent()
+          || authorityTuple.tenantBillingCutoff().isPresent()
+          || !expectedCheckpoints.equals(outboxCheckpoints)
+          || !expectedSourceEvidence.equals(outboxSourceEvidence)
           || !transitionReceipt.requestId().equals(authorityEvent.requestId())) {
         throw new IllegalArgumentException(
             "Positive Account membership snapshot evidence is internally inconsistent");
       }
     }
+  }
+
+  private static String requireCanonicalUuid(String value, String field) {
+    Objects.requireNonNull(value, field + " is required");
+    try {
+      if (!UUID.fromString(value).toString().equals(value)) {
+        throw new IllegalArgumentException(field + " must be a canonical lowercase UUID");
+      }
+    } catch (IllegalArgumentException exception) {
+      throw new IllegalArgumentException(field + " must be a canonical lowercase UUID", exception);
+    }
+    return value;
+  }
+
+  private static String requirePositiveCanonicalDecimal(String value, String field) {
+    Objects.requireNonNull(value, field + " is required");
+    if (!isPositiveCanonicalDecimal(value)) {
+      throw new IllegalArgumentException(
+          field + " must be a positive canonical unsigned decimal string");
+    }
+    return value;
+  }
+
+  private static boolean isPositiveCanonicalDecimal(String value) {
+    return value != null && value.matches("[1-9][0-9]*");
+  }
+
+  private static boolean isNonnegativeCanonicalDecimal(String value) {
+    return value != null && value.matches("0|[1-9][0-9]*");
+  }
+
+  private static Map<String, String> requireExactPositiveVersionMap(
+      Map<String, String> value, String tenantId, String field) {
+    Objects.requireNonNull(value, field + " map is required");
+    if (value.size() != 1
+        || !value.containsKey(tenantId)
+        || !isPositiveCanonicalDecimal(value.get(tenantId))) {
+      throw new IllegalArgumentException(field + " must be a positive canonical one-tenant map");
+    }
+    return Map.copyOf(value);
+  }
+
+  private static List<OutboxCheckpointEntry> requireOrderedCheckpointSet(
+      List<OutboxCheckpointEntry> checkpoints) {
+    Objects.requireNonNull(checkpoints, "Account authority checkpoints are required");
+    List<OutboxCheckpointEntry> copy = List.copyOf(checkpoints);
+    ArrayList<OutboxCheckpointEntry> ordered = new ArrayList<>(copy);
+    ordered.sort(OUTBOX_CHECKPOINT_ORDER);
+    if (!copy.equals(ordered)) {
+      throw new IllegalArgumentException(
+          "Account authority checkpoints must use canonical stream-key order");
+    }
+    for (int index = 1; index < copy.size(); index++) {
+      if (copy.get(index - 1).outboxStreamKey().equals(copy.get(index).outboxStreamKey())) {
+        throw new IllegalArgumentException(
+            "Account authority checkpoint stream keys must be unique");
+      }
+    }
+    return copy;
+  }
+
+  private static String membershipStreamKey(String accountId, String tenantId) {
+    return MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX
+        + "membership/"
+        + accountId
+        + "/"
+        + tenantId;
+  }
+
+  private static String canonicalIssuerStreamKey() {
+    return MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX
+        + "issuer/"
+        + AccountServiceImpl.ACCOUNT_JWT_ISSUER;
+  }
+
+  private static String accountStreamKey(String accountId) {
+    return MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX + "account/" + accountId;
+  }
+
+  private static String tenantStreamKey(String tenantId) {
+    return MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX + "tenant/" + tenantId;
   }
 
   private record Identity(

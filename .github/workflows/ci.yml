@@ -391,6 +391,7 @@ jobs:
           bash ./dev-tools/tests/secret-compliance-contract.sh
           bash ./dev-tools/tests/ensure-local-compose-env-contract.sh
           bash ./dev-tools/tests/smoke-image-env-contract.sh
+          bash ./dev-tools/tests/gradle-proof-tooling-contract.sh
           bash ./dev-tools/tests/minio-pr-smoke-bootstrap-contract.sh
           bash ./dev-tools/tests/architecture-doc-contracts.sh
           bash ./dev-tools/tests/lint-yaml-contract.sh
@@ -943,8 +944,60 @@ jobs:
         id: checks
         run: |
           echo "::group::Run Module Validation"
-          ./gradlew :${{ matrix.module }}:check -PfullCheck
+          if [[ "${{ matrix.module }}" == "account-service" || "${{ matrix.module }}" == "game-session-service" ]]; then
+            ./gradlew :${{ matrix.module }}:check -PfullCheck --no-build-cache --no-configuration-cache
+          else
+            ./gradlew :${{ matrix.module }}:check -PfullCheck
+          fi
           echo "::endgroup::"
+
+      - name: 🔎 Verify Account PostgreSQL proof cases
+        if: ${{ matrix.module == 'account-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest \
+            --require-suite integration.net.firedevops.firemud.accountservice.AccountBareLoginExchangeRepositoryIntegrationTest \
+            --require-suite integration.net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceRepositoryIntegrationTest \
+            --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#positiveMembershipSnapshotRejectsScalarAndWrongTenantVersionMaps()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#concurrentFirstJoinCannotMixWithCompleteFencedRuntimeMembershipSnapshot()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountBareLoginExchangeRepositoryIntegrationTest#claimOnlyTransactionRollsBackPendingExchange()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceRepositoryIntegrationTest#concurrentExactIssuanceClaimsHaveOneTerminalFirstWriter()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceRepositoryIntegrationTest#lostIssuanceResponseRecoversExactEncryptedResultFromDurableReadback(Path)' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceRepositoryIntegrationTest#directDeletionOfIssuanceOperationOrResponseEnvelopeIsRejected()' \
+            account-service
+
+      - name: 🔎 Verify Account authority exhaustion rollback proof
+        if: ${{ matrix.module == 'account-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationIntegrationTest \
+            --require-suite integration.net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepositoryIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationIntegrationTest#exhaustedAccountCountersRollbackTheWholeCallerTransaction()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepositoryIntegrationTest#exhaustedSequenceRejectsAppendWithoutChangingEventCheckpointOrCallerSentinel()' \
+            account-service
+
+      - name: 🔎 Verify Account committed connect source readback proof
+        if: ${{ matrix.module == 'account-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest#readsExactCommittedOriginalSourceAndLostResultWithoutMutation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest#doesNotReturnWhenAccountFenceWaitOutlivesTheUnchangedGatewayDeadline()' \
+            account-service
+
+      - name: 🔎 Verify Game Session PostgreSQL proof case
+        if: ${{ matrix.module == 'game-session-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite net.firedevops.firemud.gamesession.repository.ScriptPinOperationRepositoryIntegrationTest \
+            --require-suite net.firedevops.firemud.gamesession.websocket.GameSessionWebSocketHandlerIntegrationTest \
+            --require-case 'net.firedevops.firemud.gamesession.repository.ScriptPinOperationRepositoryIntegrationTest#pinAdmissionBaseMustStillMatchTheRowLockedRuntimeAndIsBoundToTheReceipt()' \
+            --require-case 'net.firedevops.firemud.gamesession.websocket.GameSessionWebSocketHandlerIntegrationTest#websocketFirstPartySignedCompleteContextFailsClosedWithoutMutation()' \
+            game-session-service
 
       - name: 📦 Build Runtime JAR
         if: ${{ contains(fromJSON(needs.changes.outputs.bootable_modules), matrix.module) }}

@@ -1,69 +1,41 @@
 package net.firedevops.firemud.gamesession.service;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import io.jsonwebtoken.Claims;
-import io.jsonwebtoken.JwtException;
+import java.security.PublicKey;
+import java.time.Clock;
+import java.util.Map;
 import java.util.Optional;
-import net.firedevops.firemud.common.security.JwtClaims;
-import net.firedevops.firemud.common.security.JwtUtil;
-import net.firedevops.firemud.gamesession.config.FirstPartyConnectContextProperties;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Qualifier;
+import net.firedevops.firemud.common.security.GatewayConnectContext;
+import net.firedevops.firemud.common.security.GatewayConnectContextCodec;
 import org.springframework.stereotype.Component;
-import org.springframework.util.StringUtils;
 
+/** Receives complete Gateway-signed contexts; no Account-JWT or shared-secret fallback exists. */
 @Component
-@SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification = "Injected configuration properties are framework-managed singletons")
 public class FirstPartyConnectContextService {
-  private static final Logger logger =
-      LoggerFactory.getLogger(FirstPartyConnectContextService.class);
 
-  private final FirstPartyConnectContextProperties properties;
-  private final JwtUtil jwtUtil;
-
-  public FirstPartyConnectContextService(
-      FirstPartyConnectContextProperties properties,
-      @Qualifier("firstPartyConnectContextJwtUtil") JwtUtil jwtUtil) {
-    this.properties = properties;
-    this.jwtUtil = jwtUtil;
-  }
-
-  public Optional<FirstPartyConnectContext> parse(String token) {
-    if (!StringUtils.hasText(token) || !StringUtils.hasText(properties.getJwtSecret())) {
-      return Optional.empty();
-    }
+  /**
+   * Validates a context against the explicitly supplied Gateway public-key ring.
+   *
+   * <p>The Gateway key-publication source is not yet wired into the runtime. Callers must not
+   * replace the empty runtime key set with an Account JWT key or a test/default key.
+   */
+  public Optional<GatewayConnectContext> parseVerified(
+      String signedEnvelope,
+      Map<String, ? extends PublicKey> gatewayVerificationKeys,
+      Clock clock) {
     try {
-      Claims claims = jwtUtil.parseToken(token).getPayload();
-      JwtClaims.SignedGameplayRoutingClaims routingClaims =
-          JwtClaims.requireSignedGameplayRoutingClaims(
-              claims, "first-party connect context account subject mismatch");
       return Optional.of(
-          new FirstPartyConnectContext(
-              routingClaims.accountId(),
-              routingClaims.tenantId(),
-              routingClaims.worldSlug(),
-              routingClaims.realmSlug(),
-              routingClaims.gameInstanceId(),
-              routingClaims.pointerVersion(),
-              requiredTextClaim(claims, "connectScopeId"),
-              stringClaim(claims, "connectTokenJti"),
-              requiredTextClaim(claims, "connectRequestId"),
-              stringClaim(claims, "gatewayRequestId")));
-    } catch (IllegalArgumentException | JwtException ex) {
-      logger.warn("Rejecting invalid first-party connect context", ex);
+          GatewayConnectContextCodec.verifyAndDecode(
+              signedEnvelope, gatewayVerificationKeys, clock));
+    } catch (IllegalArgumentException ex) {
       return Optional.empty();
     }
   }
 
-  private static String stringClaim(Claims claims, String key) {
-    Object value = claims.get(key);
-    return value == null ? null : value.toString();
-  }
-
-  private static String requiredTextClaim(Claims claims, String key) {
-    return JwtClaims.requireText(claims.get(key), key);
+  /**
+   * Runtime admission remains closed until the independently published Gateway key set is wired.
+   * The legacy numeric Game Session carrier cannot be populated from canonical UUID target IDs.
+   */
+  public Optional<FirstPartyConnectContext> parse(String signedEnvelope) {
+    return Optional.empty();
   }
 }

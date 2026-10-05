@@ -25,6 +25,7 @@ import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapsh
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
+import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 import org.jooq.exception.DataAccessException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -265,8 +266,7 @@ class WorldsTextCommandDispatchHandlerTest {
         .issueDirectTextConnectScope(Mockito.any(), targetCaptor.capture());
     assertThat(targetCaptor.getValue()).isEqualTo(expectedTarget);
     Mockito.verify(accountClient, Mockito.never())
-        .getTenantMembershipForRuntime(
-            Mockito.anyString(), Mockito.anyString(), Mockito.anyString());
+        .getTenantMembershipForRuntime(Mockito.any(PlayerExecutionContext.class));
     Mockito.verify(accountClient, Mockito.never())
         .getRealmAccessGrantForRuntime(
             Mockito.anyString(),

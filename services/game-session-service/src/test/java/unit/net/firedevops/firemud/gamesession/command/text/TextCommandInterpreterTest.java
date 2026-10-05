@@ -22,7 +22,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
-import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.account.v1.IssueDirectTextConnectScopeResponse;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.cache.ScreenBufferService;
@@ -178,18 +177,18 @@ class TextCommandInterpreterTest {
                         .build())
                 .build());
     when(accountClient.getTenantMembershipForRuntime(
-            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
-        .thenReturn(
-            GetTenantMembershipForRuntimeResponse.newBuilder()
-                .setAccountId("123")
-                .setTenantId("22")
-                .setMembershipExists(true)
-                .setMembershipLifecycleState("ACTIVE")
-                .setGameplayAdmissionAllowed(true)
-                .setMembershipVersion(1L)
-                .setMembershipAuthorityGeneration(1L)
-                .setEvaluatedAt(Instant.now().toString())
-                .build());
+            Mockito.any(net.firedevops.firemud.shared.v1.PlayerExecutionContext.class)))
+        .thenAnswer(
+            invocation -> {
+              var response =
+                  net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures.active(
+                          123L, 22L, "1")
+                      .toBuilder()
+                      .setEvaluatedAt(Instant.now().toString())
+                      .build();
+              return net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                  .echoRequestId(response, invocation.getArgument(0));
+            });
     when(accountClient.getRealmAccessGrantForRuntime(
             Mockito.anyString(),
             Mockito.anyString(),

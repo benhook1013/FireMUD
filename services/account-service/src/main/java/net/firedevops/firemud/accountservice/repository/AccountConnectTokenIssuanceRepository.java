@@ -103,6 +103,58 @@ public class AccountConnectTokenIssuanceRepository {
   }
 
   /**
+   * Reads a successful committed source result using only its exact caller identity. The request
+   * digest and all AEAD evidence are recovered from the immutable winning operation row; callers
+   * must not derive or substitute a digest when they only possess the original scope and request
+   * IDs.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public Optional<AccountCommittedConnectSource> readCommittedResponseEnvelope(
+      AccountConnectTokenIssuanceIdentity identity) {
+    validateIdentity(identity);
+    Optional<AccountConnectTokenIssuanceOperation> stored = readOperation(identity);
+    if (stored.isEmpty()) {
+      return Optional.empty();
+    }
+
+    AccountConnectTokenIssuanceOperation operation = stored.orElseThrow();
+    if (operation.lifecycle() != Lifecycle.COMMITTED
+        || !"SUCCESS".equals(operation.outcomeCode())
+        || operation.tokenIdentity() == null
+        || operation.tokenIdentity().isBlank()
+        || operation.tokenHash() == null
+        || operation.contextEvidenceDigest() == null
+        || operation.authorityTupleDigest() == null
+        || operation.issuanceFenceDigest() == null
+        || operation.postconditionDigest() == null) {
+      throw new IllegalStateException(
+          "Connect-token source operation is not a complete committed success");
+    }
+
+    AccountEnvelopeBinding binding =
+        new AccountEnvelopeBinding(
+            AccountEnvelopeBinding.OperationKind.CONNECT_TOKEN_ISSUANCE,
+            operation.operationId().toString(),
+            identity.requestId(),
+            Long.toString(identity.accountId()),
+            Long.toString(identity.tenantId()),
+            identity.connectScopeId(),
+            null,
+            operation.requestDigest(),
+            operation.contextEvidenceDigest(),
+            operation.authorityTupleDigest(),
+            operation.issuanceFenceDigest(),
+            operation.postconditionDigest());
+    AccountConnectTokenResponseEnvelope envelope =
+        readResponseEnvelope(identity, operation.requestDigest(), binding)
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "Committed connect-token source has no exact response envelope"));
+    return Optional.of(new AccountCommittedConnectSource(operation, envelope));
+  }
+
+  /**
    * Adds previously absent token/authority evidence to the first writer's still-PENDING row.
    * Existing evidence is write-once; retries may confirm the same bytes but cannot replace them.
    * This lets an ambiguous operation retain what Account already proved without making it terminal

@@ -24,6 +24,7 @@ import net.firedevops.firemud.gamesession.service.DirectTextConnectScopeSessionS
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures;
 import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
@@ -92,8 +93,7 @@ class WorldsCommandHandlerTest {
     AccountClient accountClient = Mockito.mock(AccountClient.class);
     stubPublicConnectScope(accountClient, "scope-public");
     Mockito.when(
-            accountClient.getTenantMembershipForRuntime(
-                Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+            accountClient.getTenantMembershipForRuntime(Mockito.any(PlayerExecutionContext.class)))
         .thenReturn(activeMembership());
     Mockito.when(
             accountClient.getRealmAccessGrantForRuntime(
@@ -123,8 +123,7 @@ class WorldsCommandHandlerTest {
             Mockito.anyString(),
             Mockito.anyString());
     Mockito.verify(accountClient, Mockito.never())
-        .getTenantMembershipForRuntime(
-            Mockito.anyString(), Mockito.anyString(), Mockito.anyString());
+        .getTenantMembershipForRuntime(Mockito.any(PlayerExecutionContext.class));
   }
 
   @Test
@@ -188,8 +187,7 @@ class WorldsCommandHandlerTest {
     AccountClient accountClient = Mockito.mock(AccountClient.class);
     stubPublicConnectScope(accountClient, "scope-public");
     Mockito.when(
-            accountClient.getTenantMembershipForRuntime(
-                Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+            accountClient.getTenantMembershipForRuntime(Mockito.any(PlayerExecutionContext.class)))
         .thenReturn(activeMembership());
     Mockito.when(
             accountClient.getRealmAccessGrantForRuntime(
@@ -536,8 +534,7 @@ class WorldsCommandHandlerTest {
                 .setConnectScopeExpiresAt(Instant.now().plusSeconds(60).toString())
                 .build());
     Mockito.when(
-            accountClient.getTenantMembershipForRuntime(
-                Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+            accountClient.getTenantMembershipForRuntime(Mockito.any(PlayerExecutionContext.class)))
         .thenReturn(activeMembership());
     DirectTextConnectScopeSessionStore scopeStore =
         DirectTextConnectScopeSessionStore.inMemoryForTest();
@@ -720,8 +717,7 @@ class WorldsCommandHandlerTest {
     GameplayCatalogProperties properties = publicProductionProperties();
     AccountClient accountClient = Mockito.mock(AccountClient.class);
     Mockito.when(
-            accountClient.getTenantMembershipForRuntime(
-                Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+            accountClient.getTenantMembershipForRuntime(Mockito.any(PlayerExecutionContext.class)))
         .thenReturn(publicMembership(false, false, 0L, 0L, "MISSING"));
     Mockito.when(
             accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
@@ -740,8 +736,7 @@ class WorldsCommandHandlerTest {
     GameplayCatalogProperties properties = publicProductionProperties();
     AccountClient accountClient = Mockito.mock(AccountClient.class);
     Mockito.when(
-            accountClient.getTenantMembershipForRuntime(
-                Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+            accountClient.getTenantMembershipForRuntime(Mockito.any(PlayerExecutionContext.class)))
         .thenReturn(publicMembership(true, false, 3L, 4L, "INACTIVE"));
     Mockito.when(
             accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
@@ -806,19 +801,8 @@ class WorldsCommandHandlerTest {
     properties.getWorlds().getFirst().getRealms().getFirst().setPublicProductionRealm(true);
     AccountClient accountClient = Mockito.mock(AccountClient.class);
     Mockito.when(
-            accountClient.getTenantMembershipForRuntime(
-                Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
-        .thenReturn(
-            GetTenantMembershipForRuntimeResponse.newBuilder()
-                .setAccountId("123")
-                .setTenantId("22")
-                .setMembershipExists(false)
-                .setGameplayAdmissionAllowed(false)
-                .setMembershipVersion(0L)
-                .setMembershipAuthorityGeneration(0L)
-                .setMembershipLifecycleState("MISSING")
-                .setEvaluatedAt(Instant.now().toString())
-                .build());
+            accountClient.getTenantMembershipForRuntime(Mockito.any(PlayerExecutionContext.class)))
+        .thenReturn(RuntimeMembershipTestFixtures.missing(123L, 22L));
     Mockito.when(
             accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(publicEntitlement(false));
@@ -838,19 +822,8 @@ class WorldsCommandHandlerTest {
     properties.getWorlds().getFirst().getRealms().getFirst().setPublicProductionRealm(true);
     AccountClient accountClient = Mockito.mock(AccountClient.class);
     Mockito.when(
-            accountClient.getTenantMembershipForRuntime(
-                Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
-        .thenReturn(
-            GetTenantMembershipForRuntimeResponse.newBuilder()
-                .setAccountId("123")
-                .setTenantId("22")
-                .setMembershipExists(false)
-                .setGameplayAdmissionAllowed(false)
-                .setMembershipVersion(0L)
-                .setMembershipAuthorityGeneration(0L)
-                .setMembershipLifecycleState("MISSING")
-                .setEvaluatedAt(Instant.now().toString())
-                .build());
+            accountClient.getTenantMembershipForRuntime(Mockito.any(PlayerExecutionContext.class)))
+        .thenReturn(RuntimeMembershipTestFixtures.missing(123L, 22L));
     Mockito.when(
             accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
@@ -924,7 +897,7 @@ class WorldsCommandHandlerTest {
       AccountClient accountClient = Mockito.mock(AccountClient.class);
       Mockito.when(
               accountClient.getTenantMembershipForRuntime(
-                  Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+                  Mockito.any(PlayerExecutionContext.class)))
           .thenReturn(memberships.get(index));
       Mockito.when(
               accountClient.getRealmAccessGrantForRuntime(
@@ -1152,8 +1125,7 @@ class WorldsCommandHandlerTest {
     addPublicProductionAuthority(properties);
     AccountClient accountClient = Mockito.mock(AccountClient.class);
     Mockito.when(
-            accountClient.getTenantMembershipForRuntime(
-                Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+            accountClient.getTenantMembershipForRuntime(Mockito.any(PlayerExecutionContext.class)))
         .thenReturn(
             GetTenantMembershipForRuntimeResponse.newBuilder()
                 .setError(ErrorDetail.newBuilder().setCode("AUTH_UNAVAILABLE"))
@@ -1171,8 +1143,7 @@ class WorldsCommandHandlerTest {
   void browseCharactersIgnoresIncompleteOrStaleEntitlementBeforeRosterReads() {
     AccountClient accountClient = Mockito.mock(AccountClient.class);
     Mockito.when(
-            accountClient.getTenantMembershipForRuntime(
-                Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+            accountClient.getTenantMembershipForRuntime(Mockito.any(PlayerExecutionContext.class)))
         .thenReturn(activeMembership());
     WorldsCommandHandler localHandler =
         authenticatedHandler(publicProductionProperties(), accountClient);
@@ -1206,7 +1177,7 @@ class WorldsCommandHandlerTest {
     for (String evaluatedAt : invalidEvaluationTimes()) {
       Mockito.when(
               accountClient.getTenantMembershipForRuntime(
-                  Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+                  Mockito.any(PlayerExecutionContext.class)))
           .thenReturn(activeMembership().toBuilder().setEvaluatedAt(evaluatedAt).build());
 
       assertThat(localHandler.browseCharacters(authenticatedSession(), "demo", "production"))
@@ -1333,8 +1304,7 @@ class WorldsCommandHandlerTest {
         assertThat(issuedContexts.getValue().getRealmId())
             .isEqualTo(currentWorld.realms().getFirst().realmId().toString());
         Mockito.verify(accountClient, Mockito.never())
-            .getTenantMembershipForRuntime(
-                Mockito.anyString(), Mockito.anyString(), Mockito.anyString());
+            .getTenantMembershipForRuntime(Mockito.any(PlayerExecutionContext.class));
         Mockito.verify(accountClient, Mockito.never())
             .getRealmAccessGrantForRuntime(
                 Mockito.anyString(),
@@ -1371,8 +1341,7 @@ class WorldsCommandHandlerTest {
     addPublicProductionAuthority(properties);
     AccountClient accountClient = Mockito.mock(AccountClient.class);
     Mockito.when(
-            accountClient.getTenantMembershipForRuntime(
-                Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+            accountClient.getTenantMembershipForRuntime(Mockito.any(PlayerExecutionContext.class)))
         .thenReturn(publicMembership(false, false, 0L, 0L, "MISSING"));
     WorldsCommandHandler localHandler = authenticatedHandler(properties, accountClient);
 
@@ -1553,8 +1522,7 @@ class WorldsCommandHandlerTest {
                 .setConnectScopeExpiresAt(Instant.now().plusSeconds(60).toString())
                 .build());
     Mockito.when(
-            accountClient.getTenantMembershipForRuntime(
-                Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+            accountClient.getTenantMembershipForRuntime(Mockito.any(PlayerExecutionContext.class)))
         .thenReturn(activeMembership());
     Mockito.when(
             accountClient.getRealmAccessGrantForRuntime(
@@ -1581,8 +1549,7 @@ class WorldsCommandHandlerTest {
                     .containsExactly("production"));
     Mockito.verify(accountClient).issueDirectTextConnectScope(Mockito.any(), Mockito.any());
     Mockito.verify(accountClient, Mockito.never())
-        .getTenantMembershipForRuntime(
-            Mockito.anyString(), Mockito.anyString(), Mockito.anyString());
+        .getTenantMembershipForRuntime(Mockito.any(PlayerExecutionContext.class));
     Mockito.verify(accountClient, Mockito.never())
         .getRealmAccessGrantForRuntime(
             Mockito.anyString(),
@@ -1665,8 +1632,7 @@ class WorldsCommandHandlerTest {
             scopedRealm ->
                 assertThat(scopedRealm.playerContext().getRealmId()).isEqualTo(realmId.toString()));
     Mockito.verify(accountClient, Mockito.never())
-        .getTenantMembershipForRuntime(
-            Mockito.anyString(), Mockito.anyString(), Mockito.anyString());
+        .getTenantMembershipForRuntime(Mockito.any(PlayerExecutionContext.class));
     Mockito.verify(accountClient, Mockito.never())
         .getRealmAccessGrantForRuntime(
             Mockito.anyString(),
@@ -2172,8 +2138,7 @@ class WorldsCommandHandlerTest {
       GetTenantMembershipForRuntimeResponse membership) {
     AccountClient accountClient = Mockito.mock(AccountClient.class);
     Mockito.when(
-            accountClient.getTenantMembershipForRuntime(
-                Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+            accountClient.getTenantMembershipForRuntime(Mockito.any(PlayerExecutionContext.class)))
         .thenReturn(membership);
     Mockito.when(
             accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
@@ -2213,7 +2178,7 @@ class WorldsCommandHandlerTest {
   }
 
   private GetTenantMembershipForRuntimeResponse activeMembership() {
-    return publicMembership(true, true, 1L, 1L, "ACTIVE");
+    return RuntimeMembershipTestFixtures.active(123L, 22L, "1");
   }
 
   private GetTenantMembershipForRuntimeResponse publicMembership(
@@ -2222,15 +2187,16 @@ class WorldsCommandHandlerTest {
       long membershipVersion,
       long membershipAuthorityGeneration,
       String lifecycleState) {
-    return GetTenantMembershipForRuntimeResponse.newBuilder()
-        .setAccountId("123")
-        .setTenantId("22")
-        .setMembershipExists(membershipExists)
-        .setGameplayAdmissionAllowed(gameplayAdmissionAllowed)
-        .setMembershipVersion(membershipVersion)
-        .setMembershipLifecycleState(lifecycleState)
-        .setMembershipAuthorityGeneration(membershipAuthorityGeneration)
-        .setEvaluatedAt(Instant.now().toString())
+    return RuntimeMembershipTestFixtures.incomplete(
+            123L,
+            22L,
+            membershipExists,
+            lifecycleState,
+            gameplayAdmissionAllowed,
+            Long.toString(membershipVersion),
+            Instant.now().toString())
+        .toBuilder()
+        .setMembershipAuthorityGeneration(Long.toString(membershipAuthorityGeneration))
         .build();
   }
 

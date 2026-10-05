@@ -30,6 +30,8 @@ Target state makes Game Session the authoritative owner of region/tick coordinat
 
 ## Implementation Status
 
+First-party context admission currently fails closed. The complete codec is a component boundary, not an enabled bare-`LOGIN` exchange or first-party gameplay proof; independent Gateway keys, canonical identity mapping, and Account producer/consumer proof remain required in [Player Access and Session](../../../project-management/implementation-tracking/player-access-and-session.md).
+
 Current seams are narrower: patch/request convergence reads, instance-scoped pause/resume, region-epoch fencing, and existing version-fence paths do not yet prove complete `scriptPinEpoch` propagation, final-effect enforcement, or Game-Session-owned append-only history. Track those implementation and proof gaps in the [Game Session runtime and tick coordination tracker](../../../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md#active-gaps).
 
 ## Terminology
