@@ -10,9 +10,12 @@ import com.google.protobuf.UnknownFieldSet;
 import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository;
@@ -64,9 +67,43 @@ class TenantIdentityGrpcServiceTest {
   }
 
   @Test
+  void returnsExactImmutableReceiptToSameNamespaceGameSessionPeer() {
+    FreshTenantCreationEvidence receipt = evidence("test", REQUEST_DIGEST);
+    when(repository.read(REQUEST_ID, "test")).thenReturn(Optional.of(receipt));
+
+    Observer observer = call(request(REQUEST_ID.toString(), REQUEST_DIGEST), GAME_SESSION_URI);
+
+    assertThat(observer.failure).isNull();
+    assertThat(observer.completed).isTrue();
+    assertThat(observer.response.getCreationRequestId()).isEqualTo(REQUEST_ID.toString());
+    assertThat(observer.response.getCanonicalTenantId()).isEqualTo(TENANT_ID.toString());
+    assertThat(observer.response.getEvidenceDigest()).isEqualTo(receipt.evidenceDigest());
+    verify(repository).read(REQUEST_ID, "test");
+  }
+
+  @Test
+  void deniesCallerContextEvenForExactOwnerPeersBeforeRead() {
+    SessionContext.setContext("account-uuid", List.of("player"), Map.of());
+    try {
+      for (String peer : List.of(ACCOUNT_URI, GAME_SESSION_URI)) {
+        assertThat(status(call(request(REQUEST_ID.toString(), REQUEST_DIGEST), peer)))
+            .isEqualTo(Status.Code.PERMISSION_DENIED);
+      }
+      verifyNoInteractions(repository);
+    } finally {
+      SessionContext.clear();
+    }
+  }
+
+  @Test
   void deniesMissingWrongServiceWrongNamespaceAndUnconfiguredPeerBeforeRead() {
     for (String peer :
-        new String[] {null, GAME_SESSION_URI, "spiffe://firemud/ns/other/sa/account-service"}) {
+        new String[] {
+          null,
+          "spiffe://firemud/ns/other/sa/account-service",
+          "spiffe://firemud/ns/other/sa/game-session-service",
+          "spiffe://firemud/ns/test/sa/entity-management-service"
+        }) {
       assertThat(status(call(request(REQUEST_ID.toString(), REQUEST_DIGEST), peer)))
           .isEqualTo(Status.Code.PERMISSION_DENIED);
     }
