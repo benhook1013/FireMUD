@@ -3693,12 +3693,12 @@ routes:
     end_user_token_required: false
     implementation_status:
       known_drift:
-        - current_handler_retains_AdminRoleGuard_and_returns_UNAVAILABLE_without_dispatch; target_Account_mTLS_audit_receipt_receiver_and_runtime_proof_are_unavailable
+        - exact_Account_mTLS_peer_is_authenticated_then_CreateLogEvent_returns_UNAVAILABLE_before_validation_or_storage; positive_receipt_projection_is_offline_fixture_only_and_live_activation_remains_retention_and_runtime_proof_gated
   - service: logging-admin-service
     route: ReadLogEventReceipt
     transport: grpc
     scope: account
-    route_status: target_not_currently_routable
+    route_status: current_openapi_operator_surface
     classification: internal_workload
     auth_path: exact_mtls_workload
     issued_token_state: none
@@ -3714,7 +3714,7 @@ routes:
     end_user_token_required: false
     implementation_status:
       known_drift:
-        - current_service_has_no_ReadLogEventReceipt_handler_and_returns_UNIMPLEMENTED; target_Account_mTLS_receipt_readback_and_runtime_proof_are_unavailable
+        - local_Account_mTLS_receipt_readback_is_implemented_but_not_invoked_by_Account; historical_evidence_retention_lifecycle_and_PostgreSQL_end_to_end_proof_remain_activation_gates
   - service: game-session-service
     route: ToggleFeatureFlag
     transport: grpc

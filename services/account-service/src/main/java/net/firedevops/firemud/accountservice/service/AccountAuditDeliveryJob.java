@@ -6,10 +6,9 @@ import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
 import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
-/** At-least-once delivery of Account's immutable audit outbox envelopes. */
+/** Offline-fixture-callable delivery logic for Account's immutable audit outbox envelopes. */
 @Component
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
@@ -25,7 +24,6 @@ public class AccountAuditDeliveryJob {
     this.loggingAdminClient = loggingAdminClient;
   }
 
-  @Scheduled(fixedDelayString = "${firemud.account.audit-delivery-delay-ms:5000}")
   public void deliverPending() {
     Instant capturedNow = Instant.now();
     for (var envelope : outbox.pending(50, capturedNow)) {

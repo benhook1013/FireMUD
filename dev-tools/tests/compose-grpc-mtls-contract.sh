@@ -451,19 +451,34 @@ for service in "${services[@]}"; do
   rg -Fq "\${FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT:?canonical smoke must set a run-owned mTLS certificate root}/workloads/$service:/app/certs:ro" "$mtls_compose"
 done
 
-python3 - "$ROOT_DIR/dev-tools/verify-smoke-images.sh" <<'PY'
+python3 - "$ROOT_DIR/dev-tools/verify-smoke-images.sh" "$mtls_compose" \
+  "$ROOT_DIR/dev-tools/verify-fresh-bootstrap.sh" "$ROOT_DIR/dev-tools/verify-restart-state.sh" <<'PY'
 import pathlib
 import sys
 
-source = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
-profile = source.index('COMPOSE_FILES+=( -f "$DOCKER_DIR/docker-compose.grpc-mtls.override.yml" )')
+smoke_source_path, mtls_compose_path, *source_wrapper_paths = sys.argv[1:]
+smoke_source = pathlib.Path(smoke_source_path).read_text(encoding="utf-8")
+profile = smoke_source.index('COMPOSE_FILES+=( -f "$DOCKER_DIR/docker-compose.grpc-mtls.override.yml" )')
 for prior_overlay in (
     'docker-compose.smoke-images.override.yml',
     'docker-compose.pr-local-minio.override.yml',
 ):
-    assert source.index(prior_overlay) < profile, prior_overlay
-assert "COMPOSE_UP_ARGS=(up -d --remove-orphans)" in source
-assert "--build" not in source
+    assert smoke_source.index(prior_overlay) < profile, prior_overlay
+assert "COMPOSE_UP_ARGS=(up -d --remove-orphans)" in smoke_source
+assert "--build" not in smoke_source
+
+mtls_override = pathlib.Path(mtls_compose_path).read_text(encoding="utf-8")
+logging_block = mtls_override.split("\n  logging-admin-service:\n", 1)[1].split(
+    "\n  social-groups-service:\n", 1
+)[0]
+assert "FIREMUD_GRPC_WORKLOAD_NAMESPACE: dev" in logging_block
+
+for wrapper_path in source_wrapper_paths:
+    wrapper = pathlib.Path(wrapper_path).read_text(encoding="utf-8")
+    base = wrapper.index('-f "$ROOT_DIR/docker/docker-compose.yml"')
+    local = wrapper.index('-f "$ROOT_DIR/docker/docker-compose.override.yml"')
+    mtls = wrapper.index('-f "$ROOT_DIR/docker/docker-compose.grpc-mtls.override.yml"')
+    assert base < local < mtls, wrapper_path
 PY
 
 for wrapper in verify-smoke-images.sh verify-fresh-bootstrap.sh verify-restart-state.sh; do
@@ -535,7 +550,10 @@ for profile, config_path, image_only in (
         if image_only:
             assert service.get("build") is None, f"image-only proof must not build {name}"
 
-    for name in ("account-service", "entity-management-service", "social-groups-service", "world-management-service"):
+    for name in (
+        "account-service", "entity-management-service", "logging-admin-service",
+        "social-groups-service", "world-management-service",
+    ):
         namespace = services[name]["environment"].get("FIREMUD_GRPC_WORKLOAD_NAMESPACE")
         assert namespace == "dev", (profile, name, namespace)
     if image_only:
@@ -557,7 +575,7 @@ for profile, config_path, image_only in (
 print("Verified source and image Compose mTLS wiring and workload identities.")
 PY
 else
-  echo "Docker Compose unavailable; skipped rendered-configuration assertion."
+  echo "Docker Compose unavailable; source/layer invariant passed, skipped rendered-configuration assertion."
 fi
 
 social_groups_key="$workloads_dir/social-groups-service/client.key"
