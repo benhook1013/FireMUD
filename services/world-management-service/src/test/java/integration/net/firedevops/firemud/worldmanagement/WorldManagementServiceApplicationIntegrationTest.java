@@ -21,6 +21,7 @@ import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.security.HttpAuthProperties;
 import net.firedevops.firemud.common.security.HttpJwtAuthInterceptor;
 import net.firedevops.firemud.common.security.JwtUtil;
+import net.firedevops.firemud.test.FiremudAuthTestProperties;
 import net.firedevops.firemud.test.HttpTestSupport;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
@@ -59,7 +60,12 @@ import tools.jackson.databind.ObjectMapper;
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,
     classes = WorldManagementServiceApplication.class,
-    properties = "spring.grpc.server.port=0")
+    properties = {
+      "spring.grpc.server.port=0",
+      FiremudAuthTestProperties.HTTP_ENABLED,
+      "firemud.auth.http.public-routes[0].method=GET",
+      "firemud.auth.http.public-routes[0].path-pattern=/ping"
+    })
 class WorldManagementServiceApplicationIntegrationTest {
   private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
 
