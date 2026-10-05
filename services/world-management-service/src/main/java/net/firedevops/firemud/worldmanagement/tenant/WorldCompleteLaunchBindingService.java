@@ -2,12 +2,16 @@ package net.firedevops.firemud.worldmanagement.tenant;
 
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorClient;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec.GetRequest;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateClient;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateEvidence;
 import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -16,11 +20,12 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * Explicitly unwired World owner step for retaining the complete released-content launch binding.
  *
- * <p>This proves neither local content nor lifecycle preparation, current authority, or runtime
- * activation.
+ * <p>Neither binding nor its current-Version read proves local content, commit fencing, lifecycle
+ * preparation, or runtime admission.
  */
 public final class WorldCompleteLaunchBindingService {
   private final AuthoredWorldLaunchDescriptorClient client;
+  private final AuthoredWorldVersionStateClient versionStateClient;
   private final WorldCompleteLaunchBindingRepository repository;
   private final WorldAuthoredSourceIntakeRepository sourceIntakeRepository;
   private final TransactionTemplate ownerTransaction;
@@ -32,7 +37,22 @@ public final class WorldCompleteLaunchBindingService {
       WorldAuthoredSourceIntakeRepository sourceIntakeRepository,
       PlatformTransactionManager transactionManager,
       String workloadNamespace) {
+    this(client, repository, sourceIntakeRepository, transactionManager, workloadNamespace, null);
+  }
+
+  /**
+   * Constructs the explicitly unwired binding verifier with its separately authenticated Game
+   * Design current-version reader.
+   */
+  public WorldCompleteLaunchBindingService(
+      AuthoredWorldLaunchDescriptorClient client,
+      WorldCompleteLaunchBindingRepository repository,
+      WorldAuthoredSourceIntakeRepository sourceIntakeRepository,
+      PlatformTransactionManager transactionManager,
+      String workloadNamespace,
+      AuthoredWorldVersionStateClient versionStateClient) {
     this.client = Objects.requireNonNull(client, "client");
+    this.versionStateClient = versionStateClient;
     this.repository = Objects.requireNonNull(repository, "repository");
     this.sourceIntakeRepository =
         Objects.requireNonNull(sourceIntakeRepository, "sourceIntakeRepository");
@@ -114,6 +134,74 @@ public final class WorldCompleteLaunchBindingService {
           "World complete launch binding changed during independent commit readback");
     }
     return readback;
+  }
+
+  /**
+   * Reads current Game Design version evidence for an already committed, exact World binding.
+   *
+   * <p>This read never creates or changes the historical binding. It establishes only current
+   * source-owned Version eligibility at the descriptor epoch; it does not prove World content,
+   * commit fencing, preparation, or admission.
+   */
+  public AuthoredWorldVersionStateEvidence readCurrentVersionState(
+      GetRequest request, UUID currentReadId) {
+    requireAuthenticatedGameSessionCaller();
+    requireNoAmbientTransaction();
+    validateRequest(request);
+    requireNonNilCurrentReadId(currentReadId);
+    if (versionStateClient == null) {
+      throw new IllegalStateException(
+          "World current-version verification has no configured Game Design reader");
+    }
+
+    AuthoredWorldLaunchDescriptorEvidence.Request expected = request.expectedRequest();
+    WorldCompleteLaunchBindingRepository.StoredBinding stored =
+        repository
+            .read(workloadNamespace, expected.canonicalTenantId(), expected.controlPlaneRequestId())
+            .orElseThrow(
+                () ->
+                    new WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException(
+                        "World current-version verification requires a committed launch binding"));
+    requireStoredRequest(stored, request);
+    WorldCompleteLaunchBindingReceipt committed = loadExactSourceReceipt(stored);
+    requireStoredRequest(committed, request);
+    requireFreshCurrentReadId(currentReadId, request, committed);
+
+    AuthoredWorldLaunchDescriptorEvidence descriptor = committed.descriptor();
+    // This is the Game Design-owned Version selector, never World's private local tenant key.
+    AuthoredWorldVersionStateEvidence.Request currentRequest =
+        new AuthoredWorldVersionStateEvidence.Request(
+            1,
+            descriptor.targetNamespace(),
+            currentReadId,
+            descriptor.canonicalTenantId(),
+            descriptor.worldSlug(),
+            descriptor.authoredWorldSourceOperationId(),
+            descriptor.authoredWorldSourceEvidenceDigest(),
+            descriptor.versionId());
+    AuthoredWorldVersionStateEvidence current;
+    try {
+      current = versionStateClient.read(currentRequest);
+    } catch (RuntimeException exception) {
+      throw new WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException(
+          "Current Game Design version-state evidence is unavailable or invalid", exception);
+    }
+    if (current == null
+        || !currentRequest.equals(current.request())
+        || !committed.sourceIntakeReceipt().source().equals(current.sourceEvidence())) {
+      throw new WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException(
+          "Game Design current-version evidence differs from the exact committed World source");
+    }
+    if (current.versionState() != VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED
+        && current.versionState() != VersionLifecycleState.VERSION_LIFECYCLE_STATE_ACTIVE) {
+      throw new WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException(
+          "Game Design current Version is not PUBLISHED or ACTIVE");
+    }
+    if (current.versionStateEpoch() != descriptor.versionStateEpoch()) {
+      throw new WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException(
+          "Game Design current Version epoch differs from the immutable launch descriptor");
+    }
+    return current;
   }
 
   private WorldCompleteLaunchBindingReceipt loadExactSourceReceipt(
@@ -204,6 +292,26 @@ public final class WorldCompleteLaunchBindingService {
     if (!workloadNamespace.equals(request.expectedRequest().targetNamespace())) {
       throw new SecurityException(
           "Complete launch binding request namespace does not match this World workload");
+    }
+  }
+
+  private static void requireNonNilCurrentReadId(UUID currentReadId) {
+    if (currentReadId == null || currentReadId.equals(new UUID(0L, 0L))) {
+      throw new IllegalArgumentException("Current version-state read ID must be a non-nil UUID");
+    }
+  }
+
+  private static void requireFreshCurrentReadId(
+      UUID currentReadId, GetRequest request, WorldCompleteLaunchBindingReceipt committed) {
+    WorldAuthoredSourceIntakeReceipt intake = committed.sourceIntakeReceipt();
+    if (currentReadId.equals(request.requestId())
+        || currentReadId.equals(committed.operationId())
+        || currentReadId.equals(intake.operationId())
+        || currentReadId.equals(intake.intakeRequestId())
+        || currentReadId.equals(intake.sourceOperationId())
+        || currentReadId.equals(intake.source().registrationRequestId())) {
+      throw new IllegalArgumentException(
+          "Current version-state read ID must be separate from source and registration IDs");
     }
   }
 

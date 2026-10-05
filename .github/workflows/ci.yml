@@ -1232,6 +1232,8 @@ jobs:
             --require-case 'net.firedevops.firemud.worldmanagement.WorldCompleteLaunchBindingIntegrationTest#concurrentExactAndChangedClaimsKeepOneImmutableBinding()' \
             --require-case 'net.firedevops.firemud.worldmanagement.WorldCompleteLaunchBindingIntegrationTest#simultaneousExactRetriesReturnTheSameDurableReceiptAndOwnerOperation()' \
             --require-case 'net.firedevops.firemud.worldmanagement.WorldCompleteLaunchBindingIntegrationTest#recoversCommittedBindingWhenOwnerCommitAcknowledgmentIsLost()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldCompleteLaunchBindingIntegrationTest#readsCurrentVersionForExactCommittedBindingAndPreservesOriginalReceipt()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldCompleteLaunchBindingIntegrationTest#deniesMixedCurrentVersionEvidenceWithoutChangingCommittedBinding()' \
             world-management-service
 
       - name: Capture World complete launch binding PostgreSQL raw XML

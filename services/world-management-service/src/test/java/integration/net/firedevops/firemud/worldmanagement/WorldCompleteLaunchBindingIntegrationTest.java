@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -13,8 +14,12 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -24,14 +29,18 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import javax.sql.DataSource;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorClient;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec.GetRequest;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateClient;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateEvidence;
 import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
@@ -87,6 +96,7 @@ class WorldCompleteLaunchBindingIntegrationTest {
   }
 
   @Autowired private DSLContext dsl;
+  @Autowired private DataSource dataSource;
   @Autowired private WorldAuthoredSourceIntakeRepository sourceRepository;
   @Autowired private PlatformTransactionManager transactionManager;
 
@@ -396,6 +406,271 @@ class WorldCompleteLaunchBindingIntegrationTest {
     verify(retryClient, never()).getComplete(any());
   }
 
+  @Test
+  void readsCurrentVersionForExactCommittedBindingAndPreservesOriginalReceipt()
+      throws SQLException {
+    AuthoredWorldSourceEvidence source = source(UUID.randomUUID(), randomWorld());
+    WorldAuthoredSourceIntakeReceipt sourceReceipt = acceptSource(source);
+    CompleteLaunchBindingEvidence evidence = evidence(source, controlRequest(), 71L);
+    GetRequest bindingRequest = request(evidence);
+    AuthoredWorldLaunchDescriptorClient descriptorClient =
+        mock(AuthoredWorldLaunchDescriptorClient.class);
+    when(descriptorClient.getComplete(any())).thenReturn(evidence);
+    AuthoredWorldVersionStateClient versionStateClient =
+        mock(AuthoredWorldVersionStateClient.class);
+    UUID firstReadId = UUID.randomUUID();
+    UUID retiredReadId = UUID.randomUUID();
+    when(versionStateClient.read(any()))
+        .thenAnswer(
+            invocation -> {
+              AuthoredWorldVersionStateEvidence.Request currentRequest = invocation.getArgument(0);
+              if (currentRequest.readRequestId().equals(firstReadId)) {
+                return currentVersionState(
+                    currentRequest,
+                    source,
+                    VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED,
+                    evidence.descriptor().versionStateEpoch());
+              }
+              if (currentRequest.readRequestId().equals(retiredReadId)) {
+                return currentVersionState(
+                    currentRequest,
+                    source,
+                    VersionLifecycleState.VERSION_LIFECYCLE_STATE_ACTIVE,
+                    evidence.descriptor().versionStateEpoch() + 1);
+              }
+              throw new IllegalArgumentException("Unexpected synthetic current-read request");
+            });
+    WorldCompleteLaunchBindingService service =
+        service(descriptorClient, versionStateClient, transactionManager);
+
+    WorldCompleteLaunchBindingReceipt original =
+        withGameSession(() -> service.bind(bindingRequest));
+    Map<String, List<Map<String, Object>>> ownerRowsBeforeRead =
+        worldOwnerRows(
+            source.canonicalTenantId(),
+            sourceReceipt.operationId(),
+            sourceReceipt.localTenantKey(),
+            evidence.descriptor().controlPlaneRequestId());
+
+    AuthoredWorldVersionStateEvidence eligible =
+        withGameSession(() -> service.readCurrentVersionState(bindingRequest, firstReadId));
+
+    assertThat(eligible.versionState())
+        .isEqualTo(VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED);
+    assertThat(eligible.versionStateEpoch()).isEqualTo(evidence.descriptor().versionStateEpoch());
+    assertThat(eligible.request().versionId()).isEqualTo(evidence.descriptor().versionId());
+    assertThat(
+            worldOwnerRows(
+                source.canonicalTenantId(),
+                sourceReceipt.operationId(),
+                sourceReceipt.localTenantKey(),
+                evidence.descriptor().controlPlaneRequestId()))
+        .isEqualTo(ownerRowsBeforeRead);
+
+    assertThatThrownBy(
+            () ->
+                withGameSession(
+                    () -> service.readCurrentVersionState(bindingRequest, retiredReadId)))
+        .isInstanceOf(WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException.class)
+        .hasMessageContaining("epoch differs");
+    assertThat(
+            worldOwnerRows(
+                source.canonicalTenantId(),
+                sourceReceipt.operationId(),
+                sourceReceipt.localTenantKey(),
+                evidence.descriptor().controlPlaneRequestId()))
+        .isEqualTo(ownerRowsBeforeRead);
+
+    WorldCompleteLaunchBindingReceipt retry = withGameSession(() -> service.bind(bindingRequest));
+    assertThat(retry).isEqualTo(original);
+    assertThat(retry.operationId()).isEqualTo(original.operationId());
+    assertThat(retry.sourceIntakeReceipt()).isEqualTo(sourceReceipt);
+    assertThat(retry.evidence()).isEqualTo(evidence);
+    assertThat(
+            worldOwnerRows(
+                source.canonicalTenantId(),
+                sourceReceipt.operationId(),
+                sourceReceipt.localTenantKey(),
+                evidence.descriptor().controlPlaneRequestId()))
+        .isEqualTo(ownerRowsBeforeRead);
+    verify(descriptorClient).getComplete(any());
+    verify(versionStateClient, times(2)).read(any());
+  }
+
+  @Test
+  void deniesMixedCurrentVersionEvidenceWithoutChangingCommittedBinding() throws SQLException {
+    AuthoredWorldSourceEvidence boundSource = source(UUID.randomUUID(), randomWorld());
+    WorldAuthoredSourceIntakeReceipt boundSourceReceipt = acceptSource(boundSource);
+    CompleteLaunchBindingEvidence bindingEvidence = evidence(boundSource, controlRequest(), 73L);
+    GetRequest bindingRequest = request(bindingEvidence);
+    AuthoredWorldLaunchDescriptorClient descriptorClient =
+        mock(AuthoredWorldLaunchDescriptorClient.class);
+    when(descriptorClient.getComplete(any())).thenReturn(bindingEvidence);
+    AuthoredWorldVersionStateClient versionStateClient =
+        mock(AuthoredWorldVersionStateClient.class);
+
+    AuthoredWorldSourceEvidence otherSource = source(UUID.randomUUID(), randomWorld());
+    WorldAuthoredSourceIntakeReceipt otherSourceReceipt = acceptSource(otherSource);
+    AuthoredWorldSourceEvidence missingBindingSource = source(UUID.randomUUID(), randomWorld());
+    WorldAuthoredSourceIntakeReceipt missingBindingReceipt = acceptSource(missingBindingSource);
+    String otherControlPlaneRequestId = controlRequest();
+    UUID mixedReadId = UUID.randomUUID();
+    UUID changedSelectorReadId = UUID.randomUUID();
+    UUID unavailableReadId = UUID.randomUUID();
+    UUID missingBindingReadId = UUID.randomUUID();
+    AuthoredWorldVersionStateEvidence mixedEvidence =
+        currentVersionState(
+            otherSource,
+            mixedReadId,
+            bindingEvidence.descriptor().versionId() + 1,
+            VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED,
+            bindingEvidence.descriptor().versionStateEpoch());
+    AuthoredWorldVersionStateEvidence changedSelectorEvidence =
+        currentVersionState(
+            boundSource,
+            changedSelectorReadId,
+            bindingEvidence.descriptor().versionId() + 1,
+            VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED,
+            bindingEvidence.descriptor().versionStateEpoch());
+    mixedEvidence.requireValid();
+    changedSelectorEvidence.requireValid();
+    when(versionStateClient.read(any()))
+        .thenAnswer(
+            invocation -> {
+              AuthoredWorldVersionStateEvidence.Request currentRequest = invocation.getArgument(0);
+              if (currentRequest.readRequestId().equals(mixedReadId)) {
+                return mixedEvidence;
+              }
+              if (currentRequest.readRequestId().equals(changedSelectorReadId)) {
+                return changedSelectorEvidence;
+              }
+              if (currentRequest.readRequestId().equals(unavailableReadId)) {
+                throw new IllegalStateException("Synthetic current-version source is unavailable");
+              }
+              throw new IllegalArgumentException("Unexpected synthetic current-read request");
+            });
+    WorldCompleteLaunchBindingService service =
+        service(descriptorClient, versionStateClient, transactionManager);
+    WorldCompleteLaunchBindingReceipt committed =
+        withGameSession(() -> service.bind(bindingRequest));
+    GetRequest missingBindingRequest =
+        request(evidence(missingBindingSource, controlRequest(), 74L));
+    Map<String, List<Map<String, Object>>> committedRowsBeforeRead =
+        worldOwnerRows(
+            boundSource.canonicalTenantId(),
+            boundSourceReceipt.operationId(),
+            boundSourceReceipt.localTenantKey(),
+            bindingEvidence.descriptor().controlPlaneRequestId());
+    Map<String, List<Map<String, Object>>> otherSourceRowsBeforeRead =
+        worldOwnerRows(
+            otherSource.canonicalTenantId(),
+            otherSourceReceipt.operationId(),
+            otherSourceReceipt.localTenantKey(),
+            otherControlPlaneRequestId);
+    Map<String, List<Map<String, Object>>> missingBindingRowsBeforeRead =
+        worldOwnerRows(
+            missingBindingSource.canonicalTenantId(),
+            missingBindingReceipt.operationId(),
+            missingBindingReceipt.localTenantKey(),
+            missingBindingRequest.expectedRequest().controlPlaneRequestId());
+    assertThat(mixedEvidence.request().sourceOperationId()).isEqualTo(otherSource.operationId());
+    assertThat(mixedEvidence.request().versionId())
+        .isNotEqualTo(bindingEvidence.descriptor().versionId());
+    assertThat(changedSelectorEvidence.sourceEvidence()).isEqualTo(boundSource);
+    assertThat(changedSelectorEvidence.request().versionId())
+        .isNotEqualTo(bindingEvidence.descriptor().versionId());
+
+    assertThatThrownBy(
+            () ->
+                withGameSession(() -> service.readCurrentVersionState(bindingRequest, mixedReadId)))
+        .isInstanceOf(WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException.class)
+        .hasMessageContaining("exact committed World source");
+    assertThat(
+            worldOwnerRows(
+                boundSource.canonicalTenantId(),
+                boundSourceReceipt.operationId(),
+                boundSourceReceipt.localTenantKey(),
+                bindingEvidence.descriptor().controlPlaneRequestId()))
+        .isEqualTo(committedRowsBeforeRead);
+    assertThat(
+            worldOwnerRows(
+                otherSource.canonicalTenantId(),
+                otherSourceReceipt.operationId(),
+                otherSourceReceipt.localTenantKey(),
+                otherControlPlaneRequestId))
+        .isEqualTo(otherSourceRowsBeforeRead);
+
+    assertThatThrownBy(
+            () ->
+                withGameSession(
+                    () -> service.readCurrentVersionState(bindingRequest, changedSelectorReadId)))
+        .isInstanceOf(WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException.class)
+        .hasMessageContaining("exact committed World source");
+    assertThat(
+            worldOwnerRows(
+                boundSource.canonicalTenantId(),
+                boundSourceReceipt.operationId(),
+                boundSourceReceipt.localTenantKey(),
+                bindingEvidence.descriptor().controlPlaneRequestId()))
+        .isEqualTo(committedRowsBeforeRead);
+
+    assertThatThrownBy(
+            () ->
+                withGameSession(
+                    () -> service.readCurrentVersionState(bindingRequest, unavailableReadId)))
+        .isInstanceOf(WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException.class)
+        .hasMessageContaining("unavailable or invalid");
+    assertThat(
+            worldOwnerRows(
+                boundSource.canonicalTenantId(),
+                boundSourceReceipt.operationId(),
+                boundSourceReceipt.localTenantKey(),
+                bindingEvidence.descriptor().controlPlaneRequestId()))
+        .isEqualTo(committedRowsBeforeRead);
+
+    assertThatThrownBy(
+            () ->
+                withGameSession(
+                    () ->
+                        service.readCurrentVersionState(
+                            missingBindingRequest, missingBindingReadId)))
+        .isInstanceOf(WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException.class)
+        .hasMessageContaining("requires a committed launch binding");
+    assertThat(
+            worldOwnerRows(
+                missingBindingSource.canonicalTenantId(),
+                missingBindingReceipt.operationId(),
+                missingBindingReceipt.localTenantKey(),
+                missingBindingRequest.expectedRequest().controlPlaneRequestId()))
+        .isEqualTo(missingBindingRowsBeforeRead);
+    assertThat(missingBindingRowsBeforeRead.get("binding")).isEmpty();
+    assertThat(committed.operationId())
+        .isEqualTo(committedRowsBeforeRead.get("binding").get(0).get("binding_operation_id"));
+    assertThat(
+            worldOwnerRows(
+                otherSource.canonicalTenantId(),
+                otherSourceReceipt.operationId(),
+                otherSourceReceipt.localTenantKey(),
+                otherControlPlaneRequestId))
+        .isEqualTo(otherSourceRowsBeforeRead);
+    assertThat(
+            worldOwnerRows(
+                missingBindingSource.canonicalTenantId(),
+                missingBindingReceipt.operationId(),
+                missingBindingReceipt.localTenantKey(),
+                missingBindingRequest.expectedRequest().controlPlaneRequestId()))
+        .isEqualTo(missingBindingRowsBeforeRead);
+    assertThat(
+            worldOwnerRows(
+                boundSource.canonicalTenantId(),
+                boundSourceReceipt.operationId(),
+                boundSourceReceipt.localTenantKey(),
+                bindingEvidence.descriptor().controlPlaneRequestId()))
+        .isEqualTo(committedRowsBeforeRead);
+    verify(descriptorClient).getComplete(any());
+    verify(versionStateClient, times(3)).read(any());
+  }
+
   private WorldAuthoredSourceIntakeReceipt acceptSource(AuthoredWorldSourceEvidence source) {
     UUID intakeRequestId = UUID.randomUUID();
     TransactionTemplate transaction = new TransactionTemplate(transactionManager);
@@ -413,6 +688,84 @@ class WorldCompleteLaunchBindingIntegrationTest {
         sourceRepository,
         manager,
         NAMESPACE);
+  }
+
+  private WorldCompleteLaunchBindingService service(
+      AuthoredWorldLaunchDescriptorClient descriptorClient,
+      AuthoredWorldVersionStateClient versionStateClient,
+      PlatformTransactionManager manager) {
+    return new WorldCompleteLaunchBindingService(
+        descriptorClient,
+        new WorldCompleteLaunchBindingRepository(dsl),
+        sourceRepository,
+        manager,
+        NAMESPACE,
+        versionStateClient);
+  }
+
+  private Map<String, List<Map<String, Object>>> worldOwnerRows(
+      UUID canonicalTenantId,
+      UUID sourceIntakeOperationId,
+      long localTenantKey,
+      String controlPlaneRequestId)
+      throws SQLException {
+    try (Connection connection = dataSource.getConnection()) {
+      Map<String, List<Map<String, Object>>> rows = new LinkedHashMap<>();
+      rows.put(
+          "association",
+          readOwnerRows(
+              connection,
+              "SELECT * FROM world_authored_source_tenant_association "
+                  + "WHERE target_namespace = ? AND canonical_tenant_id = ?",
+              NAMESPACE,
+              canonicalTenantId));
+      rows.put(
+          "reservation",
+          readOwnerRows(
+              connection,
+              "SELECT * FROM world_authored_source_tenant_key_reservation WHERE tenant_key = ?",
+              localTenantKey));
+      rows.put(
+          "sourceIntake",
+          readOwnerRows(
+              connection,
+              "SELECT * FROM world_authored_source_intake WHERE target_namespace = ? "
+                  + "AND canonical_tenant_id = ? AND operation_id = ?",
+              NAMESPACE,
+              canonicalTenantId,
+              sourceIntakeOperationId));
+      rows.put(
+          "binding",
+          readOwnerRows(
+              connection,
+              "SELECT * FROM world_complete_launch_binding WHERE target_namespace = ? "
+                  + "AND canonical_tenant_id = ? AND control_plane_request_id = ?",
+              NAMESPACE,
+              canonicalTenantId,
+              controlPlaneRequestId));
+      return Collections.unmodifiableMap(rows);
+    }
+  }
+
+  private static List<Map<String, Object>> readOwnerRows(
+      Connection connection, String query, Object... parameters) throws SQLException {
+    try (PreparedStatement statement = connection.prepareStatement(query)) {
+      for (int index = 0; index < parameters.length; index++) {
+        statement.setObject(index + 1, parameters[index]);
+      }
+      try (ResultSet resultSet = statement.executeQuery()) {
+        ResultSetMetaData metadata = resultSet.getMetaData();
+        List<Map<String, Object>> rows = new ArrayList<>();
+        while (resultSet.next()) {
+          Map<String, Object> row = new LinkedHashMap<>();
+          for (int index = 1; index <= metadata.getColumnCount(); index++) {
+            row.put(metadata.getColumnLabel(index), resultSet.getObject(index));
+          }
+          rows.add(Collections.unmodifiableMap(row));
+        }
+        return List.copyOf(rows);
+      }
+    }
   }
 
   private long countBindings(UUID tenant) {
@@ -528,6 +881,34 @@ class WorldCompleteLaunchBindingIntegrationTest {
             List.of("look"),
             descriptor.generationConfigRevision());
     return new CompleteLaunchBindingEvidence(descriptor, attestation);
+  }
+
+  private static AuthoredWorldVersionStateEvidence currentVersionState(
+      AuthoredWorldVersionStateEvidence.Request request,
+      AuthoredWorldSourceEvidence source,
+      VersionLifecycleState versionState,
+      long versionStateEpoch) {
+    return AuthoredWorldVersionStateEvidence.create(
+        request, source, versionState, versionStateEpoch);
+  }
+
+  private static AuthoredWorldVersionStateEvidence currentVersionState(
+      AuthoredWorldSourceEvidence source,
+      UUID readRequestId,
+      long versionId,
+      VersionLifecycleState versionState,
+      long versionStateEpoch) {
+    AuthoredWorldVersionStateEvidence.Request request =
+        new AuthoredWorldVersionStateEvidence.Request(
+            1,
+            source.targetNamespace(),
+            readRequestId,
+            source.canonicalTenantId(),
+            source.worldSlug(),
+            source.operationId(),
+            source.evidenceDigest(),
+            versionId);
+    return currentVersionState(request, source, versionState, versionStateEpoch);
   }
 
   private static AuthoredWorldReleaseAttestationEvidence.Participant participant(
