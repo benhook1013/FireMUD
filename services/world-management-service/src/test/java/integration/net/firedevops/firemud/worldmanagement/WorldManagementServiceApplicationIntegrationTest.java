@@ -1,5 +1,6 @@
 package net.firedevops.firemud.worldmanagement;
 
+import static net.firedevops.firemud.worldmanagement.jooq.tables.GenerationRule.GENERATION_RULE;
 import static net.firedevops.firemud.worldmanagement.jooq.tables.RegionInstance.REGION_INSTANCE;
 import static net.firedevops.firemud.worldmanagement.jooq.tables.WorldEvent.WORLD_EVENT;
 import static net.firedevops.firemud.worldmanagement.jooq.tables.WorldInstance.WORLD_INSTANCE;
@@ -44,6 +45,8 @@ import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -70,6 +73,7 @@ class WorldManagementServiceApplicationIntegrationTest {
 
   @LocalServerPort private int port;
   @Autowired private JwtUtil jwtUtil;
+  @Autowired private ObjectMapper objectMapper;
   @Autowired private DSLContext dsl;
   @Autowired private WorldEventRepository worldEventRepository;
   @Autowired private PlatformTransactionManager transactionManager;
@@ -139,6 +143,44 @@ class WorldManagementServiceApplicationIntegrationTest {
     assertThat(response.statusCode()).isEqualTo(400);
     assertThat(response.body()).contains("\"code\":\"INVALID_ARGUMENT\"");
     assertThat(response.body()).contains("\"message\":\"Request body is malformed\"");
+  }
+
+  @Test
+  void saveRuleDeniesAuthenticatedWriteWithoutCanonicalCommitAuthorization() throws Exception {
+    dsl.insertInto(GENERATION_RULE)
+        .set(GENERATION_RULE.TENANT_ID, 1L)
+        .set(GENERATION_RULE.VERSION_ID, 7L)
+        .set(GENERATION_RULE.NAME, "retained-denial-proof")
+        .set(GENERATION_RULE.SCOPE_TYPE, "ZONE_SUBTREE")
+        .set(GENERATION_RULE.SCOPE_ID, "12")
+        .set(GENERATION_RULE.VALUE, "{\"retained\":true}")
+        .execute();
+    List<Map<String, Object>> generationRulesBefore = generationRuleRows();
+    assertThat(generationRulesBefore).isNotEmpty();
+    String token = operatorToken();
+    HttpRequest request =
+        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/generation/rules"))
+            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+            .header(HttpHeaders.CONTENT_TYPE, "application/json")
+            .POST(
+                HttpRequest.BodyPublishers.ofString(
+                    """
+                    {"tenantId":1,"name":"denied-rule","scopeType":"ZONE_SUBTREE","scopeId":"12","value":"{}"}
+                    """))
+            .build();
+
+    HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+
+    assertThat(response.statusCode()).isEqualTo(412);
+    assertThat(response.body()).contains("\"status\":\"ERROR\"");
+    assertThat(response.body()).contains("\"code\":\"FAILED_PRECONDITION\"");
+    assertThat(response.body())
+        .contains(
+            "\"message\":\"Generation rule writes are unavailable without canonical Draft and Account commit authorization\"");
+    JsonNode responseBody = objectMapper.readTree(response.body());
+    assertThat(responseBody.path("status").asText()).isEqualTo("ERROR");
+    assertThat(responseBody.hasNonNull("data")).isFalse();
+    assertThat(generationRuleRows()).isEqualTo(generationRulesBefore);
   }
 
   @Test
@@ -246,6 +288,12 @@ class WorldManagementServiceApplicationIntegrationTest {
       Thread.currentThread().interrupt();
       throw new AssertionError("Interrupted while waiting for transaction coordination", exception);
     }
+  }
+
+  private List<Map<String, Object>> generationRuleRows() {
+    return dsl.selectFrom(GENERATION_RULE)
+        .orderBy(GENERATION_RULE.ID.asc())
+        .fetch(record -> record.intoMap());
   }
 
   private long insertRegion(long tenantId, long gameInstanceId, long fixtureLabel) {

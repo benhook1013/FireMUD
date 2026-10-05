@@ -57,15 +57,62 @@ class GenerationRuleControllerTest {
   }
 
   @Test
-  void saveRejectsCallerWithoutTenantAccess() throws Exception {
-    installTenantContext(Map.of("9", List.of("tenantAdmin")));
+  void saveRejectsTenantAdminWithoutCanonicalDraftCommitAuthorization() throws Exception {
+    mockMvc
+        .perform(validSaveRequest())
+        .andExpect(status().isPreconditionFailed())
+        .andExpect(jsonPath("$.status").value("ERROR"))
+        .andExpect(jsonPath("$.error.code").value("FAILED_PRECONDITION"))
+        .andExpect(
+            jsonPath("$.error.message")
+                .value(
+                    "Generation rule writes are unavailable without canonical Draft and Account commit authorization"));
+
+    verifyNoInteractions(generationRuleService);
+  }
+
+  @Test
+  void saveRejectsGlobalPlatformAdminWithoutCanonicalDraftCommitAuthorization() throws Exception {
+    SessionContext.setContext("test-account", List.of("platformAdmin"), Map.of());
 
     mockMvc
-        .perform(
-            post("/generation/rules")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"id\":7,\"tenantId\":1,\"name\":\"room\",\"value\":\"{}\"}"))
-        .andExpect(status().isForbidden());
+        .perform(validSaveRequest())
+        .andExpect(status().isPreconditionFailed())
+        .andExpect(jsonPath("$.status").value("ERROR"))
+        .andExpect(jsonPath("$.error.code").value("FAILED_PRECONDITION"));
+
+    verifyNoInteractions(generationRuleService);
+  }
+
+  @Test
+  void saveRejectsDesignerAndPlayerWithoutTenantAccessBeforeDispatch() throws Exception {
+    for (String role : List.of("designer", "player")) {
+      installTenantContext(Map.of("1", List.of(role)));
+
+      mockMvc.perform(validSaveRequest()).andExpect(status().isForbidden());
+
+      verifyNoInteractions(generationRuleService);
+    }
+  }
+
+  @Test
+  void saveRejectsCallerWithoutTenantAccessBeforeDispatch() throws Exception {
+    installTenantContext(Map.of("9", List.of("tenantAdmin")));
+
+    mockMvc.perform(validSaveRequest()).andExpect(status().isForbidden());
+
+    verifyNoInteractions(generationRuleService);
+  }
+
+  @Test
+  void saveKeepsMalformedBodyBindingFailureBeforeDispatch() throws Exception {
+    mockMvc
+        .perform(post("/generation/rules").contentType(MediaType.APPLICATION_JSON).content("{"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(jsonPath("$.error.message").value("Request body is malformed"));
+
+    verifyNoInteractions(generationRuleService);
   }
 
   @Test
@@ -92,5 +139,12 @@ class GenerationRuleControllerTest {
 
   private void installTenantContext(Map<String, List<String>> scopedRoles) {
     SessionContext.setContext("test-account", List.of(), scopedRoles);
+  }
+
+  private org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder
+      validSaveRequest() {
+    return post("/generation/rules")
+        .contentType(MediaType.APPLICATION_JSON)
+        .content("{\"id\":7,\"tenantId\":1,\"name\":\"room\",\"value\":\"{}\"}");
   }
 }

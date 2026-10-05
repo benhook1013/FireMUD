@@ -1372,6 +1372,8 @@ jobs:
             --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredSourceIntakeMtlsIntegrationTest#commitsFreshWorldOwnerReceiptThenReturnsExactReceiptOverAuthenticatedSocket()' \
             --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredSourceIntakeMtlsIntegrationTest#reconcilesLostSuccessAcknowledgementWithExactRetryAndCommittedReadback()' \
             --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredSourceIntakeMtlsIntegrationTest#deniesWrongWorkloadAndChangedBindingWithoutOwnerMutation()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredSourceIntakeMtlsIntegrationTest#registeredDraftMutationDeniesGameDesignPeerWithoutAccountCommitAuthorization()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredSourceIntakeMtlsIntegrationTest#registeredDraftMutationDeniesOtherAuthenticatedPeerBeforeOwnerMutation()' \
             world-management-service
 
       - name: Upload World authored-source intake PostgreSQL socket composition results
@@ -1382,6 +1384,27 @@ jobs:
           path: services/world-management-service/build/test-results/integrationTest/TEST-*WorldAuthoredSourceIntakeMtlsIntegrationTest.xml
           if-no-files-found: warn
           retention-days: 7
+      - name: Run World legacy generation write HTTP and PostgreSQL denial proof
+        if: ${{ !cancelled() && matrix.module == 'world-management-service' }}
+        run: |
+          ./gradlew :world-management-service:integrationTest \
+            --tests 'net.firedevops.firemud.worldmanagement.WorldManagementServiceApplicationIntegrationTest.saveRuleDeniesAuthenticatedWriteWithoutCanonicalCommitAuthorization' \
+            -PfullCheck --no-build-cache --no-configuration-cache
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite net.firedevops.firemud.worldmanagement.WorldManagementServiceApplicationIntegrationTest \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldManagementServiceApplicationIntegrationTest#saveRuleDeniesAuthenticatedWriteWithoutCanonicalCommitAuthorization()' \
+            world-management-service
+
+      - name: Capture World legacy generation write HTTP PostgreSQL raw XML
+        if: ${{ always() && matrix.module == 'world-management-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: world-generation-write-denial-postgresql-proof-${{ github.sha }}
+          path: services/world-management-service/build/test-results/integrationTest/TEST-*WorldManagementServiceApplicationIntegrationTest.xml
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Retain Game Design owner migration raw PostgreSQL evidence
         if: ${{ always() && matrix.module == 'game-design-service' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
