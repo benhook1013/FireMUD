@@ -181,6 +181,9 @@ class FireControllerWebTest(unittest.TestCase):
 
     def test_private_markdown_escapes_html_and_rejects_unsafe_links_and_images(self):
         page = web.render_job(FakeStore().detail)
+        self.assertIn("<title>Keep the lane moving · FireController job</title>", page)
+        self.assertIn("<h1>Keep the lane moving</h1>", page)
+        self.assertIn('<span class="job-alias">Job alias · Build the bridge</span>', page)
         self.assertIn(PRIVATE_SENTINEL, page)
         self.assertIn('<a href="https://example.com">web</a>', page)
         self.assertIn('<a href="/jobs/job-1/history">local</a>', page)
@@ -392,14 +395,26 @@ class FireControllerWebTest(unittest.TestCase):
 
 class PrivateWebHistoryTests(unittest.TestCase):
     def test_historical_job_structured_state_is_visible_and_escaped(self):
-        page = web.render_job({"job": {"id": "job-1", "name": "Current"}, "revision_entry": {
+        page = web.render_job({"job": {"id": "job-1", "name": "Current", "title": "Current task title"}, "revision_entry": {
             "revision": 2, "status": "blocked", "worker": "General<script>", "primary": True,
             "title": "Historical title", "brief": "Old brief", "checklist": [
                 {"id": "old", "text": "Historical <script>check</script>", "done": True}]}}, history=True)
-        for text in ("blocked", "General&lt;script&gt;", "Primary", "Historical title", "Checklist", "Done",
+        for text in ("<title>Current task title history</title>",
+                     "<h1>Current task title · Revision 2</h1>",
+                     '<p class="job-alias">Job alias · Current</p>',
+                     "blocked", "General&lt;script&gt;", "Primary", "Historical title", "Checklist", "Done",
                      "Historical &lt;script&gt;check&lt;/script&gt;"):
             self.assertIn(text, page)
         self.assertNotIn("<script>", page)
+
+    def test_job_revision_list_uses_display_title_and_keeps_alias_and_revision_titles(self):
+        page = web.render_job({"job": {"id": "job-1", "name": "Current", "title": "Current task title"},
+                               "history": [{"revision": 2, "status": "blocked", "title": "Historical title"}]},
+                              history=True)
+        self.assertIn("<title>Current task title history</title>", page)
+        self.assertIn("<h1>Current task title history</h1>", page)
+        self.assertIn('<p class="job-alias">Job alias · Current</p>', page)
+        self.assertIn("Historical title", page)
 
     def test_workstream_pagination_and_historical_phases(self):
         class Store:

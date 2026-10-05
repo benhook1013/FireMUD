@@ -411,12 +411,13 @@ def render_job(job, history=False) -> str:
     job_id = str(job.get("id", ""))
     encoded_id = quote(job_id, safe="")
     name = html.escape(str(job.get("name", "Job")), quote=True)
+    title = html.escape(str(job.get("title") or job.get("name") or "Job"), quote=True)
     status = html.escape(str(job.get("status", "unknown")), quote=True)
     primary = " · Primary" if job.get("primary") is True else ""
     content = [(
-        f'<article class="job-private"><div class="job-meta"><h1>{name}</h1>'
+        f'<article class="job-private"><div class="job-meta"><h1>{title}</h1>'
         f'<span class="job-state">{status}</span><span>{html.escape(str(job.get("worker", "")), quote=True)}'
-        f'{primary}</span></div><p>{html.escape(str(job.get("title", "")), quote=True)}</p>'
+        f'{primary}</span><span class="job-alias">Job alias · {name}</span></div>'
     )]
     for label, field in (("Summary", "summary"), ("Progress", "progress"), ("Blocker", "blocker")):
         section = _field(label, job.get(field))
@@ -464,7 +465,7 @@ def render_job(job, history=False) -> str:
     else:
         content.append("<p>No pending notes or reminders.</p>")
     content.append(f'</section><p class="job-links"><a href="/jobs/{encoded_id}/history">Job history</a></p></article>')
-    return _private_document(f"{name} · FireController job", "".join(content))
+    return _private_document(f"{title} · FireController job", "".join(content))
 
 
 def _render_history(data: dict) -> str:
@@ -473,11 +474,13 @@ def _render_history(data: dict) -> str:
         raise TypeError("history page needs current job details")
     job_id = quote(str(job.get("id", "")), safe="")
     name = html.escape(str(job.get("name", "Job")), quote=True)
+    title = html.escape(str(job.get("title") or job.get("name") or "Job"), quote=True)
     entry = data.get("revision_entry")
     if isinstance(entry, dict):
         revision = entry.get("revision", "?")
         body = [
-            f'<article class="job-history-entry"><h1>{name} · Revision {html.escape(str(revision), quote=True)}</h1>',
+            f'<article class="job-history-entry"><h1>{title} · Revision {html.escape(str(revision), quote=True)}</h1>',
+            f'<p class="job-alias">Job alias · {name}</p>',
             f'<p>{_time_metadata(entry.get("created_at", ""))}</p>',
         ]
         body.append(
@@ -493,11 +496,12 @@ def _render_history(data: dict) -> str:
                 body.append(section)
         body.append(f'<section><h2>Private working brief</h2>{_markdown(entry.get("brief", ""))}</section>')
         body.append(f'<p><a href="/jobs/{job_id}/history">All revisions</a> · <a href="/jobs/{job_id}">Current job</a></p></article>')
-        return _private_document(f"{name} history", "".join(body))
+        return _private_document(f"{title} history", "".join(body))
 
     offset = data.get("offset", 0)
     rows = data.get("history", [])
-    content = [f'<article class="job-private"><h1>{name} history</h1><p>Recent revisions</p><ol>']
+    content = [f'<article class="job-private"><h1>{title} history</h1>'
+               f'<p class="job-alias">Job alias · {name}</p><p>Recent revisions</p><ol>']
     if isinstance(rows, list):
         for row in rows:
             if not isinstance(row, dict):
@@ -517,7 +521,7 @@ def _render_history(data: dict) -> str:
     if isinstance(rows, list) and len(rows) == HISTORY_PAGE_SIZE and type(offset) is int:
         content.append(f'<a href="/jobs/{job_id}/history?offset={offset + HISTORY_PAGE_SIZE}">Older revisions</a>')
     content.append(f'</nav><p><a href="/jobs/{job_id}">Current job</a></p></article>')
-    return _private_document(f"{name} history", "".join(content))
+    return _private_document(f"{title} history", "".join(content))
 
 
 
