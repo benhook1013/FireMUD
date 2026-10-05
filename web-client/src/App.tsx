@@ -4,9 +4,11 @@ import GameEditor from './GameEditor';
 import ScriptEditor from './ScriptEditor';
 import reactLogo from './assets/react.svg';
 import viteLogo from '/vite.svg';
+import EmailLinkLanding from './EmailLinkLanding';
+import { emailLinkLanding } from './emailLinkLanding';
 import './App.css';
 
-function App() {
+function DemoApp() {
   const [count, setCount] = useState(0);
   const [mode, setMode] = useState<'demo' | 'game' | 'script'>('demo');
 
@@ -61,6 +63,14 @@ function App() {
         </p>
       </main>
     </>
+  );
+}
+
+function App() {
+  return emailLinkLanding ? (
+    <EmailLinkLanding route={emailLinkLanding} />
+  ) : (
+    <DemoApp />
   );
 }
 

@@ -1,0 +1,124 @@
+{{- $frontend := .Values.previewStack.frontend | default dict }}
+{{- if and .Values.previewStack.enabled ($frontend.enabled | default false) }}
+{{- $frontendImage := $frontend.image | default dict }}
+{{- $imageRepository := required "previewStack.frontend.image.repository is required when the frontend is enabled" (get $frontendImage "repository" | default "") }}
+{{- $imageTag := required "previewStack.frontend.image.tag or previewStack.defaultImageTag is required when the frontend is enabled" (default $.Values.previewStack.defaultImageTag (get $frontendImage "tag")) }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  labels:
+{{ include "firemud.commonLabels" . | indent 4 }}
+spec:
+  replicas: {{ default 1 $frontend.replicaCount }}
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with $.Values.previewStack.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range $secret := . }}
+        {{- if kindIs "string" $secret }}
+        - name: {{ $secret }}
+        {{- else }}
+{{ toYaml (list $secret) | indent 8 }}
+        {{- end }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: frontend
+          image: "{{ $imageRepository }}:{{ $imageTag }}"
+          imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 101
+            runAsGroup: 101
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 20
+          resources:
+{{ toYaml $frontend.resources | indent 12 }}
+          volumeMounts:
+            - name: nginx-tmp
+              mountPath: /tmp
+      volumes:
+        - name: nginx-tmp
+          emptyDir:
+            sizeLimit: 16Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  labels:
+{{ include "firemud.commonLabels" . | indent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app: frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+{{- if .Values.previewStack.networkPolicies.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frontend-static-host
+  labels:
+{{ include "firemud.commonLabels" . | indent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: frontend
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress: []
+{{- end }}
+{{- end }}

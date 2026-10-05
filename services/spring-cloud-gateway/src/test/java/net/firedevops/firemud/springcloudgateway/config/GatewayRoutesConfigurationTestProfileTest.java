@@ -50,7 +50,18 @@ class GatewayRoutesConfigurationTestProfileTest {
           "admin-tick-remediation",
           "design-ping",
           "design-templates-read",
-          "account-auth",
+          "account-auth-login",
+          "account-auth-player-bootstrap",
+          "account-auth-bootstrap-worlds",
+          "account-auth-bootstrap-realms",
+          "account-auth-bootstrap-characters",
+          "account-auth-bootstrap-join",
+          "account-auth-connect-token",
+          "account-auth-request-password-reset",
+          "account-auth-complete-password-reset",
+          "account-auth-request-email-verification",
+          "account-auth-verify-email",
+          "account-auth-recover-username",
           "account-accounts",
           "account-profiles",
           "account-ping",
@@ -125,7 +136,14 @@ class GatewayRoutesConfigurationTestProfileTest {
 
     assertHasPath(gatewayProperties, "session-ping", "/api/session/ping");
 
-    assertHasPath(gatewayProperties, "account-auth", "/api/account/auth/**");
+    assertHasPath(gatewayProperties, "account-auth-verify-email", "/api/account/auth/verify-email");
+    assertHasMethod(gatewayProperties, "account-auth-verify-email", "POST");
+    assertHasPath(
+        gatewayProperties,
+        "account-auth-complete-password-reset",
+        "/api/account/auth/complete-password-reset");
+    assertHasMethod(gatewayProperties, "account-auth-complete-password-reset", "POST");
+    assertNoConfiguredPath(gatewayProperties, "/api/account/auth/**");
     assertHasPath(gatewayProperties, "account-accounts", "/api/account/accounts/**");
     assertHasPath(gatewayProperties, "account-profiles", "/api/account/profiles/**");
     assertHasPath(gatewayProperties, "account-ping", "/api/account/ping");
@@ -145,7 +163,8 @@ class GatewayRoutesConfigurationTestProfileTest {
     assertHasStripPrefix(gatewayProperties, "admin-tick-remediation", "2");
     assertHasStripPrefix(gatewayProperties, "design-ping", "2");
     assertHasStripPrefix(gatewayProperties, "design-templates-read", "2");
-    assertHasStripPrefix(gatewayProperties, "account-auth", "2");
+    assertHasStripPrefix(gatewayProperties, "account-auth-verify-email", "2");
+    assertHasStripPrefix(gatewayProperties, "account-auth-complete-password-reset", "2");
     assertHasStripPrefix(gatewayProperties, "account-accounts", "2");
     assertHasStripPrefix(gatewayProperties, "account-profiles", "2");
     assertHasStripPrefix(gatewayProperties, "account-ping", "2");
