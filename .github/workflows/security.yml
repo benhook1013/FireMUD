@@ -1,4 +1,4 @@
-name: Security Checks
+name: Security Gate
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
     types: [opened, synchronize, reopened, edited]
   workflow_dispatch:
 
-run-name: Security Checks ${{ github.event_name == 'pull_request' && format('pr-{0} base-{1} head-{2}', github.event.pull_request.number, github.event.pull_request.base.sha, github.event.pull_request.head.sha) || github.ref_name }}
+run-name: Security Gate ${{ github.event_name == 'pull_request' && format('pr-{0} base-{1} head-{2}', github.event.pull_request.number, github.event.pull_request.base.sha, github.event.pull_request.head.sha) || github.ref_name }}
 
 permissions:
   contents: read
@@ -163,7 +163,7 @@ jobs:
         uses: ./.github/actions/preserve-required-gate
         with:
           gate-name: Security Gate
-          workflow-name: Security Checks
+          workflow-name: Security Gate
           workflow-file: security.yml
           workflow-path: .github/workflows/security.yml
 
