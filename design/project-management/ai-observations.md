@@ -431,3 +431,8 @@ Entry format:
   - Context: a focused Game Design SpotBugs diagnostic returned `BUILD SUCCESSFUL` without `-PfullCheck`; the task log showed `spotbugsMain SKIPPED`. Document briefly reported that as an isolated analyzer pass before checking the task state.
   - Outcome: the skipped result was withdrawn, the exact task rerun with `-PfullCheck`, and its XML exposed the constructor finding behind the consolidated failure. No skipped diagnostic result was used as publication or completion proof.
   - Expected pattern: preserve required check flags in diagnostic commands and inspect the actual task outcome, not just the process exit status, before attributing analyzer execution or calling a failure intermittent.
+
+- `2026-10-05`: Cross-service test dependencies can leak another owner's Flyway migrations
+  - Context: the new Game Design-to-World composition fixture added a World service test dependency. Its service JAR also supplied `db/migration`, so existing Game Design classpath-based Flyway fixtures failed on duplicate V1 migrations in CI; Docker-free local checks had skipped that setup. All eight new database cases passed, but six other required cases did not execute.
+  - Outcome: selecting the World dependency's standard classes-only variant preserves its implementation and transitive dependencies without its migration resources. A resolved runtime-classpath diagnostic and full affected checks pass; exact corrected-state PostgreSQL execution is still required.
+  - Expected pattern: for cross-service test composition, inspect resolved runtime artifacts as well as compilation. Keep owner migrations explicitly isolated and verify existing owner suites still execute; do not modify migrations or weaken fixtures to accommodate resource leakage.

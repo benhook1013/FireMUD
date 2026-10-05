@@ -1,4 +1,6 @@
 
+import org.gradle.api.attributes.LibraryElements
+
 apply(from = "${rootDir}/gradle/proto-convention.gradle")
 
 plugins {
@@ -15,5 +17,12 @@ dependencies {
     compileOnly(libs.spotbugs.annotations)
     implementation(libs.aws.sdk.s3)
     testImplementation(libs.bouncycastle.pkix)
-    testImplementation(project(":world-management-service"))
+    testImplementation(project(":world-management-service")) {
+        attributes {
+            attribute(
+                LibraryElements.LIBRARY_ELEMENTS_ATTRIBUTE,
+                objects.named(LibraryElements::class.java, LibraryElements.CLASSES),
+            )
+        }
+    }
 }
