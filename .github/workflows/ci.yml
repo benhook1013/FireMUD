@@ -2032,6 +2032,40 @@ jobs:
           fi
           echo "::endgroup::"
 
+      - name: Capture Account retained tenant-role PostgreSQL raw proof
+        if: ${{ always() && matrix.module == 'account-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: account-retained-tenant-role-postgresql-proof-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            services/account-service/build/test-results/integrationTest/TEST-*AccountJoinPostgresIntegrationTest.xml
+            services/account-service/build/test-results/integrationTest/TEST-*AccountTenantRoleOperationRepositoryPostgresIntegrationTest.xml
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Verify Account retained tenant-role PostgreSQL proof cases
+        if: ${{ !cancelled() && matrix.module == 'account-service' }}
+        run: |
+          # These prove the unwired writer against stipulated retained owner state, not actor authentication.
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest \
+            --require-suite integration.net.firedevops.firemud.accountservice.repository.AccountTenantRoleOperationRepositoryPostgresIntegrationTest \
+            --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#tenantRoleMutationDeniesNonAdminWithoutChangingAnyAccountSource()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#tenantRoleMutationRejectsStaleMembershipWithoutChangingAnyAccountSource()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#tenantRoleMutationRejectsMissingCurrentMembershipWithoutCreatingEvidence()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#tenantRoleMutationCommitsGrantRevokeTransferAndReplaysOriginalGrantAfterLaterChange()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#tenantRoleMutationRollsBackAllSourcesWhenEventAppendFailsAfterWriting()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#tenantRoleMutationRollsBackAllSourcesWhenAuditAppendFailsAfterWriting()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#tenantRoleMutationRollsBackAllSourcesWhenFinalCurrentReadbackFails()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#tenantRoleMutationRejectsWrongTenantWithoutChangingAnyAccountSource()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#tenantRoleMutationRejectsNonExplicitMembershipWithoutChangingAnyAccountSource()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#invalidatingTenantRoleMutationDeniesFenceOverflowWithoutChangingAnyAccountSource()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#concurrentOpposingTenantAdminTransfersLeaveOneCurrentAdministrator()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountTenantRoleOperationRepositoryPostgresIntegrationTest#immutableJournalRetriesOriginalBytesAfterLaterRoleOperationAndRejectsChangedIntent()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountTenantRoleOperationRepositoryPostgresIntegrationTest#operationJournalAndMemberEvidenceRollBackTogether()' \
+            account-service
+
       - name: Verify Account tenant-generation source PostgreSQL proof cases
         if: ${{ !cancelled() && matrix.module == 'account-service' }}
         run: |

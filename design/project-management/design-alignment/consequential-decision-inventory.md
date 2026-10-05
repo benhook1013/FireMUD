@@ -381,12 +381,15 @@ Packet 2 historical-alias rule: `MS-AA-TOKEN-REVOCATION` is a superseded service
 
 `AUTH-GLOBAL-ROLE-WRITER-01` is the sixth post-archive direct human decision recorded in this unmerged candidate. It records approval of the authority boundary only; it does not claim merged application, runtime implementation, or proof completion.
 
+The `AUTH-GLOBAL-ROLE-WRITER-01` and `AUTH-TENANT-ROLE-OWNER-01` entries below are supplemental approval records in this unmerged candidate; they do not alter the historical archive, source-allocation, or audited decision totals above.
+
 - [x] `COMMERCE-02` — `accepted` on 2026-08-25; initial human approval on 2026-08-23 and final refinement/application on 2026-08-25; [ADR 0179](../../architecture/decisions/adr-0179-firemud-managed-creator-commerce-boundary.md)
 - [x] `HOSTED-TERMS-01` — `accepted` on 2026-08-25; initial human approval on 2026-08-24 and final refinement/application on 2026-08-25; [ADR 0180](../../architecture/decisions/adr-0180-account-owned-hosted-terms-acceptance-gate.md)
 - [x] `HOSTED-TERMS-02` — `accepted` on 2026-08-25; initial human approval on 2026-08-24 and final refinement/application on 2026-08-25; [ADR 0181](../../architecture/decisions/adr-0181-changed-hosted-terms-decline-and-existing-content-continuity.md)
 - [x] `OPS-07` — `revised` on 2026-09-06; [ADR 0182](../../architecture/decisions/adr-0182-separated-hosted-runtime-and-certificate-identity-lifecycles.md)
 - [x] `EDGE-WITHDRAWAL-01` — `accepted` on 2026-09-24; human-approved emergency cutoff despite possible service interruption; [ADR 0184](../../architecture/decisions/adr-0184-emergency-tcp-proxy-identity-withdrawal.md)
 - [x] `AUTH-GLOBAL-ROLE-WRITER-01` — `accepted` on 2026-10-04; Ben explicitly selected “Approve this boundary (Recommended),” relayed through Overseer inbox `0f5ec31e-db81-4b31-ab9c-7e94b257cd62`; [ADR 0185](../../architecture/decisions/adr-0185-account-owned-global-role-administration-and-bootstrap.md)
+- [x] `AUTH-TENANT-ROLE-OWNER-01` — `accepted` on 2026-10-05; Ben approved same-tenant `tenantAdmin` management of `designer` roles, automatic first-`tenantAdmin` assignment to the verified tenant-creation initiator, and atomic same-tenant administrator transfer that preserves at least one current administrator. Approval was relayed through Overseer inbox `db1d32d5-e9ab-4726-bb5e-b720367aa8af` at `2026-10-05T04:01:52Z`; refined by Overseer approval `2eff595d-d41b-4e08-9b4b-919796e35190` on 2026-10-05 to distinguish the source-bound creator's first non-admitting membership event from a later explicit JOIN that passes the ordinary fresh JOIN gates; [canonical contract](../../architecture/microservices/account-service/api-contracts.md#account-owned-tenant-role-administration); no ADR required
 
 ### Allocation Notes
 

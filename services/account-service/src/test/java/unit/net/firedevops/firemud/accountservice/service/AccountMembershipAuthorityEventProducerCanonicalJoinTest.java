@@ -92,7 +92,11 @@ class AccountMembershipAuthorityEventProducerCanonicalJoinTest {
           mock(AccountLogoutAllOperationRepository.class),
           transitionReceipts,
           memberships,
-          roleSnapshots);
+          roleSnapshots,
+          mock(net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository.class),
+          mock(
+              net.firedevops.firemud.accountservice.repository.AccountTenantRoleOperationRepository
+                  .class));
     }
 
     private void verifyNoReads() {

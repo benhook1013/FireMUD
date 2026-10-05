@@ -93,6 +93,50 @@ public class AccountAuditOutboxRepository {
   }
 
   /**
+   * Locks and verifies one exact committed tenant-role audit envelope from its immutable journal.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public Optional<AccountAuditEnvelope> findCanonicalTenantRoleEnvelopeForUpdate(
+      UUID auditEventId,
+      UUID canonicalTenantUuid,
+      Instant occurredAt,
+      String payloadDigest,
+      String payload) {
+    requireReadWriteOwnerTransaction();
+    if (auditEventId == null
+        || canonicalTenantUuid == null
+        || occurredAt == null
+        || !AccountAuditDigest.isValid(payloadDigest)
+        || payload == null
+        || !payloadDigest.equals(AccountAuditDigest.ofPayload(payload))) {
+      throw new IllegalArgumentException("Exact tenant-role audit evidence is required");
+    }
+    Optional<AccountAuditEnvelope> found =
+        dsl.selectFrom(ACCOUNT_AUDIT_OUTBOX)
+            .where(ACCOUNT_AUDIT_OUTBOX.AUDIT_EVENT_ID.eq(auditEventId))
+            .forUpdate()
+            .fetchOptional(this::toEnvelope);
+    found.ifPresent(
+        actual -> {
+          if (!"tenant".equals(actual.scope())
+              || actual.tenantIdentityVersion() != AccountAuditTenantIdentity.VERSION_2
+              || actual.tenantId() != null
+              || !canonicalTenantUuid.equals(actual.tenantUuid())
+              || !"account-service".equals(actual.producerService())
+              || !"ACCOUNT_TENANT_ROLE_CHANGED".equals(actual.eventType())
+              || !occurredAt.equals(actual.occurredAt())
+              || actual.schemaVersion() != 1
+              || actual.payloadDigestVersion() != 1
+              || !payloadDigest.equals(actual.payloadDigest())
+              || !payload.equals(actual.payload())) {
+            throw new IllegalStateException(
+                "Tenant-role audit envelope differs from its immutable operation evidence");
+          }
+        });
+    return found;
+  }
+
+  /**
    * Locks the existing JOIN audit identity and returns it only for its exact canonical UUID scope.
    * A present event with another scope, tenant representation, producer, or event type is
    * contradictory evidence rather than an absent canonical audit.
