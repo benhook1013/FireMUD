@@ -52,6 +52,27 @@ public class WorldDraftTopologyCommitRepository {
     return Optional.ofNullable(find(plan, mapper.writeValueAsString(plan.ownerBinding())));
   }
 
+  /** Caller already holds the exact shared V25 FROZEN owner lock; no writer is entered. */
+  WorldDraftTopologyCommitEvidence readUnderFrozenLock(WorldDraftTopologyCommitPlan plan) {
+    requireTransaction();
+    WorldDraftTopologyCommitEvidence stored =
+        find(plan, mapper.writeValueAsString(plan.ownerBinding()));
+    if (stored == null) {
+      throw new ConflictException("World frozen capture has no committed complete topology result");
+    }
+    return stored;
+  }
+
+  /** Validates historical bytes without consulting current content, epochs or owner phase. */
+  WorldCanonicalAuthoredGraph verifyImmutableBytes(
+      WorldDraftTopologyCommitPlan plan, byte[] graph, byte[] result) {
+    WorldCanonicalAuthoredGraph decoded = new WorldCanonicalAuthoredGraphReader().read(plan, graph);
+    if (!Arrays.equals(result, encodeResult(plan, graph))) {
+      throw new ConflictException("World historical topology result differs from original input");
+    }
+    return decoded;
+  }
+
   WorldDraftTopologyCommitEvidence store(WorldDraftTopologyCommitPlan plan) {
     requireTransaction();
     String ownerJson = mapper.writeValueAsString(plan.ownerBinding());
@@ -154,8 +175,41 @@ public class WorldDraftTopologyCommitRepository {
       throw new ConflictException(
           "World complete request or commit was reused with changed full input or source");
     }
-    JsonNode identity = mapper.readTree(row.get("identity_json", String.class));
-    JsonNode intake = mapper.readTree(row.get("intake_json", String.class));
+    WorldAuthoredVersionIdentityReceipt original =
+        verifyOriginalSource(
+            plan, row.get("identity_json", String.class), row.get("intake_json", String.class));
+    long tenant = original.sourceIntakeReceipt().localTenantKey();
+    long version = original.localVersionKey();
+    var o = plan.ownerBinding();
+    if (tenant <= 0
+        || version <= 0
+        || !Objects.equals(row.get("request_id", UUID.class), binding.requestId())
+        || !Objects.equals(row.get("commit_id", UUID.class), binding.commitId())
+        || !Objects.equals(row.get("target_namespace", String.class), o.targetNamespace())
+        || !Objects.equals(row.get("canonical_tenant_id", UUID.class), o.canonicalTenantId())
+        || !Objects.equals(row.get("canonical_version_id", UUID.class), o.canonicalVersionId())
+        || !Objects.equals(row.get("local_tenant_key", Long.class), tenant)
+        || !Objects.equals(row.get("local_version_key", Long.class), version)
+        || !WorldDraftTopologyCommitEvidence.STATUS.equals(
+            row.get("storage_status", String.class))) {
+      throw new ConflictException("World immutable topology identity provenance is inconsistent");
+    }
+    byte[] graph = row.get("graph_bytes", byte[].class);
+    byte[] result = row.get("result_bytes", byte[].class);
+    if (!sha256(graph).equals(row.get("graph_sha256", String.class))
+        || !Arrays.equals(graph, readAndVerifyGraph(plan, tenant, version))
+        || !Arrays.equals(result, encodeResult(plan, graph))) {
+      throw new ConflictException("World immutable topology payload, graph or result differs");
+    }
+    return new WorldDraftTopologyCommitEvidence(binding, o, graph, result);
+  }
+
+  /** Reuses the original closed source and Version evidence validators for detached history. */
+  WorldAuthoredVersionIdentityReceipt verifyOriginalSource(
+      WorldDraftTopologyCommitPlan plan, String identityJson, String intakeJson) {
+    DraftCommitBinding binding = plan.binding();
+    JsonNode identity = mapper.readTree(identityJson);
+    JsonNode intake = mapper.readTree(intakeJson);
     var o = plan.ownerBinding();
     requireField(identity, "operation_id", o.versionIdentityOperationId());
     requireField(identity, "target_namespace", o.targetNamespace());
@@ -234,27 +288,7 @@ public class WorldDraftTopologyCommitRepository {
       throw new ConflictException(
           "World topology differs from retained closed Version/source evidence");
     }
-    if (tenant <= 0
-        || version <= 0
-        || !Objects.equals(row.get("request_id", UUID.class), binding.requestId())
-        || !Objects.equals(row.get("commit_id", UUID.class), binding.commitId())
-        || !Objects.equals(row.get("target_namespace", String.class), o.targetNamespace())
-        || !Objects.equals(row.get("canonical_tenant_id", UUID.class), o.canonicalTenantId())
-        || !Objects.equals(row.get("canonical_version_id", UUID.class), o.canonicalVersionId())
-        || !Objects.equals(row.get("local_tenant_key", Long.class), tenant)
-        || !Objects.equals(row.get("local_version_key", Long.class), version)
-        || !WorldDraftTopologyCommitEvidence.STATUS.equals(
-            row.get("storage_status", String.class))) {
-      throw new ConflictException("World immutable topology identity provenance is inconsistent");
-    }
-    byte[] graph = row.get("graph_bytes", byte[].class);
-    byte[] result = row.get("result_bytes", byte[].class);
-    if (!sha256(graph).equals(row.get("graph_sha256", String.class))
-        || !Arrays.equals(graph, readAndVerifyGraph(plan, tenant, version))
-        || !Arrays.equals(result, encodeResult(plan, graph))) {
-      throw new ConflictException("World immutable topology payload, graph or result differs");
-    }
-    return new WorldDraftTopologyCommitEvidence(binding, o, graph, result);
+    return retainedIdentity;
   }
 
   private byte[] readAndVerifyGraph(WorldDraftTopologyCommitPlan plan, long tenant, long version) {
@@ -405,7 +439,7 @@ public class WorldDraftTopologyCommitRepository {
     return mapper.writeValueAsBytes(graph);
   }
 
-  private Map<String, Object> expectedContent(
+  static Map<String, Object> expectedContent(
       Node node, Map<String, Long> keys, long tenant, long version) {
     Map<String, Object> row = new LinkedHashMap<>();
     var m = node.mutation();
@@ -476,12 +510,12 @@ public class WorldDraftTopologyCommitRepository {
     return row;
   }
 
-  private Long lookup(Map<String, Long> keys, String family, String id) {
+  private static Long lookup(Map<String, Long> keys, String family, String id) {
     return Objects.requireNonNull(
         keys.get(family + ":" + UUID.fromString(id)), "typed parent mapping");
   }
 
-  private String family(Node node) {
+  static String family(Node node) {
     return node.mutation().getAggregateType().name().replace("WORLD_DESIGN_AGGREGATE_TYPE_", "");
   }
 
@@ -491,7 +525,7 @@ public class WorldDraftTopologyCommitRepository {
     }
   }
 
-  private boolean sameContent(JsonNode actual, JsonNode expected) {
+  static boolean sameContent(JsonNode actual, JsonNode expected) {
     if (actual.size() != expected.size()) {
       return false;
     }
