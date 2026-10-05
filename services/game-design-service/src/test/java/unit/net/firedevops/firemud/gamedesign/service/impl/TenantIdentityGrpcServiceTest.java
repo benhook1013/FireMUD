@@ -215,13 +215,13 @@ class TenantIdentityGrpcServiceTest {
   }
 
   private static Status.Code status(Observer observer) {
-    return observer.failure == null ? null : Status.fromThrowable(observer.failure).getCode();
+    return observer.failure;
   }
 
   private static final class Observer
       implements StreamObserver<ResolveFreshTenantCreationResponse> {
     private ResolveFreshTenantCreationResponse response;
-    private Throwable failure;
+    private Status.Code failure;
     private boolean completed;
 
     @Override
@@ -231,7 +231,7 @@ class TenantIdentityGrpcServiceTest {
 
     @Override
     public void onError(Throwable throwable) {
-      failure = throwable;
+      failure = Status.fromThrowable(throwable).getCode();
     }
 
     @Override
