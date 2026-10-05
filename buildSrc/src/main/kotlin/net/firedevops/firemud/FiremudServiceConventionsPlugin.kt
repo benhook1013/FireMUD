@@ -13,7 +13,7 @@ class FiremudServiceConventionsPlugin : Plugin<Project> {
             dependencies.add("annotationProcessor", libs.findLibrary("lombok").get())
             dependencies.add("annotationProcessor", libs.findLibrary("lombok.mapstruct.binding").get())
             dependencies.add("compileOnly", libs.findLibrary("lombok").get())
-            dependencies.add("compileOnly", "com.github.spotbugs:spotbugs-annotations:4.9.8")
+            dependencies.add("compileOnly", libs.findLibrary("spotbugs.annotations").get())
 
             dependencies.add("implementation", libs.findLibrary("mapstruct").get())
             dependencies.add("implementation", libs.findLibrary("spring.boot.starter").get())

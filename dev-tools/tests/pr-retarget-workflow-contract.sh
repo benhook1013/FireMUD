@@ -386,6 +386,7 @@ for filename, jobs in {
             for key, value in values.items():
                 expression = expression.replace(key, repr(value))
             return eval(expression.replace("&&", "and").replace("||", "or").replace("null", "None"), {"__builtins__": {}})
+        # Upstream failure is deliberately absent from this status predicate.
         if not eligible() or not eligible(action="edited", base_ref="develop"):
             raise SystemExit(f"{job} must report ordinary results and base retargets")
         for arguments in ({"cancelled": True}, {"head_repo": "fork/repo"}, {"actor": "dependabot[bot]"}, {"action": "edited"}, {"event": "push"}):

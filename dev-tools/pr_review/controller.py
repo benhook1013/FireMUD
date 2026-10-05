@@ -4288,16 +4288,17 @@ class ReviewController:
         history_cache: dict[tuple[int, str], list[Any]] = {}
         stop_audit_cache: dict[tuple[Any, ...], Mapping[str, Any]] = {}
         bounded_evidence_cache: dict[tuple[int, str], Mapping[str, Any]] = {}
-        for allocation in state.allocations.values():
-            if allocation.pr not in state.ordered_prs or allocation.stop_basis is None:
-                continue
+
+        def cache_request_history(pr: int, channel: str) -> None:
+            if (pr, channel) in history_cache:
+                return
             request_history = getattr(self._evidence_provider, "request_history", None)
             if callable(request_history):
-                values = list(request_history(allocation.pr, allocation.channel))
+                values = list(request_history(pr, channel))
             else:
                 values = [
                     value
-                    for value in _history(self._evidence_provider, allocation.pr, policy.Channel(allocation.channel))
+                    for value in _history(self._evidence_provider, pr, policy.Channel(channel))
                     if _field(value, "active_review") is True
                     or _field(value, "active_reservation") is True
                     or _field(value, "rate_limited") is True
@@ -4306,12 +4307,21 @@ class ReviewController:
                         and _field(value, "terminal") is not True
                     )
                 ]
-            history_cache[(allocation.pr, allocation.channel)] = values
+            history_cache[(pr, channel)] = values
+
+        for allocation in state.allocations.values():
+            if allocation.pr in state.ordered_prs and allocation.stop_basis is not None:
+                cache_request_history(allocation.pr, allocation.channel)
         live, reconciliation = self._reconciliation(state, history_cache=history_cache)
         for pr in state.ordered_prs:
             problem = self._head_repository_problem(live[pr])
             if problem:
                 raise ControllerError(f"PR #{pr} {problem}")
+            if live[pr].merged:
+                # Merged PRs cannot supply selection or taper. Current reservations
+                # and repository cooldowns still belong to request admission.
+                for channel_name in ("hosted", "cli"):
+                    cache_request_history(pr, channel_name)
         history = {
             pr: self._policy_history(state, pr, selected, reconciliation, history_cache=history_cache)
             for pr in state.ordered_prs

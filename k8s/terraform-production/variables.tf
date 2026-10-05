@@ -54,3 +54,13 @@ variable "velero_credentials_secret" {
   type        = string
   default     = "velero-creds"
 }
+
+variable "postgres_chart_version" {
+  description = "Operator-selected exact PostgreSQL HA chart version; supported PostgreSQL 16 packaging and chart/values compatibility must be proven before deployment"
+  type        = string
+
+  validation {
+    condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+$", var.postgres_chart_version))
+    error_message = "postgres_chart_version must be an explicit exact chart version; latest and version ranges are not allowed."
+  }
+}
