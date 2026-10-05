@@ -500,44 +500,77 @@ class WorldCanonicalFrozenTopologyPostgresIntegrationTest {
 
   @Test
   void immutableJournalDeniesWritesAndHistoricalReadRejectsEveryTamperedField() {
-    for (String set :
-        List.of(
-            "result_bytes='corrupt'::bytea",
-            "storage_result_bytes='corrupt'::bytea",
-            "binding_digest='sha256:" + "f".repeat(64) + "'",
-            "binding_json=replace(binding_json,'retained-base','tampered-base')",
-            "identity_json=replace(identity_json,'local_version_key','unsupported_key')",
-            "intake_json=replace(intake_json,'Synthetic component world','changed source')",
-            "owner_binding_json=replace(owner_binding_json,'firemud','other')",
-            "freeze_request_json=replace(freeze_request_json,'"
-                + "b".repeat(64)
-                + "','"
-                + "c".repeat(64)
-                + "')",
-            "graph_sha256='" + "d".repeat(64) + "'")) {
+    Map<String, String> mutations = new LinkedHashMap<>();
+    mutations.put("result_bytes", "result_bytes='corrupt'::bytea");
+    mutations.put("storage_result_bytes", "storage_result_bytes='corrupt'::bytea");
+    mutations.put("binding_digest", "binding_digest='sha256:" + "f".repeat(64) + "'");
+    mutations.put(
+        "binding_json", "binding_json=replace(binding_json,'retained-base','tampered-base')");
+    mutations.put(
+        "identity_json",
+        "identity_json=replace(identity_json,'local_version_key','unsupported_key')");
+    mutations.put(
+        "intake_json",
+        "intake_json=replace(intake_json,'Synthetic component world','changed source')");
+    mutations.put(
+        "owner_binding_json", "owner_binding_json=replace(owner_binding_json,'firemud','other')");
+    mutations.put("freeze_request_json contentDigest", null);
+    mutations.put("graph_sha256", "graph_sha256='" + "d".repeat(64) + "'");
+
+    for (var mutation : mutations.entrySet()) {
       Fixture f = fixture();
       var p = plan(f);
       component().store(p);
       Request request = freeze(p);
       frozen().capture(request);
+      String set = mutation.getValue();
+      if (set == null) {
+        String originalDigest = request.freeze().contentDigest();
+        String changedDigest =
+            (originalDigest.charAt(0) == '0' ? "1" : "0") + originalDigest.substring(1);
+        assertThat(changedDigest)
+            .as("replacement for %s differs from the actual schema-3 digest", mutation.getKey())
+            .isNotEqualTo(originalDigest);
+        set =
+            "freeze_request_json=replace(freeze_request_json,'"
+                + originalDigest
+                + "','"
+                + changedDigest
+                + "')";
+      }
+      String before =
+          dsl.resultQuery(
+                  "SELECT to_jsonb(t)::text FROM world_canonical_frozen_topology t "
+                      + "WHERE publication_fence=?",
+                  request.freeze().publicationFence())
+              .fetchOne(0, String.class);
+      assertThat(before).as("original journal row exists for %s", mutation.getKey()).isNotNull();
+      String update = "UPDATE world_canonical_frozen_topology SET " + set;
       assertThatThrownBy(
               () ->
                   dsl.execute(
-                      "UPDATE world_canonical_frozen_topology SET "
-                          + set
-                          + " WHERE publication_fence=?",
-                      request.freeze().publicationFence()))
+                      update + " WHERE publication_fence=?", request.freeze().publicationFence()))
+          .as("origin trigger rejects direct update of %s", mutation.getKey())
           .isInstanceOf(RuntimeException.class);
       assertThatThrownBy(
               () ->
                   dsl.execute(
                       "DELETE FROM world_canonical_frozen_topology WHERE publication_fence=?",
                       request.freeze().publicationFence()))
+          .as("origin trigger rejects direct delete while testing %s", mutation.getKey())
           .isInstanceOf(RuntimeException.class);
-      bypass(
-          "UPDATE world_canonical_frozen_topology SET " + set + " WHERE publication_fence=?",
-          request.freeze().publicationFence());
+      bypass(update + " WHERE publication_fence=?", request.freeze().publicationFence());
+      String after =
+          dsl.resultQuery(
+                  "SELECT to_jsonb(t)::text FROM world_canonical_frozen_topology t WHERE publication_fence=?",
+                  request.freeze().publicationFence())
+              .fetchOne(0, String.class);
+      assertThat(after)
+          .as("bypass mutation changes the complete original journal row for %s", mutation.getKey())
+          .isNotNull()
+          .isNotEqualTo(before);
       assertThatThrownBy(() -> frozen().readCommitted(request))
+          .as("historical read rejects tampered %s", mutation.getKey())
           .isInstanceOf(RuntimeException.class);
       assertOrigin();
     }

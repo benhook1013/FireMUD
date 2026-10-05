@@ -9,6 +9,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
@@ -54,6 +55,8 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
   static final String STATUS_TERMINATING = "TERMINATING";
   static final String STATUS_TERMINATED = "TERMINATED";
   private static final String SUPPORTED_RELEASE_ATTESTATION_SCHEMA_VERSION = "v1";
+
+  private record SelectedRoomTopology(List<Zone> zones, List<Room> rooms, List<RoomExit> exits) {}
 
   private final WorldInstanceRepository worldInstanceRepository;
   private final RegionInstanceRepository regionInstanceRepository;
@@ -200,6 +203,8 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
       return snapshot(existing);
     }
     validateAttestedLaunchInputs(request);
+    SelectedRoomTopology topology =
+        loadAndValidateRoomTopology(request.tenantId(), request.versionId());
     WorldInstance worldInstance = new WorldInstance();
     worldInstance.setTenantId(request.tenantId());
     worldInstance.setGameInstanceId(request.gameInstanceId());
@@ -232,8 +237,7 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
     region.setGeneratorParams("{}");
     region.setSpacingMultiplier(1.0);
     RegionInstance savedRegion = regionInstanceRepository.save(region);
-    materializeRoomTopology(
-        savedRegion, request.tenantId(), request.versionId(), request.gameInstanceId());
+    materializeRoomTopology(savedRegion, request.tenantId(), request.gameInstanceId(), topology);
 
     logger.info(
         "Prepared world instance tenant={} gameInstanceId={} launchDescriptorId={} versionId={}",
@@ -538,11 +542,105 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
                 new IllegalArgumentException("WORLD_INSTANCE_NOT_FOUND: world instance not found"));
   }
 
+  private SelectedRoomTopology loadAndValidateRoomTopology(long tenantId, long versionId) {
+    List<Zone> zones = zoneRepository.findByTenantIdAndVersionIdOrderByIdAsc(tenantId, versionId);
+    List<Room> rooms = roomRepository.findByTenantIdAndVersionIdOrderByIdAsc(tenantId, versionId);
+    List<RoomExit> exits =
+        roomExitRepository.findByTenantIdAndVersionIdOrderByIdAsc(tenantId, versionId);
+
+    Map<Long, Zone> zonesById = new LinkedHashMap<>();
+    for (Zone zone : zones) {
+      if (zone == null) {
+        throw incompleteTopology("selected zone row is missing");
+      }
+      requireScopedTopologyRow(
+          "zone", zone.getId(), zone.getTenantId(), zone.getVersionId(), tenantId, versionId);
+      if (zonesById.putIfAbsent(zone.getId(), zone) != null) {
+        throw incompleteTopology("selected topology contains duplicate zone identities");
+      }
+    }
+
+    Map<Long, Room> roomsById = new LinkedHashMap<>();
+    for (Room room : rooms) {
+      if (room == null) {
+        throw incompleteTopology("selected room row is missing");
+      }
+      requireScopedTopologyRow(
+          "room", room.getId(), room.getTenantId(), room.getVersionId(), tenantId, versionId);
+      if (roomsById.putIfAbsent(room.getId(), room) != null) {
+        throw incompleteTopology("selected topology contains duplicate room identities");
+      }
+      Zone parentZone = room.getZone();
+      if (parentZone == null) {
+        throw incompleteTopology("room " + room.getId() + " has no selected zone");
+      }
+      requireTopologyReferenceId("room zone reference", parentZone.getId());
+      if (!zonesById.containsKey(parentZone.getId())) {
+        throw incompleteTopology("room " + room.getId() + " references a missing selected zone");
+      }
+    }
+
+    Set<Long> exitIds = new HashSet<>();
+    for (RoomExit exit : exits) {
+      if (exit == null) {
+        throw incompleteTopology("selected exit row is missing");
+      }
+      requireScopedTopologyRow(
+          "exit", exit.getId(), exit.getTenantId(), exit.getVersionId(), tenantId, versionId);
+      if (!exitIds.add(exit.getId())) {
+        throw incompleteTopology("selected topology contains duplicate exit identities");
+      }
+      requireSelectedExitEndpoint("from", exit.getFromRoom(), roomsById);
+      requireSelectedExitEndpoint("to", exit.getToRoom(), roomsById);
+    }
+    return new SelectedRoomTopology(List.copyOf(zones), List.copyOf(rooms), List.copyOf(exits));
+  }
+
+  private void requireScopedTopologyRow(
+      String rowType,
+      Long rowId,
+      Long rowTenantId,
+      Long rowVersionId,
+      long tenantId,
+      long versionId) {
+    if (rowId == null || rowId <= 0L) {
+      throw incompleteTopology(rowType + " row has no positive identity");
+    }
+    if (!Long.valueOf(tenantId).equals(rowTenantId)
+        || !Long.valueOf(versionId).equals(rowVersionId)) {
+      throw incompleteTopology(rowType + " row is outside the selected tenant/version scope");
+    }
+  }
+
+  private void requireSelectedExitEndpoint(
+      String endpoint, Room endpointRoom, Map<Long, Room> roomsById) {
+    if (endpointRoom == null) {
+      throw incompleteTopology("exit has no " + endpoint + " room");
+    }
+    requireTopologyReferenceId(endpoint + " exit room reference", endpointRoom.getId());
+    if (!roomsById.containsKey(endpointRoom.getId())) {
+      throw incompleteTopology("exit " + endpoint + " room is not in the selected topology");
+    }
+  }
+
+  private void requireTopologyReferenceId(String referenceType, Long referenceId) {
+    if (referenceId == null || referenceId <= 0L) {
+      throw incompleteTopology(referenceType + " has no positive identity");
+    }
+  }
+
+  private IllegalArgumentException incompleteTopology(String detail) {
+    return new IllegalArgumentException(
+        "FAILED_PRECONDITION: INCOMPLETE_WORLD_TOPOLOGY: " + detail);
+  }
+
   private void materializeRoomTopology(
-      RegionInstance regionInstance, long tenantId, long versionId, long gameInstanceId) {
+      RegionInstance regionInstance,
+      long tenantId,
+      long gameInstanceId,
+      SelectedRoomTopology topology) {
     Map<Long, ZoneInstance> zoneInstancesByTemplateId = new LinkedHashMap<>();
-    for (Zone templateZone :
-        zoneRepository.findByTenantIdAndVersionIdOrderByIdAsc(tenantId, versionId)) {
+    for (Zone templateZone : topology.zones()) {
       ZoneInstance zoneInstance = new ZoneInstance();
       zoneInstance.setTenantId(tenantId);
       zoneInstance.setGameInstanceId(gameInstanceId);
@@ -553,14 +651,9 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
       ZoneInstance savedZoneInstance = zoneInstanceRepository.save(zoneInstance);
       zoneInstancesByTemplateId.put(templateZone.getId(), savedZoneInstance);
     }
-    List<Room> templateRooms =
-        roomRepository.findByTenantIdAndVersionIdOrderByIdAsc(tenantId, versionId);
     Map<Long, RoomInstance> roomInstancesByTemplateId = new LinkedHashMap<>();
-    for (Room templateRoom : templateRooms) {
+    for (Room templateRoom : topology.rooms()) {
       ZoneInstance zoneInstance = zoneInstancesByTemplateId.get(templateRoom.getZone().getId());
-      if (zoneInstance == null) {
-        continue;
-      }
       RoomInstance roomInstance = new RoomInstance();
       roomInstance.setTenantId(tenantId);
       roomInstance.setGameInstanceId(gameInstanceId);
@@ -576,14 +669,10 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
       RoomInstance savedRoomInstance = roomInstanceRepository.save(roomInstance);
       roomInstancesByTemplateId.put(templateRoom.getId(), savedRoomInstance);
     }
-    for (RoomExit templateExit :
-        roomExitRepository.findByTenantIdAndVersionIdOrderByIdAsc(tenantId, versionId)) {
+    for (RoomExit templateExit : topology.exits()) {
       RoomInstance fromRoomInstance =
           roomInstancesByTemplateId.get(templateExit.getFromRoom().getId());
       RoomInstance toRoomInstance = roomInstancesByTemplateId.get(templateExit.getToRoom().getId());
-      if (fromRoomInstance == null || toRoomInstance == null) {
-        continue;
-      }
       RoomInstanceExit roomInstanceExit = new RoomInstanceExit();
       roomInstanceExit.setTenantId(tenantId);
       roomInstanceExit.setGameInstanceId(gameInstanceId);
