@@ -34,11 +34,18 @@ MATERIALIZER_USERNAME = "system:serviceaccount:account-prod:firemud-secret-mater
 UNSET = object()
 
 
-def manifest_for(*, active: str, ids: tuple[str, ...], first_material_number: int = 1) -> bytes:
+def manifest_for(
+    *,
+    active: str,
+    ids: tuple[str, ...],
+    first_material_number: int = 1,
+    purposes_by_id: dict[str, tuple[str, ...]] | None = None,
+) -> bytes:
     lines = ["version=1", f"activeKeyId={active}"]
     material_number = first_material_number
     for key_id in ids:
-        for purpose in ("bare-login", "connect-token"):
+        purposes = (purposes_by_id or {}).get(key_id, ("bare-login", "connect-token"))
+        for purpose in purposes:
             material = bytes([material_number]) * 32
             material_number += 1
             encoded = base64.urlsafe_b64encode(material).rstrip(b"=").decode("ascii")
@@ -186,9 +193,7 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
         self.addCleanup(self.kubectl_patch.stop)
         # Permit only this test fixture's fake Kubernetes transcripts. This is
         # offline behavior proof, not authorization for live materialization.
-        self.target_binding_patch = patch.object(
-            MATERIALIZER, "_require_target_cluster_binding", return_value=None
-        )
+        self.target_binding_patch = patch.object(MATERIALIZER, "_require_target_cluster_binding", return_value=None)
         self.target_binding_patch.start()
         self.addCleanup(self.target_binding_patch.stop)
 
@@ -249,6 +254,39 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
             kubectl="kubectl-test-double",
             now=now,
         )
+
+    def test_manifest_parser_accepts_optional_pending_reset_purpose(self) -> None:
+        manifest = manifest_for(
+            active="k2",
+            ids=("k1", "k2"),
+            purposes_by_id={"k2": ("bare-login", "connect-token", "pending-reset")},
+        )
+
+        parsed = MATERIALIZER.parse_manifest(manifest)
+
+        self.assertEqual({"bare-login", "connect-token"}, set(parsed.keys["k1"]))
+        self.assertEqual({"bare-login", "connect-token", "pending-reset"}, set(parsed.keys["k2"]))
+        self.assertEqual(5, len({key for values in parsed.keys.values() for key in values.values()}))
+
+    def test_manifest_parser_rejects_missing_original_purpose(self) -> None:
+        manifest = manifest_for(
+            active="k1",
+            ids=("k1",),
+            purposes_by_id={"k1": ("bare-login", "pending-reset")},
+        )
+
+        with self.assertRaisesRegex(MATERIALIZER.MaterializationError, "both Account response purposes"):
+            MATERIALIZER.parse_manifest(manifest)
+
+    def test_manifest_parser_rejects_unknown_purpose(self) -> None:
+        manifest = manifest_for(
+            active="k1",
+            ids=("k1",),
+            purposes_by_id={"k1": ("bare-login", "connect-token", "unknown-purpose")},
+        )
+
+        with self.assertRaisesRegex(MATERIALIZER.MaterializationError, "invalid key identity"):
+            MATERIALIZER.parse_manifest(manifest)
 
     def test_rfc3339_utc_accepts_canonical_fractional_precision(self) -> None:
         timestamp = "2026-09-27T12:00:00.00101Z"

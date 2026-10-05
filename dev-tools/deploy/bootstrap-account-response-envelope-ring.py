@@ -37,9 +37,7 @@ NAMESPACE_PATTERN = re.compile(r"[a-z0-9]([-a-z0-9]*[a-z0-9])?\Z")
 SERVICE_ACCOUNT_NAME_PATTERN = re.compile(
     r"[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)*\Z"
 )
-RFC3339_UTC_PATTERN = re.compile(
-    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?Z\Z"
-)
+RFC3339_UTC_PATTERN = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?Z\Z")
 
 
 class BootstrapError(Exception):
@@ -115,14 +113,19 @@ def _manifest() -> bytes:
     key_id = _random_identifier(16)
     bare_login_key = secrets.token_bytes(KEY_BYTES)
     connect_token_key = secrets.token_bytes(KEY_BYTES)
-    while connect_token_key == bare_login_key:
+    pending_reset_key = secrets.token_bytes(KEY_BYTES)
+    while connect_token_key == bare_login_key or connect_token_key == pending_reset_key:
         connect_token_key = secrets.token_bytes(KEY_BYTES)
+    while pending_reset_key in (bare_login_key, connect_token_key):
+        pending_reset_key = secrets.token_bytes(KEY_BYTES)
     bare_login_encoded = base64.urlsafe_b64encode(bare_login_key).rstrip(b"=").decode("ascii")
     connect_token_encoded = base64.urlsafe_b64encode(connect_token_key).rstrip(b"=").decode("ascii")
+    pending_reset_encoded = base64.urlsafe_b64encode(pending_reset_key).rstrip(b"=").decode("ascii")
     return (
         f"version=1\nactiveKeyId={key_id}\n"
         f"key:{key_id}:bare-login={bare_login_encoded}\n"
         f"key:{key_id}:connect-token={connect_token_encoded}\n"
+        f"key:{key_id}:pending-reset={pending_reset_encoded}\n"
     ).encode("ascii")
 
 
@@ -160,9 +163,7 @@ def _source_record_bytes(
         "materializerUsername": materializer_username,
         "previousSourceGeneration": previous_source_generation,
     }
-    return (json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode(
-        "utf-8"
-    )
+    return (json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
 
 
 def build_source_record(
@@ -247,36 +248,33 @@ def _read_previous_source_record(path: Path, repository_root: Path):
 
 def _rotation_manifest(materializer, previous_manifest: bytes) -> bytes:
     previous = materializer.parse_manifest(previous_manifest)
-    previous_material = {
-        key_material
-        for purposes in previous.keys.values()
-        for key_material in purposes.values()
-    }
+    previous_material = {key_material for purposes in previous.keys.values() for key_material in purposes.values()}
     previous_key_ids = set(previous.keys)
     while True:
         active_key_id = _random_identifier(16)
         if active_key_id not in previous_key_ids:
             break
 
+    used_material = set(previous_material)
+
     def fresh_key() -> bytes:
         while True:
             candidate = secrets.token_bytes(KEY_BYTES)
-            if candidate not in previous_material:
+            if candidate not in used_material:
+                used_material.add(candidate)
                 return candidate
 
-    bare_login_key = fresh_key()
-    connect_token_key = fresh_key()
-    while connect_token_key == bare_login_key:
-        connect_token_key = fresh_key()
+    active_keys: dict[str, bytes] = {}
+    for purpose in ("bare-login", "connect-token", "pending-reset"):
+        active_keys[purpose] = fresh_key()
     lines = ["version=1", f"activeKeyId={active_key_id}"]
     for key_id, purposes in previous.keys.items():
-        for purpose in ("bare-login", "connect-token"):
+        for purpose in ("bare-login", "connect-token", "pending-reset"):
+            if purpose not in purposes:
+                continue
             encoded = base64.urlsafe_b64encode(purposes[purpose]).rstrip(b"=").decode("ascii")
             lines.append(f"key:{key_id}:{purpose}={encoded}")
-    for purpose, key_material in (
-        ("bare-login", bare_login_key),
-        ("connect-token", connect_token_key),
-    ):
+    for purpose, key_material in active_keys.items():
         encoded = base64.urlsafe_b64encode(key_material).rstrip(b"=").decode("ascii")
         lines.append(f"key:{active_key_id}:{purpose}={encoded}")
     return ("\n".join(lines) + "\n").encode("ascii")

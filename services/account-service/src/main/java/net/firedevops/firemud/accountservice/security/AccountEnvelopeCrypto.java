@@ -17,16 +17,18 @@ import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import javax.crypto.AEADBadTagException;
 import javax.crypto.Cipher;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
 /**
- * Account-local AES-256-GCM for bounded credential-bearing response envelopes. The mounted manifest
- * is read for every operation so atomic rotation and key removal take effect immediately. Callers
- * must provide an Account-only mounted path and must read back the exact durable operation/envelope
- * before using {@link #decrypt} for recovery.
+ * Account-local AES-256-GCM for bounded credential-bearing response and pending-reset envelopes.
+ * The mounted manifest is read for every operation so atomic rotation and key removal take effect
+ * immediately. Callers must provide an Account-only mounted path and must read back the exact
+ * durable operation/envelope before using a decrypt method for recovery.
  *
  * <p>Manifest v1 is strict ASCII (an ASCII subset of UTF-8), terminated by one LF:
  *
@@ -37,10 +39,13 @@ import javax.crypto.spec.SecretKeySpec;
  * key:k1:connect-token=&lt;43-character-unpadded-base64url&gt;
  * key:k2:bare-login=&lt;43-character-unpadded-base64url&gt;
  * key:k2:connect-token=&lt;43-character-unpadded-base64url&gt;
+ * key:k2:pending-reset=&lt;43-character-unpadded-base64url&gt;
  * </pre>
  *
- * Every key ID must have one independent 32-byte key for each purpose. The active ID is used for
- * new writes; retained older IDs are decrypt-only. No default key or classpath fallback exists.
+ * Every key ID must have independent 32-byte connect-token and bare-LOGIN keys. A pending-reset key
+ * is optional for retained IDs and is required only for pending-reset operations. The active ID is
+ * used for new writes; retained older IDs are decrypt-only. No default key or classpath fallback
+ * exists.
  */
 public final class AccountEnvelopeCrypto {
   public static final String KEY_RING_PATH_ENVIRONMENT_VARIABLE =
@@ -52,8 +57,14 @@ public final class AccountEnvelopeCrypto {
   private static final int AES_KEY_LENGTH_BYTES = 32;
   private static final int GCM_TAG_LENGTH_BITS = 128;
   private static final int MAX_AAD_FIELD_LENGTH_BYTES = 4096;
+  private static final Pattern ARGON2_VERIFIER_PATTERN =
+      Pattern.compile(
+          "\\$argon2(?:i|id)\\$v=19\\$m=([1-9][0-9]*),t=([1-9][0-9]*),p=([1-9][0-9]*)"
+              + "\\$([A-Za-z0-9+/]+)\\$([A-Za-z0-9+/]+)");
   private static final byte[] AAD_DOMAIN =
       "firemud-account-response-envelope/v1".getBytes(StandardCharsets.US_ASCII);
+  private static final byte[] PENDING_RESET_AAD_DOMAIN =
+      "firemud-account-pending-reset-envelope/v1".getBytes(StandardCharsets.US_ASCII);
   private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
   private final Path manifestPath;
@@ -90,6 +101,43 @@ public final class AccountEnvelopeCrypto {
       throw failure(AccountEnvelopeCryptoException.Failure.INVALID_ENVELOPE);
     }
 
+    return encryptWithAssociatedData(
+        purpose,
+        plaintext,
+        (formatVersion, keyId, envelopePurpose) ->
+            associatedData(formatVersion, keyId, envelopePurpose, binding));
+  }
+
+  /**
+   * Encrypts the exact encoded slow Argon2 verifier for a pending password-reset operation. The
+   * binding digest is SHA-256 over this encoded verifier; plaintext passwords and fast password
+   * digests are not valid plaintext for this purpose.
+   */
+  public AccountEncryptedEnvelope encryptPendingReset(
+      AccountPendingResetEnvelopeBinding binding, byte[] encodedArgon2Verifier) {
+    Objects.requireNonNull(binding, "binding");
+    Objects.requireNonNull(encodedArgon2Verifier, "encodedArgon2Verifier");
+    if (encodedArgon2Verifier.length == 0
+        || encodedArgon2Verifier.length > AccountEncryptedEnvelope.MAX_PLAINTEXT_LENGTH_BYTES) {
+      throw failure(AccountEnvelopeCryptoException.Failure.INVALID_ENVELOPE);
+    }
+    if (!isWellFormedArgon2Verifier(encodedArgon2Verifier)
+        || !matchesTargetVerifierDigest(encodedArgon2Verifier, binding)) {
+      throw failure(AccountEnvelopeCryptoException.Failure.INVALID_ENVELOPE);
+    }
+
+    return encryptWithAssociatedData(
+        AccountEnvelopePurpose.PENDING_PASSWORD_RESET,
+        encodedArgon2Verifier,
+        (formatVersion, keyId, purpose) ->
+            pendingResetAssociatedData(formatVersion, keyId, purpose, binding));
+  }
+
+  private AccountEncryptedEnvelope encryptWithAssociatedData(
+      AccountEnvelopePurpose purpose,
+      byte[] plaintext,
+      AssociatedDataFactory associatedDataFactory) {
+
     try (LoadedKeyRing keyRing = readKeyRing()) {
       String keyId = keyRing.activeKeyId;
       byte[] keyBytes = keyRing.keyBytes(keyId, purpose);
@@ -101,7 +149,8 @@ public final class AccountEnvelopeCrypto {
           new SecretKeySpec(keyBytes, "AES"),
           new GCMParameterSpec(GCM_TAG_LENGTH_BITS, nonce));
       cipher.updateAAD(
-          associatedData(AccountEncryptedEnvelope.CURRENT_FORMAT_VERSION, keyId, purpose, binding));
+          associatedDataFactory.create(
+              AccountEncryptedEnvelope.CURRENT_FORMAT_VERSION, keyId, purpose));
       byte[] ciphertext = cipher.doFinal(plaintext);
       return new AccountEncryptedEnvelope(
           AccountEncryptedEnvelope.CURRENT_FORMAT_VERSION, keyId, purpose, nonce, ciphertext);
@@ -124,6 +173,36 @@ public final class AccountEnvelopeCrypto {
       throw failure(AccountEnvelopeCryptoException.Failure.PURPOSE_MISMATCH);
     }
 
+    return decryptWithAssociatedData(
+        envelope,
+        (formatVersion, keyId, purpose) -> associatedData(formatVersion, keyId, purpose, binding));
+  }
+
+  /** Decrypts a pending-reset envelope only under its complete original typed binding. */
+  public byte[] decryptPendingReset(
+      AccountEncryptedEnvelope envelope, AccountPendingResetEnvelopeBinding binding) {
+    Objects.requireNonNull(envelope, "envelope");
+    Objects.requireNonNull(binding, "binding");
+    if (envelope.purpose() != AccountEnvelopePurpose.PENDING_PASSWORD_RESET) {
+      throw failure(AccountEnvelopeCryptoException.Failure.PURPOSE_MISMATCH);
+    }
+
+    byte[] encodedArgon2Verifier =
+        decryptWithAssociatedData(
+            envelope,
+            (formatVersion, keyId, purpose) ->
+                pendingResetAssociatedData(formatVersion, keyId, purpose, binding));
+    if (!isWellFormedArgon2Verifier(encodedArgon2Verifier)
+        || !matchesTargetVerifierDigest(encodedArgon2Verifier, binding)) {
+      Arrays.fill(encodedArgon2Verifier, (byte) 0);
+      throw failure(AccountEnvelopeCryptoException.Failure.AUTHENTICATION_FAILED);
+    }
+    return encodedArgon2Verifier;
+  }
+
+  private byte[] decryptWithAssociatedData(
+      AccountEncryptedEnvelope envelope, AssociatedDataFactory associatedDataFactory) {
+
     try (LoadedKeyRing keyRing = readKeyRing()) {
       byte[] keyBytes = keyRing.keyBytes(envelope.keyId(), envelope.purpose());
       Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
@@ -132,7 +211,8 @@ public final class AccountEnvelopeCrypto {
           new SecretKeySpec(keyBytes, "AES"),
           new GCMParameterSpec(GCM_TAG_LENGTH_BITS, envelope.nonce()));
       cipher.updateAAD(
-          associatedData(envelope.formatVersion(), envelope.keyId(), envelope.purpose(), binding));
+          associatedDataFactory.create(
+              envelope.formatVersion(), envelope.keyId(), envelope.purpose()));
       return cipher.doFinal(envelope.ciphertext());
     } catch (AEADBadTagException exception) {
       throw failure(AccountEnvelopeCryptoException.Failure.AUTHENTICATION_FAILED);
@@ -230,7 +310,8 @@ public final class AccountEnvelopeCrypto {
         throw failure(AccountEnvelopeCryptoException.Failure.KEY_RING_MALFORMED);
       }
       for (Map.Entry<String, EnumMap<AccountEnvelopePurpose, byte[]>> entry : keys.entrySet()) {
-        if (entry.getValue().size() != AccountEnvelopePurpose.values().length) {
+        if (!entry.getValue().containsKey(AccountEnvelopePurpose.CONNECT_TOKEN_RESPONSE)
+            || !entry.getValue().containsKey(AccountEnvelopePurpose.BARE_LOGIN_RESPONSE)) {
           throw failure(AccountEnvelopeCryptoException.Failure.KEY_RING_MALFORMED);
         }
       }
@@ -347,6 +428,91 @@ public final class AccountEnvelopeCrypto {
       return bytes.toByteArray();
     } catch (IOException exception) {
       throw failure(AccountEnvelopeCryptoException.Failure.CRYPTO_OPERATION_FAILED);
+    }
+  }
+
+  private static byte[] pendingResetAssociatedData(
+      int formatVersion,
+      String keyId,
+      AccountEnvelopePurpose purpose,
+      AccountPendingResetEnvelopeBinding binding) {
+    try {
+      ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+      DataOutputStream output = new DataOutputStream(bytes);
+      writeFrame(output, PENDING_RESET_AAD_DOMAIN);
+      output.writeInt(formatVersion);
+      writeFrame(output, utf8(keyId));
+      writeFrame(output, utf8(purpose.manifestName()));
+      writeFrame(output, utf8(binding.accountId().toString()));
+      writeFrame(output, utf8(binding.tokenHash()));
+      writeFrame(output, utf8(binding.tokenExpiresAt().toString()));
+      writeFrame(output, utf8(binding.requestId()));
+      writeFrame(output, binding.requestDigest());
+      writeFrame(output, binding.sourceCaptureDigest());
+      writeFrame(output, binding.targetVerifierDigest());
+      output.flush();
+      if (bytes.size() > MAX_AAD_FIELD_LENGTH_BYTES * 8) {
+        throw failure(AccountEnvelopeCryptoException.Failure.INVALID_ENVELOPE);
+      }
+      return bytes.toByteArray();
+    } catch (IOException exception) {
+      throw failure(AccountEnvelopeCryptoException.Failure.CRYPTO_OPERATION_FAILED);
+    }
+  }
+
+  private static boolean matchesTargetVerifierDigest(
+      byte[] encodedArgon2Verifier, AccountPendingResetEnvelopeBinding binding) {
+    byte[] calculatedDigest = null;
+    try {
+      calculatedDigest = MessageDigest.getInstance("SHA-256").digest(encodedArgon2Verifier);
+      return MessageDigest.isEqual(calculatedDigest, binding.targetVerifierDigest());
+    } catch (GeneralSecurityException exception) {
+      throw failure(AccountEnvelopeCryptoException.Failure.CRYPTO_OPERATION_FAILED);
+    } finally {
+      if (calculatedDigest != null) {
+        Arrays.fill(calculatedDigest, (byte) 0);
+      }
+    }
+  }
+
+  private static boolean isWellFormedArgon2Verifier(byte[] encodedVerifier) {
+    for (byte value : encodedVerifier) {
+      if (value < 0x21 || value > 0x7e) {
+        return false;
+      }
+    }
+
+    Matcher matcher =
+        ARGON2_VERIFIER_PATTERN.matcher(new String(encodedVerifier, StandardCharsets.US_ASCII));
+    if (!matcher.matches()
+        || !isCanonicalPositiveInt(matcher.group(1))
+        || !isCanonicalPositiveInt(matcher.group(2))
+        || !isCanonicalPositiveInt(matcher.group(3))) {
+      return false;
+    }
+    return isCanonicalBase64(matcher.group(4)) && isCanonicalBase64(matcher.group(5));
+  }
+
+  private static boolean isCanonicalPositiveInt(String value) {
+    try {
+      return Integer.parseInt(value) > 0;
+    } catch (NumberFormatException exception) {
+      return false;
+    }
+  }
+
+  private static boolean isCanonicalBase64(String value) {
+    byte[] decoded = null;
+    try {
+      decoded = Base64.getDecoder().decode(value);
+      return decoded.length > 0
+          && Base64.getEncoder().withoutPadding().encodeToString(decoded).equals(value);
+    } catch (IllegalArgumentException exception) {
+      return false;
+    } finally {
+      if (decoded != null) {
+        Arrays.fill(decoded, (byte) 0);
+      }
     }
   }
 
@@ -472,5 +638,10 @@ public final class AccountEnvelopeCrypto {
     public void close() {
       wipeKeys(keys);
     }
+  }
+
+  @FunctionalInterface
+  private interface AssociatedDataFactory {
+    byte[] create(int formatVersion, String keyId, AccountEnvelopePurpose purpose);
   }
 }

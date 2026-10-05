@@ -446,3 +446,7 @@ Entry format:
   - Observation: matching the workflow and exact head alone did not prove that the selected run would execute the required service job. The workflow deliberately skips its build matrix for metadata-only edits; waiting for that matrix would not produce proof.
   - Expected pattern: inspect same-head run/job identity once at watcher admission, select the substantive matrix run, and bind subsequent observation to its immutable checkout and scoped job. Do not duplicate parent polling, dispatch replacement CI, or count a metadata-preservation gate as runtime execution.
   - Outcome: the sole watcher switched to the exact-head substantive run and preserved raw migration-failure evidence; its metadata-run selection was recorded without granting execution credit.
+
+- `2026-10-06`: A terminal CI failure may contain no acquired test runner
+  - Context: exact #3007 source `a6f10921` Validation run 37369680372 ended after about 45 minutes without an Account or World matrix job, raw XML or artifacts. The detector's check annotation explicitly reports that the hosted runner was not acquired despite multiple attempts; its steps are empty.
+  - Expected pattern: inspect terminal job annotations before attributing an aggregate failure to code. Record zero execution credit and the concrete runner-acquisition failure, retain local skipped-test limits, and continue independent implementation. A failed or cancelled detector is neither a database failure nor successful proof.
