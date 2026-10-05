@@ -372,11 +372,13 @@ class FireControllerWebTest(unittest.TestCase):
             def __init__(self):
                 self.read_calls = []
                 self.list_calls = []
+                self.thread_calls = []
 
             def list(self, recipient, *, unread, limit, offset):
                 self.list_calls.append((recipient, unread, limit, offset))
                 return [{"id": "message-1", "recipient": recipient, "author": "Overseer",
-                         "body": PRIVATE_SENTINEL, "created_at": "2026-10-03T00:00:00Z"}]
+                         "body": PRIVATE_SENTINEL, "created_at": "2026-10-03T00:00:00Z",
+                         "reply_to": "message-0"}]
 
             def unread_count(self, worker):
                 return 1
@@ -384,7 +386,19 @@ class FireControllerWebTest(unittest.TestCase):
             def read(self, message_id, *, recipient):
                 self.read_calls.append((message_id, recipient))
                 return {"id": message_id, "author": "Overseer", "body": PRIVATE_SENTINEL,
-                        "created_at": "2026-10-03T00:00:00Z"}
+                        "created_at": "2026-10-03T00:00:00Z", "reply_to": "message-0"}
+
+            def thread_page(self, message_id, *, limit, offset, focus_id=None):
+                self.thread_calls.append((message_id, limit, offset, focus_id))
+                return {"offset": offset, "messages": [
+                    {"id": "message-0", "recipient": "Overseer", "author": "Build & Tools",
+                     "body": "Original private request", "created_at": "2026-10-02T00:00:00Z",
+                     "seen_at": None, "acknowledged_at": None},
+                    {"id": "message-1", "recipient": "Build & Tools", "author": "Overseer",
+                     "body": PRIVATE_SENTINEL, "created_at": "2026-10-03T00:00:00Z",
+                     "reply_to": "message-0", "job": "merge-train", "pr": 2898,
+                     "seen_at": None, "acknowledged_at": None},
+                ]}
 
         inbox = Inbox()
         status, _headers, body = web.private_route("/inbox/Build%20%26%20Tools?offset=0", None, inbox=inbox)
@@ -392,12 +406,109 @@ class FireControllerWebTest(unittest.TestCase):
         self.assertNotIn(PRIVATE_SENTINEL.encode(), body)
         self.assertIn(b'<time datetime="2026-10-03T00:00:00Z">3 Oct 2026 13:00 NZDT</time>', body)
         self.assertEqual(inbox.list_calls, [("Build & Tools", False, 50, 0)])
+        self.assertIn(b"Conversation", body)
+        self.assertIn(b"/thread/message-0?focus=message-0#message-message-0", body)
         self.assertEqual(inbox.read_calls, [])
         status, _headers, body = web.private_route("/inbox/Build%20%26%20Tools/message-1", None, inbox=inbox)
         self.assertEqual(status, 200)
         self.assertEqual(inbox.read_calls, [("message-1", "Build & Tools")])
         self.assertIn(PRIVATE_SENTINEL.encode(), body)
         self.assertIn(b'<time datetime="2026-10-03T00:00:00Z">3 Oct 2026 13:00 NZDT</time>', body)
+        self.assertIn(b"/thread/message-0?focus=message-0#message-message-0", body)
+        self.assertIn(b"Conversation", body)
+        status, _headers, body = web.private_route(
+            "/inbox/Build%20%26%20Tools/thread/message-1?offset=50", None, inbox=inbox,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(inbox.thread_calls, [("message-1", 50, 50, None)])
+        self.assertEqual(inbox.read_calls, [("message-1", "Build & Tools")])
+        self.assertIn(PRIVATE_SENTINEL.encode(), body)
+        self.assertIn(b"Overseer", body)
+        self.assertIn(b"Build &amp; Tools", body)
+        self.assertIn(b"Unread", body)
+        self.assertIn(b"Job: merge-train", body)
+        self.assertIn(b"PR: #2898", body)
+        self.assertIn(b"Reply to", body)
+        self.assertIn(b"Earlier messages", body)
+
+    def test_private_conversation_pagination_labels_follow_chronological_order(self):
+        first_page = [
+            {"id": f"message-{index}", "recipient": "General", "author": "Overseer",
+             "body": f"Message {index}", "created_at": f"2026-10-01T00:{index:02d}:00Z"}
+            for index in range(web.HISTORY_PAGE_SIZE)
+        ]
+        later = web.render_inbox_thread("General", first_page, message_id="message-0", offset=0)
+        self.assertIn("Later messages", later)
+        self.assertNotIn("Earlier messages", later)
+
+        earlier = web.render_inbox_thread("General", first_page[:1], message_id="message-49", offset=web.HISTORY_PAGE_SIZE)
+        self.assertIn("Earlier messages", earlier)
+        self.assertNotIn("Later messages", earlier)
+
+    def test_private_parent_focus_loads_only_its_bounded_page_without_marking_messages(self):
+        import tempfile
+        from datetime import datetime, timedelta, timezone
+
+        from fire_controller.inbox import InboxStore
+
+        with tempfile.TemporaryDirectory() as directory:
+            inbox = InboxStore(Path(directory) / "controller.sqlite3")
+            inbox.bootstrap()
+            start = datetime(2026, 10, 1, tzinfo=timezone.utc)
+            timestamps = (start + timedelta(minutes=index) for index in range(100))
+
+            def next_timestamp():
+                return next(timestamps).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+            with patch("fire_controller.inbox._now", side_effect=next_timestamp):
+                root = inbox.send("General", "THREAD-BODY-0", author="Overseer")
+                messages = [root]
+                parent = root
+                for index in range(1, 54):
+                    recipient = "Overseer" if index % 2 else "General"
+                    author = "General" if recipient == "Overseer" else "Overseer"
+                    parent = inbox.send(
+                        recipient, f"THREAD-BODY-{index}", author=author, reply_to=parent["id"],
+                    )
+                    messages.append(parent)
+                unrelated = inbox.send("General", "UNRELATED_THREAD")
+
+            child_id = messages[-1]["id"]
+            parent_id = messages[-2]["id"]
+            self.assertEqual(inbox.thread_page(child_id, focus_id=parent_id)["offset"], 50)
+            inbox_list = web.render_inbox("Overseer", [messages[-1]])
+            focused_parent = (
+                f"/thread/{parent_id}?focus={parent_id}#message-{parent_id}"
+            )
+            self.assertIn(focused_parent, inbox_list)
+
+            status, _headers, body = web.private_route(
+                f"/inbox/Overseer/thread/{child_id}?focus={parent_id}", None, inbox=inbox,
+            )
+            page = body.decode("utf-8")
+            self.assertEqual(status, 200)
+            self.assertIn(f'id="message-{parent_id}"', page)
+            self.assertEqual(page.count('class="job-private inbox-thread-message"'), 4)
+            self.assertIn("THREAD-BODY-50", page)
+            self.assertIn("THREAD-BODY-53", page)
+            self.assertNotIn("UNRELATED_THREAD", page)
+            self.assertIn("Earlier messages", page)
+            self.assertIn(f'href="/inbox/Overseer/thread/{child_id}?offset=0">Earlier messages', page)
+            for index in range(54):
+                self.assertEqual(f"<p>THREAD-BODY-{index}</p>" in page, index >= 50)
+            self.assertTrue(all(message["seen_at"] is None and message["acknowledged_at"] is None
+                                for message in inbox.thread(child_id)))
+
+            self.assertEqual(web.private_route(
+                f"/inbox/Overseer/thread/{child_id}?focus={unrelated['id']}", None, inbox=inbox,
+            )[0], 404)
+            self.assertEqual(web.private_route(
+                f"/inbox/Overseer/thread/{child_id}?focus=invalid%2Fid", None, inbox=inbox,
+            )[0], 400)
+            self.assertEqual(web.private_route(
+                f"/inbox/Overseer/thread/{child_id}?focus={parent_id}&offset=50", None, inbox=inbox,
+            )[0], 400)
+            self.assertIsNone(web.private_route(f"/public/inbox/Overseer/thread/{child_id}", None, inbox=inbox))
 
 
 class PrivateWebHistoryTests(unittest.TestCase):

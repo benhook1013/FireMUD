@@ -36,11 +36,11 @@ Append a job update only for a material assignment or next-step change, signific
 
 ```sh
 dev-tools/fire-controller jobs --database /tmp/example-controller.sqlite3 --json bootstrap
-dev-tools/fire-controller jobs --database /tmp/example-controller.sqlite3 --json create gate-proof --worker General --title 'Prove the gate' --summary 'Gate proof' --body-file /tmp/current-brief.md
+dev-tools/fire-controller jobs --database /tmp/example-controller.sqlite3 --json create merge-train --worker General --title 'Keep the merge train moving' --summary 'Land and prove the current merge-train slice.' --progress 'Current focus: #2898 Smoke. Prerequisite PRs: #2861, #2872. Likely 2 more unpublished PRs (estimate).' --body-file /tmp/current-brief.md
 dev-tools/fire-controller jobs --database /tmp/example-controller.sqlite3 --json assigned --worker General
-dev-tools/fire-controller jobs --database /tmp/example-controller.sqlite3 --json revise gate-proof --expect-revision 1 --summary 'Proof complete' --body-file /tmp/revised-brief.md
-dev-tools/fire-controller jobs --database /tmp/example-controller.sqlite3 --json update gate-proof --body 'Focused proof passed; next is handover.'
-dev-tools/fire-controller jobs --database /tmp/example-controller.sqlite3 --json checkpoint gate-proof --done 'Focused proof' --next 'Handover' --pointers '{"branch":"codex/example","proof":"focused test"}'
+dev-tools/fire-controller jobs --database /tmp/example-controller.sqlite3 --json revise merge-train --expect-revision 1 --summary 'Smoke proof complete' --body-file /tmp/revised-brief.md
+dev-tools/fire-controller jobs --database /tmp/example-controller.sqlite3 --json update merge-train --body 'Smoke proof passed; next is handover.'
+dev-tools/fire-controller jobs --database /tmp/example-controller.sqlite3 --json checkpoint merge-train --done 'Smoke proof' --next 'Handover' --pointers '{"branch":"codex/example","proof":"focused test"}'
 ```
 
 Primary designation is independent of active/parked/blocked/completed status. A blocked primary stays visible with its blocker. One primary job exists per worker; `--secondary` creates other work without the designation. An explicit `revise … --primary` switches the primary atomically; parking or completing clears it. A checklist item does not force the whole job’s state. `revise` can change current instructions and public fields together. Current-state mutations require `--expect-revision`, so concurrent edits fail clearly rather than overwrite newer instructions. Appended updates, checkpoints and notes do not replace the brief.
@@ -53,7 +53,7 @@ Checkpoint `--pointers` accepts only a JSON object with `branch`, `worktree`, `p
 
 `note --worker Overseer --phase 'Unit 3A' --kind source --body-file …` parks a source input for a future phase. `notes` accepts explicit worker/job/phase selection. A job selector resolves its friendly name or ID to the same existing stable job ID on creation, listing and correction; an unknown explicit job fails without changing the note. Worker/phase-only future notes require no job. `note-status … --expect-revision N` consumes, dismisses with a reason, or reopens a note; `note-revise` also corrects its body or scope. Automatic `note-history` retains earlier dispositions and reasons. Stale corrections fail clearly; consumed and dismissed states are not irreversible. No intelligent trigger, scheduler or task graph runs. Future Unit 3A/3C pointers stay Overseer-owned until explicitly reassigned when relevant.
 
-Public title, summary, progress, blocker and selected checklist text are intentionally public. Keep them focused on the overall job and 1–2 broad milestones; put SHAs, run IDs, test inventories and detailed issue lists in the private brief, checkpoint or review records. Working briefs, detailed updates, notes, checkpoints, source files and chat IDs are private. Do not store credentials in either surface. Public export uses a field allowlist rather than dumping stored objects.
+Public title, summary, progress, blocker and selected checklist text are intentionally public. Lead with the durable mission, use the summary to state the outcome, then use progress and selected checklist items for the current focus and 1–2 broad milestones. When merge-train dependencies matter, name the current PR, list prerequisite PR numbers explicitly, and give the likely remaining unpublished PR count as an estimate; this is useful content, not a required format or field. For example: `Keep the merge train moving`; `Current focus: #2898 Smoke. Prerequisite PRs: #2861, #2872. Likely 2 more unpublished PRs (estimate).` Keep service-level execution steps, SHAs, run IDs, test inventories and detailed issue lists in the private brief, checkpoint or review records. Working briefs, detailed updates, notes, checkpoints, source files and chat IDs are private. Do not store credentials in either surface. Public export uses a field allowlist rather than dumping stored objects.
 
 ## Lane activity and private inbox
 
@@ -63,17 +63,18 @@ Explicit `--worker-identity WORKER` before the command area, or `FIRE_CONTROLLER
 
 Always supply your own lane identity on normal worker commands. For interactive review work, prefer `firemud-controller --worker-identity WORKER reviews …`; direct `firemud-pr-review` calls bypass inbox notices. Help, version, errors and text previews do not provide a successful-command inbox notice.
 
-Check pending messages on resume and at the next safe boundary when an unread notice appears: `firemud-controller --worker-identity WORKER inbox list --worker WORKER --json` lists messages without marking them seen; `--unread` filters to unseen messages. Read the relevant messages, handle work already authorized by their controlling directions, and acknowledge only after the requested action or coordination is handled. Leave unfinished requests unacknowledged even after reading them; return consequential decisions to Overseer. Messages do not wake chats. Avoid per-edit polling and acknowledgment loops, and do not wait for an entire long provider review when other safe work can read the inbox.
+Check pending messages on resume and at the next safe boundary when an unread notice appears: `firemud-controller --worker-identity WORKER inbox list --worker WORKER --json` lists messages without marking them seen; `--unread` filters to unseen messages. Use `inbox thread MESSAGE_ID` to read the original message and all replies across recipients in chronological order; it follows `reply_to` to the conversation root and returns bounded pages with author, recipient, time, job, PR, seen/acknowledged state and body. Thread reads do not mark messages seen or acknowledged. Read the relevant messages, handle work already authorized by their controlling directions, and acknowledge only after the requested action or coordination is handled. Leave unfinished requests unacknowledged even after reading them; return consequential decisions to Overseer. Messages do not wake chats. Avoid per-edit polling and acknowledgment loops, and do not wait for an entire long provider review when other safe work can read the inbox.
 
 ```sh
 dev-tools/fire-controller inbox --database /tmp/example-controller.sqlite3 bootstrap
 dev-tools/fire-controller --worker-identity General inbox --database /tmp/example-controller.sqlite3 send Overseer --body 'The isolated proof is ready.' --pr 123
 dev-tools/fire-controller --worker-identity Overseer inbox --database /tmp/example-controller.sqlite3 --json list --unread
 dev-tools/fire-controller inbox --database /tmp/example-controller.sqlite3 read MESSAGE_ID
+dev-tools/fire-controller inbox --database /tmp/example-controller.sqlite3 --json thread MESSAGE_ID --limit 50 --offset 0
 dev-tools/fire-controller inbox --database /tmp/example-controller.sqlite3 ack MESSAGE_ID
 ```
 
-Messages may reference a job, PR and `--reply-to` message. Reading marks seen; acknowledgment describes message handling and does not complete requested work or any job. There are no delivery guarantees, automated reminders, escalation, chat-service calls or automatic waking. Message bodies are private and never public exports.
+Messages may reference a job, PR and `--reply-to` message. `read` marks one message seen; `ack` describes message handling and does not complete requested work or any job. `thread` is a read-only conversation view and does not change either state. There are no delivery guarantees, automated reminders, escalation, chat-service calls or automatic waking. Message bodies and conversations are private and never public exports.
 
 ## Project map and private status site
 
