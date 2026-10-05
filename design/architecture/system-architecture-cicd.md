@@ -15,7 +15,7 @@ This document describes the continuous integration strategy for FireMUD using **
 - **Perform deep static code scanning** with CodeQL on pull requests targeting `develop` and `main`, require the dedicated CodeQL gate for both protected bases, and continue running the full analysis on `main` pushes, scheduled runs, and manual dispatches.
 - Route AI-assisted pull-request review through the unified [`dev-tools/pr-review`](../../dev-tools/pr-review) controller. CodeRabbit automatic reviews are disabled; operators request complete reviews only when the controller selects a stable target.
 - **Benchmark repository hardening** with OSSF Scorecard on `develop` and `main` pushes plus the weekly scorecard schedule.
-- **Scan for vulnerabilities** with Trivy during CI runs and scheduled security scans.
+- **Scan for vulnerabilities** with Trivy during CI runs and scheduled security scans. The scanner step uses explicit Bash pipeline failure handling so saving a report with `tee` cannot mask a vulnerability or scanner error; report upload still runs after failures.
 - **Publish coverage feedback** to Codecov from the service validation matrix so pull requests receive patch-coverage status and coverage comments.
 - **Run OWASP ZAP baseline scans** against the built web client preview during CI.
 - **Publish documentation** to GitHub Pages after successful builds.
@@ -69,7 +69,7 @@ The main [`ci.yml`](../../.github/workflows/ci.yml) workflow:
 - Invokes a dedicated `generate-erd` job that runs [`dev-tools/docs/generate-erd.sh`](../../dev-tools/docs/generate-erd.sh) to build ERD diagrams from service migrations and upload them as artifacts.
 - Caches Buf modules, Node dependencies, Trivy database, and Gradle artifacts to speed up repeat workflow runs.
 - Runs markdownlint, blocking internal link checks, structural design contracts, and a MkDocs site build in pull-request CI. Push CI also checks external links; `docs.yml` verifies internal links again before publishing to GitHub Pages.
-- Posts a summary comment on pull requests with test status and coverage, while Codecov publishes patch-coverage status separately.
+- Posts a summary comment on pull requests with test status and coverage, while Codecov publishes patch-coverage status separately. Native Validation, Security and Smoke comment jobs run only for uncancelled same-repository PR events whose actor is not `dependabot[bot]`; fork and Dependabot PRs retain check logs and artifacts. Failed dependencies still produce summaries. Publishers verify the current open PR head and base tuple before touching comments. Required gates retain their independent always-running conditions and fail-closed prerequisite evaluation.
 
 The executable [`ci.yml`](../../.github/workflows/ci.yml) workflow is the source of truth for job structure and pinned action versions. It validates documentation with the repository-configured `markdownlint-cli2`, `dev-tools/docs/link-check.sh`, structural design contracts, and `python3 -m mkdocs build --clean`; Gradle validation runs through the affected-module matrix, including shared modules, the hosted identity controller, and load testing, while only runtime modules build boot JARs. Workflow-specific concurrency groups cancel superseded runs only within the same pull-request or branch validation lane.
 

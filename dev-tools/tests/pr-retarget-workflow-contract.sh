@@ -355,6 +355,45 @@ if "workflow_dispatch" not in events:
     raise SystemExit("Validation must retain manual dispatch")
 PYTHON
 
+# Optional native-PR comments cannot delay cancellation or require fork/bot write tokens.
+python3 - "$ROOT_DIR" <<'PYTHON'
+from pathlib import Path
+import sys
+import yaml
+
+root = Path(sys.argv[1])
+expected = "${{ !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}"
+for filename, jobs in {
+    "ci.yml": ("validation-summary",),
+    "security.yml": ("security-summary",),
+    "smoke.yml": ("smoke-summary-pending", "smoke-summary"),
+}.items():
+    workflow = yaml.load((root / ".github/workflows" / filename).read_text(), Loader=yaml.BaseLoader)
+    for job in jobs:
+        condition = workflow["jobs"][job]["if"]
+        if condition != expected:
+            raise SystemExit(f"{filename}/{job} must retain the cancellation, trust and substantive-event condition")
+        def eligible(cancelled=False, event="pull_request", head_repo="example/repo", actor="contributor", action="synchronize", base_ref=None):
+            expression = condition[3:-3].replace("!cancelled()", str(not cancelled))
+            values = {
+                "github.event.pull_request.head.repo.full_name": head_repo,
+                "github.event.changes.base.ref": base_ref,
+                "github.event_name": event,
+                "github.repository": "example/repo",
+                "github.actor": actor,
+                "github.event.action": action,
+            }
+            for key, value in values.items():
+                expression = expression.replace(key, repr(value))
+            return eval(expression.replace("&&", "and").replace("||", "or").replace("null", "None"), {"__builtins__": {}})
+        # Upstream failure is deliberately absent from this status predicate.
+        if not eligible() or not eligible(action="edited", base_ref="develop"):
+            raise SystemExit(f"{job} must report ordinary results and base retargets")
+        for arguments in ({"cancelled": True}, {"head_repo": "fork/repo"}, {"actor": "dependabot[bot]"}, {"action": "edited"}, {"event": "push"}):
+            if eligible(**arguments):
+                raise SystemExit(f"{job} permits an ineligible comment mutation: {arguments}")
+PYTHON
+
 # Metadata-only edits get distinct optional summary contexts; substantive events
 # retain each summary's canonical name.
 # shellcheck disable=SC2016 # Assert literal GitHub expression syntax.
@@ -1994,6 +2033,7 @@ const scripts = JSON.parse(process.env.SMOKE_SUMMARY_SCRIPTS);
 const context = {
   repo: { owner: "example", repo: "firemud" },
   issue: { number: 42 },
+  payload: { pull_request: { head: { sha: "h" }, base: { ref: "develop", sha: "b" } } },
 };
 
 async function checkSummary(jobName, script) {
@@ -2026,13 +2066,16 @@ async function checkSummary(jobName, script) {
       created_at: "2026-08-01T00:00:00Z",
     },
   ];
-  const calls = { paginate: [], operations: [], creates: [] };
+  const calls = { paginate: [], operations: [], creates: [], bodies: [] };
+  let currentPullRequest = { state: "open", ...structuredClone(context.payload.pull_request) };
+  let readError = null;
   const listComments = async () => undefined;
   const github = {
     rest: {
+      pulls: { get: async () => { if (readError) throw readError; return { data: currentPullRequest }; } },
       issues: {
         listComments,
-        updateComment: async ({ comment_id }) => calls.operations.push(`update:${comment_id}`),
+        updateComment: async ({ comment_id, body }) => { calls.operations.push(`update:${comment_id}`); calls.bodies.push(body); },
         deleteComment: async ({ comment_id }) => calls.operations.push(`delete:${comment_id}`),
         createComment: async (request) => calls.creates.push(request),
       },
@@ -2046,8 +2089,24 @@ async function checkSummary(jobName, script) {
   process.env.CHANGES_RESULT = "success";
   process.env.RUN_SMOKE_FULL = "true";
   process.env.SMOKE_GATE_RESULT = "success";
-  const run = new Function("github", "context", `return (async () => {\n${script}\n})()`);
-  await run(github, context);
+  const run = new Function("github", "context", "core", `return (async () => {\n${script}\n})()`);
+  const core = { info: () => {} };
+  for (const changed of [
+    { state: "closed" }, { head: { sha: "new" } },
+    { base: { ref: "main", sha: "b" } }, { base: { ref: "develop", sha: "new" } },
+  ]) {
+    currentPullRequest = { state: "open", ...structuredClone(context.payload.pull_request), ...changed };
+    await run(github, context, core);
+    assert.deepEqual(calls.paginate, [], `${jobName} must not list stale comments`);
+    assert.deepEqual(calls.operations, [], `${jobName} must not mutate stale comments`);
+    assert.deepEqual(calls.creates, [], `${jobName} must not create stale comments`);
+  }
+  readError = new Error("PR guard unavailable");
+  await assert.rejects(run(github, context, core), /PR guard unavailable/);
+  assert.deepEqual(calls.paginate, [], `${jobName} guard errors must fail closed`);
+  readError = null;
+  currentPullRequest = { state: "open", ...structuredClone(context.payload.pull_request) };
+  await run(github, context, core);
 
   assert.equal(calls.paginate.length, 1, `${jobName} must paginate once`);
   assert.equal(calls.paginate[0].method, listComments, `${jobName} must paginate issue comments`);
@@ -2058,6 +2117,10 @@ async function checkSummary(jobName, script) {
     `${jobName} must update the oldest bot summary before deleting later duplicates`,
   );
   assert.deepEqual(calls.creates, [], `${jobName} must not create another summary`);
+  process.env.CHANGES_RESULT = "failure";
+  process.env.SMOKE_GATE_RESULT = "failure";
+  await run(github, context, core);
+  assert.ok(calls.bodies.at(-1).includes("failure"), `${jobName} must report failed dependencies`);
 }
 
 (async () => {

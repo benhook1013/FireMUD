@@ -145,7 +145,7 @@ jobs:
       contents: read
       pull-requests: write
     needs: [changes]
-    if: ${{ always() && github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
@@ -197,6 +197,26 @@ jobs:
               `- ${statusIcon(smokeGateStatus)} Smoke Gate: \`${smokeGateStatus}\``,
               `- ${statusIcon(fullResult)} PR Full-Stack Smoke: \`${fullResult}\``,
             ].join("\n");
+
+            const expectedHeadSha = context.payload.pull_request.head.sha;
+            const expectedBaseRef = context.payload.pull_request.base.ref;
+            const expectedBaseSha = context.payload.pull_request.base.sha;
+            const { data: currentPullRequest } = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number: context.issue.number,
+            });
+            if (
+              currentPullRequest.state !== "open" ||
+              currentPullRequest.head.sha !== expectedHeadSha ||
+              currentPullRequest.base.ref !== expectedBaseRef ||
+              currentPullRequest.base.sha !== expectedBaseSha
+            ) {
+              core.info(
+                `Skipping stale smoke summary for ${expectedBaseRef}@${expectedBaseSha}...${expectedHeadSha}; ` +
+                `current PR state/base/head is ${currentPullRequest.state}/${currentPullRequest.base.ref}@${currentPullRequest.base.sha}/${currentPullRequest.head.sha}`
+              );
+              return;
+            }
 
             const comments = await github.paginate(
               github.rest.issues.listComments,
@@ -277,7 +297,7 @@ jobs:
       contents: read
       pull-requests: write
     needs: [changes, smoke-gate, smoke-summary-pending]
-    if: ${{ always() && github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
@@ -333,6 +353,26 @@ jobs:
               `- ${statusIcon(smokeGateStatus)} Smoke Gate: \`${smokeGateStatus}\``,
               `- ${statusIcon(fullResult)} PR Full-Stack Smoke: \`${fullResult}\``,
             ].join("\n");
+
+            const expectedHeadSha = context.payload.pull_request.head.sha;
+            const expectedBaseRef = context.payload.pull_request.base.ref;
+            const expectedBaseSha = context.payload.pull_request.base.sha;
+            const { data: currentPullRequest } = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number: context.issue.number,
+            });
+            if (
+              currentPullRequest.state !== "open" ||
+              currentPullRequest.head.sha !== expectedHeadSha ||
+              currentPullRequest.base.ref !== expectedBaseRef ||
+              currentPullRequest.base.sha !== expectedBaseSha
+            ) {
+              core.info(
+                `Skipping stale smoke summary for ${expectedBaseRef}@${expectedBaseSha}...${expectedHeadSha}; ` +
+                `current PR state/base/head is ${currentPullRequest.state}/${currentPullRequest.base.ref}@${currentPullRequest.base.sha}/${currentPullRequest.head.sha}`
+              );
+              return;
+            }
 
             const comments = await github.paginate(
               github.rest.issues.listComments,
