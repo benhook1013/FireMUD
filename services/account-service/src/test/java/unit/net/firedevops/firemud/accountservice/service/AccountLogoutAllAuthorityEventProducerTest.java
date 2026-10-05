@@ -1,5 +1,6 @@
 package unit.net.firedevops.firemud.accountservice.service;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -15,6 +16,7 @@ import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOper
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.service.AccountAuthoritySourceEventReadback;
 import net.firedevops.firemud.accountservice.service.AccountLogoutAllAuthorityEventProducer;
+import net.firedevops.firemud.accountservice.service.AccountLogoutAllDraftSourceChangeRepository;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -26,6 +28,17 @@ class AccountLogoutAllAuthorityEventProducerTest {
   private static final String TOKEN_HASH = "b".repeat(64);
   private static final String REQUEST_DIGEST =
       AccountLogoutRequestDigest.accountLogoutAll(ACCOUNT_UUID, TOKEN_PROFILE, TOKEN_HASH);
+
+  @Test
+  void pendingSourceChangeExposesOnlyItsStableRecoveryIdentity() {
+    UUID changeId = UUID.randomUUID();
+
+    var pending =
+        new AccountLogoutAllDraftSourceChangeRepository.PendingSourceChangeException(changeId);
+
+    assertThat(pending.sourceChangeId()).isEqualTo(changeId);
+    assertThat(pending.getMessage()).contains(changeId.toString()).doesNotContain(TOKEN_HASH);
+  }
 
   @Test
   void rejectsMalformedRequestEvidenceBeforeDatabaseOrTransactionInteraction() {

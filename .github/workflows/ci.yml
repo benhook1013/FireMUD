@@ -2387,6 +2387,11 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountLogoutAllAuthorityProducerPostgresIntegrationTest#historicalReadbackPreservesMixedEventsWhileReturningCurrentSourceAndResetRetryStaysSuperseded()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountLogoutAllAuthorityProducerPostgresIntegrationTest#invalidHistoricalSelectorsFailWithoutChangingAnyAccountSourceEvidence()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountLogoutAllAuthorityProducerPostgresIntegrationTest#historicalReaderHoldsAccountFenceThroughSelectedAndCurrentSourceReadback()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountLogoutAllAuthorityProducerPostgresIntegrationTest#revokeOrderWaitsForBothExactAbortsBeforeOneLogoutAdvanceAndNeverAdmitsDelayedCommit()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountLogoutAllAuthorityProducerPostgresIntegrationTest#commitOrderWaitsForBothExactOutcomesIncludingMixedFailureBeforeLogoutAdvance()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountLogoutAllAuthorityProducerPostgresIntegrationTest#pendingRetryKeepsOriginalCaptureAndConflictsOnlyOnChangedCallerBindings()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountLogoutAllAuthorityProducerPostgresIntegrationTest#lateDatabaseFailureAfterReceiptEventAndBothJournalTransitionsRollsBackLogoutOnly()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountLogoutAllAuthorityProducerPostgresIntegrationTest#v59ToV60PreservesImmutableLogoutResetSourceOutboxAndFenceHistoryWithoutBackfill()' \
             account-service
 
       - name: Upload Account logout-all source PostgreSQL proof results

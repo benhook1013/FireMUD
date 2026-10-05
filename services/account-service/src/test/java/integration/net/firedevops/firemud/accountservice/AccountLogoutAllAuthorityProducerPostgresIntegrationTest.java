@@ -20,6 +20,16 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.Outcome;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.Owner;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.OwnerReadback;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.SourceEvidence;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.SourceKind;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.Ordering;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.Settlement;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.SourceChange;
 import net.firedevops.firemud.accountservice.dto.AccountLogoutRequestDigest;
 import net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest;
 import net.firedevops.firemud.accountservice.entity.Account;
@@ -38,14 +48,22 @@ import net.firedevops.firemud.accountservice.service.AccountAuthoritySourceEvent
 import net.firedevops.firemud.accountservice.service.AccountAuthoritySourceReader;
 import net.firedevops.firemud.accountservice.service.AccountLogoutAllAuthorityEventProducer;
 import net.firedevops.firemud.accountservice.service.AccountLogoutAllAuthorityEventProducer.LogoutAllResult;
+import net.firedevops.firemud.accountservice.service.AccountLogoutAllDraftSourceChangeRepository;
+import net.firedevops.firemud.accountservice.service.AccountLogoutAllDraftSourceChangeRepository.PendingIntentSnapshot;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
 import net.firedevops.firemud.common.account.authority.AccountLogoutAllAuthorityEventV1Codec;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
+import org.postgresql.util.PSQLException;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
@@ -153,6 +171,12 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
     LogoutAllResult firstResult =
         commit(fixture, seed, firstRequest, firstDigest, firstTokenHash, seed.initialState());
     LogoutAllReceipt firstReceipt = logoutReceipt(fixture, firstRequest);
+    AccountAuthorityOutboxRepository.Event firstEvent = event(fixture, seed, 1L);
+    PendingIntentSnapshot firstSourceIntent = pendingIntent(fixture, firstRequest).orElseThrow();
+    var firstFenceChange = sourceChange(firstSourceIntent);
+    var firstFenceChangeSnapshot =
+        transaction(
+            fixture.transaction(), () -> draftFences(fixture).readSourceChange(firstFenceChange));
 
     UUID laterRequest = UUID.randomUUID();
     String laterTokenHash = digest("presented-token:" + laterRequest);
@@ -171,6 +195,364 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
     assertThat(retry).isEqualTo(firstResult);
     assertThat(logoutReceipt(fixture, firstRequest)).isEqualTo(firstReceipt);
     assertThat(snapshot(fixture, seed)).isEqualTo(afterLaterAdvance);
+    assertSameEvent(firstEvent, event(fixture, seed, 1L));
+    assertThat(pendingIntent(fixture, firstRequest).orElseThrow())
+        .satisfies(
+            replay -> {
+              assertThat(replay.requestPayload())
+                  .containsExactly(firstSourceIntent.requestPayload());
+              assertThat(replay.captureEvidence())
+                  .containsExactly(firstSourceIntent.captureEvidence());
+              assertThat(replay.sourceEvidence())
+                  .containsExactly(firstSourceIntent.sourceEvidence());
+              assertThat(replay.sourceChangeBinding())
+                  .containsExactly(firstSourceIntent.sourceChangeBinding());
+              assertThat(replay.status()).isEqualTo("SOURCE_COMMITTED");
+            });
+    var replayedFenceChange =
+        transaction(
+            fixture.transaction(), () -> draftFences(fixture).readSourceChange(firstFenceChange));
+    assertThat(replayedFenceChange.changeId()).isEqualTo(firstFenceChangeSnapshot.changeId());
+    assertThat(replayedFenceChange.binding()).containsExactly(firstFenceChangeSnapshot.binding());
+    assertThat(replayedFenceChange.status()).isEqualTo(firstFenceChangeSnapshot.status());
+    assertThat(replayedFenceChange.requestedAt()).isEqualTo(firstFenceChangeSnapshot.requestedAt());
+    assertThat(replayedFenceChange.committedAt()).isEqualTo(firstFenceChangeSnapshot.committedAt());
+  }
+
+  /**
+   * These cases connect real PostgreSQL Account source writes to the V57 fence tables. The Draft
+   * bindings and owner readbacks below are synthetic test evidence; they do not authenticate a real
+   * Draft operation or prove the absent Game Design/World owner readback producers.
+   */
+  @Test
+  void revokeOrderWaitsForBothExactAbortsBeforeOneLogoutAdvanceAndNeverAdmitsDelayedCommit() {
+    Fixture fixture = newFixture();
+    Seed seed = seedAccount(fixture);
+    DraftAuthorizationFenceBinding binding =
+        syntheticDraftBinding(seed, seed.initialState(), 0L, null);
+    transaction(
+        fixture.transaction(),
+        () -> {
+          draftFences(fixture).reserve(binding);
+          return null;
+        });
+    UUID requestId = UUID.randomUUID();
+    String tokenHash = digest("revocation-wins-token:" + requestId);
+    String requestDigest = logoutAllDigest(seed.accountUuid(), TOKEN_PROFILE, tokenHash);
+    StoredState before = snapshot(fixture, seed);
+
+    assertPending(fixture, seed, requestId, requestDigest, tokenHash, seed.initialState());
+    PendingIntentSnapshot waiting = pendingIntent(fixture, requestId).orElseThrow();
+    assertThat(waiting.status()).isEqualTo("WAITING");
+    assertThat(waiting.expectedGeneration()).isEqualTo(1L);
+    assertThat(waiting.expectedSourceVersion()).isEqualTo(1L);
+    assertThat(waiting.expectedIssuanceFence()).isEqualTo(1L);
+    assertThat(waiting.expectedIssuanceFenceSourceVersion()).isEqualTo(1L);
+    assertThat(waiting.checkpointSequence()).isZero();
+    SourceChange sourceChange = sourceChange(waiting);
+    assertThat(sourceChange.sources()).hasSize(1);
+    assertThat(sourceChange.sources().getFirst().kind()).isEqualTo(SourceKind.ACCOUNT);
+    assertThat(sourceChange.sources().getFirst().scopeId())
+        .isEqualTo(seed.accountUuid().toString());
+    assertThat(
+            transaction(fixture.transaction(), () -> draftFences(fixture).read(binding).ordering()))
+        .isEqualTo(Ordering.REVOKE_ORDER);
+    assertThatThrownBy(
+            () ->
+                transaction(
+                    fixture.transaction(), () -> draftFences(fixture).claimCommitOrder(binding)))
+        .isInstanceOf(IllegalStateException.class);
+
+    syntheticOwnerReadback(
+        fixture, binding, Owner.WORLD, Outcome.DEFINITIVELY_ABORTED, new byte[] {31});
+    assertPending(fixture, seed, requestId, requestDigest, tokenHash, seed.initialState());
+    assertThat(snapshot(fixture, seed)).isEqualTo(before);
+    assertThat(pendingIntent(fixture, requestId).orElseThrow().sourceChangeBinding())
+        .containsExactly(waiting.sourceChangeBinding());
+    assertThat(
+            transaction(fixture.transaction(), () -> draftFences(fixture).readSettlement(binding)))
+        .isEqualTo(Settlement.PENDING);
+
+    syntheticOwnerReadback(
+        fixture, binding, Owner.GAME_DESIGN, Outcome.DEFINITIVELY_ABORTED, new byte[] {32});
+    assertThat(
+            transaction(fixture.transaction(), () -> draftFences(fixture).readSettlement(binding)))
+        .isEqualTo(Settlement.FAILED_NONPUBLICATION);
+    assertThat(
+            transaction(
+                fixture.transaction(),
+                () -> draftFences(fixture).sourceMutationPermitted(sourceChange)))
+        .isTrue();
+
+    assertThat(commit(fixture, seed, requestId, requestDigest, tokenHash, seed.initialState()))
+        .isEqualTo(LogoutAllResult.LOGOUT_ALL_COMMITTED);
+    assertThat(authority(fixture, seed).generation()).isEqualTo(2L);
+    assertThat(authority(fixture, seed).sourceVersion()).isEqualTo(2L);
+    assertThat(authority(fixture, seed).issuanceFence().value()).isEqualTo(2L);
+    assertThat(authority(fixture, seed).issuanceFence().sourceVersion()).isEqualTo(2L);
+    assertThat(logoutReceipt(fixture, requestId).outboxSequence()).isEqualTo(1L);
+    assertThat(event(fixture, seed, 1L).requestId()).isEqualTo(requestId.toString());
+    assertThat(pendingIntent(fixture, requestId).orElseThrow().status())
+        .isEqualTo("SOURCE_COMMITTED");
+    assertThat(
+            transaction(
+                fixture.transaction(),
+                () -> draftFences(fixture).readSourceChange(sourceChange).status()))
+        .isEqualTo("SOURCE_COMMITTED");
+    assertThatThrownBy(
+            () ->
+                transaction(
+                    fixture.transaction(), () -> draftFences(fixture).claimCommitOrder(binding)))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(snapshot(fixture, seed).generation()).isEqualTo(2L);
+    assertThat(count(fixture, "account_authority_outbox_events")).isEqualTo(1L);
+    assertThat(count(fixture, "account_logout_all_operation_receipts")).isEqualTo(1L);
+  }
+
+  @Test
+  void commitOrderWaitsForBothExactOutcomesIncludingMixedFailureBeforeLogoutAdvance() {
+    Fixture fixture = newFixture();
+    Seed seed = seedAccount(fixture);
+    DraftAuthorizationFenceBinding binding =
+        syntheticDraftBinding(seed, seed.initialState(), 0L, null);
+    transaction(
+        fixture.transaction(),
+        () -> {
+          draftFences(fixture).reserve(binding);
+          draftFences(fixture).claimCommitOrder(binding);
+          return null;
+        });
+    UUID requestId = UUID.randomUUID();
+    String tokenHash = digest("commit-order-token:" + requestId);
+    String requestDigest = logoutAllDigest(seed.accountUuid(), TOKEN_PROFILE, tokenHash);
+    StoredState before = snapshot(fixture, seed);
+
+    assertPending(fixture, seed, requestId, requestDigest, tokenHash, seed.initialState());
+    PendingIntentSnapshot waiting = pendingIntent(fixture, requestId).orElseThrow();
+    SourceChange sourceChange = sourceChange(waiting);
+    assertThat(
+            transaction(fixture.transaction(), () -> draftFences(fixture).read(binding).ordering()))
+        .isEqualTo(Ordering.COMMIT_ORDER);
+
+    syntheticOwnerReadback(fixture, binding, Owner.WORLD, Outcome.COMMITTED, new byte[] {41});
+    assertPending(fixture, seed, requestId, requestDigest, tokenHash, seed.initialState());
+    assertThat(snapshot(fixture, seed)).isEqualTo(before);
+    assertThat(
+            transaction(fixture.transaction(), () -> draftFences(fixture).readSettlement(binding)))
+        .isEqualTo(Settlement.PENDING);
+
+    syntheticOwnerReadback(
+        fixture, binding, Owner.GAME_DESIGN, Outcome.DEFINITIVELY_ABORTED, new byte[] {42});
+    assertThat(
+            transaction(fixture.transaction(), () -> draftFences(fixture).readSettlement(binding)))
+        .isEqualTo(Settlement.FAILED_NONPUBLICATION);
+    var originalWorldResult =
+        transaction(
+                fixture.transaction(),
+                () -> draftFences(fixture).readOwnerResult(binding, Owner.WORLD))
+            .orElseThrow();
+    assertThat(originalWorldResult.outcome()).isEqualTo(Outcome.COMMITTED);
+    assertThat(originalWorldResult.readback()).containsExactly(new byte[] {41});
+
+    assertThat(commit(fixture, seed, requestId, requestDigest, tokenHash, seed.initialState()))
+        .isEqualTo(LogoutAllResult.LOGOUT_ALL_COMMITTED);
+    assertThat(authority(fixture, seed).generation()).isEqualTo(2L);
+    assertThat(logoutReceipt(fixture, requestId).outboxSequence()).isEqualTo(1L);
+    assertThat(event(fixture, seed, 1L).requestId()).isEqualTo(requestId.toString());
+    assertThat(pendingIntent(fixture, requestId).orElseThrow().status())
+        .isEqualTo("SOURCE_COMMITTED");
+    assertThat(
+            transaction(
+                fixture.transaction(),
+                () -> draftFences(fixture).readSourceChange(sourceChange).status()))
+        .isEqualTo("SOURCE_COMMITTED");
+    var replayedWorldResult =
+        transaction(
+                fixture.transaction(),
+                () -> draftFences(fixture).readOwnerResult(binding, Owner.WORLD))
+            .orElseThrow();
+    assertThat(replayedWorldResult.outcome()).isEqualTo(originalWorldResult.outcome());
+    assertThat(replayedWorldResult.readback()).containsExactly(originalWorldResult.readback());
+    assertThat(replayedWorldResult.recordedAt()).isEqualTo(originalWorldResult.recordedAt());
+    assertThat(count(fixture, "account_authority_outbox_events")).isEqualTo(1L);
+    assertThat(count(fixture, "account_logout_all_operation_receipts")).isEqualTo(1L);
+  }
+
+  @Test
+  void pendingRetryKeepsOriginalCaptureAndConflictsOnlyOnChangedCallerBindings() {
+    Fixture fixture = newFixture();
+    Seed seed = seedAccount(fixture);
+    Seed otherAccount = seedAccount(fixture);
+    DraftAuthorizationFenceBinding binding =
+        syntheticDraftBinding(seed, seed.initialState(), 0L, null);
+    transaction(
+        fixture.transaction(),
+        () -> {
+          draftFences(fixture).reserve(binding);
+          return null;
+        });
+    UUID requestId = UUID.randomUUID();
+    String tokenHash = digest("original-pending-token:" + requestId);
+    String requestDigest = logoutAllDigest(seed.accountUuid(), TOKEN_PROFILE, tokenHash);
+    assertPending(fixture, seed, requestId, requestDigest, tokenHash, seed.initialState());
+    PendingIntentSnapshot original = pendingIntent(fixture, requestId).orElseThrow();
+    StoredState before = snapshot(fixture, seed);
+    ScopeState changedServerCounters =
+        new ScopeState(
+            seed.initialState().scope(),
+            81L,
+            82L,
+            new AccountAuthorityGenerationRepository.IssuanceFence(seed.accountUuid(), 83L, 84L));
+
+    assertPending(fixture, seed, requestId, requestDigest, tokenHash, changedServerCounters);
+    assertPendingIntentEquals(pendingIntent(fixture, requestId).orElseThrow(), original);
+    assertThat(snapshot(fixture, seed)).isEqualTo(before);
+
+    assertThatThrownBy(
+            () ->
+                commit(
+                    fixture,
+                    seed,
+                    requestId,
+                    digest("changed-pending-caller-digest:" + requestId),
+                    tokenHash,
+                    seed.initialState()))
+        .isInstanceOf(AccountLogoutAllAuthorityEventProducer.OperationConflictException.class);
+    assertThatThrownBy(
+            () ->
+                commit(
+                    fixture,
+                    seed,
+                    requestId,
+                    logoutAllDigest(seed.accountUuid(), "player-bootstrap", tokenHash),
+                    "player-bootstrap",
+                    tokenHash,
+                    seed.initialState()))
+        .isInstanceOf(AccountLogoutAllAuthorityEventProducer.OperationConflictException.class);
+    assertThatThrownBy(
+            () ->
+                commit(
+                    fixture,
+                    seed,
+                    requestId,
+                    requestDigest,
+                    digest("changed-pending-token:" + requestId),
+                    seed.initialState()))
+        .isInstanceOf(AccountLogoutAllAuthorityEventProducer.OperationConflictException.class);
+    assertThatThrownBy(
+            () ->
+                producer(fixture)
+                    .commit(
+                        requestId,
+                        1,
+                        requestDigest,
+                        TOKEN_PROFILE,
+                        tokenHash,
+                        account(fixture, otherAccount),
+                        authority(fixture, otherAccount)))
+        .isInstanceOf(AccountLogoutAllAuthorityEventProducer.OperationConflictException.class);
+    assertThatThrownBy(
+            () ->
+                commit(
+                    fixture,
+                    seed,
+                    UUID.randomUUID(),
+                    logoutAllDigest(seed.accountUuid(), TOKEN_PROFILE, tokenHash),
+                    tokenHash,
+                    seed.initialState()))
+        .isInstanceOf(AccountLogoutAllAuthorityEventProducer.OperationConflictException.class);
+
+    assertPendingIntentEquals(pendingIntent(fixture, requestId).orElseThrow(), original);
+    assertThat(snapshot(fixture, seed)).isEqualTo(before);
+    assertThat(count(fixture, "account_logout_all_operation_receipts")).isZero();
+    assertThat(count(fixture, "account_authority_outbox_events")).isZero();
+  }
+
+  @Test
+  void lateDatabaseFailureAfterReceiptEventAndBothJournalTransitionsRollsBackLogoutOnly() {
+    Fixture fixture = newFixture();
+    Seed seed = seedAccount(fixture);
+    DraftAuthorizationFenceBinding binding =
+        syntheticDraftBinding(seed, seed.initialState(), 0L, null);
+    transaction(
+        fixture.transaction(),
+        () -> {
+          draftFences(fixture).reserve(binding);
+          draftFences(fixture).claimCommitOrder(binding);
+          return null;
+        });
+    UUID requestId = UUID.randomUUID();
+    String tokenHash = digest("late-failure-token:" + requestId);
+    String requestDigest = logoutAllDigest(seed.accountUuid(), TOKEN_PROFILE, tokenHash);
+    assertPending(fixture, seed, requestId, requestDigest, tokenHash, seed.initialState());
+    PendingIntentSnapshot waiting = pendingIntent(fixture, requestId).orElseThrow();
+    SourceChange sourceChange = sourceChange(waiting);
+    syntheticOwnerReadback(fixture, binding, Owner.WORLD, Outcome.COMMITTED, new byte[] {51});
+    syntheticOwnerReadback(fixture, binding, Owner.GAME_DESIGN, Outcome.COMMITTED, new byte[] {52});
+    StoredState beforeRetry = snapshot(fixture, seed);
+
+    installLateLogoutFailureTrigger(fixture, requestId);
+    assertThatThrownBy(
+            () -> commit(fixture, seed, requestId, requestDigest, tokenHash, seed.initialState()))
+        .satisfies(
+            failure -> {
+              PSQLException postgresFailure = rootPostgresCause(failure);
+              assertThat(postgresFailure.getSQLState()).isEqualTo("P0001");
+              assertThat((Throwable) postgresFailure)
+                  .hasMessageContaining(
+                      "injected late failure after logout receipt, event, V57 and V60 transitions");
+            });
+
+    assertThat(snapshot(fixture, seed)).isEqualTo(beforeRetry);
+    assertThat(count(fixture, "account_authority_outbox_events")).isZero();
+    assertThat(count(fixture, "account_authority_outbox_streams")).isZero();
+    assertThat(count(fixture, "account_logout_all_operation_receipts")).isZero();
+    PendingIntentSnapshot retained = pendingIntent(fixture, requestId).orElseThrow();
+    assertPendingIntentEquals(retained, waiting);
+    assertThat(retained.status()).isEqualTo("WAITING");
+    assertThat(
+            transaction(
+                fixture.transaction(),
+                () -> draftFences(fixture).readSourceChange(sourceChange).status()))
+        .isEqualTo("WAITING");
+    assertThat(
+            transaction(fixture.transaction(), () -> draftFences(fixture).readSettlement(binding)))
+        .isEqualTo(Settlement.COMMITTED);
+  }
+
+  @Test
+  void v59ToV60PreservesImmutableLogoutResetSourceOutboxAndFenceHistoryWithoutBackfill() {
+    Fixture fixture = newFixtureAtVersion("59");
+    Seed seed = seedAccount(fixture);
+    reset(fixture, seed, "migration-preservation-password");
+    seedLegacyLogoutReceipt(fixture, seed);
+    seedSyntheticDraftHistory(fixture, seed);
+
+    List<String> preservedTables =
+        List.of(
+            "account_password_reset_operation_receipts",
+            "account_logout_all_operation_receipts",
+            "account_authority_generations",
+            "account_authority_issuance_fences",
+            "account_authority_outbox_streams",
+            "account_authority_outbox_events",
+            "account_draft_authorization_source_locks",
+            "account_draft_authorization_fences",
+            "account_draft_authorization_sources",
+            "account_draft_authorization_owner_readbacks",
+            "account_draft_authorization_source_changes",
+            "account_draft_authorization_changed_scopes",
+            "account_issuer_tenant_draft_source_changes");
+    List<List<String>> before = preservedTables.stream().map(t -> rowImages(fixture, t)).toList();
+
+    migrateFixtureToLatest(fixture);
+
+    for (int index = 0; index < preservedTables.size(); index++) {
+      assertThat(rowImages(fixture, preservedTables.get(index)))
+          .as("V60 preserves every existing row in %s byte-for-byte", preservedTables.get(index))
+          .isEqualTo(before.get(index));
+    }
+    assertThat(count(fixture, "account_logout_all_draft_source_changes")).isZero();
   }
 
   @Test
@@ -719,21 +1101,318 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
     return commit(fixture, seed, requestId, requestDigest, tokenHash, seed.initialState());
   }
 
+  private DraftAuthorizationFenceRepository draftFences(Fixture fixture) {
+    return new DraftAuthorizationFenceRepository(fixture.transactionDsl());
+  }
+
+  private Optional<PendingIntentSnapshot> pendingIntent(Fixture fixture, UUID requestId) {
+    return transaction(
+        fixture.transaction(),
+        () ->
+            new AccountLogoutAllDraftSourceChangeRepository(fixture.transactionDsl())
+                .readPendingIntent(requestId));
+  }
+
+  private SourceChange sourceChange(PendingIntentSnapshot intent) {
+    return SourceChange.fromStored(intent.sourceChangeBinding());
+  }
+
+  private void assertPending(
+      Fixture fixture,
+      Seed seed,
+      UUID requestId,
+      String requestDigest,
+      String tokenHash,
+      ScopeState expectedState) {
+    assertThatThrownBy(
+            () -> commit(fixture, seed, requestId, requestDigest, tokenHash, expectedState))
+        .isInstanceOf(
+            AccountLogoutAllDraftSourceChangeRepository.PendingSourceChangeException.class);
+  }
+
+  private void assertPendingIntentEquals(
+      PendingIntentSnapshot actual, PendingIntentSnapshot expected) {
+    assertThat(actual.requestId()).isEqualTo(expected.requestId());
+    assertThat(actual.sourceChangeId()).isEqualTo(expected.sourceChangeId());
+    assertThat(actual.requestPayload()).containsExactly(expected.requestPayload());
+    assertThat(actual.captureEvidence()).containsExactly(expected.captureEvidence());
+    assertThat(actual.sourceEvidence()).containsExactly(expected.sourceEvidence());
+    assertThat(actual.sourceChangeRequest()).containsExactly(expected.sourceChangeRequest());
+    assertThat(actual.sourceChangeBinding()).containsExactly(expected.sourceChangeBinding());
+    assertThat(actual.status()).isEqualTo(expected.status());
+    assertThat(actual.expectedGeneration()).isEqualTo(expected.expectedGeneration());
+    assertThat(actual.expectedSourceVersion()).isEqualTo(expected.expectedSourceVersion());
+    assertThat(actual.expectedIssuanceFence()).isEqualTo(expected.expectedIssuanceFence());
+    assertThat(actual.expectedIssuanceFenceSourceVersion())
+        .isEqualTo(expected.expectedIssuanceFenceSourceVersion());
+    assertThat(actual.checkpointSequence()).isEqualTo(expected.checkpointSequence());
+  }
+
+  private DraftAuthorizationFenceBinding syntheticDraftBinding(
+      Seed seed, ScopeState sourceState, long checkpointSequence, byte[] sourceEvidence) {
+    byte[] evidence =
+        sourceEvidence == null
+            ? "synthetic-authenticated-owner-source-readback".getBytes(StandardCharsets.UTF_8)
+            : sourceEvidence.clone();
+    SourceEvidence accountSource =
+        new SourceEvidence(
+            SourceKind.ACCOUNT,
+            seed.accountUuid().toString(),
+            Long.toString(sourceState.generation()),
+            Long.toString(sourceState.sourceVersion()),
+            streamKey(seed.accountUuid()),
+            Long.toString(checkpointSequence),
+            evidence);
+    UUID tenantId = UUID.randomUUID();
+    UUID versionId = UUID.randomUUID();
+    UUID requestId = UUID.randomUUID();
+    UUID commitId = UUID.randomUUID();
+    DraftCommitBinding complete =
+        DraftCommitBinding.create(
+            new TargetProof(tenantId, versionId, 1, "tenant-key", 2, "tenant-key", "NEW_GAME_ROW"),
+            requestId,
+            commitId,
+            "logout-all-draft-base:" + UUID.randomUUID(),
+            List.of(
+                new RevisionPayload(
+                    "0",
+                    UUID.randomUUID(),
+                    DraftCommitBinding.Owner.WORLD_MANAGEMENT,
+                    "synthetic complete Draft owner payload")),
+            List.of(
+                new AffectedUnit(
+                    DraftCommitBinding.Owner.WORLD_MANAGEMENT,
+                    "region",
+                    "region-1",
+                    "aggregate",
+                    "region-1",
+                    "9007199254740999")));
+    byte[] completeBytes = complete.canonicalBytes();
+    return new DraftAuthorizationFenceBinding(
+        UUID.randomUUID(),
+        complete.requestId(),
+        complete.commitId(),
+        UUID.randomUUID(),
+        seed.accountUuid(),
+        complete.target().canonicalTenantId(),
+        complete.target().canonicalVersionId(),
+        complete.baseCommitId(),
+        "1",
+        completeBytes,
+        completeBytes,
+        complete.digest(),
+        List.of(accountSource));
+  }
+
+  private void syntheticOwnerReadback(
+      Fixture fixture,
+      DraftAuthorizationFenceBinding binding,
+      Owner owner,
+      Outcome outcome,
+      byte[] result) {
+    OwnerReadback readback =
+        new OwnerReadback(
+            owner,
+            outcome,
+            binding.operationId(),
+            binding.commitId(),
+            binding.fenceId(),
+            binding.inputDigest(),
+            binding.canonicalBytes(),
+            result);
+    transaction(
+        fixture.transaction(),
+        () -> {
+          draftFences(fixture).recordOwnerReadback(binding, readback);
+          return null;
+        });
+  }
+
+  private void installLateLogoutFailureTrigger(Fixture fixture, UUID requestId) {
+    fixture
+        .setupDsl()
+        .execute(
+            "CREATE FUNCTION account_logout_all_test_late_failure() RETURNS trigger "
+                + "LANGUAGE plpgsql AS $$ BEGIN "
+                + "IF NOT EXISTS (SELECT 1 FROM account_logout_all_operation_receipts receipt "
+                + "JOIN account_authority_outbox_events event ON "
+                + "event.outbox_stream_key = receipt.outbox_stream_key "
+                + "AND event.outbox_sequence = receipt.outbox_sequence "
+                + "JOIN account_logout_all_draft_source_changes journal ON "
+                + "journal.request_id = receipt.request_id "
+                + "JOIN account_draft_authorization_source_changes source_change ON "
+                + "source_change.change_id = journal.source_change_id "
+                + "WHERE receipt.request_id = NEW.request_id "
+                + "AND journal.status = 'SOURCE_COMMITTED' "
+                + "AND source_change.status = 'SOURCE_COMMITTED' "
+                + "AND event.event_id = receipt.event_id AND event.event_digest = receipt.event_digest) "
+                + "THEN RAISE EXCEPTION 'late failure ran before receipt, event, and both journal transitions'; "
+                + "END IF; "
+                + "RAISE EXCEPTION 'injected late failure after logout receipt, event, V57 and V60 transitions'; "
+                + "END; $$");
+    fixture
+        .setupDsl()
+        .execute(
+            "CREATE CONSTRAINT TRIGGER account_logout_all_test_late_failure "
+                + "AFTER INSERT ON account_logout_all_operation_receipts "
+                + "DEFERRABLE INITIALLY DEFERRED FOR EACH ROW "
+                + "EXECUTE FUNCTION account_logout_all_test_late_failure()");
+  }
+
+  private LogoutAllReceipt seedLegacyLogoutReceipt(Fixture fixture, Seed seed) {
+    UUID requestId = UUID.randomUUID();
+    String tokenHash = digest("pre-v60-logout-token:" + requestId);
+    String requestDigest = logoutAllDigest(seed.accountUuid(), TOKEN_PROFILE, tokenHash);
+    return transaction(
+        fixture.transaction(),
+        () -> {
+          ScopeState current = fixture.authority().read(AuthorityScope.account(seed.accountUuid()));
+          ScopeState advanced = fixture.authority().advance(current, current.issuanceFence());
+          String stream = streamKey(seed.accountUuid());
+          String eventId = EVENT_ID_PREFIX + requestId;
+          long sequence =
+              fixture
+                  .outbox()
+                  .readCheckpoint(stream)
+                  .map(checkpoint -> checkpoint.outboxSequence() + 1L)
+                  .orElse(1L);
+          var eventEvidence =
+              AccountLogoutAllAuthorityEventV1Codec.seal(
+                  Map.ofEntries(
+                      Map.entry(
+                          "schemaVersion", AccountLogoutAllAuthorityEventV1Codec.SCHEMA_VERSION),
+                      Map.entry("eventType", AccountLogoutAllAuthorityEventV1Codec.EVENT_TYPE),
+                      Map.entry("eventId", eventId),
+                      Map.entry("requestId", requestId.toString()),
+                      Map.entry("accountId", seed.accountUuid().toString()),
+                      Map.entry("sourceScope", "account/" + seed.accountUuid()),
+                      Map.entry("outboxStreamKey", stream),
+                      Map.entry("outboxSequence", Long.toString(sequence)),
+                      Map.entry("accountAuthorityGeneration", Long.toString(advanced.generation())),
+                      Map.entry("sourceVersion", Long.toString(advanced.sourceVersion())),
+                      Map.entry(
+                          "accountSecurityCutoff",
+                          Map.of(
+                              "accountAuthorityGeneration", Long.toString(advanced.generation()),
+                              "outboxStreamKey", stream,
+                              "outboxSequence", Long.toString(sequence)))));
+          var appended =
+              fixture
+                  .outbox()
+                  .append(
+                      stream,
+                      requestId.toString(),
+                      eventEvidence.eventId(),
+                      eventEvidence.eventDigest(),
+                      eventEvidence.canonicalJsonUtf8());
+          LogoutAllReceipt receipt =
+              LogoutAllReceipt.committed(
+                  requestId,
+                  seed.accountId(),
+                  seed.accountUuid(),
+                  requestDigest,
+                  tokenHash,
+                  TOKEN_PROFILE,
+                  stream,
+                  appended.outboxSequence(),
+                  eventEvidence.eventId(),
+                  eventEvidence.eventDigest(),
+                  advanced,
+                  advanced.issuanceFence());
+          fixture.logoutOperations().insert(receipt);
+          return receipt;
+        });
+  }
+
+  private void seedSyntheticDraftHistory(Fixture fixture, Seed seed) {
+    ScopeState state = authority(fixture, seed);
+    AccountAuthorityOutboxRepository.Event latest = event(fixture, seed, 2L);
+    DraftAuthorizationFenceBinding binding =
+        syntheticDraftBinding(seed, state, latest.outboxSequence(), latest.payload());
+    DraftAuthorizationFenceRepository fences = draftFences(fixture);
+    transaction(
+        fixture.transaction(),
+        () -> {
+          fences.reserve(binding);
+          fences.claimCommitOrder(binding);
+          fences.requestSourceChange(
+              new SourceChange(
+                  UUID.randomUUID(),
+                  binding.sources(),
+                  "synthetic prior source change".getBytes(StandardCharsets.UTF_8)));
+          return null;
+        });
+    syntheticOwnerReadback(fixture, binding, Owner.WORLD, Outcome.COMMITTED, new byte[] {61});
+    syntheticOwnerReadback(fixture, binding, Owner.GAME_DESIGN, Outcome.COMMITTED, new byte[] {62});
+    SourceChange change =
+        transaction(
+            fixture.transaction(),
+            () ->
+                fences.waitingSourceChanges().stream()
+                    .map(DraftAuthorizationFenceRepository.SourceChangeSnapshot::binding)
+                    .map(SourceChange::fromStored)
+                    .findFirst()
+                    .orElseThrow());
+    transaction(
+        fixture.transaction(),
+        () -> {
+          fences.markSourceCommitted(change);
+          return null;
+        });
+  }
+
+  private List<String> rowImages(Fixture fixture, String table) {
+    return fixture
+        .setupDsl()
+        .fetch(
+            "SELECT row_to_json(row_data)::text AS row_image FROM "
+                + table
+                + " row_data ORDER BY row_image")
+        .getValues("row_image", String.class);
+  }
+
+  private void migrateFixtureToLatest(Fixture fixture) {
+    Flyway.configure()
+        .dataSource(fixture.dataSource())
+        .schemas(fixture.schema())
+        .defaultSchema(fixture.schema())
+        .placeholders(Map.of("serviceSchema", fixture.schema()))
+        .locations("classpath:db/migration")
+        .load()
+        .migrate();
+  }
+
+  private static PSQLException rootPostgresCause(Throwable failure) {
+    Throwable cause = failure;
+    while (cause.getCause() != null) {
+      cause = cause.getCause();
+    }
+    assertThat(cause).isInstanceOf(PSQLException.class);
+    return (PSQLException) cause;
+  }
+
   private Fixture newFixture() {
+    return newFixtureAtVersion(null);
+  }
+
+  private Fixture newFixtureAtVersion(String targetVersion) {
     String schema = SCHEMA_PREFIX + "_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
     String separator = postgres.getJdbcUrl().contains("?") ? "&" : "?";
     dataSource.setUrl(postgres.getJdbcUrl() + separator + "currentSchema=" + schema);
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
-    Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .placeholders(Map.of("serviceSchema", schema))
-        .locations("classpath:db/migration")
-        .load()
-        .migrate();
+    var flywayConfiguration =
+        Flyway.configure()
+            .dataSource(dataSource)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .placeholders(Map.of("serviceSchema", schema))
+            .locations("classpath:db/migration");
+    if (targetVersion != null) {
+      flywayConfiguration.target(MigrationVersion.fromVersion(targetVersion));
+    }
+    flywayConfiguration.load().migrate();
 
     DSLContext setupDsl = DSL.using(dataSource, SQLDialect.POSTGRES);
     DSLContext transactionDsl =
@@ -750,6 +1429,8 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
         new AccountLogoutAllOperationRepository(transactionDsl);
     PasswordResetTokenRepository tokens = new PasswordResetTokenRepository(transactionDsl);
     return new Fixture(
+        schema,
+        dataSource,
         setupDsl,
         transactionDsl,
         transactionManager,
@@ -1137,6 +1818,8 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
   }
 
   private record Fixture(
+      String schema,
+      DriverManagerDataSource dataSource,
       DSLContext setupDsl,
       DSLContext transactionDsl,
       PlatformTransactionManager transactionManager,

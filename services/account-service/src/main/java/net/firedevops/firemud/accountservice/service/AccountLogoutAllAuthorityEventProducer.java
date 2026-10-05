@@ -7,6 +7,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.SourceChange;
 import net.firedevops.firemud.accountservice.dto.AccountLogoutRequestDigest;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
@@ -48,6 +49,7 @@ public final class AccountLogoutAllAuthorityEventProducer {
   private final AccountAuthorityOutboxRepository outboxRepository;
   private final AccountLogoutAllOperationRepository operationRepository;
   private final AccountAuthoritySourceEventReadback sourceReadback;
+  private final AccountLogoutAllDraftSourceChangeRepository draftSourceChanges;
   private final TransactionTemplate ownerTransaction;
 
   public AccountLogoutAllAuthorityEventProducer(
@@ -68,6 +70,7 @@ public final class AccountLogoutAllAuthorityEventProducer {
         Objects.requireNonNull(operationRepository, "logout-all operation repository is required");
     this.sourceReadback =
         Objects.requireNonNull(sourceReadback, "Account source-event readback is required");
+    this.draftSourceChanges = new AccountLogoutAllDraftSourceChangeRepository(dsl);
     Objects.requireNonNull(dsl, "transaction-aware DSLContext is required");
     Objects.requireNonNull(transactionManager, "Account transaction manager is required");
 
@@ -82,7 +85,9 @@ public final class AccountLogoutAllAuthorityEventProducer {
    * <p>The request digest is recomputed from the exact closed operation tuple and compared with the
    * supplied lowercase SHA-256 binding. The token profile and digest correlate the receipt; neither
    * is proof of caller authorization. The supplied Account association and scope state are compared
-   * against locked persisted state.
+   * against locked persisted state for a new request. A pending exact retry recovers its original
+   * server-resolved counters and capture rather than treating a changed retry snapshot as new
+   * caller identity.
    */
   public LogoutAllResult commit(
       UUID requestId,
@@ -97,7 +102,7 @@ public final class AccountLogoutAllAuthorityEventProducer {
     validateExpectedInputs(verifiedAccountAssociation, expectedAccountState);
     requireNoAmbientTransaction();
 
-    LogoutAllReceipt transactionResult =
+    CommitAttempt transactionResult =
         ownerTransaction.execute(
             status ->
                 commitInOwnerTransaction(
@@ -109,7 +114,17 @@ public final class AccountLogoutAllAuthorityEventProducer {
                     verifiedAccountAssociation,
                     expectedAccountState));
     if (transactionResult == null) {
-      throw new IllegalStateException("Logout-all source transaction returned no receipt");
+      throw new IllegalStateException("Logout-all source transaction returned no result");
+    }
+    if (transactionResult.pendingChange() != null) {
+      ownerTransaction.executeWithoutResult(
+          status ->
+              draftSourceChanges.verifyWaiting(
+                  requestId,
+                  transactionResult.requestPayload(),
+                  transactionResult.pendingChange()));
+      throw new AccountLogoutAllDraftSourceChangeRepository.PendingSourceChangeException(
+          transactionResult.pendingChange().changeId());
     }
 
     LogoutAllReceipt committedResult =
@@ -120,14 +135,14 @@ public final class AccountLogoutAllAuthorityEventProducer {
             tokenProfile,
             presentedTokenHash,
             verifiedAccountAssociation);
-    if (!transactionResult.equals(committedResult)) {
+    if (!transactionResult.receipt().equals(committedResult)) {
       throw new IllegalStateException(
           "Post-commit logout-all receipt differs from the source transaction result");
     }
     return LogoutAllResult.valueOf(committedResult.lifecycleResult());
   }
 
-  private LogoutAllReceipt commitInOwnerTransaction(
+  private CommitAttempt commitInOwnerTransaction(
       UUID requestId,
       int requestDigestVersion,
       String requestDigest,
@@ -143,6 +158,14 @@ public final class AccountLogoutAllAuthorityEventProducer {
     Optional<LogoutAllReceipt> priorRequest = operationRepository.findByRequestId(requestId);
     Optional<LogoutAllReceipt> priorToken =
         operationRepository.findByPresentedTokenHash(presentedTokenHash);
+    byte[] requestPayload =
+        draftSourceChanges.requestBinding(
+            requestId,
+            requestDigestVersion,
+            requestDigest,
+            tokenProfile,
+            presentedTokenHash,
+            account);
     if (priorRequest.isPresent()) {
       LogoutAllReceipt receipt = priorRequest.orElseThrow();
       requireExactRetryBinding(
@@ -156,12 +179,27 @@ public final class AccountLogoutAllAuthorityEventProducer {
       if (priorToken.isEmpty() || !receipt.equals(priorToken.orElseThrow())) {
         throw new IllegalStateException("Logout-all token receipt index readback is inconsistent");
       }
-      return recoverReceipt(account, receipt);
+      Event historicalEvent =
+          outboxRepository
+              .findEvent(receipt.outboxStreamKey(), receipt.outboxSequence())
+              .orElseThrow(
+                  () -> new IllegalStateException("Logout-all historical event is missing"));
+      draftSourceChanges.verifyCommittedIfPresent(requestId, requestPayload, historicalEvent);
+      return new CommitAttempt(recoverReceipt(account, receipt), null, requestPayload);
     }
     if (priorToken.isPresent()) {
       throw new OperationConflictException(
           "Presented token identity is already bound to another logout-all request");
     }
+
+    Optional<SourceChange> originalPending =
+        draftSourceChanges.findPending(
+            requestId,
+            requestDigestVersion,
+            requestDigest,
+            tokenProfile,
+            presentedTokenHash,
+            account);
 
     if (requestDigestVersion != DIGEST_VERSION) {
       throw new IllegalArgumentException("Logout-all request digest version must be 1");
@@ -175,7 +213,7 @@ public final class AccountLogoutAllAuthorityEventProducer {
     }
     ScopeState current =
         generationRepository.read(AuthorityScope.account(account.getAccountUuid()));
-    if (!current.equals(expectedAccountState)) {
+    if (originalPending.isEmpty() && !current.equals(expectedAccountState)) {
       throw new IllegalStateException("Logout-all Account source compare-and-advance is stale");
     }
     AccountAuthoritySourceEventReadback.LatestSourceSnapshot source =
@@ -188,6 +226,24 @@ public final class AccountLogoutAllAuthorityEventProducer {
     long nextSequence = incrementExact(source.outboxSequence(), "Account source outbox sequence");
     String streamKey = streamKey(account.getAccountUuid());
     String eventId = EVENT_ID_PREFIX + requestText;
+
+    AccountLogoutAllDraftSourceChangeRepository.Participation participation =
+        draftSourceChanges.participate(
+            requestId,
+            requestDigestVersion,
+            requestDigest,
+            tokenProfile,
+            presentedTokenHash,
+            account,
+            current,
+            source);
+    SourceChange sourceChange = participation.change();
+    if (!participation.settled()) {
+      return new CommitAttempt(null, sourceChange, requestPayload);
+    }
+    if (!draftSourceChanges.permitted(sourceChange)) {
+      throw new IllegalStateException("Settled logout-all source change is not permitted");
+    }
 
     ScopeState advanced = generationRepository.advance(current, current.issuanceFence());
     requireAdvancedState(current, advanced, nextGeneration, nextSourceVersion, nextIssuanceFence);
@@ -262,6 +318,7 @@ public final class AccountLogoutAllAuthorityEventProducer {
         || !appended.equals(latest.latestEvent().orElseThrow())) {
       throw new IllegalStateException("Logout-all current source checkpoint readback differs");
     }
+    draftSourceChanges.complete(requestId, requestPayload, sourceChange, appended);
     requireReceiptReadback(
         receipt,
         requestId,
@@ -270,7 +327,7 @@ public final class AccountLogoutAllAuthorityEventProducer {
         tokenProfile,
         presentedTokenHash,
         account);
-    return receipt;
+    return new CommitAttempt(receipt, null, requestPayload);
   }
 
   private LogoutAllReceipt recoverReceipt(Account account, LogoutAllReceipt receipt) {
@@ -324,6 +381,22 @@ public final class AccountLogoutAllAuthorityEventProducer {
                   tokenProfile,
                   presentedTokenHash,
                   account);
+              Event event =
+                  outboxRepository
+                      .findEvent(committed.outboxStreamKey(), committed.outboxSequence())
+                      .orElseThrow(
+                          () ->
+                              new IllegalStateException("Logout-all historical event is missing"));
+              draftSourceChanges.verifyCommittedIfPresent(
+                  requestId,
+                  draftSourceChanges.requestBinding(
+                      requestId,
+                      requestDigestVersion,
+                      requestDigest,
+                      tokenProfile,
+                      presentedTokenHash,
+                      account),
+                  event);
               return recoverReceipt(account, committed);
             });
     if (receipt == null) {
@@ -359,6 +432,20 @@ public final class AccountLogoutAllAuthorityEventProducer {
         || !expected.equals(byToken.orElseThrow())) {
       throw new IllegalStateException("Logout-all receipt readback differs from its insert");
     }
+    Event event =
+        outboxRepository
+            .findEvent(expected.outboxStreamKey(), expected.outboxSequence())
+            .orElseThrow(() -> new IllegalStateException("Logout-all event readback is missing"));
+    draftSourceChanges.verifyCommittedIfPresent(
+        requestId,
+        draftSourceChanges.requestBinding(
+            requestId,
+            requestDigestVersion,
+            requestDigest,
+            tokenProfile,
+            presentedTokenHash,
+            account),
+        event);
     return byRequest;
   }
 
@@ -388,7 +475,9 @@ public final class AccountLogoutAllAuthorityEventProducer {
         accountRepository
             .findByIdForUpdate(requestedAccount.getId())
             .orElseThrow(
-                () -> new IllegalStateException("Verified Account association is missing"));
+                () ->
+                    new OperationConflictException(
+                        "Logout-all Account identity binding is absent from persisted Account state"));
     if (!Objects.equals(requestedAccount.getId(), locked.getId())
         || !Objects.equals(requestedAccount.getAccountUuid(), locked.getAccountUuid())
         || !Objects.equals(
@@ -396,7 +485,8 @@ public final class AccountLogoutAllAuthorityEventProducer {
             locked.getAccountUuidSourceNumericId())
         || requestedAccount.getAccountUuidProvenance() != locked.getAccountUuidProvenance()
         || !isVerifiedProvenance(locked.getAccountUuidProvenance())) {
-      throw new IllegalStateException("Verified Account association changed before logout-all");
+      throw new OperationConflictException(
+          "Logout-all Account identity binding conflicts with persisted Account identity");
     }
     // The source readback enforces that this is an exact persisted UUID association.
     if (locked.getId() == null
@@ -564,6 +654,9 @@ public final class AccountLogoutAllAuthorityEventProducer {
         && MessageDigest.isEqual(
             left.getBytes(StandardCharsets.US_ASCII), right.getBytes(StandardCharsets.US_ASCII));
   }
+
+  private record CommitAttempt(
+      LogoutAllReceipt receipt, SourceChange pendingChange, byte[] requestPayload) {}
 
   private long incrementExact(long value, String field) {
     try {
