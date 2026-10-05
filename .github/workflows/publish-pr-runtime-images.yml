@@ -179,8 +179,8 @@ jobs:
               fail("source workflow run API id does not match the event")
           if source_run.get("workflow_id") != int(workflow_id_text):
               fail("source workflow identity changed between event and API")
-          if source_run.get("name") != source_title:
-              fail("source workflow API name differs from its exact run title")
+          if source_run.get("name") not in {"Build Runtime Images", source_title}:
+              fail("source workflow API name is neither its owning name nor exact run title")
           if source_run.get("path") != SOURCE_WORKFLOW_PATH:
               fail("source workflow API path is not the trusted runtime-images workflow")
           if source_run.get("event") != source_event:
