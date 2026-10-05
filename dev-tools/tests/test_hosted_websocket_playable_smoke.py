@@ -1050,13 +1050,14 @@ class HostedWebSocketPlayableSmokeTests(unittest.TestCase):
         for attributes, metadata in invalid_responses:
             http = FakeHttp(cookie_attributes=attributes, connect_token_metadata=metadata)
             socket_attempts = []
-            with self.subTest(attributes=attributes, metadata=metadata), self.assertRaises(
-                MODULE.HostedWebSocketPlayableSmokeError
+            with (
+                self.subTest(attributes=attributes, metadata=metadata),
+                self.assertRaises(MODULE.HostedWebSocketPlayableSmokeError),
             ):
                 MODULE.run_smoke(
                     self.config(),
                     http_request=http,
-                    websocket_factory=lambda *args: socket_attempts.append(args),
+                    websocket_factory=lambda *args, attempts=socket_attempts: attempts.append(args),
                 )
             self.assertEqual(socket_attempts, [])
 
@@ -1066,7 +1067,7 @@ class HostedWebSocketPlayableSmokeTests(unittest.TestCase):
         MODULE.run_smoke(
             self.config(),
             http_request=http,
-            websocket_factory=lambda *args: (socket_attempts.append(args) or FakeWebSocket()),
+            websocket_factory=lambda *args: socket_attempts.append(args) or FakeWebSocket(),
         )
         self.assertEqual(len(socket_attempts), 1)
 

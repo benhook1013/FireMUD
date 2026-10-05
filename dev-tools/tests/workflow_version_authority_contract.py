@@ -139,6 +139,8 @@ def main() -> int:
     for name, (entries, includes) in locks.items():
         if includes:
             fail(f"{name} requirements must not include another profile")
+    if "websocket-client" not in locks["smoke"][0]:
+        fail("smoke requirements must pin the bounded WebSocket test dependency")
     for dependency in expected_direct_requirements["docs"]:
         if dependency not in locks["docs"][0]:
             fail(f"docs requirements must pin its direct dependency in the generated lock: {dependency}")
@@ -591,6 +593,55 @@ def main() -> int:
                 fail(f"{path.name}:{job_name}: {need} helper lacks its pinned dependency profile")
         return setup_count
 
+    smoke_requirements_install = (
+        "python3 -m pip install --disable-pip-version-check --require-hashes -r config/python/smoke-requirements.txt"
+    )
+    full_validation_guard = "${{ needs.changes.outputs.lightweight_only != 'true' }}"
+    full_validation_commands = {
+        "python3 -m unittest discover -s dev-tools/validation -p 'test_*.py'",
+        "python3 -m unittest discover -s dev-tools/tests -p 'test_*.py'",
+    }
+
+    def validate_dev_tool_smoke_dependencies(path, steps):
+        setup_indices = [
+            index
+            for index, step in enumerate(steps)
+            if isinstance(step, dict) and step.get("uses") == "./.github/actions/setup-python"
+        ]
+        if len(setup_indices) != 1:
+            fail(f"{path.name}:dev-tool-contract-checks must set up Python exactly once")
+        setup_index = setup_indices[0]
+        install_indices = [
+            index
+            for index, step in enumerate(steps)
+            if isinstance(step, dict) and "pip install" in str(step.get("run", ""))
+        ]
+        if len(install_indices) != 1:
+            fail(f"{path.name}:dev-tool-contract-checks must install the smoke lock exactly once")
+        install_index = install_indices[0]
+        install_step = steps[install_index]
+        if install_index != setup_index + 1:
+            fail(f"{path.name}:dev-tool-contract-checks smoke lock must install immediately after Python setup")
+        if str(install_step.get("run", "")).strip() != smoke_requirements_install:
+            fail(f"{path.name}:dev-tool-contract-checks must install the hash-locked smoke requirements")
+        if install_step.get("if") != full_validation_guard:
+            fail(f"{path.name}:dev-tool-contract-checks smoke lock install must be limited to full validation")
+
+        full_discovery = []
+        for index, step in enumerate(steps):
+            if not isinstance(step, dict):
+                continue
+            run_lines = {line.strip() for line in str(step.get("run", "")).splitlines()}
+            if full_validation_commands <= run_lines:
+                full_discovery.append((index, step))
+        if len(full_discovery) != 1:
+            fail(f"{path.name}:dev-tool-contract-checks must retain full unittest discovery")
+        discovery_index, discovery_step = full_discovery[0]
+        if discovery_index <= install_index:
+            fail(f"{path.name}:dev-tool-contract-checks must install smoke requirements before full discovery")
+        if discovery_step.get("if") != full_validation_guard:
+            fail(f"{path.name}:dev-tool-contract-checks full unittest discovery must remain on full validation")
+
     if python_needs("bash ./dev-tools/tests/dev-tools-readme-contract.sh") == "smoke":
         fail("documentation/data references must not imply the smoke dependency profile")
     if python_needs("bash ./services/game-session-service/websocket-login-look-smoke.sh") != "smoke":
@@ -796,6 +847,19 @@ def main() -> int:
             ],
             "profile-sequencing: smoke helper lacks its pinned dependency profile",
         )
+        expect_workflow_failure(
+            [workflow_checkout, {"run": smoke_requirements_install}],
+            "profile-sequencing: direct or helper Python consumer uses ambient runner Python",
+        )
+        expect_workflow_failure(
+            [
+                workflow_checkout,
+                {"uses": "./.github/actions/setup-python", "with": {"requirements": "ci"}},
+                {"run": smoke_requirements_install},
+                {"run": python_smoke_reference},
+            ],
+            "profile-sequencing: smoke helper lacks its pinned dependency profile",
+        )
 
         conditional_setup = {
             "uses": "./.github/actions/setup-python",
@@ -842,6 +906,41 @@ def main() -> int:
             "ci.yml:dev-tool-contract-checks: docs helper lacks its pinned dependency profile",
             path=ci_workflow_fixture,
             job_name="dev-tool-contract-checks",
+        )
+
+        valid_full_run = {
+            "if": full_validation_guard,
+            "run": "\n".join(sorted(full_validation_commands)),
+        }
+        valid_smoke_install = {"if": full_validation_guard, "run": smoke_requirements_install}
+        valid_smoke_dependency_steps = [workflow_checkout, conditional_setup, valid_smoke_install, valid_full_run]
+        validate_dev_tool_smoke_dependencies(ci_workflow_fixture, valid_smoke_dependency_steps)
+
+        def expect_smoke_dependency_failure(steps, expected_message):
+            try:
+                validate_dev_tool_smoke_dependencies(ci_workflow_fixture, steps)
+            except SystemExit as error:
+                if expected_message not in str(error):
+                    fail(f"smoke dependency fixture failed for an unexpected reason: {error}")
+            else:
+                fail(f"smoke dependency fixture unexpectedly passed: {expected_message}")
+
+        expect_smoke_dependency_failure(
+            [
+                workflow_checkout,
+                conditional_setup,
+                {**valid_smoke_install, "run": valid_smoke_install["run"].replace("--require-hashes ", "")},
+                valid_full_run,
+            ],
+            "must install the hash-locked smoke requirements",
+        )
+        expect_smoke_dependency_failure(
+            [workflow_checkout, conditional_setup, {**valid_smoke_install, "if": None}, valid_full_run],
+            "smoke lock install must be limited to full validation",
+        )
+        expect_smoke_dependency_failure(
+            [workflow_checkout, conditional_setup, valid_smoke_install],
+            "must retain full unittest discovery",
         )
 
     workflow_paths = sorted((*workflows.glob("*.yml"), *workflows.glob("*.yaml")))
@@ -935,6 +1034,8 @@ def main() -> int:
                 continue
             steps = job.get("steps", [])
             python_count += validate_workflow_python_steps(path, job_name, steps)
+            if path.name == "ci.yml" and job_name == "dev-tool-contract-checks":
+                validate_dev_tool_smoke_dependencies(path, steps)
             checkout = gh_setup_seen = loader = False
             for step in steps:
                 if not isinstance(step, dict):
