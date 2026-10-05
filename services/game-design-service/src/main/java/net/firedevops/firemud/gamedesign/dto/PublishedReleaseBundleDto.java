@@ -20,7 +20,8 @@ public record PublishedReleaseBundleDto(
     String scriptPatchVersion,
     LocalDateTime publishedAt,
     UUID canonicalTenantId,
-    UUID canonicalVersionId) {
+    UUID canonicalVersionId,
+    String publishedReleaseBundleRef) {
   public PublishedReleaseBundleDto {
     requiredManifestAssetKeys =
         List.copyOf(requiredManifestAssetKeys == null ? List.of() : requiredManifestAssetKeys);
@@ -43,7 +44,8 @@ public record PublishedReleaseBundleDto(
       String scriptPatchVersion,
       LocalDateTime publishedAt,
       UUID canonicalTenantId,
-      UUID canonicalVersionId) {
+      UUID canonicalVersionId,
+      String publishedReleaseBundleRef) {
     this(
         id,
         tenantId,
@@ -60,6 +62,7 @@ public record PublishedReleaseBundleDto(
         scriptPatchVersion,
         publishedAt,
         canonicalTenantId,
-        canonicalVersionId);
+        canonicalVersionId,
+        publishedReleaseBundleRef);
   }
 }

@@ -484,8 +484,9 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
       throw new IllegalArgumentException(
           "RELEASE_ATTESTATION_MISMATCH: world activation request does not match the published release bundle");
     }
-    if (!releaseBundleRef(request.tenantId(), request.versionId(), request.releaseBundleId())
-        .equals(request.publishedReleaseBundleRef())) {
+    String publishedReleaseBundleRef = bundle.getPublishedReleaseBundleRef();
+    if (publishedReleaseBundleRef.isBlank()
+        || !publishedReleaseBundleRef.equals(request.publishedReleaseBundleRef())) {
       throw new IllegalArgumentException(
           "RELEASE_ATTESTATION_MISMATCH: published release bundle ref mismatch");
     }
@@ -645,10 +646,6 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
 
   private String normalizeBlank(String value) {
     return value == null || value.isBlank() ? null : value;
-  }
-
-  private String releaseBundleRef(long tenantId, long versionId, long releaseBundleId) {
-    return "prb:" + tenantId + ":" + versionId + ":" + releaseBundleId;
   }
 
   private void requireSupportedReleaseAttestationSchema(String schemaVersion) {

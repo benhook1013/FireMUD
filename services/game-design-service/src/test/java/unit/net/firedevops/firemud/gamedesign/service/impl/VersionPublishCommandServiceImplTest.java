@@ -14,6 +14,7 @@ import io.grpc.StatusRuntimeException;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
@@ -205,8 +206,9 @@ class VersionPublishCommandServiceImplTest {
                 false,
                 null,
                 LocalDateTime.now(),
-                null,
-                null));
+                UUID.fromString("67d7b75b-42d1-4ac6-9572-684c5e633cda"),
+                UUID.fromString("c472ebd1-56d8-49df-b8fa-85963dd940f8"),
+                "opaque-owner-issued-release-reference"));
     when(versionAssetArtifactService.markPublished(
             any(String.class),
             any(Long.class),
@@ -484,8 +486,9 @@ class VersionPublishCommandServiceImplTest {
             false,
             null,
             LocalDateTime.now(),
-            null,
-            null);
+            UUID.fromString("67d7b75b-42d1-4ac6-9572-684c5e633cda"),
+            UUID.fromString("c472ebd1-56d8-49df-b8fa-85963dd940f8"),
+            "opaque-owner-issued-release-reference");
     VersionAssetArtifactStateDto driftedArtifact =
         new VersionAssetArtifactStateDto(
             "tenant-1",
@@ -559,8 +562,9 @@ class VersionPublishCommandServiceImplTest {
             false,
             null,
             LocalDateTime.now(),
-            null,
-            null);
+            UUID.fromString("67d7b75b-42d1-4ac6-9572-684c5e633cda"),
+            UUID.fromString("c472ebd1-56d8-49df-b8fa-85963dd940f8"),
+            "opaque-owner-issued-release-reference");
     when(publishAttemptRepository.findByPublishWorkflowId(workflowId))
         .thenReturn(Optional.of(attempt));
     when(publishedReleaseBundleService.findPublishedReleaseBundle("tenant-1", 10L))
@@ -651,8 +655,9 @@ class VersionPublishCommandServiceImplTest {
             false,
             null,
             LocalDateTime.now(),
-            null,
-            null);
+            UUID.fromString("67d7b75b-42d1-4ac6-9572-684c5e633cda"),
+            UUID.fromString("c472ebd1-56d8-49df-b8fa-85963dd940f8"),
+            "opaque-owner-issued-release-reference");
     when(publishedReleaseBundleService.findPublishedReleaseBundle("tenant-1", 10L))
         .thenReturn(Optional.of(bundle));
 
@@ -773,8 +778,9 @@ class VersionPublishCommandServiceImplTest {
             false,
             null,
             LocalDateTime.now(),
-            null,
-            null);
+            UUID.fromString("67d7b75b-42d1-4ac6-9572-684c5e633cda"),
+            UUID.fromString("c472ebd1-56d8-49df-b8fa-85963dd940f8"),
+            "opaque-owner-issued-release-reference");
     VersionAssetArtifactStateDto artifact =
         new VersionAssetArtifactStateDto(
             "tenant-1",
@@ -999,8 +1005,9 @@ class VersionPublishCommandServiceImplTest {
             false,
             null,
             LocalDateTime.now(),
-            null,
-            null);
+            UUID.fromString("67d7b75b-42d1-4ac6-9572-684c5e633cda"),
+            UUID.fromString("c472ebd1-56d8-49df-b8fa-85963dd940f8"),
+            "opaque-owner-issued-release-reference");
     when(publishAttemptRepository.findByPublishWorkflowId(workflowId))
         .thenReturn(Optional.of(attempt));
     when(versionRepository.findByTenantIdAndId("tenant-1", 10L)).thenReturn(Optional.of(version));

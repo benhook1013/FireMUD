@@ -20,10 +20,11 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Account-owned first-writer storage and exact readback for bare first-party LOGIN exchange. Claim,
- * pending evidence, terminal success, and its exact envelope must share one Account transaction;
- * V37.1 permits {@code PENDING} only as an in-transaction intermediate and rejects a still-pending
- * exchange at transaction commit.
+ * Account-owned first-writer storage and exact readback for bare first-party LOGIN exchange. A
+ * non-authorizing {@code PENDING} claim and its write-once evidence may survive separate Account
+ * transactions for crash recovery. The transition to terminal success and its exact purpose-bound
+ * envelope must share one Account transaction. This storage primitive is not the complete pre-sign
+ * issuance evidence bundle, signer, registry, credential exchange, or activation path.
  */
 @Repository
 @SuppressFBWarnings(
@@ -46,9 +47,10 @@ public class AccountBareLoginExchangeRepository {
   /**
    * Claims one source connect-operation identity without replacing a prior writer's request
    * identity or digest. A source connect operation must already be a committed V35 issuance; a
-   * pending or absent source is not Account authentication and cannot start an exchange. The caller
-   * must keep this claim in the same Account transaction as pending evidence and terminal envelope
-   * completion; committing the claim alone is rejected.
+   * pending or absent source is not Account authentication and cannot start an exchange. A durable
+   * {@code PENDING} claim is non-authorizing and may commit alone; an exact retry recovers the
+   * original operation ID and request digest and may resume its evidence or completion while the
+   * operation remains pending.
    */
   @Transactional(propagation = Propagation.MANDATORY)
   public ClaimResult claim(AccountBareLoginExchangeIdentity identity, byte[] requestDigest) {
@@ -126,9 +128,9 @@ public class AccountBareLoginExchangeRepository {
 
   /**
    * Adds write-once source/token/authority evidence to a still-pending exchange. It never marks a
-   * transient or ambiguous result terminal; the claim, this evidence binding, and the later
-   * terminal call must share one transaction, which must store the exact purpose-bound envelope
-   * before commit.
+   * transient or ambiguous result terminal. The pending evidence may commit for crash recovery;
+   * terminal completion must separately commit the transition and exact purpose-bound envelope
+   * together.
    */
   @Transactional(propagation = Propagation.MANDATORY)
   public AccountBareLoginExchangeOperation recordPendingEvidence(
@@ -236,8 +238,9 @@ public class AccountBareLoginExchangeRepository {
 
   /**
    * Stores one terminal successful result and its authenticated ciphertext in the caller's
-   * transaction. The claim and any pending evidence must have occurred in this same transaction;
-   * this repository never creates or decrypts the delegation JWT.
+   * transaction. The still-pending operation and exact envelope become durable together; the
+   * original claim and any write-once pending evidence may have committed in earlier transactions.
+   * This repository never creates or decrypts the delegation JWT.
    */
   @Transactional(propagation = Propagation.MANDATORY)
   public AccountBareLoginResponseEnvelope completeWithEnvelope(
@@ -629,9 +632,11 @@ public class AccountBareLoginExchangeRepository {
 
   private AccountBareLoginExchangeIdentity requireClaimIdentity(ClaimResult claim) {
     Objects.requireNonNull(claim, "claim");
-    if (claim.disposition() != ClaimDisposition.CLAIMED) {
+    if (claim.disposition() != ClaimDisposition.CLAIMED
+        && !(claim.disposition() == ClaimDisposition.REPLAYED
+            && claim.operation().lifecycle() == Lifecycle.PENDING)) {
       throw new IllegalStateException(
-          "Only the first bare LOGIN exchange claimant may record evidence or an outcome");
+          "Only an exact pending bare LOGIN exchange claim may record evidence or an outcome");
     }
     return claim.identity();
   }

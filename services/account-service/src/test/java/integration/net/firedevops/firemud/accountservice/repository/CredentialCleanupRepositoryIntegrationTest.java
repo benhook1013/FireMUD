@@ -11,6 +11,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.time.LocalDateTime;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -41,6 +42,7 @@ class CredentialCleanupRepositoryIntegrationTest {
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
   private DSLContext dsl;
+  private DataSource adminDataSource;
   private DataSource dataSource;
   private PasswordResetTokenRepository passwordResetTokenRepository;
   private EmailVerificationTokenRepository emailVerificationTokenRepository;
@@ -48,17 +50,31 @@ class CredentialCleanupRepositoryIntegrationTest {
 
   @BeforeAll
   void setUpRepositories() {
-    dataSource = newDataSource();
-    Flyway.configure().dataSource(dataSource).locations(MIGRATION_LOCATION).load().migrate();
+    adminDataSource = newDataSource();
+  }
+
+  @BeforeEach
+  void setUpIsolatedSchema() {
+    String schema = "credential_cleanup_it_" + UUID.randomUUID().toString().replace("-", "");
+    DSL.using(adminDataSource, SQLDialect.POSTGRES).execute("CREATE SCHEMA " + schema);
+
+    DriverManagerDataSource schemaDataSource = newDataSource();
+    String jdbcUrl = postgres.getJdbcUrl();
+    schemaDataSource.setUrl(
+        jdbcUrl + (jdbcUrl.contains("?") ? "&" : "?") + "currentSchema=" + schema);
+    dataSource = schemaDataSource;
+
+    Flyway.configure()
+        .dataSource(dataSource)
+        .locations(MIGRATION_LOCATION)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .load()
+        .migrate();
     dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
     passwordResetTokenRepository = new PasswordResetTokenRepository(dsl);
     emailVerificationTokenRepository = new EmailVerificationTokenRepository(dsl);
     emailLoginChallengeRepository = new AccountEmailLoginChallengeRepository(dsl);
-  }
-
-  @BeforeEach
-  void cleanTables() {
-    dsl.execute("TRUNCATE TABLE accounts RESTART IDENTITY CASCADE");
   }
 
   @Test
@@ -258,7 +274,7 @@ class CredentialCleanupRepositoryIntegrationTest {
     int deleteExpired(DSLContext cleanupDsl, LocalDateTime capturedNow);
   }
 
-  private DataSource newDataSource() {
+  private DriverManagerDataSource newDataSource() {
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
     dataSource.setDriverClassName(postgres.getDriverClassName());
     dataSource.setUrl(postgres.getJdbcUrl());

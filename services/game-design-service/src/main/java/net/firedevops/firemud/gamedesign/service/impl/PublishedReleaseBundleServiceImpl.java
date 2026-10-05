@@ -138,7 +138,8 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
         entity.getScriptPatchVersion(),
         entity.getPublishedAt(),
         entity.getCanonicalTenantId(),
-        entity.getCanonicalVersionId());
+        entity.getCanonicalVersionId(),
+        entity.getPublishedReleaseBundleRef());
   }
 
   private boolean isCanonicalNonNilUuid(UUID value) {

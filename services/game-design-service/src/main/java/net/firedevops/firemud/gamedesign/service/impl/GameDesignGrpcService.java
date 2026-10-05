@@ -760,6 +760,9 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
             .setCanonicalTenantId(bundle.canonicalTenantId().toString())
             .setCanonicalVersionId(bundle.canonicalVersionId().toString());
       }
+      if (bundle.publishedReleaseBundleRef() != null) {
+        bundleBuilder.setPublishedReleaseBundleRef(bundle.publishedReleaseBundleRef());
+      }
       builder.setBundle(bundleBuilder.build());
     } catch (AdminAuthorizationException ex) {
       builder.setError(

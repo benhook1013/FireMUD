@@ -24,17 +24,23 @@ import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.accountservice.client.EntityManagementClient;
 import net.firedevops.firemud.accountservice.client.GameSessionClient;
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
+import net.firedevops.firemud.accountservice.dto.AccountFreshCaptureSources;
 import net.firedevops.firemud.accountservice.dto.RuntimeMembershipSnapshotDto;
+import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
+import net.firedevops.firemud.accountservice.repository.AccountGlobalRoleSourceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository;
 import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepository;
+import net.firedevops.firemud.accountservice.service.AccountFreshCaptureSourceReader;
 import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer;
 import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer.OutboxCheckpointEntry;
 import net.firedevops.firemud.accountservice.service.AccountMembershipSourceReader;
+import net.firedevops.firemud.accountservice.service.AccountTenantAuthorityEventProducer;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
+import net.firedevops.firemud.common.account.authority.TenantGenerationAuthorityEventV1Codec.TenantGenerationAuthorityEvent;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.test.GatewayTestProperties;
@@ -50,6 +56,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.util.AopTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -86,6 +93,7 @@ class AccountFreshUuidMembershipSnapshotIntegrationTest {
   @Autowired private AccountMembershipAuthorityEventProducer producer;
   @Autowired private AccountAuthorityGenerationRepository authorityGenerationRepository;
   @Autowired private AccountAuthorityOutboxRepository authorityOutboxRepository;
+  @Autowired private AccountGlobalRoleSourceRepository globalRoleSourceRepository;
   @Autowired private FreshTenantIdentityAssociationRepository freshAssociationRepository;
   @Autowired private PlatformTransactionManager transactionManager;
 
@@ -175,6 +183,158 @@ class AccountFreshUuidMembershipSnapshotIntegrationTest {
     assertThat(countAuthorityStreams(membershipStreamKey(account.accountUuid(), tenantUuid)))
         .isZero();
     assertThat(issuanceFence(account.accountUuid())).isEqualTo(originalIssuanceFence);
+  }
+
+  @Test
+  void freshGlobalRoleSourceComposesWithExistingMembershipVectorAndPreservesIndependentVersions() {
+    AccountFixture account = accountFixture();
+    UUID tenantUuid = UUID.randomUUID();
+    importFreshTenantAssociation(tenantUuid);
+    new AccountTenantAuthorityEventProducer(
+            authorityGenerationRepository, authorityOutboxRepository, dsl, transactionManager)
+        .advance(tenantUuid, UUID.randomUUID(), 1L, 1L);
+    readFreshNeverJoinedMembershipSnapshot(account.accountUuid(), tenantUuid);
+
+    Map<String, Object> pairBefore = membershipPairAuthorityRow(account.accountUuid(), tenantUuid);
+    Map<String, Object> tenantGenerationBefore =
+        authorityGenerationRow("TENANT", null, tenantUuid).orElseThrow();
+    Map<String, Object> membershipGenerationBefore =
+        authorityGenerationRow("MEMBERSHIP", account.accountUuid(), tenantUuid).orElseThrow();
+    Map<String, Object> fenceBefore = issuanceFenceRow(account.accountUuid());
+    Map<String, Object> roleSourceBefore = globalRoleSourceRow(account.accountUuid());
+    AccountFreshCaptureSourceReader reader =
+        new AccountFreshCaptureSourceReader(producer, globalRoleSourceRepository);
+    TransactionTemplate ownerTransaction = new TransactionTemplate(transactionManager);
+    ownerTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    ownerTransaction.setReadOnly(false);
+
+    AccountFreshCaptureSources first =
+        ownerTransaction.execute(status -> reader.readExisting(account.accountUuid(), tenantUuid));
+    AccountFreshCaptureSources retry =
+        ownerTransaction.execute(status -> reader.readExisting(account.accountUuid(), tenantUuid));
+
+    var persistedAccount =
+        dsl.resultQuery(
+                "SELECT id, account_uuid, account_uuid_source_numeric_id, "
+                    + "account_uuid_provenance FROM accounts WHERE id = ?",
+                account.accountId())
+            .fetchOne();
+    assertThat(persistedAccount).isNotNull();
+    assertThat(persistedAccount.get("account_uuid", UUID.class)).isEqualTo(account.accountUuid());
+    assertThat(persistedAccount.get("account_uuid_provenance", String.class))
+        .isEqualTo(AccountIdentityProvenance.ACCOUNT_DATABASE_INSERT.name());
+    assertThat(persistedAccount.get("account_uuid_source_numeric_id", Long.class))
+        .isEqualTo(account.accountId());
+
+    var membershipSources = first.membershipSources();
+    var authority = membershipSources.authoritySnapshot();
+    assertThat(first.requestedAccountUuid()).isEqualTo(account.accountUuid());
+    assertThat(first.requestedTenantUuid()).isEqualTo(tenantUuid);
+    assertThat(membershipSources.membershipSnapshot().accountUuid())
+        .isEqualTo(account.accountUuid().toString());
+    assertThat(membershipSources.membershipSnapshot().tenantUuid())
+        .isEqualTo(tenantUuid.toString());
+    assertThat(membershipSources.membershipSnapshot().membershipExists()).isFalse();
+    assertThat(membershipSources.membershipSnapshot().gameplayAdmissionAllowed()).isFalse();
+    assertThat(authority.issuer().sourceVersion()).isEqualTo(1L);
+    assertThat(authority.account().sourceVersion()).isEqualTo(1L);
+    assertThat(authority.tenants())
+        .singleElement()
+        .satisfies(
+            tenant -> {
+              assertThat(tenant.sourceVersion()).isEqualTo(2L);
+              assertThat(tenant.generation()).isEqualTo(2L);
+            });
+    assertThat(authority.memberships())
+        .singleElement()
+        .satisfies(
+            membership -> {
+              assertThat(membership.sourceVersion()).isEqualTo(1L);
+              assertThat(membership.generation()).isEqualTo(1L);
+            });
+    assertThat(authority.issuanceFence().value()).isEqualTo(1L);
+    assertThat(authority.issuanceFence().sourceVersion()).isEqualTo(1L);
+    assertThat(membershipSources.membershipSnapshot().outboxCheckpoints())
+        .anySatisfy(
+            checkpoint -> {
+              assertThat(checkpoint.outboxStreamKey())
+                  .isEqualTo("account:auth-authority:v1:tenant/" + tenantUuid);
+              assertThat(checkpoint.outboxSequence()).isEqualTo("1");
+            });
+
+    var freshRoleSource = first.freshGlobalRoleSource();
+    assertThat(freshRoleSource.accountUuid()).isEqualTo(account.accountUuid());
+    assertThat(freshRoleSource.accountRowId()).isEqualTo(account.accountId());
+    assertThat(freshRoleSource.accountUuidSourceNumericId()).isEqualTo(account.accountId());
+    assertThat(freshRoleSource.accountUuidProvenance())
+        .isEqualTo(AccountIdentityProvenance.ACCOUNT_DATABASE_INSERT);
+    assertThat(freshRoleSource.globalRoles()).isEmpty();
+    assertThat(freshRoleSource.globalRoleSourceVersion()).isEqualTo(1L);
+    assertThat(authority.tenants().getFirst().sourceVersion())
+        .isNotEqualTo(freshRoleSource.globalRoleSourceVersion());
+    assertThat(retry.freshGlobalRoleSource()).isEqualTo(freshRoleSource);
+    assertThat(retry.membershipSources().authoritySnapshot()).isEqualTo(authority);
+    assertThat(retry.membershipSources().membershipSnapshot().membershipBaseline())
+        .isEqualTo(membershipSources.membershipSnapshot().membershipBaseline());
+    assertThat(retry.membershipSources().membershipSnapshot().outboxCheckpoints())
+        .isEqualTo(membershipSources.membershipSnapshot().outboxCheckpoints());
+
+    assertThat(membershipPairAuthorityRow(account.accountUuid(), tenantUuid)).isEqualTo(pairBefore);
+    assertThat(authorityGenerationRow("TENANT", null, tenantUuid)).contains(tenantGenerationBefore);
+    assertThat(authorityGenerationRow("MEMBERSHIP", account.accountUuid(), tenantUuid))
+        .contains(membershipGenerationBefore);
+    assertThat(issuanceFenceRow(account.accountUuid())).isEqualTo(fenceBefore);
+    assertThat(globalRoleSourceRow(account.accountUuid())).isEqualTo(roleSourceBefore);
+    assertThat(countMembershipsForAccount(account.accountId())).isZero();
+    assertThat(countMembershipTransitionReceiptsForAccount(account.accountId())).isZero();
+
+    AccountFixture otherAccount = accountFixture();
+    var otherRoleSource =
+        ownerTransaction.execute(
+            status ->
+                globalRoleSourceRepository.readFreshEmptySourceForUpdate(
+                    otherAccount.accountUuid()));
+    assertThatThrownBy(
+            () ->
+                new AccountFreshCaptureSources(
+                    account.accountUuid(), tenantUuid, membershipSources, otherRoleSource))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("fresh Account identity");
+    assertThat(membershipPairAuthorityRow(account.accountUuid(), tenantUuid)).isEqualTo(pairBefore);
+    assertThat(globalRoleSourceRow(account.accountUuid())).isEqualTo(roleSourceBefore);
+  }
+
+  @Test
+  void retainedAccountWithoutFreshGlobalRoleSourceIsDeniedWithoutEnrollment() {
+    AccountFixture account = retainedAccountFixture();
+    UUID tenantUuid = UUID.randomUUID();
+    importFreshTenantAssociation(tenantUuid);
+    readFreshNeverJoinedMembershipSnapshot(account.accountUuid(), tenantUuid);
+
+    Map<String, Object> pairBefore = membershipPairAuthorityRow(account.accountUuid(), tenantUuid);
+    Map<String, Object> membershipGenerationBefore =
+        authorityGenerationRow("MEMBERSHIP", account.accountUuid(), tenantUuid).orElseThrow();
+    Map<String, Object> fenceBefore = issuanceFenceRow(account.accountUuid());
+    assertThat(countGlobalRoleSources(account.accountUuid())).isZero();
+    AccountFreshCaptureSourceReader reader =
+        new AccountFreshCaptureSourceReader(producer, globalRoleSourceRepository);
+    TransactionTemplate ownerTransaction = new TransactionTemplate(transactionManager);
+    ownerTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+
+    assertThatThrownBy(
+            () ->
+                ownerTransaction.execute(
+                    status -> reader.readExisting(account.accountUuid(), tenantUuid)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Fresh canonical Account identity readback is invalid");
+
+    assertThat(countGlobalRoleSources(account.accountUuid())).isZero();
+    assertThat(membershipPairAuthorityRow(account.accountUuid(), tenantUuid)).isEqualTo(pairBefore);
+    assertThat(authorityGenerationRow("MEMBERSHIP", account.accountUuid(), tenantUuid))
+        .contains(membershipGenerationBefore);
+    assertThat(issuanceFenceRow(account.accountUuid())).isEqualTo(fenceBefore);
+    assertThat(countMembershipsForAccount(account.accountId())).isZero();
+    assertThat(countMembershipTransitionReceiptsForAccount(account.accountId())).isZero();
   }
 
   @Test
@@ -674,6 +834,181 @@ class AccountFreshUuidMembershipSnapshotIntegrationTest {
     }
   }
 
+  @Test
+  void tenantAdvanceWaitsForFreshCaptureSourceLocksAndPreservesCapturedVector() throws Exception {
+    AccountFixture account = accountFixture();
+    UUID tenantUuid = UUID.randomUUID();
+    importFreshTenantAssociation(tenantUuid);
+
+    var enrolledBaseline =
+        readFreshNeverJoinedMembershipSnapshot(account.accountUuid(), tenantUuid);
+    assertThat(enrolledBaseline.membershipExists()).isFalse();
+    assertThat(enrolledBaseline.gameplayAdmissionAllowed()).isFalse();
+    assertThat(enrolledBaseline.membershipVersion()).isEqualTo(Map.of(tenantUuid.toString(), "1"));
+    assertThat(authorityGeneration("TENANT", null, tenantUuid)).isEqualTo(1L);
+    assertThat(authorityGeneration("MEMBERSHIP", account.accountUuid(), tenantUuid)).isEqualTo(1L);
+
+    Map<String, Object> accountAuthorityBefore =
+        authorityGenerationRow("ACCOUNT", account.accountUuid(), null).orElseThrow();
+    Map<String, Object> tenantAuthorityBefore =
+        authorityGenerationRow("TENANT", null, tenantUuid).orElseThrow();
+    assertThat(tenantAuthorityBefore)
+        .containsEntry("generation", 1L)
+        .containsEntry("source_version", 1L);
+    Map<String, Object> membershipAuthorityBefore =
+        authorityGenerationRow("MEMBERSHIP", account.accountUuid(), tenantUuid).orElseThrow();
+    Map<String, Object> issuanceFenceBefore = issuanceFenceRow(account.accountUuid());
+    Map<String, Object> membershipPairBefore =
+        membershipPairAuthorityRow(account.accountUuid(), tenantUuid);
+    Map<String, Object> globalRoleSourceBefore = globalRoleSourceRow(account.accountUuid());
+    assertThat(globalRoleSourceBefore).containsEntry("global_role_source_version", 1L);
+    String tenantStreamKey = "account:auth-authority:v1:tenant/" + tenantUuid;
+    assertThat(countAuthorityEvents(tenantStreamKey)).isZero();
+    assertThat(countAuthorityStreams(tenantStreamKey)).isZero();
+
+    AccountFreshCaptureSourceReader reader =
+        new AccountFreshCaptureSourceReader(producer, globalRoleSourceRepository);
+    TransactionTemplate captureOwnerTransaction = new TransactionTemplate(transactionManager);
+    captureOwnerTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    captureOwnerTransaction.setReadOnly(false);
+    AccountTenantAuthorityEventProducer tenantProducer =
+        new AccountTenantAuthorityEventProducer(
+            authorityGenerationRepository, authorityOutboxRepository, dsl, transactionManager);
+    UUID requestId = UUID.randomUUID();
+
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    CountDownLatch captureReady = new CountDownLatch(1);
+    CountDownLatch releaseCapture = new CountDownLatch(1);
+    CountDownLatch advanceStarted = new CountDownLatch(1);
+    AtomicReference<Integer> captureBackendPid = new AtomicReference<>();
+    try {
+      Future<AccountFreshCaptureSources> captureFuture =
+          executor.submit(
+              () ->
+                  captureOwnerTransaction.execute(
+                      status -> {
+                        AccountFreshCaptureSources capture =
+                            reader.readExisting(account.accountUuid(), tenantUuid);
+                        captureBackendPid.set(currentBackendPid());
+                        captureReady.countDown();
+                        await(releaseCapture);
+                        return capture;
+                      }));
+      assertThat(captureReady.await(10, TimeUnit.SECONDS)).isTrue();
+      assertThat(captureBackendPid.get()).isNotNull();
+
+      Future<TenantGenerationAuthorityEvent> advanceFuture =
+          executor.submit(
+              () -> {
+                advanceStarted.countDown();
+                return tenantProducer.advance(tenantUuid, requestId, 1L, 1L);
+              });
+      assertThat(advanceStarted.await(10, TimeUnit.SECONDS)).isTrue();
+
+      Integer waitingBackendPid = null;
+      long lockWaitDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+      while (System.nanoTime() < lockWaitDeadline && waitingBackendPid == null) {
+        waitingBackendPid =
+            dsl.resultQuery(
+                    "SELECT pid FROM pg_stat_activity "
+                        + "WHERE wait_event_type = 'Lock' "
+                        + "AND CAST(? AS integer) = ANY(pg_blocking_pids(pid)) "
+                        + "AND query ILIKE '%account_authority_generations%' "
+                        + "ORDER BY query_start DESC LIMIT 1",
+                    captureBackendPid.get())
+                .fetchOne(0, Integer.class);
+        if (waitingBackendPid == null) {
+          Thread.sleep(10L);
+        }
+      }
+      assertThat(waitingBackendPid)
+          .as("tenant advancement must block on the captured authority-generation row")
+          .isNotNull();
+      assertThat(advanceFuture.isDone()).isFalse();
+      assertThat(authorityGeneration("TENANT", null, tenantUuid)).isEqualTo(1L);
+      assertThat(countAuthorityEvents(tenantStreamKey)).isZero();
+
+      releaseCapture.countDown();
+      AccountFreshCaptureSources captured = captureFuture.get(20, TimeUnit.SECONDS);
+      var advancedEvent = advanceFuture.get(20, TimeUnit.SECONDS);
+
+      assertThat(captured.requestedAccountUuid()).isEqualTo(account.accountUuid());
+      assertThat(captured.requestedTenantUuid()).isEqualTo(tenantUuid);
+      var membershipSources = captured.membershipSources();
+      assertThat(membershipSources.membershipSnapshot().membershipExists()).isFalse();
+      assertThat(membershipSources.membershipSnapshot().gameplayAdmissionAllowed()).isFalse();
+      assertThat(membershipSources.membershipSnapshot().membershipBaseline().membershipVersion())
+          .isEqualTo(Map.of(tenantUuid.toString(), "1"));
+      assertThat(membershipSources.authoritySnapshot().tenants())
+          .singleElement()
+          .satisfies(
+              tenant -> {
+                assertThat(tenant.generation()).isEqualTo(1L);
+                assertThat(tenant.sourceVersion()).isEqualTo(1L);
+              });
+      assertThat(membershipSources.membershipSnapshot().outboxCheckpoints())
+          .anySatisfy(
+              checkpoint -> {
+                assertThat(checkpoint.outboxStreamKey()).isEqualTo(tenantStreamKey);
+                assertThat(checkpoint.outboxSequence()).isEqualTo("0");
+              });
+      assertThat(membershipSources.membershipSnapshot().outboxSourceEvidence()).isEmpty();
+      assertThat(captured.freshGlobalRoleSource().globalRoles()).isEmpty();
+      assertThat(captured.freshGlobalRoleSource().globalRoleSourceVersion()).isEqualTo(1L);
+
+      assertThat(advancedEvent.requestId()).isEqualTo(requestId.toString());
+      assertThat(advancedEvent.tenantId()).isEqualTo(tenantUuid.toString());
+      assertThat(advancedEvent.outboxStreamKey()).isEqualTo(tenantStreamKey);
+      assertThat(advancedEvent.outboxSequence()).isEqualTo("1");
+      assertThat(advancedEvent.tenantAuthorityGeneration()).isEqualTo("2");
+      assertThat(advancedEvent.sourceVersion()).isEqualTo("2");
+      var currentTenant = tenantProducer.readCurrent(tenantUuid);
+      assertThat(currentTenant.tenantAuthorityGeneration()).isEqualTo(2L);
+      assertThat(currentTenant.sourceVersion()).isEqualTo(2L);
+      assertThat(currentTenant.outboxStreamKey()).isEqualTo(tenantStreamKey);
+      assertThat(currentTenant.outboxSequence()).isEqualTo(1L);
+      assertThat(currentTenant.latestEvent())
+          .hasValueSatisfying(
+              currentEvent -> {
+                assertThat(currentEvent.requestId()).isEqualTo(requestId.toString());
+                assertThat(currentEvent.canonicalJson()).isEqualTo(advancedEvent.canonicalJson());
+                assertThat(currentEvent.outboxSequence()).isEqualTo("1");
+                assertThat(currentEvent.tenantAuthorityGeneration()).isEqualTo("2");
+                assertThat(currentEvent.sourceVersion()).isEqualTo("2");
+              });
+      assertThat(countAuthorityEvents(tenantStreamKey)).isEqualTo(1L);
+      assertThat(countAuthorityStreams(tenantStreamKey)).isEqualTo(1L);
+      assertThat(authorityGenerationRow("TENANT", null, tenantUuid))
+          .hasValueSatisfying(
+              row ->
+                  assertThat(row)
+                      .containsEntry("generation", 2L)
+                      .containsEntry("source_version", 2L));
+
+      // The captured vector remains the exact pre-advance snapshot; the current source is newer.
+      assertThat(captured.freshGlobalRoleSource().globalRoleSourceVersion()).isNotEqualTo(2L);
+      assertThat(membershipSources.authoritySnapshot().tenants().getFirst().sourceVersion())
+          .isNotEqualTo(currentTenant.sourceVersion());
+      assertThat(authorityGenerationRow("ACCOUNT", account.accountUuid(), null))
+          .contains(accountAuthorityBefore);
+      assertThat(authorityGenerationRow("MEMBERSHIP", account.accountUuid(), tenantUuid))
+          .contains(membershipAuthorityBefore);
+      assertThat(issuanceFenceRow(account.accountUuid())).isEqualTo(issuanceFenceBefore);
+      assertThat(membershipPairAuthorityRow(account.accountUuid(), tenantUuid))
+          .isEqualTo(membershipPairBefore);
+      assertThat(globalRoleSourceRow(account.accountUuid())).isEqualTo(globalRoleSourceBefore);
+      assertThat(countMembershipsForAccount(account.accountId())).isZero();
+      assertThat(countMembershipTransitionReceiptsForAccount(account.accountId())).isZero();
+      assertThat(countAuthorityEvents(membershipStreamKey(account.accountUuid(), tenantUuid)))
+          .isZero();
+      assertThat(countAuthorityStreams(membershipStreamKey(account.accountUuid(), tenantUuid)))
+          .isZero();
+    } finally {
+      releaseCapture.countDown();
+      executor.shutdownNow();
+    }
+  }
+
   private AccountFixture accountFixture() {
     String suffix = UUID.randomUUID().toString().replace("-", "");
     long accountId =
@@ -689,6 +1024,41 @@ class AccountFreshUuidMembershipSnapshotIntegrationTest {
         Objects.requireNonNull(
             dsl.resultQuery("SELECT account_uuid FROM accounts WHERE id = ?", accountId)
                 .fetchOne(0, UUID.class));
+    dsl.execute(
+        "INSERT INTO account_authority_generations "
+            + "(scope_kind, account_uuid, generation, source_version) "
+            + "VALUES ('ACCOUNT', ?, 1, 1)",
+        accountUuid);
+    dsl.execute(
+        "INSERT INTO account_authority_issuance_fences "
+            + "(account_uuid, issuance_fence, source_version) VALUES (?, 1, 1)",
+        accountUuid);
+    new TransactionTemplate(transactionManager)
+        .executeWithoutResult(
+            status ->
+                authorityGenerationRepository.initializeIssuerIfAbsent(
+                    AccountServiceImpl.ACCOUNT_JWT_ISSUER));
+    return new AccountFixture(accountId, accountUuid);
+  }
+
+  private AccountFixture retainedAccountFixture() {
+    String suffix = UUID.randomUUID().toString().replace("-", "");
+    UUID accountUuid = UUID.randomUUID();
+    var accountRow =
+        dsl.resultQuery(
+                "INSERT INTO accounts (username, email, password_hash, account_uuid, "
+                    + "account_uuid_provenance) VALUES (?, ?, ?, ?, ?) "
+                    + "RETURNING id, account_uuid, account_uuid_source_numeric_id",
+                "retained-capture-" + suffix,
+                "retained-capture-" + suffix + "@example.com",
+                "test-hash",
+                accountUuid,
+                AccountIdentityProvenance.ACCOUNT_V29_MIGRATION.name())
+            .fetchOne();
+    assertThat(accountRow).isNotNull();
+    long accountId = Objects.requireNonNull(accountRow.get("id", Long.class));
+    assertThat(accountRow.get("account_uuid", UUID.class)).isEqualTo(accountUuid);
+    assertThat(accountRow.get("account_uuid_source_numeric_id", Long.class)).isEqualTo(accountId);
     dsl.execute(
         "INSERT INTO account_authority_generations "
             + "(scope_kind, account_uuid, generation, source_version) "
@@ -782,6 +1152,28 @@ class AccountFreshUuidMembershipSnapshotIntegrationTest {
             .fetchOne();
     assertThat(row).isNotNull();
     return row.intoMap();
+  }
+
+  private Map<String, Object> globalRoleSourceRow(UUID accountUuid) {
+    var row =
+        dsl.resultQuery(
+                "SELECT xmin::text AS row_xmin, account_uuid, "
+                    + "account_uuid_source_numeric_id, account_uuid_provenance, "
+                    + "array_to_json(global_roles)::text AS global_roles, "
+                    + "global_role_source_version FROM account_global_role_sources "
+                    + "WHERE account_uuid = ?",
+                accountUuid)
+            .fetchOne();
+    assertThat(row).isNotNull();
+    return row.intoMap();
+  }
+
+  private long countGlobalRoleSources(UUID accountUuid) {
+    return Objects.requireNonNull(
+        dsl.resultQuery(
+                "SELECT COUNT(*) FROM account_global_role_sources WHERE account_uuid = ?",
+                accountUuid)
+            .fetchOne(0, Long.class));
   }
 
   private long countMembershipPairAuthorities(UUID accountUuid, UUID tenantUuid) {

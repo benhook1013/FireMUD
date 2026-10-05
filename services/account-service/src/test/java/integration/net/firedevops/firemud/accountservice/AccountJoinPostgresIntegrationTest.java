@@ -1270,11 +1270,12 @@ class AccountJoinPostgresIntegrationTest {
     JoinFixture retry = fixture("active");
     dsl.execute(
         "INSERT INTO account_audit_outbox "
-            + "(audit_event_id, scope, tenant_id, producer_service, event_type, occurred_at, "
-            + "schema_version, payload_digest_version, payload_digest, payload, delivery_status, "
-            + "next_attempt_at) "
-            + "VALUES (?, 'tenant', ?, 'account-service', "
-            + "'ACCOUNT_JOINED_PUBLIC_PRODUCTION', CURRENT_TIMESTAMP, 1, 1, ?, NULL, 'MINIMIZED', NULL)",
+            + "(audit_event_id, scope, tenant_id, tenant_identity_version, tenant_uuid, "
+            + "producer_service, event_type, occurred_at, schema_version, payload_digest_version, "
+            + "payload_digest, payload, delivery_status, next_attempt_at) "
+            + "VALUES (?, 'tenant', ?, 1, NULL, 'account-service', "
+            + "'ACCOUNT_JOINED_PUBLIC_PRODUCTION', CURRENT_TIMESTAMP, 1, 1, ?, NULL, "
+            + "'MINIMIZED', NULL)",
         UUID.randomUUID(),
         retry.tenantId(),
         "sha256:" + "0".repeat(64));

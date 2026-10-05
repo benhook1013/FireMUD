@@ -75,6 +75,7 @@ class PublishedReleaseBundleServiceImplTest {
             invocation -> {
               PublishedReleaseBundle entity = invocation.getArgument(0);
               entity.setId(11L);
+              entity.setPublishedReleaseBundleRef("owner-issued-reference-11");
               return entity;
             });
 
@@ -97,6 +98,7 @@ class PublishedReleaseBundleServiceImplTest {
     assertEquals(1, dto.participantDigests().size());
     assertEquals(List.of(validCommandDefinition()), dto.commandDefinitions());
     assertEquals("v1", dto.attestationSchemaVersion());
+    assertEquals("owner-issued-reference-11", dto.publishedReleaseBundleRef());
     assertEquals(sourceIdentity().getCanonicalTenantId(), dto.canonicalTenantId());
     assertEquals(sourceIdentity().getCanonicalVersionId(), dto.canonicalVersionId());
     org.mockito.Mockito.verify(repository)
@@ -121,6 +123,7 @@ class PublishedReleaseBundleServiceImplTest {
 
     assertNull(dto.canonicalTenantId());
     assertNull(dto.canonicalVersionId());
+    assertNull(dto.publishedReleaseBundleRef());
   }
 
   private Version sourceIdentity() {

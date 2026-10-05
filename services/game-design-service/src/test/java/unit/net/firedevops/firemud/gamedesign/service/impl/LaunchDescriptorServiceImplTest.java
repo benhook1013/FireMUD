@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamedesign.service.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.clearInvocations;
@@ -47,12 +48,15 @@ class LaunchDescriptorServiceImplTest {
   private static final String NAMESPACE = "test";
   private static final UUID CANONICAL_TENANT_ID =
       UUID.fromString("12345678-1234-4234-8234-123456789abc");
+  private static final UUID CANONICAL_VERSION_ID =
+      UUID.fromString("c472ebd1-56d8-49df-b8fa-85963dd940f8");
   private static final UUID SOURCE_OPERATION_ID =
       UUID.fromString("22345678-1234-4234-8234-123456789abc");
   private static final UUID SOURCE_REGISTRATION_ID =
       UUID.fromString("32345678-1234-4234-8234-123456789abc");
   private static final String WORLD_SLUG = "silver-march";
   private static final String PRIVATE_SOURCE_TENANT_KEY = "game-owner-key-901";
+  private static final String PUBLISHED_RELEASE_BUNDLE_REF = "opaque-release-reference-from-owner";
 
   @Mock private GameTemplateRepository gameTemplateRepository;
   @Mock private LaunchDescriptorRepository launchDescriptorRepository;
@@ -101,8 +105,7 @@ class LaunchDescriptorServiceImplTest {
     assertEquals("genrev-1", resolved.generationConfigRevision());
     assertEquals(17L, resolved.versionStateEpoch());
     assertEquals(11L, resolved.releaseBundleId());
-    assertEquals(
-        "release-bundle:" + CANONICAL_TENANT_ID + ":7:11", resolved.publishedReleaseBundleRef());
+    assertEquals(PUBLISHED_RELEASE_BUNDLE_REF, resolved.publishedReleaseBundleRef());
     assertNotNull(resolved.authoredWorldBinding());
     assertEquals(request.requestDigest(), resolved.authoredWorldBinding().requestDigest());
     assertEquals(
@@ -485,6 +488,48 @@ class LaunchDescriptorServiceImplTest {
   }
 
   @Test
+  void missingOpaqueBundleReferenceDeniesCreationAndExactRetryWithoutSynthesizing() {
+    AuthoredWorldLaunchDescriptorEvidence.Request request = request("cp-missing-reference", 9L);
+    stubTemplate(request, 7L, null);
+    AuthoredWorldSourceEvidence source = sourceEvidence(WORLD_SLUG);
+    stubSource(request, source);
+    stubVersion(7L, VersionLifecycleState.PUBLISHED, 17L, null);
+    when(publishedReleaseBundleService.getPublishedReleaseBundle(PRIVATE_SOURCE_TENANT_KEY, 7L))
+        .thenReturn(releaseBundle(7L, 11L, "v1", null));
+    AtomicReference<LaunchDescriptor> stored = new AtomicReference<>();
+    when(launchDescriptorRepository.findBoundByRequest(
+            NAMESPACE, CANONICAL_TENANT_ID, request.controlPlaneRequestId()))
+        .thenAnswer(invocation -> Optional.ofNullable(stored.get()));
+    when(launchDescriptorRepository.findByPrivateRequest(
+            PRIVATE_SOURCE_TENANT_KEY, request.controlPlaneRequestId()))
+        .thenReturn(Optional.empty());
+    when(launchDescriptorRepository.insertImmutable(any(LaunchDescriptor.class)))
+        .thenAnswer(
+            invocation -> {
+              LaunchDescriptor descriptor = invocation.getArgument(0);
+              stored.set(descriptor);
+              return descriptor;
+            });
+
+    IllegalArgumentException first =
+        assertThrows(
+            IllegalArgumentException.class, () -> service.resolveLaunchDescriptor(request));
+    IllegalArgumentException retry =
+        assertThrows(
+            IllegalArgumentException.class, () -> service.resolveLaunchDescriptor(request));
+
+    assertEquals(
+        "RELEASE_BUNDLE_NOT_FOUND: published release bundle has no persisted opaque reference",
+        first.getMessage());
+    assertEquals(first.getMessage(), retry.getMessage());
+    assertEquals(LaunchDescriptor.OUTCOME_FAILED, stored.get().getOutcomeStatus());
+    assertEquals("RELEASE_BUNDLE_NOT_FOUND", stored.get().getFailureCode());
+    assertNull(stored.get().getPublishedReleaseBundleRef());
+    verify(publishedReleaseBundleService, times(1))
+        .getPublishedReleaseBundle(PRIVATE_SOURCE_TENANT_KEY, 7L);
+  }
+
+  @Test
   void resolveLaunchDescriptorAcceptsEqualLargeReleaseVersionIdsByValue() {
     AuthoredWorldLaunchDescriptorEvidence.Request request = request("cp-large-version", 9L);
     Long resolvedVersionId = boxedLargeVersionId();
@@ -510,8 +555,7 @@ class LaunchDescriptorServiceImplTest {
     assertEquals(11L, resolved.releaseBundleId());
     assertNotNull(resolved.authoredWorldBinding());
     assertEquals(request.requestDigest(), resolved.authoredWorldBinding().requestDigest());
-    assertEquals(
-        "release-bundle:" + CANONICAL_TENANT_ID + ":1000:11", resolved.publishedReleaseBundleRef());
+    assertEquals(PUBLISHED_RELEASE_BUNDLE_REF, resolved.publishedReleaseBundleRef());
   }
 
   @Test
@@ -644,6 +688,11 @@ class LaunchDescriptorServiceImplTest {
 
   private PublishedReleaseBundleDto releaseBundle(
       Long versionId, long bundleId, String schemaVersion) {
+    return releaseBundle(versionId, bundleId, schemaVersion, PUBLISHED_RELEASE_BUNDLE_REF);
+  }
+
+  private PublishedReleaseBundleDto releaseBundle(
+      Long versionId, long bundleId, String schemaVersion, String publishedReleaseBundleRef) {
     return new PublishedReleaseBundleDto(
         bundleId,
         PRIVATE_SOURCE_TENANT_KEY,
@@ -658,8 +707,9 @@ class LaunchDescriptorServiceImplTest {
         false,
         null,
         LocalDateTime.now(),
-        null,
-        null);
+        CANONICAL_TENANT_ID,
+        CANONICAL_VERSION_ID,
+        publishedReleaseBundleRef);
   }
 
   @SuppressWarnings("removal")
@@ -680,7 +730,7 @@ class LaunchDescriptorServiceImplTest {
             "genrev-1",
             17L,
             bundleId,
-            "release-bundle:" + CANONICAL_TENANT_ID + ":" + versionId + ":" + bundleId,
+            PUBLISHED_RELEASE_BUNDLE_REF,
             false,
             null);
     AuthoredWorldSourceEvidence source = sourceEvidence(request.worldSlug());

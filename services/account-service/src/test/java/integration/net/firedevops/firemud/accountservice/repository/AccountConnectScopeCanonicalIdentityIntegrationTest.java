@@ -1399,6 +1399,65 @@ class AccountConnectScopeCanonicalIdentityIntegrationTest {
                 operations.bindCanonicalPolicyEvidence(
                     invalidSourceRequestId, unexpiredScope, callerBinding, true, 24L));
     String missingSourceHash = AccountJoinDigest.tokenHash("missing-canonical-scope-source");
+    Record invalidSourceBeforeFaultInjection =
+        Objects.requireNonNull(
+            fixture
+                .setupDsl()
+                .fetchOne(
+                    "SELECT * FROM account_join_operations WHERE request_id = ?",
+                    invalidSourceRequestId),
+            "Canonical JOIN operation row must exist before source-integrity proofs");
+    Record originalScopeSourceBeforeFaultInjection =
+        Objects.requireNonNull(
+            fixture
+                .setupDsl()
+                .fetchOne(
+                    "SELECT * FROM account_connect_scope_records WHERE scope_token_hash = ?",
+                    invalidSourceBeforeFaultInjection.get("scope_token_hash", String.class)),
+            "Canonical JOIN operation must retain its original scope source");
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .transaction()
+                    .executeWithoutResult(
+                        status -> {
+                          DSLContext transactionDsl = fixture.transactionDsl();
+                          transactionDsl.execute(
+                              "ALTER TABLE account_join_operations "
+                                  + "DISABLE TRIGGER account_join_operation_identity_guard");
+                          transactionDsl.execute(
+                              "UPDATE account_join_operations SET scope_token_hash = ? "
+                                  + "WHERE request_id = ?",
+                              missingSourceHash,
+                              invalidSourceRequestId);
+                        }))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("account_join_operation_scope_reference_fk");
+    Record invalidSourceAfterRejectedCorruption =
+        Objects.requireNonNull(
+            fixture
+                .setupDsl()
+                .fetchOne(
+                    "SELECT * FROM account_join_operations WHERE request_id = ?",
+                    invalidSourceRequestId),
+            "Rejected scope corruption must leave the operation row present");
+    Record originalScopeSourceAfterRejectedCorruption =
+        Objects.requireNonNull(
+            fixture
+                .setupDsl()
+                .fetchOne(
+                    "SELECT * FROM account_connect_scope_records WHERE scope_token_hash = ?",
+                    invalidSourceBeforeFaultInjection.get("scope_token_hash", String.class)),
+            "Rejected scope corruption must leave its source row present");
+    assertThat(invalidSourceAfterRejectedCorruption.intoMap())
+        .containsExactlyEntriesOf(invalidSourceBeforeFaultInjection.intoMap());
+    assertThat(originalScopeSourceAfterRejectedCorruption.intoMap())
+        .containsExactlyEntriesOf(originalScopeSourceBeforeFaultInjection.intoMap());
+
+    // This deliberately simulates retained corrupt storage that ordinary production writes
+    // cannot create. The private fixture schema temporarily removes only the named FK and
+    // disables only the identity guard; the exact FK is restored as NOT VALID in the same
+    // transaction so it still guards every subsequent write. A failure rolls back all fixture DDL.
     fixture
         .transaction()
         .executeWithoutResult(
@@ -1406,17 +1465,23 @@ class AccountConnectScopeCanonicalIdentityIntegrationTest {
               DSLContext transactionDsl = fixture.transactionDsl();
               transactionDsl.execute(
                   "ALTER TABLE account_join_operations "
+                      + "DROP CONSTRAINT account_join_operation_scope_reference_fk");
+              transactionDsl.execute(
+                  "ALTER TABLE account_join_operations "
                       + "DISABLE TRIGGER account_join_operation_identity_guard");
-              try {
-                transactionDsl.execute(
-                    "UPDATE account_join_operations SET scope_token_hash = ? WHERE request_id = ?",
-                    missingSourceHash,
-                    invalidSourceRequestId);
-              } finally {
-                transactionDsl.execute(
-                    "ALTER TABLE account_join_operations "
-                        + "ENABLE TRIGGER account_join_operation_identity_guard");
-              }
+              transactionDsl.execute(
+                  "UPDATE account_join_operations SET scope_token_hash = ? WHERE request_id = ?",
+                  missingSourceHash,
+                  invalidSourceRequestId);
+              transactionDsl.execute(
+                  "ALTER TABLE account_join_operations "
+                      + "ENABLE TRIGGER account_join_operation_identity_guard");
+              transactionDsl.execute(
+                  "ALTER TABLE account_join_operations "
+                      + "ADD CONSTRAINT account_join_operation_scope_reference_fk "
+                      + "FOREIGN KEY (scope_token_hash) "
+                      + "REFERENCES account_connect_scope_records(scope_token_hash) "
+                      + "ON DELETE RESTRICT NOT VALID");
             });
     assertThatThrownBy(
             () ->

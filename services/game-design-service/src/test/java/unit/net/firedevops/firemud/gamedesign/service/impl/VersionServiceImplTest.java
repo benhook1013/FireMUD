@@ -19,6 +19,7 @@ import io.grpc.StatusRuntimeException;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
@@ -1804,8 +1805,9 @@ class VersionServiceImplTest {
         false,
         null,
         LocalDateTime.parse("2026-04-26T10:00:00"),
-        null,
-        null);
+        UUID.fromString("67d7b75b-42d1-4ac6-9572-684c5e633cda"),
+        UUID.fromString("c472ebd1-56d8-49df-b8fa-85963dd940f8"),
+        "opaque-owner-issued-release-reference");
   }
 
   private PublishedPluginVersion uploadedPluginVersion(

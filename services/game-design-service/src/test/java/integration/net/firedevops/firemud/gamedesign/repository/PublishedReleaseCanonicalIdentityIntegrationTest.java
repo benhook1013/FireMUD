@@ -40,11 +40,14 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
   private static final MigrationVersion V35 = MigrationVersion.fromVersion("35");
   private static final MigrationVersion V35_1 = MigrationVersion.fromVersion("35.1");
   private static final MigrationVersion V35_2 = MigrationVersion.fromVersion("35.2");
+  private static final MigrationVersion V36 = MigrationVersion.fromVersion("36");
   private static final Table<?> VERSION = DSL.table(DSL.name("version"));
   private static final Table<?> RELEASE_BUNDLE = DSL.table(DSL.name("published_release_bundle"));
   private static final Field<Long> ID = DSL.field(DSL.name("id"), Long.class);
   private static final Field<String> TENANT_ID = DSL.field(DSL.name("tenant_id"), String.class);
   private static final Field<Long> VERSION_ID = DSL.field(DSL.name("version_id"), Long.class);
+  private static final Field<String> PUBLISHED_RELEASE_BUNDLE_REF =
+      DSL.field(DSL.name("published_release_bundle_ref"), String.class);
   private static final Field<UUID> CANONICAL_TENANT_ID =
       DSL.field(DSL.name("canonical_tenant_id"), UUID.class);
   private static final Field<UUID> CANONICAL_VERSION_ID =
@@ -81,6 +84,29 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
               assertThat(row.get(CANONICAL_TENANT_ID)).isNull();
               assertThat(row.get(CANONICAL_VERSION_ID)).isNull();
             });
+    migrate(fixture.dataSource(), fixture.schema(), V36);
+
+    assertThat(retainedTuple(fixture.dsl(), retainedBundleId)).isEqualTo(retainedTupleBefore);
+    assertThat(bundleXmin(fixture.dsl(), retainedBundleId)).isEqualTo(retainedXminBefore);
+    assertThat(
+            fixture
+                .dsl()
+                .select(PUBLISHED_RELEASE_BUNDLE_REF)
+                .from(RELEASE_BUNDLE)
+                .where(ID.eq(retainedBundleId))
+                .fetchOne(PUBLISHED_RELEASE_BUNDLE_REF))
+        .isNull();
+    PublishedReleaseBundle retained =
+        fixture
+            .releaseBundleRepository()
+            .findByTenantIdAndVersionId(game.getTenantId(), retainedVersionId)
+            .orElseThrow();
+    assertThat(retained.getCanonicalTenantId()).isNull();
+    assertThat(retained.getCanonicalVersionId()).isNull();
+    assertThat(retained.getPublishedReleaseBundleRef()).isNull();
+    assertThatThrownBy(() -> fixture.releaseBundleRepository().save(retained))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Published release bundle is immutable");
     assertThatThrownBy(
             () ->
                 fixture
@@ -93,7 +119,7 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
 
   @Test
   void normalSavePersistsExactVersionAndVerifiedGameIdentityAndReadsBackWithinTransaction() {
-    Fixture fixture = fixture(V35_2);
+    Fixture fixture = fixture(V36);
     Game owner = saveGame(fixture, "fresh-release-source");
     Game other = saveGame(fixture, "other-release-source");
     Version version = saveVersion(fixture, owner);
@@ -102,6 +128,7 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
         fixture.releaseBundleRepository().save(bundle(owner.getTenantId(), version.getId()));
     assertThat(saved.getCanonicalTenantId()).isEqualTo(owner.getCanonicalTenantId());
     assertThat(saved.getCanonicalVersionId()).isEqualTo(version.getCanonicalVersionId());
+    assertThat(saved.getPublishedReleaseBundleRef()).isNotBlank();
     assertThat(
             fixture
                 .releaseBundleRepository()
@@ -145,7 +172,7 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
 
   @Test
   void repositoryNestedTransactionRollsBackWithOuterSpringPublisherTransaction() {
-    Fixture fixture = fixture(V35_2);
+    Fixture fixture = fixture(V36);
     Game owner = saveGame(fixture, "outer-release-rollback-owner");
     Version version = saveVersion(fixture, owner);
     String versionXminBefore = versionXmin(fixture.dsl(), version.getId());
@@ -165,6 +192,7 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
                               .isEqualTo(owner.getCanonicalTenantId());
                           assertThat(saved.getCanonicalVersionId())
                               .isEqualTo(version.getCanonicalVersionId());
+                          assertThat(saved.getPublishedReleaseBundleRef()).isNotBlank();
                           Version publishingVersion =
                               fixture
                                   .versionRepository()
@@ -214,7 +242,7 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
 
   @Test
   void deniesWrongTenantNilAndSubstitutedCallerOrDatabaseIdentityWithoutGrowingBundles() {
-    Fixture fixture = fixture(V35_2);
+    Fixture fixture = fixture(V36);
     Game owner = saveGame(fixture, "denied-release-owner");
     Game other = saveGame(fixture, "denied-release-other");
     Version version = saveVersion(fixture, owner);
@@ -279,8 +307,41 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
     Long retainedVersionId = insertRetainedVersion(fixture.dsl(), game.getTenantId());
     Long retainedBundleId =
         insertRetainedBundle(fixture.dsl(), game.getTenantId(), retainedVersionId);
+    Map<String, Object> retainedTupleBeforeIdentityMigration =
+        retainedTuple(fixture.dsl(), retainedBundleId);
+    String retainedXminBeforeIdentityMigration = bundleXmin(fixture.dsl(), retainedBundleId);
     migrate(fixture.dataSource(), fixture.schema(), V35_1);
     migrate(fixture.dataSource(), fixture.schema(), V35_2);
+
+    Map<String, Object> retainedTupleBeforeV36 = retainedTuple(fixture.dsl(), retainedBundleId);
+    String retainedXminBeforeV36 = bundleXmin(fixture.dsl(), retainedBundleId);
+    assertThat(retainedTuple(fixture.dsl(), retainedBundleId))
+        .isEqualTo(retainedTupleBeforeIdentityMigration);
+    assertThat(bundleXmin(fixture.dsl(), retainedBundleId))
+        .isEqualTo(retainedXminBeforeIdentityMigration);
+    assertThat(
+            fixture
+                .dsl()
+                .select(CANONICAL_TENANT_ID, CANONICAL_VERSION_ID)
+                .from(RELEASE_BUNDLE)
+                .where(ID.eq(retainedBundleId))
+                .fetchOne())
+        .satisfies(
+            row -> {
+              assertThat(row.get(CANONICAL_TENANT_ID)).isNull();
+              assertThat(row.get(CANONICAL_VERSION_ID)).isNull();
+            });
+    migrate(fixture.dataSource(), fixture.schema(), V36);
+    assertThat(retainedTuple(fixture.dsl(), retainedBundleId)).isEqualTo(retainedTupleBeforeV36);
+    assertThat(bundleXmin(fixture.dsl(), retainedBundleId)).isEqualTo(retainedXminBeforeV36);
+    assertThat(
+            fixture
+                .dsl()
+                .select(PUBLISHED_RELEASE_BUNDLE_REF)
+                .from(RELEASE_BUNDLE)
+                .where(ID.eq(retainedBundleId))
+                .fetchOne(PUBLISHED_RELEASE_BUNDLE_REF))
+        .isNull();
 
     Version mappedVersion = saveVersion(fixture, game);
     PublishedReleaseBundle mapped =
@@ -359,6 +420,16 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
                 fixture
                     .dsl()
                     .update(RELEASE_BUNDLE)
+                    .set(PUBLISHED_RELEASE_BUNDLE_REF, "attempted-retained-release-reference")
+                    .where(ID.eq(retainedBundleId))
+                    .execute())
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("published release bundle attestation is immutable");
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .dsl()
+                    .update(RELEASE_BUNDLE)
                     .set(CANONICAL_TENANT_ID, game.getCanonicalTenantId())
                     .set(CANONICAL_VERSION_ID, mappedVersion.getCanonicalVersionId())
                     .where(ID.eq(retainedBundleId))
@@ -373,6 +444,7 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
             .orElseThrow();
     assertThat(retained.getCanonicalTenantId()).isNull();
     assertThat(retained.getCanonicalVersionId()).isNull();
+    assertThat(retained.getPublishedReleaseBundleRef()).isNull();
     assertThatThrownBy(() -> fixture.releaseBundleRepository().save(retained))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("Published release bundle is immutable");
@@ -399,6 +471,7 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
             .orElseThrow();
     assertThat(retainedAfterAttempts.getCanonicalTenantId()).isNull();
     assertThat(retainedAfterAttempts.getCanonicalVersionId()).isNull();
+    assertThat(retainedAfterAttempts.getPublishedReleaseBundleRef()).isNull();
     assertThat(retainedAfterAttempts.getManifestHash()).isEqualTo("sha256:retained");
 
     assertThatThrownBy(
@@ -536,13 +609,14 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
             + "attestation_schema_version, publish_workflow_id, manifest_hash, "
             + "generation_config_revision, required_manifest_asset_keys_json, "
             + "participant_digests_json, command_definitions_json, script_only, "
-            + "canonical_tenant_id, canonical_version_id) "
+            + "canonical_tenant_id, canonical_version_id, published_release_bundle_ref) "
             + "VALUES (?, ?, 1, 'v1', 'direct-write-test', 'sha256:raw', 'generation-1', "
-            + "'[]', '[]', '[]', FALSE, ?, ?)",
+            + "'[]', '[]', '[]', FALSE, ?, ?, ?)",
         tenantId,
         versionId,
         canonicalTenantId,
-        canonicalVersionId);
+        canonicalVersionId,
+        UUID.randomUUID().toString());
   }
 
   private long bundleCount(DSLContext dsl) {
@@ -566,6 +640,7 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
     return Objects.requireNonNull(
             dsl.fetchOne(
                 "SELECT id, tenant_id, version_id, canonical_tenant_id, canonical_version_id, "
+                    + "published_release_bundle_ref, "
                     + "version_number, attestation_schema_version, publish_workflow_id, "
                     + "manifest_hash, generation_config_revision, "
                     + "required_manifest_asset_keys_json, participant_digests_json, "

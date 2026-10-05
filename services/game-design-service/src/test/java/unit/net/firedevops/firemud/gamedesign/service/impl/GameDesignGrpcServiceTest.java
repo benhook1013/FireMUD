@@ -193,7 +193,8 @@ class GameDesignGrpcServiceTest {
                 null,
                 LocalDateTime.parse("2026-04-14T12:00:00"),
                 UUID.fromString("67d7b75b-42d1-4ac6-9572-684c5e633cda"),
-                UUID.fromString("c472ebd1-56d8-49df-b8fa-85963dd940f8")));
+                UUID.fromString("c472ebd1-56d8-49df-b8fa-85963dd940f8"),
+                "opaque-owner-issued-release-reference"));
 
     AtomicReference<GetPublishedReleaseBundleResponse> ref = new AtomicReference<>();
     try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
@@ -207,6 +208,9 @@ class GameDesignGrpcServiceTest {
 
     assertEquals("", ref.get().getError().getCode());
     assertEquals(11L, ref.get().getBundle().getId());
+    assertEquals(
+        "opaque-owner-issued-release-reference",
+        ref.get().getBundle().getPublishedReleaseBundleRef());
     assertEquals("abc123", ref.get().getBundle().getManifestHash());
     assertEquals("genrev-1", ref.get().getBundle().getGenerationConfigRevision());
     assertEquals(2, ref.get().getBundle().getRequiredManifestAssetKeysCount());
@@ -241,6 +245,7 @@ class GameDesignGrpcServiceTest {
                 null,
                 LocalDateTime.parse("2026-04-14T12:00:00"),
                 UUID.fromString("67d7b75b-42d1-4ac6-9572-684c5e633cda"),
+                null,
                 null));
     AtomicReference<GetPublishedReleaseBundleResponse> ref = new AtomicReference<>();
 
@@ -276,7 +281,8 @@ class GameDesignGrpcServiceTest {
                 null,
                 LocalDateTime.parse("2026-04-14T12:00:00"),
                 UUID.fromString("00000000-0000-0000-0000-000000000000"),
-                UUID.fromString("c472ebd1-56d8-49df-b8fa-85963dd940f8")));
+                UUID.fromString("c472ebd1-56d8-49df-b8fa-85963dd940f8"),
+                null));
     AtomicReference<GetPublishedReleaseBundleResponse> ref = new AtomicReference<>();
 
     try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
@@ -1142,8 +1148,9 @@ class GameDesignGrpcServiceTest {
                 false,
                 null,
                 LocalDateTime.parse("2026-04-14T12:00:00"),
-                null,
-                null));
+                UUID.fromString("67d7b75b-42d1-4ac6-9572-684c5e633cda"),
+                UUID.fromString("c472ebd1-56d8-49df-b8fa-85963dd940f8"),
+                "opaque-owner-issued-release-reference"));
 
     AtomicReference<GetPublishedReleaseBundleResponse> ref = new AtomicReference<>();
     try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {

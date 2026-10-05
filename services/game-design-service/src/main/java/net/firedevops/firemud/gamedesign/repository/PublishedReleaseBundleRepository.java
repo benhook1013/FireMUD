@@ -24,6 +24,8 @@ public class PublishedReleaseBundleRepository {
       DSL.table(DSL.name("version")).as("source_version");
   private static final Table<?> GAME_SOURCE = DSL.table(DSL.name("game")).as("source_game");
   private static final Field<Long> ID = DSL.field(DSL.name("id"), Long.class);
+  private static final Field<String> PUBLISHED_RELEASE_BUNDLE_REF =
+      DSL.field(DSL.name("published_release_bundle_ref"), String.class);
   private static final Field<String> TENANT_ID = DSL.field(DSL.name("tenant_id"), String.class);
   private static final Field<Long> VERSION_ID = DSL.field(DSL.name("version_id"), Long.class);
   private static final Field<UUID> CANONICAL_TENANT_ID =
@@ -116,9 +118,11 @@ public class PublishedReleaseBundleRepository {
       DSLContext tx, PublishedReleaseBundle bundle, LocalDateTime publishedAt) {
     CanonicalSource source = findExactCanonicalSource(tx, bundle);
     rejectCallerIdentitySubstitution(bundle, source);
+    String publishedReleaseBundleRef = UUID.randomUUID().toString();
 
     Long generatedId =
         tx.insertInto(TABLE_REF)
+            .set(PUBLISHED_RELEASE_BUNDLE_REF, publishedReleaseBundleRef)
             .set(TENANT_ID, bundle.getTenantId())
             .set(VERSION_ID, bundle.getVersionId())
             .set(CANONICAL_TENANT_ID, source.canonicalTenantId())
@@ -141,7 +145,7 @@ public class PublishedReleaseBundleRepository {
     }
 
     PublishedReleaseBundle persisted = findById(tx, generatedId).orElseThrow();
-    verifyPersistedSource(persisted, bundle, source);
+    verifyPersistedSource(persisted, bundle, source, publishedReleaseBundleRef);
     return persisted;
   }
 
@@ -198,13 +202,17 @@ public class PublishedReleaseBundleRepository {
   }
 
   private void verifyPersistedSource(
-      PublishedReleaseBundle persisted, PublishedReleaseBundle requested, CanonicalSource source) {
+      PublishedReleaseBundle persisted,
+      PublishedReleaseBundle requested,
+      CanonicalSource source,
+      String publishedReleaseBundleRef) {
     if (!Objects.equals(persisted.getTenantId(), requested.getTenantId())
         || !Objects.equals(persisted.getVersionId(), requested.getVersionId())
         || !Objects.equals(persisted.getCanonicalTenantId(), source.canonicalTenantId())
-        || !Objects.equals(persisted.getCanonicalVersionId(), source.canonicalVersionId())) {
+        || !Objects.equals(persisted.getCanonicalVersionId(), source.canonicalVersionId())
+        || !Objects.equals(persisted.getPublishedReleaseBundleRef(), publishedReleaseBundleRef)) {
       throw new IllegalStateException(
-          "Published release bundle readback does not match its exact Version source");
+          "Published release bundle readback does not match its source identity and owner reference");
     }
   }
 
@@ -218,6 +226,7 @@ public class PublishedReleaseBundleRepository {
     }
     PublishedReleaseBundle bundle = new PublishedReleaseBundle();
     bundle.setId(record.get(ID));
+    bundle.setPublishedReleaseBundleRef(record.get(PUBLISHED_RELEASE_BUNDLE_REF));
     bundle.setTenantId(record.get(TENANT_ID));
     bundle.setVersionId(record.get(VERSION_ID));
     bundle.setCanonicalTenantId(record.get(CANONICAL_TENANT_ID));

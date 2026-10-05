@@ -105,18 +105,14 @@ class AccountAuthenticationUuidIntegrationTest {
   @MockitoSpyBean private AccountEmailLoginChallengeRepository challengeRepositorySpy;
 
   @BeforeEach
-  void cleanDatabaseAndObserveOwnerTransaction() {
-    dsl.execute("TRUNCATE TABLE account_audit_outbox");
-    dsl.execute("TRUNCATE TABLE accounts RESTART IDENTITY CASCADE");
-    AccountEmailLoginChallengeRepository challengeRepositoryTarget =
-        AopTestUtils.getUltimateTargetObject(challengeRepositorySpy);
+  void observeOwnerTransaction() {
     doAnswer(
             invocation -> {
               assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
               invocation.callRealMethod();
               return null;
             })
-        .when(challengeRepositoryTarget)
+        .when(challengeRepositorySpy)
         .lockAccountChallenge(anyLong());
   }
 
@@ -134,6 +130,7 @@ class AccountAuthenticationUuidIntegrationTest {
     UUID returnedAccountUuid = UUID.fromString(created.id());
     long accountId = accountService.resolveAccountStorageId(returnedAccountUuid);
     Account persisted = accountRepository.findById(accountId).orElseThrow();
+    String expectedRegistrationAuditPayload = "{\"accountId\":\"" + returnedAccountUuid + "\"}";
 
     assertThat(created.id())
         .isEqualTo(persisted.getAccountUuid().toString())
@@ -149,14 +146,14 @@ class AccountAuthenticationUuidIntegrationTest {
                     "SELECT payload FROM account_audit_outbox "
                         + "WHERE scope = 'platform' AND tenant_id IS NULL "
                         + "AND producer_service = 'account-service' "
-                        + "AND event_type = 'ACCOUNT_REGISTERED'")
+                        + "AND event_type = 'ACCOUNT_REGISTERED' AND payload = ?",
+                    expectedRegistrationAuditPayload)
                 .fetchOne(),
             "Expected durable ACCOUNT_REGISTERED platform audit row");
     String registrationAuditPayload =
         Objects.requireNonNull(
             registrationAudit.get(0, String.class), "Expected registration audit payload");
-    assertThat(registrationAuditPayload)
-        .isEqualTo("{\"accountId\":\"" + returnedAccountUuid + "\"}");
+    assertThat(registrationAuditPayload).isEqualTo(expectedRegistrationAuditPayload);
 
     assertAuthenticationAndPrivateLookup(username, accountId, persisted.getAccountUuid());
   }
