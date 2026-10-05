@@ -1786,6 +1786,11 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountCanonicalJoinReconciliationIntegrationTest#eventReadbackRejectsStalePendingDtoAfterJournalHasTerminalized()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountCanonicalJoinReconciliationIntegrationTest#absentOrContradictoryOwnerEvidenceRemainsPendingWithoutReconciliationSideEffects()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountCanonicalJoinReconciliationIntegrationTest#concurrentExactTerminalRetryAndReconcilerRetainOneHistoricalWriteSet()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCanonicalJoinReconciliationIntegrationTest#committedFreshUuidJoinReturnsExactPositiveSnapshotAndCaptureWithoutChangingSources()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCanonicalJoinReconciliationIntegrationTest#existingOnlyFreshUuidReadPreservesProvedAbsenceAndPendingOperation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCanonicalJoinReconciliationIntegrationTest#pendingCanonicalJoinCannotAuthorizePositiveReadbackOrCauseMutation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCanonicalJoinReconciliationIntegrationTest#freshUuidReadRejectsContradictoryReceiptEventRolesPairAndAuditWithoutMutation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCanonicalJoinReconciliationIntegrationTest#existingOnlyFreshUuidReadRejectsWrongAccountAndTenantSources()' \
             account-service
 
       - name: Upload Account canonical JOIN scope and intent PostgreSQL proof results

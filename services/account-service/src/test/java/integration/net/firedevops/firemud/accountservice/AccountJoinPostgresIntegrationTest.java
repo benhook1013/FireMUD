@@ -704,7 +704,8 @@ class AccountJoinPostgresIntegrationTest {
 
     assertThatThrownBy(() -> leave(fixture, "leave-contradictory-" + UUID.randomUUID()))
         .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("receipt differs from its latest V33 event");
+        .hasMessageContaining(
+            "Current Account membership transition receipt is incomplete or mismatched");
 
     assertThat(membershipSnapshot(fixture)).isEqualTo(membershipBefore);
     assertThat(membershipPairAuthorityRow(fixture)).isEqualTo(pairBefore);
@@ -1636,6 +1637,48 @@ class AccountJoinPostgresIntegrationTest {
     OperationEvidence grant = tenantRoleMutationService.mutate(grantRequest);
     assertThat(grant.status()).isEqualTo("COMMITTED");
     assertThat(grant.members()).hasSize(1);
+
+    MembershipTransitionReceipt originalJoinReceipt =
+        membershipTransitionReceipt(fixture.target(), 1L);
+    Map<String, Object> targetBeforeHistoricalReceiptReads =
+        membershipAuthorityReadEvidenceSnapshot(fixture.target());
+    long auditRowsBeforeHistoricalReceiptReads = countAuditOutboxRows(fixture.target());
+    assertThatThrownBy(
+            () ->
+                membershipTransitionReceiptRepository.findLatestReceipt(
+                    fixture.target().accountId(), fixture.target().tenantId()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("does not match its latest provisional receipt");
+
+    var historicalReceiptEvidence =
+        Objects.requireNonNull(
+            new TransactionTemplate(transactionManager)
+                .execute(
+                    status ->
+                        membershipTransitionReceiptRepository
+                            .findLatestHistoricalReceipt(
+                                fixture.target().accountId(), fixture.target().tenantId())
+                            .orElseThrow()));
+    assertThat(historicalReceiptEvidence.receipt()).isEqualTo(originalJoinReceipt);
+    assertThat(historicalReceiptEvidence.accountId()).isEqualTo(fixture.target().accountId());
+    assertThat(historicalReceiptEvidence.tenantId()).isEqualTo(fixture.target().tenantId());
+    assertThat(historicalReceiptEvidence.lifecycleState()).isEqualTo("ACTIVE");
+    assertThat(historicalReceiptEvidence.gameplayAdmissionAllowed()).isTrue();
+    assertThat(historicalReceiptEvidence.membershipVersion()).isEqualTo(2L);
+    assertThat(historicalReceiptEvidence.membershipAuthorityGeneration()).isEqualTo(1L);
+    assertThat(historicalReceiptEvidence.authorityProvenance()).isEqualTo("EXPLICIT_JOIN");
+
+    PositiveMembershipSnapshot afterRoleGrant =
+        readExistingPairBoundPositiveMembershipSnapshot(fixture.target());
+    assertThat(afterRoleGrant.membershipVersion())
+        .isEqualTo(Map.of(fixture.target().tenantUuid().toString(), "3"));
+    assertThat(afterRoleGrant.roles()).containsExactly("designer", "player");
+    assertThat(afterRoleGrant.authorityEvent().outboxSequence()).isEqualTo("2");
+    assertThat(membershipAuthorityReadEvidenceSnapshot(fixture.target()))
+        .isEqualTo(targetBeforeHistoricalReceiptReads);
+    assertThat(countAuditOutboxRows(fixture.target()))
+        .isEqualTo(auditRowsBeforeHistoricalReceiptReads);
+
     assertCurrentRoleMutationState(
         fixture.target(), 3L, 1L, 2L, 1L, List.of("designer", "player"), false);
     assertCurrentRoleMutationState(
@@ -1855,8 +1898,24 @@ class AccountJoinPostgresIntegrationTest {
     new TransactionTemplate(transactionManager)
         .execute(
             status -> {
-              seedSyntheticRetainedActiveMembership(
-                  fixture, List.of("player", "tenantAdmin"), "SEEDED_DEMO");
+              seedSyntheticRetainedActiveMembership(fixture, List.of("player", "tenantAdmin"));
+              ApprovedAssociation association =
+                  tenantIdentityResolver.resolve(fixture.tenantUuid());
+              VerifiedTenantProvenance provenance =
+                  new VerifiedTenantProvenance(
+                      association.legacyTenantId(),
+                      TenantProvenanceKind.APPROVED_RETAINED,
+                      association.operationId(),
+                      association.manifestDigest());
+              AccountTenantMembership membership =
+                  membershipRepository
+                      .findCanonicalMembershipForUpdate(fixture.accountUuid(), fixture.tenantUuid())
+                      .orElseThrow();
+              // The transition-receipt contract accepts explicit joins, so install the unsupported
+              // source only after creating that valid historical receipt.
+              membership.setAuthorityProvenance("SEEDED_DEMO");
+              membershipRepository.saveCanonical(
+                  membership, fixture.accountUuid(), fixture.tenantUuid(), provenance);
               return null;
             });
     Map<String, Object> sourceBefore = membershipAuthorityReadEvidenceSnapshot(fixture);
@@ -1874,7 +1933,8 @@ class AccountJoinPostgresIntegrationTest {
                         Action.GRANT_DESIGNER,
                         2L,
                         2L)))
-        .isInstanceOf(IllegalStateException.class);
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("does not match its latest V1 provisional receipt");
     assertThat(membershipAuthorityReadEvidenceSnapshot(fixture)).isEqualTo(sourceBefore);
     assertThat(countAuditOutboxRows(fixture)).isEqualTo(auditCountBefore);
     assertTenantRoleOperationAbsent(requestId);
@@ -1882,12 +1942,12 @@ class AccountJoinPostgresIntegrationTest {
 
   @Test
   void invalidatingTenantRoleMutationDeniesFenceOverflowWithoutChangingAnyAccountSource() {
-    JoinFixture fixture = fixture("active");
+    JoinFixture fixture = fixture("active", TenantAssociationSetup.APPROVED, Long.MAX_VALUE);
     new TransactionTemplate(transactionManager)
         .execute(
             status -> {
               seedSyntheticRetainedActiveMembership(
-                  fixture, List.of("designer", "player", "tenantAdmin"), "EXPLICIT_JOIN", true);
+                  fixture, List.of("designer", "player", "tenantAdmin"));
               return null;
             });
     PositiveMembershipSnapshot current = readExistingPairBoundPositiveMembershipSnapshot(fixture);
@@ -2879,6 +2939,13 @@ class AccountJoinPostgresIntegrationTest {
   }
 
   private JoinFixture fixture(String subscriptionStatus, TenantAssociationSetup associationSetup) {
+    return fixture(subscriptionStatus, associationSetup, 1L);
+  }
+
+  private JoinFixture fixture(
+      String subscriptionStatus,
+      TenantAssociationSetup associationSetup,
+      long initialIssuanceFence) {
     String suffix = UUID.randomUUID().toString();
     long accountId =
         Objects.requireNonNull(
@@ -2893,7 +2960,7 @@ class AccountJoinPostgresIntegrationTest {
         Objects.requireNonNull(
             dsl.resultQuery("SELECT account_uuid FROM accounts WHERE id = ?", accountId)
                 .fetchOne(0, UUID.class));
-    seedAccountAuthorityState(accountUuid);
+    seedAccountAuthorityState(accountUuid, initialIssuanceFence);
     return fixture(subscriptionStatus, accountId, accountUuid, associationSetup, suffix);
   }
 
@@ -2981,11 +3048,7 @@ class AccountJoinPostgresIntegrationTest {
             dsl.resultQuery("SELECT account_uuid FROM accounts WHERE id = ?", accountId)
                 .fetchOne(0, UUID.class));
     seedAccountAuthorityState(accountUuid);
-    dsl.execute(
-        "INSERT INTO subscription (account_id, tenant_id, plan_id, status, entitlement_version) "
-            + "VALUES (?, ?, 'join-proof', 'active', 1)",
-        accountId,
-        existing.tenantId());
+    // Entitlements are tenant-scoped; the existing fixture already seeded the sole subscription.
     DirectTextCallerContext caller =
         new DirectTextCallerContext(
             accountId,
@@ -3045,19 +3108,6 @@ class AccountJoinPostgresIntegrationTest {
   }
 
   private void seedSyntheticRetainedActiveMembership(JoinFixture fixture, List<String> roles) {
-    seedSyntheticRetainedActiveMembership(fixture, roles, "EXPLICIT_JOIN");
-  }
-
-  private void seedSyntheticRetainedActiveMembership(
-      JoinFixture fixture, List<String> roles, String authorityProvenance) {
-    seedSyntheticRetainedActiveMembership(fixture, roles, authorityProvenance, false);
-  }
-
-  private void seedSyntheticRetainedActiveMembership(
-      JoinFixture fixture,
-      List<String> roles,
-      String authorityProvenance,
-      boolean exhaustedIssuanceFence) {
     Account account =
         accountRepository.findByAccountUuidForUpdate(fixture.accountUuid()).orElseThrow();
     ApprovedAssociation association = tenantIdentityResolver.resolve(fixture.tenantUuid());
@@ -3083,7 +3133,7 @@ class AccountJoinPostgresIntegrationTest {
     membership.setLifecycleState("ACTIVE");
     membership.setMembershipVersion(2L);
     membership.setMembershipAuthorityGeneration(1L);
-    membership.setAuthorityProvenance(authorityProvenance);
+    membership.setAuthorityProvenance("EXPLICIT_JOIN");
     AccountTenantMembership persisted =
         membershipRepository.saveCanonical(
             membership, fixture.accountUuid(), fixture.tenantUuid(), provenance);
@@ -3096,16 +3146,6 @@ class AccountJoinPostgresIntegrationTest {
         membershipTransitionReceiptRepository.appendTransition(
             persisted, "MEMBERSHIP_JOINED", historicalRequestId);
     assertThat(receipt.requestId()).isEqualTo(historicalRequestId);
-
-    if (exhaustedIssuanceFence) {
-      assertThat(
-              dsl.execute(
-                  "UPDATE account_authority_issuance_fences SET issuance_fence = ? "
-                      + "WHERE account_uuid = ?",
-                  Long.MAX_VALUE,
-                  fixture.accountUuid()))
-          .isEqualTo(1);
-    }
 
     var authority =
         authorityGenerationRepository.readCompositeSnapshot(
@@ -3393,6 +3433,10 @@ class AccountJoinPostgresIntegrationTest {
   }
 
   private void seedAccountAuthorityState(UUID accountUuid) {
+    seedAccountAuthorityState(accountUuid, 1L);
+  }
+
+  private void seedAccountAuthorityState(UUID accountUuid, long initialIssuanceFence) {
     dsl.execute(
         "INSERT INTO account_authority_generations "
             + "(scope_kind, account_uuid, generation, source_version) "
@@ -3400,8 +3444,10 @@ class AccountJoinPostgresIntegrationTest {
         accountUuid);
     dsl.execute(
         "INSERT INTO account_authority_issuance_fences "
-            + "(account_uuid, issuance_fence, source_version) VALUES (?, 1, 1)",
-        accountUuid);
+            + "(account_uuid, issuance_fence, source_version) VALUES (?, ?, ?)",
+        accountUuid,
+        initialIssuanceFence,
+        initialIssuanceFence);
   }
 
   private void seedTenantAuthorityGeneration(UUID tenantUuid) {

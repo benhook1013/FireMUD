@@ -20,14 +20,22 @@ import net.firedevops.firemud.accountservice.AccountServiceApplication;
 import net.firedevops.firemud.accountservice.client.EntityManagementClient;
 import net.firedevops.firemud.accountservice.client.GameSessionClient;
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
+import net.firedevops.firemud.accountservice.dto.AccountAuditDigest;
+import net.firedevops.firemud.accountservice.dto.AccountMembershipCaptureSources;
 import net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2;
+import net.firedevops.firemud.accountservice.dto.RuntimeMembershipSnapshotDto;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
 import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Event;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.EventEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.CanonicalJoinOperationEvidence;
+import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository;
+import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.PairAuthority;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.TenantProvenanceKind;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipTransitionReceiptRepository;
@@ -99,6 +107,8 @@ class AccountCanonicalJoinReconciliationIntegrationTest {
   @Autowired private AccountCanonicalJoinReconciliationService reconciliationService;
   @Autowired private AccountMembershipAuthorityEventProducer membershipEventProducer;
   @Autowired private AccountAuthorityGenerationRepository generations;
+  @Autowired private AccountAuthorityOutboxRepository authorityOutbox;
+  @Autowired private AccountMembershipPairAuthorityRepository pairAuthorities;
   @Autowired private AccountConnectScopeRepository connectScopes;
   @Autowired private AccountJoinOperationRepository joinOperations;
   @Autowired private AccountRepository accounts;
@@ -136,6 +146,183 @@ class AccountCanonicalJoinReconciliationIntegrationTest {
     assertThat(committed.reconciliationAttemptCount()).isEqualTo(1);
     assertThat(evidenceCounts(fixture)).isEqualTo(before);
     assertThat(issuanceFence(fixture.account().accountUuid())).isEqualTo(fenceBefore);
+  }
+
+  @Test
+  void committedFreshUuidJoinReturnsExactPositiveSnapshotAndCaptureWithoutChangingSources() {
+    // This fixture proves persisted Account-owner composition only. Its caller binding is synthetic
+    // and does not exercise or claim an authenticated JOIN producer.
+    JoinFixture fixture = committedFreshJoinFixture();
+    EvidenceCounts before = evidenceCounts(fixture);
+    PairAuthority pairBefore = pairAuthority(fixture);
+    long fenceBefore = issuanceFence(fixture.account().accountUuid());
+    FreshTenantCreationEvidence freshSource =
+        inTransaction(() -> freshAssociations.read(fixture.tenantUuid()).orElseThrow());
+
+    RuntimeMembershipSnapshotDto existingOnly =
+        inTransaction(
+            () ->
+                membershipEventProducer.readExistingRuntimeMembershipSnapshot(
+                    fixture.account().accountUuid(), fixture.tenantUuid()));
+    RuntimeMembershipSnapshotDto enrollMode =
+        inTransaction(
+            () ->
+                membershipEventProducer.readRuntimeMembershipSnapshot(
+                    fixture.account().accountUuid(), fixture.tenantUuid()));
+    AccountMembershipCaptureSources capturedSources =
+        inTransaction(
+            () ->
+                membershipEventProducer.readExistingRuntimeMembershipCaptureSources(
+                    fixture.account().accountUuid(), fixture.tenantUuid()));
+
+    assertThat(existingOnly.membershipExists()).isTrue();
+    assertThat(existingOnly.gameplayAdmissionAllowed()).isTrue();
+    assertThat(existingOnly.membershipBaseline().membershipLifecycleState()).isEqualTo("ACTIVE");
+    assertThat(existingOnly.membershipBaseline().membershipVersion())
+        .containsExactly(Map.entry(fixture.tenantUuid().toString(), "2"));
+    assertThat(existingOnly.membershipBaseline().membershipAuthorityGeneration()).isEqualTo("1");
+    assertThat(existingOnly.roles()).contains("player");
+    assertThat(existingOnly.requireConsistentSourceEvent().outboxSequence()).isEqualTo("1");
+    assertThat(enrollMode.membershipBaseline()).isEqualTo(existingOnly.membershipBaseline());
+    assertThat(enrollMode.roles()).isEqualTo(existingOnly.roles());
+    assertThat(enrollMode.sourceEvent().canonicalJson())
+        .isEqualTo(existingOnly.sourceEvent().canonicalJson());
+    assertThat(capturedSources.membershipSnapshot().membershipExists()).isTrue();
+    assertThat(capturedSources.membershipSnapshot().sourceEvent().canonicalJson())
+        .isEqualTo(existingOnly.sourceEvent().canonicalJson());
+    assertThat(capturedSources.freshTenantAssociation()).contains(freshSource);
+    assertThat(capturedSources.retainedTenantAssociation()).isEmpty();
+    var capturedRole = capturedSources.roleSource().orElseThrow();
+    assertThat(capturedRole.accountId()).isEqualTo(fixture.account().accountId());
+    assertThat(capturedRole.accountUuid()).isEqualTo(fixture.account().accountUuid());
+    assertThat(capturedRole.membershipId()).isEqualTo(readOperation(fixture).membershipId());
+    assertThat(capturedRole.tenantId()).isNull();
+    assertThat(capturedRole.tenantUuid()).isEqualTo(fixture.tenantUuid());
+    assertThat(capturedRole.tenantProvenance())
+        .isEqualTo(
+            new VerifiedTenantProvenance(
+                null,
+                TenantProvenanceKind.FRESH_GAME_DESIGN,
+                freshSource.operationId(),
+                freshSource.evidenceDigest()));
+    assertThat(capturedRole.snapshotVersion()).isEqualTo(2L);
+    assertThat(capturedRole.roles()).isEqualTo(existingOnly.roles());
+    assertThat(capturedSources.authoritySnapshot().memberships().getFirst().generation())
+        .isEqualTo(1L);
+    assertThat(capturedSources.authoritySnapshot().memberships().getFirst().sourceVersion())
+        .isEqualTo(1L);
+    assertThat(capturedSources.membershipSnapshot().outboxCheckpoints())
+        .anySatisfy(
+            checkpoint -> {
+              assertThat(checkpoint.outboxStreamKey()).isEqualTo(eventStreamKey(fixture));
+              assertThat(checkpoint.outboxSequence()).isEqualTo("1");
+            });
+    assertThat(capturedSources.membershipSnapshot().outboxSourceEvidence())
+        .anySatisfy(
+            source -> {
+              assertThat(source.outboxStreamKey()).isEqualTo(eventStreamKey(fixture));
+              assertThat(source.outboxSequence()).isEqualTo("1");
+            });
+    assertThat(evidenceCounts(fixture)).isEqualTo(before);
+    assertThat(pairAuthority(fixture)).isEqualTo(pairBefore);
+    assertThat(issuanceFence(fixture.account().accountUuid())).isEqualTo(fenceBefore);
+  }
+
+  @Test
+  void existingOnlyFreshUuidReadPreservesProvedAbsenceAndPendingOperation() {
+    JoinFixture fixture = fixture(true);
+    EvidenceCounts before = evidenceCounts(fixture);
+    PairAuthority pairBefore = pairAuthority(fixture);
+
+    RuntimeMembershipSnapshotDto absent =
+        inTransaction(
+            () ->
+                membershipEventProducer.readExistingRuntimeMembershipSnapshot(
+                    fixture.account().accountUuid(), fixture.tenantUuid()));
+
+    assertThat(absent.membershipExists()).isFalse();
+    assertThat(absent.membershipBaseline().membershipLifecycleState()).isEqualTo("MISSING");
+    assertThat(absent.membershipBaseline().membershipVersion())
+        .containsExactly(Map.entry(fixture.tenantUuid().toString(), "1"));
+    assertThat(readOperation(fixture).status()).isEqualTo("PENDING");
+    assertThat(evidenceCounts(fixture)).isEqualTo(before);
+    assertThat(pairAuthority(fixture)).isEqualTo(pairBefore);
+  }
+
+  @Test
+  void pendingCanonicalJoinCannotAuthorizePositiveReadbackOrCauseMutation() {
+    JoinFixture fixture = fixture(true);
+    persistEvidence(fixture, EvidenceShape.COMPLETE);
+    EvidenceCounts before = evidenceCounts(fixture);
+    PairAuthority pairBefore = pairAuthority(fixture);
+
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    () ->
+                        membershipEventProducer.readExistingRuntimeMembershipSnapshot(
+                            fixture.account().accountUuid(), fixture.tenantUuid())))
+        .isInstanceOf(IllegalStateException.class);
+
+    assertThat(readOperation(fixture).status()).isEqualTo("PENDING");
+    assertThat(evidenceCounts(fixture)).isEqualTo(before);
+    assertThat(pairAuthority(fixture)).isEqualTo(pairBefore);
+  }
+
+  @Test
+  void freshUuidReadRejectsContradictoryReceiptEventRolesPairAndAuditWithoutMutation() {
+    for (Contradiction contradiction : Contradiction.values()) {
+      JoinFixture fixture = committedFreshJoinFixture();
+      introduceContradiction(fixture, contradiction);
+      EvidenceCounts before = evidenceCounts(fixture);
+      PairAuthority pairBefore = pairAuthority(fixture);
+
+      assertThatThrownBy(
+              () ->
+                  inTransaction(
+                      () ->
+                          membershipEventProducer.readExistingRuntimeMembershipSnapshot(
+                              fixture.account().accountUuid(), fixture.tenantUuid())))
+          .as(contradiction.name())
+          .isInstanceOf(IllegalStateException.class);
+
+      assertThat(evidenceCounts(fixture)).as(contradiction.name()).isEqualTo(before);
+      assertThat(pairAuthority(fixture)).as(contradiction.name()).isEqualTo(pairBefore);
+    }
+  }
+
+  @Test
+  void existingOnlyFreshUuidReadRejectsWrongAccountAndTenantSources() {
+    JoinFixture fixture = committedFreshJoinFixture();
+    PairAuthority pairBefore = pairAuthority(fixture);
+    AccountFixture otherAccount = accountFixture();
+    UUID otherTenantUuid = UUID.randomUUID();
+    FreshTenantCreationEvidence otherTenantSource = freshTenantEvidence(otherTenantUuid);
+    inTransaction(
+        () -> {
+          freshAssociations.importVerified(otherTenantSource);
+          generations.initializeTenantIfAbsent(otherTenantUuid);
+          return null;
+        });
+
+    // Neither different scope has its own durable absence baseline. Existing-only readback must
+    // deny rather than fabricate MISSING authority from an absent row or borrow the joined pair.
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    () ->
+                        membershipEventProducer.readExistingRuntimeMembershipSnapshot(
+                            otherAccount.accountUuid(), fixture.tenantUuid())))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    () ->
+                        membershipEventProducer.readExistingRuntimeMembershipSnapshot(
+                            fixture.account().accountUuid(), otherTenantUuid)))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(evidenceCounts(fixture)).isEqualTo(new EvidenceCounts(1L, 1L, 1L, 1L));
+    assertThat(pairAuthority(fixture)).isEqualTo(pairBefore);
   }
 
   @Test
@@ -317,6 +504,88 @@ class AccountCanonicalJoinReconciliationIntegrationTest {
     return new JoinFixture(account, tenantUuid, provenance, scope, requestId, callerBinding);
   }
 
+  private JoinFixture committedFreshJoinFixture() {
+    JoinFixture fixture = fixture(true);
+    persistEvidence(fixture, EvidenceShape.COMPLETE);
+    recordLaterUnavailableAttempt(fixture);
+    reconciliationService.reconcileDueOperations(reconciliationTime(fixture));
+    assertThat(readOperation(fixture).status()).isEqualTo("COMMITTED");
+    return fixture;
+  }
+
+  private void introduceContradiction(JoinFixture fixture, Contradiction contradiction) {
+    switch (contradiction) {
+      case LATEST_RECEIPT ->
+          inTransactionWithoutResult(
+              () ->
+                  receipts.appendCanonicalTransition(
+                      fixture.account().accountUuid(),
+                      fixture.tenantUuid(),
+                      "MEMBERSHIP_JOINED",
+                      UUID.randomUUID().toString()));
+      case LATEST_EVENT ->
+          inTransactionWithoutResult(
+              () -> {
+                String stream = eventStreamKey(fixture);
+                Event current =
+                    authorityOutbox
+                        .readCheckpoint(stream)
+                        .flatMap(
+                            checkpoint ->
+                                authorityOutbox.findEvent(stream, checkpoint.outboxSequence()))
+                        .orElseThrow();
+                authorityOutbox.append(
+                    stream,
+                    "unmatched-current-event-" + UUID.randomUUID(),
+                    ignoredSequence ->
+                        new EventEvidence(
+                            UUID.randomUUID().toString(),
+                            "sha256:" + "0".repeat(64),
+                            current.payload()));
+              });
+      case CURRENT_ROLES ->
+          inTransactionWithoutResult(
+              () -> {
+                AccountTenantMembership membership =
+                    memberships
+                        .findCanonicalMembershipForUpdate(
+                            fixture.account().accountUuid(), fixture.tenantUuid())
+                        .orElseThrow();
+                roleSnapshots.replaceCanonical(
+                    membership,
+                    fixture.account().accountUuid(),
+                    fixture.tenantUuid(),
+                    fixture.provenance(),
+                    membership.getMembershipVersion(),
+                    List.of("player", "moderator"));
+              });
+      case PAIR ->
+          dsl.execute(
+              "UPDATE account_membership_pair_authority SET membership_version = membership_version + 1, "
+                  + "last_event_sequence = last_event_sequence + 1, last_event_id = ?, "
+                  + "last_event_digest = ? WHERE account_uuid = ? AND tenant_uuid = ?",
+              "unmatched-pair-event-" + UUID.randomUUID(),
+              "sha256:" + "1".repeat(64),
+              fixture.account().accountUuid(),
+              fixture.tenantUuid());
+      case AUDIT -> {
+        String contradictoryPayload =
+            AccountAuditOutboxRepository.canonicalJoinPayload(
+                UUID.randomUUID(),
+                fixture.tenantUuid(),
+                fixture.scope().worldSlug(),
+                fixture.scope().realmSlug(),
+                Map.of(fixture.tenantUuid().toString(), "2"),
+                fixture.requestId());
+        dsl.execute(
+            "UPDATE account_audit_outbox SET payload = ?, payload_digest = ? WHERE audit_event_id = ?",
+            contradictoryPayload,
+            AccountAuditDigest.ofPayload(contradictoryPayload),
+            auditEventId(fixture.requestId()));
+      }
+    }
+  }
+
   private void persistEvidence(JoinFixture fixture, EvidenceShape shape) {
     inTransactionWithoutResult(
         () -> {
@@ -466,6 +735,14 @@ class AccountCanonicalJoinReconciliationIntegrationTest {
         () -> joinOperations.findCanonicalEvidenceByRequestId(fixture.requestId()).orElseThrow());
   }
 
+  private PairAuthority pairAuthority(JoinFixture fixture) {
+    return inTransaction(
+        () ->
+            pairAuthorities
+                .readForUpdate(fixture.account().accountUuid(), fixture.tenantUuid())
+                .orElseThrow());
+  }
+
   private long membershipId(JoinFixture fixture) {
     return Objects.requireNonNull(
         dsl.resultQuery(
@@ -564,6 +841,14 @@ class AccountCanonicalJoinReconciliationIntegrationTest {
       String callerBinding) {}
 
   private record EvidenceCounts(long memberships, long events, long receipts, long audits) {}
+
+  private enum Contradiction {
+    LATEST_RECEIPT,
+    LATEST_EVENT,
+    CURRENT_ROLES,
+    PAIR,
+    AUDIT
+  }
 
   private record Case(String description, Boolean allowPublicJoin, EvidenceShape evidenceShape) {}
 

@@ -1266,6 +1266,34 @@ public class AccountMembershipTransitionReceiptRepository {
   }
 
   /**
+   * Reads the latest immutable lifecycle receipt without treating its historical counters as
+   * current authority. A later role event may advance those counters without a lifecycle
+   * transition. Callers must independently prove the current role operation, event and audit before
+   * using this historical evidence; ordinary JOIN readers retain {@link #findLatestReceipt}.
+   */
+  @Transactional(propagation = Propagation.MANDATORY, readOnly = true)
+  public Optional<TransitionReceiptEvidence> findLatestHistoricalReceipt(
+      long accountId, long tenantId) {
+    requireOwnerTransaction();
+    ReceiptSnapshot snapshot = readLatestReceiptSnapshot(accountId, tenantId);
+    if (snapshot == null || snapshot.receipt() == null) {
+      return Optional.empty();
+    }
+    TransitionReceiptEvidence evidence =
+        findByRequestId(snapshot.receipt().requestId())
+            .orElseThrow(
+                () -> new IllegalStateException("Account lifecycle receipt readback is missing"));
+    if (evidence.accountId() != accountId
+        || evidence.tenantId() != tenantId
+        || !evidence.receipt().equals(snapshot.receipt())
+        || evidence.membershipVersion() != snapshot.receiptMembershipVersion()
+        || evidence.membershipAuthorityGeneration() != snapshot.receiptAuthorityGeneration()) {
+      throw new IllegalStateException("Account lifecycle receipt readback is inconsistent");
+    }
+    return Optional.of(evidence);
+  }
+
+  /**
    * Reads one immutable transition receipt by its globally unique request ID without requiring it
    * to remain the current receipt. This supports exact, non-authorizing replay after a later
    * membership transition; callers must separately prove the matching event and audit envelope.

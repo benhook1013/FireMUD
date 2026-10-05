@@ -58,6 +58,29 @@ class AccountMembershipAuthorityEventProducerCanonicalJoinTest {
     }
   }
 
+  @Test
+  void existingUuidMembershipReadRequiresOwnerTransactionBeforeRepositoryReads() {
+    Repositories repositories = new Repositories();
+    boolean previousActive = TransactionSynchronizationManager.isActualTransactionActive();
+    boolean previousReadOnly = TransactionSynchronizationManager.isCurrentTransactionReadOnly();
+    TransactionSynchronizationManager.setActualTransactionActive(false);
+    TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
+
+    try {
+      assertThatThrownBy(
+              () ->
+                  repositories
+                      .producer()
+                      .readExistingRuntimeMembershipSnapshot(UUID.randomUUID(), UUID.randomUUID()))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("active owner transaction");
+      repositories.verifyNoReads();
+    } finally {
+      TransactionSynchronizationManager.setActualTransactionActive(previousActive);
+      TransactionSynchronizationManager.setCurrentTransactionReadOnly(previousReadOnly);
+    }
+  }
+
   private static final class Repositories {
     private final AccountJoinOperationRepository joinOperations =
         mock(AccountJoinOperationRepository.class);

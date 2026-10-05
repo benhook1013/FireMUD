@@ -143,12 +143,13 @@ public class AccountTenantRoleOperationRepository {
             "UPDATE "
                 + OPERATIONS
                 + " SET status = 'COMMITTED', audit_event_id = ?, audit_event_type = ?, "
-                + "audit_occurred_at = ?, audit_payload_digest = ?, audit_payload = ?, "
+                + "audit_occurred_at = CAST(? AS TIMESTAMPTZ), audit_payload_digest = ?, "
+                + "audit_payload = ?, "
                 + "result_payload = ?, result_digest = ? "
                 + "WHERE request_id = ? AND status = 'IN_PROGRESS' AND request_digest = ?",
             audit.auditEventId(),
             audit.eventType(),
-            audit.occurredAt(),
+            audit.occurredAt().toString(),
             audit.payloadDigest(),
             audit.payload(),
             resultPayload,
