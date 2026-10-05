@@ -14,6 +14,7 @@ import io.jsonwebtoken.Jws;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
 import net.firedevops.firemud.common.config.CommonSecurityServletAutoConfiguration;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
@@ -23,6 +24,7 @@ import net.firedevops.firemud.common.security.GrpcAuthProperties;
 import net.firedevops.firemud.common.security.HttpAuthProperties;
 import net.firedevops.firemud.common.security.HttpJwtAuthInterceptor;
 import net.firedevops.firemud.common.security.JwtUtil;
+import net.firedevops.firemud.common.security.SessionContext;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
@@ -31,6 +33,17 @@ import org.springframework.boot.autoconfigure.context.ConfigurationPropertiesAut
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.boot.test.context.runner.ReactiveWebApplicationContextRunner;
 import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
+import org.springframework.boot.webmvc.autoconfigure.WebMvcAutoConfiguration;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseEntity;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.HandlerExecutionChain;
+import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 
 class CommonSecurityAutoConfigurationTest {
   private final ApplicationContextRunner contextRunner =
@@ -77,6 +90,65 @@ class CommonSecurityAutoConfigurationTest {
               assertThat(props.getPublicRoutes().get(0).getMethod()).isEqualTo("GET");
               assertThat(props.getPublicRoutes().get(0).getPathPattern()).isEqualTo("/ping");
             });
+  }
+
+  @Test
+  void registersSharedHttpAuthInMvcHandlerChain() {
+    new WebApplicationContextRunner()
+        .withConfiguration(
+            AutoConfigurations.of(
+                ConfigurationPropertiesAutoConfiguration.class,
+                CommonSecurityAutoConfiguration.class,
+                CommonSecurityServletAutoConfiguration.class,
+                WebMvcAutoConfiguration.class))
+        .withBean(TenantGuardedController.class)
+        .withPropertyValues(
+            "firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234",
+            "firemud.auth.http.enabled=true")
+        .run(
+            ctx -> {
+              assertThat(ctx).hasSingleBean(HttpJwtAuthInterceptor.class);
+              assertThat(ctx).hasBean("firemudHttpAuthWebMvcConfigurer");
+              RequestMappingHandlerMapping mapping =
+                  ctx.getBean(RequestMappingHandlerMapping.class);
+              HandlerExecutionChain handler =
+                  mapping.getHandler(new MockHttpServletRequest("POST", "/tenant-write"));
+              assertThat(handler).isNotNull();
+              assertThat(handler.getInterceptors())
+                  .contains(ctx.getBean(HttpJwtAuthInterceptor.class));
+
+              MockMvc mvc = MockMvcBuilders.webAppContextSetup(ctx).build();
+              assertThat(
+                      mvc.perform(MockMvcRequestBuilders.post("/tenant-write"))
+                          .andReturn()
+                          .getResponse()
+                          .getStatus())
+                  .isEqualTo(401);
+              String accountId = "018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a";
+              String token =
+                  ctx.getBean(JwtUtil.class)
+                      .generateToken(
+                          accountId,
+                          Map.of("accountId", accountId, "globalRoles", List.of("platformAdmin")));
+              assertThat(
+                      mvc.perform(
+                              MockMvcRequestBuilders.post("/tenant-write")
+                                  .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+                          .andReturn()
+                          .getResponse()
+                          .getStatus())
+                  .isEqualTo(412);
+              assertThat(SessionContext.hasAuthenticatedCallerContext()).isFalse();
+            });
+  }
+
+  @RestController
+  static class TenantGuardedController {
+    @PostMapping("/tenant-write")
+    ResponseEntity<Void> write() {
+      SessionContext.requireTenantAccess(1L);
+      return ResponseEntity.status(412).build();
+    }
   }
 
   @Test
