@@ -1164,6 +1164,8 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.gamedesign.service.AuthoredWorldVersionStateMtlsIntegrationTest#returnsCompletePersistedSourceAndVersionStateOverSocketWithoutMutation(Path)' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.service.AuthoredWorldVersionStateMtlsIntegrationTest#changedSourceDigestAndForeignPersistedVersionFailClosedWithoutMutation(Path)' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.service.AuthoredWorldVersionStateMtlsIntegrationTest#sameReadIdentityObservesFreshCommittedLifecycleAndEpochSnapshot(Path)' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.service.AuthoredWorldVersionStateMtlsIntegrationTest#composesPersistedGameDesignVersionOverMtlsWithWorldIdentityReadbackAndExactRetry(Path)' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.service.AuthoredWorldVersionStateMtlsIntegrationTest#rejectsSubstitutedCanonicalVersionBeforeWorldIdentityPersistence(Path)' \
             --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldVersionStateMtlsTest#exactSameNamespaceWorldWorkloadReceivesCompleteVersionStateEvidenceOverSocket(Path)' \
             --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldVersionStateMtlsTest#wrongServiceNamespaceAndSharedCertificatesAreRejectedBeforeProducerRead()' \
             --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldVersionStateMtlsTest#missingClientCertificateCannotSupplyAnAuthenticatedPeerToProducer()' \
@@ -1242,6 +1244,32 @@ jobs:
         with:
           name: world-complete-launch-binding-postgresql-proof-${{ github.sha }}
           path: services/world-management-service/build/test-results/integrationTest/TEST-*WorldCompleteLaunchBindingIntegrationTest.xml
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Run World authored Version identity PostgreSQL prerequisite proof
+        if: ${{ !cancelled() && matrix.module == 'world-management-service' }}
+        run: |
+          ./gradlew :world-management-service:integrationTest \
+            --tests net.firedevops.firemud.worldmanagement.WorldAuthoredVersionIdentityIntegrationTest \
+            -PfullCheck --no-build-cache --no-configuration-cache
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite net.firedevops.firemud.worldmanagement.WorldAuthoredVersionIdentityIntegrationTest \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredVersionIdentityIntegrationTest#persistsExactIdentityAndPrivateKeyWithoutContentOrLifecycleWrites()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredVersionIdentityIntegrationTest#deniesWrongGameDesignIdentitySourceNamespaceAndMissingIntakeBeforeOwnerWrites()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredVersionIdentityIntegrationTest#concurrentExactStableIdentityReturnsOneOriginalHistoricalReceipt()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredVersionIdentityIntegrationTest#conflictingUuidOrGameDesignSelectorDoesNotRewriteTheOriginalReceipt()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredVersionIdentityIntegrationTest#recoversLostCommitAcknowledgmentAndRetriesWithoutRereadingOrReminting()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredVersionIdentityIntegrationTest#forwardV27MigrationPreservesRetainedRowsWithoutInferringIdentityAssociations()' \
+            world-management-service
+
+      - name: Capture World authored Version identity PostgreSQL raw XML
+        if: ${{ always() && matrix.module == 'world-management-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: world-authored-version-identity-postgresql-proof-${{ github.sha }}
+          path: services/world-management-service/build/test-results/integrationTest/TEST-*WorldAuthoredVersionIdentityIntegrationTest.xml
           if-no-files-found: error
           retention-days: 7
 

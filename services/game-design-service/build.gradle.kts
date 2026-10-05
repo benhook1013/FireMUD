@@ -15,4 +15,5 @@ dependencies {
     compileOnly(libs.spotbugs.annotations)
     implementation(libs.aws.sdk.s3)
     testImplementation(libs.bouncycastle.pkix)
+    testImplementation(project(":world-management-service"))
 }
