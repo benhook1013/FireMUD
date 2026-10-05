@@ -8,7 +8,7 @@ For REST endpoints, the authoritative request/response schema source is [openapi
 
 ## Fresh-Tenant Prerequisite Implementation Status
 
-The owner-local fresh-creation repository and Account-only mTLS receipt read are implemented in this prerequisite. Focused common transport/canonicalization tests, all 263 Game Design unit tests, and three physical PostgreSQL migration/repository tests passed; source formatting, enabled Checkstyle, links, and Markdown checks also passed. This proves the bounded storage/readback path, not authenticated creator authorization, Account enrollment, runtime admission, or a playable environment. No creation RPC or activation is introduced.
+The owner-local fresh-creation repository and Account-only mTLS receipt read are implemented; authenticated creator authorization, Account enrollment, runtime admission, and playable proof remain unavailable. No creation RPC or activation is introduced. Current validation evidence and remaining gaps are recorded in the [implementation tracker](../../../project-management/implementation-tracking/game-authoring-publishing-and-activation.md#fresh-tenant-identity-prerequisite).
 
 ## Canonical Tenant Identity and Fresh-Creation Readback
 
