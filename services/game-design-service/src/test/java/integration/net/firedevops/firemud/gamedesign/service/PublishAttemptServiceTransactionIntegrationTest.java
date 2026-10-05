@@ -14,16 +14,19 @@ import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.PublishAttempt;
+import net.firedevops.firemud.gamedesign.entity.PublishAttemptParticipantDigest;
 import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.entity.VersionAssetArtifact;
 import net.firedevops.firemud.gamedesign.entity.VersionTemplateRemapSet;
 import net.firedevops.firemud.gamedesign.model.PublishAttemptStatus;
+import net.firedevops.firemud.gamedesign.model.PublishParticipantKey;
 import net.firedevops.firemud.gamedesign.model.PublishType;
 import net.firedevops.firemud.gamedesign.model.TemplateRemapSetStatus;
 import net.firedevops.firemud.gamedesign.model.VersionAssetArtifactState;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
+import net.firedevops.firemud.gamedesign.repository.PublishAttemptParticipantDigestRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactRepository;
@@ -67,6 +70,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 class PublishAttemptServiceTransactionIntegrationTest {
   private static final String TENANT_ID = "9001";
   private static final String WORKFLOW_ID = "full-version-transaction-integration-test";
+  private static final String TRANSACTION_MANIFEST_HASH = "sha256:" + "a".repeat(64);
+  private static final String FINALIZATION_MANIFEST_HASH = "sha256:" + "b".repeat(64);
 
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
@@ -84,6 +89,8 @@ class PublishAttemptServiceTransactionIntegrationTest {
   @Autowired private PublishedReleaseBundleRepository publishedReleaseBundleRepository;
   @Autowired private VersionAssetArtifactRepository versionAssetArtifactRepository;
   @Autowired private VersionRepository versionRepository;
+  @Autowired private VersionAssetExportCandidateService versionAssetExportCandidateService;
+  @Autowired private VersionAssetPublicationService versionAssetPublicationService;
   @Autowired private VersionTemplateRemapSetRepository templateRemapSetRepository;
   @Autowired private DSLContext dsl;
   @MockitoBean private AssetExportService assetExportService;
@@ -127,9 +134,11 @@ class PublishAttemptServiceTransactionIntegrationTest {
                       bundle.setVersionNumber(persistedVersion.getVersionNumber());
                       bundle.setAttestationSchemaVersion("v1");
                       bundle.setPublishWorkflowId(WORKFLOW_ID);
-                      bundle.setManifestHash("transaction-proof-manifest");
+                      bundle.setManifestHash(TRANSACTION_MANIFEST_HASH);
+                      bundle.setManifestSchemaVersion(1);
                       bundle.setGenerationConfigRevision("transaction-proof-generation");
                       bundle.setRequiredManifestAssetKeysJson("[]");
+                      bundle.setArtifactDigestsJson("[]");
                       bundle.setParticipantDigestsJson("[]");
                       bundle.setCommandDefinitionsJson("[]");
                       publishedReleaseBundleRepository.save(bundle);
@@ -141,6 +150,9 @@ class PublishAttemptServiceTransactionIntegrationTest {
                       artifact.setArtifactState(VersionAssetArtifactState.PUBLISHED);
                       artifact.setStateEpoch(2L);
                       artifact.setManifestHash(bundle.getManifestHash());
+                      // This manually inserted row proves transaction rollback, not export.
+                      // No durable source snapshot exists in this fixture, so candidate proof
+                      // remains explicitly absent rather than bypassing its required FK.
                       artifact.setLastWorkflowId(WORKFLOW_ID);
                       artifact.setExportedManifestAssetKeysJson("[]");
                       versionAssetArtifactRepository.save(artifact);
@@ -215,6 +227,122 @@ class PublishAttemptServiceTransactionIntegrationTest {
   }
 
   @Test
+  void recordsAndIndependentlyReadsDedicatedAbilitySchemaDigestOnPublishAttempt() {
+    String tenantId = "9010";
+    String publishWorkflowId = "full-version-ability-schema-integration-test";
+    Game game = new Game();
+    game.setTenantId(tenantId);
+    game.setName("ability-schema-persistence-proof-game");
+    gameRepository.save(game);
+
+    Version version = new Version();
+    version.setTenantId(tenantId);
+    version.setVersionNumber(17);
+    version.setVersionState(VersionLifecycleState.DRAFT);
+    version.setVersionStateEpoch(1L);
+    version.setNotes("ability schema participant persistence proof");
+    Version savedVersion = versionRepository.save(version);
+    String scopeValue = String.valueOf(savedVersion.getId());
+
+    PublishAttempt attempt = new PublishAttempt();
+    attempt.setTenantId(tenantId);
+    attempt.setPublishWorkflowId(publishWorkflowId);
+    attempt.setPublishType(PublishType.FULL_VERSION);
+    attempt.setStatus(PublishAttemptStatus.PENDING);
+    attempt.setVersionId(savedVersion.getId());
+    attempt.setVersionNumber(savedVersion.getVersionNumber());
+    PublishAttempt savedAttempt = publishAttemptRepository.save(attempt);
+
+    publishAttemptService.recordFullVersionParticipantDigests(
+        publishWorkflowId,
+        List.of(
+            new PublishParticipantDigestDto(
+                "GAME_LOGIC",
+                scopeValue,
+                null,
+                "commit-full-version-17",
+                "sha256:aggregate-game-logic-1",
+                1,
+                "sha256:ability-schema-1",
+                null,
+                null),
+            new PublishParticipantDigestDto(
+                "GAME_DESIGN_CONTROL_PLANE",
+                scopeValue,
+                null,
+                "commit-full-version-17",
+                "sha256:aggregate-control-plane-1",
+                1,
+                null,
+                null,
+                null),
+            new PublishParticipantDigestDto(
+                "WORLD_MANAGEMENT",
+                scopeValue,
+                null,
+                "commit-full-version-17",
+                "sha256:aggregate-world-1",
+                1,
+                null,
+                null,
+                null),
+            new PublishParticipantDigestDto(
+                "ENTITY_MANAGEMENT",
+                scopeValue,
+                null,
+                "commit-full-version-17",
+                "sha256:aggregate-entity-1",
+                1,
+                null,
+                null,
+                null),
+            new PublishParticipantDigestDto(
+                "AUTOMATION_SCRIPTING",
+                scopeValue,
+                null,
+                "commit-full-version-17",
+                "sha256:aggregate-automation-1",
+                1,
+                null,
+                null,
+                null)));
+
+    List<PublishAttemptParticipantDigest> persistedDigests =
+        new PublishAttemptParticipantDigestRepository(dsl)
+            .findByPublishAttemptId(savedAttempt.getId());
+
+    assertThat(savedAttempt.getPublishType()).isEqualTo(PublishType.FULL_VERSION);
+    assertThat(savedAttempt.getVersionId()).isEqualTo(savedVersion.getId());
+    assertThat(persistedDigests).hasSize(5);
+    PublishAttemptParticipantDigest gameLogicDigest =
+        persistedDigests.stream()
+            .filter(digest -> digest.getParticipantKey() == PublishParticipantKey.GAME_LOGIC)
+            .findFirst()
+            .orElseThrow();
+    assertThat(gameLogicDigest.getParticipantKey()).isEqualTo(PublishParticipantKey.GAME_LOGIC);
+    assertThat(gameLogicDigest.getScopeValue()).isEqualTo(scopeValue);
+    assertThat(gameLogicDigest.getBaseVersionId()).isNull();
+    assertThat(gameLogicDigest.getAppliedCommitId()).isEqualTo("commit-full-version-17");
+    assertThat(gameLogicDigest.getDigestSchemaVersion()).isEqualTo(1);
+    assertThat(gameLogicDigest.getContentDigest()).isEqualTo("sha256:aggregate-game-logic-1");
+    assertThat(gameLogicDigest.getAbilitySchemaDigest()).isEqualTo("sha256:ability-schema-1");
+    assertThat(gameLogicDigest.getAbilitySchemaDigest())
+        .isNotEqualTo(gameLogicDigest.getContentDigest());
+
+    assertThat(persistedDigests)
+        .allSatisfy(
+            digest -> {
+              assertThat(digest.getScopeValue()).isEqualTo(scopeValue);
+              assertThat(digest.getBaseVersionId()).isNull();
+              assertThat(digest.getAppliedCommitId()).isEqualTo("commit-full-version-17");
+              assertThat(digest.getDigestSchemaVersion()).isEqualTo(1);
+            });
+    assertThat(persistedDigests)
+        .filteredOn(digest -> digest.getParticipantKey() != PublishParticipantKey.GAME_LOGIC)
+        .allSatisfy(digest -> assertThat(digest.getAbilitySchemaDigest()).isNull());
+  }
+
+  @Test
   void reconciledFullVersionPublicationCommitsAttemptVersionAndReleaseBundleTogether() {
     String tenantId = "9002";
     String publishRequestId = "successful-reconcile-request";
@@ -248,8 +376,15 @@ class PublishAttemptServiceTransactionIntegrationTest {
                       null));
             });
     Mockito.when(assetExportService.exportAssets(tenantId, 1))
-        .thenReturn(
-            new ExportedAssetManifest("transaction-proof-manifest", List.of("manifest.json")));
+        .thenAnswer(
+            invocation -> {
+              int versionNumber = invocation.getArgument(1);
+              versionAssetPublicationService.freezeOrReadSnapshot(tenantId, versionNumber);
+              return versionAssetExportCandidateService.recordExportCandidate(
+                  tenantId,
+                  versionNumber,
+                  new ExportedAssetManifest(FINALIZATION_MANIFEST_HASH, 1, List.of(), List.of()));
+            });
 
     VersionDto publishedVersion =
         versionPublishCommandService.publishFullVersion(
@@ -272,7 +407,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
     assertThat(attempt.getVersionId()).isEqualTo(publishedVersion.id());
     assertThat(storedVersion.getVersionState()).isEqualTo(VersionLifecycleState.PUBLISHED);
     assertThat(bundle.getPublishWorkflowId()).isEqualTo(publishWorkflowId);
-    assertThat(bundle.getManifestHash()).isEqualTo("transaction-proof-manifest");
+    assertThat(bundle.getManifestHash()).isEqualTo(FINALIZATION_MANIFEST_HASH);
     assertThat(bundle.getPublishedReleaseBundleRef()).isNotBlank();
     assertThat(bundle.getPublishedReleaseBundleRef())
         .isNotEqualTo(
@@ -318,7 +453,18 @@ class PublishAttemptServiceTransactionIntegrationTest {
                 .findByTenantIdAndVersionId(tenantId, publishedVersion.id())
                 .orElseThrow()
                 .getManifestHash())
-        .isEqualTo("transaction-proof-manifest");
+        .isEqualTo(FINALIZATION_MANIFEST_HASH);
+    String generationConfigRevision = bundle.getGenerationConfigRevision();
+    assertThat(generationConfigRevision.length()).isGreaterThan(128);
+    versionPublishCommandService.publishFullVersion(
+        tenantId, "successful transaction proof", publishRequestId, publishWorkflowId);
+    assertThat(
+            publishedReleaseBundleRepository
+                .findByTenantIdAndVersionId(tenantId, publishedVersion.id())
+                .orElseThrow()
+                .getGenerationConfigRevision())
+        .isEqualTo(generationConfigRevision);
+    Mockito.verify(assetExportService, Mockito.times(1)).exportAssets(tenantId, 1);
     assertThat(artifact.getArtifactState()).isEqualTo(VersionAssetArtifactState.PUBLISHED);
   }
 
@@ -353,6 +499,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
     AtomicReference<Throwable> exportCallbackFailure = new AtomicReference<>();
     AtomicBoolean exportCompleted = new AtomicBoolean();
     AtomicBoolean finalizationFailureInjected = new AtomicBoolean();
+    String longFailureMessage = "forced finalization failure " + "x".repeat(600);
 
     Mockito.when(
             publishGateService.collectFullVersionParticipantDigests(
@@ -388,12 +535,17 @@ class PublishAttemptServiceTransactionIntegrationTest {
         .assertMatchesRecordedDigests(
             Mockito.eq(tenantId), Mockito.eq(PublishType.FULL_VERSION), Mockito.anyList());
     ExportedAssetManifest exportedManifest =
-        new ExportedAssetManifest("post-export-finalization-manifest", List.of("manifest.json"));
+        new ExportedAssetManifest(FINALIZATION_MANIFEST_HASH, 1, List.of(), List.of());
     Mockito.when(assetExportService.exportAssets(Mockito.eq(tenantId), Mockito.anyInt()))
         .thenAnswer(
             invocation -> {
               exportedVersionNumber.set(invocation.getArgument(1));
               try {
+                versionAssetPublicationService.freezeOrReadSnapshot(
+                    tenantId, exportedVersionNumber.get());
+                ExportedAssetManifest recordedManifest =
+                    versionAssetExportCandidateService.recordExportCandidate(
+                        tenantId, exportedVersionNumber.get(), exportedManifest);
                 VersionTemplateRemapSet approvedRemapSet = new VersionTemplateRemapSet();
                 approvedRemapSet.setRemapSetId("failed-candidate-approved-remap");
                 approvedRemapSet.setTenantId(tenantId);
@@ -407,7 +559,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
                 templateRemapSetRepository.save(approvedRemapSet);
                 remapSetId.set(approvedRemapSet.getRemapSetId());
                 exportCompleted.set(true);
-                return exportedManifest;
+                return recordedManifest;
               } catch (Throwable failure) {
                 exportCallbackFailure.set(failure);
                 throw failure;
@@ -416,7 +568,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
     Mockito.doAnswer(
             invocation -> {
               finalizationFailureInjected.set(true);
-              throw new IllegalStateException("forced finalization failure");
+              throw new IllegalStateException(longFailureMessage);
             })
         .when(versionAssetArtifactService)
         .markPublished(
@@ -465,7 +617,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
         .as("asset export uses the candidate's persisted version number")
         .isEqualTo(candidateVersionNumber.get());
     assertThat(attempt.getStatus()).isEqualTo(PublishAttemptStatus.FAILED);
-    assertThat(attempt.getFailureMessage()).isEqualTo("forced finalization failure");
+    assertThat(attempt.getFailureMessage()).isEqualTo(longFailureMessage);
     Version retainedCandidate =
         versionRepository.findByTenantIdAndId(tenantId, candidateVersionId.get()).orElseThrow();
     assertThat(retainedCandidate.getVersionState()).isEqualTo(VersionLifecycleState.DRAFT);
@@ -478,6 +630,14 @@ class PublishAttemptServiceTransactionIntegrationTest {
             .findByTenantIdAndVersionId(tenantId, candidateVersionId.get())
             .orElseThrow();
     assertThat(failedArtifact.getArtifactState()).isEqualTo(VersionAssetArtifactState.FAILED);
+    assertThat(failedArtifact.getStateEpoch()).isEqualTo(3L);
+    assertThat(failedArtifact.getLastErrorMessage()).isEqualTo(longFailureMessage);
+    assertThat(failedArtifact.getManifestHash()).isEqualTo(FINALIZATION_MANIFEST_HASH);
+    assertThat(failedArtifact.getManifestSchemaVersion()).isEqualTo(1);
+    assertThat(failedArtifact.getArtifactDigestsJson()).isEqualTo("[]");
+    assertThat(failedArtifact.getCandidateSnapshotVersionId()).isEqualTo(candidateVersionId.get());
+    assertThat(failedArtifact.getPublishedObjectProofsJson())
+        .contains("manifests/sha256/", FINALIZATION_MANIFEST_HASH);
     VersionTemplateRemapSet retainedRemapSet =
         templateRemapSetRepository
             .findByTenantIdAndRemapSetId(tenantId, remapSetId.get())
@@ -486,6 +646,31 @@ class PublishAttemptServiceTransactionIntegrationTest {
     assertThat(retainedRemapSet.getApprovedAt()).isNotNull();
     assertThat(retainedRemapSet.getSourceVersionId()).isEqualTo(sourceVersionId);
     assertThat(retainedRemapSet.getTargetVersionId()).isEqualTo(candidateVersionId.get());
+
+    assertThatThrownBy(
+            () ->
+                versionPublishCommandService.publishFullVersion(
+                    tenantId, "failed remap proof", publishRequestId, publishWorkflowId))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage(longFailureMessage);
+    PublishAttempt replayedAttempt =
+        publishAttemptRepository.findByPublishWorkflowId(publishWorkflowId).orElseThrow();
+    assertThat(replayedAttempt).isEqualTo(attempt);
+    assertThat(replayedAttempt.getStatus()).isEqualTo(PublishAttemptStatus.FAILED);
+    assertThat(replayedAttempt.getVersionId()).isEqualTo(candidateVersionId.get());
+    assertThat(replayedAttempt.getVersionNumber()).isEqualTo(candidateVersionNumber.get());
+    assertThat(replayedAttempt.getFailureCode()).isEqualTo(attempt.getFailureCode());
+    assertThat(replayedAttempt.getFailureMessage()).isEqualTo(longFailureMessage);
+    VersionAssetArtifact replayedArtifact =
+        versionAssetArtifactRepository
+            .findByTenantIdAndVersionId(tenantId, candidateVersionId.get())
+            .orElseThrow();
+    assertThat(replayedArtifact).isEqualTo(failedArtifact);
+    assertThat(replayedArtifact.getArtifactState()).isEqualTo(VersionAssetArtifactState.FAILED);
+    assertThat(replayedArtifact.getStateEpoch()).isEqualTo(3L);
+    assertThat(replayedArtifact.getLastErrorMessage()).isEqualTo(longFailureMessage);
+    Mockito.verify(assetExportService, Mockito.times(1))
+        .exportAssets(Mockito.eq(tenantId), Mockito.anyInt());
   }
 
   private static String firstStackFrame(Throwable failure) {

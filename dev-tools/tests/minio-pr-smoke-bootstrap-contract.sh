@@ -84,7 +84,21 @@ require_contains "$classifier" 'changed_paths="$(git diff --name-only "$BASE_SHA
 require_contains "$classifier" '"$BASE_REF" == main || "$BASE_REF" == develop'
 require_contains "$classifier" 'docker/minio/*|dev-tools/minio/*) has_source_change=true'
 require_contains "$classifier" '.github/workflows/build-trusted-minio-source-images.yml) has_workflow_change=true'
-require_contains "$classifier" 'if [[ "$has_source_change" == true && "$has_workflow_change" == false ]]; then'
+require_count "$trusted_builder" 'services/game-design-service/src/test/java/integration/net/firedevops/firemud/gamedesign/service/VersionAssetPublicationMinioPostgresIntegrationTest.java' 3
+require_contains "$classifier" 'if [[ "$has_source_change" == true && "$has_workflow_change" == false && "$has_asset_export_change" == false ]]; then'
+require_contains "$classifier" 'has_asset_export_change=true'
+require_contains "$build_job" 'Prove Game Design asset export against source-built MinIO'
+require_contains "$build_job" './gradlew --rerun-tasks'
+require_contains "$build_job" ':game-design-service:test'
+require_contains "$build_job" '--tests '\''net.firedevops.firemud.gamedesign.service.AssetExportServiceMinioIntegrationTest'\'''
+require_contains "$build_job" ':game-design-service:integrationTest'
+require_contains "$build_job" "--tests 'net.firedevops.firemud.gamedesign.service.VersionAssetPublicationMinioPostgresIntegrationTest'"
+require_contains "$build_job" '--require-suite net.firedevops.firemud.gamedesign.service.VersionAssetPublicationMinioPostgresIntegrationTest'
+require_contains "$build_job" '--require-case '\''net.firedevops.firemud.gamedesign.service.AssetExportServiceMinioIntegrationTest#publishesConditionallyReadsBackExactBytesAndRecoversCommittedPutAgainstMinio()'\'''
+require_contains "$build_job" '--require-case '\''net.firedevops.firemud.gamedesign.service.VersionAssetPublicationMinioPostgresIntegrationTest#composesPostgresSnapshotAndCandidateWithMinioBeforeWriteAndRetriesAfterLostAcknowledgement()'\'''
+require_contains "$build_job" 'container_created=false'
+require_contains "$build_job" 'if [[ "$container_created" == true ]]; then'
+require_contains "$build_job" 'build/test-results/integrationTest/*VersionAssetPublicationMinioPostgresIntegrationTest*.xml'
 require_contains "$classifier" 'should_build=false'
 require_contains "$build_job" 'needs: classify'
 require_contains "$build_job" "if: needs.classify.outputs.should_build == 'true'"

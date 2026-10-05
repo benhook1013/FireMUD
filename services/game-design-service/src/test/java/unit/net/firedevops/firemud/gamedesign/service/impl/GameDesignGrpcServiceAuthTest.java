@@ -35,6 +35,8 @@ import org.mockito.Mockito;
 import org.springframework.test.util.ReflectionTestUtils;
 
 class GameDesignGrpcServiceAuthTest {
+  private static final String MANIFEST_HASH = "sha256:" + "a".repeat(64);
+
   @AfterEach
   void tearDown() {
     SessionContext.clear();
@@ -90,8 +92,8 @@ class GameDesignGrpcServiceAuthTest {
                 8,
                 "v1",
                 "workflow-1",
-                "hash-1",
-                List.of("manifest.json"),
+                MANIFEST_HASH,
+                List.of(),
                 List.of(),
                 "genrev-1",
                 false,
@@ -99,7 +101,9 @@ class GameDesignGrpcServiceAuthTest {
                 java.time.LocalDateTime.parse("2026-04-14T12:00:00"),
                 null,
                 null,
-                null));
+                null,
+                1,
+                List.of()));
     GameDesignGrpcService service =
         new GameDesignGrpcService(
             Mockito.mock(PingService.class),

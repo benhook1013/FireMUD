@@ -1,6 +1,6 @@
 # Ability & Action Design Tools
 
-This document outlines the editors for defining abilities, actions, and combat mechanics. The tooling is part of the Game Design Service and pushes finalized data to the [Game Logic Service](../game-logic-service/README.md) during version publishing.
+This document outlines the editors for defining abilities, actions, and combat mechanics. The tooling is part of the Game Design Service. Its target owner handoff applies Draft rule and ability revisions to the [Game Logic Service](../game-logic-service/README.md) before publication under the canonical [commit and revision synchronization contract](version-control.md#design-time-synchronization); publication verifies that existing owner state rather than copying a separate design database.
 
 The publish workflow is part of the durable control-plane workflow described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
 
@@ -9,7 +9,7 @@ The publish workflow is part of the durable control-plane workflow described in 
 The current proven behavior is stable-reference validation against the exact published base version for the plugin publication path. `abilitySchemaDigest` is persisted in plugin metadata and exposed by the publication read, but dedicated Game Logic-owned release-attested ability-schema validation remains target-state and unproved. Current plugin publication and activation compare the plugin's `abilitySchemaDigest` with the published `AUTOMATION_SCRIPTING` aggregate participant digest; that aggregate comparison is not a dedicated ability-schema attestation. Script-patch publication does not currently enforce same-tenant published-base identity, and launch resolution does not currently prove same-base published patch identity or Automation `READY`; those are implementation gaps. Exact `scriptPinEpoch` propagation and same-version old-epoch rejection at runtime handoff are target-state and remain unproved; this design-time editor does not establish that runtime proof. See the [Automation and Scheduler Runtime tracker](../../../project-management/implementation-tracking/automation-and-scheduler-runtime.md#script-transition-reconciliation) and [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
 
 Data entered in these editors is stored as revisions using the `SaveRevision` gRPC call defined in [`game_design_service.proto`](../../../../protos/game-design/v1/game_design_service.proto).
-Finalized versions are published with `PublishVersion` so the Game Logic Service can load the rules as part of the cross-service publish workflow described in the [Game Design Service Architecture](README.md).
+Finalized versions are published with `PublishVersion` only after the required owner Draft state and exact commit-bound evidence exist under [version control](version-control.md#history-and-provenance-across-services). The current generic revision store is not a completed Game Logic rule/ability producer; that owner-local application, provenance and dedicated digest remain open in the [publishing tracker](../../../project-management/implementation-tracking/game-authoring-publishing-and-activation.md).
 
 Ability definitions use a structured schema delivered through the API.
 

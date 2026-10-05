@@ -124,10 +124,12 @@ public class TestDataSeeder implements ApplicationRunner {
       bundle = publishedReleaseBundleRepository.save(bundle);
     }
 
-    VersionAssetArtifact artifact =
-        versionAssetArtifactRepository
-            .findByTenantIdAndVersionId(DEMO_TENANT_ID, versionId)
-            .orElseGet(VersionAssetArtifact::new);
+    if (versionAssetArtifactRepository
+        .findByTenantIdAndVersionId(DEMO_TENANT_ID, versionId)
+        .isPresent()) {
+      return;
+    }
+    VersionAssetArtifact artifact = new VersionAssetArtifact();
     artifact.setTenantId(DEMO_TENANT_ID);
     artifact.setVersionId(versionId);
     artifact.setExportedVersionNumber(version.getVersionNumber());

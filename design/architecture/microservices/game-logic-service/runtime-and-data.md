@@ -25,7 +25,7 @@ The sections below define the target-state runtime contract. Current implementat
 - The target runtime contract is that every player-delegated gameplay RPC carries the complete validated typed `PlayerExecutionContext`, including `tenantId`, `playableStateNamespaceId`, server-derived `playableStateScope`, active `gameInstanceId`, and applicable region/epoch or executor fences. The live per-RPC schemas, including `SendCommunication` and its legacy `session_attestation`, remain an implementation gap; see the [PlayerExecutionContext contract](../../system-architecture-authentication.md#gameplay-player-execution-context-contract-normative).
 - Gameplay gRPC requests do not include JWTs. Game Session provides player identity from Redis via `SessionContext`, may refresh a JWT from Account Service if roles change, and does not validate tokens for gameplay. Service-to-service traffic still uses mutual TLS as described in the [Security Architecture](../../system-architecture-security.md).
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
-- Flyway is enabled for consistency with other services, but the initial migration is empty because no tables are required.
+- Flyway is enabled; the current initial migration is empty because the owner-local versioned rule/ability source is not implemented. This is implementation status, not permission to replace the target source with another service's aggregate or process-local state.
 - NPC morale and aggression-state evaluation remain part of this service's runtime behavior. When gameplay rules consume faction or reputation signals sourced from Social & Groups, the local morale logic is still owned here, including transitions such as `FLEEING` and `SURRENDERED`; cross-service reputation data informs the decision, but Game Logic owns the gameplay-state consequence.
 
 ## Workflow Participation
@@ -46,6 +46,8 @@ For full-version publish gating, this service is still a required digest partici
 - `digestSchemaVersion` bump criteria, where any include, exclude, or canonicalization change requires an explicit schema bump and replay or re-record workflow.
 
 Publish gating must fail closed if this service cannot attest a digest under its documented manifest for the reported `digestSchemaVersion`.
+
+The typed digest response distinguishes the complete rule-input `contentDigest` from the dedicated `abilitySchemaDigest`. Both belong to the same exact tenant/version, `appliedCommitId`, and supported `digestSchemaVersion`; a value from Automation, another participant, another commit or an unsupported source schema cannot substitute for Game Logic's ability evidence. The optional carrier represents absent evidence, not a proved empty schema. A successful full-version publish requires the dedicated Game Logic value, preserves it in the immutable release participant evidence and compares it exactly for plugin compatibility. Defining the normal persisted input manifest, its ability-schema subset and canonicalization remains producer work; the current unavailable producer must continue rejecting the request rather than manufacture either digest.
 
 ## Redis Role and Prefixes
 

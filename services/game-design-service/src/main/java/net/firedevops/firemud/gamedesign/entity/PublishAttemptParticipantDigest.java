@@ -13,6 +13,7 @@ public class PublishAttemptParticipantDigest {
   private Long baseVersionId;
   private String appliedCommitId;
   private String contentDigest;
+  private String abilitySchemaDigest;
 
   private Integer digestSchemaVersion;
   private String errorCode;

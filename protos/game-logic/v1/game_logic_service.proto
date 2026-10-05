@@ -274,4 +274,5 @@ message GetDraftDesignDigestResponse {
     string script_patch_version = 8;
   }
   string base_version_id = 9;
+  optional string ability_schema_digest = 10;
 }

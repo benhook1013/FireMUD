@@ -40,6 +40,10 @@ public class PublishedReleaseBundleRepository {
       DSL.field(DSL.name("publish_workflow_id"), String.class);
   private static final Field<String> MANIFEST_HASH =
       DSL.field(DSL.name("manifest_hash"), String.class);
+  private static final Field<Integer> MANIFEST_SCHEMA_VERSION =
+      DSL.field(DSL.name("manifest_schema_version"), Integer.class);
+  private static final Field<String> ARTIFACT_DIGESTS_JSON =
+      DSL.field(DSL.name("artifact_digests_json"), String.class);
   private static final Field<String> GENERATION_CONFIG_REVISION =
       DSL.field(DSL.name("generation_config_revision"), String.class);
   private static final Field<String> REQUIRED_MANIFEST_ASSET_KEYS_JSON =
@@ -131,6 +135,8 @@ public class PublishedReleaseBundleRepository {
             .set(ATTESTATION_SCHEMA_VERSION, bundle.getAttestationSchemaVersion())
             .set(PUBLISH_WORKFLOW_ID, bundle.getPublishWorkflowId())
             .set(MANIFEST_HASH, bundle.getManifestHash())
+            .set(MANIFEST_SCHEMA_VERSION, bundle.getManifestSchemaVersion())
+            .set(ARTIFACT_DIGESTS_JSON, bundle.getArtifactDigestsJson())
             .set(GENERATION_CONFIG_REVISION, bundle.getGenerationConfigRevision())
             .set(REQUIRED_MANIFEST_ASSET_KEYS_JSON, bundle.getRequiredManifestAssetKeysJson())
             .set(PARTICIPANT_DIGESTS_JSON, bundle.getParticipantDigestsJson())
@@ -210,6 +216,15 @@ public class PublishedReleaseBundleRepository {
         || !Objects.equals(persisted.getVersionId(), requested.getVersionId())
         || !Objects.equals(persisted.getCanonicalTenantId(), source.canonicalTenantId())
         || !Objects.equals(persisted.getCanonicalVersionId(), source.canonicalVersionId())
+        || !Objects.equals(persisted.getManifestHash(), requested.getManifestHash())
+        || !Objects.equals(
+            persisted.getManifestSchemaVersion(), requested.getManifestSchemaVersion())
+        || !Objects.equals(persisted.getArtifactDigestsJson(), requested.getArtifactDigestsJson())
+        || !Objects.equals(
+            persisted.getRequiredManifestAssetKeysJson(),
+            requested.getRequiredManifestAssetKeysJson())
+        || !Objects.equals(
+            persisted.getParticipantDigestsJson(), requested.getParticipantDigestsJson())
         || !Objects.equals(persisted.getPublishedReleaseBundleRef(), publishedReleaseBundleRef)) {
       throw new IllegalStateException(
           "Published release bundle readback does not match its source identity and owner reference");
@@ -235,6 +250,8 @@ public class PublishedReleaseBundleRepository {
     bundle.setAttestationSchemaVersion(record.get(ATTESTATION_SCHEMA_VERSION));
     bundle.setPublishWorkflowId(record.get(PUBLISH_WORKFLOW_ID));
     bundle.setManifestHash(record.get(MANIFEST_HASH));
+    bundle.setManifestSchemaVersion(record.get(MANIFEST_SCHEMA_VERSION));
+    bundle.setArtifactDigestsJson(record.get(ARTIFACT_DIGESTS_JSON));
     bundle.setGenerationConfigRevision(record.get(GENERATION_CONFIG_REVISION));
     bundle.setRequiredManifestAssetKeysJson(record.get(REQUIRED_MANIFEST_ASSET_KEYS_JSON));
     bundle.setParticipantDigestsJson(record.get(PARTICIPANT_DIGESTS_JSON));

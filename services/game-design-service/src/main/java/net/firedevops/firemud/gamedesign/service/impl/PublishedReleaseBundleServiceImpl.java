@@ -18,6 +18,7 @@ import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleReposi
 import net.firedevops.firemud.gamedesign.repository.RevisionRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
+import net.firedevops.firemud.gamedesign.service.PublishedArtifactDigest;
 import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -89,6 +90,9 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
         PublishedReleaseBundleContract.SUPPORTED_ATTESTATION_SCHEMA_VERSION);
     entity.setPublishWorkflowId(publishWorkflowId);
     entity.setManifestHash(exportedManifest.manifestHash());
+    entity.setManifestSchemaVersion(exportedManifest.manifestSchemaVersion());
+    entity.setArtifactDigestsJson(
+        objectMapper.writeValueAsString(exportedManifest.artifactDigests()));
     entity.setGenerationConfigRevision(generationConfigRevision);
     entity.setRequiredManifestAssetKeysJson(
         serializeKeys(exportedManifest.requiredManifestAssetKeys()));
@@ -139,7 +143,15 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
         entity.getPublishedAt(),
         entity.getCanonicalTenantId(),
         entity.getCanonicalVersionId(),
-        entity.getPublishedReleaseBundleRef());
+        entity.getPublishedReleaseBundleRef(),
+        entity.getManifestSchemaVersion(),
+        entity.getArtifactDigestsJson() == null
+            ? null
+            : objectMapper.readValue(
+                entity.getArtifactDigestsJson(),
+                objectMapper
+                    .getTypeFactory()
+                    .constructCollectionType(List.class, PublishedArtifactDigest.class)));
   }
 
   private boolean isCanonicalNonNilUuid(UUID value) {

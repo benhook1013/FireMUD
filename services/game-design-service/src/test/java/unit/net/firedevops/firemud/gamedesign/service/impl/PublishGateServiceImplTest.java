@@ -77,7 +77,15 @@ class PublishGateServiceImplTest {
     when(gameLogicClient.getDraftDesignDigestForVersion(any(PublicationDigestRequestBinding.class)))
         .thenReturn(
             new PublishParticipantDigestDto(
-                "GAME_LOGIC", "7", "version:7", "digest-logic", 1, null, null));
+                "GAME_LOGIC",
+                "7",
+                null,
+                "version:7",
+                "digest-logic",
+                1,
+                "ability-schema-1",
+                null,
+                null));
     when(automationScriptingClient.getDraftDesignDigestForVersion(
             any(PublicationDigestRequestBinding.class)))
         .thenReturn(
@@ -141,6 +149,40 @@ class PublishGateServiceImplTest {
   }
 
   @Test
+  void fullVersionGateRequiresDedicatedGameLogicAbilitySchemaDigest() {
+    VersionDto version = fullVersion();
+    List<PublishParticipantDigestDto> missingDigest =
+        withAbilitySchemaDigest(
+            fullVersionDigests(2, "digest-entity", "version:7"), "GAME_LOGIC", null);
+    List<PublishParticipantDigestDto> blankDigest =
+        withAbilitySchemaDigest(
+            fullVersionDigests(2, "digest-entity", "version:7"), "GAME_LOGIC", "  ");
+
+    for (List<PublishParticipantDigestDto> digests : List.of(missingDigest, blankDigest)) {
+      PublishGateFailureException thrown =
+          assertThrows(
+              PublishGateFailureException.class, () -> service.assertGatePassed(version, digests));
+      assertEquals(PublishGateFailureCode.MISSING_ABILITY_SCHEMA_DIGEST, thrown.failureCode());
+    }
+  }
+
+  @Test
+  void fullVersionGateRejectsAbilitySchemaDigestOwnedByAnotherParticipant() {
+    VersionDto version = fullVersion();
+    List<PublishParticipantDigestDto> digests =
+        withAbilitySchemaDigest(
+            fullVersionDigests(2, "digest-entity", "version:7"),
+            "AUTOMATION_SCRIPTING",
+            "legacy-aggregate-digest");
+
+    PublishGateFailureException thrown =
+        assertThrows(
+            PublishGateFailureException.class, () -> service.assertGatePassed(version, digests));
+
+    assertEquals(PublishGateFailureCode.ABILITY_SCHEMA_DIGEST_OWNER_MISMATCH, thrown.failureCode());
+  }
+
+  @Test
   void fullVersionGateFailsClosedForUnsupportedSchema() {
     VersionDto version =
         new VersionDto(
@@ -162,7 +204,15 @@ class PublishGateServiceImplTest {
             new PublishParticipantDigestDto(
                 "ENTITY_MANAGEMENT", "7", "version:7", "digest-entity", 2, null, null),
             new PublishParticipantDigestDto(
-                "GAME_LOGIC", "7", "version:7", "digest-logic", 1, null, null),
+                "GAME_LOGIC",
+                "7",
+                null,
+                "version:7",
+                "digest-logic",
+                1,
+                "ability-schema-1",
+                null,
+                null),
             new PublishParticipantDigestDto(
                 "AUTOMATION_SCRIPTING", "7", "version:7", "digest-script", 5, null, null),
             new PublishParticipantDigestDto(
@@ -198,7 +248,15 @@ class PublishGateServiceImplTest {
             new PublishParticipantDigestDto(
                 "ENTITY_MANAGEMENT", "7", "version:7", "digest-entity", 4, null, null),
             new PublishParticipantDigestDto(
-                "GAME_LOGIC", "7", "version:7", "digest-logic", 1, null, null),
+                "GAME_LOGIC",
+                "7",
+                null,
+                "version:7",
+                "digest-logic",
+                1,
+                "ability-schema-1",
+                null,
+                null),
             new PublishParticipantDigestDto(
                 "GAME_DESIGN_CONTROL_PLANE", "7", "version:7", "digest-design", 1, null, null));
 
@@ -260,7 +318,15 @@ class PublishGateServiceImplTest {
             new PublishParticipantDigestDto(
                 "ENTITY_MANAGEMENT", "7", "version:7", "digest-entity", 2, null, null),
             new PublishParticipantDigestDto(
-                "GAME_LOGIC", "7", "version:7", "digest-logic", 1, null, null),
+                "GAME_LOGIC",
+                "7",
+                null,
+                "version:7",
+                "digest-logic",
+                1,
+                "ability-schema-1",
+                null,
+                null),
             new PublishParticipantDigestDto(
                 "AUTOMATION_SCRIPTING", "7", "version:7", "digest-script", 4, null, null),
             new PublishParticipantDigestDto(
@@ -376,7 +442,15 @@ class PublishGateServiceImplTest {
             new PublishParticipantDigestDto(
                 "ENTITY_MANAGEMENT", "7", "version:7", "digest-entity", 2, null, null),
             new PublishParticipantDigestDto(
-                "GAME_LOGIC", "7", "version:7", "digest-logic", 1, null, null),
+                "GAME_LOGIC",
+                "7",
+                null,
+                "version:7",
+                "digest-logic",
+                1,
+                "ability-schema-1",
+                null,
+                null),
             new PublishParticipantDigestDto(
                 "AUTOMATION_SCRIPTING", "7", "version:7", "digest-script", 5, null, null),
             new PublishParticipantDigestDto(
@@ -412,7 +486,15 @@ class PublishGateServiceImplTest {
             new PublishParticipantDigestDto(
                 "ENTITY_MANAGEMENT", "7", "version:7", "digest-entity", 2, null, null),
             new PublishParticipantDigestDto(
-                "GAME_LOGIC", "7", "version:7", "digest-logic", 1, null, null),
+                "GAME_LOGIC",
+                "7",
+                null,
+                "version:7",
+                "digest-logic",
+                1,
+                "ability-schema-1",
+                null,
+                null),
             new PublishParticipantDigestDto(
                 "AUTOMATION_SCRIPTING", "7", "version:7", "digest-script", 5, null, null),
             new PublishParticipantDigestDto(
@@ -710,10 +792,40 @@ class PublishGateServiceImplTest {
             null,
             null),
         new PublishParticipantDigestDto(
-            "GAME_LOGIC", "7", "version:7", "digest-logic", 1, null, null),
+            "GAME_LOGIC",
+            "7",
+            null,
+            "version:7",
+            "digest-logic",
+            1,
+            "ability-schema-1",
+            null,
+            null),
         new PublishParticipantDigestDto(
             "AUTOMATION_SCRIPTING", "7", "version:7", "digest-script", 5, null, null),
         new PublishParticipantDigestDto(
             "GAME_DESIGN_CONTROL_PLANE", "7", "version:7", "digest-design", 1, null, null));
+  }
+
+  private List<PublishParticipantDigestDto> withAbilitySchemaDigest(
+      List<PublishParticipantDigestDto> digests,
+      String participantKey,
+      String abilitySchemaDigest) {
+    return digests.stream()
+        .map(
+            digest ->
+                new PublishParticipantDigestDto(
+                    digest.participantKey(),
+                    digest.scopeValue(),
+                    digest.baseVersionId(),
+                    digest.appliedCommitId(),
+                    digest.contentDigest(),
+                    digest.digestSchemaVersion(),
+                    participantKey.equals(digest.participantKey())
+                        ? abilitySchemaDigest
+                        : digest.abilitySchemaDigest(),
+                    digest.errorCode(),
+                    digest.errorMessage()))
+        .toList();
   }
 }

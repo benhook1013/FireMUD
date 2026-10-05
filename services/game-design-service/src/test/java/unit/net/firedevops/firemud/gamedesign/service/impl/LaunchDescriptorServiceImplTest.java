@@ -57,6 +57,7 @@ class LaunchDescriptorServiceImplTest {
   private static final String WORLD_SLUG = "silver-march";
   private static final String PRIVATE_SOURCE_TENANT_KEY = "game-owner-key-901";
   private static final String PUBLISHED_RELEASE_BUNDLE_REF = "opaque-release-reference-from-owner";
+  private static final String MANIFEST_HASH = "sha256:" + "a".repeat(64);
 
   @Mock private GameTemplateRepository gameTemplateRepository;
   @Mock private LaunchDescriptorRepository launchDescriptorRepository;
@@ -700,8 +701,8 @@ class LaunchDescriptorServiceImplTest {
         8,
         schemaVersion,
         "workflow-1",
-        "hash-1",
-        List.of("manifest.json"),
+        MANIFEST_HASH,
+        List.of(),
         List.of(),
         "genrev-1",
         false,
@@ -709,7 +710,9 @@ class LaunchDescriptorServiceImplTest {
         LocalDateTime.now(),
         CANONICAL_TENANT_ID,
         CANONICAL_VERSION_ID,
-        publishedReleaseBundleRef);
+        publishedReleaseBundleRef,
+        1,
+        List.of());
   }
 
   @SuppressWarnings("removal")

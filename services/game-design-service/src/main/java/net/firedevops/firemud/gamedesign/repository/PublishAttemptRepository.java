@@ -116,8 +116,25 @@ public class PublishAttemptRepository {
               .set(FAILURE_MESSAGE, attempt.getFailureMessage())
               .set(CREATED_AT, JooqPersistenceSupport.toTimestamp(createdAt))
               .set(COMPLETED_AT, JooqPersistenceSupport.toTimestamp(attempt.getCompletedAt()))
-              .returning()
+              .returning(
+                  ID,
+                  TENANT_ID,
+                  PUBLISH_WORKFLOW_ID,
+                  PUBLISH_TYPE,
+                  STATUS,
+                  VERSION_ID,
+                  VERSION_NUMBER,
+                  SCRIPT_PATCH_VERSION,
+                  BASE_VERSION_ID,
+                  REQUEST_DIGEST,
+                  FAILURE_CODE,
+                  FAILURE_MESSAGE,
+                  CREATED_AT,
+                  COMPLETED_AT)
               .fetchOne();
+      if (record == null) {
+        throw new IllegalStateException("Publish attempt insert did not return its persisted row");
+      }
       return toEntity(record);
     }
     dsl.update(PUBLISH_ATTEMPT_TABLE)

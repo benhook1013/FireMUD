@@ -1,6 +1,8 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.google.protobuf.UnknownFieldSet;
 import io.grpc.Context;
@@ -34,6 +36,7 @@ import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.PingService;
 import net.firedevops.firemud.gamedesign.service.PublishAttemptPendingReconciliationException;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
+import net.firedevops.firemud.gamedesign.service.PublishedArtifactDigest;
 import net.firedevops.firemud.gamedesign.service.RevisionService;
 import net.firedevops.firemud.gamedesign.service.ScriptPatchPublishFailureException;
 import net.firedevops.firemud.gamedesign.service.SettingsAuthorityService;
@@ -92,6 +95,9 @@ import org.mockito.Mockito;
 import org.springframework.test.util.ReflectionTestUtils;
 
 class GameDesignGrpcServiceTest {
+  private static final String MANIFEST_HASH = "sha256:" + "a".repeat(64);
+  private static final String LOGO_DIGEST = "sha256:" + "b".repeat(64);
+
   private final PingService pingService = Mockito.mock(PingService.class);
   private final RevisionService revisionService = Mockito.mock(RevisionService.class);
   private final VersionService versionService = Mockito.mock(VersionService.class);
@@ -182,9 +188,19 @@ class GameDesignGrpcServiceTest {
                 8,
                 "v1",
                 "workflow-1",
-                "abc123",
-                List.of("logo.png", "manifest.json"),
+                MANIFEST_HASH,
+                List.of("logo.png"),
                 List.of(
+                    new PublishParticipantDigestDto(
+                        "GAME_LOGIC",
+                        "7",
+                        null,
+                        "version:7",
+                        "logic-aggregate-digest",
+                        1,
+                        "ability-schema-v1",
+                        null,
+                        null),
                     new PublishParticipantDigestDto(
                         "GAME_DESIGN_CONTROL_PLANE", "7", "version:7", "digest-1", 1, null, null)),
                 List.of("{\"commandId\":\"block\",\"schemaVersion\":1}"),
@@ -194,7 +210,9 @@ class GameDesignGrpcServiceTest {
                 LocalDateTime.parse("2026-04-14T12:00:00"),
                 UUID.fromString("67d7b75b-42d1-4ac6-9572-684c5e633cda"),
                 UUID.fromString("c472ebd1-56d8-49df-b8fa-85963dd940f8"),
-                "opaque-owner-issued-release-reference"));
+                "opaque-owner-issued-release-reference",
+                1,
+                List.of(logoProof())));
 
     AtomicReference<GetPublishedReleaseBundleResponse> ref = new AtomicReference<>();
     try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
@@ -211,13 +229,30 @@ class GameDesignGrpcServiceTest {
     assertEquals(
         "opaque-owner-issued-release-reference",
         ref.get().getBundle().getPublishedReleaseBundleRef());
-    assertEquals("abc123", ref.get().getBundle().getManifestHash());
+    assertEquals(MANIFEST_HASH, ref.get().getBundle().getManifestHash());
     assertEquals("genrev-1", ref.get().getBundle().getGenerationConfigRevision());
-    assertEquals(2, ref.get().getBundle().getRequiredManifestAssetKeysCount());
+    assertEquals(1, ref.get().getBundle().getRequiredManifestAssetKeysCount());
+    assertEquals("logo.png", ref.get().getBundle().getRequiredManifestAssetKeys(0));
+    assertEquals(1, ref.get().getBundle().getManifestSchemaVersion());
+    assertEquals(1, ref.get().getBundle().getArtifactDigestsCount());
+    assertEquals("logo.png", ref.get().getBundle().getArtifactDigests(0).getUsageKey());
+    assertEquals("BINARY", ref.get().getBundle().getArtifactDigests(0).getArtifactKind());
+    assertEquals(
+        "artifacts/sha256/" + LOGO_DIGEST.substring("sha256:".length()),
+        ref.get().getBundle().getArtifactDigests(0).getImmutableObjectKey());
+    assertEquals(LOGO_DIGEST, ref.get().getBundle().getArtifactDigests(0).getContentDigest());
+    assertEquals("image/png", ref.get().getBundle().getArtifactDigests(0).getContentType());
+    assertEquals(1, ref.get().getBundle().getArtifactDigests(0).getArtifactSchemaVersion());
     assertEquals(
         List.of("{\"commandId\":\"block\",\"schemaVersion\":1}"),
         ref.get().getBundle().getCommandDefinitionsList());
-    assertEquals(1, ref.get().getBundle().getParticipantDigestsCount());
+    assertEquals(2, ref.get().getBundle().getParticipantDigestsCount());
+    assertEquals("GAME_LOGIC", ref.get().getBundle().getParticipantDigests(0).getParticipantKey());
+    assertTrue(ref.get().getBundle().getParticipantDigests(0).hasAbilitySchemaDigest());
+    assertEquals(
+        "ability-schema-v1",
+        ref.get().getBundle().getParticipantDigests(0).getAbilitySchemaDigest());
+    assertFalse(ref.get().getBundle().getParticipantDigests(1).hasAbilitySchemaDigest());
     assertEquals(
         "67d7b75b-42d1-4ac6-9572-684c5e633cda", ref.get().getBundle().getCanonicalTenantId());
     assertEquals(
@@ -237,8 +272,8 @@ class GameDesignGrpcServiceTest {
                 8,
                 "v1",
                 "workflow-1",
-                "abc123",
-                List.of("manifest.json"),
+                MANIFEST_HASH,
+                List.of(),
                 List.of(),
                 "genrev-1",
                 false,
@@ -246,7 +281,9 @@ class GameDesignGrpcServiceTest {
                 LocalDateTime.parse("2026-04-14T12:00:00"),
                 UUID.fromString("67d7b75b-42d1-4ac6-9572-684c5e633cda"),
                 null,
-                null));
+                null,
+                1,
+                List.of()));
     AtomicReference<GetPublishedReleaseBundleResponse> ref = new AtomicReference<>();
 
     try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
@@ -273,8 +310,8 @@ class GameDesignGrpcServiceTest {
                 8,
                 "v1",
                 "workflow-1",
-                "abc123",
-                List.of("manifest.json"),
+                MANIFEST_HASH,
+                List.of(),
                 List.of(),
                 "genrev-1",
                 false,
@@ -282,7 +319,9 @@ class GameDesignGrpcServiceTest {
                 LocalDateTime.parse("2026-04-14T12:00:00"),
                 UUID.fromString("00000000-0000-0000-0000-000000000000"),
                 UUID.fromString("c472ebd1-56d8-49df-b8fa-85963dd940f8"),
-                null));
+                null,
+                1,
+                List.of()));
     AtomicReference<GetPublishedReleaseBundleResponse> ref = new AtomicReference<>();
 
     try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
@@ -1141,8 +1180,8 @@ class GameDesignGrpcServiceTest {
                 8,
                 "v999",
                 "workflow-1",
-                "abc123",
-                List.of("manifest.json"),
+                MANIFEST_HASH,
+                List.of(),
                 List.of(),
                 "genrev-1",
                 false,
@@ -1150,7 +1189,9 @@ class GameDesignGrpcServiceTest {
                 LocalDateTime.parse("2026-04-14T12:00:00"),
                 UUID.fromString("67d7b75b-42d1-4ac6-9572-684c5e633cda"),
                 UUID.fromString("c472ebd1-56d8-49df-b8fa-85963dd940f8"),
-                "opaque-owner-issued-release-reference"));
+                "opaque-owner-issued-release-reference",
+                1,
+                List.of()));
 
     AtomicReference<GetPublishedReleaseBundleResponse> ref = new AtomicReference<>();
     try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
@@ -1517,13 +1558,13 @@ class GameDesignGrpcServiceTest {
                 7L,
                 8,
                 "PUBLISHED",
-                2L,
-                "hash-1",
+                3L,
+                MANIFEST_HASH,
                 "workflow-1",
                 null,
                 null,
                 LocalDateTime.parse("2026-04-14T12:00:00"),
-                List.of("logo.png", "manifest.json")));
+                List.of("logo.png")));
 
     AtomicReference<GetVersionAssetArtifactStateResponse> ref = new AtomicReference<>();
     try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
@@ -1551,8 +1592,8 @@ class GameDesignGrpcServiceTest {
     assertEquals(
         "ARTIFACT_STATE_PUBLISHED", ref.get().getArtifactState().getArtifactState().name());
     assertEquals(8, ref.get().getArtifactState().getExportedVersionNumber());
-    assertEquals("hash-1", ref.get().getArtifactState().getManifestHash());
-    assertEquals(2, ref.get().getArtifactState().getExportedManifestAssetKeysCount());
+    assertEquals(MANIFEST_HASH, ref.get().getArtifactState().getManifestHash());
+    assertEquals(1, ref.get().getArtifactState().getExportedManifestAssetKeysCount());
   }
 
   @Test
@@ -1565,12 +1606,12 @@ class GameDesignGrpcServiceTest {
                 8,
                 "TOMBSTONED",
                 4L,
-                "hash-1",
+                MANIFEST_HASH,
                 "wf-1",
                 null,
                 null,
                 LocalDateTime.parse("2026-04-14T12:00:00"),
-                List.of("manifest.json")));
+                List.of()));
 
     AtomicReference<TombstoneVersionAssetsResponse> ref = new AtomicReference<>();
     try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
@@ -1672,6 +1713,16 @@ class GameDesignGrpcServiceTest {
         .setAuthoredWorldSourceOperationId("22345678-1234-4234-8234-123456789abc")
         .setExpectedAuthoredWorldSourceEvidenceDigest("sha256:" + "a".repeat(64))
         .build();
+  }
+
+  private static PublishedArtifactDigest logoProof() {
+    return new PublishedArtifactDigest(
+        "logo.png",
+        "BINARY",
+        "artifacts/sha256/" + LOGO_DIGEST.substring("sha256:".length()),
+        LOGO_DIGEST,
+        "image/png",
+        1);
   }
 
   private static <T> StreamObserver<T> observerFor(AtomicReference<T> ref) {

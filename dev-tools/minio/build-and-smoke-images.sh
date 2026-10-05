@@ -142,8 +142,8 @@ payload = {
     "client": {"image": client_image, "imageId": client_image_id,
                "tagObject": "835afd0a86e9a3ed396b8162eabc98243c342e5f",
                "sourceCommit": "fdb36acbb1d793b6cca622a55e6292f0d52309f0"},
-    "builder": "golang:1.21.13-bookworm@sha256:c6a5b9308b3f3095e8fde83c8bf4d68bd101fce606c1a0a1394522542509dda9",
-    "runtime": "alpine:3.22.1@sha256:4bcff63911fcb4448bd4fdacec207030997caf25e9bea4045fa6c8c44de311d1",
+    "builder": "golang:1.27.1-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195",
+    "runtime": "alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6",
 }
 Path(output).write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
 PY

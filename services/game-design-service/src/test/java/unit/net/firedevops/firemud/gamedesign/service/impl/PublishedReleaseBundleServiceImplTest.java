@@ -22,6 +22,7 @@ import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleReposi
 import net.firedevops.firemud.gamedesign.repository.RevisionRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
+import net.firedevops.firemud.gamedesign.service.PublishedArtifactDigest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
@@ -29,6 +30,9 @@ import org.mockito.MockitoAnnotations;
 import tools.jackson.databind.ObjectMapper;
 
 class PublishedReleaseBundleServiceImplTest {
+  private static final String MANIFEST_HASH = "sha256:" + "a".repeat(64);
+  private static final String LOGO_DIGEST = "sha256:" + "b".repeat(64);
+
   @Mock private PublishedReleaseBundleRepository repository;
   @Mock private RevisionRepository revisionRepository;
   @Mock private VersionRepository versionRepository;
@@ -83,19 +87,36 @@ class PublishedReleaseBundleServiceImplTest {
         service.createFullVersionBundle(
             version,
             "workflow-1",
-            new ExportedAssetManifest("abc123", List.of("logo.png", "manifest.json")),
+            logoManifest(),
             "genrev-1",
             List.of(
+                new PublishParticipantDigestDto(
+                    "GAME_LOGIC",
+                    "7",
+                    null,
+                    "version:7",
+                    "digest-logic",
+                    1,
+                    "ability-schema-v1",
+                    null,
+                    null),
                 new PublishParticipantDigestDto(
                     "GAME_DESIGN_CONTROL_PLANE", "7", "version:7", "digest-1", 1, null, null)));
 
     assertEquals(11L, dto.id());
     assertEquals("tenant-1", dto.tenantId());
     assertEquals(7L, dto.versionId());
-    assertEquals("abc123", dto.manifestHash());
+    assertEquals(MANIFEST_HASH, dto.manifestHash());
+    assertEquals(1, dto.manifestSchemaVersion());
+    assertEquals(List.of(logoProof()), dto.artifactDigests());
     assertEquals("genrev-1", dto.generationConfigRevision());
-    assertEquals(List.of("logo.png", "manifest.json"), dto.requiredManifestAssetKeys());
-    assertEquals(1, dto.participantDigests().size());
+    assertEquals(List.of("logo.png"), dto.requiredManifestAssetKeys());
+    assertEquals(2, dto.participantDigests().size());
+    assertEquals("GAME_LOGIC", dto.participantDigests().getFirst().participantKey());
+    assertEquals("version:7", dto.participantDigests().getFirst().appliedCommitId());
+    assertEquals("digest-logic", dto.participantDigests().getFirst().contentDigest());
+    assertEquals(1, dto.participantDigests().getFirst().digestSchemaVersion());
+    assertEquals("ability-schema-v1", dto.participantDigests().getFirst().abilitySchemaDigest());
     assertEquals(List.of(validCommandDefinition()), dto.commandDefinitions());
     assertEquals("v1", dto.attestationSchemaVersion());
     assertEquals("owner-issued-reference-11", dto.publishedReleaseBundleRef());
@@ -117,6 +138,11 @@ class PublishedReleaseBundleServiceImplTest {
     retained.setId(11L);
     retained.setTenantId("tenant-1");
     retained.setVersionId(7L);
+    retained.setParticipantDigestsJson(
+        "[{\"participantKey\":\"GAME_LOGIC\",\"scopeValue\":\"7\","
+            + "\"baseVersionId\":null,\"appliedCommitId\":\"version:7\","
+            + "\"contentDigest\":\"legacy-aggregate\",\"digestSchemaVersion\":1,"
+            + "\"errorCode\":null,\"errorMessage\":null}]");
     when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.of(retained));
 
     var dto = service.findPublishedReleaseBundle("tenant-1", 7L).orElseThrow();
@@ -124,6 +150,9 @@ class PublishedReleaseBundleServiceImplTest {
     assertNull(dto.canonicalTenantId());
     assertNull(dto.canonicalVersionId());
     assertNull(dto.publishedReleaseBundleRef());
+    assertNull(dto.manifestSchemaVersion());
+    assertNull(dto.artifactDigests());
+    assertNull(dto.participantDigests().getFirst().abilitySchemaDigest());
   }
 
   private Version sourceIdentity() {
@@ -155,11 +184,7 @@ class PublishedReleaseBundleServiceImplTest {
         IllegalStateException.class,
         () ->
             service.createFullVersionBundle(
-                version,
-                "workflow-1",
-                new ExportedAssetManifest("abc123", List.of("manifest.json")),
-                "genrev-1",
-                List.of()));
+                version, "workflow-1", emptyManifest(), "genrev-1", List.of()));
   }
 
   @Test
@@ -200,11 +225,7 @@ class PublishedReleaseBundleServiceImplTest {
         IllegalStateException.class,
         () ->
             service.createFullVersionBundle(
-                version,
-                "workflow-1",
-                new ExportedAssetManifest("abc123", List.of("manifest.json")),
-                "genrev-1",
-                List.of()));
+                version, "workflow-1", emptyManifest(), "genrev-1", List.of()));
   }
 
   @Test
@@ -222,11 +243,7 @@ class PublishedReleaseBundleServiceImplTest {
         IllegalStateException.class,
         () ->
             service.createFullVersionBundle(
-                version(),
-                "workflow-1",
-                new ExportedAssetManifest("abc123", List.of("manifest.json")),
-                "genrev-1",
-                List.of()));
+                version(), "workflow-1", emptyManifest(), "genrev-1", List.of()));
   }
 
   @Test
@@ -244,11 +261,7 @@ class PublishedReleaseBundleServiceImplTest {
         IllegalStateException.class,
         () ->
             service.createFullVersionBundle(
-                version(),
-                "workflow-1",
-                new ExportedAssetManifest("abc123", List.of("manifest.json")),
-                "genrev-1",
-                List.of()));
+                version(), "workflow-1", emptyManifest(), "genrev-1", List.of()));
   }
 
   @Test
@@ -265,11 +278,7 @@ class PublishedReleaseBundleServiceImplTest {
         IllegalArgumentException.class,
         () ->
             service.createFullVersionBundle(
-                version,
-                "workflow-1",
-                new ExportedAssetManifest("abc123", List.of("manifest.json")),
-                "genrev-1",
-                List.of()));
+                version, "workflow-1", emptyManifest(), "genrev-1", List.of()));
   }
 
   private VersionDto version() {
@@ -285,5 +294,23 @@ class PublishedReleaseBundleServiceImplTest {
         "notes",
         LocalDateTime.now(),
         LocalDateTime.now());
+  }
+
+  private static ExportedAssetManifest emptyManifest() {
+    return new ExportedAssetManifest(MANIFEST_HASH, 1, List.of(), List.of());
+  }
+
+  private static ExportedAssetManifest logoManifest() {
+    return new ExportedAssetManifest(MANIFEST_HASH, 1, List.of("logo.png"), List.of(logoProof()));
+  }
+
+  private static PublishedArtifactDigest logoProof() {
+    return new PublishedArtifactDigest(
+        "logo.png",
+        "BINARY",
+        "artifacts/sha256/" + LOGO_DIGEST.substring("sha256:".length()),
+        LOGO_DIGEST,
+        "image/png",
+        1);
   }
 }
