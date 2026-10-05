@@ -2112,6 +2112,15 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Capture World guarded region commit PostgreSQL XML
+        if: ${{ always() && matrix.module == 'world-management-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: world-guarded-region-commit-postgresql-proof-${{ github.sha }}-${{ github.run_attempt }}
+          path: services/world-management-service/build/test-results/integrationTest/TEST-*WorldDraftRegionCommitPostgresIntegrationTest.xml
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Verify Account authored-draft publication PostgreSQL proof
         if: ${{ !cancelled() && matrix.module == 'account-service' }}
         run: |
@@ -2165,6 +2174,19 @@ jobs:
             --strict \
             --require-suite net.firedevops.firemud.worldmanagement.WorldAuthoredGraphSnapshotPostgresIntegrationTest \
             --require-suite net.firedevops.firemud.worldmanagement.WorldDesignPublicationFenceIntegrationTest \
+            --require-suite net.firedevops.firemud.worldmanagement.tenant.WorldDraftRegionCommitPostgresIntegrationTest \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftRegionCommitPostgresIntegrationTest#twoRegionsAdvanceFourTuplesWithFullHistoryAndExactLostAckReplay()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftRegionCommitPostgresIntegrationTest#lastScopeConflictRollsBackEarlierRegionPayloadEpochsAndEntireHistory()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftRegionCommitPostgresIntegrationTest#disjointTupleCommitsSucceedFromTheSameRetainedBaseWithoutRebasing()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftRegionCommitPostgresIntegrationTest#immutableFullInputRejectsChangedBaseOtherOwnerPayloadOrderAndTuples()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftRegionCommitPostgresIntegrationTest#firstClaimAndExistingEpochContendersHaveOnlyOneWinner()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftRegionCommitPostgresIntegrationTest#concurrentExactFirstClaimReturnsOneOriginalResult()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftRegionCommitPostgresIntegrationTest#freezeFirstDeniesFreshStorageAndWriterFirstCompletesBeforeFreeze()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftRegionCommitPostgresIntegrationTest#productionGuardRejectsUnmanifestedPayloadMoveInsertDeleteEpochAndOtherFamilyWrites()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftRegionCommitPostgresIntegrationTest#defaultPermissionVerifierFailsBeforeTransactionOrOwnerClaim()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftRegionCommitPostgresIntegrationTest#corruptCompleteResultIsRejectedOnExactReplayWithoutRewritingContent()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftRegionCommitPostgresIntegrationTest#staleTransactionAndWrongPayloadExecutionManifestsCannotAuthorizeRows()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftRegionCommitPostgresIntegrationTest#v29UpgradePreservesRetainedV28FrozenSourceGraphFenceAndEpochHistory()' \
             --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredGraphSnapshotPostgresIntegrationTest#exactSnapshotSurvivesRollbackAndConcurrentRetryWithFullGraphReadback()' \
             --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredGraphSnapshotPostgresIntegrationTest#wrongTenantVersionParentEdgeDeniesCaptureBeforeSnapshotRetention()' \
             --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredGraphSnapshotPostgresIntegrationTest#schemaOneAttemptCannotOmitExactIntakeRequestDigestOrMutateOwnerHistory()' \

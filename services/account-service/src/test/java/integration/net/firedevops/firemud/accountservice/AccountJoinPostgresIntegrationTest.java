@@ -2191,17 +2191,24 @@ class AccountJoinPostgresIntegrationTest {
     }
     syntheticVerifiedOwnerReadback(binding, Owner.WORLD, Outcome.COMMITTED);
     syntheticVerifiedOwnerReadback(binding, Owner.GAME_DESIGN, Outcome.COMMITTED);
-    // A separately identified source writer wins the same original version after settlement.
-    assertThat(
-            tenantRoleMutationService
-                .mutate(roleRequest(fixture, Action.GRANT_DESIGNER, 2L))
-                .status())
-        .isEqualTo("COMMITTED");
-    Map<String, Object> afterWinner = membershipAuthorityReadEvidenceSnapshot(fixture.target());
-    assertThatThrownBy(() -> restartedRoleMutation(request))
-        .isInstanceOf(AccountTenantRoleOperationRepository.OperationConflictException.class)
-        .hasMessageContaining("membership version is stale");
-    assertThat(membershipAuthorityReadEvidenceSnapshot(fixture.target())).isEqualTo(afterWinner);
+    // A distinct source writer cannot capture the same source while the original intent waits.
+    Request competing = roleRequest(fixture, Action.GRANT_DESIGNER, 2L);
+    Map<String, Object> beforeCompeting = membershipAuthorityReadEvidenceSnapshot(fixture.target());
+    long auditsBeforeCompeting = countAuditOutboxRows(fixture.admin());
+    assertThatThrownBy(() -> tenantRoleMutationService.mutate(competing))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Another authority source change is already pending");
+    assertTenantRoleOperationAbsent(competing.requestId());
+    assertThat(membershipAuthorityReadEvidenceSnapshot(fixture.target()))
+        .isEqualTo(beforeCompeting);
+    assertThat(countAuditOutboxRows(fixture.admin())).isEqualTo(auditsBeforeCompeting);
+    assertPendingRoleIntent(
+        new TransactionTemplate(transactionManager)
+            .execute(
+                status ->
+                    tenantRoleOperationRepository
+                        .findForUpdate(request.requestId())
+                        .orElseThrow()));
     assertThat(originalRoleSourceChange(request).canonicalBytes())
         .containsExactly(original.canonicalBytes());
     assertThat(
@@ -2212,6 +2219,43 @@ class AccountJoinPostgresIntegrationTest {
                             .readSourceChange(original)
                             .status()))
         .isEqualTo("WAITING");
+
+    OperationEvidence committed = restartedRoleMutation(request);
+    assertThat(committed.pending()).isFalse();
+    assertThat(committed.status()).isEqualTo("COMMITTED");
+    assertCurrentRoleMutationState(
+        fixture.target(), 3L, 1L, 2L, 1L, List.of("designer", "player"), false);
+    assertThat(originalRoleSourceChange(request).canonicalBytes())
+        .containsExactly(original.canonicalBytes());
+    assertThat(
+            new TransactionTemplate(transactionManager)
+                .<String>execute(
+                    status ->
+                        new DraftAuthorizationFenceRepository(dsl)
+                            .readSourceChange(original)
+                            .status()))
+        .isEqualTo("SOURCE_COMMITTED");
+
+    // A later distinct role operation uses the newly committed source version.
+    Request later = roleRequest(fixture, Action.REVOKE_DESIGNER, 3L);
+    OperationEvidence laterCommitted = tenantRoleMutationService.mutate(later);
+    assertThat(laterCommitted.status()).isEqualTo("COMMITTED");
+    assertCurrentRoleMutationState(fixture.target(), 4L, 2L, 3L, 2L, List.of("player"), true);
+    Map<String, Object> afterLaterCommit =
+        membershipAuthorityReadEvidenceSnapshot(fixture.target());
+    assertExactTenantRoleOperation(committed, restartedRoleMutation(request));
+    assertThat(membershipAuthorityReadEvidenceSnapshot(fixture.target()))
+        .isEqualTo(afterLaterCommit);
+    assertThat(originalRoleSourceChange(request).canonicalBytes())
+        .containsExactly(original.canonicalBytes());
+    assertThat(
+            new TransactionTemplate(transactionManager)
+                .<String>execute(
+                    status ->
+                        new DraftAuthorizationFenceRepository(dsl)
+                            .readSourceChange(original)
+                            .status()))
+        .isEqualTo("SOURCE_COMMITTED");
   }
 
   private Request roleRequest(TenantRoleFixture fixture, Action action, long targetVersion) {

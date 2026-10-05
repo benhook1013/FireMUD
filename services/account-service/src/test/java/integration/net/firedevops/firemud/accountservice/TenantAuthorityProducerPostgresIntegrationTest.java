@@ -46,6 +46,7 @@ import org.jooq.Record;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
+import org.postgresql.util.PSQLException;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
@@ -168,8 +169,14 @@ class TenantAuthorityProducerPostgresIntegrationTest {
                       fences.markSourceCommitted(original);
                       return null;
                     }))
-        .isInstanceOf(RuntimeException.class)
-        .hasMessageContaining("must commit atomically");
+        .satisfies(
+            failure -> {
+              PSQLException postgresFailure = rootPostgresCause(failure);
+              assertThat(postgresFailure.getSQLState()).isEqualTo("23514");
+              assertThat((Throwable) postgresFailure)
+                  .hasMessageContaining(
+                      "Issuer/tenant journal and V57 source transition must commit atomically");
+            });
     fixture.producer().advance(TENANT_ID, request, 1, 1);
     assertThatThrownBy(
             () ->
@@ -1278,6 +1285,15 @@ class TenantAuthorityProducerPostgresIntegrationTest {
       throw new IllegalStateException(
           "Concurrent tenant authority proof was interrupted", interrupted);
     }
+  }
+
+  private static PSQLException rootPostgresCause(Throwable failure) {
+    Throwable cause = failure;
+    while (cause.getCause() != null) {
+      cause = cause.getCause();
+    }
+    assertThat(cause).isInstanceOf(PSQLException.class);
+    return (PSQLException) cause;
   }
 
   private <T> T transaction(TransactionTemplate transaction, Supplier<T> operation) {
