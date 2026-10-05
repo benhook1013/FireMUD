@@ -12,8 +12,10 @@ import org.junit.jupiter.api.Test;
 class ApprovedLegacyTenantAssociationRepositoryTest {
   private final DSLContext dsl = mock(DSLContext.class);
   private final LegacyTenantSourceEvidence sources = mock(LegacyTenantSourceEvidence.class);
+  private final AccountAuthorityGenerationRepository authorityGenerations =
+      mock(AccountAuthorityGenerationRepository.class);
   private final ApprovedLegacyTenantAssociationRepository repository =
-      new ApprovedLegacyTenantAssociationRepository(dsl, sources, "proof");
+      new ApprovedLegacyTenantAssociationRepository(dsl, sources, "proof", authorityGenerations);
 
   @Test
   void mismatchedOrIncompleteOwnerReadNeverTouchesRetainedRows() {
@@ -32,7 +34,7 @@ class ApprovedLegacyTenantAssociationRepositoryTest {
     assertThatThrownBy(
             () -> repository.importApproved(41L, response().clearCanonicalTenantId().build()))
         .isInstanceOf(IllegalArgumentException.class);
-    verifyNoInteractions(dsl, sources);
+    verifyNoInteractions(dsl, sources, authorityGenerations);
   }
 
   private ResolveLegacyAccountTenantAssociationResponse.Builder response() {
