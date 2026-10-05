@@ -19,13 +19,14 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 @Repository
-@SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification = "Injected DSLContext is an internal Spring collaborator.")
 public class AccountRepository {
   private final DSLContext dsl;
   private final AccountAuthoritySourceEvidenceRepository sourceEvidence;
 
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification =
+          "Preserve the injected DSLContext precondition; Spring must proxy this non-final repository.")
   public AccountRepository(DSLContext dsl) {
     this(
         dsl,
@@ -36,6 +37,10 @@ public class AccountRepository {
   }
 
   @org.springframework.beans.factory.annotation.Autowired
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification =
+          "Preserve required injected collaborators; Spring must proxy this non-final repository.")
   public AccountRepository(
       DSLContext dsl, AccountAuthoritySourceEvidenceRepository sourceEvidence) {
     this.dsl = Objects.requireNonNull(dsl, "DSLContext is required");

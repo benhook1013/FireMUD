@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2;
 import net.firedevops.firemud.accountservice.entity.Account;
@@ -381,12 +382,14 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
     }
 
     private long count(String table, String keyColumn, Object value) {
-      return dsl.fetchOne("SELECT count(*) FROM " + table + " WHERE " + keyColumn + " = ?", value)
+      return Objects.requireNonNull(
+              dsl.fetchOne("SELECT count(*) FROM " + table + " WHERE " + keyColumn + " = ?", value))
           .get(0, Long.class);
     }
 
     private long countAll(String table) {
-      return dsl.fetchOne("SELECT count(*) FROM " + table).get(0, Long.class);
+      return Objects.requireNonNull(dsl.fetchOne("SELECT count(*) FROM " + table))
+          .get(0, Long.class);
     }
 
     private <T> T inTransaction(java.util.function.Supplier<T> callback) {

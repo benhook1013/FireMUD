@@ -50,9 +50,6 @@ import tools.jackson.databind.json.JsonMapper;
  * check, public JOIN entry point, cross-service commit gate, or Logging receiver receipt.
  */
 @Service
-@SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification = "Injected repositories are internal Account transaction collaborators.")
 public class AccountCanonicalFirstJoinTerminalCoordinator {
   private static final String JOINED_EVENT_TYPE = "ACCOUNT_JOINED_PUBLIC_PRODUCTION";
   private static final String ACCOUNT_PRODUCER = "account-service";
@@ -67,6 +64,11 @@ public class AccountCanonicalFirstJoinTerminalCoordinator {
   private final AccountAuditOutboxRepository auditOutboxRepository;
   private final AccountMembershipAuthorityEventProducer eventProducer;
 
+  @SuppressFBWarnings(
+      value = {"CT_CONSTRUCTOR_THROW", "EI_EXPOSE_REP2"},
+      justification =
+          "Keep injected transaction collaborators private and preserve their preconditions; "
+              + "Spring must proxy this non-final service.")
   public AccountCanonicalFirstJoinTerminalCoordinator(
       AccountRepository accountRepository,
       AccountJoinOperationRepository joinOperationRepository,
@@ -119,7 +121,7 @@ public class AccountCanonicalFirstJoinTerminalCoordinator {
     final Checkpoint checkpoint;
     if ("PENDING".equals(operation.status())) {
       VerifiedTenantProvenance provenance = operation.scopeEvidence().tenantProvenance();
-      if (operation.allowPublicJoin() != Boolean.TRUE
+      if (!Boolean.TRUE.equals(operation.allowPublicJoin())
           || !"AVAILABLE".equals(operation.entitlementAuthorityAvailability())
           || operation.entitlementVersion() == null
           || operation.entitlementVersion() <= 0L) {

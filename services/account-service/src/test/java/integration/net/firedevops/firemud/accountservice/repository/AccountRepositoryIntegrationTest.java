@@ -1629,35 +1629,45 @@ class AccountRepositoryIntegrationTest {
         .isEqualTo(profileBefore);
     assertThat(
             jsonRow(
-                "SELECT " + membershipProjection + " FROM "
+                "SELECT "
+                    + membershipProjection
+                    + " FROM "
                     + schema
                     + ".account_tenant_membership m WHERE account_id = ?",
                 firstAccountId))
         .isEqualTo(membershipBefore);
     assertThat(
             jsonRow(
-                "SELECT " + membershipProjection + " FROM "
+                "SELECT "
+                    + membershipProjection
+                    + " FROM "
                     + schema
                     + ".account_tenant_membership m WHERE account_id = ?",
                 secondAccountId))
         .isEqualTo(explicitMembershipBefore);
     assertThat(
             jsonRow(
-                "SELECT " + joinOperationProjection + " FROM "
+                "SELECT "
+                    + joinOperationProjection
+                    + " FROM "
                     + schema
                     + ".account_join_operations j WHERE request_id = ?",
                 pendingJoinRequestId))
         .isEqualTo(pendingJoinBefore);
     assertThat(
             jsonRow(
-                "SELECT " + connectScopeProjection + " FROM "
+                "SELECT "
+                    + connectScopeProjection
+                    + " FROM "
                     + schema
                     + ".account_connect_scope_records s WHERE scope_token_hash = ?",
                 scopeTokenHash))
         .isEqualTo(retainedConnectScopeBefore);
     assertThat(
             jsonRow(
-                "SELECT " + auditOutboxProjection + " FROM "
+                "SELECT "
+                    + auditOutboxProjection
+                    + " FROM "
                     + schema
                     + ".account_audit_outbox o WHERE audit_event_id = ?",
                 auditEventId))
@@ -1675,57 +1685,55 @@ class AccountRepositoryIntegrationTest {
       assertThat(retainedMembershipIdentity.get("tenant_uuid", UUID.class)).isNull();
       assertThat(retainedMembershipIdentity.get("tenant_provenance_kind", String.class))
           .isEqualTo("UNBRIDGED_RETAINED");
-      assertThat(retainedMembershipIdentity.get("tenant_source_operation_id", UUID.class))
-          .isNull();
-      assertThat(retainedMembershipIdentity.get("tenant_provenance_digest", String.class))
-          .isNull();
+      assertThat(retainedMembershipIdentity.get("tenant_source_operation_id", UUID.class)).isNull();
+      assertThat(retainedMembershipIdentity.get("tenant_provenance_digest", String.class)).isNull();
     }
     assertThat(
             dsl.resultQuery(
-                "SELECT lifecycle_state FROM "
-                    + schema
-                    + ".account_tenant_membership WHERE account_id = ?",
-                firstAccountId)
+                    "SELECT lifecycle_state FROM "
+                        + schema
+                        + ".account_tenant_membership WHERE account_id = ?",
+                    firstAccountId)
                 .fetchOne(0, String.class))
         .isEqualTo("LEGACY_UNVERIFIED");
     assertThat(
             dsl.resultQuery(
-                "SELECT gameplay_admission_allowed FROM "
-                    + schema
-                    + ".account_tenant_membership WHERE account_id = ?",
-                firstAccountId)
+                    "SELECT gameplay_admission_allowed FROM "
+                        + schema
+                        + ".account_tenant_membership WHERE account_id = ?",
+                    firstAccountId)
                 .fetchOne(0, Boolean.class))
         .isFalse();
     assertThat(
             dsl.resultQuery(
-                "SELECT authority_provenance FROM "
-                    + schema
-                    + ".account_tenant_membership WHERE account_id = ?",
-                firstAccountId)
+                    "SELECT authority_provenance FROM "
+                        + schema
+                        + ".account_tenant_membership WHERE account_id = ?",
+                    firstAccountId)
                 .fetchOne(0, String.class))
         .isEqualTo("LEGACY_UNVERIFIED");
     assertThat(
             dsl.resultQuery(
-                "SELECT lifecycle_state FROM "
-                    + schema
-                    + ".account_tenant_membership WHERE account_id = ?",
-                secondAccountId)
+                    "SELECT lifecycle_state FROM "
+                        + schema
+                        + ".account_tenant_membership WHERE account_id = ?",
+                    secondAccountId)
                 .fetchOne(0, String.class))
         .isEqualTo("ACTIVE");
     assertThat(
             dsl.resultQuery(
-                "SELECT gameplay_admission_allowed FROM "
-                    + schema
-                    + ".account_tenant_membership WHERE account_id = ?",
-                secondAccountId)
+                    "SELECT gameplay_admission_allowed FROM "
+                        + schema
+                        + ".account_tenant_membership WHERE account_id = ?",
+                    secondAccountId)
                 .fetchOne(0, Boolean.class))
         .isTrue();
     assertThat(
             dsl.resultQuery(
-                "SELECT authority_provenance FROM "
-                    + schema
-                    + ".account_tenant_membership WHERE account_id = ?",
-                secondAccountId)
+                    "SELECT authority_provenance FROM "
+                        + schema
+                        + ".account_tenant_membership WHERE account_id = ?",
+                    secondAccountId)
                 .fetchOne(0, String.class))
         .isEqualTo("EXPLICIT_JOIN");
 
@@ -1924,5 +1932,4 @@ class AccountRepositoryIntegrationTest {
   private String jsonRow(String query, Object... bindings) {
     return Objects.requireNonNull(dsl.fetchOne(query, bindings)).get(0, String.class);
   }
-
 }

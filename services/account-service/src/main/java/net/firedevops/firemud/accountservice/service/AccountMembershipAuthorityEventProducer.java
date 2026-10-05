@@ -48,9 +48,6 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * Composes one canonical fresh JOIN membership with its Account-owned event and pair checkpoint.
  */
 @Service
-@SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification = "Injected repositories are internal Account transaction collaborators.")
 public class AccountMembershipAuthorityEventProducer {
   private static final String ACCOUNT_JWT_ISSUER = "firemud-account-service";
   private static final int MAX_REQUEST_ID_LENGTH = 128;
@@ -65,6 +62,11 @@ public class AccountMembershipAuthorityEventProducer {
   private final AccountAuthorityOutboxRepository authorityOutboxRepository;
   private final AccountAuthoritySourceEvidenceRepository sourceEvidenceRepository;
 
+  @SuppressFBWarnings(
+      value = {"CT_CONSTRUCTOR_THROW", "EI_EXPOSE_REP2"},
+      justification =
+          "Keep injected transaction collaborators private and preserve their preconditions; "
+              + "Spring must proxy this non-final service.")
   public AccountMembershipAuthorityEventProducer(
       AccountJoinOperationRepository joinOperationRepository,
       AccountRepository accountRepository,

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -94,10 +95,11 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
                             account.getAccountUuid())))
         .isInstanceOf(RuntimeException.class);
     assertThat(
-            dsl.fetchOne(
-                    "SELECT generation FROM account_authority_generations "
-                        + "WHERE scope_kind = 'ACCOUNT' AND account_uuid = ?",
-                    account.getAccountUuid())
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT generation FROM account_authority_generations "
+                            + "WHERE scope_kind = 'ACCOUNT' AND account_uuid = ?",
+                        account.getAccountUuid()))
                 .get(0, Long.class))
         .isEqualTo(1L);
 
@@ -247,7 +249,9 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
         retained.getPasswordHash(),
         retained.getRole());
     UUID retainedUuid =
-        dsl.fetchOne("SELECT account_uuid FROM accounts WHERE username = ?", retained.getUsername())
+        Objects.requireNonNull(
+                dsl.fetchOne(
+                    "SELECT account_uuid FROM accounts WHERE username = ?", retained.getUsername()))
             .get("account_uuid", UUID.class);
     String retainedIssuer = "retained-issuer-" + UUID.randomUUID();
     assertThatThrownBy(
@@ -263,10 +267,11 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
                     }))
         .isInstanceOf(IllegalStateException.class);
     assertThat(
-            dsl.fetchOne(
-                    "SELECT count(*) FROM account_authority_source_records "
-                        + "WHERE scope_kind = 'ISSUER' AND issuer_id = ?",
-                    retainedIssuer)
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT count(*) FROM account_authority_source_records "
+                            + "WHERE scope_kind = 'ISSUER' AND issuer_id = ?",
+                        retainedIssuer))
                 .get(0, Long.class))
         .isZero();
 
@@ -289,10 +294,11 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
                     }))
         .isInstanceOf(IllegalStateException.class);
     assertThat(
-            dsl.fetchOne(
-                    "SELECT count(*) FROM account_authority_source_records "
-                        + "WHERE scope_kind = 'ACCOUNT' AND account_uuid = ?",
-                    retainedUuid)
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT count(*) FROM account_authority_source_records "
+                            + "WHERE scope_kind = 'ACCOUNT' AND account_uuid = ?",
+                        retainedUuid))
                 .get(0, Long.class))
         .isZero();
 
@@ -355,7 +361,8 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
               return transaction.execute(
                   status -> {
                     snapshotBackendPid.complete(
-                        dsl.fetchOne("SELECT pg_backend_pid()").get(0, Integer.class));
+                        Objects.requireNonNull(dsl.fetchOne("SELECT pg_backend_pid()"))
+                            .get(0, Integer.class));
                     return sources.readCurrentIssuerAccountSources(
                         ISSUER, account.getAccountUuid());
                   });

@@ -38,9 +38,6 @@ import org.springframework.transaction.annotation.Transactional;
  * empty. This class never enrolls an existing Account or repairs a missing baseline.
  */
 @Repository
-@SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification = "Injected jOOQ and Account authority repositories are internal collaborators.")
 public class AccountAuthoritySourceEvidenceRepository {
   private static final String SOURCE_TABLE = "account_authority_source_records";
   private static final String STREAM_PREFIX =
@@ -51,6 +48,10 @@ public class AccountAuthoritySourceEvidenceRepository {
   private final AccountAuthorityGenerationRepository generations;
   private final AccountAuthorityOutboxRepository outbox;
 
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification =
+          "Preserve required injected collaborators; Spring must proxy this non-final repository.")
   public AccountAuthoritySourceEvidenceRepository(
       DSLContext dsl,
       AccountAuthorityGenerationRepository generations,

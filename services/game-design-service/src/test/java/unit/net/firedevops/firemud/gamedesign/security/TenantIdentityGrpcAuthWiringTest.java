@@ -71,7 +71,7 @@ class TenantIdentityGrpcAuthWiringTest {
   }
 
   @Test
-  void allowlistedNoTokenReadStillRequiresExactAccountPeerBeforeOwnerRead() {
+  void allowlistedNoTokenReadStillRequiresExactOwnerPeerBeforeOwnerRead() {
     withConfiguredInterceptor(
         interceptor -> {
           GameTenantCreationRepository repository = mock(GameTenantCreationRepository.class);
@@ -87,16 +87,34 @@ class TenantIdentityGrpcAuthWiringTest {
           assertThat(account.handlerDispatched()).isTrue();
           verify(repository).read(REQUEST_ID, "test");
 
-          GameTenantCreationRepository wrongPeerRepository =
+          GameTenantCreationRepository gameSessionRepository =
               mock(GameTenantCreationRepository.class);
-          TenantIdentityGrpcService wrongPeerService =
-              new TenantIdentityGrpcService(wrongPeerRepository, "test");
-          DispatchResult gameSession = dispatch(interceptor, wrongPeerService, GAME_SESSION_URI);
-          assertThat(gameSession.observer().failure).isEqualTo(Status.Code.PERMISSION_DENIED);
-          assertThat(gameSession.observer().response).isNull();
-          assertThat(gameSession.observer().completed).isFalse();
+          TenantIdentityGrpcService gameSessionService =
+              new TenantIdentityGrpcService(gameSessionRepository, "test");
+          when(gameSessionRepository.read(REQUEST_ID, "test")).thenReturn(Optional.of(evidence));
+
+          DispatchResult gameSession = dispatch(interceptor, gameSessionService, GAME_SESSION_URI);
+          assertThat(gameSession.observer().failure).isNull();
+          assertThat(gameSession.observer().completed).isTrue();
+          assertThat(gameSession.observer().response.getEvidenceDigest())
+              .isEqualTo(evidence.evidenceDigest());
           assertThat(gameSession.handlerDispatched()).isTrue();
-          verifyNoInteractions(wrongPeerRepository);
+          verify(gameSessionRepository).read(REQUEST_ID, "test");
+
+          GameTenantCreationRepository unauthorizedRepository =
+              mock(GameTenantCreationRepository.class);
+          TenantIdentityGrpcService unauthorizedService =
+              new TenantIdentityGrpcService(unauthorizedRepository, "test");
+          DispatchResult unauthorized =
+              dispatch(
+                  interceptor,
+                  unauthorizedService,
+                  "spiffe://firemud/ns/test/sa/entity-management-service");
+          assertThat(unauthorized.observer().failure).isEqualTo(Status.Code.PERMISSION_DENIED);
+          assertThat(unauthorized.observer().response).isNull();
+          assertThat(unauthorized.observer().completed).isFalse();
+          assertThat(unauthorized.handlerDispatched()).isTrue();
+          verifyNoInteractions(unauthorizedRepository);
         });
   }
 

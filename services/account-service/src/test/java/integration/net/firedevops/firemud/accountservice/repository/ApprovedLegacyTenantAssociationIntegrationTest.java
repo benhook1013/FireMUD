@@ -89,7 +89,7 @@ class ApprovedLegacyTenantAssociationIntegrationTest {
                     dsl.fetchOne(
                         "SELECT COUNT(*) FROM information_schema.columns "
                             + "WHERE table_name = 'account_approved_legacy_tenant_associations' "
-                        + "AND column_name IN ('account_evidence_digest', 'manifest_digest')"))
+                            + "AND column_name IN ('account_evidence_digest', 'manifest_digest')"))
                 .get(0, Long.class))
         .isZero();
 
