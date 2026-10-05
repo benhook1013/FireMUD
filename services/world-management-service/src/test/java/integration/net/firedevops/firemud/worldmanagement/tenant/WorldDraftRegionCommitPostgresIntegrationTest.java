@@ -46,16 +46,20 @@ import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
+import org.springframework.aop.framework.ProxyFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.SingleConnectionDataSource;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource;
+import org.springframework.transaction.interceptor.TransactionInterceptor;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.GenericContainer;
@@ -550,14 +554,32 @@ class WorldDraftRegionCommitPostgresIntegrationTest {
           .migrate();
       assertThat(retainedRows(retained, scopes.keySet().stream().toList())).isEqualTo(before);
       SingleConnectionDataSource dataSource = new SingleConnectionDataSource(connection, true);
+      DataSourceTransactionManager retainedManager = new DataSourceTransactionManager(dataSource);
+      DriverManagerDataSource committedReadDataSource =
+          new DriverManagerDataSource(
+              postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+      committedReadDataSource.setSchema(schema);
+      // Match the normal repository proxy's NOT_SUPPORTED read boundary. A separate connection
+      // reads this exact schema's committed intake while the owner transaction is suspended.
+      TransactionInterceptor readTransactions = new TransactionInterceptor();
+      readTransactions.setTransactionManager(retainedManager);
+      readTransactions.setTransactionAttributeSource(new AnnotationTransactionAttributeSource());
+      ProxyFactory intakeProxy =
+          new ProxyFactory(
+              new WorldAuthoredSourceIntakeRepository(
+                  DSL.using(committedReadDataSource, SQLDialect.POSTGRES)));
+      intakeProxy.setProxyTargetClass(true);
+      intakeProxy.addAdvice(readTransactions);
       WorldAuthoredSourceIntakeRepository retainedIntake =
-          new WorldAuthoredSourceIntakeRepository(retained);
+          (WorldAuthoredSourceIntakeRepository) intakeProxy.getProxy();
+      assertThat(retainedIntake.read(NAMESPACE, f.intake().intakeRequestId()).orElseThrow())
+          .isEqualTo(f.intake());
       WorldDesignPublicationFenceRepository retainedFence =
           new WorldDesignPublicationFenceRepository(retained, retainedIntake);
       WorldDraftRegionCommitService deniedFrozen =
           new WorldDraftRegionCommitService(
               new WorldDraftRegionCommitRepository(retained, retainedFence, mapper),
-              new DataSourceTransactionManager(dataSource),
+              retainedManager,
               plan -> {});
       assertThatThrownBy(
               () -> deniedFrozen.store(plan(f, List.of(f.first()), 1, "must-remain-frozen")))

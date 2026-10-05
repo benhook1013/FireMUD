@@ -4,7 +4,6 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
-import java.sql.SQLException;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -26,7 +25,6 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import org.jooq.DSLContext;
 import org.jooq.Record;
-import org.jooq.exception.DataAccessException;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Isolation;
@@ -77,37 +75,29 @@ public class DraftCommitCoordinatorRepository {
       return snapshot(existing);
     }
 
-    int inserted;
-    try {
-      inserted =
-          dsl.execute(
-              "INSERT INTO "
-                  + COMMIT_TABLE
-                  + " (canonical_tenant_id, canonical_version_id, game_design_version_row_id, "
-                  + "game_design_version_tenant_key, source_game_row_id, source_game_tenant_key, "
-                  + "source_provenance_kind, request_id, commit_id, base_commit_id, input_digest, "
-                  + "binding_json, workflow_state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'QUEUED') "
-                  + "ON CONFLICT (canonical_tenant_id, canonical_version_id, request_id) DO NOTHING",
-              binding.target().canonicalTenantId(),
-              binding.target().canonicalVersionId(),
-              binding.target().gameDesignVersionRowId(),
-              binding.target().gameDesignVersionTenantKey(),
-              binding.target().sourceGameRowId(),
-              binding.target().sourceGameTenantKey(),
-              binding.target().sourceProvenanceKind(),
-              binding.requestId(),
-              binding.commitId(),
-              binding.baseCommitId(),
-              binding.digest(),
-              binding.canonicalJson());
-    } catch (DataAccessException exception) {
-      if (isUniqueConstraintViolation(exception)) {
-        throw new DraftCommitIdentityConflictException(
-            "Draft commit request or commit identity is already bound to different input",
-            exception);
-      }
-      throw exception;
-    }
+    int inserted =
+        dsl.execute(
+            "INSERT INTO "
+                + COMMIT_TABLE
+                + " (canonical_tenant_id, canonical_version_id, game_design_version_row_id, "
+                + "game_design_version_tenant_key, source_game_row_id, source_game_tenant_key, "
+                + "source_provenance_kind, request_id, commit_id, base_commit_id, input_digest, "
+                + "binding_json, workflow_state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'QUEUED') "
+                // Request and commit are independent immutable identities; suppress either unique
+                // collision in PostgreSQL so the transaction remains readable for exact readback.
+                + "ON CONFLICT DO NOTHING",
+            binding.target().canonicalTenantId(),
+            binding.target().canonicalVersionId(),
+            binding.target().gameDesignVersionRowId(),
+            binding.target().gameDesignVersionTenantKey(),
+            binding.target().sourceGameRowId(),
+            binding.target().sourceGameTenantKey(),
+            binding.target().sourceProvenanceKind(),
+            binding.requestId(),
+            binding.commitId(),
+            binding.baseCommitId(),
+            binding.digest(),
+            binding.canonicalJson());
 
     if (inserted == 0) {
       CommitRecord concurrent = findCommit(binding, true);
@@ -1221,18 +1211,6 @@ public class DraftCommitCoordinatorRepository {
 
   private static OffsetDateTime now() {
     return OffsetDateTime.now(ZoneOffset.UTC);
-  }
-
-  private static boolean isUniqueConstraintViolation(Throwable failure) {
-    Throwable current = failure;
-    while (current != null) {
-      if (current instanceof SQLException sqlException
-          && "23505".equals(sqlException.getSQLState())) {
-        return true;
-      }
-      current = current.getCause();
-    }
-    return false;
   }
 
   private String canonicalJson(Object value) {

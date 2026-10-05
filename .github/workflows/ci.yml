@@ -2150,6 +2150,8 @@ jobs:
             --require-case 'net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepositoryIntegrationTest#exactClaimReplayRetainsFullBindingAndChangedRetryConflictsWithoutRewrite()' \
             --require-case 'net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepositoryIntegrationTest#pendingBindingAndOwnerRowsRollBackTogether()' \
             --require-case 'net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepositoryIntegrationTest#concurrentExactClaimsConvergeOnOneImmutableBinding()' \
+            --require-case 'net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepositoryIntegrationTest#concurrentDifferentRequestsCannotClaimTheSameCommitIdentity()' \
+            --require-case 'net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepositoryIntegrationTest#concurrentChangedInputForOneRequestIsRejectedWithoutExtraOwnerRows()' \
             --require-case 'net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepositoryIntegrationTest#partialUnknownOwnerResultKeepsApplicationSlotAndCannotCreateVisibilityFence()' \
             --require-case 'net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepositoryIntegrationTest#exactAppliedResultReplayIsImmutableBeforeAndAfterSlotRelease()' \
             --require-case 'net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepositoryIntegrationTest#mixedFinalAbortPreservesPriorFenceAndOwnerEvidenceAndFencesDelayedAttempts()' \

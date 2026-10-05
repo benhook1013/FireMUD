@@ -161,6 +161,97 @@ class DraftCommitCoordinatorRepositoryIntegrationTest {
   }
 
   @Test
+  void concurrentDifferentRequestsCannotClaimTheSameCommitIdentity() throws Exception {
+    TargetProof target = fixture.newTarget();
+    UUID commitId = UUID.randomUUID();
+    var firstBinding = binding(target, UUID.randomUUID(), commitId);
+    var secondBinding = binding(target, UUID.randomUUID(), commitId);
+
+    ConcurrentClaims claims = concurrentlyClaim(firstBinding, secondBinding);
+    assertExactlyOneClaimSucceeded(claims);
+    DraftCommitBinding winningBinding =
+        claims.left().snapshot() == null ? secondBinding : firstBinding;
+    DraftCommitBinding rejectedBinding =
+        claims.left().snapshot() == null ? firstBinding : secondBinding;
+
+    CommitSnapshot persisted =
+        fixture.coordinator().read(target, winningBinding.requestId()).orElseThrow();
+    assertThat(persisted.binding().canonicalBytes())
+        .containsExactly(winningBinding.canonicalBytes());
+    assertThat(persisted.ownerStates())
+        .containsOnlyKeys(Owner.WORLD_MANAGEMENT, Owner.ENTITY_MANAGEMENT);
+    assertThat(fixture.coordinator().read(target, rejectedBinding.requestId())).isEmpty();
+    assertThat(
+            fixture
+                .dsl()
+                .fetchCount(
+                    DSL.table(DSL.name("game_design_draft_commit")),
+                    DSL.field(DSL.name("commit_id"), UUID.class).eq(commitId)))
+        .isEqualTo(1);
+    assertThat(
+            fixture
+                .dsl()
+                .fetchCount(
+                    DSL.table(DSL.name("game_design_draft_commit_owner_result")),
+                    DSL.field(DSL.name("request_id"), UUID.class).eq(winningBinding.requestId())))
+        .isEqualTo(winningBinding.requiredOwners().size());
+    assertThat(
+            fixture
+                .dsl()
+                .fetchCount(
+                    DSL.table(DSL.name("game_design_draft_commit_owner_result")),
+                    DSL.field(DSL.name("request_id"), UUID.class).eq(rejectedBinding.requestId())))
+        .isZero();
+  }
+
+  @Test
+  void concurrentChangedInputForOneRequestIsRejectedWithoutExtraOwnerRows() throws Exception {
+    TargetProof target = fixture.newTarget();
+    UUID requestId = UUID.randomUUID();
+    UUID commitId = UUID.randomUUID();
+    var firstBinding = binding(target, requestId, commitId);
+    var changedBinding =
+        DraftCommitBinding.create(
+            firstBinding.target(),
+            firstBinding.requestId(),
+            firstBinding.commitId(),
+            firstBinding.baseCommitId(),
+            List.of(
+                new RevisionPayload(
+                    "0",
+                    firstBinding.revisions().getFirst().revisionId(),
+                    Owner.WORLD_MANAGEMENT,
+                    "{\"room\":\"changed concurrent input\"}"),
+                firstBinding.revisions().get(1)),
+            firstBinding.affectedUnits());
+
+    ConcurrentClaims claims = concurrentlyClaim(firstBinding, changedBinding);
+    assertExactlyOneClaimSucceeded(claims);
+    DraftCommitBinding winningBinding =
+        claims.left().snapshot() == null ? changedBinding : firstBinding;
+
+    CommitSnapshot persisted = fixture.coordinator().read(target, requestId).orElseThrow();
+    assertThat(persisted.binding().canonicalBytes())
+        .containsExactly(winningBinding.canonicalBytes());
+    assertThat(persisted.ownerStates())
+        .containsOnlyKeys(Owner.WORLD_MANAGEMENT, Owner.ENTITY_MANAGEMENT);
+    assertThat(
+            fixture
+                .dsl()
+                .fetchCount(
+                    DSL.table(DSL.name("game_design_draft_commit")),
+                    DSL.field(DSL.name("request_id"), UUID.class).eq(requestId)))
+        .isEqualTo(1);
+    assertThat(
+            fixture
+                .dsl()
+                .fetchCount(
+                    DSL.table(DSL.name("game_design_draft_commit_owner_result")),
+                    DSL.field(DSL.name("request_id"), UUID.class).eq(requestId)))
+        .isEqualTo(winningBinding.requiredOwners().size());
+  }
+
+  @Test
   void partialUnknownOwnerResultKeepsApplicationSlotAndCannotCreateVisibilityFence() {
     TargetProof target = fixture.newTarget();
     var binding = binding(target, UUID.randomUUID(), UUID.randomUUID());
@@ -828,6 +919,51 @@ class DraftCommitCoordinatorRepositoryIntegrationTest {
     return fixture.ownerTransaction().execute(status -> work.get());
   }
 
+  private static ConcurrentClaims concurrentlyClaim(
+      DraftCommitBinding leftBinding, DraftCommitBinding rightBinding) throws Exception {
+    CountDownLatch ready = new CountDownLatch(2);
+    CountDownLatch start = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      Future<ClaimAttempt> left =
+          executor.submit(
+              () -> {
+                ready.countDown();
+                await(start);
+                return claimAttempt(leftBinding);
+              });
+      Future<ClaimAttempt> right =
+          executor.submit(
+              () -> {
+                ready.countDown();
+                await(start);
+                return claimAttempt(rightBinding);
+              });
+      await(ready);
+      start.countDown();
+      return new ConcurrentClaims(left.get(20, TimeUnit.SECONDS), right.get(20, TimeUnit.SECONDS));
+    } finally {
+      executor.shutdownNow();
+    }
+  }
+
+  private static ClaimAttempt claimAttempt(DraftCommitBinding binding) {
+    try {
+      return new ClaimAttempt(inTransaction(() -> fixture.coordinator().claim(binding)), null);
+    } catch (RuntimeException exception) {
+      return new ClaimAttempt(null, exception);
+    }
+  }
+
+  private static void assertExactlyOneClaimSucceeded(ConcurrentClaims claims) {
+    assertThat(claims.left().snapshot() == null).isNotEqualTo(claims.right().snapshot() == null);
+    ClaimAttempt rejected = claims.left().snapshot() == null ? claims.left() : claims.right();
+    ClaimAttempt succeeded = claims.left().snapshot() == null ? claims.right() : claims.left();
+    assertThat(rejected.failure())
+        .isInstanceOf(DraftCommitCoordinatorRepository.DraftCommitIdentityConflictException.class);
+    assertThat(succeeded.failure()).isNull();
+  }
+
   private static void await(CountDownLatch latch) {
     try {
       if (!latch.await(10, TimeUnit.SECONDS)) {
@@ -839,6 +975,10 @@ class DraftCommitCoordinatorRepositoryIntegrationTest {
           "Interrupted while coordinating concurrent Draft claims", exception);
     }
   }
+
+  private record ClaimAttempt(CommitSnapshot snapshot, RuntimeException failure) {}
+
+  private record ConcurrentClaims(ClaimAttempt left, ClaimAttempt right) {}
 
   private record Fixture(
       DSLContext dsl,
