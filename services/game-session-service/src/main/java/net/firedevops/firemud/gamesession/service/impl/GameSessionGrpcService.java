@@ -442,7 +442,7 @@ public final class GameSessionGrpcService
       long viewerAccountId =
           ControlPlaneRequestParser.parsePositiveLong(
               request.getViewerAccountId(), "viewerAccountId");
-      requireTenantOrCurrentAccountAccess(tenantId, viewerAccountId);
+      requireNumericAccountPresenceAccess(tenantId);
       if (request.getAccountIdsCount() > 100) {
         throw new IllegalArgumentException("accountIds must contain at most 100 entries");
       }
@@ -862,11 +862,11 @@ public final class GameSessionGrpcService
     throw new AuthorizationException("Tenant access required");
   }
 
-  private void requireTenantOrCurrentAccountAccess(long tenantId, long accountId) {
-    if (SessionContext.hasTenantAccess(tenantId) || isCurrentAccount(accountId)) {
+  private void requireNumericAccountPresenceAccess(long tenantId) {
+    if (SessionContext.hasTenantAccess(tenantId)) {
       return;
     }
-    throw new AuthorizationException("Account access required");
+    throw new AuthorizationException("Numeric account self-service is unavailable");
   }
 
   private void requireInstanceAccess(long sessionId) {
@@ -896,10 +896,6 @@ public final class GameSessionGrpcService
     return AccountIds.isCanonicalNonNilUuid(ownerAccountId)
         && AccountIds.isCanonicalNonNilUuid(currentAccountId)
         && ownerAccountId.equals(currentAccountId);
-  }
-
-  private boolean isCurrentAccount(long ownerAccountId) {
-    return SessionContext.isCurrentAccount(ownerAccountId);
   }
 
   private net.firedevops.firemud.gamesession.v1.GameplayRealm toGameplayRealm(

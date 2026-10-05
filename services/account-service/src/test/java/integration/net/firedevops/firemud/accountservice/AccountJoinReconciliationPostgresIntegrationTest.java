@@ -1,6 +1,7 @@
 package net.firedevops.firemud.accountservice;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 
 import java.nio.charset.StandardCharsets;
@@ -74,7 +75,7 @@ class AccountJoinReconciliationPostgresIntegrationTest {
   private static final UUID REALM_ID = UUID.fromString("a825f7ef-0ea3-4e8c-bf7c-a20242b4c931");
   private static final String WORLD_SLUG = "join-reconciliation-world";
   private static final String REALM_SLUG = "production";
-  private static final String NAMESPACE_ID = "join-reconciliation-namespace";
+  private static final String NAMESPACE_ID = "9f1c6889-9e41-4d5d-86fb-8c75fc401a31";
   private static final long GAME_INSTANCE_ID = 73L;
   private static final long CATALOG_REVISION = 29L;
   private static final long POINTER_VERSION = 11L;
@@ -164,7 +165,7 @@ class AccountJoinReconciliationPostgresIntegrationTest {
     Instant now = scopeExpiry.plusSeconds(1);
     reconciliationService.reconcileDueOperations(now);
 
-    assertOperation(fixture, "COMMITTED", "JOINED", 2, null);
+    assertOperation(fixture, "COMMITTED", "JOINED", 2, "PRIOR_RECONCILIATION_ATTEMPT");
     assertThat(
             dsl.resultQuery(
                     "SELECT COUNT(*) FROM account_join_operations WHERE request_id = ? AND status = 'COMMITTED' AND outcome = 'JOINED' AND membership_id = ? AND outcome_membership_version = 2 AND outcome_membership_authority_generation = 1",
@@ -261,14 +262,43 @@ class AccountJoinReconciliationPostgresIntegrationTest {
   }
 
   @Test
-  void absentScopeAndExpiredScopeWithoutMembershipProofRemainPendingWithDiagnostics() {
-    JoinFixture absentScope = committedEvidencePendingFixture();
-    dsl.execute(
-        "DELETE FROM account_connect_scope_records WHERE scope_token_hash = ?",
-        AccountJoinDigest.tokenHash(absentScope.connectScopeId()));
-    assertUnresolvedAtThreshold(absentScope, "JOIN_SCOPE_EVIDENCE_ABSENT");
-    assertThat(countMemberships(absentScope)).isEqualTo(1L);
-    assertThat(countJoinOutbox(absentScope)).isEqualTo(1L);
+  void retainedScopeDeletionAndExpiredScopeWithoutMembershipProofRemainPendingWithDiagnostics() {
+    JoinFixture retainedScope = committedEvidencePendingFixture();
+    String scopeTokenHash = AccountJoinDigest.tokenHash(retainedScope.connectScopeId());
+    var originalScope =
+        dsl.resultQuery(
+                "SELECT * FROM account_connect_scope_records WHERE scope_token_hash = ?",
+                scopeTokenHash)
+            .fetchOne();
+    var originalOperation =
+        dsl.resultQuery(
+                "SELECT * FROM account_join_operations WHERE request_id = ?",
+                retainedScope.requestId())
+            .fetchOne();
+    assertThat(originalScope).isNotNull();
+    assertThat(originalOperation).isNotNull();
+    assertThat(originalOperation.get("status", String.class)).isEqualTo("PENDING");
+
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "DELETE FROM account_connect_scope_records WHERE scope_token_hash = ?",
+                    scopeTokenHash))
+        .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT * FROM account_connect_scope_records WHERE scope_token_hash = ?",
+                    scopeTokenHash)
+                .fetchOne())
+        .isEqualTo(originalScope);
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT * FROM account_join_operations WHERE request_id = ?",
+                    retainedScope.requestId())
+                .fetchOne())
+        .isEqualTo(originalOperation);
+    assertThat(countMemberships(retainedScope)).isEqualTo(1L);
+    assertThat(countJoinOutbox(retainedScope)).isEqualTo(1L);
 
     JoinFixture expiredWithoutMembership = committedEvidencePendingFixture();
     deleteMembershipEvidence(expiredWithoutMembership);
@@ -453,7 +483,7 @@ class AccountJoinReconciliationPostgresIntegrationTest {
       first.get(30, TimeUnit.SECONDS);
       second.get(30, TimeUnit.SECONDS);
 
-      assertOperation(fixture, "COMMITTED", "JOINED", 2, null);
+      assertOperation(fixture, "COMMITTED", "JOINED", 2, "PRIOR_RECONCILIATION_ATTEMPT");
       assertMembershipAndAuditOnce(fixture, originalMembershipId(fixture));
     } finally {
       executor.shutdownNow();
@@ -484,7 +514,7 @@ class AccountJoinReconciliationPostgresIntegrationTest {
     assertThat(updated).isEqualTo(1);
     int auditUpdated =
         dsl.execute(
-            "UPDATE account_audit_outbox SET delivery_status = 'COMMITTED', receiver_audit_projection_version = 1, receiver_receipt_id = 'verified-receipt', receiver_log_event_id = 'verified-projection' WHERE audit_event_id = ? AND scope = 'tenant' AND tenant_id = ? AND producer_service = 'account-service' AND event_type = 'ACCOUNT_JOINED_PUBLIC_PRODUCTION'",
+            "UPDATE account_audit_outbox SET delivery_status = 'COMMITTED', next_attempt_at = NULL, receiver_audit_projection_version = 1, receiver_receipt_id = 'verified-receipt', receiver_log_event_id = 'verified-projection' WHERE audit_event_id = ? AND scope = 'tenant' AND tenant_id = ? AND producer_service = 'account-service' AND event_type = 'ACCOUNT_JOINED_PUBLIC_PRODUCTION'",
             joinAuditEventId(fixture.requestId()),
             fixture.tenantId());
     assertThat(auditUpdated).isEqualTo(1);

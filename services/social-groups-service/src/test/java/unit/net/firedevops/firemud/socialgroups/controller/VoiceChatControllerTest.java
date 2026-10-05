@@ -35,6 +35,7 @@ import org.springframework.test.web.servlet.MockMvc;
 })
 @WithFiremudHttpAuthTestProperties
 class VoiceChatControllerTest {
+  private static final String ACCOUNT_UUID = "c41744c9-285e-4ed0-9fb4-0f0acb7a0123";
 
   @Autowired private MockMvc mockMvc;
   @Autowired private JwtUtil jwtUtil;
@@ -45,7 +46,7 @@ class VoiceChatControllerTest {
   @Test
   void createTokenReturnsToken() throws Exception {
     when(service.createToken(any())).thenReturn(new VoiceTokenDto("abc", Instant.now()));
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token = accountToken();
     String body = "{\"tenantId\":1,\"accountId\":2,\"channelId\":\"guild-1\"}";
 
     mockMvc
@@ -60,7 +61,7 @@ class VoiceChatControllerTest {
 
   @Test
   void createTokenRejectsZeroAccountIdBeforeAccessCheckAndDispatch() throws Exception {
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token = accountToken();
     String body = "{\"tenantId\":1,\"accountId\":0,\"channelId\":\"guild-1\"}";
 
     mockMvc
@@ -75,5 +76,10 @@ class VoiceChatControllerTest {
         .andExpect(jsonPath("$.error.message").value("accountId must be positive"));
 
     verifyNoInteractions(service, socialAccessGuard);
+  }
+
+  private String accountToken() {
+    return jwtUtil.generateToken(
+        ACCOUNT_UUID, Map.of("accountId", ACCOUNT_UUID, "globalRoles", List.of()));
   }
 }

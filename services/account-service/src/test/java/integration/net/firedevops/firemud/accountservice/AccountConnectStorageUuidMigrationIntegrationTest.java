@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -328,7 +329,7 @@ class AccountConnectStorageUuidMigrationIntegrationTest {
             "INSERT INTO "
                 + table(database, "accounts")
                 + " (username, email, password_hash) VALUES (?, ?, ?) RETURNING id")) {
-      statement.setString(1, "migration-user-" + UUID.randomUUID());
+      statement.setString(1, "migration-" + UUID.randomUUID());
       statement.setString(2, UUID.randomUUID() + "@example.test");
       statement.setString(3, "test-hash");
       try (ResultSet result = statement.executeQuery()) {
@@ -756,6 +757,7 @@ class AccountConnectStorageUuidMigrationIntegrationTest {
             .schemas(database.schema())
             .defaultSchema(database.schema())
             .table(HISTORY_TABLE)
+            .placeholders(Map.of("serviceSchema", database.schema()))
             .locations("classpath:db/migration");
     if (target != null) {
       configuration.target(MigrationVersion.fromVersion(target));
@@ -765,9 +767,12 @@ class AccountConnectStorageUuidMigrationIntegrationTest {
 
   private static Database newDatabase() throws SQLException {
     String schema = "account_connect_uuid_" + UUID.randomUUID().toString().replace("-", "");
+    String separator = postgres.getJdbcUrl().contains("?") ? "&" : "?";
     DriverManagerDataSource dataSource =
         new DriverManagerDataSource(
-            postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+            postgres.getJdbcUrl() + separator + "currentSchema=" + schema,
+            postgres.getUsername(),
+            postgres.getPassword());
     dataSource.setDriverClassName("org.postgresql.Driver");
     try (Connection connection = dataSource.getConnection();
         Statement statement = connection.createStatement()) {

@@ -1,5 +1,6 @@
 package net.firedevops.firemud.loggingadmin.controller;
 
+import static net.firedevops.firemud.loggingadmin.AccountJwtTestTokens.accountToken;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -79,7 +80,7 @@ class AdmissionPointerControllerTest {
                     "req-1",
                     "pvu-1",
                     Instant.parse("2026-04-18T00:00:00Z"))));
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(get("/admission-pointers").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
@@ -100,7 +101,7 @@ class AdmissionPointerControllerTest {
             new ResponseStatusException(
                 org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE,
                 "current pointer authority unavailable"));
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(get("/admission-pointers").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
@@ -181,7 +182,7 @@ class AdmissionPointerControllerTest {
                     "pvu-1",
                     Instant.parse("2026-04-18T00:00:00Z"))));
     SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -204,7 +205,7 @@ class AdmissionPointerControllerTest {
                 org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE,
                 "admission-pointer audit authority unavailable"));
     SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -220,7 +221,7 @@ class AdmissionPointerControllerTest {
   void auditRejectsCrossTenantScopedAdmin() throws Exception {
     SessionContext.setContext("user", List.of(), Map.of("8", List.of("tenantAdmin")));
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
+        accountToken(jwtUtil, Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(
@@ -232,7 +233,7 @@ class AdmissionPointerControllerTest {
   @Test
   void auditRejectsMalformedTenantIdBeforeDispatch() throws Exception {
     SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -249,7 +250,7 @@ class AdmissionPointerControllerTest {
   void getRuntimeStateReturnsCanonicalRuntimeState() throws Exception {
     when(admissionPointerService.getRuntimeState(2L, 7L)).thenReturn(runtimeStateDto());
     SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -270,7 +271,7 @@ class AdmissionPointerControllerTest {
                 org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE,
                 "prepared version-upgrade proof authority unavailable"));
     SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -287,7 +288,7 @@ class AdmissionPointerControllerTest {
   void getRuntimeStateRejectsCrossTenantScopedAdmin() throws Exception {
     SessionContext.setContext("user", List.of(), Map.of("8", List.of("tenantAdmin")));
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
+        accountToken(jwtUtil, Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(
@@ -299,7 +300,7 @@ class AdmissionPointerControllerTest {
   @Test
   void getRuntimeStateRejectsZeroGameInstanceIdBeforeDispatch() throws Exception {
     SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -316,7 +317,7 @@ class AdmissionPointerControllerTest {
   void getPreparedVersionUpgradeRejectsCrossTenantScopedAdmin() throws Exception {
     SessionContext.setContext("user", List.of(), Map.of("8", List.of("tenantAdmin")));
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
+        accountToken(jwtUtil, Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(
@@ -330,7 +331,7 @@ class AdmissionPointerControllerTest {
     when(admissionPointerService.validateInstanceCutoverCompatibility(2L, 7L, 9L))
         .thenReturn(cutoverCompatibility());
     SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -346,7 +347,7 @@ class AdmissionPointerControllerTest {
   void validateInstanceCutoverCompatibilityRejectsCrossTenantScopedAdmin() throws Exception {
     SessionContext.setContext("user", List.of(), Map.of("8", List.of("tenantAdmin")));
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
+        accountToken(jwtUtil, Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(
@@ -359,7 +360,7 @@ class AdmissionPointerControllerTest {
   void validateInstanceCutoverCompatibilityRejectsMalformedTargetVersionIdBeforeDispatch()
       throws Exception {
     SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(

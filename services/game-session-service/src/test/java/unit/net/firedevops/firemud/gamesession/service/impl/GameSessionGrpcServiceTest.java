@@ -248,7 +248,7 @@ class GameSessionGrpcServiceTest {
   }
 
   @Test
-  void queryAccountPresenceReturnsMappedSnapshots() {
+  void queryAccountPresenceTenantRoleReturnsMappedSnapshots() {
     PingService pingService = Mockito.mock(PingService.class);
     GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
     FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
@@ -259,7 +259,7 @@ class GameSessionGrpcServiceTest {
     TickService tickService = Mockito.mock(TickService.class);
     IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    SessionContext.setContext("42", List.of(), Map.of());
+    SessionContext.setContext(OWNER_ACCOUNT_UUID, List.of(), Map.of("1", List.of("tenantAdmin")));
     Mockito.when(accountPresenceQueryService.queryAccountPresence(1L, 42L, List.of(7L)))
         .thenReturn(
             List.of(
@@ -332,6 +332,58 @@ class GameSessionGrpcServiceTest {
   }
 
   @Test
+  void queryAccountPresenceDeniesNumericSelfServiceForCanonicalAccountSubject() {
+    PingService pingService = Mockito.mock(PingService.class);
+    GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
+    FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
+    TextCommandInterpreter textCommandInterpreter = Mockito.mock(TextCommandInterpreter.class);
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    AccountPresenceQueryService accountPresenceQueryService =
+        Mockito.mock(AccountPresenceQueryService.class);
+    TickService tickService = Mockito.mock(TickService.class);
+    IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    SessionContext.setContext(OWNER_ACCOUNT_UUID, List.of(), Map.of());
+    GameSessionGrpcService service =
+        newService(
+            pingService,
+            gameInstanceService,
+            featureFlagService,
+            textCommandInterpreter,
+            gameInstanceRepository,
+            accountPresenceQueryService,
+            tickService,
+            meterRegistry,
+            ipLimiter);
+
+    AtomicReference<QueryAccountPresenceResponse> ref = new AtomicReference<>();
+    service.queryAccountPresence(
+        QueryAccountPresenceRequest.newBuilder()
+            .setTenantId("1")
+            .setViewerAccountId("42")
+            .addAccountIds("42")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(QueryAccountPresenceResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
+    assertEquals("Numeric account self-service is unavailable", ref.get().getError().getMessage());
+    Mockito.verifyNoInteractions(accountPresenceQueryService);
+  }
+
+  @Test
   void queryAccountPresenceRejectsMalformedAccountId() {
     PingService pingService = Mockito.mock(PingService.class);
     GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
@@ -343,7 +395,7 @@ class GameSessionGrpcServiceTest {
     TickService tickService = Mockito.mock(TickService.class);
     IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    SessionContext.setContext("42", List.of(), Map.of());
+    SessionContext.setContext(OWNER_ACCOUNT_UUID, List.of(), Map.of("1", List.of("tenantAdmin")));
     GameSessionGrpcService service =
         newService(
             pingService,
@@ -395,7 +447,7 @@ class GameSessionGrpcServiceTest {
     TickService tickService = Mockito.mock(TickService.class);
     IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    SessionContext.setContext("42", List.of(), Map.of());
+    SessionContext.setContext(OWNER_ACCOUNT_UUID, List.of(), Map.of("1", List.of("tenantAdmin")));
     GameSessionGrpcService service =
         newService(
             pingService,
@@ -447,7 +499,7 @@ class GameSessionGrpcServiceTest {
     TickService tickService = Mockito.mock(TickService.class);
     IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    SessionContext.setContext("42", List.of(), Map.of());
+    SessionContext.setContext(OWNER_ACCOUNT_UUID, List.of(), Map.of("1", List.of("tenantAdmin")));
     GameSessionGrpcService service =
         newService(
             pingService,

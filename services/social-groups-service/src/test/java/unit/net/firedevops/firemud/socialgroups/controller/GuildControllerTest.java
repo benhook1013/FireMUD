@@ -40,6 +40,7 @@ import tools.jackson.databind.ObjectMapper;
 })
 @WithFiremudHttpAuthTestProperties
 class GuildControllerTest {
+  private static final String ACCOUNT_UUID = "c41744c9-285e-4ed0-9fb4-0f0acb7a0123";
 
   @Autowired private MockMvc mockMvc;
   private final ObjectMapper objectMapper = new ObjectMapper();
@@ -57,7 +58,10 @@ class GuildControllerTest {
     CreateGuildRequest request = new CreateGuildRequest(1L, 2L, "guild");
     when(guildService.createGuild(request))
         .thenReturn(new GuildDto(1L, 1L, "guild", 2L, Instant.now()));
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token =
+        jwtUtil.generateToken(
+            ACCOUNT_UUID,
+            Map.of("accountId", ACCOUNT_UUID, "globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -74,7 +78,9 @@ class GuildControllerTest {
   void createGuildRejectsCrossTenantScopedAdmin() throws Exception {
     CreateGuildRequest request = new CreateGuildRequest(1L, 2L, "guild");
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
+        jwtUtil.generateToken(
+            ACCOUNT_UUID,
+            Map.of("accountId", ACCOUNT_UUID, "scopedRoles", Map.of("8", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(
@@ -88,7 +94,10 @@ class GuildControllerTest {
   @Test
   void createGuildRejectsZeroTenantIdBeforeDispatch() throws Exception {
     CreateGuildRequest request = new CreateGuildRequest(0L, 2L, "guild");
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token =
+        jwtUtil.generateToken(
+            ACCOUNT_UUID,
+            Map.of("accountId", ACCOUNT_UUID, "globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -107,7 +116,10 @@ class GuildControllerTest {
   @Test
   void addMemberRejectsZeroGuildIdBeforeDispatch() throws Exception {
     AddGuildMemberRequest request = new AddGuildMemberRequest(1L, 0L, 2L, "member");
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token =
+        jwtUtil.generateToken(
+            ACCOUNT_UUID,
+            Map.of("accountId", ACCOUNT_UUID, "globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(

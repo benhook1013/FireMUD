@@ -92,7 +92,7 @@ class AccountJoinPostgresIntegrationTest {
   private static final UUID REALM_ID = UUID.fromString("4c4b57d8-e3a2-48fe-9977-e7df0fdce901");
   private static final String WORLD_SLUG = "join-proof-world";
   private static final String REALM_SLUG = "production";
-  private static final String NAMESPACE_ID = "join-proof-namespace";
+  private static final String NAMESPACE_ID = "65f23d2c-3b4f-4ec3-9b11-0c56a9a2a7d1";
   private static final long GAME_INSTANCE_ID = 44L;
   private static final long CATALOG_REVISION = 23L;
   private static final long POINTER_VERSION = 17L;
@@ -285,10 +285,11 @@ class AccountJoinPostgresIntegrationTest {
     dsl.execute(
         "UPDATE subscription SET status = 'active', entitlement_version = 2 WHERE tenant_id = ?",
         fixture.tenantId());
-    AuthenticationException conflict =
-        assertThrows(AuthenticationException.class, () -> join(fixture));
+    JoinPublicProductionResult conflict = join(fixture);
 
-    assertThat(conflict.getCode()).isEqualTo("IDEMPOTENCY_CONFLICT");
+    assertThat(conflict.success()).isFalse();
+    assertThat(conflict.outcomeCode()).isEqualTo("IDEMPOTENCY_CONFLICT");
+    assertThat(conflict.replayed()).isFalse();
     assertThat(
             dsl.resultQuery(
                     "SELECT request_digest FROM account_join_operations WHERE request_id = ?",
@@ -1198,7 +1199,7 @@ class AccountJoinPostgresIntegrationTest {
     assertMembershipTransitionReceipt(initialJoin, "MEMBERSHIP_JOINED", 1L);
 
     assertThrows(
-        org.jooq.exception.DataAccessException.class,
+        org.springframework.dao.DataIntegrityViolationException.class,
         () ->
             dsl.execute(
                 "UPDATE account_membership_transition_receipts "
@@ -1209,7 +1210,7 @@ class AccountJoinPostgresIntegrationTest {
     assertMembershipTransitionReceipt(initialJoin, "MEMBERSHIP_JOINED", 1L);
 
     assertThrows(
-        org.jooq.exception.DataAccessException.class,
+        org.springframework.dao.DataIntegrityViolationException.class,
         () ->
             dsl.execute(
                 "DELETE FROM account_membership_transition_receipts "
@@ -1227,16 +1228,32 @@ class AccountJoinPostgresIntegrationTest {
                 .fetchOne(0, Long.class))
         .isEqualTo(1L);
 
-    dsl.execute(
-        "UPDATE account_tenant_membership SET lifecycle_state = 'INACTIVE', "
-            + "gameplay_admission_allowed = FALSE WHERE account_id = ? AND tenant_id = ?",
-        initialJoin.accountId(),
-        initialJoin.tenantId());
+    String leftRequestId = "leave-proof-" + UUID.randomUUID();
+    MembershipTransitionReceipt left = leave(initialJoin, leftRequestId);
+    assertThat(left.transitionType()).isEqualTo("MEMBERSHIP_LEFT");
+    assertThat(left.requestId()).isEqualTo(leftRequestId);
+    assertThat(left.receiptSequence()).isEqualTo(2L);
+    assertMembershipTransitionReceipt(initialJoin, "MEMBERSHIP_LEFT", 2L);
+    assertThat(membershipSnapshot(initialJoin))
+        .containsEntry("lifecycle_state", "INACTIVE")
+        .containsEntry("gameplay_admission_allowed", false)
+        .containsEntry("membership_version", 3L)
+        .containsEntry("membership_authority_generation", 2L);
+    assertThat(countAuthorityMembershipEvents(initialJoin)).isEqualTo(2L);
+    assertLeftAuthorityMembershipEvent(initialJoin, leftRequestId, 2L, 3L);
+
     JoinFixture reactivation = fixtureForMembership(initialJoin);
 
     assertThat(join(reactivation).success()).isTrue();
-    assertMembershipTransitionReceipt(reactivation, "MEMBERSHIP_REACTIVATED", 2L);
-    assertThat(countMembershipTransitionReceipts(reactivation)).isEqualTo(2L);
+    assertMembershipTransitionReceipt(reactivation, "MEMBERSHIP_REACTIVATED", 3L);
+    assertThat(membershipSnapshot(reactivation))
+        .containsEntry("lifecycle_state", "ACTIVE")
+        .containsEntry("gameplay_admission_allowed", true)
+        .containsEntry("membership_version", 4L)
+        .containsEntry("membership_authority_generation", 3L);
+    assertThat(countAuthorityMembershipEvents(reactivation)).isEqualTo(3L);
+    assertAuthorityMembershipEvent(reactivation, 3L, 4L, true);
+    assertThat(countMembershipTransitionReceipts(reactivation)).isEqualTo(3L);
     assertThat(
             dsl.resultQuery(
                     "SELECT last_receipt_sequence "
@@ -1245,7 +1262,7 @@ class AccountJoinPostgresIntegrationTest {
                     reactivation.accountId(),
                     reactivation.tenantId())
                 .fetchOne(0, Long.class))
-        .isEqualTo(2L);
+        .isEqualTo(3L);
   }
 
   @Test

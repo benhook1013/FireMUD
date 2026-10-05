@@ -31,6 +31,7 @@ import org.springframework.test.web.servlet.MockMvc;
 })
 @WithFiremudHttpAuthTestProperties
 class ChatControllerTest {
+  private static final String ACCOUNT_UUID = "c41744c9-285e-4ed0-9fb4-0f0acb7a0123";
 
   @Autowired private MockMvc mockMvc;
   @Autowired private JwtUtil jwtUtil;
@@ -40,7 +41,9 @@ class ChatControllerTest {
 
   @Test
   void sendMessageRejectsZeroTenantIdBeforeAccessCheckAndDispatch() throws Exception {
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token =
+        jwtUtil.generateToken(
+            ACCOUNT_UUID, Map.of("accountId", ACCOUNT_UUID, "globalRoles", List.of()));
     String body =
         """
         {"tenantId":0,"senderAccountId":2,"type":"SAY","content":"hello"}

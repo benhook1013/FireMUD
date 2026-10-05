@@ -1,5 +1,6 @@
 package net.firedevops.firemud.loggingadmin.controller;
 
+import static net.firedevops.firemud.loggingadmin.AccountJwtTestTokens.accountToken;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -45,9 +46,7 @@ class GameSessionPinControllerTest {
   @Test
   void getPinnedScriptPatchVersionReturnsPinMetadata() throws Exception {
     when(gameSessionPinService.getPinnedScriptPatchVersion(1L, 7L)).thenReturn(pinnedVersionDto());
-    String token =
-        jwtUtil.generateToken(
-            "42", Map.of("accountId", "42", "globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(get("/game-session-pins/1/7").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
@@ -60,9 +59,7 @@ class GameSessionPinControllerTest {
   void getGameSessionPinConvergenceReturnsConvergenceMetadata() throws Exception {
     when(gameSessionPinService.getGameSessionPinConvergence(1L, 7L))
         .thenReturn(pinConvergenceDto());
-    String token =
-        jwtUtil.generateToken(
-            "42", Map.of("accountId", "42", "globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -77,7 +74,7 @@ class GameSessionPinControllerTest {
   @Test
   void getPinnedScriptPatchVersionRejectsCrossTenantScopedAdmin() throws Exception {
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
+        accountToken(jwtUtil, Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(get("/game-session-pins/1/7").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
@@ -86,9 +83,7 @@ class GameSessionPinControllerTest {
 
   @Test
   void getPinnedScriptPatchVersionRejectsMalformedTenantIdBeforeDispatch() throws Exception {
-    String token =
-        jwtUtil.generateToken(
-            "42", Map.of("accountId", "42", "globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -103,9 +98,7 @@ class GameSessionPinControllerTest {
 
   @Test
   void getGameSessionPinConvergenceRejectsZeroGameInstanceIdBeforeDispatch() throws Exception {
-    String token =
-        jwtUtil.generateToken(
-            "42", Map.of("accountId", "42", "globalRoles", List.of("platformAdmin")));
+    String token = accountToken(jwtUtil, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(

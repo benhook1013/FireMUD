@@ -59,7 +59,8 @@ class RemovedExternalAccountRouteHttpTest {
 
     assertThat(unauthenticatedResponse.statusCode()).isEqualTo(401);
 
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2"));
+    String accountId = "018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a";
+    String token = jwtUtil.generateToken(accountId, Map.of("accountId", accountId));
     HttpRequest authenticatedRequest = externalLinkRequest(route, token);
 
     HttpResponse<String> authenticatedResponse =
