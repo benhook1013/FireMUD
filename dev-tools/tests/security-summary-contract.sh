@@ -15,6 +15,18 @@ grep -Fq 'currentPullRequest.head.sha !== expectedHeadSha' "$workflow"
 grep -Fq 'currentPullRequest.base.ref !== expectedBaseRef' "$workflow"
 grep -Fq 'currentPullRequest.base.sha !== expectedBaseSha' "$workflow"
 
+python3 - "$repo_root/.github/workflows/security.yml" <<'PYTHON'
+from pathlib import Path
+import sys
+import yaml
+
+workflow = yaml.load(Path(sys.argv[1]).read_text(), Loader=yaml.BaseLoader)
+condition = workflow["jobs"]["security-summary"]["if"]
+expected = "${{ !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}"
+if condition != expected:
+    raise SystemExit("Optional summary must preserve cancellation, native-PR trust and substantive-event predicates")
+PYTHON
+
 test_root="$(mktemp -d)"
 trap 'rm -rf -- "$test_root"' EXIT
 script_path="$test_root/security-summary.js"
@@ -163,5 +175,44 @@ run(github, context, core).then(async () => {
   process.exit(1);
 });
 NODE
+
+# Execute the checked-in scanner step using the explicit Actions Bash shell.
+# The fake scanner and reports stay in one disposable directory; no scan/network occurs.
+python3 - "$workflow" "$repo_root/config/security/trivy.yaml" <<'PYTHON'
+from pathlib import Path
+import os
+import subprocess
+import sys
+import tempfile
+import yaml
+
+workflow = yaml.load(Path(sys.argv[1]).read_text(), Loader=yaml.BaseLoader)
+steps = workflow["jobs"]["trivy-scan"]["steps"]
+scanner = next(step for step in steps if step.get("name") == "🔍 Run Trivy and Save Report")
+upload = next(step for step in steps if step.get("name") == "📤 Upload Trivy Report")
+if scanner.get("shell") != "bash" or upload.get("if") != "always()":
+    raise SystemExit("Trivy must use explicit pipefail Bash and retain always-uploaded reports")
+settings = yaml.safe_load(Path(sys.argv[2]).read_text())
+if settings.get("exit-code") != 1 or settings.get("severity") != ["CRITICAL", "HIGH"] or settings.get("ignore-unfixed") is not True:
+    raise SystemExit("Trivy failure policy and filters must remain intact")
+with tempfile.TemporaryDirectory(prefix="firemud-trivy-pipeline-") as directory:
+    root = Path(directory)
+    scanner_path = root / "trivy"
+    scanner_path.write_text('#!/bin/sh\nprintf "scanner-result-%s\\n" "$FAKE_TRIVY_EXIT"\nexit "$FAKE_TRIVY_EXIT"\n')
+    scanner_path.chmod(0o755)
+    for exit_status in (0, 1, 2):
+        environment = dict(os.environ, PATH=str(root) + os.pathsep + os.environ["PATH"], FAKE_TRIVY_EXIT=str(exit_status))
+        # actions/runner explicit shell:bash -> bash --noprofile --norc -e -o pipefail {0}.
+        script = root / "step.sh"
+        script.write_text(scanner["run"])
+        result = subprocess.run(["bash", "--noprofile", "--norc", "-e", "-o", "pipefail", str(script)], cwd=root, env=environment, capture_output=True, text=True)
+        if result.returncode != exit_status:
+            raise SystemExit(f"Trivy exit {exit_status} was masked: {result.returncode}")
+        if (root / "trivy-report.txt").read_text() != f"scanner-result-{exit_status}\n":
+            raise SystemExit("tee must retain the report even when the scanner fails")
+        if ("::endgroup::" in result.stdout) != (exit_status == 0):
+            raise SystemExit("Failed scanner pipelines must stop the step")
+print("Trivy pipeline contract passed: scanner success/vulnerability/error with reports retained")
+PYTHON
 
 echo "security summary contract passed"

@@ -41,6 +41,18 @@ if script.index("github.rest.pulls.get") > script.index("github.paginate(github.
     raise SystemExit("validation-summary must verify the current PR before listing comments")
 PY
 
+python3 - "$ROOT_DIR/.github/workflows/ci.yml" <<'PYTHON'
+from pathlib import Path
+import sys
+import yaml
+
+workflow = yaml.load(Path(sys.argv[1]).read_text(), Loader=yaml.BaseLoader)
+condition = workflow["jobs"]["validation-summary"]["if"]
+expected = "${{ !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}"
+if condition != expected:
+    raise SystemExit("Optional summary must preserve cancellation, native-PR trust and substantive-event predicates")
+PYTHON
+
 script_b64="$({
   python3 - "$CI_WORKFLOW" <<'PY'
 import base64
