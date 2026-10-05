@@ -55,19 +55,31 @@ def _parser():
     areas.add_parser("reviews", help="delegate all following arguments to the existing review engine")
     jobs = areas.add_parser(
         "jobs", help="local SQLite jobs; never changes review policy",
-        description="Read assigned work with assigned/read; revise standing instructions and write checkpoints explicitly.",
+        description=("Read assigned work with assigned/read; revise standing instructions and write checkpoints explicitly. "
+                     "Keep public worker cards mission-first, with the current focus and broad milestones; reserve execution detail for the private brief."),
     )
     jobs.add_argument("--database", type=Path, help="explicit controller SQLite path; required without --context")
     jobs.add_argument("--json", action="store_true", help="structured output for agents")
     commands = jobs.add_subparsers(dest="command", required=True)
     commands.add_parser("bootstrap", help="explicitly initialise the job schema")
-    create = commands.add_parser("create", help="create a job and its initial working brief")
+    create = commands.add_parser(
+        "create", help="create a mission-first public card and private working brief",
+        description=("Create a job with a durable mission in its public card, then add its current focus and broad milestones. "
+                     "Keep service steps, SHAs, run IDs and test inventories in the private working brief."),
+        epilog=("Illustrative merge-train card; replace the prerequisite PRs and estimate with current evidence:\n"
+                "  firemud-controller jobs create merge-train --worker General "
+                "--title 'Keep the merge train moving' "
+                "--summary 'Land and prove the current merge-train slice.' "
+                "--progress 'Current focus: #2898 Smoke. Prerequisite PRs: #2861, #2872. Likely 2 more unpublished PRs (estimate).' "
+                "--body-file /tmp/merge-train-brief.md"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     create.add_argument("name")
     create.add_argument("--worker", required=True)
-    create.add_argument("--title", required=True, help="public standing-job title")
+    create.add_argument("--title", required=True, help="public mission-first standing-job title")
     create.add_argument("--status", choices=["active", "parked", "blocked", "completed"], default="active")
-    create.add_argument("--summary", default="", help="public high-level assignment")
-    create.add_argument("--progress", default="", help="public current next step")
+    create.add_argument("--summary", default="", help="public assignment and outcome")
+    create.add_argument("--progress", default="", help="public current focus and broad milestone")
     create.add_argument("--blocker", default="", help="public blocker")
     create.add_argument("--chat-id")
     create.add_argument("--workstream-id", help="curated project-map track association")
@@ -106,26 +118,28 @@ def _parser():
     for name in ("revise", "assign", "park", "resume", "complete", "block"):
         command = commands.add_parser(
             name, help="change current state with a revision guard",
-            description="Change job state with a revision guard; omitted text fields retain their current values.",
+            description=("Change job state with a revision guard; omitted text fields retain their current values. "
+                         "Keep public fields mission-first, current and limited to broad milestones; use relevant PR dependencies or estimates only when useful, and keep execution detail in the private brief."),
         )
         command.add_argument("job", help="stable job ID or exact friendly name")
         command.add_argument("--expect-revision", type=int, required=True,
                              help="current revision returned by jobs read; stale revisions are refused")
         command.add_argument("--worker", required=name == "assign")
-        command.add_argument("--title", help="public standing-job title")
-        command.add_argument("--summary", help="public high-level assignment")
-        command.add_argument("--progress", help="public current next step")
+        command.add_argument("--title", help="public mission-first standing-job title")
+        command.add_argument("--summary", help="public assignment and outcome")
+        command.add_argument("--progress", help="public current focus and broad milestone")
         command.add_argument("--blocker", help="public blocker")
         command.add_argument("--chat-id", help="private chat context pointer")
         command.add_argument("--workstream-id")
         command.add_argument("--status", choices=["active", "parked", "blocked", "completed"])
         command.add_argument("--primary", action="store_true", default=None, help="explicitly switch the worker primary job")
-        command.add_argument("--checklist", type=json.loads, help="JSON checklist; selected item text is public")
+        command.add_argument("--checklist", type=json.loads, help="JSON checklist; keep selected public items to broad milestones")
         _body_options(command, label="Private working brief (Markdown)")
         if name == "revise":
             command.epilog = (
                 "Read the job first, then use its revision in --expect-revision. Example if revision is 1: "
-                "firemud-controller jobs revise current-general --expect-revision 1 --body-file /tmp/revised-brief.md"
+                "firemud-controller jobs revise current-general --expect-revision 1 --body-file /tmp/revised-brief.md\n"
+                "Use --title for the durable mission, --progress for the current focus, and selected checklist items for broad milestones."
             )
             command.formatter_class = argparse.RawDescriptionHelpFormatter
     update = commands.add_parser("update", help="append a meaningful update without replacing the brief")
@@ -272,6 +286,16 @@ def _parser():
         message = inbox_commands.add_parser(action, help=description, description=description)
         message.add_argument("message_id", help="message ID returned by inbox list or send")
         message.add_argument("--worker", help="optional recipient selector, not authentication")
+    thread = inbox_commands.add_parser(
+        "thread", help="read a complete reply conversation without changing message state",
+        description=("Read the original message and every reply across recipients, in chronological order. "
+                     "This is read-only and does not mark messages seen or acknowledged."),
+        epilog="Example: firemud-controller inbox thread MESSAGE_ID --limit 50 --offset 0 --json",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    thread.add_argument("message_id", help="any message ID in the conversation")
+    thread.add_argument("--limit", type=int, default=50, help="maximum messages per page (default: 50)")
+    thread.add_argument("--offset", type=int, default=0, help="chronological result offset")
     for command_parser in inbox_commands.choices.values():
         command_parser.add_argument("--database", type=Path, default=argparse.SUPPRESS)
         command_parser.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
@@ -342,6 +366,8 @@ def _dispatch_inbox(args):
         if not worker:
             raise ValueError("inbox list requires --worker or --worker-identity/FIRE_CONTROLLER_WORKER")
         return store.list(worker, unread=args.unread, limit=args.limit, offset=args.offset)
+    if args.command == "thread":
+        return store.thread(args.message_id, limit=args.limit, offset=args.offset)
     return getattr(store, args.command)(args.message_id, recipient=args.worker or args.worker_identity)
 
 

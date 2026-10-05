@@ -638,11 +638,17 @@ def render_inbox(worker: str, messages, *, offset: int = 0, unread_count: int | 
         if isinstance(message.get("pr"), int) and not isinstance(message.get("pr"), bool):
             refs.append(f'PR: #{message["pr"]}')
         if isinstance(message.get("reply_to"), str) and message["reply_to"]:
-            refs.append(f'Reply to: {html.escape(message["reply_to"], quote=True)}')
+            parent_id = message["reply_to"]
+            parent_url = (
+                f"/inbox/{encoded_worker}/thread/{quote(parent_id, safe='')}"
+                f"?focus={quote(parent_id, safe='')}#message-{quote(parent_id, safe='')}"
+            )
+            refs.append(f'Reply to <a href="{parent_url}">{html.escape(parent_id, quote=True)}</a>')
         entries.append(
             f'<li><a href="{message_url}">{_time_metadata(message.get("created_at", "Message"))}</a>'
             f' · {state} · {html.escape(str(message.get("author") or "Unspecified sender"), quote=True)}'
-            f'{(" · " + " · ".join(refs)) if refs else ""}</li>'
+            f'{(" · " + " · ".join(refs)) if refs else ""}'
+            f' · <a href="/inbox/{encoded_worker}/thread/{quote(message_id, safe="")}">Conversation</a></li>'
         )
     content = (
         f'<article class="job-private"><h1>{title}</h1>{count}'
@@ -655,6 +661,61 @@ def render_inbox(worker: str, messages, *, offset: int = 0, unread_count: int | 
         content += f'<a href="/inbox/{encoded_worker}?offset={offset + HISTORY_PAGE_SIZE}">Older messages</a>'
     content += "</article>"
     return _private_document(f"{title} · FireController", content)
+
+
+def render_inbox_thread(worker: str, messages, *, message_id: str, offset: int = 0) -> str:
+    """Render a bounded private conversation without changing message state."""
+
+    if not _worker_alias(worker):
+        raise ValueError("worker alias is invalid")
+    if not _JOB_ID.fullmatch(message_id):
+        raise ValueError("message id is invalid")
+    if not isinstance(messages, list):
+        raise TypeError("thread messages must be a list")
+    encoded_worker = quote(worker, safe="")
+    encoded_id = quote(message_id, safe="")
+    title_text = f"{worker} conversation"
+    title = html.escape(title_text, quote=True)
+    entries = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        current_id = str(message.get("id", ""))
+        if not _JOB_ID.fullmatch(current_id):
+            continue
+        state = "Acknowledged" if message.get("acknowledged_at") else (
+            "Seen" if message.get("seen_at") else "Unread"
+        )
+        recipient = html.escape(str(message.get("recipient") or "Unspecified recipient"), quote=True)
+        author = html.escape(str(message.get("author") or "Unspecified sender"), quote=True)
+        details = [f'{_time_metadata(message.get("created_at", "Message"))} · {author} → {recipient} · {state}']
+        if isinstance(message.get("job"), str) and message["job"]:
+            details.append(f'Job: {html.escape(message["job"], quote=True)}')
+        if isinstance(message.get("pr"), int) and not isinstance(message.get("pr"), bool):
+            details.append(f'PR: #{message["pr"]}')
+        reply_to = message.get("reply_to")
+        if isinstance(reply_to, str) and reply_to and _JOB_ID.fullmatch(reply_to):
+            parent_url = (
+                f"/inbox/{encoded_worker}/thread/{quote(reply_to, safe='')}"
+                f"?focus={quote(reply_to, safe='')}#message-{quote(reply_to, safe='')}"
+            )
+            details.append(f'<span>Reply to <a href="{parent_url}">{html.escape(reply_to, quote=True)}</a></span>')
+        entries.append(
+            f'<li id="message-{html.escape(current_id, quote=True)}"><article class="job-private inbox-thread-message">'
+            f'<p>{" · ".join(details)}</p>{_markdown(message.get("body", ""))}</article></li>'
+        )
+    content = (
+        f'<article class="job-private"><h1>{title}</h1>'
+        '<p>Messages from every recipient are shown in chronological order. Opening this conversation does not mark messages seen or acknowledge them.</p>'
+        f'<ol>{"".join(entries) if entries else "<li>No messages on this page.</li>"}</ol>'
+    )
+    base = f"/inbox/{encoded_worker}/thread/{encoded_id}"
+    if offset > 0:
+        content += f'<a href="{base}?offset={max(0, offset - HISTORY_PAGE_SIZE)}">Earlier messages</a> '
+    if len(messages) == HISTORY_PAGE_SIZE:
+        content += f'<a href="{base}?offset={offset + HISTORY_PAGE_SIZE}">Later messages</a>'
+    content += f'<p><a href="/inbox/{encoded_worker}">Back to {html.escape(worker, quote=True)} inbox</a></p></article>'
+    return _private_document(f"{title_text} · FireController", content)
 
 
 def render_worker_history(worker: str, jobs) -> str:
@@ -711,14 +772,24 @@ def render_inbox_message(worker: str, message: dict) -> str:
             f'{html.escape(str(message.get("author") or "Unspecified sender"), quote=True)}</p>'
         ),
     ]
-    for label, key in (("Job", "job"), ("PR", "pr"), ("Reply to", "reply_to")):
+    for label, key in (("Job", "job"), ("PR", "pr")):
         value = message.get(key)
         if value is not None and value != "":
             display = f"#{value}" if key == "pr" else str(value)
             content.append(f'<p><strong>{label}</strong> · {html.escape(display, quote=True)}</p>')
+    reply_to = message.get("reply_to")
+    if isinstance(reply_to, str) and reply_to and _JOB_ID.fullmatch(reply_to):
+        parent_url = (
+            f"/inbox/{encoded_worker}/thread/{quote(reply_to, safe='')}"
+            f"?focus={quote(reply_to, safe='')}#message-{quote(reply_to, safe='')}"
+        )
+        content.append(
+            f'<p><strong>Reply to</strong> · <a href="{parent_url}">{html.escape(reply_to, quote=True)}</a></p>'
+        )
     content.append(_markdown(message.get("body", "")))
     content.append(
-        f'<p><a href="/inbox/{encoded_worker}">Back to {html.escape(worker, quote=True)} inbox</a></p></article>'
+        f'<p><a href="/inbox/{encoded_worker}/thread/{quote(message_id, safe="")}">Conversation</a> · '
+        f'<a href="/inbox/{encoded_worker}">Back to {html.escape(worker, quote=True)} inbox</a></p></article>'
     )
     return _private_document(f"{worker} inbox message", "".join(content))
 
@@ -845,7 +916,7 @@ def _private_workstream_route(parsed, jobs_store, workstream_store, editorial):
 
 def _private_inbox_route(parsed, inbox_store):
     segments = parsed.path.split("/")
-    if len(segments) not in {3, 4} or not segments[2]:
+    if len(segments) not in {3, 4, 5} or not segments[2]:
         return _error(404, "Inbox page not found")
     worker = unquote(segments[2])
     if not _worker_alias(worker):
@@ -853,11 +924,15 @@ def _private_inbox_route(parsed, inbox_store):
     if inbox_store is None:
         return _error(404, "Worker inbox is not enabled")
     is_message = len(segments) == 4 and bool(segments[3])
-    if len(segments) == 4 and not is_message:
+    is_thread = len(segments) == 5 and segments[3] == "thread" and bool(segments[4])
+    if (len(segments) == 4 and not is_message) or (len(segments) == 5 and not is_thread):
         return _error(404, "Inbox message not found")
-    query, error = _query(parsed, {"offset"} if not is_message else set())
+    allowed_query = {"focus", "offset"} if is_thread else {"offset"} if not is_message else set()
+    query, error = _query(parsed, allowed_query)
     if error:
         return error
+    if is_thread and "focus" in query and "offset" in query:
+        return _error(400, "Choose either a focus message or a page offset")
     try:
         if is_message:
             message_id = unquote(segments[3])
@@ -866,6 +941,20 @@ def _private_inbox_route(parsed, inbox_store):
             # Opening an explicit message route is the explicit read action.
             message = inbox_store.read(message_id, recipient=worker)
             return _response(200, render_inbox_message(worker, message))
+        if is_thread:
+            message_id = unquote(segments[4])
+            if not _JOB_ID.fullmatch(message_id):
+                return _error(400, "Invalid inbox message identifier")
+            focus_id = query.get("focus", [None])[0]
+            if focus_id is not None and not _JOB_ID.fullmatch(focus_id):
+                return _error(400, "Invalid focus message identifier")
+            offset = _history_offset(query) if focus_id is None else 0
+            if isinstance(offset, tuple):
+                return offset[1]
+            page = inbox_store.thread_page(message_id, limit=HISTORY_PAGE_SIZE, offset=offset, focus_id=focus_id)
+            return _response(200, render_inbox_thread(
+                worker, page["messages"], message_id=message_id, offset=page["offset"],
+            ))
         offset = _history_offset(query)
         if isinstance(offset, tuple):
             return offset[1]
