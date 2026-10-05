@@ -517,7 +517,11 @@ jobs:
             const eventMergeSha = context.sha;
             const prNumber = String(context.payload.pull_request.number);
             const started = Date.now();
-            const timeoutMs = 25 * 60 * 1000;
+            // Contract-checked against pr-local-smoke; bounded overhead covers metadata,
+            // runner scheduling and API convergence, not unbounded queue delays.
+            const producerTimeoutMinutes = 45;
+            const prerequisiteAndQueueAllowanceMinutes = 45;
+            const timeoutMs = (producerTimeoutMinutes + prerequisiteAndQueueAllowanceMinutes) * 60 * 1000;
             const cancelledReplacementTimeoutMs = 5 * 60 * 1000;
             const sleepMs = 15000;
             const pullRequestCheckInterval = 4;
