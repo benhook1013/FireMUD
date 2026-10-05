@@ -874,8 +874,10 @@ def _private_worker_jobs_route(parsed, store):
     segments = parsed.path.split("/")
     if len(segments) != 4 or segments[3] != "jobs" or not segments[2]:
         return _error(404, "Worker history page not found")
+    if not segments[2].startswith("@"):
+        return _error(404, "Worker history page not found")
     try:
-        worker = unquote(segments[2], errors="strict")
+        worker = unquote(segments[2][1:], errors="strict")
     except UnicodeDecodeError:
         return _error(400, "Invalid worker history")
     if not _worker_alias(worker):

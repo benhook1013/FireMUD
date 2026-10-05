@@ -302,7 +302,7 @@ class FireControllerWebTest(unittest.TestCase):
 
         jobs = Jobs()
         status, headers, body = web.private_route(
-            "/workers/Build%20%26%20Tools/jobs", jobs,
+            "/workers/@Build%20%26%20Tools/jobs", jobs,
         )
         text = body.decode()
         self.assertEqual(status, 200)
@@ -315,9 +315,14 @@ class FireControllerWebTest(unittest.TestCase):
         self.assertIn('href="/jobs/completed-job/history"', text)
         self.assertNotIn(PRIVATE_SENTINEL, text)
         self.assertEqual(
-            web.private_route("/workers/Build%20%26%20Tools/jobs?offset=1", jobs)[0], 400,
+            web.private_route("/workers/@Build%20%26%20Tools/jobs?offset=1", jobs)[0], 400,
         )
-        self.assertIsNone(web.private_route("/public/workers/Build%20%26%20Tools/jobs", jobs))
+        self.assertIsNone(web.private_route("/public/workers/@Build%20%26%20Tools/jobs", jobs))
+        for alias in (".", ".."):
+            status, _, _ = web.private_route(f"/workers/@{alias}/jobs", jobs)
+            self.assertEqual(200, status)
+            self.assertEqual(alias, jobs.list_calls[-1])
+        self.assertEqual(web.private_route("/workers/General/jobs", jobs)[0], 404)
 
     def test_workstream_and_inbox_routes_are_private_and_bounded(self):
         class Workstreams:
