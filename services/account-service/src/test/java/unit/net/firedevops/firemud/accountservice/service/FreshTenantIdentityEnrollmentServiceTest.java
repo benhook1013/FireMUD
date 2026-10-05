@@ -18,6 +18,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentMatchers;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.TransactionCallback;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 class FreshTenantIdentityEnrollmentServiceTest {
@@ -42,6 +43,31 @@ class FreshTenantIdentityEnrollmentServiceTest {
 
     verify(client).resolveCreation(REQUEST_ID, REQUEST_DIGEST);
     verifyNoInteractions(associations, generations, transaction);
+  }
+
+  @Test
+  void ambientAccountTransactionIsRejectedBeforeOwnerOrRepositoryCalls() {
+    GameDesignFreshTenantIdentityClient client = mock(GameDesignFreshTenantIdentityClient.class);
+    FreshTenantIdentityAssociationRepository associations =
+        mock(FreshTenantIdentityAssociationRepository.class);
+    AccountAuthorityGenerationRepository generations =
+        mock(AccountAuthorityGenerationRepository.class);
+    TransactionTemplate transaction = mock(TransactionTemplate.class);
+    FreshTenantIdentityEnrollmentService service =
+        new FreshTenantIdentityEnrollmentService(client, associations, generations, transaction);
+
+    boolean transactionWasActive =
+        TransactionSynchronizationManager.isActualTransactionActive();
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    try {
+      assertThatThrownBy(() -> service.enroll(REQUEST_ID, REQUEST_DIGEST))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("outside an Account transaction");
+    } finally {
+      TransactionSynchronizationManager.setActualTransactionActive(transactionWasActive);
+    }
+
+    verifyNoInteractions(client, associations, generations, transaction);
   }
 
   @Test
