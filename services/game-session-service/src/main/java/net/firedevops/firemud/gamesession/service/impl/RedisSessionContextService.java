@@ -34,6 +34,7 @@ public final class RedisSessionContextService implements SessionContextService {
 
   @Override
   public void save(SessionContext context) {
+    SessionContext persistedContext = context.withoutJwt();
     for (int attempt = 0; attempt < MAX_SAVE_RETRIES; attempt++) {
       Boolean committed =
           redisTemplate.execute(
@@ -41,30 +42,32 @@ public final class RedisSessionContextService implements SessionContextService {
                 @Override
                 public Boolean execute(
                     org.springframework.data.redis.core.RedisOperations operations) {
-                  LinkedHashSet<String> watchedKeys = new LinkedHashSet<>(watchKeys(context));
+                  LinkedHashSet<String> watchedKeys =
+                      new LinkedHashSet<>(watchKeys(persistedContext));
                   while (true) {
                     operations.watch(watchedKeys);
                     SessionContext existingContext =
                         readContext(
-                            operations, contextKey(context.tenantId(), context.sessionId()));
+                            operations,
+                            contextKey(persistedContext.tenantId(), persistedContext.sessionId()));
                     SessionContext existingIdentityContext =
-                        context.hasGameplayIdentity()
+                        persistedContext.hasGameplayIdentity()
                             ? readContext(
                                 operations,
                                 identityKey(
-                                    context.tenantId(),
-                                    context.gameInstanceId(),
-                                    context.characterId()))
+                                    persistedContext.tenantId(),
+                                    persistedContext.gameInstanceId(),
+                                    persistedContext.characterId()))
                             : null;
                     SessionContext existingNameContext =
-                        context.hasGameplayIdentity()
-                                && StringUtils.hasText(context.characterName())
+                        persistedContext.hasGameplayIdentity()
+                                && StringUtils.hasText(persistedContext.characterName())
                             ? readContext(
                                 operations,
                                 nameKey(
-                                    context.tenantId(),
-                                    context.gameInstanceId(),
-                                    context.characterName()))
+                                    persistedContext.tenantId(),
+                                    persistedContext.gameInstanceId(),
+                                    persistedContext.characterName()))
                             : null;
                     LinkedHashSet<String> additionalWatchKeys = new LinkedHashSet<>();
                     addWatchKeys(additionalWatchKeys, existingContext);
@@ -80,7 +83,7 @@ public final class RedisSessionContextService implements SessionContextService {
                     deleteIndexes(operations, existingContext);
                     deleteIndexes(operations, existingIdentityContext);
                     deleteIndexes(operations, existingNameContext);
-                    writeContext(operations, context);
+                    writeContext(operations, persistedContext);
                     return operations.exec() != null;
                   }
                 }
@@ -94,22 +97,18 @@ public final class RedisSessionContextService implements SessionContextService {
 
   @Override
   public Optional<SessionContext> findBySessionId(long sessionId) {
-    return Optional.ofNullable(
-        (SessionContext) redisTemplate.opsForValue().get(sessionKey(sessionId)));
+    return readSessionContext(sessionKey(sessionId));
   }
 
   @Override
   public Optional<SessionContext> findByTenantAndSessionId(long tenantId, long sessionId) {
-    return Optional.ofNullable(
-        (SessionContext) redisTemplate.opsForValue().get(contextKey(tenantId, sessionId)));
+    return readSessionContext(contextKey(tenantId, sessionId));
   }
 
   @Override
   public Optional<SessionContext> findByGameplayIdentity(
       long tenantId, long gameInstanceId, long characterId) {
-    return Optional.ofNullable(
-        (SessionContext)
-            redisTemplate.opsForValue().get(identityKey(tenantId, gameInstanceId, characterId)));
+    return readSessionContext(identityKey(tenantId, gameInstanceId, characterId));
   }
 
   @Override
@@ -118,9 +117,7 @@ public final class RedisSessionContextService implements SessionContextService {
     if (!StringUtils.hasText(characterName)) {
       return Optional.empty();
     }
-    return Optional.ofNullable(
-        (SessionContext)
-            redisTemplate.opsForValue().get(nameKey(tenantId, gameInstanceId, characterName)));
+    return readSessionContext(nameKey(tenantId, gameInstanceId, characterName));
   }
 
   @Override
@@ -162,6 +159,11 @@ public final class RedisSessionContextService implements SessionContextService {
 
   private String contextKey(long tenantId, long sessionId) {
     return SessionContextRedisKeys.contextKey(tenantId, sessionId);
+  }
+
+  private Optional<SessionContext> readSessionContext(String key) {
+    SessionContext context = (SessionContext) redisTemplate.opsForValue().get(key);
+    return Optional.ofNullable(context).map(SessionContext::withoutJwt);
   }
 
   private String sessionKey(long sessionId) {

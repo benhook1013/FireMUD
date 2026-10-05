@@ -66,6 +66,8 @@ public final class EntityManagementStubServer implements AutoCloseable {
       new AtomicReference<>(defaultCharacters());
   private final AtomicReference<ListRoomEntitiesResponse> roomEntities =
       new AtomicReference<>(LookTestFixtures.sampleEntities());
+  private final AtomicReference<ListCharactersByAccountRequest> lastListCharactersByAccountRequest =
+      new AtomicReference<>();
   private final AtomicReference<QueryActorStateResponse> actorState =
       new AtomicReference<>(QueryActorStateResponse.getDefaultInstance());
   private boolean torchOnGround = true;
@@ -113,6 +115,7 @@ public final class EntityManagementStubServer implements AutoCloseable {
                   public void listCharactersByAccount(
                       ListCharactersByAccountRequest request,
                       StreamObserver<ListCharactersByAccountResponse> responseObserver) {
+                    lastListCharactersByAccountRequest.set(request);
                     ListCharactersByAccountResponse.Builder response =
                         ListCharactersByAccountResponse.newBuilder();
                     if (request.getPlayableStateScope()
@@ -260,6 +263,14 @@ public final class EntityManagementStubServer implements AutoCloseable {
 
   public void resetActorState() {
     actorState.set(QueryActorStateResponse.getDefaultInstance());
+  }
+
+  public void resetCharacterRosterState() {
+    lastListCharactersByAccountRequest.set(null);
+  }
+
+  public Optional<ListCharactersByAccountRequest> lastListCharactersByAccountRequest() {
+    return Optional.ofNullable(lastListCharactersByAccountRequest.get());
   }
 
   private static List<Character> defaultCharacters() {

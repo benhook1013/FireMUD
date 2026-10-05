@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-Current implementation uses instance-scoped indexes and does not prove one atomic ABA-safe controller transfer. It deletes and recreates parts of the binding, lacks the target namespace key and durable binding-generation contract end to end, and may emit region-exit lifecycle behavior even though takeover leaves the character in place. These are implementation gaps, not evidence for the old target.
+Current implementation uses instance-scoped indexes and does not prove one atomic ABA-safe controller transfer. It deletes and recreates parts of the binding and lacks the target namespace key and durable binding-generation contract end to end. Game Session now suppresses a false region-exit event when takeover displaces the old session, but the complete atomic transfer and cross-service proof remain gaps, not evidence for the old target.
 
 ## Decision Record
 

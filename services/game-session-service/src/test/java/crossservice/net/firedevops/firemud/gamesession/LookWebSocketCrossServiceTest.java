@@ -64,7 +64,7 @@ class LookWebSocketCrossServiceTest {
     assertThat(responses).hasSizeGreaterThanOrEqualTo(3);
     assertThat(responses.get(0)).startsWith("OK WORLDS");
     assertThat(responses.get(1).trim())
-        .isEqualTo(GameplayTranscriptMatchers.canonicalLookWithPrompt());
+        .isEqualTo(GameplayTranscriptMatchers.canonicalLook() + "\n\nEmberline>");
     assertThat(responses.get(2)).startsWith("ERROR ROOM_NOT_FOUND");
 
     GameplayAsyncAssertions.assertMetricEventually(
@@ -280,7 +280,11 @@ class LookWebSocketCrossServiceTest {
     List<String> reconnectResponses = runPlayAfterReconnect(sessionId);
     assertThat(reconnectResponses).hasSizeGreaterThanOrEqualTo(2);
     assertThat(reconnectResponses).anyMatch(response -> response.startsWith("OK LOGIN"));
-    assertThat(reconnectResponses).anyMatch(response -> response.startsWith("ERROR JOIN_REQUIRED"));
+    assertThat(reconnectResponses)
+        .anyMatch(response -> response.startsWith("ERROR WORLD_ACCESS_DENIED"))
+        .noneMatch(
+            response ->
+                response.contains("JOIN_REQUIRED") || response.contains("Run REALMS <world>"));
   }
 
   @Test
@@ -457,8 +461,8 @@ class LookWebSocketCrossServiceTest {
             READY_LOOK_TEXT,
             client ->
                 client.awaitMatching(
-                    response -> response.startsWith("ERROR JOIN_REQUIRED"),
-                    "revoked membership admission denial"))) {
+                    response -> response.startsWith("ERROR WORLD_ACCESS_DENIED"),
+                    "active membership admission denial after revocation"))) {
       return scenario.responses();
     }
   }

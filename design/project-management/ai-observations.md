@@ -217,3 +217,14 @@ Entry format:
   - Context: on 2026-10-03, a 0/0 public checkpoint was briefly posted before the complete CLI capture was inspected. The terminal capture showed 1 found / 1 accepted; source finalization first refused the undecided finding, and linked checkpoint `5969229965` was corrected.
   - Expected pattern: inspect the complete terminal raw capture, adjudicate every finding, and confirm successful source finalization before building public counts. If finalization refuses, resolve the disposition and correct the linked checkpoint before reporting the result.
   - Outcome: the source decision and finalization were recorded with no dry-review credit.
+
+- `2026-09-25`: Admission fixture actors must carry the complete typed scope
+  - Context: a Game Session correction rejected unowned or ambiguous `PLAY` actors, while a shared Docker-backed WebSocket integration fixture still returned actor rows with protobuf-default playable scope.
+  - Observation: local integration tests skipped without Docker, but CI executed them and many otherwise unrelated scenarios failed at the first `PLAY` with `PLAY_IDENTITY_UNAVAILABLE`; the fixture's missing scope and bare selection obscured the intended assertions.
+  - Expected pattern: when actor-entry validation changes, update shared fixtures with complete tenant, account, actor, and playable-scope evidence; use explicit selection for success cases and retain a separate ambiguity-denial case. Treat compiled/skipped local tests as unproved until the composed CI cases execute.
+
+- `2026-10-05`: Match review fixes to the exact production or test file
+  - Context: a reused #2857 helper put a requested `WorldsCommandHandler` comment in unassigned production `GameSessionGrpcService`, then returned passing tests while missing several new findings and implementing similar earlier requests instead. Its similarly named test file was assigned.
+  - Expected pattern: use complete source-root paths and explicit current finding IDs; match each fix to its named method and intended semantic change, not a similar prior request. Inspect the complete returned diff against every accepted item before publication; passing tests do not establish assignment coverage.
+  - Observation: even a passing focused suite can miss a narrowly accepted correction if the patch is applied to a similar but unassigned production file or covers only an earlier, related request.
+  - Outcome: the helper reported the wrong-file edit, and the orchestrator removed only that known comment. Integration caught the remaining mismatches before publication and returned the same helper to the exact corrections, preserving unrelated edits. The corrected batch passed 464 focused tests, integration-source compilation, enabled formatting/static checks, and documentation checks; integration runtime remains unrun locally.

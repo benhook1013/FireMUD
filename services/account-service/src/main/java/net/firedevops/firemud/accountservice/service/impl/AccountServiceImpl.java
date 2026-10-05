@@ -90,9 +90,11 @@ import net.firedevops.firemud.common.security.JwtAuthProperties;
 import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import org.jooq.exception.ConfigurationException;
+import org.jooq.exception.DataAccessException;
 import org.jooq.exception.IntegrityConstraintViolationException;
+import org.jooq.exception.MappingException;
 import org.slf4j.Logger;
-import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -1079,26 +1081,7 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private RuntimeEntitlementsDto joinEntitlement(long tenantId, boolean lockSubscription) {
-    List<net.firedevops.firemud.accountservice.entity.Subscription> rows =
-        lockSubscription
-            ? subscriptionRepository.findByTenantIdForUpdate(tenantId)
-            : subscriptionRepository.findByTenantId(tenantId);
-    if (rows.size() != 1) {
-      throw new AuthenticationException(
-          "ENTITLEMENT_UNAVAILABLE", "Tenant entitlement authority is missing or ambiguous");
-    }
-    var subscription = rows.getFirst();
-    if (subscription.getEntitlementVersion() <= 0L) {
-      throw new AuthenticationException(
-          "ENTITLEMENT_UNAVAILABLE", "Entitlement version is missing");
-    }
-    return new RuntimeEntitlementsDto(
-        tenantId,
-        isGameplayAvailableStatus(subscription.getStatus()),
-        isPublicJoinAllowedStatus(subscription.getStatus()),
-        subscription.getEntitlementVersion(),
-        subscription.getEntitlementVersion(),
-        Instant.now().toString());
+    return readTenantEntitlements(tenantId, lockSubscription);
   }
 
   @Override
@@ -1119,6 +1102,9 @@ public class AccountServiceImpl implements AccountService {
     if (cachedReplay.isPresent()) {
       var replay = cachedReplay.orElseThrow();
       if (replay.success()) {
+        ConnectTokenResult cachedResult = replay.result();
+        requireConnectTokenReplayBinding(cachedResult, bootstrapContext, scopeContext, request);
+        authorizeConnectTokenIssuance(bootstrapContext, scopeContext, request.requestId());
         logger.info(
             "Replayed connect-token attempt for account {} tenant {} world {} realm {} requestId {}",
             bootstrapContext.accountId(),
@@ -1126,7 +1112,7 @@ public class AccountServiceImpl implements AccountService {
             scopeContext.worldSlug(),
             scopeContext.realmSlug(),
             request.requestId());
-        return replayedConnectTokenResult(replay.result());
+        return replayedConnectTokenResult(cachedResult);
       }
       logger.info(
           "Replayed failed connect-token attempt for account {} tenant {} world {} realm {} requestId {} code {}",
@@ -1160,54 +1146,8 @@ public class AccountServiceImpl implements AccountService {
       BootstrapContext bootstrapContext,
       ConnectScopeContext scopeContext,
       ConnectTokenRequest request) {
-    RuntimeRealmTarget realm = requireCurrentConnectScopeTarget(scopeContext);
-    RuntimeEntitlementsDto entitlements =
-        getTenantEntitlementsForRuntime(scopeContext.tenantId(), request.requestId());
-    if (!entitlements.gameplayAvailable()) {
-      throw new AuthenticationException(
-          "TENANT_BILLING_BLOCKED", "Gameplay is not available for this tenant");
-    }
-    RuntimeMembershipDto membership =
-        getTenantMembershipForRuntime(
-            bootstrapContext.accountId(), scopeContext.tenantId(), request.requestId());
-
-    if (membership.membershipExists()
-        && !"ACTIVE".equals(membership.membershipLifecycleState())
-        && !"INACTIVE".equals(membership.membershipLifecycleState())) {
-      throw new AuthenticationException(
-          "CONNECT_TOKEN_REJECTED", "Membership authority requires reconciliation");
-    }
-    if (membership.membershipExists()
-        && "INACTIVE".equals(membership.membershipLifecycleState())
-        && isPublicProductionRealm(realm)) {
-      if (!entitlements.allowPublicJoin()) {
-        throw new AuthenticationException(
-            "PUBLIC_PRODUCTION_ADMISSION_DENIED",
-            "Public joining is not allowed for the selected game");
-      }
-      throw new AuthenticationException(
-          "JOIN_REQUIRED", "Join the selected world before requesting a connect token");
-    }
-    if (membership.membershipExists() && !membership.gameplayAdmissionAllowed()) {
-      throw new AuthenticationException(
-          "CONNECT_TOKEN_REJECTED", "Gameplay admission is not allowed for this account");
-    }
-
-    if (!membership.membershipExists()) {
-      if (!isPublicProductionRealm(realm)) {
-        throw new AuthenticationException(
-            "NON_PUBLIC_ENROLLMENT_REQUIRED",
-            "Existing game membership is required for this non-public realm");
-      }
-      if (!entitlements.allowPublicJoin()) {
-        throw new AuthenticationException(
-            "PUBLIC_PRODUCTION_ADMISSION_DENIED",
-            "Public joining is not allowed for the selected game");
-      }
-      throw new AuthenticationException(
-          "JOIN_REQUIRED", "Join the selected world before requesting a connect token");
-    }
-
+    RuntimeRealmTarget realm =
+        authorizeConnectTokenIssuance(bootstrapContext, scopeContext, request.requestId());
     String jti =
         stableId(
             "gameplay-connect",
@@ -1281,6 +1221,88 @@ public class AccountServiceImpl implements AccountService {
         request.requestId(),
         jti);
     return result;
+  }
+
+  private RuntimeRealmTarget authorizeConnectTokenIssuance(
+      BootstrapContext bootstrapContext, ConnectScopeContext scopeContext, String requestId) {
+    RuntimeRealmTarget realm = requireCurrentConnectScopeTarget(scopeContext);
+    RuntimeEntitlementsDto entitlements =
+        getTenantEntitlementsForRuntime(scopeContext.tenantId(), requestId);
+    if (!entitlements.gameplayAvailable()) {
+      throw new AuthenticationException(
+          "TENANT_BILLING_BLOCKED", "Gameplay is not available for this tenant");
+    }
+    RuntimeMembershipDto membership;
+    try {
+      membership =
+          getTenantMembershipForRuntime(
+              bootstrapContext.accountId(), scopeContext.tenantId(), requestId);
+    } catch (MappingException | ConfigurationException ex) {
+      throw ex;
+    } catch (DataAccessException | org.springframework.dao.DataAccessException ex) {
+      throw new AuthenticationException(
+          "AUTH_UNAVAILABLE", "Membership authority is unavailable; retry later", ex);
+    }
+
+    if (membership.membershipExists()
+        && !"ACTIVE".equals(membership.membershipLifecycleState())
+        && !"INACTIVE".equals(membership.membershipLifecycleState())) {
+      throw new AuthenticationException(
+          "CONNECT_TOKEN_REJECTED", "Membership authority requires reconciliation");
+    }
+    if (membership.membershipExists()
+        && "INACTIVE".equals(membership.membershipLifecycleState())
+        && isPublicProductionRealm(realm)) {
+      if (!entitlements.allowPublicJoin()) {
+        throw new AuthenticationException(
+            "PUBLIC_PRODUCTION_ADMISSION_DENIED",
+            "Public joining is not allowed for the selected game");
+      }
+      throw new AuthenticationException(
+          "JOIN_REQUIRED", "Join the selected world before requesting a connect token");
+    }
+    if (membership.membershipExists() && !membership.gameplayAdmissionAllowed()) {
+      throw new AuthenticationException(
+          "CONNECT_TOKEN_REJECTED", "Gameplay admission is not allowed for this account");
+    }
+
+    if (!membership.membershipExists()) {
+      if (!isPublicProductionRealm(realm)) {
+        throw new AuthenticationException(
+            "NON_PUBLIC_ENROLLMENT_REQUIRED",
+            "Existing game membership is required for this non-public realm");
+      }
+      if (!entitlements.allowPublicJoin()) {
+        throw new AuthenticationException(
+            "PUBLIC_PRODUCTION_ADMISSION_DENIED",
+            "Public joining is not allowed for the selected game");
+      }
+      throw new AuthenticationException(
+          "JOIN_REQUIRED", "Join the selected world before requesting a connect token");
+    }
+    return realm;
+  }
+
+  private void requireConnectTokenReplayBinding(
+      ConnectTokenResult result,
+      BootstrapContext bootstrapContext,
+      ConnectScopeContext scopeContext,
+      ConnectTokenRequest request) {
+    if (result == null
+        || result.accountId() != bootstrapContext.accountId()
+        || result.tenantId() != scopeContext.tenantId()
+        || result.gameInstanceId() != scopeContext.gameInstanceId()
+        || !java.util.Objects.equals(result.realmSlug(), scopeContext.realmSlug())
+        || !java.util.Objects.equals(result.connectScopeId(), request.connectScopeId())
+        || !java.util.Objects.equals(result.requestId(), request.requestId())
+        || !StringUtils.hasText(result.connectToken())
+        || !StringUtils.hasText(result.jti())
+        || !StringUtils.hasText(result.issuedAt())
+        || !StringUtils.hasText(result.expiresAt())) {
+      throw new AuthenticationException(
+          "AUTH_UNAVAILABLE",
+          "Cached connect-token result does not match the current request scope");
+    }
   }
 
   @Override
@@ -1376,16 +1398,25 @@ public class AccountServiceImpl implements AccountService {
   @Transactional(readOnly = true)
   @Timed(value = "account.runtime_entitlements")
   public RuntimeEntitlementsDto getTenantEntitlementsForRuntime(Long tenantId, String requestId) {
+    return readTenantEntitlements(tenantId, false);
+  }
+
+  private RuntimeEntitlementsDto readTenantEntitlements(long tenantId, boolean lockSubscription) {
     List<net.firedevops.firemud.accountservice.entity.Subscription> subscriptions;
     try {
-      subscriptions = subscriptionRepository.findByTenantId(tenantId);
-    } catch (DataAccessException ex) {
+      subscriptions =
+          lockSubscription
+              ? subscriptionRepository.findByTenantIdForUpdate(tenantId)
+              : subscriptionRepository.findByTenantId(tenantId);
+    } catch (MappingException | ConfigurationException ex) {
+      throw ex;
+    } catch (DataAccessException | org.springframework.dao.DataAccessException ex) {
       throw new AuthenticationException(
           "ENTITLEMENT_UNAVAILABLE",
           "Tenant entitlement authority is unavailable; retry later",
           ex);
     }
-    if (subscriptions.size() != 1) {
+    if (subscriptions == null || subscriptions.size() != 1 || subscriptions.getFirst() == null) {
       throw new AuthenticationException(
           "ENTITLEMENT_UNAVAILABLE",
           "Tenant entitlement authority is missing or ambiguous; retry later");
@@ -1395,6 +1426,10 @@ public class AccountServiceImpl implements AccountService {
     boolean gameplayAvailable = isGameplayAvailableStatus(subscription.getStatus());
     boolean allowPublicJoin = isPublicJoinAllowedStatus(subscription.getStatus());
     long version = subscription.getEntitlementVersion();
+    if (version <= 0L) {
+      throw new AuthenticationException(
+          "ENTITLEMENT_UNAVAILABLE", "Tenant entitlement version is invalid; retry later");
+    }
     return new RuntimeEntitlementsDto(
         tenantId, gameplayAvailable, allowPublicJoin, version, version, Instant.now().toString());
   }

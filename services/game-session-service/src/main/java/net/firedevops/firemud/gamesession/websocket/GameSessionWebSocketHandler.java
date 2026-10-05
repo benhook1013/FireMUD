@@ -473,12 +473,11 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       TextCommandInterpretationResult interpretation,
       Optional<SessionContext> maybeContext)
       throws IOException {
-    boolean reconnectRestoreRequested =
-        interpretation.reconnectRedrawRecommended()
-            || StringUtils.hasText(resolveConnectContext(session));
+    boolean reconnectRestoreRequested = interpretation.reconnectRedrawRecommended();
+    boolean firstPartyPlay = "first_party_web".equals(resolveConnectionMode(session));
     if (command.type() != TextCommandType.PLAY
         || !interpretation.commandResult().accepted()
-        || !reconnectRestoreRequested) {
+        || !reconnectRestoreRequested && !firstPartyPlay) {
       return;
     }
     maybeContext
@@ -498,7 +497,8 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
                   sendProjectedOutput(
                       session, look, localeTag, effectivePresentation, "fresh LOOK");
                 }
-                if (effectivePresentation.prompt().emitAfterReconnectRestore()) {
+                if (effectivePresentation.prompt().enabled()
+                    && effectivePresentation.prompt().emitAfterReconnectRestore()) {
                   composePrompt(context)
                       .ifPresent(
                           prompt -> {

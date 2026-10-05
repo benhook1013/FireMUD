@@ -116,7 +116,7 @@ public final class RedisMovementEffectIdempotencyService
         current.characterName(),
         current.gameInstanceId(),
         destinationRoomInstanceId,
-        current.jwt(),
+        null,
         current.localeTag(),
         current.bootstrapGameInstanceId(),
         current.worldSlug(),
@@ -141,7 +141,8 @@ public final class RedisMovementEffectIdempotencyService
 
   private SessionContext readContext(
       org.springframework.data.redis.core.RedisOperations<String, Object> operations, String key) {
-    return (SessionContext) operations.opsForValue().get(key);
+    SessionContext context = (SessionContext) operations.opsForValue().get(key);
+    return context == null ? null : context.withoutJwt();
   }
 
   private void addWatchKeys(LinkedHashSet<String> watchKeys, SessionContext context) {
@@ -185,23 +186,32 @@ public final class RedisMovementEffectIdempotencyService
   private void writeContext(
       org.springframework.data.redis.core.RedisOperations<String, Object> operations,
       SessionContext context) {
+    SessionContext persistedContext = context.withoutJwt();
     var ops = operations.opsForValue();
     ops.set(
-        SessionContextRedisKeys.contextKey(context.tenantId(), context.sessionId()),
-        context,
+        SessionContextRedisKeys.contextKey(
+            persistedContext.tenantId(), persistedContext.sessionId()),
+        persistedContext,
         sessionTtl);
-    ops.set(SessionContextRedisKeys.sessionKey(context.sessionId()), context, sessionTtl);
-    if (context.hasGameplayIdentity()) {
+    ops.set(
+        SessionContextRedisKeys.sessionKey(persistedContext.sessionId()),
+        persistedContext,
+        sessionTtl);
+    if (persistedContext.hasGameplayIdentity()) {
       ops.set(
           SessionContextRedisKeys.identityKey(
-              context.tenantId(), context.gameInstanceId(), context.characterId()),
-          context,
+              persistedContext.tenantId(),
+              persistedContext.gameInstanceId(),
+              persistedContext.characterId()),
+          persistedContext,
           sessionTtl);
-      if (hasGameplayName(context)) {
+      if (hasGameplayName(persistedContext)) {
         ops.set(
             SessionContextRedisKeys.nameKey(
-                context.tenantId(), context.gameInstanceId(), context.characterName()),
-            context,
+                persistedContext.tenantId(),
+                persistedContext.gameInstanceId(),
+                persistedContext.characterName()),
+            persistedContext,
             sessionTtl);
       }
     }
