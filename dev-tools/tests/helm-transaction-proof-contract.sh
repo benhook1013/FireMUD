@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 python3 - "$ROOT_DIR" <<'PY'
 import copy
 import pathlib
+import re
 import shlex
 import yaml
 
@@ -32,9 +33,9 @@ except SystemExit:
     pass
 else:
     raise SystemExit("Helm transaction proof contract accepted a 10-minute job timeout")
-pinned_k3s_image = "rancher/k3s:v1.34.5-k3s1@sha256:998f4db28a13143ada759690b554c5d8c1814ac03f77c1bdd78bbd73875a1379"
-if not isinstance(job.get("env"), dict) or job["env"].get("K3S_IMAGE") != pinned_k3s_image:
-    raise SystemExit("Helm transaction proof must define the exact pinned k3s image once as K3S_IMAGE")
+pinned_k3s_image = job.get("env", {}).get("K3S_IMAGE")
+if not isinstance(pinned_k3s_image, str) or not re.fullmatch(r"rancher/k3s:v[0-9]+\.[0-9]+\.[0-9]+-k3s[0-9]+@sha256:[0-9a-f]{64}", pinned_k3s_image):
+    raise SystemExit("Helm transaction proof must define one exact version+digest pinned K3S_IMAGE")
 workflow_text = (root / ".github/workflows/ci.yml").read_text()
 if workflow_text.count(pinned_k3s_image) != 1:
     raise SystemExit("Helm transaction proof must define the pinned k3s image exactly once")
@@ -136,7 +137,7 @@ mutated_job = copy.deepcopy(job)
 for step in mutated_job["steps"]:
     if isinstance(step, dict) and step.get("name") == "Start pinned disposable k3s server":
         step["run"] = (
-            step["run"].replace('"$K3S_IMAGE"', "rancher/k3s:v1.34.5-k3s1")
+            step["run"].replace('"$K3S_IMAGE"', pinned_k3s_image.split("@", 1)[0])
             + f"\n# pinned image: {pinned_k3s_image}\necho \"$K3S_IMAGE\" server\n"
         )
         break

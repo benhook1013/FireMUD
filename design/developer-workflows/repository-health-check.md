@@ -28,6 +28,8 @@ Inspect every open Renovate PR older than 24 hours. For each one, check its head
 
 Before fixing a failed update, distinguish upstream incompatibility from a repository update-model gap. When version authorities, package groups, lockfiles, hashes, or image digests drift, prefer a single authoritative version source with Renovate-supported grouping and lockfile, hash, or digest management, or integrate an existing canonical updater where feasible. Make a bounded durable improvement that prevents repeat failures while preserving checksum integrity, compatibility bounds, and privilege safeguards. Use a manual patch when automation cannot safely express the update, and record the concrete limitation and a revisit trigger. Do not assume Renovate supports every source or invent a separate post-upgrade process.
 
+When checking dependency management, compare actual native Renovate extraction with explicit runtime, build, tool, and container dependency declarations across the repository. Verify enabled managers, file patterns, and ignored paths, including real service `src/test` image authorities; distinguish deliberately maintained compatibility/promotion boundaries, upstream-owned defaults, and generated locks from unmanaged direct pins. Check that canonical version sources and their consuming validation/provenance projections stay aligned. Open update PRs or successful configuration parsing alone do not prove coverage.
+
 ## Worktrees And Branches
 
 Include branch and worktree cleanup in the maintenance pass. Follow [PR lifecycle: Branch And PR Hygiene](./pr-lifecycle.md#branch-and-pr-hygiene) and use `bash dev-tools/validation/report-worktree-pr-topology.sh --json` for the canonical inventory; do not delete by age alone.

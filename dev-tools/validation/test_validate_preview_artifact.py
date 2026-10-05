@@ -1065,6 +1065,39 @@ class PreviewArtifactPersistentVolumeClaimTest(unittest.TestCase):
                 self._validate(self._document("postgres-data", spec))
 
 
+class TrustedDatabaseImageAuthorityTest(unittest.TestCase):
+    def test_exact_changed_trusted_versions_are_loaded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "values.yaml"
+            source.write_text(yaml.safe_dump({"previewStack": {
+                "postgres": {"image": "postgres:16.9-alpine"},
+                "redis": {"image": "redis:7.4.4"},
+                "seed": {"image": "postgres:16.9-alpine"},
+            }}))
+            images = VALIDATOR._trusted_database_images(source)
+            self.assertEqual(images["postgres"], "postgres:16.9-alpine")
+            self.assertEqual(images["redis"], "redis:7.4.4")
+
+    def test_missing_or_unpinned_trusted_images_fail_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "values.yaml"
+            for image in (None, "postgres:latest", "evil/postgres:16", "postgres:16@sha256:bad"):
+                with self.subTest(image=image):
+                    source.write_text(yaml.safe_dump({"previewStack": {
+                        "postgres": {"image": image},
+                        "redis": {"image": "redis:7.4.3"},
+                        "seed": {"image": "postgres:16"},
+                    }}))
+                    with self.assertRaises(ValueError):
+                        VALIDATOR._trusted_database_images(source)
+            source.write_text("previewStack: {}")
+            with self.assertRaises(ValueError):
+                VALIDATOR._trusted_database_images(source)
+            source.unlink()
+            with self.assertRaises(ValueError):
+                VALIDATOR._trusted_database_images(source)
+
+
 class PreviewArtifactInfrastructureDeploymentTest(unittest.TestCase):
     validator = VALIDATOR
 
