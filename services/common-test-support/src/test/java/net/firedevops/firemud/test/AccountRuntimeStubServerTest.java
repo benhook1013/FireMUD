@@ -10,18 +10,23 @@ import java.util.Locale;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.GetProfileRequest;
+import net.firedevops.firemud.account.v1.GetProfileResponse;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.account.v1.UpdateProfileRequest;
+import net.firedevops.firemud.account.v1.UpdateProfileResponse;
 import net.firedevops.firemud.common.account.AccountProfileJson;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 class AccountRuntimeStubServerTest {
   private static final String ACCOUNT_UUID = "c91fb96e-5ad8-4e4e-a12d-2838640093b2";
   private static final String NIL_ACCOUNT_UUID = "00000000-0000-0000-0000-000000000000";
+  private static final JsonMapper JSON_MAPPER = JsonMapper.builder().build();
 
   @Test
   void authenticationCanonicalizesEmailAndRuntimeAuthoritySnapshotsAreFreshAndComplete()
@@ -209,38 +214,50 @@ class AccountRuntimeStubServerTest {
         AccountServiceGrpc.AccountServiceBlockingStub stub =
             AccountServiceGrpc.newBlockingStub(channel);
 
+        GetProfileResponse initialProfileResponse =
+            stub.getProfile(
+                GetProfileRequest.newBuilder().setTenantId("1").setAccountId(ACCOUNT_UUID).build());
+        assertProfileIdentity(initialProfileResponse, ACCOUNT_UUID, 1L);
         AccountProfileJson initialProfile =
-            AccountProfileJson.parse(
-                stub.getProfile(
-                        GetProfileRequest.newBuilder()
-                            .setTenantId("1")
-                            .setAccountId(ACCOUNT_UUID)
-                            .build())
-                    .getProfileJson(),
-                "FRIENDS_ONLY");
+            AccountProfileJson.parse(initialProfileResponse.getProfileJson(), "FRIENDS_ONLY");
         assertThat(initialProfile.presenceVisibilityPolicy()).isEqualTo("FRIENDS_ONLY");
 
-        assertThat(
-                stub.updateProfile(
-                        UpdateProfileRequest.newBuilder()
-                            .setTenantId("1")
-                            .setAccountId(ACCOUNT_UUID)
-                            .setProfileJson(
-                                "{\"displayName\":\"Demo-%s\",\"bio\":null,\"presenceVisibilityPolicy\":\"PRIVATE\"}"
-                                    .formatted(ACCOUNT_UUID))
-                            .build())
-                    .getSuccess())
-            .isTrue();
+        UpdateProfileResponse updateResponse =
+            stub.updateProfile(
+                UpdateProfileRequest.newBuilder()
+                    .setTenantId("1")
+                    .setAccountId(ACCOUNT_UUID)
+                    .setProfileJson(
+                        "{\"displayName\":\"Demo-%s\",\"bio\":null,\"presenceVisibilityPolicy\":\"PRIVATE\"}"
+                            .formatted(ACCOUNT_UUID))
+                    .build());
+        assertThat(updateResponse.getSuccess()).isTrue();
+        assertThat(updateResponse.getAccountId()).isEqualTo(ACCOUNT_UUID);
+        assertThat(updateResponse.getTenantId()).isEqualTo("1");
 
+        UpdateProfileResponse wrongTenantUpdate =
+            stub.updateProfile(
+                UpdateProfileRequest.newBuilder()
+                    .setTenantId("2")
+                    .setAccountId(ACCOUNT_UUID)
+                    .setProfileJson(
+                        "{\"displayName\":\"Wrong tenant\",\"bio\":null,\"presenceVisibilityPolicy\":\"PUBLIC\"}")
+                    .build());
+        assertThat(wrongTenantUpdate.getSuccess()).isFalse();
+        assertThat(wrongTenantUpdate.getAccountId()).isEmpty();
+        assertThat(wrongTenantUpdate.getTenantId()).isEmpty();
+
+        GetProfileResponse wrongTenantRead =
+            stub.getProfile(
+                GetProfileRequest.newBuilder().setTenantId("2").setAccountId(ACCOUNT_UUID).build());
+        assertThat(wrongTenantRead.getProfileJson()).isEmpty();
+
+        GetProfileResponse updatedProfileResponse =
+            stub.getProfile(
+                GetProfileRequest.newBuilder().setTenantId("1").setAccountId(ACCOUNT_UUID).build());
+        assertProfileIdentity(updatedProfileResponse, ACCOUNT_UUID, 1L);
         AccountProfileJson updatedProfile =
-            AccountProfileJson.parse(
-                stub.getProfile(
-                        GetProfileRequest.newBuilder()
-                            .setTenantId("1")
-                            .setAccountId(ACCOUNT_UUID)
-                            .build())
-                    .getProfileJson(),
-                "FRIENDS_ONLY");
+            AccountProfileJson.parse(updatedProfileResponse.getProfileJson(), "FRIENDS_ONLY");
         assertThat(updatedProfile.presenceVisibilityPolicy()).isEqualTo("PRIVATE");
       } finally {
         channel.shutdownNow();
@@ -273,10 +290,11 @@ class AccountRuntimeStubServerTest {
           assertThatThrownBy(
                   () -> server.setPresenceVisibilityPolicy(invalidAccountUuid, "PRIVATE"))
               .isInstanceOf(IllegalArgumentException.class);
-          assertThat(
-                  stub.updateProfile(profileUpdate(invalidAccountUuid, "Overwritten profile"))
-                      .getSuccess())
-              .isFalse();
+          UpdateProfileResponse invalidAccountUpdate =
+              stub.updateProfile(profileUpdate(invalidAccountUuid, "Overwritten profile"));
+          assertThat(invalidAccountUpdate.getSuccess()).isFalse();
+          assertThat(invalidAccountUpdate.getAccountId()).isEmpty();
+          assertThat(invalidAccountUpdate.getTenantId()).isEmpty();
         }
 
         assertThatThrownBy(() -> server.mapAccountUuid("candidate@example.com", null))
@@ -355,5 +373,14 @@ class AccountRuntimeStubServerTest {
             "{\"displayName\":\"%s\",\"bio\":null,\"presenceVisibilityPolicy\":\"PRIVATE\"}"
                 .formatted(displayName))
         .build();
+  }
+
+  private static void assertProfileIdentity(
+      GetProfileResponse response, String accountUuid, long tenantId) throws Exception {
+    JsonNode profile = JSON_MAPPER.readTree(response.getProfileJson());
+    assertThat(profile.path("accountId").isTextual()).isTrue();
+    assertThat(profile.path("accountId").asString()).isEqualTo(accountUuid);
+    assertThat(profile.path("tenantId").isIntegralNumber()).isTrue();
+    assertThat(profile.path("tenantId").asLong()).isEqualTo(tenantId);
   }
 }

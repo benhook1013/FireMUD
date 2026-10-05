@@ -46,7 +46,7 @@ class ChatControllerTest {
             ACCOUNT_UUID, Map.of("accountId", ACCOUNT_UUID, "globalRoles", List.of()));
     String body =
         """
-        {"tenantId":0,"senderAccountId":2,"type":"SAY","content":"hello"}
+        {"tenantId":0,"senderAccountId":"c41744c9-285e-4ed0-9fb4-0f0acb7a0123","type":"SAY","content":"hello"}
         """;
 
     mockMvc

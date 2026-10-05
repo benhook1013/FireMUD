@@ -7072,16 +7072,115 @@ class AccountServiceImplTest {
   void listPresenceVisibilityPoliciesOmitsProfilesWithoutAPolicy() {
     Account account = new Account();
     account.setId(2L);
+    setPersistedAuthenticationIdentity(account);
     Profile profile = new Profile();
     profile.setAccount(account);
+    profile.setTenantId(1L);
     profile.setPresenceVisibilityPolicy(null);
+    when(accountTenantMembershipRepository.existsByAccountIdAndTenantId(2L, 1L)).thenReturn(true);
     when(profileRepository.findByTenantIdAndAccountIds(1L, java.util.List.of(2L)))
         .thenReturn(java.util.List.of(profile));
 
-    Map<Long, ProfilePresenceVisibilityPolicy> policies =
-        service.listPresenceVisibilityPolicies(1L, java.util.List.of(2L));
+    Map<String, ProfilePresenceVisibilityPolicy> policies =
+        service.listPresenceVisibilityPolicies(
+            1L, java.util.List.of(account.getAccountUuid().toString()));
 
     assertTrue(policies.isEmpty());
+  }
+
+  @Test
+  void listPresenceVisibilityPoliciesKeysResultsByVerifiedAccountUuid() {
+    Account account = new Account();
+    account.setId(2L);
+    setPersistedAuthenticationIdentity(account);
+    Profile profile = new Profile();
+    profile.setAccount(account);
+    profile.setTenantId(1L);
+    profile.setPresenceVisibilityPolicy(ProfilePresenceVisibilityPolicy.PRIVATE);
+    when(accountTenantMembershipRepository.existsByAccountIdAndTenantId(2L, 1L)).thenReturn(true);
+    when(profileRepository.findByTenantIdAndAccountIds(1L, java.util.List.of(2L)))
+        .thenReturn(java.util.List.of(profile));
+
+    String accountUuid = account.getAccountUuid().toString();
+    Map<String, ProfilePresenceVisibilityPolicy> policies =
+        service.listPresenceVisibilityPolicies(1L, java.util.List.of(accountUuid));
+
+    assertEquals(Map.of(accountUuid, ProfilePresenceVisibilityPolicy.PRIVATE), policies);
+    verify(accountRepository).findByAccountUuid(account.getAccountUuid());
+  }
+
+  @Test
+  void listPresenceVisibilityPoliciesRejectsMalformedUuidBeforeLookup() {
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> service.listPresenceVisibilityPolicies(1L, java.util.List.of("2")));
+
+    verifyNoInteractions(accountRepository, accountTenantMembershipRepository, profileRepository);
+  }
+
+  @Test
+  void listPresenceVisibilityPoliciesOmitsUnknownAccountUuids() {
+    String unknownAccountUuid = UUID.randomUUID().toString();
+
+    Map<String, ProfilePresenceVisibilityPolicy> policies =
+        service.listPresenceVisibilityPolicies(1L, java.util.List.of(unknownAccountUuid));
+
+    assertTrue(policies.isEmpty());
+    verify(accountRepository).findByAccountUuid(UUID.fromString(unknownAccountUuid));
+    verifyNoInteractions(accountTenantMembershipRepository, profileRepository);
+  }
+
+  @Test
+  void listPresenceVisibilityPoliciesFailsClosedOnContradictoryAccountProvenance() {
+    Account account = new Account();
+    account.setId(2L);
+    setPersistedAuthenticationIdentity(account);
+    account.setAccountUuidSourceNumericId(3L);
+
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            service.listPresenceVisibilityPolicies(
+                1L, java.util.List.of(account.getAccountUuid().toString())));
+
+    verifyNoInteractions(accountTenantMembershipRepository, profileRepository);
+  }
+
+  @Test
+  void listPresenceVisibilityPoliciesOmitsAccountsWithoutTenantMembership() {
+    Account account = new Account();
+    account.setId(2L);
+    setPersistedAuthenticationIdentity(account);
+    when(accountTenantMembershipRepository.existsByAccountIdAndTenantId(2L, 1L)).thenReturn(false);
+
+    Map<String, ProfilePresenceVisibilityPolicy> policies =
+        service.listPresenceVisibilityPolicies(
+            1L, java.util.List.of(account.getAccountUuid().toString()));
+
+    assertTrue(policies.isEmpty());
+    verifyNoInteractions(profileRepository);
+  }
+
+  @Test
+  void listPresenceVisibilityPoliciesRejectsForeignProfileOwner() {
+    Account account = new Account();
+    account.setId(2L);
+    setPersistedAuthenticationIdentity(account);
+    Account foreignAccount = new Account();
+    foreignAccount.setId(3L);
+    Profile profile = new Profile();
+    profile.setAccount(foreignAccount);
+    profile.setTenantId(1L);
+    profile.setPresenceVisibilityPolicy(ProfilePresenceVisibilityPolicy.PRIVATE);
+    when(accountTenantMembershipRepository.existsByAccountIdAndTenantId(2L, 1L)).thenReturn(true);
+    when(profileRepository.findByTenantIdAndAccountIds(1L, java.util.List.of(2L)))
+        .thenReturn(java.util.List.of(profile));
+
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            service.listPresenceVisibilityPolicies(
+                1L, java.util.List.of(account.getAccountUuid().toString())));
   }
 
   @Test

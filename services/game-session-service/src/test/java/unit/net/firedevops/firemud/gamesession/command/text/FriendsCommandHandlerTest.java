@@ -34,6 +34,8 @@ import net.firedevops.firemud.socialgroups.v1.RemoveFriendByOrdinalResponse;
 import net.firedevops.firemud.socialgroups.v1.RemoveFriendResponse;
 import net.firedevops.firemud.socialgroups.v1.UpdateFriendPresencePolicyResponse;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mockito;
 
 class FriendsCommandHandlerTest {
@@ -375,6 +377,63 @@ class FriendsCommandHandlerTest {
         .contains("1) Sora [acct #" + FRIEND_ACCOUNT_ID + "] - online");
     Mockito.verify(socialGroupsClient)
         .listFriends(1L, CALLER_ACCOUNT_ID, FriendRosterFilter.FRIEND_ROSTER_FILTER_ONLINE);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"ONLINE", "RECENT"})
+  void friendsFilteredRedactedMatchesKeepRosterTotalOutOfPlayerText(String filter) {
+    FriendRosterFilter rosterFilter =
+        "ONLINE".equals(filter)
+            ? FriendRosterFilter.FRIEND_ROSTER_FILTER_ONLINE
+            : FriendRosterFilter.FRIEND_ROSTER_FILTER_RECENT;
+    SocialGroupsClient socialGroupsClient = Mockito.mock(SocialGroupsClient.class);
+    EntityManagementClient entityManagementClient = Mockito.mock(EntityManagementClient.class);
+    FriendsCommandHandler handler =
+        newHandler(
+            socialGroupsClient, entityManagementClient, Mockito.mock(ScriptEventPublisher.class));
+    when(socialGroupsClient.listFriends(1L, CALLER_ACCOUNT_ID, rosterFilter))
+        .thenReturn(
+            ListFriendsResponse.newBuilder()
+                .setFilter(rosterFilter)
+                .setTotalCount(2)
+                .setMatchCount(1)
+                .addFriends(
+                    FriendRosterEntry.newBuilder()
+                        .setOrdinal(2)
+                        .setFriendAccountId(SECOND_FRIEND_ACCOUNT_ID)
+                        .setPresence(
+                            FriendPresenceEntry.newBuilder()
+                                .setFriendAccountId(SECOND_FRIEND_ACCOUNT_ID)
+                                .setOnline("ONLINE".equals(filter))
+                                .setLastSeenAtMs(1_744_336_000_000L)
+                                .setCharacterName("Secret")
+                                .setVisibilityPolicy(
+                                    net.firedevops.firemud.socialgroups.v1
+                                        .FriendPresenceVisibilityPolicy
+                                        .FRIEND_PRESENCE_VISIBILITY_POLICY_PRIVATE)
+                                .build())
+                        .build())
+                .build());
+
+    TextCommandInterpretationResult result =
+        handler.handle(
+            new TextCommand(
+                TextCommandType.FRIENDS, java.util.List.of(filter), "FRIENDS " + filter),
+            GAMEPLAY_CONTEXT);
+
+    assertThat(result.commandResult().accepted()).isTrue();
+    FriendPresenceViewOutput view =
+        (FriendPresenceViewOutput) result.outputs().getFirst().payload();
+    assertThat(view.filter()).isEqualTo(filter);
+    assertThat(view.totalCount()).isEqualTo(2);
+    assertThat(view.friends()).isEmpty();
+    assertThat(
+            new TextPlayerOutputRenderer(
+                    new net.firedevops.firemud.gamesession.config.PresentationProperties())
+                .render(result.outputs().getFirst()))
+        .contains("Friends " + filter + ": no matching friends.")
+        .doesNotContain("Secret", SECOND_FRIEND_ACCOUNT_ID, "[1/2]", "[0/2]", "[0/0]");
+    Mockito.verify(socialGroupsClient).listFriends(1L, CALLER_ACCOUNT_ID, rosterFilter);
   }
 
   @Test

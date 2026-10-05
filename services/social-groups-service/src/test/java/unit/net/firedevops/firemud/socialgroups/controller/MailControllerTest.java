@@ -1,5 +1,6 @@
 package net.firedevops.firemud.socialgroups.controller;
 
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -33,6 +34,7 @@ import tools.jackson.databind.ObjectMapper;
 @WithFiremudHttpAuthTestProperties
 class MailControllerTest {
   private static final String ACCOUNT_UUID = "c41744c9-285e-4ed0-9fb4-0f0acb7a0123";
+  private static final String RECIPIENT_UUID = "d52755da-396f-4fd1-80c5-1f1bcb8b1234";
 
   @Autowired private MockMvc mockMvc;
   @Autowired private JwtUtil jwtUtil;
@@ -41,8 +43,9 @@ class MailControllerTest {
   @MockitoBean private MailService mailService;
 
   @Test
-  void sendMailFailsClosedForCanonicalSubjectWithLegacyNumericSenderSelector() throws Exception {
-    SendMailRequest request = new SendMailRequest(1L, 2L, 3L, "hello", "test body");
+  void sendMailAllowsCanonicalAuthenticatedSenderAndRecipient() throws Exception {
+    SendMailRequest request =
+        new SendMailRequest(1L, ACCOUNT_UUID, RECIPIENT_UUID, "hello", "test body");
     String token = accountToken();
     mockMvc
         .perform(
@@ -50,18 +53,13 @@ class MailControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                 .content(objectMapper.writeValueAsString(request)))
-        .andExpect(status().isServiceUnavailable())
-        .andExpect(jsonPath("$.status").value("ERROR"))
-        .andExpect(
-            jsonPath("$.error.message")
-                .value(
-                    "Mail sender authorization is unavailable until Social account UUID migration is complete"));
+        .andExpect(status().isOk());
 
-    verifyNoInteractions(mailService);
+    verify(mailService).sendMail(request);
   }
 
   @Test
-  void sendMailRejectsZeroSenderAccountIdBeforeAccessCheckAndDispatch() throws Exception {
+  void sendMailRejectsLegacyNumericSenderSelectorBeforeDispatch() throws Exception {
     String token = accountToken();
 
     mockMvc
@@ -70,19 +68,18 @@ class MailControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                 .content(
-                    """
-                    {"tenantId":1,"senderAccountId":0,"recipientAccountId":3,"subject":"hello","content":"test body"}
-                    """))
+                    "{\"tenantId\":1,\"senderAccountId\":\"2\",\"recipientAccountId\":\"%s\",\"subject\":\"hello\",\"content\":\"test body\"}"
+                        .formatted(RECIPIENT_UUID)))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.status").value("ERROR"))
         .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
-        .andExpect(jsonPath("$.error.message").value("senderAccountId must be positive"));
+        .andExpect(jsonPath("$.error.message").value("Malformed claim: senderAccountId"));
 
     verifyNoInteractions(mailService);
   }
 
   @Test
-  void tenantRoleCannotEnableMailWhileSenderIdentityIsNumeric() throws Exception {
+  void tenantRoleCannotSendMailAsAnotherAccount() throws Exception {
     String token =
         jwtUtil.generateToken(
             ACCOUNT_UUID,
@@ -97,14 +94,11 @@ class MailControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                 .content(
-                    """
-                    {"tenantId":1,"senderAccountId":3,"recipientAccountId":4,"subject":"hello","content":"test body"}
-                    """))
-        .andExpect(status().isServiceUnavailable())
+                    "{\"tenantId\":1,\"senderAccountId\":\"%s\",\"recipientAccountId\":\"%s\",\"subject\":\"hello\",\"content\":\"test body\"}"
+                        .formatted(RECIPIENT_UUID, ACCOUNT_UUID)))
+        .andExpect(status().isForbidden())
         .andExpect(
-            jsonPath("$.error.message")
-                .value(
-                    "Mail sender authorization is unavailable until Social account UUID migration is complete"));
+            jsonPath("$.error.message").value("Mail sender must match the authenticated account"));
 
     verifyNoInteractions(mailService);
   }

@@ -420,13 +420,10 @@ public class FriendsCommandHandler {
                   return toEntry(ordinal, entry);
                 })
             .toList();
-    boolean canonicalFiltered =
-        filter == FriendListFilter.ALL
-            || response.getFilter() == mapRosterFilter(filter)
-            || response.getMatchCount() > 0
-            || response.getTotalCount() > 0;
+    // Filtering must use the final disclosed projection, not backend membership in a filter.
+    // A redacted subject must not reveal online/recent state through its inclusion alone.
     List<FriendPresenceViewOutput.Entry> mapped =
-        canonicalFiltered ? allEntries : allEntries.stream().filter(filter::matches).toList();
+        allEntries.stream().filter(filter::matches).toList();
     int totalCount = response.getTotalCount() > 0 ? response.getTotalCount() : allEntries.size();
     return new FriendPresenceViewOutput(filter.name(), totalCount, mapped);
   }

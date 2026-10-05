@@ -1219,11 +1219,13 @@ class AccountGrpcServiceTest {
   void listPresenceVisibilityPoliciesMapsPersistedPolicies() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
-    Mockito.when(accountService.listPresenceVisibilityPolicies(1L, List.of(2L, 3L)))
+    Mockito.when(
+            accountService.listPresenceVisibilityPolicies(
+                1L, List.of(ACCOUNT_UUID, OTHER_ACCOUNT_UUID)))
         .thenReturn(
             Map.of(
-                2L, ProfilePresenceVisibilityPolicy.PRIVATE,
-                3L, ProfilePresenceVisibilityPolicy.HIDDEN_STAFF));
+                ACCOUNT_UUID, ProfilePresenceVisibilityPolicy.PRIVATE,
+                OTHER_ACCOUNT_UUID, ProfilePresenceVisibilityPolicy.HIDDEN_STAFF));
     AccountGrpcService service =
         new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
     RecordingObserver<ListPresenceVisibilityPoliciesResponse> observer = new RecordingObserver<>();
@@ -1234,9 +1236,9 @@ class AccountGrpcServiceTest {
             service.listPresenceVisibilityPolicies(
                 ListPresenceVisibilityPoliciesRequest.newBuilder()
                     .setTenantId("1")
-                    .addAccountIds("2")
-                    .addAccountIds("3")
-                    .addAccountIds("2")
+                    .addAccountIds(ACCOUNT_UUID)
+                    .addAccountIds(OTHER_ACCOUNT_UUID)
+                    .addAccountIds(ACCOUNT_UUID)
                     .build(),
                 observer));
 
@@ -1245,15 +1247,19 @@ class AccountGrpcServiceTest {
     assertTrue(
         observer.response().getPoliciesList().stream()
             .anyMatch(
-                entry -> entry.getAccountId().equals("2") && entry.getPolicy().equals("PRIVATE")));
+                entry ->
+                    entry.getAccountId().equals(ACCOUNT_UUID)
+                        && entry.getPolicy().equals("PRIVATE")));
     assertTrue(
         observer.response().getPoliciesList().stream()
             .anyMatch(
                 entry ->
-                    entry.getAccountId().equals("3") && entry.getPolicy().equals("HIDDEN_STAFF")));
+                    entry.getAccountId().equals(OTHER_ACCOUNT_UUID)
+                        && entry.getPolicy().equals("HIDDEN_STAFF")));
     assertTrue(observer.completed());
     assertFalse(observer.receivedTransportError());
-    Mockito.verify(accountService).listPresenceVisibilityPolicies(1L, List.of(2L, 3L));
+    Mockito.verify(accountService)
+        .listPresenceVisibilityPolicies(1L, List.of(ACCOUNT_UUID, OTHER_ACCOUNT_UUID));
   }
 
   @Test
@@ -1292,28 +1298,61 @@ class AccountGrpcServiceTest {
   }
 
   @Test
-  void listPresenceVisibilityPoliciesRejectsNonPositiveAccountId() {
+  void listPresenceVisibilityPoliciesRejectsMalformedAccountUuidsBeforeLookup() {
+    for (String malformedAccountId :
+        List.of(
+            "2",
+            "00000000-0000-0000-0000-000000000000",
+            ACCOUNT_UUID.toUpperCase(java.util.Locale.ROOT))) {
+      PingService pingService = Mockito.mock(PingService.class);
+      AccountService accountService = Mockito.mock(AccountService.class);
+      AccountGrpcService service =
+          new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
+      RecordingObserver<ListPresenceVisibilityPoliciesResponse> observer =
+          new RecordingObserver<>();
+
+      withPeer(
+          SOCIAL_GROUPS_PEER,
+          () ->
+              service.listPresenceVisibilityPolicies(
+                  ListPresenceVisibilityPoliciesRequest.newBuilder()
+                      .setTenantId("1")
+                      .addAccountIds(malformedAccountId)
+                      .build(),
+                  observer));
+
+      assertNotNull(observer.response());
+      assertEquals("INVALID_ARGUMENT", observer.response().getError().getCode());
+      assertEquals(
+          "accountId must be a canonical non-nil UUID",
+          observer.response().getError().getMessage());
+      assertTrue(observer.completed());
+      assertFalse(observer.receivedTransportError());
+      Mockito.verifyNoInteractions(accountService);
+    }
+  }
+
+  @Test
+  void listPresenceVisibilityPoliciesRejectsMoreThanOneHundredSelectorsBeforeLookup() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
     AccountGrpcService service =
         new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
+    ListPresenceVisibilityPoliciesRequest.Builder request =
+        ListPresenceVisibilityPoliciesRequest.newBuilder().setTenantId("1");
+    for (int index = 0; index < 101; index++) {
+      request.addAccountIds(ACCOUNT_UUID);
+    }
     RecordingObserver<ListPresenceVisibilityPoliciesResponse> observer = new RecordingObserver<>();
 
     withPeer(
         SOCIAL_GROUPS_PEER,
-        () ->
-            service.listPresenceVisibilityPolicies(
-                ListPresenceVisibilityPoliciesRequest.newBuilder()
-                    .setTenantId("1")
-                    .addAccountIds("0")
-                    .build(),
-                observer));
+        () -> service.listPresenceVisibilityPolicies(request.build(), observer));
 
-    assertNotNull(observer.response());
     assertEquals("INVALID_ARGUMENT", observer.response().getError().getCode());
-    assertEquals("accountId must be positive", observer.response().getError().getMessage());
+    assertEquals(
+        "accountIds must contain at most 100 entries", observer.response().getError().getMessage());
     assertTrue(observer.completed());
-    assertFalse(observer.receivedTransportError());
     Mockito.verifyNoInteractions(accountService);
   }
 
@@ -1324,7 +1363,7 @@ class AccountGrpcServiceTest {
     AccountGrpcService service =
         new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
 
-    Mockito.when(accountService.listPresenceVisibilityPolicies(1L, List.of(2L)))
+    Mockito.when(accountService.listPresenceVisibilityPolicies(1L, List.of(ACCOUNT_UUID)))
         .thenThrow(new IllegalArgumentException("Tenant not found"));
     RecordingObserver<ListPresenceVisibilityPoliciesResponse> notFoundObserver =
         new RecordingObserver<>();
@@ -1334,7 +1373,7 @@ class AccountGrpcServiceTest {
             service.listPresenceVisibilityPolicies(
                 ListPresenceVisibilityPoliciesRequest.newBuilder()
                     .setTenantId("1")
-                    .addAccountIds("2")
+                    .addAccountIds(ACCOUNT_UUID)
                     .build(),
                 notFoundObserver));
 
@@ -1343,7 +1382,7 @@ class AccountGrpcServiceTest {
     assertFalse(notFoundObserver.receivedTransportError());
 
     Mockito.reset(accountService);
-    Mockito.when(accountService.listPresenceVisibilityPolicies(1L, List.of(2L)))
+    Mockito.when(accountService.listPresenceVisibilityPolicies(1L, List.of(ACCOUNT_UUID)))
         .thenThrow(new IllegalStateException("Policy lookup unavailable"));
     RecordingObserver<ListPresenceVisibilityPoliciesResponse> internalObserver =
         new RecordingObserver<>();
@@ -1353,7 +1392,7 @@ class AccountGrpcServiceTest {
             service.listPresenceVisibilityPolicies(
                 ListPresenceVisibilityPoliciesRequest.newBuilder()
                     .setTenantId("1")
-                    .addAccountIds("2")
+                    .addAccountIds(ACCOUNT_UUID)
                     .build(),
                 internalObserver));
 
@@ -1612,6 +1651,10 @@ class AccountGrpcServiceTest {
     AccountService accountService = Mockito.mock(AccountService.class);
     Mockito.when(accountService.resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID)))
         .thenReturn(2L);
+    Mockito.when(accountService.updateProfile(Mockito.eq(2L), Mockito.any()))
+        .thenReturn(
+            new net.firedevops.firemud.accountservice.dto.ProfileDto(
+                10L, 1L, ACCOUNT_UUID, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE));
     AccountGrpcService service =
         new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
 
@@ -1630,6 +1673,8 @@ class AccountGrpcServiceTest {
                 observer));
 
     assertTrue(observer.response().getSuccess());
+    assertEquals(ACCOUNT_UUID, observer.response().getAccountId());
+    assertEquals("1", observer.response().getTenantId());
     assertTrue(observer.completed());
     org.mockito.ArgumentCaptor<net.firedevops.firemud.accountservice.dto.UpdateProfileRequest>
         captor =
@@ -1640,6 +1685,52 @@ class AccountGrpcServiceTest {
     assertEquals(1L, captor.getValue().tenantId());
     assertEquals(ACCOUNT_UUID, captor.getValue().accountId());
     assertEquals("demo", captor.getValue().displayName());
+  }
+
+  @Test
+  void updateProfileRejectsMismatchedPersistedIdentityEchoes() {
+    for (var mismatchedProfile :
+        List.of(
+            new net.firedevops.firemud.accountservice.dto.ProfileDto(
+                10L,
+                1L,
+                OTHER_ACCOUNT_UUID,
+                "demo",
+                "bio",
+                ProfilePresenceVisibilityPolicy.PRIVATE),
+            new net.firedevops.firemud.accountservice.dto.ProfileDto(
+                10L, 2L, ACCOUNT_UUID, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE))) {
+      PingService pingService = Mockito.mock(PingService.class);
+      AccountService accountService = Mockito.mock(AccountService.class);
+      Mockito.when(accountService.resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID)))
+          .thenReturn(2L);
+      Mockito.when(accountService.updateProfile(Mockito.eq(2L), Mockito.any()))
+          .thenReturn(mismatchedProfile);
+      AccountGrpcService service =
+          new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
+      RecordingObserver<UpdateProfileResponse> observer = new RecordingObserver<>();
+      SessionContext.setContext(ACCOUNT_UUID, List.of("player"), Map.of());
+
+      withPeer(
+          SOCIAL_GROUPS_PEER,
+          () ->
+              service.updateProfile(
+                  UpdateProfileRequest.newBuilder()
+                      .setTenantId("1")
+                      .setAccountId(ACCOUNT_UUID)
+                      .setProfileJson(
+                          "{\"displayName\":\"demo\",\"bio\":\"bio\",\"presenceVisibilityPolicy\":\"PRIVATE\"}")
+                      .build(),
+                  observer));
+
+      assertFalse(observer.response().getSuccess());
+      assertEquals("INTERNAL", observer.response().getError().getCode());
+      assertEquals("Profile source validation failed", observer.response().getError().getMessage());
+      assertEquals("", observer.response().getAccountId());
+      assertEquals("", observer.response().getTenantId());
+      assertTrue(observer.completed());
+      Mockito.verify(accountService).updateProfile(Mockito.eq(2L), Mockito.any());
+    }
   }
 
   @Test

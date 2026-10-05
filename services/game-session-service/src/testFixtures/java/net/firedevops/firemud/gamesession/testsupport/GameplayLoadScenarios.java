@@ -65,20 +65,22 @@ public final class GameplayLoadScenarios {
                       "ALLOW_NEW",
                       GameplayCrossServiceStack.SYNTHETIC_LOAD_ACTOR,
                       "Seed per-player load-test admission pointer",
-                      "load-test:" + characterId,
+                      "load-test:" + accountUuid,
                       0L,
                       0L,
                       null));
       long sessionId = firstCharacterId + 10_000L + i + 1;
       String email = "player" + (i + 1) + "@example.com";
       stack.accountStub().mapAccountUuid(email, accountUuid);
-      characters.add(
+      Character character =
           Character.newBuilder()
               .setId(Long.toString(characterId))
               .setTenantId(Long.toString(tenantId))
               .setAccountId(accountUuid)
               .setName(label)
-              .build());
+              .build();
+      stack.entityStub().registerCharacterForAccountUuid(accountUuid, character);
+      characters.add(character);
       players.add(
           new PlayerSeed(
               sessionId,

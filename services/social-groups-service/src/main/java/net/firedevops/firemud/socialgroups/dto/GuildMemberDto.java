@@ -8,5 +8,5 @@ public record GuildMemberDto(
     Long id,
     @NotNull Long tenantId,
     @NotNull Long guildId,
-    @NotNull Long accountId,
+    @NotNull String accountId,
     @NotBlank String role) {}

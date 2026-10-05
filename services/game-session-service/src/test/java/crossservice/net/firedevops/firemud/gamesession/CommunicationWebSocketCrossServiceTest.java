@@ -36,7 +36,7 @@ class CommunicationWebSocketCrossServiceTest {
       Long.parseLong(ChatTestFixtures.PLAYER_EMBERLINE);
   private static final long SORA_CHARACTER_ID = Long.parseLong(ChatTestFixtures.PLAYER_SORA);
   private static final long NYX_CHARACTER_ID = Long.parseLong(ChatTestFixtures.PLAYER_NYX);
-  private static final long MANAGEMENT_OWNER_SELECTOR = EMBERLINE_CHARACTER_ID;
+  private static final long MANAGEMENT_OWNER_SELECTOR = 900_001L;
   private static final long DEMO_WORLD_INSTANCE_ID = 1L;
   private static final String READY_LOOK_TEXT = "Candle-lit Antechamber";
   private static final String SORA_EMAIL = "sora@example.com";

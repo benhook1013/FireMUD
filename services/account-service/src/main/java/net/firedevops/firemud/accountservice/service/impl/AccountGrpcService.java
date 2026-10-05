@@ -882,20 +882,20 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
         throw new InvalidRequestException(
             "accountIds must contain at most " + MAX_ACCOUNT_IDS_PER_REQUEST + " entries", null);
       }
-      java.util.List<Long> accountIds =
+      java.util.List<String> accountUuids =
           request.getAccountIdsList().stream()
-              .map(accountId -> requirePositiveRequestId(accountId, "accountId"))
+              .map(accountId -> requireCanonicalAccountUuid(accountId).toString())
               .distinct()
               .toList();
       var builder =
           net.firedevops.firemud.account.v1.ListPresenceVisibilityPoliciesResponse.newBuilder();
       accountService
-          .listPresenceVisibilityPolicies(tenantId, accountIds)
+          .listPresenceVisibilityPolicies(tenantId, accountUuids)
           .forEach(
-              (accountId, policy) ->
+              (accountUuid, policy) ->
                   builder.addPolicies(
                       net.firedevops.firemud.account.v1.PresenceVisibilityPolicyEntry.newBuilder()
-                          .setAccountId(Long.toString(accountId))
+                          .setAccountId(accountUuid)
                           .setPolicy(policy.name())
                           .build()));
       responseObserver.onNext(builder.build());
@@ -943,18 +943,29 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       String displayName = node.path("displayName").asText(null);
       String bio = node.path("bio").asText(null);
       String presenceVisibilityPolicy = node.path("presenceVisibilityPolicy").asText(null);
-      accountService.updateProfile(
-          accountId,
-          new net.firedevops.firemud.accountservice.dto.UpdateProfileRequest(
-              tenantId,
-              accountUuid.toString(),
-              displayName,
-              bio,
-              ProfilePresenceVisibilityPolicy.valueOf(
-                  presenceVisibilityPolicy == null
-                      ? ProfilePresenceVisibilityPolicy.FRIENDS_ONLY.name()
-                      : presenceVisibilityPolicy)));
-      UpdateProfileResponse response = UpdateProfileResponse.newBuilder().setSuccess(true).build();
+      var updatedProfile =
+          accountService.updateProfile(
+              accountId,
+              new net.firedevops.firemud.accountservice.dto.UpdateProfileRequest(
+                  tenantId,
+                  accountUuid.toString(),
+                  displayName,
+                  bio,
+                  ProfilePresenceVisibilityPolicy.valueOf(
+                      presenceVisibilityPolicy == null
+                          ? ProfilePresenceVisibilityPolicy.FRIENDS_ONLY.name()
+                          : presenceVisibilityPolicy)));
+      if (updatedProfile == null
+          || !accountUuid.toString().equals(updatedProfile.accountId())
+          || !Long.valueOf(tenantId).equals(updatedProfile.tenantId())) {
+        throw new IllegalStateException("Profile update readback did not match its request");
+      }
+      UpdateProfileResponse response =
+          UpdateProfileResponse.newBuilder()
+              .setSuccess(true)
+              .setAccountId(updatedProfile.accountId())
+              .setTenantId(updatedProfile.tenantId().toString())
+              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {

@@ -218,12 +218,13 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
     if (characterIds.length > 0) {
       clearScreenBuffers(tenantId, gameplayInstanceId, characterIds);
     }
+    String ownerAccountUuid = GameInstanceTestFixtures.TEST_OWNER_ACCOUNT_UUID;
     long gameInstanceId =
         GameInstanceTestFixtures.insertRunningGameInstance(
-            jdbc, tenantId, GameInstanceTestFixtures.TEST_OWNER_ACCOUNT_UUID, gameTemplateId);
+            jdbc, tenantId, ownerAccountUuid, gameTemplateId);
     seedRuntimeOwnership(tenantId, gameInstanceId);
     if (useDefaultDemoCatalogFixture) {
-      bindDefaultDemoPointer(tenantId, gameInstanceId, managementOwnerSelector, gameTemplateId);
+      bindDefaultDemoPointer(tenantId, gameInstanceId, ownerAccountUuid, gameTemplateId);
     }
     return gameInstanceId;
   }
@@ -550,7 +551,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
   }
 
   private void bindDefaultDemoPointer(
-      long tenantId, long gameInstanceId, long ownerAccountId, long gameTemplateId) {
+      long tenantId, long gameInstanceId, String ownerAccountUuid, long gameTemplateId) {
     InitialAdmissionBindOwnerService owner =
         gameSession.bean(InitialAdmissionBindOwnerService.class);
     GameplayAdmissionPointerAuthorityService pointerAuthority =
@@ -575,7 +576,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
             requestId,
             tenantId,
             gameTemplateId,
-            ownerAccountId,
+            ownerAccountUuid,
             catalog,
             gameInstanceId,
             versionId,
@@ -728,7 +729,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
       String operationId,
       long tenantId,
       long gameTemplateId,
-      long ownerAccountId,
+      String ownerAccountUuid,
       InitialAdmissionBindCatalog catalog,
       long gameInstanceId,
       long versionId,
@@ -738,7 +739,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
     appendDigestField(canonical, "operationId", operationId);
     appendDigestField(canonical, "tenantId", Long.toString(tenantId));
     appendDigestField(canonical, "gameTemplateId", Long.toString(gameTemplateId));
-    appendDigestField(canonical, "ownerAccountId", Long.toString(ownerAccountId));
+    appendDigestField(canonical, "ownerAccountId", ownerAccountUuid);
     appendDigestField(canonical, "worldSlug", "demo");
     appendDigestField(canonical, "worldDisplayName", "Demo World");
     appendDigestField(canonical, "realmSlug", "production");

@@ -55,9 +55,9 @@ class GuildControllerTest {
 
   @Test
   void createGuildAllowsScopedTenantAdmin() throws Exception {
-    CreateGuildRequest request = new CreateGuildRequest(1L, 2L, "guild");
+    CreateGuildRequest request = new CreateGuildRequest(1L, ACCOUNT_UUID, "guild");
     when(guildService.createGuild(request))
-        .thenReturn(new GuildDto(1L, 1L, "guild", 2L, Instant.now()));
+        .thenReturn(new GuildDto(1L, 1L, "guild", ACCOUNT_UUID, Instant.now()));
     String token =
         jwtUtil.generateToken(
             ACCOUNT_UUID,
@@ -76,7 +76,7 @@ class GuildControllerTest {
 
   @Test
   void createGuildRejectsCrossTenantScopedAdmin() throws Exception {
-    CreateGuildRequest request = new CreateGuildRequest(1L, 2L, "guild");
+    CreateGuildRequest request = new CreateGuildRequest(1L, ACCOUNT_UUID, "guild");
     String token =
         jwtUtil.generateToken(
             ACCOUNT_UUID,
@@ -93,7 +93,7 @@ class GuildControllerTest {
 
   @Test
   void createGuildRejectsZeroTenantIdBeforeDispatch() throws Exception {
-    CreateGuildRequest request = new CreateGuildRequest(0L, 2L, "guild");
+    CreateGuildRequest request = new CreateGuildRequest(0L, ACCOUNT_UUID, "guild");
     String token =
         jwtUtil.generateToken(
             ACCOUNT_UUID,
@@ -115,7 +115,7 @@ class GuildControllerTest {
 
   @Test
   void addMemberRejectsZeroGuildIdBeforeDispatch() throws Exception {
-    AddGuildMemberRequest request = new AddGuildMemberRequest(1L, 0L, 2L, "member");
+    AddGuildMemberRequest request = new AddGuildMemberRequest(1L, 0L, ACCOUNT_UUID, "member");
     String token =
         jwtUtil.generateToken(
             ACCOUNT_UUID,

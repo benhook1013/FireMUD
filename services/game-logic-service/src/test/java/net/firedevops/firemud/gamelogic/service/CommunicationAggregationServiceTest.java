@@ -41,7 +41,7 @@ import org.slf4j.MDC;
 
 @ExtendWith(MockitoExtension.class)
 class CommunicationAggregationServiceTest {
-  private static final String VALID_ACCOUNT_ID = "42";
+  private static final String VALID_ACCOUNT_ID = "cc51ef2c-9a14-4c56-98bd-af7f8e4c60c1";
 
   @Mock private SocialGroupsServiceGrpc.SocialGroupsServiceBlockingStub socialStub;
 
@@ -125,14 +125,18 @@ class CommunicationAggregationServiceTest {
   }
 
   @Test
-  void rejectsMissingMalformedAndNonPositiveAccountIdsBeforeDownstreamCalls() {
+  void rejectsMissingMalformedAndNoncanonicalAccountIdsBeforeDownstreamCalls() {
     for (String[] accountIdCase :
         new String[][] {
           {"empty", ""},
           {"whitespace-only", "   "},
-          {"malformed", "not-a-number"},
+          {"malformed", "not-a-uuid"},
+          {"numeric", "42"},
           {"zero", "0"},
           {"negative", "-1"},
+          {"nil", "00000000-0000-0000-0000-000000000000"},
+          {"uppercase", VALID_ACCOUNT_ID.toUpperCase(java.util.Locale.ROOT)},
+          {"padded", " " + VALID_ACCOUNT_ID + " "},
         }) {
       String accountIdCaseDescription = accountIdCase[0];
       String accountId = accountIdCase[1];
@@ -154,7 +158,7 @@ class CommunicationAggregationServiceTest {
           .isEqualTo("INVALID_ARGUMENT");
       assertThat(resp.getError().getMessage())
           .as(accountIdCaseDescription)
-          .isEqualTo("account_id must be a positive numeric account id");
+          .isEqualTo("account_id must be a canonical non-nil Account UUID");
     }
 
     verify(entityStub, never()).listRoomEntities(any());
@@ -162,7 +166,7 @@ class CommunicationAggregationServiceTest {
   }
 
   @Test
-  void normalizesPaddedNoncanonicalAccountIdForSocialSender() {
+  void preservesCanonicalAccountUuidForSocialSenderWithoutUsingCharacterIdentity() {
     when(socialStub.sendMessage(any()))
         .thenReturn(SendMessageResponse.newBuilder().setSuccess(true).build());
 
@@ -172,7 +176,7 @@ class CommunicationAggregationServiceTest {
                 .setTenantId("tenant-1")
                 .setSessionId("sess-1")
                 .setCharacterId("player-0")
-                .setAccountId(" 0042 ")
+                .setAccountId(VALID_ACCOUNT_ID)
                 .setType(CommunicationType.TELL)
                 .setTargetCharacterId("player-9")
                 .setTargetCharacterName("Sora")
@@ -182,7 +186,8 @@ class CommunicationAggregationServiceTest {
     assertThat(resp.getSuccess()).isTrue();
     ArgumentCaptor<SendMessageRequest> captor = ArgumentCaptor.forClass(SendMessageRequest.class);
     verify(socialStub).sendMessage(captor.capture());
-    assertThat(captor.getValue().getSenderId()).isEqualTo("42");
+    assertThat(captor.getValue().getSenderId()).isEqualTo(VALID_ACCOUNT_ID);
+    assertThat(captor.getValue().getSenderId()).isNotEqualTo("player-0");
   }
 
   @Test

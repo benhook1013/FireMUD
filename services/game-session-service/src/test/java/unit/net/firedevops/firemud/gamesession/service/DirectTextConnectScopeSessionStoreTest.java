@@ -212,6 +212,7 @@ class DirectTextConnectScopeSessionStoreTest {
   }
 
   @Test
+  @SuppressWarnings("unchecked")
   void readsLegacyLobbyJsonAcrossProductionStoreInstances() throws Exception {
     SessionContext caller = session(41L, ACCOUNT_UUID);
     Instant now = Instant.now();
@@ -324,6 +325,7 @@ class DirectTextConnectScopeSessionStoreTest {
     assertThat(selected.scope().connectScopeId()).isEqualTo("uuid-connect-scope");
     assertThat(selected.scope().playerContext().getAccountId()).isEqualTo(ACCOUNT_UUID);
     assertThat(selected.scope().playerContext().getSessionId()).isEqualTo("41");
+    assertThat(selected.scope().playerContext().getTenantId()).isEqualTo("22");
     assertThat(
             firstInstance
                 .publicProductionScopeForJoin(caller, "1", 22L, "demo-world", now)

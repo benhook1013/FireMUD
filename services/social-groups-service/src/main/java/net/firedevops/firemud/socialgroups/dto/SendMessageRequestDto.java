@@ -7,10 +7,10 @@ import net.firedevops.firemud.socialgroups.enums.ChatType;
 
 public record SendMessageRequestDto(
     @NotNull @Positive Long tenantId,
-    @NotNull @Positive Long senderAccountId,
+    @NotBlank String senderAccountId,
     ChatType type,
     String channelId,
-    @Positive Long recipientAccountId,
+    String recipientAccountId,
     @Positive Long guildId,
     @Positive Long cityId,
     @NotBlank String content,

@@ -69,6 +69,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @Import(NoGrpcServerTestConfiguration.class)
 class SocialGroupsApplicationIntegrationTest {
   private static final String ACCOUNT_UUID = "c41744c9-285e-4ed0-9fb4-0f0acb7a0123";
+  private static final String FRIEND_UUID_3 = "d52755da-396f-4fd1-80c5-1f1bcb8b1234";
+  private static final String FRIEND_UUID_4 = "e63866eb-4a70-4fe2-91d6-202cdc9c2345";
+  private static final String FRIEND_UUID_5 = "f74977fc-5b81-40f3-a2e7-313dedad3456";
   private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
   private static final JwtUtil JWT_UTIL =
       new JwtUtil("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 3600000L);
@@ -114,14 +117,14 @@ class SocialGroupsApplicationIntegrationTest {
         TEST_ACCOUNT_CLIENT,
         TEST_SOCIAL_ACCESS_GUARD);
     Mockito.when(
-            TEST_MODERATION_POLICY_CLIENT.evaluateChatSend(Mockito.anyLong(), Mockito.anyLong()))
+            TEST_MODERATION_POLICY_CLIENT.evaluateChatSend(Mockito.anyLong(), Mockito.anyString()))
         .thenReturn(EvaluateModerationPolicyResponse.newBuilder().setAllowed(true).build());
     Mockito.when(
             TEST_ACCOUNT_CLIENT.getPresenceVisibilityPolicies(
                 Mockito.anyLong(), Mockito.anyCollection()))
         .thenAnswer(
             invocation -> {
-              java.util.Collection<Long> accountIds = invocation.getArgument(1);
+              java.util.Collection<String> accountIds = invocation.getArgument(1);
               return accountIds.stream()
                   .collect(
                       java.util.stream.Collectors.toMap(
@@ -130,7 +133,7 @@ class SocialGroupsApplicationIntegrationTest {
                               net.firedevops.firemud.socialgroups.dto
                                   .FriendPresenceVisibilityPolicyValue.FRIENDS_ONLY));
             });
-    Mockito.when(TEST_ACCOUNT_CLIENT.getPresenceVisibilityPolicy(1L, 2L))
+    Mockito.when(TEST_ACCOUNT_CLIENT.getPresenceVisibilityPolicy(1L, ACCOUNT_UUID))
         .thenReturn(
             java.util.Optional.of(
                 net.firedevops.firemud.socialgroups.dto.FriendPresenceVisibilityPolicyValue
@@ -159,7 +162,12 @@ class SocialGroupsApplicationIntegrationTest {
     String token = privilegedAccountToken();
 
     HttpResponse<String> response =
-        send(authedGet(token, "http://localhost:" + port + "/friends?tenantId=bad&accountId=2"));
+        send(
+            authedGet(
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends?tenantId=bad&accountId=c41744c9-285e-4ed0-9fb4-0f0acb7a0123"));
 
     assertThat(response.statusCode()).isEqualTo(400);
     assertThat(response.body()).contains("\"code\":\"INVALID_ARGUMENT\"");
@@ -176,7 +184,7 @@ class SocialGroupsApplicationIntegrationTest {
                 token,
                 "http://localhost:"
                     + port
-                    + "/friends?tenantId=1&accountId=2&filter=NOT_A_FILTER"));
+                    + "/friends?tenantId=1&accountId=c41744c9-285e-4ed0-9fb4-0f0acb7a0123&filter=NOT_A_FILTER"));
 
     assertThat(response.statusCode()).isEqualTo(400);
     assertThat(response.body()).contains("\"code\":\"INVALID_ARGUMENT\"");
@@ -187,7 +195,15 @@ class SocialGroupsApplicationIntegrationTest {
   void duplicateEffectIdReturnsExistingChatMessageWithoutRepublishing() {
     SendMessageRequestDto request =
         new SendMessageRequestDto(
-            1L, 2L, ChatType.SAY, null, 2L, null, null, "hello there", "fx-comm-42");
+            1L,
+            ACCOUNT_UUID,
+            ChatType.SAY,
+            null,
+            ACCOUNT_UUID,
+            null,
+            null,
+            "hello there",
+            "fx-comm-42");
 
     ChatMessageDto first = chatService.sendMessage(request);
     ChatMessageDto replay = chatService.sendMessage(request);
@@ -196,7 +212,7 @@ class SocialGroupsApplicationIntegrationTest {
     assertThat(chatMessageRepository.findByTenantIdAndEffectId(1L, "fx-comm-42"))
         .hasValueSatisfying(message -> assertThat(message.getId()).isEqualTo(first.id()));
 
-    List<Object> redisRange = redisTemplate.opsForList().range("chat:say:1:2", 0, -1);
+    List<Object> redisRange = redisTemplate.opsForList().range("chat:say:1:" + ACCOUNT_UUID, 0, -1);
     List<Object> cachedMessages = new ArrayList<>(redisRange == null ? List.of() : redisRange);
     assertThat(cachedMessages).containsExactly("hello there");
   }
@@ -212,18 +228,20 @@ class SocialGroupsApplicationIntegrationTest {
                 .POST(
                     HttpRequest.BodyPublishers.ofString(
                         """
-                        {"tenantId":1,"accountId":2,"friendAccountId":3}
+                        {"tenantId":1,"accountId":"c41744c9-285e-4ed0-9fb4-0f0acb7a0123","friendAccountId":"d52755da-396f-4fd1-80c5-1f1bcb8b1234"}
                         """))
                 .build());
     assertThat(addResponse.statusCode()).isEqualTo(200);
-    acceptFriendLink(1L, 2L, 3L);
+    acceptFriendLink(
+        1L, "c41744c9-285e-4ed0-9fb4-0f0acb7a0123", "d52755da-396f-4fd1-80c5-1f1bcb8b1234");
 
-    Mockito.when(TEST_GAME_SESSION_CLIENT.queryAccountPresence(1L, 2L, List.of(3L)))
+    Mockito.when(
+            TEST_GAME_SESSION_CLIENT.queryAccountPresence(1L, ACCOUNT_UUID, List.of(FRIEND_UUID_3)))
         .thenReturn(
             QueryAccountPresenceResponse.newBuilder()
                 .addPresences(
                     AccountPresenceEntry.newBuilder()
-                        .setAccountId("3")
+                        .setAccountId("d52755da-396f-4fd1-80c5-1f1bcb8b1234")
                         .setOnline(true)
                         .setGameInstanceId("9")
                         .setPlayableStateScope(
@@ -245,9 +263,15 @@ class SocialGroupsApplicationIntegrationTest {
                 .build());
 
     HttpResponse<String> rosterResponse =
-        send(authedGet(token, "http://localhost:" + port + "/friends?tenantId=1&accountId=2"));
+        send(
+            authedGet(
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends?tenantId=1&accountId=c41744c9-285e-4ed0-9fb4-0f0acb7a0123"));
     assertThat(rosterResponse.statusCode()).isEqualTo(200);
-    assertThat(rosterResponse.body()).contains("\"friendAccountId\":3");
+    assertThat(rosterResponse.body())
+        .contains("\"friendAccountId\":\"d52755da-396f-4fd1-80c5-1f1bcb8b1234\"");
     assertThat(rosterResponse.body()).contains("\"status\":\"active\"");
     assertThat(rosterResponse.body()).contains("\"presence\"");
     assertThat(rosterResponse.body()).contains("\"characterName\":\"Sora\"");
@@ -256,26 +280,40 @@ class SocialGroupsApplicationIntegrationTest {
     HttpResponse<String> presenceResponse =
         send(
             authedGet(
-                token, "http://localhost:" + port + "/friends/presence?tenantId=1&accountId=2"));
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends/presence?tenantId=1&accountId=c41744c9-285e-4ed0-9fb4-0f0acb7a0123"));
     assertThat(presenceResponse.statusCode()).isEqualTo(200);
-    assertThat(presenceResponse.body()).contains("\"friendAccountId\":3");
+    assertThat(presenceResponse.body())
+        .contains("\"friendAccountId\":\"d52755da-396f-4fd1-80c5-1f1bcb8b1234\"");
     assertThat(presenceResponse.body()).contains("\"worldSlug\":\"demo\"");
     assertThat(presenceResponse.body()).contains("\"characterName\":\"Sora\"");
 
     HttpResponse<String> detailResponse =
-        send(authedGet(token, "http://localhost:" + port + "/friends/3?tenantId=1&accountId=2"));
+        send(
+            authedGet(
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends/d52755da-396f-4fd1-80c5-1f1bcb8b1234?tenantId=1&accountId=c41744c9-285e-4ed0-9fb4-0f0acb7a0123"));
     assertThat(detailResponse.statusCode()).isEqualTo(200);
     assertThat(detailResponse.body()).contains("\"friendLinkId\"");
-    assertThat(detailResponse.body()).contains("\"friendAccountId\":3");
+    assertThat(detailResponse.body())
+        .contains("\"friendAccountId\":\"d52755da-396f-4fd1-80c5-1f1bcb8b1234\"");
     assertThat(detailResponse.body()).contains("\"characterName\":\"Sora\"");
 
     HttpResponse<String> ordinalDetailResponse =
         send(
             authedGet(
-                token, "http://localhost:" + port + "/friends/entry/1?tenantId=1&accountId=2"));
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends/entry/1?tenantId=1&accountId=c41744c9-285e-4ed0-9fb4-0f0acb7a0123"));
     assertThat(ordinalDetailResponse.statusCode()).isEqualTo(200);
     assertThat(ordinalDetailResponse.body()).contains("\"ordinal\":1");
-    assertThat(ordinalDetailResponse.body()).contains("\"friendAccountId\":3");
+    assertThat(ordinalDetailResponse.body())
+        .contains("\"friendAccountId\":\"d52755da-396f-4fd1-80c5-1f1bcb8b1234\"");
   }
 
   @Test
@@ -288,19 +326,27 @@ class SocialGroupsApplicationIntegrationTest {
             .POST(
                 HttpRequest.BodyPublishers.ofString(
                     """
-                    {"tenantId":1,"accountId":2,"friendAccountId":3}
+                    {"tenantId":1,"accountId":"c41744c9-285e-4ed0-9fb4-0f0acb7a0123","friendAccountId":"d52755da-396f-4fd1-80c5-1f1bcb8b1234"}
                     """))
             .build());
-    acceptFriendLink(1L, 2L, 3L);
+    acceptFriendLink(
+        1L, "c41744c9-285e-4ed0-9fb4-0f0acb7a0123", "d52755da-396f-4fd1-80c5-1f1bcb8b1234");
 
-    Mockito.when(TEST_GAME_SESSION_CLIENT.queryAccountPresence(1L, 2L, List.of(3L)))
+    Mockito.when(
+            TEST_GAME_SESSION_CLIENT.queryAccountPresence(1L, ACCOUNT_UUID, List.of(FRIEND_UUID_3)))
         .thenReturn(QueryAccountPresenceResponse.newBuilder().build());
 
     HttpResponse<String> rosterResponse =
-        send(authedGet(token, "http://localhost:" + port + "/friends?tenantId=1&accountId=2"));
+        send(
+            authedGet(
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends?tenantId=1&accountId=c41744c9-285e-4ed0-9fb4-0f0acb7a0123"));
 
     assertThat(rosterResponse.statusCode()).isEqualTo(200);
-    assertThat(rosterResponse.body()).contains("\"friendAccountId\":3");
+    assertThat(rosterResponse.body())
+        .contains("\"friendAccountId\":\"d52755da-396f-4fd1-80c5-1f1bcb8b1234\"");
     assertThat(rosterResponse.body()).contains("\"online\":false");
   }
 
@@ -314,10 +360,11 @@ class SocialGroupsApplicationIntegrationTest {
             .POST(
                 HttpRequest.BodyPublishers.ofString(
                     """
-                    {"tenantId":1,"accountId":2,"friendAccountId":3}
+                    {"tenantId":1,"accountId":"c41744c9-285e-4ed0-9fb4-0f0acb7a0123","friendAccountId":"d52755da-396f-4fd1-80c5-1f1bcb8b1234"}
                     """))
             .build());
-    acceptFriendLink(1L, 2L, 3L);
+    acceptFriendLink(
+        1L, "c41744c9-285e-4ed0-9fb4-0f0acb7a0123", "d52755da-396f-4fd1-80c5-1f1bcb8b1234");
     send(
         HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/friends"))
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
@@ -325,32 +372,45 @@ class SocialGroupsApplicationIntegrationTest {
             .POST(
                 HttpRequest.BodyPublishers.ofString(
                     """
-                    {"tenantId":1,"accountId":2,"friendAccountId":4}
+                    {"tenantId":1,"accountId":"c41744c9-285e-4ed0-9fb4-0f0acb7a0123","friendAccountId":"e63866eb-4a70-4fe2-91d6-202cdc9c2345"}
                     """))
             .build());
-    acceptFriendLink(1L, 2L, 4L);
+    acceptFriendLink(
+        1L, "c41744c9-285e-4ed0-9fb4-0f0acb7a0123", "e63866eb-4a70-4fe2-91d6-202cdc9c2345");
 
-    Mockito.when(TEST_GAME_SESSION_CLIENT.queryAccountPresence(1L, 2L, List.of(3L, 4L)))
+    Mockito.when(
+            TEST_GAME_SESSION_CLIENT.queryAccountPresence(
+                1L, ACCOUNT_UUID, List.of(FRIEND_UUID_3, FRIEND_UUID_4)))
         .thenReturn(
             QueryAccountPresenceResponse.newBuilder()
                 .addPresences(
-                    AccountPresenceEntry.newBuilder().setAccountId("3").setOnline(true).build())
+                    AccountPresenceEntry.newBuilder()
+                        .setAccountId("d52755da-396f-4fd1-80c5-1f1bcb8b1234")
+                        .setOnline(true)
+                        .build())
                 .addPresences(
-                    AccountPresenceEntry.newBuilder().setAccountId("4").setOnline(false).build())
+                    AccountPresenceEntry.newBuilder()
+                        .setAccountId("e63866eb-4a70-4fe2-91d6-202cdc9c2345")
+                        .setOnline(false)
+                        .build())
                 .build());
 
     HttpResponse<String> response =
         send(
             authedGet(
                 token,
-                "http://localhost:" + port + "/friends?tenantId=1&accountId=2&filter=ONLINE"));
+                "http://localhost:"
+                    + port
+                    + "/friends?tenantId=1&accountId=c41744c9-285e-4ed0-9fb4-0f0acb7a0123&filter=ONLINE"));
 
     assertThat(response.statusCode()).isEqualTo(200);
     assertThat(response.body()).contains("\"filter\":\"ONLINE\"");
     assertThat(response.body()).contains("\"totalCount\":2");
     assertThat(response.body()).contains("\"matchCount\":1");
-    assertThat(response.body()).contains("\"friendAccountId\":3");
-    assertThat(response.body()).doesNotContain("\"friendAccountId\":4");
+    assertThat(response.body())
+        .contains("\"friendAccountId\":\"d52755da-396f-4fd1-80c5-1f1bcb8b1234\"");
+    assertThat(response.body())
+        .doesNotContain("\"friendAccountId\":\"e63866eb-4a70-4fe2-91d6-202cdc9c2345\"");
   }
 
   @Test
@@ -363,10 +423,11 @@ class SocialGroupsApplicationIntegrationTest {
             .POST(
                 HttpRequest.BodyPublishers.ofString(
                     """
-                    {"tenantId":1,"accountId":2,"friendAccountId":3}
+                    {"tenantId":1,"accountId":"c41744c9-285e-4ed0-9fb4-0f0acb7a0123","friendAccountId":"d52755da-396f-4fd1-80c5-1f1bcb8b1234"}
                     """))
             .build());
-    acceptFriendLink(1L, 2L, 3L);
+    acceptFriendLink(
+        1L, "c41744c9-285e-4ed0-9fb4-0f0acb7a0123", "d52755da-396f-4fd1-80c5-1f1bcb8b1234");
     send(
         HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/friends"))
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
@@ -374,17 +435,20 @@ class SocialGroupsApplicationIntegrationTest {
             .POST(
                 HttpRequest.BodyPublishers.ofString(
                     """
-                    {"tenantId":1,"accountId":2,"friendAccountId":4}
+                    {"tenantId":1,"accountId":"c41744c9-285e-4ed0-9fb4-0f0acb7a0123","friendAccountId":"e63866eb-4a70-4fe2-91d6-202cdc9c2345"}
                     """))
             .build());
-    acceptFriendLink(1L, 2L, 4L);
+    acceptFriendLink(
+        1L, "c41744c9-285e-4ed0-9fb4-0f0acb7a0123", "e63866eb-4a70-4fe2-91d6-202cdc9c2345");
 
-    Mockito.when(TEST_GAME_SESSION_CLIENT.queryAccountPresence(1L, 2L, List.of(3L, 4L)))
+    Mockito.when(
+            TEST_GAME_SESSION_CLIENT.queryAccountPresence(
+                1L, ACCOUNT_UUID, List.of(FRIEND_UUID_3, FRIEND_UUID_4)))
         .thenReturn(
             QueryAccountPresenceResponse.newBuilder()
                 .addPresences(
                     AccountPresenceEntry.newBuilder()
-                        .setAccountId("3")
+                        .setAccountId("d52755da-396f-4fd1-80c5-1f1bcb8b1234")
                         .setOnline(true)
                         .setPlayableStateScope(
                             net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
@@ -392,7 +456,7 @@ class SocialGroupsApplicationIntegrationTest {
                         .build())
                 .addPresences(
                     AccountPresenceEntry.newBuilder()
-                        .setAccountId("4")
+                        .setAccountId("e63866eb-4a70-4fe2-91d6-202cdc9c2345")
                         .setOnline(true)
                         .setPlayableStateScope(
                             net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
@@ -404,14 +468,18 @@ class SocialGroupsApplicationIntegrationTest {
         send(
             authedGet(
                 token,
-                "http://localhost:" + port + "/friends?tenantId=1&accountId=2&filter=SHARED"));
+                "http://localhost:"
+                    + port
+                    + "/friends?tenantId=1&accountId=c41744c9-285e-4ed0-9fb4-0f0acb7a0123&filter=SHARED"));
 
     assertThat(response.statusCode()).isEqualTo(200);
     assertThat(response.body()).contains("\"filter\":\"SHARED\"");
     assertThat(response.body()).contains("\"totalCount\":2");
     assertThat(response.body()).contains("\"matchCount\":1");
-    assertThat(response.body()).contains("\"friendAccountId\":3");
-    assertThat(response.body()).doesNotContain("\"friendAccountId\":4");
+    assertThat(response.body())
+        .contains("\"friendAccountId\":\"d52755da-396f-4fd1-80c5-1f1bcb8b1234\"");
+    assertThat(response.body())
+        .doesNotContain("\"friendAccountId\":\"e63866eb-4a70-4fe2-91d6-202cdc9c2345\"");
   }
 
   @Test
@@ -424,10 +492,11 @@ class SocialGroupsApplicationIntegrationTest {
             .POST(
                 HttpRequest.BodyPublishers.ofString(
                     """
-                    {"tenantId":1,"accountId":2,"friendAccountId":3}
+                    {"tenantId":1,"accountId":"c41744c9-285e-4ed0-9fb4-0f0acb7a0123","friendAccountId":"d52755da-396f-4fd1-80c5-1f1bcb8b1234"}
                     """))
             .build());
-    acceptFriendLink(1L, 2L, 3L);
+    acceptFriendLink(
+        1L, "c41744c9-285e-4ed0-9fb4-0f0acb7a0123", "d52755da-396f-4fd1-80c5-1f1bcb8b1234");
     send(
         HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/friends"))
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
@@ -435,19 +504,25 @@ class SocialGroupsApplicationIntegrationTest {
             .POST(
                 HttpRequest.BodyPublishers.ofString(
                     """
-                    {"tenantId":1,"accountId":2,"friendAccountId":4}
+                    {"tenantId":1,"accountId":"c41744c9-285e-4ed0-9fb4-0f0acb7a0123","friendAccountId":"e63866eb-4a70-4fe2-91d6-202cdc9c2345"}
                     """))
             .build());
-    acceptFriendLink(1L, 2L, 4L);
+    acceptFriendLink(
+        1L, "c41744c9-285e-4ed0-9fb4-0f0acb7a0123", "e63866eb-4a70-4fe2-91d6-202cdc9c2345");
 
-    Mockito.when(TEST_GAME_SESSION_CLIENT.queryAccountPresence(1L, 2L, List.of(3L, 4L)))
+    Mockito.when(
+            TEST_GAME_SESSION_CLIENT.queryAccountPresence(
+                1L, ACCOUNT_UUID, List.of(FRIEND_UUID_3, FRIEND_UUID_4)))
         .thenReturn(
             QueryAccountPresenceResponse.newBuilder()
                 .addPresences(
-                    AccountPresenceEntry.newBuilder().setAccountId("3").setOnline(true).build())
+                    AccountPresenceEntry.newBuilder()
+                        .setAccountId("d52755da-396f-4fd1-80c5-1f1bcb8b1234")
+                        .setOnline(true)
+                        .build())
                 .addPresences(
                     AccountPresenceEntry.newBuilder()
-                        .setAccountId("4")
+                        .setAccountId("e63866eb-4a70-4fe2-91d6-202cdc9c2345")
                         .setOnline(false)
                         .setLastSeenAtMs(1_744_353_730_000L)
                         .build())
@@ -456,7 +531,10 @@ class SocialGroupsApplicationIntegrationTest {
     HttpResponse<String> response =
         send(
             authedGet(
-                token, "http://localhost:" + port + "/friends/summary?tenantId=1&accountId=2"));
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends/summary?tenantId=1&accountId=c41744c9-285e-4ed0-9fb4-0f0acb7a0123"));
 
     assertThat(response.statusCode()).isEqualTo(200);
     assertThat(response.body()).contains("\"totalCount\":2");
@@ -473,77 +551,154 @@ class SocialGroupsApplicationIntegrationTest {
   @Test
   void friendEndpointsRequireReciprocalActiveLinksWithinRequestedTenant() throws Exception {
     String token = privilegedAccountToken();
-    saveFriendLink(1L, 2L, 3L, "active");
-    saveFriendLink(1L, 2L, 4L, "active");
-    saveFriendLink(1L, 4L, 2L, "inactive");
-    saveFriendLink(1L, 2L, 5L, "active");
-    saveFriendLink(1L, 5L, 2L, "active");
+    saveFriendLink(
+        1L,
+        "c41744c9-285e-4ed0-9fb4-0f0acb7a0123",
+        "d52755da-396f-4fd1-80c5-1f1bcb8b1234",
+        "active");
+    saveFriendLink(
+        1L,
+        "c41744c9-285e-4ed0-9fb4-0f0acb7a0123",
+        "e63866eb-4a70-4fe2-91d6-202cdc9c2345",
+        "active");
+    saveFriendLink(
+        1L,
+        "e63866eb-4a70-4fe2-91d6-202cdc9c2345",
+        "c41744c9-285e-4ed0-9fb4-0f0acb7a0123",
+        "inactive");
+    saveFriendLink(
+        1L,
+        "c41744c9-285e-4ed0-9fb4-0f0acb7a0123",
+        "f74977fc-5b81-40f3-a2e7-313dedad3456",
+        "active");
+    saveFriendLink(
+        1L,
+        "f74977fc-5b81-40f3-a2e7-313dedad3456",
+        "c41744c9-285e-4ed0-9fb4-0f0acb7a0123",
+        "active");
 
     HttpResponse<String> tenantOneRoster =
-        send(authedGet(token, "http://localhost:" + port + "/friends?tenantId=1&accountId=2"));
+        send(
+            authedGet(
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends?tenantId=1&accountId=c41744c9-285e-4ed0-9fb4-0f0acb7a0123"));
     assertThat(tenantOneRoster.statusCode()).isEqualTo(200);
     assertThat(tenantOneRoster.body()).contains("\"totalCount\":1");
-    assertThat(tenantOneRoster.body()).contains("\"friendAccountId\":5");
-    assertThat(tenantOneRoster.body()).doesNotContain("\"friendAccountId\":3");
-    assertThat(tenantOneRoster.body()).doesNotContain("\"friendAccountId\":4");
+    assertThat(tenantOneRoster.body())
+        .contains("\"friendAccountId\":\"f74977fc-5b81-40f3-a2e7-313dedad3456\"");
+    assertThat(tenantOneRoster.body())
+        .doesNotContain("\"friendAccountId\":\"d52755da-396f-4fd1-80c5-1f1bcb8b1234\"");
+    assertThat(tenantOneRoster.body())
+        .doesNotContain("\"friendAccountId\":\"e63866eb-4a70-4fe2-91d6-202cdc9c2345\"");
 
     HttpResponse<String> tenantOnePresence =
         send(
             authedGet(
-                token, "http://localhost:" + port + "/friends/presence?tenantId=1&accountId=2"));
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends/presence?tenantId=1&accountId=c41744c9-285e-4ed0-9fb4-0f0acb7a0123"));
     assertThat(tenantOnePresence.statusCode()).isEqualTo(200);
-    assertThat(tenantOnePresence.body()).contains("\"friendAccountId\":5");
-    assertThat(tenantOnePresence.body()).doesNotContain("\"friendAccountId\":3");
-    assertThat(tenantOnePresence.body()).doesNotContain("\"friendAccountId\":4");
+    assertThat(tenantOnePresence.body())
+        .contains("\"friendAccountId\":\"f74977fc-5b81-40f3-a2e7-313dedad3456\"");
+    assertThat(tenantOnePresence.body())
+        .doesNotContain("\"friendAccountId\":\"d52755da-396f-4fd1-80c5-1f1bcb8b1234\"");
+    assertThat(tenantOnePresence.body())
+        .doesNotContain("\"friendAccountId\":\"e63866eb-4a70-4fe2-91d6-202cdc9c2345\"");
 
     HttpResponse<String> reciprocalDetail =
-        send(authedGet(token, "http://localhost:" + port + "/friends/5?tenantId=1&accountId=2"));
+        send(
+            authedGet(
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends/f74977fc-5b81-40f3-a2e7-313dedad3456?tenantId=1&accountId=c41744c9-285e-4ed0-9fb4-0f0acb7a0123"));
     assertThat(reciprocalDetail.statusCode()).isEqualTo(200);
-    assertThat(reciprocalDetail.body()).contains("\"friendAccountId\":5");
+    assertThat(reciprocalDetail.body())
+        .contains("\"friendAccountId\":\"f74977fc-5b81-40f3-a2e7-313dedad3456\"");
 
     HttpResponse<String> reciprocalOrdinal =
         send(
             authedGet(
-                token, "http://localhost:" + port + "/friends/entry/1?tenantId=1&accountId=2"));
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends/entry/1?tenantId=1&accountId=c41744c9-285e-4ed0-9fb4-0f0acb7a0123"));
     assertThat(reciprocalOrdinal.statusCode()).isEqualTo(200);
-    assertThat(reciprocalOrdinal.body()).contains("\"friendAccountId\":5");
+    assertThat(reciprocalOrdinal.body())
+        .contains("\"friendAccountId\":\"f74977fc-5b81-40f3-a2e7-313dedad3456\"");
 
     HttpResponse<String> tenantOneSummary =
         send(
             authedGet(
-                token, "http://localhost:" + port + "/friends/summary?tenantId=1&accountId=2"));
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends/summary?tenantId=1&accountId=c41744c9-285e-4ed0-9fb4-0f0acb7a0123"));
     assertThat(tenantOneSummary.statusCode()).isEqualTo(200);
     assertThat(tenantOneSummary.body()).contains("\"totalCount\":1");
 
     HttpResponse<String> oneWayDetail =
-        send(authedGet(token, "http://localhost:" + port + "/friends/3?tenantId=1&accountId=2"));
+        send(
+            authedGet(
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends/d52755da-396f-4fd1-80c5-1f1bcb8b1234?tenantId=1&accountId=c41744c9-285e-4ed0-9fb4-0f0acb7a0123"));
     assertThat(oneWayDetail.statusCode()).isEqualTo(404);
     HttpResponse<String> inactiveReciprocalDetail =
-        send(authedGet(token, "http://localhost:" + port + "/friends/4?tenantId=1&accountId=2"));
+        send(
+            authedGet(
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends/e63866eb-4a70-4fe2-91d6-202cdc9c2345?tenantId=1&accountId=c41744c9-285e-4ed0-9fb4-0f0acb7a0123"));
     assertThat(inactiveReciprocalDetail.statusCode()).isEqualTo(404);
 
     HttpResponse<String> wrongTenantRoster =
-        send(authedGet(token, "http://localhost:" + port + "/friends?tenantId=2&accountId=2"));
+        send(
+            authedGet(
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends?tenantId=2&accountId=c41744c9-285e-4ed0-9fb4-0f0acb7a0123"));
     assertThat(wrongTenantRoster.statusCode()).isEqualTo(200);
     assertThat(wrongTenantRoster.body()).contains("\"totalCount\":0");
     HttpResponse<String> wrongTenantPresence =
         send(
             authedGet(
-                token, "http://localhost:" + port + "/friends/presence?tenantId=2&accountId=2"));
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends/presence?tenantId=2&accountId=c41744c9-285e-4ed0-9fb4-0f0acb7a0123"));
     assertThat(wrongTenantPresence.statusCode()).isEqualTo(200);
-    assertThat(wrongTenantPresence.body()).doesNotContain("\"friendAccountId\":5");
+    assertThat(wrongTenantPresence.body())
+        .doesNotContain("\"friendAccountId\":\"f74977fc-5b81-40f3-a2e7-313dedad3456\"");
     HttpResponse<String> wrongTenantDetail =
-        send(authedGet(token, "http://localhost:" + port + "/friends/5?tenantId=2&accountId=2"));
+        send(
+            authedGet(
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends/f74977fc-5b81-40f3-a2e7-313dedad3456?tenantId=2&accountId=c41744c9-285e-4ed0-9fb4-0f0acb7a0123"));
     assertThat(wrongTenantDetail.statusCode()).isEqualTo(404);
     HttpResponse<String> wrongTenantOrdinal =
         send(
             authedGet(
-                token, "http://localhost:" + port + "/friends/entry/1?tenantId=2&accountId=2"));
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends/entry/1?tenantId=2&accountId=c41744c9-285e-4ed0-9fb4-0f0acb7a0123"));
     assertThat(wrongTenantOrdinal.statusCode()).isEqualTo(404);
     HttpResponse<String> wrongTenantSummary =
         send(
             authedGet(
-                token, "http://localhost:" + port + "/friends/summary?tenantId=2&accountId=2"));
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends/summary?tenantId=2&accountId=c41744c9-285e-4ed0-9fb4-0f0acb7a0123"));
     assertThat(wrongTenantSummary.statusCode()).isEqualTo(200);
     assertThat(wrongTenantSummary.body()).contains("\"totalCount\":0");
   }
@@ -558,7 +713,7 @@ class SocialGroupsApplicationIntegrationTest {
             .POST(
                 HttpRequest.BodyPublishers.ofString(
                     """
-                    {"tenantId":1,"accountId":2,"friendAccountId":3}
+                    {"tenantId":1,"accountId":"c41744c9-285e-4ed0-9fb4-0f0acb7a0123","friendAccountId":"d52755da-396f-4fd1-80c5-1f1bcb8b1234"}
                     """))
             .build();
 
@@ -567,18 +722,21 @@ class SocialGroupsApplicationIntegrationTest {
 
     assertThat(firstResponse.statusCode()).isEqualTo(200);
     assertThat(secondResponse.statusCode()).isEqualTo(200);
-    assertThat(accountFriendLinkRepository.findByTenantIdAndAccountIdAndStatus(1L, 2L, "active"))
+    assertThat(
+            accountFriendLinkRepository.findByTenantIdAndAccountIdAndStatus(
+                1L, java.util.UUID.fromString("c41744c9-285e-4ed0-9fb4-0f0acb7a0123"), "active"))
         .hasSize(1);
     assertThat(
             accountFriendLinkRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(
-                1L, 2L, "active"))
+                1L, java.util.UUID.fromString("c41744c9-285e-4ed0-9fb4-0f0acb7a0123"), "active"))
         .isEmpty();
 
-    acceptFriendLink(1L, 2L, 3L);
+    acceptFriendLink(
+        1L, "c41744c9-285e-4ed0-9fb4-0f0acb7a0123", "d52755da-396f-4fd1-80c5-1f1bcb8b1234");
 
     assertThat(
             accountFriendLinkRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(
-                1L, 2L, "active"))
+                1L, java.util.UUID.fromString("c41744c9-285e-4ed0-9fb4-0f0acb7a0123"), "active"))
         .hasSize(1);
   }
 
@@ -593,13 +751,15 @@ class SocialGroupsApplicationIntegrationTest {
                 .POST(
                     HttpRequest.BodyPublishers.ofString(
                         """
-                        {"tenantId":1,"accountId":2,"friendAccountId":2}
+                        {"tenantId":1,"accountId":"c41744c9-285e-4ed0-9fb4-0f0acb7a0123","friendAccountId":"c41744c9-285e-4ed0-9fb4-0f0acb7a0123"}
                         """))
                 .build());
 
     assertThat(response.statusCode()).isEqualTo(400);
     assertThat(response.body()).contains("Cannot add or remove your own account as a friend");
-    assertThat(accountFriendLinkRepository.findByTenantIdAndAccountIdAndStatus(1L, 2L, "active"))
+    assertThat(
+            accountFriendLinkRepository.findByTenantIdAndAccountIdAndStatus(
+                1L, java.util.UUID.fromString("c41744c9-285e-4ed0-9fb4-0f0acb7a0123"), "active"))
         .isEmpty();
   }
 
@@ -613,7 +773,7 @@ class SocialGroupsApplicationIntegrationTest {
             .POST(
                 HttpRequest.BodyPublishers.ofString(
                     """
-                    {"tenantId":1,"accountId":2,"friendAccountId":3}
+                    {"tenantId":1,"accountId":"c41744c9-285e-4ed0-9fb4-0f0acb7a0123","friendAccountId":"d52755da-396f-4fd1-80c5-1f1bcb8b1234"}
                     """))
             .build();
 
@@ -622,21 +782,29 @@ class SocialGroupsApplicationIntegrationTest {
     HttpResponse<String> firstDelete =
         send(
             HttpRequest.newBuilder(
-                    URI.create("http://localhost:" + port + "/friends/3?tenantId=1&accountId=2"))
+                    URI.create(
+                        "http://localhost:"
+                            + port
+                            + "/friends/d52755da-396f-4fd1-80c5-1f1bcb8b1234?tenantId=1&accountId=c41744c9-285e-4ed0-9fb4-0f0acb7a0123"))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                 .DELETE()
                 .build());
     HttpResponse<String> secondDelete =
         send(
             HttpRequest.newBuilder(
-                    URI.create("http://localhost:" + port + "/friends/3?tenantId=1&accountId=2"))
+                    URI.create(
+                        "http://localhost:"
+                            + port
+                            + "/friends/d52755da-396f-4fd1-80c5-1f1bcb8b1234?tenantId=1&accountId=c41744c9-285e-4ed0-9fb4-0f0acb7a0123"))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                 .DELETE()
                 .build());
 
     assertThat(firstDelete.statusCode()).isEqualTo(200);
     assertThat(secondDelete.statusCode()).isEqualTo(200);
-    assertThat(accountFriendLinkRepository.findByTenantIdAndAccountIdAndStatus(1L, 2L, "active"))
+    assertThat(
+            accountFriendLinkRepository.findByTenantIdAndAccountIdAndStatus(
+                1L, java.util.UUID.fromString("c41744c9-285e-4ed0-9fb4-0f0acb7a0123"), "active"))
         .isEmpty();
   }
 
@@ -650,24 +818,30 @@ class SocialGroupsApplicationIntegrationTest {
             .POST(
                 HttpRequest.BodyPublishers.ofString(
                     """
-                    {"tenantId":1,"accountId":2,"friendAccountId":3}
+                    {"tenantId":1,"accountId":"c41744c9-285e-4ed0-9fb4-0f0acb7a0123","friendAccountId":"d52755da-396f-4fd1-80c5-1f1bcb8b1234"}
                     """))
             .build());
 
-    acceptFriendLink(1L, 2L, 3L);
+    acceptFriendLink(
+        1L, "c41744c9-285e-4ed0-9fb4-0f0acb7a0123", "d52755da-396f-4fd1-80c5-1f1bcb8b1234");
 
     HttpResponse<String> deleteResponse =
         send(
             HttpRequest.newBuilder(
                     URI.create(
-                        "http://localhost:" + port + "/friends/entry/1?tenantId=1&accountId=2"))
+                        "http://localhost:"
+                            + port
+                            + "/friends/entry/1?tenantId=1&accountId=c41744c9-285e-4ed0-9fb4-0f0acb7a0123"))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                 .DELETE()
                 .build());
 
     assertThat(deleteResponse.statusCode()).isEqualTo(200);
-    assertThat(deleteResponse.body()).contains("\"friendAccountId\":3");
-    assertThat(accountFriendLinkRepository.findByTenantIdAndAccountIdAndStatus(1L, 2L, "active"))
+    assertThat(deleteResponse.body())
+        .contains("\"friendAccountId\":\"d52755da-396f-4fd1-80c5-1f1bcb8b1234\"");
+    assertThat(
+            accountFriendLinkRepository.findByTenantIdAndAccountIdAndStatus(
+                1L, java.util.UUID.fromString("c41744c9-285e-4ed0-9fb4-0f0acb7a0123"), "active"))
         .isEmpty();
   }
 
@@ -678,7 +852,10 @@ class SocialGroupsApplicationIntegrationTest {
     HttpResponse<String> getResponse =
         send(
             authedGet(
-                token, "http://localhost:" + port + "/friends/visibility?tenantId=1&accountId=2"));
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends/visibility?tenantId=1&accountId=c41744c9-285e-4ed0-9fb4-0f0acb7a0123"));
 
     assertThat(getResponse.statusCode()).isEqualTo(200);
     assertThat(getResponse.body()).contains("\"currentPolicy\":\"FRIENDS_ONLY\"");
@@ -686,7 +863,7 @@ class SocialGroupsApplicationIntegrationTest {
     Mockito.when(
             TEST_ACCOUNT_CLIENT.updatePresenceVisibilityPolicy(
                 1L,
-                2L,
+                ACCOUNT_UUID,
                 net.firedevops.firemud.socialgroups.dto.FriendPresenceVisibilityPolicyValue
                     .PRIVATE))
         .thenReturn(true);
@@ -699,7 +876,7 @@ class SocialGroupsApplicationIntegrationTest {
                 .PUT(
                     HttpRequest.BodyPublishers.ofString(
                         """
-                        {"tenantId":1,"accountId":2,"visibilityPolicy":"PRIVATE"}
+                        {"tenantId":1,"accountId":"c41744c9-285e-4ed0-9fb4-0f0acb7a0123","visibilityPolicy":"PRIVATE"}
                         """))
                 .build());
 
@@ -714,21 +891,22 @@ class SocialGroupsApplicationIntegrationTest {
         .build();
   }
 
-  private void acceptFriendLink(long tenantId, long accountId, long friendAccountId) {
+  private void acceptFriendLink(long tenantId, String accountId, String friendAccountId) {
     AccountFriendLink reciprocal = new AccountFriendLink();
     reciprocal.setTenantId(tenantId);
-    reciprocal.setAccountId(friendAccountId);
-    reciprocal.setFriendAccountId(accountId);
+    reciprocal.setAccountId(java.util.UUID.fromString(friendAccountId));
+    reciprocal.setFriendAccountId(java.util.UUID.fromString(accountId));
     reciprocal.setStatus("active");
     reciprocal.setCreatedAt(java.time.Instant.now());
     accountFriendLinkRepository.save(reciprocal);
   }
 
-  private void saveFriendLink(long tenantId, long accountId, long friendAccountId, String status) {
+  private void saveFriendLink(
+      long tenantId, String accountId, String friendAccountId, String status) {
     AccountFriendLink link = new AccountFriendLink();
     link.setTenantId(tenantId);
-    link.setAccountId(accountId);
-    link.setFriendAccountId(friendAccountId);
+    link.setAccountId(java.util.UUID.fromString(accountId));
+    link.setFriendAccountId(java.util.UUID.fromString(friendAccountId));
     link.setStatus(status);
     link.setCreatedAt(java.time.Instant.now());
     accountFriendLinkRepository.save(link);

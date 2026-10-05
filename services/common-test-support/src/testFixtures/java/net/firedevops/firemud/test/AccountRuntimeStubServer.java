@@ -44,6 +44,10 @@ import net.firedevops.firemud.common.account.AccountProfileJson;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 /** Shared fake Account runtime authority for cross-service gameplay tests. */
 public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountServiceImplBase
@@ -53,6 +57,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
   private static final String DEFAULT_ACCOUNT_UUID = "a7e0feac-60ab-4fd1-9002-0ad38d585db0";
   private static final String MEMBERSHIP_EVENT_ID = "00000000-0000-0000-0000-000000000099";
   private static final String MEMBERSHIP_EVENT_REQUEST_ID = "runtime-membership-request";
+  private static final ObjectMapper PROFILE_JSON_MAPPER = JsonMapper.builder().build();
   private static final Set<String> IMPLEMENTED_RUNTIME_METHODS =
       Set.of(
           "Ping",
@@ -535,15 +540,15 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
       GetProfileRequest request, StreamObserver<GetProfileResponse> responseObserver) {
     try {
       String accountUuid = requireCanonicalAccountUuid(request.getAccountId());
-      StubProfile profile =
-          profilesByAccountUuid.computeIfAbsent(accountUuid, StubProfile::defaultFor);
+      long tenantId = requirePositiveTenantId(request.getTenantId());
+      StubProfile profile = bindProfileToTenant(accountUuid, tenantId);
+      if (!profile.belongsToTenant(tenantId)) {
+        responseObserver.onNext(GetProfileResponse.newBuilder().build());
+        responseObserver.onCompleted();
+        return;
+      }
       responseObserver.onNext(
-          GetProfileResponse.newBuilder()
-              .setProfileJson(
-                  new AccountProfileJson(
-                          profile.displayName(), profile.bio(), profile.presenceVisibilityPolicy())
-                      .toJson())
-              .build());
+          GetProfileResponse.newBuilder().setProfileJson(profileJson(profile)).build());
       responseObserver.onCompleted();
     } catch (Exception ex) {
       responseObserver.onNext(GetProfileResponse.newBuilder().build());
@@ -556,19 +561,31 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
       UpdateProfileRequest request, StreamObserver<UpdateProfileResponse> responseObserver) {
     try {
       String accountUuid = requireCanonicalAccountUuid(request.getAccountId());
+      long tenantId = requirePositiveTenantId(request.getTenantId());
       AccountProfileJson profile =
           AccountProfileJson.parse(request.getProfileJson(), StubProfile.DEFAULT_VISIBILITY_POLICY);
-      StubProfile existing =
-          profilesByAccountUuid.computeIfAbsent(accountUuid, StubProfile::defaultFor);
-      profilesByAccountUuid.put(
-          accountUuid,
+      StubProfile existing = bindProfileToTenant(accountUuid, tenantId);
+      if (!existing.belongsToTenant(tenantId)) {
+        responseObserver.onNext(UpdateProfileResponse.newBuilder().setSuccess(false).build());
+        responseObserver.onCompleted();
+        return;
+      }
+      StubProfile updated =
           new StubProfile(
+              existing.accountUuid(),
+              existing.tenantId(),
               profile.displayName(),
               profile.bio(),
               profile.presenceVisibilityPolicy() == null
                   ? existing.presenceVisibilityPolicy()
-                  : profile.presenceVisibilityPolicy()));
-      responseObserver.onNext(UpdateProfileResponse.newBuilder().setSuccess(true).build());
+                  : profile.presenceVisibilityPolicy());
+      profilesByAccountUuid.put(accountUuid, updated);
+      responseObserver.onNext(
+          UpdateProfileResponse.newBuilder()
+              .setSuccess(true)
+              .setAccountId(updated.accountUuid())
+              .setTenantId(Long.toString(updated.tenantId()))
+              .build());
       responseObserver.onCompleted();
     } catch (Exception ex) {
       responseObserver.onNext(UpdateProfileResponse.newBuilder().setSuccess(false).build());
@@ -581,15 +598,85 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     server.shutdownNow();
   }
 
-  private record StubProfile(String displayName, String bio, String presenceVisibilityPolicy) {
+  private StubProfile bindProfileToTenant(String accountUuid, long tenantId) {
+    return profilesByAccountUuid.compute(
+        accountUuid,
+        (ignored, profile) -> {
+          if (profile == null) {
+            return StubProfile.defaultFor(accountUuid, tenantId);
+          }
+          return profile.bindTo(tenantId);
+        });
+  }
+
+  private static long requirePositiveTenantId(String tenantId) {
+    try {
+      long parsed = Long.parseLong(tenantId);
+      if (parsed <= 0L) {
+        throw new IllegalArgumentException("tenantId must be positive");
+      }
+      return parsed;
+    } catch (NumberFormatException ex) {
+      throw new IllegalArgumentException("tenantId must be numeric", ex);
+    }
+  }
+
+  private static String profileJson(StubProfile profile) {
+    ObjectNode json = PROFILE_JSON_MAPPER.createObjectNode();
+    json.put("accountId", profile.accountUuid());
+    json.put("tenantId", profile.tenantId());
+    putNullableText(json, "displayName", profile.displayName());
+    putNullableText(json, "bio", profile.bio());
+    putNullableText(json, "presenceVisibilityPolicy", profile.presenceVisibilityPolicy());
+    try {
+      return PROFILE_JSON_MAPPER.writeValueAsString(json);
+    } catch (JacksonException ex) {
+      throw new IllegalStateException("Could not serialize stub Account profile", ex);
+    }
+  }
+
+  private static void putNullableText(ObjectNode json, String fieldName, String value) {
+    if (value == null) {
+      json.putNull(fieldName);
+    } else {
+      json.put(fieldName, value);
+    }
+  }
+
+  private record StubProfile(
+      String accountUuid,
+      Long tenantId,
+      String displayName,
+      String bio,
+      String presenceVisibilityPolicy) {
     private static final String DEFAULT_VISIBILITY_POLICY = "FRIENDS_ONLY";
 
     private static StubProfile defaultFor(String accountUuid) {
-      return new StubProfile("Demo-" + accountUuid, null, DEFAULT_VISIBILITY_POLICY);
+      return new StubProfile(
+          accountUuid, null, "Demo-" + accountUuid, null, DEFAULT_VISIBILITY_POLICY);
+    }
+
+    private static StubProfile defaultFor(String accountUuid, long tenantId) {
+      return new StubProfile(
+          accountUuid, tenantId, "Demo-" + accountUuid, null, DEFAULT_VISIBILITY_POLICY);
+    }
+
+    private StubProfile bindTo(long tenantId) {
+      if (tenantId() != null) {
+        return this;
+      }
+      return new StubProfile(
+          accountUuid(), tenantId, displayName(), bio(), presenceVisibilityPolicy());
+    }
+
+    private boolean belongsToTenant(long requestedTenantId) {
+      return tenantId() != null && tenantId() == requestedTenantId;
     }
 
     private StubProfile withPresenceVisibilityPolicy(String visibilityPolicy) {
       return new StubProfile(
+          accountUuid,
+          tenantId,
           displayName,
           bio,
           visibilityPolicy == null ? DEFAULT_VISIBILITY_POLICY : visibilityPolicy);

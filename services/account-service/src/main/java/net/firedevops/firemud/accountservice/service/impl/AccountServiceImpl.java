@@ -2382,22 +2382,71 @@ public class AccountServiceImpl implements AccountService {
   @Override
   @Transactional(readOnly = true)
   @Timed(value = "account.list_presence_visibility_policies")
-  public Map<Long, ProfilePresenceVisibilityPolicy> listPresenceVisibilityPolicies(
-      Long tenantId, List<Long> accountIds) {
-    if (accountIds == null || accountIds.isEmpty()) {
+  public Map<String, ProfilePresenceVisibilityPolicy> listPresenceVisibilityPolicies(
+      Long tenantId, List<String> accountUuids) {
+    if (tenantId == null || tenantId <= 0L) {
+      throw new IllegalArgumentException("tenantId must be positive");
+    }
+    if (accountUuids == null || accountUuids.isEmpty()) {
       return Map.of();
     }
-    return profileRepository.findByTenantIdAndAccountIds(tenantId, accountIds).stream()
-        .filter(
-            profile ->
-                profile.getAccount() != null
-                    && profile.getAccount().getId() != null
-                    && profile.getPresenceVisibilityPolicy() != null)
-        .collect(
-            java.util.stream.Collectors.toUnmodifiableMap(
-                profile -> profile.getAccount().getId(),
-                profile -> profile.getPresenceVisibilityPolicy(),
-                (left, right) -> left));
+    List<String> canonicalAccountUuids =
+        accountUuids.stream()
+            .map(this::requireProfileAccountUuid)
+            .map(UUID::toString)
+            .distinct()
+            .toList();
+
+    Map<Long, String> accountUuidsByStorageId = new HashMap<>();
+    List<Long> accountStorageIds = new java.util.ArrayList<>();
+    for (String canonicalAccountUuid : canonicalAccountUuids) {
+      UUID accountUuid = UUID.fromString(canonicalAccountUuid);
+      Account account = accountRepository.findByAccountUuid(accountUuid).orElse(null);
+      if (account == null) {
+        continue;
+      }
+      requireAuthenticationPersistedIdentity(account);
+      if (!accountUuid.equals(account.getAccountUuid())) {
+        throw new IllegalStateException(
+            "Account UUID readback did not match the requested persisted identity");
+      }
+
+      Long accountStorageId = account.getId();
+      String priorAccountUuid =
+          accountUuidsByStorageId.putIfAbsent(accountStorageId, canonicalAccountUuid);
+      if (priorAccountUuid != null && !priorAccountUuid.equals(canonicalAccountUuid)) {
+        throw new IllegalStateException(
+            "Account UUID lookup returned a conflicting private storage row");
+      }
+      if (accountTenantMembershipRepository.existsByAccountIdAndTenantId(
+          accountStorageId, tenantId)) {
+        accountStorageIds.add(accountStorageId);
+      } else {
+        accountUuidsByStorageId.remove(accountStorageId);
+      }
+    }
+
+    if (accountStorageIds.isEmpty()) {
+      return Map.of();
+    }
+
+    Map<String, ProfilePresenceVisibilityPolicy> policies = new HashMap<>();
+    for (Profile profile :
+        profileRepository.findByTenantIdAndAccountIds(tenantId, accountStorageIds)) {
+      Long profileAccountId = profile.getAccount() == null ? null : profile.getAccount().getId();
+      String accountUuid = accountUuidsByStorageId.get(profileAccountId);
+      if (accountUuid == null) {
+        throw new IllegalStateException(
+            "Profile source does not match a requested persisted Account identity");
+      }
+      requireProfileBelongsTo(profile, profileAccountId, tenantId);
+      if (profile.getPresenceVisibilityPolicy() != null
+          && policies.putIfAbsent(accountUuid, profile.getPresenceVisibilityPolicy()) != null) {
+        throw new IllegalStateException(
+            "Multiple profile rows matched one persisted Account identity");
+      }
+    }
+    return Map.copyOf(policies);
   }
 
   @Override

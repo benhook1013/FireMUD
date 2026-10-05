@@ -19,7 +19,7 @@ class LogoutCommandHandlerTest {
   private final LogoutCommandHandler handler = new LogoutCommandHandler(sessionContextService);
 
   @Test
-  void authenticatedSharedRuntimeLogoutFailsWithoutMutatingContext() {
+  void authenticatedSharedRuntimeLogoutFailsRetryablyWithoutMutatingContext() {
     when(sessionContextService.findBySessionId(41L))
         .thenReturn(Optional.of(context(41L, ACCOUNT_UUID, 1L, "SHARED")));
 
@@ -30,7 +30,7 @@ class LogoutCommandHandlerTest {
   }
 
   @Test
-  void authenticatedIsolatedRuntimeLogoutFailsWithoutMutatingContext() {
+  void authenticatedIsolatedRuntimeLogoutFailsRetryablyWithoutMutatingContext() {
     when(sessionContextService.findBySessionId(41L))
         .thenReturn(Optional.of(context(41L, ACCOUNT_UUID, 7L, "ISOLATED")));
 
@@ -41,22 +41,13 @@ class LogoutCommandHandlerTest {
   }
 
   @Test
-  void loggedOutContextRemainsNotLoggedInWithoutMutation() {
+  void unauthenticatedContextStillReturnsNotLoggedInWithoutMutation() {
     when(sessionContextService.findBySessionId(41L))
         .thenReturn(Optional.of(context(41L, null, 1L, "SHARED")));
 
     LogoutCommandHandlingResult result = handler.handle("41", logoutCommand());
 
-    assertThat(result.commandResult().accepted()).isFalse();
-    assertThat(result.commandResult().errorCode()).isEqualTo("NOT_LOGGED_IN");
-    assertThat(result.commandResult().errorMessage()).isEqualTo("You are not logged in.");
-    assertThat(result.outputs())
-        .singleElement()
-        .satisfies(
-            output -> {
-              assertThat(output.kind()).isEqualTo(PlayerOutputKind.ERROR);
-              assertThat(output.text()).isEqualTo("ERROR NOT_LOGGED_IN You are not logged in.");
-            });
+    assertNotLoggedIn(result);
     verify(sessionContextService).findBySessionId(41L);
     verifyNoMoreInteractions(sessionContextService);
   }
@@ -67,9 +58,7 @@ class LogoutCommandHandlerTest {
 
     LogoutCommandHandlingResult result = handler.handle("41", logoutCommand());
 
-    assertThat(result.commandResult().accepted()).isFalse();
-    assertThat(result.commandResult().errorCode()).isEqualTo("NOT_LOGGED_IN");
-    assertThat(result.commandResult().errorMessage()).isEqualTo("You are not logged in.");
+    assertNotLoggedIn(result);
     verify(sessionContextService).findBySessionId(41L);
     verifyNoMoreInteractions(sessionContextService);
   }
@@ -78,8 +67,7 @@ class LogoutCommandHandlerTest {
   void invalidSessionIdDoesNotLookUpOrMutateContext() {
     LogoutCommandHandlingResult result = handler.handle("not-a-session", logoutCommand());
 
-    assertThat(result.commandResult().accepted()).isFalse();
-    assertThat(result.commandResult().errorCode()).isEqualTo("NOT_LOGGED_IN");
+    assertNotLoggedIn(result);
     verifyNoMoreInteractions(sessionContextService);
   }
 
@@ -107,6 +95,19 @@ class LogoutCommandHandlerTest {
               assertThat(output.text())
                   .isEqualTo(
                       "ERROR LOGOUT_UNAVAILABLE Logout is temporarily unavailable. Please try again.");
+            });
+  }
+
+  private static void assertNotLoggedIn(LogoutCommandHandlingResult result) {
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("NOT_LOGGED_IN");
+    assertThat(result.commandResult().errorMessage()).isEqualTo("You are not logged in.");
+    assertThat(result.outputs())
+        .singleElement()
+        .satisfies(
+            output -> {
+              assertThat(output.kind()).isEqualTo(PlayerOutputKind.ERROR);
+              assertThat(output.text()).isEqualTo("ERROR NOT_LOGGED_IN You are not logged in.");
             });
   }
 

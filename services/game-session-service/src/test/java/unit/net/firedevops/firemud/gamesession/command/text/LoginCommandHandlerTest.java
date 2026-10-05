@@ -644,7 +644,6 @@ class LoginCommandHandlerTest {
                 .setAuthToken(AUTH_TOKEN)
                 .setAccountId(ACCOUNT_99)
                 .build());
-
     LoginCommandHandlingResult firstPartyResult = handler.handle("1", bareLogin, false);
     when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 1L))
         .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 3L)));
@@ -665,7 +664,10 @@ class LoginCommandHandlerTest {
     verify(sessionContextService, Mockito.times(2)).save(captor.capture());
     List<SessionContext> savedContexts = captor.getAllValues();
     SessionContext credentialContext = savedContexts.get(0);
+    assertEquals(22L, credentialContext.tenantId());
     assertEquals(ACCOUNT_99, credentialContext.accountId());
+    assertEquals("other@example.com", credentialContext.loginName());
+    assertEquals(AUTH_TOKEN, credentialContext.jwt());
     assertEquals(1L, credentialContext.bootstrapGameInstanceId());
     assertEquals("demo", credentialContext.worldSlug());
     assertEquals("production", credentialContext.realmSlug());
