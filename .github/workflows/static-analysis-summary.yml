@@ -65,7 +65,8 @@ jobs:
             if (
               currentPullRequest.state !== "open" ||
               !sourceWorkflowName ||
-              context.payload.workflow_run.name !== expectedSourceTitle ||
+              (context.payload.workflow_run.name !== sourceWorkflowName &&
+                context.payload.workflow_run.name !== expectedSourceTitle) ||
               context.payload.workflow_run.display_title !== expectedSourceTitle
             ) {
               core.info("The source run is not bound to the current open pull-request base and head.");
