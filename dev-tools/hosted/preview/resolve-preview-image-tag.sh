@@ -33,7 +33,7 @@ runtime_relevant() {
     .github/workflows/runtime-images.yml | .github/workflows/publish-pr-runtime-images.yml | .github/workflows/smoke.yml | .github/workflows/smoke-full.yml | .dockerignore)
       return 0
       ;;
-    .github/actions/setup-python/* | .github/actions/load-workflow-tool-versions/* | buildSrc/* | gradle/* | protos/* | docker/* | services/* | dev-tools/smoke/*)
+    .github/actions/setup-python/* | .github/actions/load-workflow-tool-versions/* | buildSrc/* | gradle/* | protos/* | docker/* | services/* | dev-tools/smoke/* | dev-tools/minio/*)
       return 0
       ;;
     config/python/smoke-requirements.txt | config/python/smoke-requirements.in | \
