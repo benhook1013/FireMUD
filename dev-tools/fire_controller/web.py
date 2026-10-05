@@ -674,10 +674,10 @@ def render_worker_history(worker: str, jobs) -> str:
         encoded_job = quote(job_id, safe="")
         entries.append(
             '<article class="job-private worker-job-entry"><div class="job-meta">'
-            f'<h2>{title}</h2><span class="job-state">{html.escape(status, quote=True)}</span>'
+            f'<h2><a href="/jobs/{encoded_job}">{title}</a></h2>'
+            f'<span class="job-state">{html.escape(status, quote=True)}</span>'
             f'<span>{name}</span>{primary}</div>{summary_html}'
-            f'<p class="job-links"><a href="/jobs/{encoded_job}">Private details</a> · '
-            f'<a href="/jobs/{encoded_job}/history">Job history</a></p></article>'
+            f'<p class="job-links"><a href="/jobs/{encoded_job}/history">Job history</a></p></article>'
         )
     content = (
         f'<article class="job-private"><h1>{html.escape(worker, quote=True)} worker history</h1>'
