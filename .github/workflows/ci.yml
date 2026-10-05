@@ -2121,6 +2121,38 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Capture World guarded UUID topology PostgreSQL XML
+        if: ${{ always() && matrix.module == 'world-management-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: world-guarded-uuid-topology-postgresql-proof-${{ github.sha }}-${{ github.run_attempt }}
+          path: services/world-management-service/build/test-results/integrationTest/TEST-*WorldDraftTopologyCommitPostgresIntegrationTest.xml
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Verify World guarded UUID topology PostgreSQL proof
+        if: ${{ !cancelled() && matrix.module == 'world-management-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyCommitPostgresIntegrationTest \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyCommitPostgresIntegrationTest#allSixFamiliesAllocateTypedUuidRowsAndPreserveExactInputWithDefaults()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyCommitPostgresIntegrationTest#snakeCaseAndNumericEnumsStoreDefaultsAndRetainOriginalRawBindingAndRetry()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyCommitPostgresIntegrationTest#alteredTrustedProjectionSemanticsRollBackAgainstOriginalParsedPlan()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyCommitPostgresIntegrationTest#lostAckAndIndependentFrozenReadbackReturnOriginalExactEvidence()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyCommitPostgresIntegrationTest#completeReplayRejectsChangedBasePayloadOrderAffectedAndSource()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyCommitPostgresIntegrationTest#lateFailureRollsBackAllFamiliesMappingsEpochsAndHistory()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyCommitPostgresIntegrationTest#exactConcurrentFirstClaimReturnsOneOriginalResult()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyCommitPostgresIntegrationTest#conflictingFirstClaimsCannotRemapPreviouslyAllocatedRows()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyCommitPostgresIntegrationTest#freezeFirstDeniesAndWriterFirstSerializesFreezeUntilAtomicCommit()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyCommitPostgresIntegrationTest#ordinaryWritesMappedMovesEpochTamperAndTruncateStayDenied()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyCommitPostgresIntegrationTest#staleOrWrongInsertManifestCannotAuthorizeOrdinaryFreshRows()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyCommitPostgresIntegrationTest#retainedRowsArePreservedUnmappedAndDenyFreshContent()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyCommitPostgresIntegrationTest#deniedPermissionAndCallerTransactionCannotClaimOrReadOwnerStorage()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyCommitPostgresIntegrationTest#v29ToV30PreservesNumericRowsSourceEpochsAndOriginalRegionHistory()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyCommitPostgresIntegrationTest#immutableHistoryAndEveryStoredPayloadAreVerifiedOnIndependentReadback()' \
+            world-management-service
+
       - name: Verify Account authored-draft publication PostgreSQL proof
         if: ${{ !cancelled() && matrix.module == 'account-service' }}
         run: |

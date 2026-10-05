@@ -534,11 +534,18 @@ class WorldDraftRegionCommitPostgresIntegrationTest {
               scope.getKey().equals("world_authored_version_identity")
                   ? " OVERRIDING SYSTEM VALUE"
                   : "";
+          String columns =
+              scope.getKey().equals("world_entity_spawn_binding")
+                  ? "id,tenant_id,version_id,room_id,entity_template_type,entity_template_id,spawn_count,respawn_delay_seconds,version"
+                  : null;
           retained.execute(
               "INSERT INTO "
                   + scope.getKey()
+                  + (columns == null ? "" : " (" + columns + ")")
                   + override
-                  + " SELECT * FROM world_management_service."
+                  + " SELECT "
+                  + (columns == null ? "*" : columns)
+                  + " FROM world_management_service."
                   + scope.getKey()
                   + " WHERE "
                   + scope.getValue()
@@ -564,7 +571,8 @@ class WorldDraftRegionCommitPostgresIntegrationTest {
       }
       connection.setAutoCommit(true);
       scopes.put("world_authored_graph_snapshot", "local_tenant_key");
-      Map<String, List<String>> before = retainedRows(retained, scopes.keySet().stream().toList());
+      Map<String, List<String>> before =
+          retainedRows(retained, scopes.keySet().stream().toList(), true);
       assertThat(
               retained
                   .resultQuery(
@@ -586,7 +594,13 @@ class WorldDraftRegionCommitPostgresIntegrationTest {
           .locations("classpath:db/migration")
           .load()
           .migrate();
-      assertThat(retainedRows(retained, scopes.keySet().stream().toList())).isEqualTo(before);
+      assertThat(retainedRows(retained, scopes.keySet().stream().toList(), true)).isEqualTo(before);
+      assertThat(
+              retained
+                  .resultQuery(
+                      "SELECT COUNT(*) FROM world_entity_spawn_binding WHERE entity_canonical_tenant_id IS NOT NULL OR entity_canonical_version_id IS NOT NULL OR entity_canonical_template_id IS NOT NULL")
+                  .fetchOne(0, Long.class))
+          .isZero();
       SingleConnectionDataSource dataSource = new SingleConnectionDataSource(connection, true);
       DataSourceTransactionManager retainedManager = new DataSourceTransactionManager(dataSource);
       DriverManagerDataSource committedReadDataSource =
@@ -618,7 +632,7 @@ class WorldDraftRegionCommitPostgresIntegrationTest {
       assertThatThrownBy(
               () -> deniedFrozen.store(plan(f, List.of(f.first()), 1, "must-remain-frozen")))
           .hasMessageContaining("not open");
-      assertThat(retainedRows(retained, scopes.keySet().stream().toList())).isEqualTo(before);
+      assertThat(retainedRows(retained, scopes.keySet().stream().toList(), true)).isEqualTo(before);
       assertThat(
               retained
                   .resultQuery("SELECT COUNT(*) FROM world_region_draft_commit")
@@ -631,13 +645,28 @@ class WorldDraftRegionCommitPostgresIntegrationTest {
   }
 
   private Map<String, List<String>> retainedRows(DSLContext retained, List<String> tables) {
+    return retainedRows(retained, tables, false);
+  }
+
+  private Map<String, List<String>> retainedRows(
+      DSLContext retained, List<String> tables, boolean retainedSpawnColumnsOnly) {
     Map<String, List<String>> rows = new LinkedHashMap<>();
     for (String table : tables) {
+      String expression =
+          retainedSpawnColumnsOnly && table.equals("world_entity_spawn_binding")
+              ? "to_jsonb(t) - 'entity_canonical_tenant_id' - 'entity_canonical_version_id' - 'entity_canonical_template_id'"
+              : "to_jsonb(t)";
       rows.put(
           table,
           retained
               .resultQuery(
-                  "SELECT to_jsonb(t)::TEXT FROM " + table + " t ORDER BY to_jsonb(t)::TEXT")
+                  "SELECT ("
+                      + expression
+                      + ")::TEXT FROM "
+                      + table
+                      + " t ORDER BY ("
+                      + expression
+                      + ")::TEXT")
               .fetch(0, String.class));
     }
     return rows;
