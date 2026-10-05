@@ -58,6 +58,7 @@ import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -323,7 +324,8 @@ class WorldAuthoredGraphSnapshotPostgresIntegrationTest {
                     workflowId,
                     "unbound-commit",
                     fixture.request().contentDigest()))
-        .isInstanceOf(org.jooq.exception.DataAccessException.class);
+        .isInstanceOf(DataIntegrityViolationException.class)
+        .satisfies(this::assertPublicationOwnerBindingConstraintDenial);
 
     assertThat(ownerCount(intake.canonicalTenantId(), fixture.localVersionKey()))
         .isEqualTo(ownerCountBefore);
@@ -360,7 +362,7 @@ class WorldAuthoredGraphSnapshotPostgresIntegrationTest {
                               LARGE_VALUE);
                           return null;
                         }))
-        .isInstanceOf(org.jooq.exception.DataAccessException.class)
+        .isInstanceOf(DataIntegrityViolationException.class)
         .satisfies(this::assertV24CanonicalKeyDenial);
 
     assertThat(syntheticRetentionRowCounts(fixture)).isEqualTo(retainedRowsBefore);
@@ -600,7 +602,7 @@ class WorldAuthoredGraphSnapshotPostgresIntegrationTest {
                 owner.canonicalTenantId(),
                 owner.canonicalVersionId(),
                 owner.gameDesignVersionId(),
-                source.tenantSlug(),
+                source.sourceGameTenantKey(),
                 source.sourceGameRowId(),
                 source.sourceGameTenantKey(),
                 source.provenanceKind()),
@@ -933,6 +935,16 @@ class WorldAuthoredGraphSnapshotPostgresIntegrationTest {
 
   private void assertV24CanonicalKeyDenial(Throwable throwable) {
     assertThat(throwable).hasStackTraceContaining("is reserved for a canonical authored source");
+    Throwable cause = throwable;
+    while (cause != null && !(cause instanceof SQLException)) {
+      cause = cause.getCause();
+    }
+    assertThat(cause).isInstanceOf(SQLException.class);
+    assertThat(((SQLException) cause).getSQLState()).isEqualTo("23514");
+  }
+
+  private void assertPublicationOwnerBindingConstraintDenial(Throwable throwable) {
+    assertThat(throwable).hasStackTraceContaining("ck_world_publication_attempt_owner_binding");
     Throwable cause = throwable;
     while (cause != null && !(cause instanceof SQLException)) {
       cause = cause.getCause();

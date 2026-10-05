@@ -2127,6 +2127,8 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#inconsistentOrMalformedCompleteBindingsFailBeforeReservationStorage()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#rollbackPreservesReservationAndIntentTogetherAndDisjointSourcesDoNotConflict()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#concurrentCommitOrderAndRevocationChooseExactlyOneDurableOrdering()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#distinctPendingChangesCannotRetainTwoOldCapturesForTheSameSource()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#concurrentDistinctSourceClaimsAdmitOnlyOnePendingCaptureWithoutBlockingDisjointSources()' \
             account-service
 
       - name: Verify Game Design authored-draft publication PostgreSQL proof
@@ -2373,7 +2375,37 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.accountservice.IssuerAuthorityProducerPostgresIntegrationTest#transactionLocalEventReadbackFailureRollsBackTheAdvance()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.IssuerAuthorityProducerPostgresIntegrationTest#unavailablePostCommitReadDoesNotUndoAndExactRetryRecoversWithoutAdvancingAgain()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.IssuerAuthorityProducerPostgresIntegrationTest#generationAndSourceVersionOverflowFailBeforeAnyMutation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerAuthorityProducerPostgresIntegrationTest#issuerCommitOrderWaitsForEveryOriginalOwnerOutcomeBeforeAtomicSourceCompletion()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerAuthorityProducerPostgresIntegrationTest#issuerRevocationWaitsForBothExactAbortsAndPendingRequestAndCaptureAreImmutable()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerAuthorityProducerPostgresIntegrationTest#concurrentDistinctIssuerRequestsCannotLeaveCompetingPendingCaptures()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerAuthorityProducerPostgresIntegrationTest#sameRequestUuidAcrossExactIssuersHasDistinctPersistedSourceChangeIdentities()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerAuthorityProducerPostgresIntegrationTest#failedIssuerAdvanceRetainsOriginalPendingCaptureForExactRetry()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerAuthorityProducerPostgresIntegrationTest#issuerPendingCaptureRetainsIndependentCountersCheckpointAndExactPositiveEventBytes()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerAuthorityProducerPostgresIntegrationTest#v59PreservesV58SourceHistoryAndExactKeysAndSupportsFullMultibyteIssuerParticipation()' \
             account-service
+
+      - name: Verify Account tenant Draft source ordering PostgreSQL proof cases
+        if: ${{ !cancelled() && matrix.module == 'account-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.accountservice.TenantAuthorityProducerPostgresIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.accountservice.TenantAuthorityProducerPostgresIntegrationTest#tenantCommitOrderWaitsForBothOriginalOwnerOutcomesBeforeAtomicSourceCompletion()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.TenantAuthorityProducerPostgresIntegrationTest#tenantRevocationWaitsForExactAbortsAndKeepsOriginalPendingRequestAndCapture()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.TenantAuthorityProducerPostgresIntegrationTest#concurrentDistinctTenantRequestsCannotLeaveCompetingPendingCaptures()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.TenantAuthorityProducerPostgresIntegrationTest#sameRequestUuidAcrossEnrolledTenantsHasDistinctPersistedSourceChangeIdentities()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.TenantAuthorityProducerPostgresIntegrationTest#failedTenantAdvanceRetainsOriginalPendingCaptureForExactRetry()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.TenantAuthorityProducerPostgresIntegrationTest#v59PreservesV58TenantAssociationCountersAndExactRetainedEventRetryWithoutBackfill()' \
+            account-service
+
+      - name: Upload Account tenant Draft source ordering PostgreSQL proof results
+        if: ${{ always() && matrix.module == 'account-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: account-tenant-draft-source-postgresql-proof-${{ github.sha }}
+          path: services/account-service/build/test-results/integrationTest/TEST-*TenantAuthorityProducerPostgresIntegrationTest.xml
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Verify Account issuer reconciliation capture PostgreSQL proof cases
         if: ${{ !cancelled() && matrix.module == 'account-service' }}

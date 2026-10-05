@@ -224,6 +224,8 @@ public final class DraftAuthorizationFenceRepository {
   /**
    * Commit this WAITING result even when false: rolling back would lose revocation intent. True
    * means settled or an exact SOURCE_COMMITTED replay; call sourceMutationPermitted before writing.
+   * A distinct request overlapping an already pending source change is not admitted: it must not
+   * retain a second old-state capture that becomes stale when the first source change commits.
    */
   public boolean requestSourceChange(SourceChange change) {
     requireTransaction();
@@ -235,6 +237,9 @@ public final class DraftAuthorizationFenceRepository {
         return true;
       }
     } else {
+      if (hasWaitingChange(change.sources())) {
+        throw new IllegalStateException("Another authority source change is already pending");
+      }
       dsl.execute(
           "INSERT INTO " + CHANGES + " (change_id, binding, status) VALUES (?, ?, 'WAITING')",
           change.changeId(),

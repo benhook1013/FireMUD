@@ -169,16 +169,22 @@ class DraftAuthorizationFenceBindingTest {
 
   @Test
   void rejectsOversizedMultibyteParticipationKeyWithoutChangingCanonicalScopes() {
-    String exactLimit = "界".repeat(168) + "x";
+    String exactLimit = "界".repeat(680) + "x";
     SourceEvidence retained =
         new SourceEvidence(SourceKind.ISSUER, exactLimit, "1", "1", "stream", "0", new byte[] {1});
     assertThat(retained.scopeId()).isEqualTo(exactLimit);
-    assertThat(retained.key().getBytes(StandardCharsets.UTF_8)).hasSize(512);
+    assertThat(retained.key().getBytes(StandardCharsets.UTF_8)).hasSize(2048);
     assertThatThrownBy(
             () ->
                 new SourceEvidence(
                     SourceKind.ISSUER, exactLimit + "x", "1", "1", "stream", "0", new byte[] {1}))
         .isInstanceOf(IllegalArgumentException.class);
+    String configuredIssuer = "界".repeat(512);
+    SourceEvidence exactIssuer =
+        new SourceEvidence(
+            SourceKind.ISSUER, configuredIssuer, "1", "1", "stream", "0", new byte[] {1});
+    assertThat(exactIssuer.scopeId()).isEqualTo(configuredIssuer);
+    assertThat(exactIssuer.key()).isEqualTo("ISSUER:" + configuredIssuer);
     UUID account = UUID.randomUUID();
     SourceEvidence canonical =
         new SourceEvidence(

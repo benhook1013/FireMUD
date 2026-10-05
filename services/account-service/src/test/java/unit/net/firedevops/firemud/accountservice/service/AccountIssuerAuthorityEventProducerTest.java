@@ -24,6 +24,17 @@ class AccountIssuerAuthorityEventProducerTest {
   private static final String STREAM_KEY = "account:auth-authority:v1:issuer/" + ISSUER_ID;
 
   @Test
+  void fullConfiguredMultibyteIssuerLengthIsPreservedWithoutPersistenceOrNormalization() {
+    Collaborators collaborators = new Collaborators();
+    String exactIssuer = "界".repeat(512);
+    AccountIssuerAuthorityEventProducer producer = newProducer(exactIssuer, collaborators);
+    assertThatThrownBy(() -> producer.advance(exactIssuer + "x", UUID.randomUUID(), 1, 1))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("exact configured issuer");
+    collaborators.verifyUnused();
+  }
+
+  @Test
   void requestedIssuerMismatchIsRejectedBeforeDatabaseOrTransactionManagerInteraction() {
     Collaborators collaborators = new Collaborators();
     AccountIssuerAuthorityEventProducer producer = newProducer(ISSUER_ID, collaborators);

@@ -348,6 +348,86 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   }
 
   @Test
+  void distinctPendingChangesCannotRetainTwoOldCapturesForTheSameSource() {
+    Context context = context();
+    DraftAuthorizationFenceBinding binding = binding();
+    SourceChange first = change(binding);
+    SourceChange second = change(binding);
+    tx(context, () -> context.repository().reserve(binding));
+    tx(context, () -> context.repository().claimCommitOrder(binding));
+    assertThat(tx(context, () -> context.repository().requestSourceChange(first))).isFalse();
+    var original = tx(context, () -> context.repository().readSourceChange(first));
+
+    assertThatThrownBy(() -> tx(context, () -> context.repository().requestSourceChange(second)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("already pending");
+    assertThat(context.dsl().fetchCount(DSL.table("account_draft_authorization_source_changes")))
+        .isEqualTo(1);
+    assertThat(tx(context, () -> context.repository().requestSourceChange(first))).isFalse();
+    var exactRetry = tx(context, () -> context.repository().readSourceChange(first));
+    assertThat(exactRetry.binding()).containsExactly(original.binding());
+    assertThat(exactRetry.requestedAt()).isEqualTo(original.requestedAt());
+
+    // This storage fixture stipulates definitive owner evidence; it does not authenticate it.
+    owner(context, binding, Owner.WORLD, Outcome.COMMITTED, new byte[] {1});
+    owner(context, binding, Owner.GAME_DESIGN, Outcome.COMMITTED, new byte[] {2});
+    tx(
+        context,
+        () -> {
+          context.repository().markSourceCommitted(first);
+          return null;
+        });
+    assertThat(tx(context, () -> context.repository().requestSourceChange(second))).isTrue();
+    assertThat(context.dsl().fetchCount(DSL.table("account_draft_authorization_source_changes")))
+        .isEqualTo(2);
+  }
+
+  @Test
+  void concurrentDistinctSourceClaimsAdmitOnlyOnePendingCaptureWithoutBlockingDisjointSources()
+      throws Exception {
+    Context context = context();
+    DraftAuthorizationFenceBinding binding = binding();
+    SourceChange first = change(binding);
+    SourceChange second = change(binding);
+    tx(context, () -> context.repository().reserve(binding));
+    tx(context, () -> context.repository().claimCommitOrder(binding));
+    CountDownLatch firstClaimed = new CountDownLatch(1);
+    CountDownLatch secondStarted = new CountDownLatch(1);
+    try (var executor = Executors.newFixedThreadPool(2)) {
+      var firstTask =
+          executor.submit(
+              () ->
+                  tx(
+                      context,
+                      () -> {
+                        boolean permitted = context.repository().requestSourceChange(first);
+                        firstClaimed.countDown();
+                        await(secondStarted);
+                        return permitted;
+                      }));
+      var secondTask =
+          executor.submit(
+              () -> {
+                await(firstClaimed);
+                secondStarted.countDown();
+                assertThatThrownBy(
+                        () -> tx(context, () -> context.repository().requestSourceChange(second)))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("already pending");
+              });
+      assertThat(firstTask.get(15, TimeUnit.SECONDS)).isFalse();
+      secondTask.get(15, TimeUnit.SECONDS);
+    }
+    assertThat(context.dsl().fetchCount(DSL.table("account_draft_authorization_source_changes")))
+        .isEqualTo(1);
+    assertThat(tx(context, () -> context.repository().requestSourceChange(first))).isFalse();
+    SourceChange disjoint = change(binding());
+    assertThat(tx(context, () -> context.repository().requestSourceChange(disjoint))).isTrue();
+    assertThat(context.dsl().fetchCount(DSL.table("account_draft_authorization_source_changes")))
+        .isEqualTo(2);
+  }
+
+  @Test
   void concurrentCommitOrderAndRevocationChooseExactlyOneDurableOrdering() throws Exception {
     for (boolean commitWins : List.of(true, false)) {
       Context context = context();

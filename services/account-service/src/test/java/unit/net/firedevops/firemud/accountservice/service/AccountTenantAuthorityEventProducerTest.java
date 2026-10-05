@@ -39,6 +39,17 @@ class AccountTenantAuthorityEventProducerTest {
   private static final String STREAM_KEY = "account:auth-authority:v1:tenant/" + TENANT_ID;
 
   @Test
+  void matchingEventDoesNotRelaxTheExistingTenantTransitionInvariant() {
+    TenantGenerationAuthorityEvent latest = event(TENANT_ID, UUID.randomUUID(), 4L, 5L, 7L);
+    assertThatThrownBy(
+            () ->
+                new AccountTenantAuthorityEventProducer.TenantAuthoritySnapshot(
+                    TENANT_ID, 5L, 7L, STREAM_KEY, 4L, Optional.of(latest)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("uninterrupted sequence and counter progression");
+  }
+
+  @Test
   void nilTenantAndRequestIdentitiesAreRejectedBeforePersistence() {
     Collaborators collaborators = new Collaborators();
     AccountTenantAuthorityEventProducer producer = newProducer(collaborators);

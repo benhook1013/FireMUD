@@ -139,8 +139,10 @@ public record DraftAuthorizationFenceBinding(
     public SourceEvidence {
       Objects.requireNonNull(kind);
       text(scopeId);
-      if ((kind.name() + ":" + scopeId).getBytes(StandardCharsets.UTF_8).length > 512) {
-        throw new IllegalArgumentException("Source participation key exceeds 512 UTF-8 bytes");
+      // Preserve the exact configured issuer, including its supported 512-character Unicode
+      // identity. Bound the complete index key in bytes rather than truncating or aliasing it.
+      if ((kind.name() + ":" + scopeId).getBytes(StandardCharsets.UTF_8).length > 2048) {
+        throw new IllegalArgumentException("Source participation key exceeds 2048 UTF-8 bytes");
       }
       if (kind == SourceKind.ACCOUNT
           || kind == SourceKind.TENANT

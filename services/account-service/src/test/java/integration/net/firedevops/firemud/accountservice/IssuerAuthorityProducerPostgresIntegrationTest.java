@@ -3,6 +3,7 @@ package integration.net.firedevops.firemud.accountservice;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -15,14 +16,27 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.Outcome;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.Owner;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.OwnerReadback;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.SourceEvidence;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.SourceKind;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.SourceChange;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.AuthorityScope;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.ScopeState;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Event;
 import net.firedevops.firemud.accountservice.service.AccountIssuerAuthorityEventProducer;
+import net.firedevops.firemud.accountservice.service.IssuerTenantDraftSourceChangeRepository.PendingSourceChangeException;
 import net.firedevops.firemud.common.account.authority.IssuerGenerationAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.IssuerGenerationAuthorityEventV1Codec.IssuerGenerationAuthorityEvent;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -46,6 +60,443 @@ class IssuerAuthorityProducerPostgresIntegrationTest {
 
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+
+  @Test
+  void issuerCommitOrderWaitsForEveryOriginalOwnerOutcomeBeforeAtomicSourceCompletion() {
+    for (List<Outcome> outcomes :
+        List.of(
+            List.of(Outcome.COMMITTED, Outcome.COMMITTED),
+            List.of(Outcome.COMMITTED, Outcome.DEFINITIVELY_ABORTED),
+            List.of(Outcome.DEFINITIVELY_ABORTED, Outcome.DEFINITIVELY_ABORTED))) {
+      Fixture fixture = newFixture();
+      seedIssuer(fixture);
+      DraftAuthorizationFenceBinding binding =
+          issuerBinding(ISSUER_ID, "1", "1", "0", new byte[] {1});
+      DraftAuthorizationFenceRepository fences =
+          new DraftAuthorizationFenceRepository(fixture.transactionDsl());
+      transaction(
+          fixture.transaction(),
+          () -> {
+            fences.reserve(binding);
+            fences.claimCommitOrder(binding);
+            return null;
+          });
+      UUID request = UUID.randomUUID();
+      assertThatThrownBy(() -> fixture.producer().advance(ISSUER_ID, request, 1, 1))
+          .isInstanceOf(PendingSourceChangeException.class);
+      SourceChange original = pendingIssuerChange(fixture, ISSUER_ID, request);
+      assertThat(original.changeId()).isNotEqualTo(request);
+      assertThat(original.sources().getFirst().kind()).isEqualTo(SourceKind.ISSUER);
+      assertThat(original.sources().getFirst().scopeId()).isEqualTo(ISSUER_ID);
+      recordOwner(fixture, binding, Owner.WORLD, outcomes.get(0));
+      assertThatThrownBy(() -> fixture.producer().advance(ISSUER_ID, request, 1, 1))
+          .isInstanceOf(PendingSourceChangeException.class)
+          .satisfies(
+              error ->
+                  assertThat(((PendingSourceChangeException) error).sourceChangeId())
+                      .isEqualTo(original.changeId()));
+      assertThat(readAuthority(fixture).generation()).isEqualTo(1);
+      assertThat(countEvents(fixture, STREAM_KEY)).isZero();
+      recordOwner(fixture, binding, Owner.GAME_DESIGN, outcomes.get(1));
+      IssuerGenerationAuthorityEvent event = fixture.producer().advance(ISSUER_ID, request, 1, 1);
+      assertThat(event.issuerAuthGeneration()).isEqualTo("2");
+      assertThat(
+              transaction(fixture.transaction(), () -> fences.readSourceChange(original).status()))
+          .isEqualTo("SOURCE_COMMITTED");
+      assertThat(
+              Objects.requireNonNull(
+                      fixture
+                          .setupDsl()
+                          .fetchOne(
+                              "SELECT status FROM account_issuer_tenant_draft_source_changes WHERE request_id = ?",
+                              request),
+                      "Committed issuer source journal row is missing")
+                  .get(0, String.class))
+          .isEqualTo("SOURCE_COMMITTED");
+      assertThat(
+              transaction(
+                  fixture.transaction(),
+                  () -> fences.readOwnerResult(binding, Owner.WORLD).orElseThrow().outcome()))
+          .isEqualTo(outcomes.get(0));
+    }
+  }
+
+  @Test
+  void issuerRevocationWaitsForBothExactAbortsAndPendingRequestAndCaptureAreImmutable() {
+    Fixture fixture = newFixture();
+    seedIssuer(fixture);
+    DraftAuthorizationFenceBinding binding =
+        issuerBinding(ISSUER_ID, "1", "1", "0", new byte[] {1});
+    DraftAuthorizationFenceRepository fences =
+        new DraftAuthorizationFenceRepository(fixture.transactionDsl());
+    transaction(fixture.transaction(), () -> fences.reserve(binding));
+    UUID request = UUID.randomUUID();
+    assertThatThrownBy(() -> fixture.producer().advance(ISSUER_ID, request, 1, 1))
+        .isInstanceOf(PendingSourceChangeException.class);
+    SourceChange original = pendingIssuerChange(fixture, ISSUER_ID, request);
+    byte[] stored = original.canonicalBytes();
+    assertThat(transaction(fixture.transaction(), () -> fences.read(binding).ordering()))
+        .isEqualTo(DraftAuthorizationFenceRepository.Ordering.REVOKE_ORDER);
+    assertThatThrownBy(
+            () -> transaction(fixture.transaction(), () -> fences.claimCommitOrder(binding)))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> fixture.producer().advance(ISSUER_ID, request, 2, 1))
+        .isInstanceOf(AccountAuthorityOutboxRepository.IdempotencyConflictException.class);
+    assertThatThrownBy(() -> fixture.producer().advance(ISSUER_ID, request, 1, 2))
+        .isInstanceOf(AccountAuthorityOutboxRepository.IdempotencyConflictException.class);
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .setupDsl()
+                    .execute(
+                        "UPDATE account_issuer_tenant_draft_source_changes SET expected_generation = 2 WHERE request_id = ?",
+                        request))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class);
+    assertThat(pendingIssuerChange(fixture, ISSUER_ID, request).canonicalBytes())
+        .containsExactly(stored);
+    recordOwner(fixture, binding, Owner.GAME_DESIGN, Outcome.DEFINITIVELY_ABORTED);
+    assertThatThrownBy(() -> fixture.producer().advance(ISSUER_ID, request, 1, 1))
+        .isInstanceOf(PendingSourceChangeException.class);
+    recordOwner(fixture, binding, Owner.WORLD, Outcome.DEFINITIVELY_ABORTED);
+    assertThatThrownBy(
+            () ->
+                transaction(
+                    fixture.transaction(),
+                    () -> {
+                      fences.markSourceCommitted(original);
+                      return null;
+                    }))
+        .isInstanceOf(RuntimeException.class)
+        .hasMessageContaining("must commit atomically");
+    assertThat(fixture.producer().advance(ISSUER_ID, request, 1, 1).issuerAuthGeneration())
+        .isEqualTo("2");
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .setupDsl()
+                    .execute(
+                        "DELETE FROM account_issuer_tenant_draft_source_changes WHERE request_id = ?",
+                        request))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class);
+  }
+
+  @Test
+  void concurrentDistinctIssuerRequestsCannotLeaveCompetingPendingCaptures() throws Exception {
+    Fixture fixture = newFixture();
+    seedIssuer(fixture);
+    DraftAuthorizationFenceBinding binding =
+        issuerBinding(ISSUER_ID, "1", "1", "0", new byte[] {1});
+    transaction(
+        fixture.transaction(),
+        () -> new DraftAuthorizationFenceRepository(fixture.transactionDsl()).reserve(binding));
+    UUID original = UUID.randomUUID();
+    assertThatThrownBy(() -> fixture.producer().advance(ISSUER_ID, original, 1, 1))
+        .isInstanceOf(PendingSourceChangeException.class);
+    CountDownLatch start = new CountDownLatch(1);
+    try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+      Future<?> first =
+          executor.submit(
+              () -> {
+                await(start);
+                assertThatThrownBy(
+                        () -> fixture.producer().advance(ISSUER_ID, UUID.randomUUID(), 1, 1))
+                    .isInstanceOf(IllegalStateException.class)
+                    .isNotInstanceOf(PendingSourceChangeException.class);
+              });
+      Future<?> second =
+          executor.submit(
+              () -> {
+                await(start);
+                assertThatThrownBy(
+                        () -> fixture.producer().advance(ISSUER_ID, UUID.randomUUID(), 1, 1))
+                    .isInstanceOf(IllegalStateException.class)
+                    .isNotInstanceOf(PendingSourceChangeException.class);
+              });
+      start.countDown();
+      first.get(20, TimeUnit.SECONDS);
+      second.get(20, TimeUnit.SECONDS);
+    }
+    assertThat(
+            fixture.setupDsl().fetchCount(DSL.table("account_issuer_tenant_draft_source_changes")))
+        .isEqualTo(1);
+    assertThat(
+            fixture.setupDsl().fetchCount(DSL.table("account_draft_authorization_source_changes")))
+        .isEqualTo(1);
+    recordOwner(fixture, binding, Owner.GAME_DESIGN, Outcome.DEFINITIVELY_ABORTED);
+    recordOwner(fixture, binding, Owner.WORLD, Outcome.DEFINITIVELY_ABORTED);
+    fixture.producer().advance(ISSUER_ID, original, 1, 1);
+    assertThat(
+            fixture.producer().advance(ISSUER_ID, UUID.randomUUID(), 2, 2).issuerAuthGeneration())
+        .isEqualTo("3");
+  }
+
+  @Test
+  void sameRequestUuidAcrossExactIssuersHasDistinctPersistedSourceChangeIdentities() {
+    Fixture fixture = newFixture();
+    seedIssuer(fixture);
+    String otherIssuer = "https://other.example.test/issuer";
+    transaction(
+        fixture.transaction(),
+        () -> {
+          fixture.generations().initializeIssuerIfAbsent(otherIssuer);
+          return null;
+        });
+    UUID request = UUID.randomUUID();
+    IssuerGenerationAuthorityEvent first = fixture.producer().advance(ISSUER_ID, request, 1, 1);
+    AccountIssuerAuthorityEventProducer other =
+        new AccountIssuerAuthorityEventProducer(
+            otherIssuer,
+            fixture.generations(),
+            fixture.outbox(),
+            fixture.transactionDsl(),
+            fixture.transactionManager());
+    IssuerGenerationAuthorityEvent second = other.advance(otherIssuer, request, 1, 1);
+    assertThat(first.issuerId()).isEqualTo(ISSUER_ID);
+    assertThat(second.issuerId()).isEqualTo(otherIssuer);
+    assertThat(
+            fixture
+                .setupDsl()
+                .fetch(
+                    "SELECT source_change_id FROM account_issuer_tenant_draft_source_changes WHERE request_id = ?",
+                    request)
+                .getValues(0, UUID.class))
+        .hasSize(2)
+        .doesNotHaveDuplicates()
+        .doesNotContain(request);
+  }
+
+  @Test
+  void failedIssuerAdvanceRetainsOriginalPendingCaptureForExactRetry() {
+    Fixture fixture = newFixture();
+    seedIssuer(fixture);
+    DraftAuthorizationFenceBinding binding =
+        issuerBinding(ISSUER_ID, "1", "1", "0", new byte[] {1});
+    DraftAuthorizationFenceRepository fences =
+        new DraftAuthorizationFenceRepository(fixture.transactionDsl());
+    transaction(fixture.transaction(), () -> fences.reserve(binding));
+    UUID request = UUID.randomUUID();
+    assertThatThrownBy(() -> fixture.producer().advance(ISSUER_ID, request, 1, 1))
+        .isInstanceOf(PendingSourceChangeException.class);
+    SourceChange original = pendingIssuerChange(fixture, ISSUER_ID, request);
+    recordOwner(fixture, binding, Owner.GAME_DESIGN, Outcome.DEFINITIVELY_ABORTED);
+    recordOwner(fixture, binding, Owner.WORLD, Outcome.DEFINITIVELY_ABORTED);
+    fixture
+        .setupDsl()
+        .execute(
+            "ALTER TABLE account_authority_outbox_events ADD CONSTRAINT reject_pending_issuer_retry CHECK (event_id NOT LIKE 'account-issuer-authority-event-v1:%')");
+    assertThatThrownBy(() -> fixture.producer().advance(ISSUER_ID, request, 1, 1))
+        .isInstanceOf(RuntimeException.class);
+    assertThat(pendingIssuerChange(fixture, ISSUER_ID, request).canonicalBytes())
+        .containsExactly(original.canonicalBytes());
+    assertThat(transaction(fixture.transaction(), () -> fences.readSourceChange(original).status()))
+        .isEqualTo("WAITING");
+    assertThat(
+            Objects.requireNonNull(
+                    fixture
+                        .setupDsl()
+                        .fetchOne(
+                            "SELECT status FROM account_issuer_tenant_draft_source_changes WHERE request_id = ?",
+                            request),
+                    "Pending issuer source journal row is missing after rollback")
+                .get(0, String.class))
+        .isEqualTo("WAITING");
+    assertThat(readAuthority(fixture).generation()).isEqualTo(1);
+    assertThat(countEvents(fixture, STREAM_KEY)).isZero();
+    fixture
+        .setupDsl()
+        .execute(
+            "ALTER TABLE account_authority_outbox_events DROP CONSTRAINT reject_pending_issuer_retry");
+    assertThat(fixture.producer().advance(ISSUER_ID, request, 1, 1).issuerAuthGeneration())
+        .isEqualTo("2");
+  }
+
+  @Test
+  void issuerPendingCaptureRetainsIndependentCountersCheckpointAndExactPositiveEventBytes() {
+    Fixture fixture = newFixture();
+    fixture
+        .setupDsl()
+        .execute(
+            "INSERT INTO account_authority_generations (scope_kind, issuer_id, generation, source_version) VALUES ('ISSUER', ?, 3, 7)",
+            ISSUER_ID);
+    transaction(
+        fixture.transaction(),
+        () -> {
+          fixture
+              .generations()
+              .advance(fixture.generations().read(AuthorityScope.issuer(ISSUER_ID)), null);
+          appendSeedEvent(fixture, UUID.randomUUID(), 4, 8);
+          return null;
+        });
+    Event latest =
+        transaction(
+            fixture.transaction(), () -> fixture.outbox().findEvent(STREAM_KEY, 1L).orElseThrow());
+    DraftAuthorizationFenceBinding binding =
+        issuerBinding(ISSUER_ID, "4", "8", "1", latest.payload());
+    transaction(
+        fixture.transaction(),
+        () -> new DraftAuthorizationFenceRepository(fixture.transactionDsl()).reserve(binding));
+    UUID request = UUID.randomUUID();
+    assertThatThrownBy(() -> fixture.producer().advance(ISSUER_ID, request, 4, 8))
+        .isInstanceOf(PendingSourceChangeException.class);
+    SourceEvidence captured = pendingIssuerChange(fixture, ISSUER_ID, request).sources().getFirst();
+    assertThat(captured.generation()).isEqualTo("4");
+    assertThat(captured.sourceVersion()).isEqualTo("8");
+    assertThat(captured.checkpointSequence()).isEqualTo("1");
+    assertThat(captured.evidence()).containsExactly(latest.payload());
+    recordOwner(fixture, binding, Owner.WORLD, Outcome.DEFINITIVELY_ABORTED);
+    recordOwner(fixture, binding, Owner.GAME_DESIGN, Outcome.DEFINITIVELY_ABORTED);
+    IssuerGenerationAuthorityEvent advanced = fixture.producer().advance(ISSUER_ID, request, 4, 8);
+    assertThat(advanced.issuerAuthGeneration()).isEqualTo("5");
+    assertThat(advanced.sourceVersion()).isEqualTo("9");
+    assertThat(advanced.outboxSequence()).isEqualTo("2");
+  }
+
+  @Test
+  void v59PreservesV58SourceHistoryAndExactKeysAndSupportsFullMultibyteIssuerParticipation() {
+    Fixture fixture = newFixture("58");
+    seedIssuer(fixture);
+    UUID oldRequest = UUID.randomUUID();
+    transaction(
+        fixture.transaction(),
+        () -> {
+          fixture
+              .generations()
+              .advance(fixture.generations().read(AuthorityScope.issuer(ISSUER_ID)), null);
+          appendSeedEvent(fixture, oldRequest, 2, 2);
+          return null;
+        });
+    DraftAuthorizationFenceBinding oldBinding =
+        issuerBinding(ISSUER_ID, "2", "2", "1", new byte[] {7});
+    DraftAuthorizationFenceRepository fences =
+        new DraftAuthorizationFenceRepository(fixture.transactionDsl());
+    transaction(fixture.transaction(), () -> fences.reserve(oldBinding));
+    SourceChange oldChange =
+        new SourceChange(UUID.randomUUID(), oldBinding.sources(), new byte[] {9});
+    transaction(fixture.transaction(), () -> fences.requestSourceChange(oldChange));
+    String oldEvents =
+        fixture
+            .setupDsl()
+            .fetch(
+                "SELECT * FROM account_authority_outbox_events ORDER BY outbox_stream_key, outbox_sequence")
+            .formatJSON();
+    String oldSources =
+        fixture
+            .setupDsl()
+            .fetch(
+                "SELECT * FROM account_draft_authorization_sources ORDER BY source_key, operation_id")
+            .formatJSON();
+    String oldLocks =
+        fixture
+            .setupDsl()
+            .fetch("SELECT * FROM account_draft_authorization_source_locks ORDER BY source_key")
+            .formatJSON();
+    String oldChanges =
+        fixture
+            .setupDsl()
+            .fetch("SELECT * FROM account_draft_authorization_source_changes ORDER BY change_id")
+            .formatJSON();
+    String oldChangedScopes =
+        fixture
+            .setupDsl()
+            .fetch(
+                "SELECT * FROM account_draft_authorization_changed_scopes ORDER BY source_key, change_id")
+            .formatJSON();
+    DriverManagerDataSource dataSource =
+        (DriverManagerDataSource)
+            ((DataSourceTransactionManager) fixture.transactionManager()).getDataSource();
+    String schema =
+        Objects.requireNonNull(
+            Objects.requireNonNull(
+                    fixture.setupDsl().fetchOne("SELECT current_schema()"),
+                    "Issuer migration fixture schema row is missing")
+                .get(0, String.class),
+            "Issuer migration fixture schema is missing");
+    Flyway.configure()
+        .dataSource(dataSource)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .placeholders(Map.of("serviceSchema", schema))
+        .locations("classpath:db/migration")
+        .load()
+        .migrate();
+    assertThat(
+            fixture
+                .setupDsl()
+                .fetch(
+                    "SELECT * FROM account_authority_outbox_events ORDER BY outbox_stream_key, outbox_sequence")
+                .formatJSON())
+        .isEqualTo(oldEvents);
+    assertThat(
+            fixture
+                .setupDsl()
+                .fetch(
+                    "SELECT * FROM account_draft_authorization_sources ORDER BY source_key, operation_id")
+                .formatJSON())
+        .isEqualTo(oldSources);
+    assertThat(
+            fixture
+                .setupDsl()
+                .fetch("SELECT * FROM account_draft_authorization_source_locks ORDER BY source_key")
+                .formatJSON())
+        .isEqualTo(oldLocks);
+    assertThat(
+            fixture
+                .setupDsl()
+                .fetch(
+                    "SELECT * FROM account_draft_authorization_source_changes ORDER BY change_id")
+                .formatJSON())
+        .isEqualTo(oldChanges);
+    assertThat(
+            fixture
+                .setupDsl()
+                .fetch(
+                    "SELECT * FROM account_draft_authorization_changed_scopes ORDER BY source_key, change_id")
+                .formatJSON())
+        .isEqualTo(oldChangedScopes);
+    assertThat(
+            transaction(fixture.transaction(), () -> fences.readSourceChange(oldChange).binding()))
+        .containsExactly(oldChange.canonicalBytes());
+    assertThat(fixture.producer().advance(ISSUER_ID, oldRequest, 1, 1).requestId())
+        .isEqualTo(oldRequest.toString());
+    assertThat(
+            fixture.setupDsl().fetchCount(DSL.table("account_issuer_tenant_draft_source_changes")))
+        .isZero();
+    String longIssuer = "界".repeat(512);
+    transaction(
+        fixture.transaction(),
+        () -> {
+          fixture.generations().initializeIssuerIfAbsent(longIssuer);
+          return null;
+        });
+    AccountIssuerAuthorityEventProducer producer =
+        new AccountIssuerAuthorityEventProducer(
+            longIssuer,
+            fixture.generations(),
+            fixture.outbox(),
+            fixture.transactionDsl(),
+            fixture.transactionManager());
+    DraftAuthorizationFenceBinding longBinding =
+        issuerBinding(longIssuer, "1", "1", "0", new byte[] {1});
+    transaction(fixture.transaction(), () -> fences.reserve(longBinding));
+    UUID request = UUID.randomUUID();
+    assertThatThrownBy(() -> producer.advance(longIssuer, request, 1, 1))
+        .isInstanceOf(PendingSourceChangeException.class);
+    assertThat(pendingIssuerChange(fixture, longIssuer, request).sources().getFirst().scopeId())
+        .isEqualTo(longIssuer);
+    recordOwner(fixture, longBinding, Owner.WORLD, Outcome.DEFINITIVELY_ABORTED);
+    recordOwner(fixture, longBinding, Owner.GAME_DESIGN, Outcome.DEFINITIVELY_ABORTED);
+    assertThat(producer.advance(longIssuer, request, 1, 1).issuerId()).isEqualTo(longIssuer);
+    assertThat(
+            Objects.requireNonNull(
+                    fixture
+                        .setupDsl()
+                        .fetchOne(
+                            "SELECT source_key FROM account_draft_authorization_source_locks WHERE source_key = ?",
+                            "ISSUER:" + longIssuer),
+                    "Exact multibyte issuer participation key row is missing")
+                .get(0, String.class))
+        .isEqualTo("ISSUER:" + longIssuer);
+  }
 
   @Test
   void atomicallyAdvancesSourceAndEventAndReadsBackExactCheckpoint() {
@@ -454,6 +905,12 @@ class IssuerAuthorityProducerPostgresIntegrationTest {
     assertThat(readAuthority(fixture).sourceVersion()).isEqualTo(1L);
     assertThat(countEvents(fixture, STREAM_KEY)).isZero();
     assertThat(countStreams(fixture)).isZero();
+    assertThat(
+            fixture.setupDsl().fetchCount(DSL.table("account_issuer_tenant_draft_source_changes")))
+        .isZero();
+    assertThat(
+            fixture.setupDsl().fetchCount(DSL.table("account_draft_authorization_source_changes")))
+        .isZero();
   }
 
   @Test
@@ -552,6 +1009,10 @@ class IssuerAuthorityProducerPostgresIntegrationTest {
   }
 
   private Fixture newFixture() {
+    return newFixture("latest");
+  }
+
+  private Fixture newFixture(String target) {
     String schema = SCHEMA_PREFIX + "_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
     String separator = postgres.getJdbcUrl().contains("?") ? "&" : "?";
@@ -564,6 +1025,7 @@ class IssuerAuthorityProducerPostgresIntegrationTest {
         .defaultSchema(schema)
         .placeholders(Map.of("serviceSchema", schema))
         .locations("classpath:db/migration")
+        .target(target)
         .load()
         .migrate();
 
@@ -577,6 +1039,91 @@ class IssuerAuthorityProducerPostgresIntegrationTest {
     AccountAuthorityOutboxRepository outbox = new AccountAuthorityOutboxRepository(transactionDsl);
     return new Fixture(
         setupDsl, transactionDsl, transactionManager, transaction, generations, outbox);
+  }
+
+  private SourceChange pendingIssuerChange(Fixture fixture, String issuer, UUID request) {
+    byte[] binding =
+        Objects.requireNonNull(
+            Objects.requireNonNull(
+                    fixture
+                        .setupDsl()
+                        .fetchOne(
+                            "SELECT source_change_binding FROM account_issuer_tenant_draft_source_changes WHERE source_kind = 'ISSUER' AND scope_id = ? AND request_id = ?",
+                            issuer,
+                            request),
+                    "Pending issuer source journal row is missing")
+                .get(0, byte[].class),
+            "Pending issuer source capture is missing");
+    return SourceChange.fromStored(binding);
+  }
+
+  private DraftAuthorizationFenceBinding issuerBinding(
+      String issuer, String generation, String version, String sequence, byte[] evidence) {
+    UUID tenant = UUID.randomUUID();
+    DraftCommitBinding complete =
+        DraftCommitBinding.create(
+            new TargetProof(
+                tenant, UUID.randomUUID(), 1, "tenant-key", 2, "tenant-key", "NEW_GAME_ROW"),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            "base",
+            List.of(
+                new RevisionPayload(
+                    "0",
+                    UUID.randomUUID(),
+                    DraftCommitBinding.Owner.WORLD_MANAGEMENT,
+                    "world-payload")),
+            List.of(
+                new AffectedUnit(
+                    DraftCommitBinding.Owner.WORLD_MANAGEMENT,
+                    "region",
+                    "region-1",
+                    "aggregate",
+                    "region-1",
+                    "1")));
+    return new DraftAuthorizationFenceBinding(
+        UUID.randomUUID(),
+        complete.requestId(),
+        complete.commitId(),
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        tenant,
+        complete.target().canonicalVersionId(),
+        complete.baseCommitId(),
+        "1",
+        complete.canonicalBytes(),
+        complete.canonicalBytes(),
+        complete.digest(),
+        List.of(
+            new SourceEvidence(
+                SourceKind.ISSUER,
+                issuer,
+                generation,
+                version,
+                "account:auth-authority:v1:issuer/" + issuer,
+                sequence,
+                evidence)));
+  }
+
+  private void recordOwner(
+      Fixture fixture, DraftAuthorizationFenceBinding binding, Owner owner, Outcome outcome) {
+    transaction(
+        fixture.transaction(),
+        () -> {
+          new DraftAuthorizationFenceRepository(fixture.transactionDsl())
+              .recordOwnerReadback(
+                  binding,
+                  new OwnerReadback(
+                      owner,
+                      outcome,
+                      binding.operationId(),
+                      binding.commitId(),
+                      binding.fenceId(),
+                      binding.inputDigest(),
+                      binding.canonicalBytes(),
+                      new byte[] {1}));
+          return null;
+        });
   }
 
   private void seedIssuer(Fixture fixture) {

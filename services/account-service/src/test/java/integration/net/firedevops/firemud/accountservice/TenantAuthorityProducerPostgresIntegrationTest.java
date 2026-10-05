@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -15,6 +16,14 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.Outcome;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.Owner;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.OwnerReadback;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.SourceEvidence;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.SourceKind;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.SourceChange;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.AuthorityScope;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.ScopeState;
@@ -22,8 +31,13 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRe
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Event;
 import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepository;
 import net.firedevops.firemud.accountservice.service.AccountTenantAuthorityEventProducer;
+import net.firedevops.firemud.accountservice.service.IssuerTenantDraftSourceChangeRepository.PendingSourceChangeException;
 import net.firedevops.firemud.common.account.authority.TenantGenerationAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.TenantGenerationAuthorityEventV1Codec.TenantGenerationAuthorityEvent;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import org.flywaydb.core.Flyway;
@@ -55,6 +69,331 @@ class TenantAuthorityProducerPostgresIntegrationTest {
 
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+
+  @Test
+  void tenantCommitOrderWaitsForBothOriginalOwnerOutcomesBeforeAtomicSourceCompletion() {
+    for (List<Outcome> outcomes :
+        List.of(
+            List.of(Outcome.COMMITTED, Outcome.COMMITTED),
+            List.of(Outcome.COMMITTED, Outcome.DEFINITIVELY_ABORTED),
+            List.of(Outcome.DEFINITIVELY_ABORTED, Outcome.DEFINITIVELY_ABORTED))) {
+      Fixture fixture = newFixture();
+      seed(fixture);
+      DraftAuthorizationFenceBinding binding = tenantBinding(fixture);
+      DraftAuthorizationFenceRepository fences =
+          new DraftAuthorizationFenceRepository(fixture.transactionDsl());
+      transaction(
+          fixture.transaction(),
+          () -> {
+            fences.reserve(binding);
+            fences.claimCommitOrder(binding);
+            return null;
+          });
+      UUID request = UUID.randomUUID();
+      assertThatThrownBy(() -> fixture.producer().advance(TENANT_ID, request, 1, 1))
+          .isInstanceOf(PendingSourceChangeException.class);
+      SourceChange original = pendingTenantChange(fixture, request);
+      assertThat(original.changeId()).isNotEqualTo(request);
+      SourceEvidence source = original.sources().getFirst();
+      assertThat(source.kind()).isEqualTo(SourceKind.TENANT);
+      assertThat(source.scopeId()).isEqualTo(TENANT_ID.toString());
+      assertThat(source.generation()).isEqualTo("1");
+      assertThat(source.sourceVersion()).isEqualTo("1");
+      assertThat(source.checkpointSequence()).isEqualTo("0");
+      recordOwner(fixture, binding, Owner.WORLD, outcomes.get(0));
+      assertThatThrownBy(() -> fixture.producer().advance(TENANT_ID, request, 1, 1))
+          .isInstanceOf(PendingSourceChangeException.class)
+          .satisfies(
+              error ->
+                  assertThat(((PendingSourceChangeException) error).sourceChangeId())
+                      .isEqualTo(original.changeId()));
+      assertThat(readTenantState(fixture).generation()).isEqualTo(1);
+      assertThat(countEvents(fixture, STREAM_KEY)).isZero();
+      recordOwner(fixture, binding, Owner.GAME_DESIGN, outcomes.get(1));
+      assertThat(fixture.producer().advance(TENANT_ID, request, 1, 1).tenantAuthorityGeneration())
+          .isEqualTo("2");
+      assertThat(
+              transaction(fixture.transaction(), () -> fences.readSourceChange(original).status()))
+          .isEqualTo("SOURCE_COMMITTED");
+      assertThat(
+              transaction(
+                  fixture.transaction(),
+                  () -> fences.readOwnerResult(binding, Owner.WORLD).orElseThrow().outcome()))
+          .isEqualTo(outcomes.get(0));
+    }
+  }
+
+  @Test
+  void tenantRevocationWaitsForExactAbortsAndKeepsOriginalPendingRequestAndCapture() {
+    Fixture fixture = newFixture();
+    seed(fixture);
+    ScopeState accountBefore = readAccountState(fixture);
+    DraftAuthorizationFenceBinding binding = tenantBinding(fixture);
+    DraftAuthorizationFenceRepository fences =
+        new DraftAuthorizationFenceRepository(fixture.transactionDsl());
+    transaction(fixture.transaction(), () -> fences.reserve(binding));
+    UUID request = UUID.randomUUID();
+    assertThatThrownBy(() -> fixture.producer().advance(TENANT_ID, request, 1, 1))
+        .isInstanceOf(PendingSourceChangeException.class);
+    SourceChange original = pendingTenantChange(fixture, request);
+    byte[] stored = original.canonicalBytes();
+    assertThat(transaction(fixture.transaction(), () -> fences.read(binding).ordering()))
+        .isEqualTo(DraftAuthorizationFenceRepository.Ordering.REVOKE_ORDER);
+    assertThatThrownBy(
+            () -> transaction(fixture.transaction(), () -> fences.claimCommitOrder(binding)))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> fixture.producer().advance(TENANT_ID, request, 2, 1))
+        .isInstanceOf(AccountAuthorityOutboxRepository.IdempotencyConflictException.class);
+    assertThatThrownBy(() -> fixture.producer().advance(TENANT_ID, request, 1, 2))
+        .isInstanceOf(AccountAuthorityOutboxRepository.IdempotencyConflictException.class);
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .setupDsl()
+                    .execute(
+                        "UPDATE account_issuer_tenant_draft_source_changes SET source_change_binding = ? WHERE request_id = ?",
+                        new byte[] {2},
+                        request))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class);
+    assertThat(pendingTenantChange(fixture, request).canonicalBytes()).containsExactly(stored);
+    recordOwner(fixture, binding, Owner.GAME_DESIGN, Outcome.DEFINITIVELY_ABORTED);
+    assertThatThrownBy(() -> fixture.producer().advance(TENANT_ID, request, 1, 1))
+        .isInstanceOf(PendingSourceChangeException.class);
+    recordOwner(fixture, binding, Owner.WORLD, Outcome.DEFINITIVELY_ABORTED);
+    assertThatThrownBy(
+            () ->
+                transaction(
+                    fixture.transaction(),
+                    () -> {
+                      fences.markSourceCommitted(original);
+                      return null;
+                    }))
+        .isInstanceOf(RuntimeException.class)
+        .hasMessageContaining("must commit atomically");
+    fixture.producer().advance(TENANT_ID, request, 1, 1);
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .setupDsl()
+                    .execute(
+                        "UPDATE account_issuer_tenant_draft_source_changes SET event_payload = ? WHERE request_id = ?",
+                        new byte[] {3},
+                        request))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class);
+    assertThat(readAccountState(fixture)).isEqualTo(accountBefore);
+  }
+
+  @Test
+  void concurrentDistinctTenantRequestsCannotLeaveCompetingPendingCaptures() throws Exception {
+    Fixture fixture = newFixture();
+    seed(fixture);
+    DraftAuthorizationFenceBinding binding = tenantBinding(fixture);
+    transaction(
+        fixture.transaction(),
+        () -> new DraftAuthorizationFenceRepository(fixture.transactionDsl()).reserve(binding));
+    UUID original = UUID.randomUUID();
+    assertThatThrownBy(() -> fixture.producer().advance(TENANT_ID, original, 1, 1))
+        .isInstanceOf(PendingSourceChangeException.class);
+    CountDownLatch start = new CountDownLatch(1);
+    try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+      Future<?> first =
+          executor.submit(
+              () -> {
+                await(start);
+                assertThatThrownBy(
+                        () -> fixture.producer().advance(TENANT_ID, UUID.randomUUID(), 1, 1))
+                    .isInstanceOf(IllegalStateException.class)
+                    .isNotInstanceOf(PendingSourceChangeException.class);
+              });
+      Future<?> second =
+          executor.submit(
+              () -> {
+                await(start);
+                assertThatThrownBy(
+                        () -> fixture.producer().advance(TENANT_ID, UUID.randomUUID(), 1, 1))
+                    .isInstanceOf(IllegalStateException.class)
+                    .isNotInstanceOf(PendingSourceChangeException.class);
+              });
+      start.countDown();
+      first.get(20, TimeUnit.SECONDS);
+      second.get(20, TimeUnit.SECONDS);
+    }
+    assertThat(
+            fixture.setupDsl().fetchCount(DSL.table("account_issuer_tenant_draft_source_changes")))
+        .isEqualTo(1);
+    assertThat(
+            fixture.setupDsl().fetchCount(DSL.table("account_draft_authorization_source_changes")))
+        .isEqualTo(1);
+    recordOwner(fixture, binding, Owner.GAME_DESIGN, Outcome.DEFINITIVELY_ABORTED);
+    recordOwner(fixture, binding, Owner.WORLD, Outcome.DEFINITIVELY_ABORTED);
+    fixture.producer().advance(TENANT_ID, original, 1, 1);
+    assertThat(
+            fixture
+                .producer()
+                .advance(TENANT_ID, UUID.randomUUID(), 2, 2)
+                .tenantAuthorityGeneration())
+        .isEqualTo("3");
+  }
+
+  @Test
+  void sameRequestUuidAcrossEnrolledTenantsHasDistinctPersistedSourceChangeIdentities() {
+    Fixture fixture = newFixture();
+    seed(fixture);
+    FreshTenantCreationEvidence other =
+        tenantEvidence(
+            UUID.randomUUID(), UUID.randomUUID(), UNKNOWN_TENANT_ID, 732, "tenant-second");
+    transaction(
+        fixture.transaction(),
+        () -> {
+          fixture.associations().importVerified(other);
+          fixture.generations().initializeTenantIfAbsent(UNKNOWN_TENANT_ID);
+          return null;
+        });
+    UUID request = UUID.randomUUID();
+    TenantGenerationAuthorityEvent first = fixture.producer().advance(TENANT_ID, request, 1, 1);
+    TenantGenerationAuthorityEvent second =
+        fixture.producer().advance(UNKNOWN_TENANT_ID, request, 1, 1);
+    assertThat(first.tenantId()).isEqualTo(TENANT_ID.toString());
+    assertThat(second.tenantId()).isEqualTo(UNKNOWN_TENANT_ID.toString());
+    assertThat(
+            fixture
+                .setupDsl()
+                .fetch(
+                    "SELECT source_change_id FROM account_issuer_tenant_draft_source_changes WHERE request_id = ?",
+                    request)
+                .getValues(0, UUID.class))
+        .hasSize(2)
+        .doesNotHaveDuplicates()
+        .doesNotContain(request);
+  }
+
+  @Test
+  void failedTenantAdvanceRetainsOriginalPendingCaptureForExactRetry() {
+    Fixture fixture = newFixture();
+    seed(fixture);
+    DraftAuthorizationFenceBinding binding = tenantBinding(fixture);
+    DraftAuthorizationFenceRepository fences =
+        new DraftAuthorizationFenceRepository(fixture.transactionDsl());
+    transaction(fixture.transaction(), () -> fences.reserve(binding));
+    UUID request = UUID.randomUUID();
+    assertThatThrownBy(() -> fixture.producer().advance(TENANT_ID, request, 1, 1))
+        .isInstanceOf(PendingSourceChangeException.class);
+    SourceChange original = pendingTenantChange(fixture, request);
+    recordOwner(fixture, binding, Owner.GAME_DESIGN, Outcome.DEFINITIVELY_ABORTED);
+    recordOwner(fixture, binding, Owner.WORLD, Outcome.DEFINITIVELY_ABORTED);
+    fixture
+        .setupDsl()
+        .execute(
+            "ALTER TABLE account_authority_outbox_events ADD CONSTRAINT reject_pending_tenant_retry CHECK (event_id NOT LIKE 'account-tenant-generation-event-v1:%')");
+    assertThatThrownBy(() -> fixture.producer().advance(TENANT_ID, request, 1, 1))
+        .isInstanceOf(RuntimeException.class);
+    assertThat(pendingTenantChange(fixture, request).canonicalBytes())
+        .containsExactly(original.canonicalBytes());
+    assertThat(transaction(fixture.transaction(), () -> fences.readSourceChange(original).status()))
+        .isEqualTo("WAITING");
+    assertThat(
+            Objects.requireNonNull(
+                    fixture
+                        .setupDsl()
+                        .fetchOne(
+                            "SELECT status FROM account_issuer_tenant_draft_source_changes WHERE request_id = ?",
+                            request),
+                    "Pending tenant source journal row is missing after rollback")
+                .get(0, String.class))
+        .isEqualTo("WAITING");
+    assertThat(readTenantState(fixture).generation()).isEqualTo(1);
+    assertThat(countEvents(fixture, STREAM_KEY)).isZero();
+    fixture
+        .setupDsl()
+        .execute(
+            "ALTER TABLE account_authority_outbox_events DROP CONSTRAINT reject_pending_tenant_retry");
+    assertThat(fixture.producer().advance(TENANT_ID, request, 1, 1).tenantAuthorityGeneration())
+        .isEqualTo("2");
+  }
+
+  @Test
+  void v59PreservesV58TenantAssociationCountersAndExactRetainedEventRetryWithoutBackfill() {
+    Fixture fixture = newFixture("58");
+    seed(fixture);
+    UUID original = UUID.randomUUID();
+    transaction(
+        fixture.transaction(),
+        () -> {
+          fixture
+              .generations()
+              .advance(fixture.generations().read(AuthorityScope.tenant(TENANT_ID)), null);
+          appendSeedEvent(fixture, original, 2, 2);
+          return null;
+        });
+    String associations =
+        fixture
+            .setupDsl()
+            .fetch(
+                "SELECT * FROM account_fresh_tenant_identity_associations ORDER BY canonical_tenant_id")
+            .formatJSON();
+    String generations =
+        fixture
+            .setupDsl()
+            .fetch(
+                "SELECT * FROM account_authority_generations ORDER BY scope_kind, issuer_id, account_uuid, tenant_uuid")
+            .formatJSON();
+    String events =
+        fixture
+            .setupDsl()
+            .fetch(
+                "SELECT * FROM account_authority_outbox_events ORDER BY outbox_stream_key, outbox_sequence")
+            .formatJSON();
+    DriverManagerDataSource dataSource =
+        (DriverManagerDataSource)
+            ((DataSourceTransactionManager) fixture.transactionManager()).getDataSource();
+    String schema =
+        Objects.requireNonNull(
+            Objects.requireNonNull(
+                    fixture.setupDsl().fetchOne("SELECT current_schema()"),
+                    "Tenant migration fixture schema row is missing")
+                .get(0, String.class),
+            "Tenant migration fixture schema is missing");
+    Flyway.configure()
+        .dataSource(dataSource)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .placeholders(Map.of("serviceSchema", schema))
+        .locations("classpath:db/migration")
+        .load()
+        .migrate();
+    assertThat(
+            fixture
+                .setupDsl()
+                .fetch(
+                    "SELECT * FROM account_fresh_tenant_identity_associations ORDER BY canonical_tenant_id")
+                .formatJSON())
+        .isEqualTo(associations);
+    assertThat(
+            fixture
+                .setupDsl()
+                .fetch(
+                    "SELECT * FROM account_authority_generations ORDER BY scope_kind, issuer_id, account_uuid, tenant_uuid")
+                .formatJSON())
+        .isEqualTo(generations);
+    assertThat(
+            fixture
+                .setupDsl()
+                .fetch(
+                    "SELECT * FROM account_authority_outbox_events ORDER BY outbox_stream_key, outbox_sequence")
+                .formatJSON())
+        .isEqualTo(events);
+    assertThat(fixture.producer().advance(TENANT_ID, original, 1, 1).requestId())
+        .isEqualTo(original.toString());
+    assertThat(
+            fixture.setupDsl().fetchCount(DSL.table("account_issuer_tenant_draft_source_changes")))
+        .isZero();
+    fixture.producer().advance(TENANT_ID, UUID.randomUUID(), 2, 2);
+    assertThat(fixture.producer().advance(TENANT_ID, original, 1, 1).requestId())
+        .isEqualTo(original.toString());
+    assertThat(
+            fixture.setupDsl().fetchCount(DSL.table("account_issuer_tenant_draft_source_changes")))
+        .isEqualTo(1);
+  }
 
   @Test
   void
@@ -541,6 +880,12 @@ class TenantAuthorityProducerPostgresIntegrationTest {
 
     assertTenantCountersAndOutbox(fixture, 1L, 1L, 0L, 0L);
     assertThat(readAccountState(fixture)).isEqualTo(accountBefore);
+    assertThat(
+            fixture.setupDsl().fetchCount(DSL.table("account_issuer_tenant_draft_source_changes")))
+        .isZero();
+    assertThat(
+            fixture.setupDsl().fetchCount(DSL.table("account_draft_authorization_source_changes")))
+        .isZero();
   }
 
   @Test
@@ -606,6 +951,10 @@ class TenantAuthorityProducerPostgresIntegrationTest {
   }
 
   private Fixture newFixture() {
+    return newFixture("latest");
+  }
+
+  private Fixture newFixture(String target) {
     String schema = SCHEMA_PREFIX + "_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
     String separator = postgres.getJdbcUrl().contains("?") ? "&" : "?";
@@ -618,6 +967,7 @@ class TenantAuthorityProducerPostgresIntegrationTest {
         .defaultSchema(schema)
         .placeholders(Map.of("serviceSchema", schema))
         .locations("classpath:db/migration")
+        .target(target)
         .load()
         .migrate();
 
@@ -668,6 +1018,89 @@ class TenantAuthorityProducerPostgresIntegrationTest {
           fixture.associations().importVerified(association);
           fixture.generations().initializeTenantIfAbsent(TENANT_ID);
           fixture.generations().initialize(AuthorityScope.account(fixture.accountUuid()));
+          return null;
+        });
+  }
+
+  private SourceChange pendingTenantChange(Fixture fixture, UUID request) {
+    byte[] binding =
+        Objects.requireNonNull(
+            Objects.requireNonNull(
+                    fixture
+                        .setupDsl()
+                        .fetchOne(
+                            "SELECT source_change_binding FROM account_issuer_tenant_draft_source_changes WHERE source_kind = 'TENANT' AND scope_id = ? AND request_id = ?",
+                            TENANT_ID.toString(),
+                            request),
+                    "Pending tenant source journal row is missing")
+                .get(0, byte[].class),
+            "Pending tenant source capture is missing");
+    return SourceChange.fromStored(binding);
+  }
+
+  private DraftAuthorizationFenceBinding tenantBinding(Fixture fixture) {
+    DraftCommitBinding complete =
+        DraftCommitBinding.create(
+            new TargetProof(
+                TENANT_ID, UUID.randomUUID(), 1, "tenant-key", 2, "tenant-key", "NEW_GAME_ROW"),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            "base",
+            List.of(
+                new RevisionPayload(
+                    "0",
+                    UUID.randomUUID(),
+                    DraftCommitBinding.Owner.WORLD_MANAGEMENT,
+                    "world-payload")),
+            List.of(
+                new AffectedUnit(
+                    DraftCommitBinding.Owner.WORLD_MANAGEMENT,
+                    "region",
+                    "region-1",
+                    "aggregate",
+                    "region-1",
+                    "1")));
+    return new DraftAuthorizationFenceBinding(
+        UUID.randomUUID(),
+        complete.requestId(),
+        complete.commitId(),
+        UUID.randomUUID(),
+        fixture.accountUuid(),
+        TENANT_ID,
+        complete.target().canonicalVersionId(),
+        complete.baseCommitId(),
+        "1",
+        complete.canonicalBytes(),
+        complete.canonicalBytes(),
+        complete.digest(),
+        List.of(
+            new SourceEvidence(
+                SourceKind.TENANT,
+                TENANT_ID.toString(),
+                "1",
+                "1",
+                STREAM_KEY,
+                "0",
+                new byte[] {1})));
+  }
+
+  private void recordOwner(
+      Fixture fixture, DraftAuthorizationFenceBinding binding, Owner owner, Outcome outcome) {
+    transaction(
+        fixture.transaction(),
+        () -> {
+          new DraftAuthorizationFenceRepository(fixture.transactionDsl())
+              .recordOwnerReadback(
+                  binding,
+                  new OwnerReadback(
+                      owner,
+                      outcome,
+                      binding.operationId(),
+                      binding.commitId(),
+                      binding.fenceId(),
+                      binding.inputDigest(),
+                      binding.canonicalBytes(),
+                      new byte[] {1}));
           return null;
         });
   }
