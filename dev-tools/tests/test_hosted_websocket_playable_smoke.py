@@ -1056,7 +1056,7 @@ class HostedWebSocketPlayableSmokeTests(unittest.TestCase):
                 MODULE.run_smoke(
                     self.config(),
                     http_request=http,
-                    websocket_factory=lambda *args: socket_attempts.append(args),
+                    websocket_factory=lambda *args, attempts=socket_attempts: attempts.append(args),
                 )
             self.assertEqual(socket_attempts, [])
 
