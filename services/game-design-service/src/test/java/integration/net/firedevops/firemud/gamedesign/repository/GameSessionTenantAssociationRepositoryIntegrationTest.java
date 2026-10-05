@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.Signature;
+import java.sql.Connection;
 import java.util.Base64;
 import java.util.Map;
 import java.util.Objects;
@@ -17,13 +18,17 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import net.firedevops.firemud.common.config.PostgresProperties;
 import net.firedevops.firemud.common.tenant.GameSessionTenantAssociationEvidence;
 import net.firedevops.firemud.gamedesign.entity.Game;
+import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.maintenance.GameSessionTenantAssociationManifestVerifier.Signed;
+import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepository;
 import net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepository.AssociationReceipt;
 import net.firedevops.firemud.gamedesign.repository.GameTenantIdentity;
+import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
@@ -83,6 +88,53 @@ class GameSessionTenantAssociationRepositoryIntegrationTest {
     assertThat(fixture.read(retained)).contains(retained);
     assertThat(fixture.read(fresh)).contains(fresh);
     assertThat(fixture.dsl().fetchCount(ASSOCIATIONS)).isEqualTo(2);
+  }
+
+  @Test
+  void versionLockRepositoryUsesConfiguredIsolatedOwnerSchema() throws Exception {
+    String schema = "game_design_version_lock_" + UUID.randomUUID().toString().replace("-", "");
+    DriverManagerDataSource dataSource = dataSource(schema);
+    migrate(dataSource, schema, null);
+    PostgresProperties postgresProperties = new PostgresProperties();
+    postgresProperties.setSchema(schema);
+
+    try (Connection connection = dataSource.getConnection()) {
+      DSLContext dsl = DSL.using(connection, SQLDialect.POSTGRES);
+      Table<?> versions = DSL.table(DSL.name(schema, "version"));
+      var idField = DSL.field(DSL.name("id"), Long.class);
+      Long versionId =
+          dsl.insertInto(versions)
+              .set(DSL.field(DSL.name("tenant_id"), String.class), "configured-schema-tenant")
+              .set(DSL.field(DSL.name("version_number"), Integer.class), 7)
+              .set(DSL.field(DSL.name("version_state"), String.class), "PUBLISHED")
+              .set(DSL.field(DSL.name("version_state_epoch"), Long.class), 9L)
+              .set(DSL.field(DSL.name("is_script_only"), Boolean.class), false)
+              .set(DSL.field(DSL.name("notes"), String.class), "configured owner schema lock proof")
+              .returning(idField)
+              .fetchOne(idField);
+      assertThat(versionId).isNotNull();
+
+      VersionRepository repository = new VersionRepository(dsl, postgresProperties);
+
+      Version locked =
+          repository
+              .findByTenantIdAndIdForEntityDigestBaselineMigration(
+                  "configured-schema-tenant", versionId)
+              .orElseThrow();
+      assertThat(locked.getId()).isEqualTo(versionId);
+      assertThat(locked.getTenantId()).isEqualTo("configured-schema-tenant");
+      assertThat(locked.getVersionNumber()).isEqualTo(7);
+      assertThat(locked.getVersionState()).isEqualTo(VersionLifecycleState.PUBLISHED);
+      assertThat(locked.getVersionStateEpoch()).isEqualTo(9L);
+      assertThat(
+              repository.findByTenantIdAndIdForEntityDigestBaselineMigration(
+                  "wrong-tenant", versionId))
+          .isEmpty();
+      assertThat(
+              repository.findByTenantIdAndIdForEntityDigestBaselineMigration(
+                  "configured-schema-tenant", versionId + 1000L))
+          .isEmpty();
+    }
   }
 
   @Test
@@ -252,8 +304,11 @@ class GameSessionTenantAssociationRepositoryIntegrationTest {
     assertThatThrownBy(() -> fixture.apply(signed, "another-namespace"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("different namespace");
+    byte[] alteredSignatureBytes = Base64.getDecoder().decode(signed.ed25519Signature());
+    alteredSignatureBytes[0] ^= 0x01;
     Signed malformedSignature =
-        new Signed(signed.manifest(), signed.ed25519Signature().substring(0, 84) + "AA==");
+        new Signed(signed.manifest(), Base64.getEncoder().encodeToString(alteredSignatureBytes));
+    assertThat(malformedSignature.ed25519Signature()).isNotEqualTo(signed.ed25519Signature());
     assertThatThrownBy(() -> fixture.apply(malformedSignature, NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("signature");

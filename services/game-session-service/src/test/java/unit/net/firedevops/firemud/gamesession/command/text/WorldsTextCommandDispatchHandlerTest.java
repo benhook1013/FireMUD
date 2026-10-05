@@ -22,6 +22,7 @@ import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
 import net.firedevops.firemud.gamesession.service.DirectTextConnectScopeSessionStore;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
+import net.firedevops.firemud.gamesession.service.RetainedRuntimeTenantUuidResolver;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
@@ -38,6 +39,8 @@ class WorldsTextCommandDispatchHandlerTest {
   private static final String ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
   private static final String ACCOUNT_A_UUID = "d0c68a37-5126-42d2-9506-8df13e97699e";
   private static final String ACCOUNT_B_UUID = "f2ed193b-12c1-4c96-bcad-c162229af440";
+  private static final String TENANT_22_UUID = "22222222-2222-4222-8222-222222222222";
+  private static final String TENANT_33_UUID = "33333333-3333-4333-8333-333333333333";
 
   private final EntityManagementClient entityManagementClient =
       Mockito.mock(EntityManagementClient.class);
@@ -50,7 +53,8 @@ class WorldsTextCommandDispatchHandlerTest {
           new WorldsCommandHandler(
               TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties),
               Mockito.mock(AccountClient.class),
-              DirectTextConnectScopeSessionStore.inMemoryForTest()),
+              DirectTextConnectScopeSessionStore.inMemoryForTest(),
+              tenantUuidResolver()),
           scriptEventPublisher);
 
   @Test
@@ -121,7 +125,8 @@ class WorldsTextCommandDispatchHandlerTest {
             new WorldsCommandHandler(
                 new GameplayWorldCatalog(authorityService),
                 accountClient,
-                DirectTextConnectScopeSessionStore.inMemoryForTest()),
+                DirectTextConnectScopeSessionStore.inMemoryForTest(),
+                tenantUuidResolver()),
             scriptEventPublisher);
     TextCommandDispatchRequest request =
         new TextCommandDispatchRequest(
@@ -152,7 +157,8 @@ class WorldsTextCommandDispatchHandlerTest {
             new WorldsCommandHandler(
                 new GameplayWorldCatalog(authorityService),
                 Mockito.mock(AccountClient.class),
-                store),
+                store,
+                tenantUuidResolver()),
             scriptEventPublisher);
 
     TextCommandInterpretationResult result =
@@ -175,7 +181,8 @@ class WorldsTextCommandDispatchHandlerTest {
             new WorldsCommandHandler(
                 catalog,
                 Mockito.mock(AccountClient.class),
-                DirectTextConnectScopeSessionStore.inMemoryForTest()),
+                DirectTextConnectScopeSessionStore.inMemoryForTest(),
+                tenantUuidResolver()),
             scriptEventPublisher);
 
     assertThatThrownBy(() -> scopedHandler.handle(worldsRequest("7")))
@@ -201,7 +208,8 @@ class WorldsTextCommandDispatchHandlerTest {
             new WorldsCommandHandler(
                 GameplayWorldCatalog.forWorldViews(List.of()),
                 Mockito.mock(AccountClient.class),
-                store),
+                store,
+                tenantUuidResolver()),
             scriptEventPublisher);
 
     assertThatThrownBy(() -> scopedHandler.handle(worldsRequest("7")))
@@ -241,7 +249,7 @@ class WorldsTextCommandDispatchHandlerTest {
     GameplayWorldCatalog.RealmView currentRealm = catalog.visibleRealms(sandbox).getFirst();
     DirectTextConnectScopeTarget expectedTarget =
         new DirectTextConnectScopeTarget(
-            Long.toString(currentRealm.tenantId()),
+            TENANT_22_UUID,
             sandbox.slug(),
             currentRealm.slug(),
             currentRealm.realmId().toString(),
@@ -253,7 +261,10 @@ class WorldsTextCommandDispatchHandlerTest {
     WorldsTextCommandDispatchHandler scopedHandler =
         new WorldsTextCommandDispatchHandler(
             new WorldsCommandHandler(
-                catalog, accountClient, DirectTextConnectScopeSessionStore.inMemoryForTest()),
+                catalog,
+                accountClient,
+                DirectTextConnectScopeSessionStore.inMemoryForTest(),
+                tenantUuidResolver()),
             scriptEventPublisher);
     SessionContext context =
         new SessionContext(
@@ -334,7 +345,8 @@ class WorldsTextCommandDispatchHandlerTest {
             new WorldsCommandHandler(
                 TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties),
                 accountClient,
-                DirectTextConnectScopeSessionStore.inMemoryForTest()),
+                DirectTextConnectScopeSessionStore.inMemoryForTest(),
+                tenantUuidResolver()),
             scriptEventPublisher);
     SessionContext context =
         new SessionContext(
@@ -382,7 +394,8 @@ class WorldsTextCommandDispatchHandlerTest {
             new WorldsCommandHandler(
                 TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties),
                 accountClient,
-                DirectTextConnectScopeSessionStore.inMemoryForTest()),
+                DirectTextConnectScopeSessionStore.inMemoryForTest(),
+                tenantUuidResolver()),
             scriptEventPublisher);
     TextCommandInterpretationResult result =
         scopedHandler.handle(
@@ -415,7 +428,8 @@ class WorldsTextCommandDispatchHandlerTest {
             new WorldsCommandHandler(
                 TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties),
                 accountClient,
-                DirectTextConnectScopeSessionStore.inMemoryForTest()),
+                DirectTextConnectScopeSessionStore.inMemoryForTest(),
+                tenantUuidResolver()),
             scriptEventPublisher);
     SessionContext context =
         new SessionContext(
@@ -457,7 +471,8 @@ class WorldsTextCommandDispatchHandlerTest {
             new WorldsCommandHandler(
                 TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties),
                 accountClient,
-                DirectTextConnectScopeSessionStore.inMemoryForTest()),
+                DirectTextConnectScopeSessionStore.inMemoryForTest(),
+                tenantUuidResolver()),
             scriptEventPublisher);
     SessionContext context =
         new SessionContext(
@@ -522,7 +537,8 @@ class WorldsTextCommandDispatchHandlerTest {
                             namespaceId)))));
     WorldsTextCommandDispatchHandler scopedHandler =
         new WorldsTextCommandDispatchHandler(
-            new WorldsCommandHandler(catalog, accountClient, scopeStore), scriptEventPublisher);
+            new WorldsCommandHandler(catalog, accountClient, scopeStore, tenantUuidResolver()),
+            scriptEventPublisher);
     when(accountClient.issueDirectTextConnectScope(Mockito.any(), Mockito.any()))
         .thenReturn(
             IssueDirectTextConnectScopeResponse.newBuilder()
@@ -604,6 +620,8 @@ class WorldsTextCommandDispatchHandlerTest {
         .issueDirectTextConnectScope(callerCaptor.capture(), targetCaptor.capture());
     assertThat(callerCaptor.getValue().getAccountId()).isEqualTo(ACCOUNT_ID);
     assertThat(callerCaptor.getValue().getSessionId()).isEqualTo("7");
+    assertThat(callerCaptor.getValue().getTenantId()).isEqualTo(TENANT_22_UUID);
+    assertThat(targetCaptor.getValue().tenantId()).isEqualTo(TENANT_22_UUID);
     assertThat(targetCaptor.getValue().realmId()).isEqualTo(realmId.toString());
     assertThat(targetCaptor.getValue().catalogRevision()).isEqualTo(7L);
     assertThat(targetCaptor.getValue().pointerVersion()).isEqualTo(4L);
@@ -672,7 +690,10 @@ class WorldsTextCommandDispatchHandlerTest {
     WorldsTextCommandDispatchHandler scopedHandler =
         new WorldsTextCommandDispatchHandler(
             new WorldsCommandHandler(
-                catalog, accountClient, DirectTextConnectScopeSessionStore.inMemoryForTest()),
+                catalog,
+                accountClient,
+                DirectTextConnectScopeSessionStore.inMemoryForTest(),
+                tenantUuidResolver()),
             scriptEventPublisher);
     when(accountClient.issueDirectTextConnectScope(Mockito.any(), Mockito.any()))
         .thenReturn(
@@ -756,7 +777,8 @@ class WorldsTextCommandDispatchHandlerTest {
             new WorldsCommandHandler(
                 TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties),
                 accountClient,
-                DirectTextConnectScopeSessionStore.inMemoryForTest()),
+                DirectTextConnectScopeSessionStore.inMemoryForTest(),
+                tenantUuidResolver()),
             scriptEventPublisher);
     TextCommand command = new TextCommand(TextCommandType.JOIN, List.of(), "JOIN");
     TextCommandInterpretationResult result =
@@ -943,7 +965,10 @@ class WorldsTextCommandDispatchHandlerTest {
     WorldsTextCommandDispatchHandler scopedHandler =
         new WorldsTextCommandDispatchHandler(
             new WorldsCommandHandler(
-                catalog, accountClient, DirectTextConnectScopeSessionStore.inMemoryForTest()),
+                catalog,
+                accountClient,
+                DirectTextConnectScopeSessionStore.inMemoryForTest(),
+                tenantUuidResolver()),
             scriptEventPublisher);
     SessionContext context =
         new SessionContext(7L, 22L, ACCOUNT_A_UUID, "emberline@example.com", 0L, null, 0L, "jwt");
@@ -1012,7 +1037,8 @@ class WorldsTextCommandDispatchHandlerTest {
             new WorldsCommandHandler(
                 TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties),
                 accountClient,
-                DirectTextConnectScopeSessionStore.inMemoryForTest()),
+                DirectTextConnectScopeSessionStore.inMemoryForTest(),
+                tenantUuidResolver()),
             scriptEventPublisher);
     SessionContext context =
         new SessionContext(
@@ -1056,5 +1082,15 @@ class WorldsTextCommandDispatchHandlerTest {
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("CHARACTER_LIST_UNAVAILABLE");
     Mockito.verifyNoInteractions(entityManagementClient, scriptEventPublisher);
+  }
+
+  private static RetainedRuntimeTenantUuidResolver tenantUuidResolver() {
+    RetainedRuntimeTenantUuidResolver resolver =
+        Mockito.mock(RetainedRuntimeTenantUuidResolver.class);
+    when(resolver.resolveCanonicalTenantId(22L))
+        .thenReturn(Optional.of(UUID.fromString(TENANT_22_UUID)));
+    when(resolver.resolveCanonicalTenantId(33L))
+        .thenReturn(Optional.of(UUID.fromString(TENANT_33_UUID)));
+    return resolver;
   }
 }

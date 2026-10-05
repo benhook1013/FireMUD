@@ -634,6 +634,7 @@ public final class DirectTextConnectScopeSessionStore {
     String contextBase64 = Base64.getEncoder().encodeToString(scope.playerContext().toByteArray());
     return new StoredScopedRealm(
         scope.realmSlug(),
+        scope.localTenantId(),
         scope.publicProductionRealm(),
         scope.connectScopeId(),
         boundedExpiry,
@@ -648,6 +649,7 @@ public final class DirectTextConnectScopeSessionStore {
               Base64.getDecoder().decode(stored.playerContextBase64()));
       return new ScopedRealm(
           stored.realmSlug(),
+          stored.localTenantId(),
           stored.publicProductionRealm(),
           stored.connectScopeId(),
           Instant.ofEpochMilli(stored.expiresAtEpochMs()),
@@ -666,24 +668,16 @@ public final class DirectTextConnectScopeSessionStore {
         || !caller.accountId().equals(context.getAccountId())
         || !Long.toString(caller.sessionId()).equals(context.getSessionId())
         || tenantId <= 0L
-        || !Long.toString(tenantId).equals(context.getTenantId())) {
+        || scope.localTenantId() != tenantId
+        || !AccountIds.isCanonicalNonNilUuid(context.getTenantId())) {
       throw new ConflictingIdentityException("Account scope caller identity did not match session");
-    }
-  }
-
-  private static long parsePositiveLong(String value) {
-    try {
-      long parsed = Long.parseLong(value);
-      return parsed > 0L ? parsed : -1L;
-    } catch (NumberFormatException ex) {
-      return -1L;
     }
   }
 
   private static long uniqueTenantId(List<ScopedRealm> scopes) {
     List<Long> tenantIds =
         Objects.requireNonNull(scopes, "scopes must not be null").stream()
-            .map(scope -> parsePositiveLong(scope.playerContext().getTenantId()))
+            .map(ScopedRealm::localTenantId)
             .distinct()
             .toList();
     if (tenantIds.size() != 1 || tenantIds.getFirst() <= 0L) {
@@ -892,23 +886,18 @@ public final class DirectTextConnectScopeSessionStore {
       justification = "Generated protobuf execution contexts are immutable value messages.")
   public record ScopedRealm(
       String realmSlug,
+      long localTenantId,
       boolean publicProductionRealm,
       String connectScopeId,
       Instant expiresAt,
       PlayerExecutionContext playerContext,
       String joinRequestId) {
-    public ScopedRealm(
-        String realmSlug,
-        boolean publicProductionRealm,
-        String connectScopeId,
-        Instant expiresAt,
-        PlayerExecutionContext playerContext) {
-      this(realmSlug, publicProductionRealm, connectScopeId, expiresAt, playerContext, "");
-    }
-
     public ScopedRealm {
       if (realmSlug == null || realmSlug.isBlank()) {
         throw new IllegalArgumentException("realmSlug must not be blank");
+      }
+      if (localTenantId <= 0L) {
+        throw new IllegalArgumentException("localTenantId must be positive");
       }
       if (connectScopeId == null || connectScopeId.isBlank()) {
         throw new IllegalArgumentException("connectScopeId must not be blank");
@@ -1044,6 +1033,7 @@ public final class DirectTextConnectScopeSessionStore {
 
   private record StoredScopedRealm(
       String realmSlug,
+      long localTenantId,
       boolean publicProductionRealm,
       String connectScopeId,
       long expiresAtEpochMs,
@@ -1059,6 +1049,7 @@ public final class DirectTextConnectScopeSessionStore {
     private StoredScopedRealm withJoinRequestId(String requestId) {
       return new StoredScopedRealm(
           realmSlug,
+          localTenantId,
           publicProductionRealm,
           connectScopeId,
           expiresAtEpochMs,

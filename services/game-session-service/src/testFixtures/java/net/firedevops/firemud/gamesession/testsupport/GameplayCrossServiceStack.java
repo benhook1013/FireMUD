@@ -14,14 +14,17 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import javax.sql.DataSource;
 import net.firedevops.firemud.cache.ScreenBufferService;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.CrossServiceAppHarness;
 import net.firedevops.firemud.gamesession.entity.InitialAdmissionBindCatalog;
 import net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus;
+import net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantSnapshotRepository;
 import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
@@ -30,6 +33,7 @@ import net.firedevops.firemud.gamesession.service.InitialAdmissionBindHoldBindin
 import net.firedevops.firemud.gamesession.service.InitialAdmissionBindOwnerProof;
 import net.firedevops.firemud.gamesession.service.InitialAdmissionBindOwnerService;
 import net.firedevops.firemud.gamesession.service.InitialAdmissionBindRequest;
+import net.firedevops.firemud.gamesession.service.RetainedRuntimeTenantUuidResolver;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.test.GameInstanceTestFixtures;
@@ -44,6 +48,7 @@ import net.firedevops.firemud.worldmanagement.v1.AcquireInitialAdmissionBindHold
 import net.firedevops.firemud.worldmanagement.v1.AcquireInitialAdmissionBindHoldResponse;
 import net.firedevops.firemud.worldmanagement.v1.InitialAdmissionBindHold;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
+import org.jooq.DSLContext;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -67,6 +72,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
   private final Map<Long, String> syntheticManagementOwnerUuidsBySelector = new HashMap<>();
   private CrossServiceAppHarness.GameLogicHolder gameLogic;
   private final CrossServiceAppHarness.GameSessionHolder gameSession;
+  private final RetainedDemoTenantAssociationFixture retainedDemoTenantAssociationFixture;
   private final boolean useDefaultDemoCatalogFixture;
 
   private GameplayCrossServiceStack(
@@ -79,6 +85,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
       ListFriendPresenceResponse baselineFriendPresenceResponse,
       CrossServiceAppHarness.GameLogicHolder gameLogic,
       CrossServiceAppHarness.GameSessionHolder gameSession,
+      String workloadNamespace,
       boolean useDefaultDemoCatalogFixture) {
     this.accountStub = accountStub;
     this.gameDesignStub = gameDesignStub;
@@ -89,6 +96,14 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
     this.baselineFriendPresenceResponse = baselineFriendPresenceResponse;
     this.gameLogic = gameLogic;
     this.gameSession = gameSession;
+    this.retainedDemoTenantAssociationFixture =
+        GrpcPeerIdentity.isValidNamespace(workloadNamespace)
+            ? new RetainedDemoTenantAssociationFixture(
+                gameSession.bean(DSLContext.class),
+                gameSession.bean(GameSessionRetainedTenantSnapshotRepository.class),
+                gameSession.bean(PlatformTransactionManager.class),
+                workloadNamespace)
+            : null;
     this.useDefaultDemoCatalogFixture = useDefaultDemoCatalogFixture;
   }
 
@@ -214,15 +229,42 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
       clearDefaultDemoAdmissionBinding(jdbc, tenantId);
     }
     jdbc.execute("TRUNCATE TABLE runtime_region_status RESTART IDENTITY");
-    jdbc.execute("TRUNCATE TABLE game_instances RESTART IDENTITY");
     if (characterIds.length > 0) {
       clearScreenBuffers(tenantId, gameplayInstanceId, characterIds);
     }
     String ownerAccountUuid = GameInstanceTestFixtures.TEST_OWNER_ACCOUNT_UUID;
-    long gameInstanceId =
-        GameInstanceTestFixtures.insertRunningGameInstance(
-            jdbc, tenantId, ownerAccountUuid, gameTemplateId);
+    long gameInstanceId;
+    if (tenantId == RetainedDemoTenantAssociationFixture.DEMO_LEGACY_TENANT_ID) {
+      // These fixed IDs are synthetic test-owner declarations that keep the bootstrapped demo
+      // and sandbox pointers attached to real source rows before retained snapshot capture.
+      gameInstanceId =
+          GameInstanceTestFixtures.ensureDeclaredRunningGameInstance(
+              jdbc, 1L, tenantId, ownerAccountUuid, gameTemplateId);
+      GameInstanceTestFixtures.ensureDeclaredRunningGameInstance(
+          jdbc, 2L, tenantId, ownerAccountUuid, gameTemplateId);
+    } else {
+      gameInstanceId =
+          GameInstanceTestFixtures.insertRunningGameInstance(
+              jdbc, tenantId, ownerAccountUuid, gameTemplateId);
+    }
     seedRuntimeOwnership(tenantId, gameInstanceId);
+    if (retainedDemoTenantAssociationFixture != null) {
+      retainedDemoTenantAssociationFixture.ensureAssociation(tenantId);
+    }
+    if (retainedDemoTenantAssociationFixture != null
+        && tenantId == RetainedDemoTenantAssociationFixture.DEMO_LEGACY_TENANT_ID) {
+      Optional<UUID> resolvedTenantId =
+          gameSession
+              .bean(RetainedRuntimeTenantUuidResolver.class)
+              .resolveCanonicalTenantId(tenantId);
+      if (resolvedTenantId.isEmpty()
+          || !resolvedTenantId
+              .orElseThrow()
+              .equals(RetainedDemoTenantAssociationFixture.DEMO_CANONICAL_TENANT_ID)) {
+        throw new IllegalStateException(
+            "Production retained-tenant resolver did not read the declared demo UUID association");
+      }
+    }
     if (useDefaultDemoCatalogFixture) {
       bindDefaultDemoPointer(tenantId, gameInstanceId, ownerAccountUuid, gameTemplateId);
     }
@@ -916,7 +958,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
     if (clearExisting) {
       clearRedis();
       jdbc.update("DELETE FROM runtime_region_status");
-      jdbc.update("DELETE FROM game_instances");
+      // Retained instance identity may still be referenced by canonical admission pointers.
     }
     long gameInstanceId =
         GameInstanceTestFixtures.insertRunningGameInstance(
@@ -1060,6 +1102,11 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
 
     public GameplayCrossServiceStack start() throws IOException {
       requireConfigured();
+      String workloadNamespace =
+          String.valueOf(
+              gameSessionProps.getOrDefault(
+                  "firemud.grpc.workload-namespace",
+                  CrossServiceAppHarness.TEST_WORKLOAD_NAMESPACE));
       AccountRuntimeStubServer accountStub = new AccountRuntimeStubServer(0);
       accountStub.setDefaultAccountUuid(defaultAccountUuid);
       accountUuidMappings.forEach(accountStub::mapAccountUuid);
@@ -1128,6 +1175,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
           initialFriendPresenceResponse,
           gameLogic,
           gameSession,
+          workloadNamespace,
           useDefaultDemoCatalogFixture);
     }
 

@@ -1,5 +1,5 @@
 -- [jooq ignore start]
-CREATE FUNCTION game_design_service.lock_version_for_entity_digest_baseline_migration(
+CREATE FUNCTION ${serviceSchema}.lock_version_for_entity_digest_baseline_migration(
     p_tenant_id VARCHAR(36),
     p_version_id BIGINT
 )
@@ -32,13 +32,13 @@ AS $$
         version_row.notes,
         version_row.created_at,
         version_row.updated_at
-    FROM game_design_service.version AS version_row
+    FROM ${serviceSchema}.version AS version_row
     WHERE version_row.tenant_id = p_tenant_id
       AND version_row.id = p_version_id
     FOR UPDATE
 $$;
 
-REVOKE EXECUTE ON FUNCTION game_design_service.lock_version_for_entity_digest_baseline_migration(
+REVOKE EXECUTE ON FUNCTION ${serviceSchema}.lock_version_for_entity_digest_baseline_migration(
     VARCHAR(36), BIGINT
 ) FROM PUBLIC;
 -- [jooq ignore stop]

@@ -15,6 +15,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -47,6 +48,7 @@ import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegist
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
+import net.firedevops.firemud.gamesession.service.RetainedRuntimeTenantUuidResolver;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -67,6 +69,9 @@ import org.springframework.data.redis.serializer.SerializationException;
 class PlayCommandHandlerTest {
   private static final String PLAY_COMMAND_NAME = "PLAY";
   private static final String PLAYER_ACCOUNT_ID = "f2ed193b-12c1-4c96-bcad-c162229af440";
+  private static final String CANONICAL_TENANT_UUID = "7c958a3d-401e-47ee-8df8-351988b6ce26";
+  private static final String SECOND_CANONICAL_TENANT_UUID = "67defbf2-3b74-4d0f-96cf-8f251b32e4d0";
+  private static final String FIXTURE_LEGACY_TENANT_UUID = "00000000-0000-0000-0000-000000000022";
   private static final String OTHER_ACCOUNT_ID = "00000000-0000-0000-0000-000000000999";
   private static final ObjectMapper JSON = new ObjectMapper();
   private static final UUID ADMISSION_REALM_ID =
@@ -80,6 +85,8 @@ class PlayCommandHandlerTest {
   private final SessionRoutingNormalizationService sessionRoutingNormalizationService =
       Mockito.mock(SessionRoutingNormalizationService.class);
   private final AccountClient accountClient = Mockito.mock(AccountClient.class);
+  private final RetainedRuntimeTenantUuidResolver retainedRuntimeTenantUuidResolver =
+      Mockito.mock(RetainedRuntimeTenantUuidResolver.class);
   private final EntityManagementClient entityManagementClient =
       Mockito.mock(EntityManagementClient.class);
   private final ModerationPolicyClient moderationPolicyClient =
@@ -124,6 +131,7 @@ class PlayCommandHandlerTest {
             worldCatalog,
             gameLogicProperties,
             accountClient,
+            retainedRuntimeTenantUuidResolver,
             entityManagementClient,
             moderationPolicyClient,
             firstPartyConnectContextRegistry,
@@ -131,6 +139,10 @@ class PlayCommandHandlerTest {
             scriptEventPublisher,
             meterRegistry,
             connectScopeSessionStore);
+    when(retainedRuntimeTenantUuidResolver.resolveCanonicalTenantId(22L))
+        .thenReturn(Optional.of(UUID.fromString(CANONICAL_TENANT_UUID)));
+    when(retainedRuntimeTenantUuidResolver.resolveCanonicalTenantId(23L))
+        .thenReturn(Optional.of(UUID.fromString(SECOND_CANONICAL_TENANT_UUID)));
     when(moderationPolicyClient.evaluateGameplayAdmission(Mockito.anyLong(), Mockito.anyString()))
         .thenReturn(
             net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyResponse.newBuilder()
@@ -149,7 +161,7 @@ class PlayCommandHandlerTest {
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             GetTenantEntitlementsForRuntimeResponse.newBuilder()
-                .setTenantId("22")
+                .setTenantId(CANONICAL_TENANT_UUID)
                 .setGameplayAvailable(true)
                 .setAllowPublicJoin(true)
                 .setEntitlementVersion(1L)
@@ -197,6 +209,100 @@ class PlayCommandHandlerTest {
               }
               return characterRoster(characterId, characterName, tenantId, accountId, scope);
             });
+  }
+
+  @Test
+  void playForwardsResolvedUuidAndKeepsCatalogKeyForLocalRosterLookup() {
+    SessionContext context =
+        new SessionContext(
+            1L, 93L, PLAYER_ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    stubOwnedRoster(
+        "1",
+        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+        actor("123", "demo", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    var membershipCaptor =
+        org.mockito.ArgumentCaptor.forClass(
+            net.firedevops.firemud.shared.v1.PlayerExecutionContext.class);
+    Mockito.verify(accountClient).getTenantMembershipForRuntime(membershipCaptor.capture());
+    assertThat(membershipCaptor.getValue().getTenantId()).isEqualTo(CANONICAL_TENANT_UUID);
+    Mockito.verify(accountClient)
+        .getTenantEntitlementsForRuntime(Mockito.eq(CANONICAL_TENANT_UUID), Mockito.anyString());
+    Mockito.verify(retainedRuntimeTenantUuidResolver).resolveCanonicalTenantId(22L);
+    Mockito.verify(retainedRuntimeTenantUuidResolver, never()).resolveCanonicalTenantId(93L);
+    Mockito.verify(entityManagementClient)
+        .listCharactersByAccount(
+            "22", PLAYER_ACCOUNT_ID, "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+    Mockito.verify(sessionContextService).save(Mockito.argThat(saved -> saved.tenantId() == 22L));
+  }
+
+  @Test
+  void missingRetainedUuidAssociationDeniesBeforeAccountOrGameplayAccess() {
+    SessionContext context = unboundContext();
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(retainedRuntimeTenantUuidResolver.resolveCanonicalTenantId(22L))
+        .thenReturn(Optional.empty());
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE);
+    Mockito.verifyNoInteractions(accountClient, entityManagementClient, sessionContextService);
+    Mockito.verifyNoInteractions(
+        gameplayPresenceLifecycleService, moderationPolicyClient, scriptEventPublisher);
+  }
+
+  @Test
+  void malformedRetainedUuidAssociationDeniesBeforeAccountOrGameplayAccess() {
+    SessionContext context = unboundContext();
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(retainedRuntimeTenantUuidResolver.resolveCanonicalTenantId(22L))
+        .thenReturn(Optional.of(new UUID(0L, 0L)));
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE);
+    Mockito.verifyNoInteractions(accountClient, entityManagementClient, sessionContextService);
+    Mockito.verifyNoInteractions(
+        gameplayPresenceLifecycleService, moderationPolicyClient, scriptEventPublisher);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"22", "6c118f15-ceda-4f7e-bf9f-1c342cb83962"})
+  void numericOrWrongTenantEchoDeniesBeforeRosterOrBinding(String responseTenantId) {
+    SessionContext context = unboundContext();
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.any(net.firedevops.firemud.shared.v1.PlayerExecutionContext.class)))
+        .thenAnswer(
+            invocation -> {
+              var response =
+                  freshMembership(
+                      net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                          .active(PLAYER_ACCOUNT_ID, 22L, "1"));
+              return net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                  .echoRequestId(
+                      response.toBuilder().setTenantId(responseTenantId).build(),
+                      invocation.getArgument(0));
+            });
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE);
+    Mockito.verifyNoInteractions(entityManagementClient, sessionContextService);
+    Mockito.verifyNoInteractions(gameplayPresenceLifecycleService, scriptEventPublisher);
   }
 
   @Test
@@ -292,7 +398,7 @@ class PlayCommandHandlerTest {
     var admissionOrder = Mockito.inOrder(accountClient, entityManagementClient);
     admissionOrder
         .verify(accountClient)
-        .getTenantEntitlementsForRuntime(Mockito.eq("22"), Mockito.anyString());
+        .getTenantEntitlementsForRuntime(Mockito.eq(CANONICAL_TENANT_UUID), Mockito.anyString());
     admissionOrder
         .verify(accountClient)
         .getTenantMembershipForRuntime(
@@ -590,6 +696,7 @@ class PlayCommandHandlerTest {
             catalog,
             gameLogicProperties,
             accountClient,
+            retainedRuntimeTenantUuidResolver,
             entityManagementClient,
             moderationPolicyClient,
             firstPartyConnectContextRegistry,
@@ -801,7 +908,7 @@ class PlayCommandHandlerTest {
             Mockito.eq("preview"),
             Mockito.anyString()))
         .thenReturn(
-            validGrant(PLAYER_ACCOUNT_ID, "22", "demo", "preview").toBuilder()
+            validGrant(PLAYER_ACCOUNT_ID, CANONICAL_TENANT_UUID, "demo", "preview").toBuilder()
                 .setGranted(false)
                 .build());
 
@@ -828,7 +935,7 @@ class PlayCommandHandlerTest {
     Mockito.verify(accountClient, Mockito.times(1))
         .getRealmAccessGrantForRuntime(
             Mockito.eq(PLAYER_ACCOUNT_ID),
-            Mockito.eq("22"),
+            Mockito.eq(CANONICAL_TENANT_UUID),
             Mockito.eq("demo"),
             Mockito.eq("preview"),
             Mockito.anyString());
@@ -896,15 +1003,17 @@ class PlayCommandHandlerTest {
                     .echoRequestId(
                         freshMembership(
                             net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                                .active(PLAYER_ACCOUNT_ID, 23L, "1")),
+                                .active(PLAYER_ACCOUNT_ID, 23L, "1"),
+                            SECOND_CANONICAL_TENANT_UUID),
                         invocation.getArgument(0)))
         .when(accountClient)
         .getTenantMembershipForRuntime(
             Mockito.any(net.firedevops.firemud.shared.v1.PlayerExecutionContext.class));
-    when(accountClient.getTenantEntitlementsForRuntime(Mockito.eq("23"), Mockito.anyString()))
+    when(accountClient.getTenantEntitlementsForRuntime(
+            Mockito.eq(SECOND_CANONICAL_TENANT_UUID), Mockito.anyString()))
         .thenReturn(
             GetTenantEntitlementsForRuntimeResponse.newBuilder()
-                .setTenantId("23")
+                .setTenantId(SECOND_CANONICAL_TENANT_UUID)
                 .setGameplayAvailable(true)
                 .setEntitlementVersion(1L)
                 .setTenantBillingSequence(1L)
@@ -1118,6 +1227,7 @@ class PlayCommandHandlerTest {
             authorityBackedCatalog,
             gameLogicProperties,
             accountClient,
+            retainedRuntimeTenantUuidResolver,
             entityManagementClient,
             moderationPolicyClient,
             firstPartyConnectContextRegistry,
@@ -1170,6 +1280,7 @@ class PlayCommandHandlerTest {
             new GameplayWorldCatalog(authorityService),
             gameLogicProperties,
             accountClient,
+            retainedRuntimeTenantUuidResolver,
             entityManagementClient,
             moderationPolicyClient,
             firstPartyConnectContextRegistry,
@@ -1218,6 +1329,7 @@ class PlayCommandHandlerTest {
             new GameplayWorldCatalog(authorityService),
             gameLogicProperties,
             accountClient,
+            retainedRuntimeTenantUuidResolver,
             entityManagementClient,
             moderationPolicyClient,
             firstPartyConnectContextRegistry,
@@ -1276,6 +1388,7 @@ class PlayCommandHandlerTest {
             new GameplayWorldCatalog(authorityService),
             gameLogicProperties,
             accountClient,
+            retainedRuntimeTenantUuidResolver,
             entityManagementClient,
             moderationPolicyClient,
             firstPartyConnectContextRegistry,
@@ -1329,6 +1442,7 @@ class PlayCommandHandlerTest {
             new GameplayWorldCatalog(authorityService),
             gameLogicProperties,
             accountClient,
+            retainedRuntimeTenantUuidResolver,
             entityManagementClient,
             moderationPolicyClient,
             firstPartyConnectContextRegistry,
@@ -1452,6 +1566,35 @@ class PlayCommandHandlerTest {
     Mockito.verify(sessionContextService, Mockito.never()).save(Mockito.any());
     Mockito.verify(gameplayPresenceLifecycleService, Mockito.never())
         .registerConnected(Mockito.any());
+  }
+
+  @Test
+  void activePublicMembershipDeniedByPolicyReturnsWorldAccessDeniedWithoutBinding() {
+    SessionContext context =
+        new SessionContext(
+            1L, 22L, PLAYER_ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.any(net.firedevops.firemud.shared.v1.PlayerExecutionContext.class)))
+        .thenAnswer(
+            invocation ->
+                net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                    .echoRequestId(
+                        freshMembership(
+                            net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                                .active(PLAYER_ACCOUNT_ID, 22L, "22"),
+                            false),
+                        invocation.getArgument(0)));
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE);
+    assertThat(((ErrorOutput) result.outputs().get(0).payload()).messageKey())
+        .isEqualTo("error.play.world-access-denied");
+    Mockito.verifyNoInteractions(entityManagementClient, sessionContextService);
   }
 
   @Test
@@ -1915,7 +2058,7 @@ class PlayCommandHandlerTest {
     org.mockito.InOrder order = Mockito.inOrder(accountClient, entityManagementClient);
     order
         .verify(accountClient)
-        .getTenantEntitlementsForRuntime(Mockito.eq("22"), Mockito.anyString());
+        .getTenantEntitlementsForRuntime(Mockito.eq(CANONICAL_TENANT_UUID), Mockito.anyString());
     order
         .verify(accountClient)
         .getTenantMembershipForRuntime(
@@ -1924,7 +2067,7 @@ class PlayCommandHandlerTest {
         .verify(accountClient)
         .getRealmAccessGrantForRuntime(
             Mockito.eq(PLAYER_ACCOUNT_ID),
-            Mockito.eq("22"),
+            Mockito.eq(CANONICAL_TENANT_UUID),
             Mockito.eq("sandbox"),
             Mockito.eq("preview"),
             Mockito.anyString());
@@ -2378,6 +2521,7 @@ class PlayCommandHandlerTest {
             authorityBackedCatalog,
             gameLogicProperties,
             accountClient,
+            retainedRuntimeTenantUuidResolver,
             entityManagementClient,
             moderationPolicyClient,
             firstPartyConnectContextRegistry,
@@ -2433,6 +2577,7 @@ class PlayCommandHandlerTest {
             new GameplayWorldCatalog(pointerAuthority),
             gameLogicProperties,
             accountClient,
+            retainedRuntimeTenantUuidResolver,
             entityManagementClient,
             moderationPolicyClient,
             firstPartyConnectContextRegistry,
@@ -2983,7 +3128,7 @@ class PlayCommandHandlerTest {
     Mockito.verify(accountClient)
         .getRealmAccessGrantForRuntime(
             Mockito.eq(PLAYER_ACCOUNT_ID),
-            Mockito.eq("22"),
+            Mockito.eq(CANONICAL_TENANT_UUID),
             Mockito.eq("sandbox"),
             Mockito.eq("preview"),
             Mockito.anyString());
@@ -2999,7 +3144,7 @@ class PlayCommandHandlerTest {
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.anyString()))
-        .thenReturn(GetRealmAccessGrantForRuntimeResponse.newBuilder().setGranted(false).build());
+        .thenReturn(grantResponse(false));
 
     PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
 
@@ -3016,7 +3161,7 @@ class PlayCommandHandlerTest {
     Mockito.verify(accountClient)
         .getRealmAccessGrantForRuntime(
             Mockito.eq(PLAYER_ACCOUNT_ID),
-            Mockito.eq("22"),
+            Mockito.eq(CANONICAL_TENANT_UUID),
             Mockito.eq("sandbox"),
             Mockito.eq("preview"),
             Mockito.anyString());
@@ -3029,7 +3174,7 @@ class PlayCommandHandlerTest {
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             GetTenantEntitlementsForRuntimeResponse.newBuilder()
-                .setTenantId("22")
+                .setTenantId(CANONICAL_TENANT_UUID)
                 .setGameplayAvailable(true)
                 .setAllowPublicJoin(false)
                 .setEntitlementVersion(1L)
@@ -3043,7 +3188,7 @@ class PlayCommandHandlerTest {
     Mockito.verify(accountClient)
         .getRealmAccessGrantForRuntime(
             Mockito.eq(PLAYER_ACCOUNT_ID),
-            Mockito.eq("22"),
+            Mockito.eq(CANONICAL_TENANT_UUID),
             Mockito.eq("sandbox"),
             Mockito.eq("preview"),
             Mockito.anyString());
@@ -3167,7 +3312,10 @@ class PlayCommandHandlerTest {
             Mockito.eq("demo"),
             Mockito.eq("invite-only"),
             Mockito.anyString()))
-        .thenReturn(GetRealmAccessGrantForRuntimeResponse.newBuilder().setGranted(false).build());
+        .thenReturn(
+            validGrant(PLAYER_ACCOUNT_ID, CANONICAL_TENANT_UUID, "demo", "invite-only").toBuilder()
+                .setGranted(false)
+                .build());
 
     PlayCommandHandlingResult denied =
         handler.handle(
@@ -3188,7 +3336,7 @@ class PlayCommandHandlerTest {
     Mockito.verify(accountClient)
         .getRealmAccessGrantForRuntime(
             Mockito.eq(PLAYER_ACCOUNT_ID),
-            Mockito.eq("22"),
+            Mockito.eq(CANONICAL_TENANT_UUID),
             Mockito.eq("demo"),
             Mockito.eq("invite-only"),
             Mockito.anyString());
@@ -3251,7 +3399,7 @@ class PlayCommandHandlerTest {
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.anyString()))
-        .thenReturn(GetRealmAccessGrantForRuntimeResponse.newBuilder().setGranted(false).build());
+        .thenReturn(grantResponse(false));
 
     PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
 
@@ -3533,9 +3681,9 @@ class PlayCommandHandlerTest {
     assertThat(leftMembership.getMembershipLifecycleState()).isEqualTo("INACTIVE");
     assertThat(leftMembership.getAuthorityAvailability()).isEqualTo("AVAILABLE");
     assertThat(leftMembership.getAccountId()).isEqualTo(PLAYER_ACCOUNT_ID);
-    assertThat(leftMembership.getTenantId()).isEqualTo("00000000-0000-0000-0000-000000000022");
+    assertThat(leftMembership.getTenantId()).isEqualTo(CANONICAL_TENANT_UUID);
     assertThat(leftMembership.getRequestAccountId()).isEqualTo(PLAYER_ACCOUNT_ID);
-    assertThat(leftMembership.getRequestTenantId()).isEqualTo("22");
+    assertThat(leftMembership.getRequestTenantId()).isEqualTo(CANONICAL_TENANT_UUID);
     assertThat(leftMembership.getMembershipVersionMap())
         .containsExactly(Map.entry(leftMembership.getTenantId(), "3"));
     assertThat(leftMembership.getMembershipAuthorityGeneration()).isEqualTo("2");
@@ -3933,7 +4081,7 @@ class PlayCommandHandlerTest {
                 ? GameplayStageCommandConstants.ENTITLEMENT_UNAVAILABLE_CODE
                 : GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE);
     Mockito.verify(accountClient)
-        .getTenantEntitlementsForRuntime(Mockito.eq("22"), Mockito.anyString());
+        .getTenantEntitlementsForRuntime(Mockito.eq(CANONICAL_TENANT_UUID), Mockito.anyString());
     Mockito.verify(accountClient, never())
         .getTenantMembershipForRuntime(
             Mockito.any(net.firedevops.firemud.shared.v1.PlayerExecutionContext.class));
@@ -3950,7 +4098,7 @@ class PlayCommandHandlerTest {
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             GetTenantEntitlementsForRuntimeResponse.newBuilder()
-                .setTenantId("22")
+                .setTenantId(CANONICAL_TENANT_UUID)
                 .setGameplayAvailable(false)
                 .setAllowPublicJoin(true)
                 .setEntitlementVersion(1L)
@@ -3982,7 +4130,7 @@ class PlayCommandHandlerTest {
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             GetTenantEntitlementsForRuntimeResponse.newBuilder()
-                .setTenantId("22")
+                .setTenantId(CANONICAL_TENANT_UUID)
                 .setGameplayAvailable(true)
                 .setAllowPublicJoin(false)
                 .setEntitlementVersion(1L)
@@ -4000,7 +4148,7 @@ class PlayCommandHandlerTest {
     org.mockito.InOrder order = Mockito.inOrder(accountClient);
     order
         .verify(accountClient)
-        .getTenantEntitlementsForRuntime(Mockito.eq("22"), Mockito.anyString());
+        .getTenantEntitlementsForRuntime(Mockito.eq(CANONICAL_TENANT_UUID), Mockito.anyString());
     order
         .verify(accountClient)
         .getTenantMembershipForRuntime(
@@ -4022,7 +4170,7 @@ class PlayCommandHandlerTest {
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             GetTenantEntitlementsForRuntimeResponse.newBuilder()
-                .setTenantId("22")
+                .setTenantId(CANONICAL_TENANT_UUID)
                 .setGameplayAvailable(true)
                 .setAllowPublicJoin(false)
                 .setEntitlementVersion(1L)
@@ -4056,7 +4204,7 @@ class PlayCommandHandlerTest {
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             GetTenantEntitlementsForRuntimeResponse.newBuilder()
-                .setTenantId("22")
+                .setTenantId(CANONICAL_TENANT_UUID)
                 .setGameplayAvailable(true)
                 .setAllowPublicJoin(true)
                 .setEntitlementVersion(1L)
@@ -4070,7 +4218,7 @@ class PlayCommandHandlerTest {
     assertThat(result.commandResult().errorCode())
         .isEqualTo(GameplayStageCommandConstants.JOIN_REQUIRED_CODE);
     Mockito.verify(accountClient)
-        .getTenantEntitlementsForRuntime(Mockito.eq("22"), Mockito.anyString());
+        .getTenantEntitlementsForRuntime(Mockito.eq(CANONICAL_TENANT_UUID), Mockito.anyString());
     Mockito.verify(accountClient)
         .getTenantMembershipForRuntime(
             Mockito.any(net.firedevops.firemud.shared.v1.PlayerExecutionContext.class));
@@ -4596,7 +4744,7 @@ class PlayCommandHandlerTest {
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             GetTenantEntitlementsForRuntimeResponse.newBuilder()
-                .setTenantId("22")
+                .setTenantId(CANONICAL_TENANT_UUID)
                 .setGameplayAvailable(false)
                 .setEntitlementVersion(5L)
                 .setTenantBillingSequence(5L)
@@ -5118,8 +5266,7 @@ class PlayCommandHandlerTest {
       String canonicalJson, String membershipVersion) {
     try {
       ObjectNode event = (ObjectNode) JSON.readTree(canonicalJson);
-      ((ObjectNode) event.get("membershipVersion"))
-          .put("00000000-0000-0000-0000-000000000022", membershipVersion);
+      ((ObjectNode) event.get("membershipVersion")).put(CANONICAL_TENANT_UUID, membershipVersion);
       event.remove("eventDigest");
       return MembershipAuthorityEventV1Codec.seal(
               JSON.convertValue(event, new TypeReference<Map<String, Object>>() {}))
@@ -5141,7 +5288,179 @@ class PlayCommandHandlerTest {
 
   private static GetTenantMembershipForRuntimeResponse freshMembership(
       GetTenantMembershipForRuntimeResponse response) {
-    return response.toBuilder().setEvaluatedAt(Instant.now().toString()).build();
+    return freshMembership(response, CANONICAL_TENANT_UUID);
+  }
+
+  private static GetTenantMembershipForRuntimeResponse freshMembership(
+      GetTenantMembershipForRuntimeResponse response, String canonicalTenantId) {
+    return freshMembership(response, canonicalTenantId, null);
+  }
+
+  private static GetTenantMembershipForRuntimeResponse freshMembership(
+      GetTenantMembershipForRuntimeResponse response, boolean gameplayAdmissionAllowed) {
+    return freshMembership(response, CANONICAL_TENANT_UUID, gameplayAdmissionAllowed);
+  }
+
+  private static GetTenantMembershipForRuntimeResponse freshMembership(
+      GetTenantMembershipForRuntimeResponse response,
+      String canonicalTenantId,
+      Boolean gameplayAdmissionAllowed) {
+    String originalTenantId = response.getTenantId();
+    var builder =
+        response.toBuilder()
+            .setTenantId(canonicalTenantId)
+            .setRequestTenantId(canonicalTenantId)
+            .setEvaluatedAt(Instant.now().toString());
+    if (gameplayAdmissionAllowed != null) {
+      builder.setGameplayAdmissionAllowed(gameplayAdmissionAllowed);
+    }
+    if (response.getMembershipVersionCount() > 0) {
+      builder
+          .clearMembershipVersion()
+          .putAllMembershipVersion(
+              rekeyMap(response.getMembershipVersionMap(), originalTenantId, canonicalTenantId));
+    }
+    if (response.hasMembershipBaseline()) {
+      builder.setMembershipBaseline(
+          response.getMembershipBaseline().toBuilder()
+              .clearMembershipVersion()
+              .putAllMembershipVersion(
+                  rekeyMap(
+                      response.getMembershipBaseline().getMembershipVersionMap(),
+                      originalTenantId,
+                      canonicalTenantId))
+              .build());
+    }
+    if (response.hasAuthorityTuple()) {
+      var tuple = response.getAuthorityTuple().toBuilder();
+      tuple
+          .clearTenantAuthorityGeneration()
+          .putAllTenantAuthorityGeneration(
+              rekeyMap(
+                  response.getAuthorityTuple().getTenantAuthorityGenerationMap(),
+                  originalTenantId,
+                  canonicalTenantId));
+      tuple
+          .clearMembershipAuthorityGeneration()
+          .putAllMembershipAuthorityGeneration(
+              rekeyMap(
+                  response.getAuthorityTuple().getMembershipAuthorityGenerationMap(),
+                  originalTenantId,
+                  canonicalTenantId));
+      for (int index = 0;
+          index < response.getAuthorityTuple().getPrivateRealmGrantVersionsCount();
+          index++) {
+        var grant = response.getAuthorityTuple().getPrivateRealmGrantVersions(index);
+        if (originalTenantId.equals(grant.getTenantId())) {
+          tuple.setPrivateRealmGrantVersions(
+              index, grant.toBuilder().setTenantId(canonicalTenantId).build());
+        }
+      }
+      builder.setAuthorityTuple(tuple.build());
+    }
+    builder.clearOutboxCheckpoints();
+    response
+        .getOutboxCheckpointsList()
+        .forEach(
+            checkpoint ->
+                builder.addOutboxCheckpoints(
+                    checkpoint.toBuilder()
+                        .setOutboxStreamKey(
+                            rekeyPathTenant(
+                                checkpoint.getOutboxStreamKey(),
+                                originalTenantId,
+                                canonicalTenantId))
+                        .build()));
+    builder.clearOutboxSourceEvidence();
+    response
+        .getOutboxSourceEvidenceList()
+        .forEach(
+            source -> {
+              String canonicalEventJson =
+                  rekeyMembershipEvent(
+                      source.getCanonicalEventJson(),
+                      response.getAccountId(),
+                      originalTenantId,
+                      canonicalTenantId,
+                      gameplayAdmissionAllowed);
+              var event = MembershipAuthorityEventV1Codec.verify(canonicalEventJson);
+              builder.addOutboxSourceEvidence(
+                  source.toBuilder()
+                      .setOutboxStreamKey(event.outboxStreamKey())
+                      .setEventDigest(event.eventDigest())
+                      .setCanonicalEventJson(event.canonicalJson())
+                      .build());
+            });
+    return builder.build();
+  }
+
+  private static Map<String, String> rekeyMap(
+      Map<String, String> values, String originalTenantId, String canonicalTenantId) {
+    Map<String, String> result = new LinkedHashMap<>();
+    values.forEach(
+        (key, value) -> {
+          String rekeyed = originalTenantId.equals(key) ? canonicalTenantId : key;
+          if (result.putIfAbsent(rekeyed, value) != null) {
+            throw new IllegalArgumentException("Fixture tenant UUID rekey collides");
+          }
+        });
+    return result;
+  }
+
+  private static String rekeyPathTenant(
+      String value, String originalTenantId, String canonicalTenantId) {
+    return value.replace("/" + originalTenantId, "/" + canonicalTenantId);
+  }
+
+  private static String rekeyMembershipEvent(
+      String canonicalJson,
+      String accountId,
+      String originalTenantId,
+      String canonicalTenantId,
+      Boolean gameplayAdmissionAllowed) {
+    try {
+      ObjectNode event = (ObjectNode) JSON.readTree(canonicalJson);
+      event.put("tenantId", canonicalTenantId);
+      if (gameplayAdmissionAllowed != null) {
+        event.put("gameplayAdmissionAllowed", gameplayAdmissionAllowed);
+      }
+      event.put(
+          "outboxStreamKey",
+          rekeyPathTenant(
+              event.path("outboxStreamKey").asText(), originalTenantId, canonicalTenantId));
+      event.put("sourceScope", "membership/" + accountId + "/" + canonicalTenantId);
+      rekeyJsonMap(
+          (ObjectNode) event.get("membershipVersion"), originalTenantId, canonicalTenantId);
+      ObjectNode tuple = (ObjectNode) event.get("authorityTuple");
+      rekeyJsonMap(
+          (ObjectNode) tuple.get("tenantAuthorityGeneration"), originalTenantId, canonicalTenantId);
+      rekeyJsonMap(
+          (ObjectNode) tuple.get("membershipAuthorityGeneration"),
+          originalTenantId,
+          canonicalTenantId);
+      if (tuple.has("privateRealmGrantVersions")) {
+        for (var grant : tuple.withArray("privateRealmGrantVersions")) {
+          if (grant instanceof ObjectNode grantObject
+              && originalTenantId.equals(grantObject.path("tenantId").asText())) {
+            grantObject.put("tenantId", canonicalTenantId);
+          }
+        }
+      }
+      event.remove("eventDigest");
+      return MembershipAuthorityEventV1Codec.seal(
+              JSON.convertValue(event, new TypeReference<Map<String, Object>>() {}))
+          .canonicalJson();
+    } catch (IOException ex) {
+      throw new AssertionError("test event should be valid JSON", ex);
+    }
+  }
+
+  private static void rekeyJsonMap(
+      ObjectNode values, String originalTenantId, String canonicalTenantId) {
+    if (values != null && values.has(originalTenantId)) {
+      var value = values.remove(originalTenantId);
+      values.set(canonicalTenantId, value);
+    }
   }
 
   private static GetTenantMembershipForRuntimeResponse leftMembershipWithDefect(String defect) {
@@ -5217,6 +5536,7 @@ class PlayCommandHandlerTest {
         worldCatalog,
         gameLogicProperties,
         accountClient,
+        retainedRuntimeTenantUuidResolver,
         entityManagementClient,
         moderationPolicyClient,
         firstPartyConnectContextRegistry,
@@ -5228,18 +5548,32 @@ class PlayCommandHandlerTest {
   }
 
   private static GetTenantMembershipForRuntimeResponse missingMembershipAt(String evaluatedAt) {
-    return net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures.missing(
-            PLAYER_ACCOUNT_ID, 22L)
+    return freshMembership(
+            net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures.missing(
+                PLAYER_ACCOUNT_ID, 22L))
         .toBuilder()
         .setEvaluatedAt(evaluatedAt)
         .build();
   }
 
   private static GetTenantMembershipForRuntimeResponse activeMembershipAt(String evaluatedAt) {
-    return net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures.active(
-            PLAYER_ACCOUNT_ID, 22L, "1")
+    return freshMembership(
+            net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures.active(
+                PLAYER_ACCOUNT_ID, 22L, "1"))
         .toBuilder()
         .setEvaluatedAt(evaluatedAt)
+        .build();
+  }
+
+  private static GetRealmAccessGrantForRuntimeResponse grantResponse(boolean granted) {
+    return GetRealmAccessGrantForRuntimeResponse.newBuilder()
+        .setAccountId(PLAYER_ACCOUNT_ID)
+        .setTenantId(CANONICAL_TENANT_UUID)
+        .setWorldSlug("sandbox")
+        .setRealmSlug("preview")
+        .setGranted(granted)
+        .setGrantVersion(granted ? 1L : 0L)
+        .setEvaluatedAt(evaluatedAtNow())
         .build();
   }
 
@@ -5264,7 +5598,7 @@ class PlayCommandHandlerTest {
   }
 
   private static GetRealmAccessGrantForRuntimeResponse validGrant() {
-    return validGrant(PLAYER_ACCOUNT_ID, "22", "sandbox", "preview");
+    return validGrant(PLAYER_ACCOUNT_ID, CANONICAL_TENANT_UUID, "sandbox", "preview");
   }
 
   private static GetRealmAccessGrantForRuntimeResponse validGrant(
@@ -5283,7 +5617,7 @@ class PlayCommandHandlerTest {
   private static GetTenantEntitlementsForRuntimeResponse publicEntitlement(
       boolean allowPublicJoin) {
     return GetTenantEntitlementsForRuntimeResponse.newBuilder()
-        .setTenantId("22")
+        .setTenantId(CANONICAL_TENANT_UUID)
         .setGameplayAvailable(true)
         .setAllowPublicJoin(allowPublicJoin)
         .setEntitlementVersion(1L)
@@ -5517,7 +5851,11 @@ class PlayCommandHandlerTest {
             Mockito.any(), Mockito.anyString(), Mockito.anyString(), Mockito.any(Instant.class)))
         .thenReturn(JoinPublicProductionMembershipResponse.newBuilder().setSuccess(true).build());
     WorldsCommandHandler worldsCommandHandler =
-        new WorldsCommandHandler(worldCatalog, accountClient, connectScopeSessionStore);
+        new WorldsCommandHandler(
+            worldCatalog,
+            accountClient,
+            connectScopeSessionStore,
+            retainedRuntimeTenantUuidResolver);
     assertThat(worldsCommandHandler.browseRealms(resolvedContext, "demo"))
         .isInstanceOf(WorldsCommandHandler.RealmBrowseResult.Success.class);
     WorldsTextCommandDispatchHandler worldsDispatchHandler =
@@ -5544,7 +5882,7 @@ class PlayCommandHandlerTest {
     assertThat(scopeIdCaptor.getValue()).isEqualTo(exactJoinScopeId);
     assertThat(playerContextCaptor.getValue().getAccountId()).isEqualTo(PLAYER_ACCOUNT_ID);
     assertThat(playerContextCaptor.getValue().getSessionId()).isEqualTo("1");
-    assertThat(playerContextCaptor.getValue().getTenantId()).isEqualTo("22");
+    assertThat(playerContextCaptor.getValue().getTenantId()).isEqualTo(CANONICAL_TENANT_UUID);
     assertThat(playerContextCaptor.getValue().getRequestId()).isEqualTo(requestIdCaptor.getValue());
   }
 
@@ -5677,15 +6015,17 @@ class PlayCommandHandlerTest {
                     .echoRequestId(
                         freshMembership(
                             net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                                .inactive(PLAYER_ACCOUNT_ID, 23L, "2")),
+                                .inactive(PLAYER_ACCOUNT_ID, 23L, "2"),
+                            SECOND_CANONICAL_TENANT_UUID),
                         invocation.getArgument(0)))
         .when(accountClient)
         .getTenantMembershipForRuntime(
             Mockito.any(net.firedevops.firemud.shared.v1.PlayerExecutionContext.class));
-    when(accountClient.getTenantEntitlementsForRuntime(Mockito.eq("23"), Mockito.anyString()))
+    when(accountClient.getTenantEntitlementsForRuntime(
+            Mockito.eq(SECOND_CANONICAL_TENANT_UUID), Mockito.anyString()))
         .thenReturn(
             net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse.newBuilder()
-                .setTenantId("23")
+                .setTenantId(SECOND_CANONICAL_TENANT_UUID)
                 .setGameplayAvailable(true)
                 .setAllowPublicJoin(true)
                 .setEntitlementVersion(1L)
@@ -5732,7 +6072,7 @@ class PlayCommandHandlerTest {
     org.mockito.InOrder order = Mockito.inOrder(accountClient, entityManagementClient);
     order
         .verify(accountClient)
-        .getTenantEntitlementsForRuntime(Mockito.eq("22"), Mockito.anyString());
+        .getTenantEntitlementsForRuntime(Mockito.eq(CANONICAL_TENANT_UUID), Mockito.anyString());
     order
         .verify(accountClient)
         .getTenantMembershipForRuntime(
@@ -5741,7 +6081,7 @@ class PlayCommandHandlerTest {
         .verify(accountClient)
         .getRealmAccessGrantForRuntime(
             Mockito.eq(PLAYER_ACCOUNT_ID),
-            Mockito.eq("22"),
+            Mockito.eq(CANONICAL_TENANT_UUID),
             Mockito.eq("sandbox"),
             Mockito.eq("preview"),
             Mockito.anyString());

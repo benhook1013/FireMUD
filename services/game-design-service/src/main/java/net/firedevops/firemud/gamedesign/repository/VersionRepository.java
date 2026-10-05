@@ -6,6 +6,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import net.firedevops.firemud.common.config.PostgresProperties;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import org.jooq.DSLContext;
@@ -20,8 +21,8 @@ import org.springframework.stereotype.Repository;
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class VersionRepository {
-  private static final String ENTITY_DIGEST_BASELINE_MIGRATION_VERSION_LOCK_FUNCTION =
-      "game_design_service.lock_version_for_entity_digest_baseline_migration";
+  private static final String ENTITY_DIGEST_BASELINE_MIGRATION_VERSION_LOCK_FUNCTION_NAME =
+      "lock_version_for_entity_digest_baseline_migration";
   private static final Table<?> VERSION_TABLE = DSL.table(DSL.name("version"));
   private static final Field<Long> ID = DSL.field(DSL.name("id"), Long.class);
   private static final Field<String> TENANT_ID = DSL.field(DSL.name("tenant_id"), String.class);
@@ -44,9 +45,11 @@ public class VersionRepository {
       DSL.field(DSL.name("updated_at"), Timestamp.class);
 
   private final DSLContext dsl;
+  private final String postgresSchema;
 
-  public VersionRepository(DSLContext dsl) {
+  public VersionRepository(DSLContext dsl, PostgresProperties postgres) {
     this.dsl = dsl;
+    this.postgresSchema = postgres == null ? null : postgres.getSchema();
   }
 
   public List<Version> findAllByTenantIdOrderByVersionNumberAsc(String tenantId) {
@@ -97,12 +100,21 @@ public class VersionRepository {
    */
   public Optional<Version> findByTenantIdAndIdForEntityDigestBaselineMigration(
       String tenantId, Long id) {
+    if (postgresSchema == null || postgresSchema.isBlank()) {
+      throw new IllegalStateException(
+          "Game Design PostgreSQL schema must be configured for the "
+              + "Entity digest baseline Version lock");
+    }
+    String versionLockFunction =
+        dsl.render(
+            DSL.quotedName(
+                postgresSchema, ENTITY_DIGEST_BASELINE_MIGRATION_VERSION_LOCK_FUNCTION_NAME));
     return Optional.ofNullable(
         dsl.resultQuery(
                 "SELECT id, tenant_id, version_number, version_state, version_state_epoch, "
                     + "script_patch_version, base_version_id, is_script_only, notes, "
                     + "created_at, updated_at FROM "
-                    + ENTITY_DIGEST_BASELINE_MIGRATION_VERSION_LOCK_FUNCTION
+                    + versionLockFunction
                     + "(?, ?)",
                 tenantId,
                 id)

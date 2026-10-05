@@ -19,6 +19,7 @@ import org.junit.jupiter.api.Test;
 class AccountRuntimeStubServerCompatibilityTest {
   private static final String ACCOUNT_UUID = "c91fb96e-5ad8-4e4e-a12d-2838640093b2";
   private static final String OTHER_ACCOUNT_UUID = "c7dc8122-91d6-48c4-9484-9350c25d9b61";
+  private static final String TENANT_UUID = "784e0d9c-714f-4a22-9404-04b8b37c8ef1";
   private static final String REALM_ID = "8a1df0f1-1b57-465e-9c4b-bb34f8153d31";
   private static final String NAMESPACE_ID = "2ea958e0-13a2-41d0-9c39-59a96cf31412";
   private static final Set<String> NON_RUNTIME_METHODS =
@@ -77,16 +78,22 @@ class AccountRuntimeStubServerCompatibilityTest {
 
         server.denyGameplayAdmission();
         var existingButNonAdmitting =
-            stub.getTenantMembershipForRuntime(membershipRequest(ACCOUNT_UUID, "11"));
+            stub.getTenantMembershipForRuntime(membershipRequest(ACCOUNT_UUID, TENANT_UUID));
         assertThat(existingButNonAdmitting.getMembershipExists()).isTrue();
         assertThat(existingButNonAdmitting.getGameplayAdmissionAllowed()).isFalse();
         assertThat(existingButNonAdmitting.getMembershipLifecycleState()).isEqualTo("ACTIVE");
+        assertThat(existingButNonAdmitting.getAuthorityAvailability()).isEqualTo("AVAILABLE");
         assertThat(existingButNonAdmitting.getMembershipAuthorityGeneration()).isEqualTo("1");
         assertThat(existingButNonAdmitting.getMembershipVersionMap())
             .containsEntry(existingButNonAdmitting.getTenantId(), "1");
+        assertThat(existingButNonAdmitting.getRolesList()).containsExactly("player");
+        assertThat(existingButNonAdmitting.hasMembershipBaseline()).isTrue();
+        assertThat(existingButNonAdmitting.hasAuthorityTuple()).isTrue();
+        assertThat(existingButNonAdmitting.getOutboxSourceEvidenceCount()).isEqualTo(1);
 
         server.setMembershipExists(false);
-        var missing = stub.getTenantMembershipForRuntime(membershipRequest(ACCOUNT_UUID, "11"));
+        var missing =
+            stub.getTenantMembershipForRuntime(membershipRequest(ACCOUNT_UUID, TENANT_UUID));
         assertThat(missing.getMembershipExists()).isFalse();
         assertThat(missing.getGameplayAdmissionAllowed()).isFalse();
         assertThat(missing.getMembershipLifecycleState()).isEqualTo("MISSING");
@@ -100,7 +107,7 @@ class AccountRuntimeStubServerCompatibilityTest {
         PlayerExecutionContext caller =
             PlayerExecutionContext.newBuilder()
                 .setAccountId(ACCOUNT_UUID)
-                .setTenantId("11")
+                .setTenantId(TENANT_UUID)
                 .setRealmId(REALM_ID)
                 .setGameInstanceId("33")
                 .setSessionId("session-1")
@@ -112,7 +119,7 @@ class AccountRuntimeStubServerCompatibilityTest {
             stub.issueDirectTextConnectScope(
                 IssueDirectTextConnectScopeRequest.newBuilder()
                     .setPlayerContext(caller)
-                    .setTenantId("11")
+                    .setTenantId(TENANT_UUID)
                     .setWorldSlug("demo")
                     .setRealmSlug("live")
                     .setRealmId(REALM_ID)
@@ -133,7 +140,8 @@ class AccountRuntimeStubServerCompatibilityTest {
                     .build());
         assertThat(join.getSuccess()).isTrue();
 
-        var afterJoin = stub.getTenantMembershipForRuntime(membershipRequest(ACCOUNT_UUID, "11"));
+        var afterJoin =
+            stub.getTenantMembershipForRuntime(membershipRequest(ACCOUNT_UUID, TENANT_UUID));
         assertThat(afterJoin.getMembershipExists()).isTrue();
         assertThat(afterJoin.getGameplayAdmissionAllowed()).isTrue();
         assertThat(afterJoin.getMembershipLifecycleState()).isEqualTo("ACTIVE");
@@ -143,7 +151,7 @@ class AccountRuntimeStubServerCompatibilityTest {
             stub.getRealmAccessGrantForRuntime(
                 GetRealmAccessGrantForRuntimeRequest.newBuilder()
                     .setAccountId(ACCOUNT_UUID)
-                    .setTenantId("11")
+                    .setTenantId(TENANT_UUID)
                     .setWorldSlug("demo")
                     .setRealmSlug("live")
                     .build());
@@ -282,7 +290,7 @@ class AccountRuntimeStubServerCompatibilityTest {
     PlayerExecutionContext caller =
         PlayerExecutionContext.newBuilder()
             .setAccountId(ACCOUNT_UUID)
-            .setTenantId("11")
+            .setTenantId(TENANT_UUID)
             .setRealmId(REALM_ID)
             .setGameInstanceId("33")
             .setSessionId("session-1")
@@ -292,7 +300,7 @@ class AccountRuntimeStubServerCompatibilityTest {
             .build();
     return IssueDirectTextConnectScopeRequest.newBuilder()
         .setPlayerContext(caller)
-        .setTenantId("11")
+        .setTenantId(TENANT_UUID)
         .setWorldSlug("demo")
         .setRealmSlug("live")
         .setRealmId(REALM_ID)

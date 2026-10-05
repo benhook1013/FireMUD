@@ -72,7 +72,8 @@ public class PasswordResetTokenRepository {
                     .ID
                     .eq(token.getId())
                     .and(PASSWORD_RESET_TOKEN.TOKEN.eq(token.getToken()))
-                    .and(PASSWORD_RESET_TOKEN.EXPIRES_AT.ge(capturedNow)))
+                    .and(PASSWORD_RESET_TOKEN.EXPIRES_AT.eq(token.getExpiresAt()))
+                    .and(PASSWORD_RESET_TOKEN.EXPIRES_AT.gt(capturedNow)))
             .execute()
         == 1;
   }

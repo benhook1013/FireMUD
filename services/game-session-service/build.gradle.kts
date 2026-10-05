@@ -73,11 +73,13 @@ dependencies {
     testFixturesImplementation("io.grpc:grpc-stub:${libs.versions.grpc.get()}")
     testFixturesImplementation("com.google.protobuf:protobuf-java:${libs.versions.protobuf.get()}")
     testFixturesImplementation(libs.spring.boot.starter.jdbc)
+    testFixturesImplementation("org.jooq:jooq")
     testFixturesCompileOnly(libs.testcontainers.postgresql)
     testFixturesCompileOnly(libs.testcontainers)
     testImplementation(libs.grpc.inprocess)
     testImplementation(testFixtures(project(":game-session-service")))
     testImplementation(project(":game-logic-service"))
+    add("crossServiceTestImplementation", project(":account-service"))
 }
 
 tasks.named<BootRun>("bootRun") {

@@ -9,9 +9,14 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -24,6 +29,7 @@ import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.cache.ScreenBufferService;
+import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
 import net.firedevops.firemud.common.config.FiremudCommandHistoryProperties;
 import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.common.security.JwtUtil;
@@ -63,6 +69,7 @@ import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleServi
 import net.firedevops.firemud.gamesession.service.GameplayPresenceRole;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.PlayerCommandHistoryStorageService;
+import net.firedevops.firemud.gamesession.service.RetainedRuntimeTenantUuidResolver;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -79,7 +86,9 @@ import org.mockito.Mockito;
 
 @SuppressWarnings("unchecked")
 class SessionResumptionFlowTest {
+  private static final ObjectMapper JSON = new ObjectMapper();
   private static final String OWNER_ACCOUNT_UUID = "123e4567-e89b-12d3-a456-426614174000";
+  private static final String CANONICAL_TENANT_UUID = "7c958a3d-401e-47ee-8df8-351988b6ce26";
   private static final String LOGIN_PAYLOAD = "LOGIN demo@example.com swordfish";
   private static final String PLAY_PAYLOAD = "PLAY demo production";
   private static final String LOOK_PAYLOAD = "LOOK";
@@ -88,6 +97,8 @@ class SessionResumptionFlowTest {
   private final GameInstanceRepository instanceRepository =
       Mockito.mock(GameInstanceRepository.class);
   private final AccountClient accountClient = Mockito.mock(AccountClient.class);
+  private final RetainedRuntimeTenantUuidResolver retainedRuntimeTenantUuidResolver =
+      Mockito.mock(RetainedRuntimeTenantUuidResolver.class);
   private final EntityManagementClient entityManagementClient =
       Mockito.mock(EntityManagementClient.class);
   private final ModerationPolicyClient moderationPolicyClient =
@@ -148,6 +159,8 @@ class SessionResumptionFlowTest {
 
   @BeforeEach
   void setUp() {
+    when(retainedRuntimeTenantUuidResolver.resolveCanonicalTenantId(22L))
+        .thenReturn(Optional.of(UUID.fromString(CANONICAL_TENANT_UUID)));
     sessionContextService.save(bootstrapShell(1L, 1L));
     sessionContextService.save(bootstrapShell(2L, 1L));
     gameplayCatalogProperties.setWorlds(
@@ -180,7 +193,7 @@ class SessionResumptionFlowTest {
             invocation -> {
               var response =
                   net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures.active(
-                          "550e8400-e29b-41d4-a716-446655440000", 22L, "1")
+                          "550e8400-e29b-41d4-a716-446655440000", 22L, CANONICAL_TENANT_UUID, "1")
                       .toBuilder()
                       .setEvaluatedAt(Instant.now().toString())
                       .build();
@@ -193,7 +206,15 @@ class SessionResumptionFlowTest {
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.anyString()))
-        .thenReturn(GetRealmAccessGrantForRuntimeResponse.newBuilder().setGranted(true).build());
+        .thenAnswer(
+            invocation ->
+                GetRealmAccessGrantForRuntimeResponse.newBuilder()
+                    .setGranted(true)
+                    .setAccountId(invocation.getArgument(0))
+                    .setTenantId(invocation.getArgument(1))
+                    .setWorldSlug(invocation.getArgument(2))
+                    .setRealmSlug(invocation.getArgument(3))
+                    .build());
     when(moderationPolicyClient.evaluateGameplayAdmission(Mockito.anyLong(), Mockito.anyString()))
         .thenReturn(
             net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyResponse.newBuilder()
@@ -202,7 +223,7 @@ class SessionResumptionFlowTest {
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             GetTenantEntitlementsForRuntimeResponse.newBuilder()
-                .setTenantId("22")
+                .setTenantId(CANONICAL_TENANT_UUID)
                 .setGameplayAvailable(true)
                 .setAllowPublicJoin(true)
                 .setEntitlementVersion(1L)
@@ -294,6 +315,7 @@ class SessionResumptionFlowTest {
             worldCatalog,
             gameLogicProperties,
             accountClient,
+            retainedRuntimeTenantUuidResolver,
             entityManagementClient,
             moderationPolicyClient,
             firstPartyConnectContextRegistry,
@@ -303,7 +325,10 @@ class SessionResumptionFlowTest {
             connectScopeSessionStore);
     worldsHandler =
         new WorldsCommandHandler(
-            worldCatalog, accountClient, DirectTextConnectScopeSessionStore.inMemoryForTest());
+            worldCatalog,
+            accountClient,
+            DirectTextConnectScopeSessionStore.inMemoryForTest(),
+            retainedRuntimeTenantUuidResolver);
     AfkCommandHandler afkHandler =
         new AfkCommandHandler(sessionAuthenticationService, gameplayPresenceService);
     interpreter =
@@ -495,8 +520,9 @@ class SessionResumptionFlowTest {
               var response =
                   net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures.left(
                       "550e8400-e29b-41d4-a716-446655440000", 22L, List.of("player"));
+              var canonicalResponse = freshMembership(response);
               return net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                  .echoRequestId(response, invocation.getArgument(0));
+                  .echoRequestId(canonicalResponse, invocation.getArgument(0));
             });
 
     TextCommandInterpretationResult secondLogin = interpreter.interpret("1", LOGIN_PAYLOAD, false);
@@ -902,5 +928,134 @@ class SessionResumptionFlowTest {
     assertTrue(
         gameplayPresenceService.listConnectedByGameInstance(22L, 1L).stream()
             .allMatch(presence -> presence.role() == GameplayPresenceRole.PLAYER));
+  }
+
+  private static GetTenantMembershipForRuntimeResponse freshMembership(
+      GetTenantMembershipForRuntimeResponse response) {
+    String originalTenantId = response.getTenantId();
+    var builder =
+        response.toBuilder()
+            .setTenantId(CANONICAL_TENANT_UUID)
+            .setRequestTenantId(CANONICAL_TENANT_UUID)
+            .setEvaluatedAt(Instant.now().toString());
+    if (response.getMembershipVersionCount() > 0) {
+      builder
+          .clearMembershipVersion()
+          .putAllMembershipVersion(rekeyMap(response.getMembershipVersionMap(), originalTenantId));
+    }
+    if (response.hasMembershipBaseline()) {
+      builder.setMembershipBaseline(
+          response.getMembershipBaseline().toBuilder()
+              .clearMembershipVersion()
+              .putAllMembershipVersion(
+                  rekeyMap(
+                      response.getMembershipBaseline().getMembershipVersionMap(), originalTenantId))
+              .build());
+    }
+    if (response.hasAuthorityTuple()) {
+      var tuple = response.getAuthorityTuple().toBuilder();
+      tuple
+          .clearTenantAuthorityGeneration()
+          .putAllTenantAuthorityGeneration(
+              rekeyMap(
+                  response.getAuthorityTuple().getTenantAuthorityGenerationMap(),
+                  originalTenantId));
+      tuple
+          .clearMembershipAuthorityGeneration()
+          .putAllMembershipAuthorityGeneration(
+              rekeyMap(
+                  response.getAuthorityTuple().getMembershipAuthorityGenerationMap(),
+                  originalTenantId));
+      for (int index = 0;
+          index < response.getAuthorityTuple().getPrivateRealmGrantVersionsCount();
+          index++) {
+        var grant = response.getAuthorityTuple().getPrivateRealmGrantVersions(index);
+        if (originalTenantId.equals(grant.getTenantId())) {
+          tuple.setPrivateRealmGrantVersions(
+              index, grant.toBuilder().setTenantId(CANONICAL_TENANT_UUID).build());
+        }
+      }
+      builder.setAuthorityTuple(tuple.build());
+    }
+    builder.clearOutboxCheckpoints();
+    response
+        .getOutboxCheckpointsList()
+        .forEach(
+            checkpoint ->
+                builder.addOutboxCheckpoints(
+                    checkpoint.toBuilder()
+                        .setOutboxStreamKey(
+                            rekeyPathTenant(checkpoint.getOutboxStreamKey(), originalTenantId))
+                        .build()));
+    builder.clearOutboxSourceEvidence();
+    response
+        .getOutboxSourceEvidenceList()
+        .forEach(
+            source -> {
+              String canonicalEventJson =
+                  rekeyMembershipEvent(
+                      source.getCanonicalEventJson(), response.getAccountId(), originalTenantId);
+              var event = MembershipAuthorityEventV1Codec.verify(canonicalEventJson);
+              builder.addOutboxSourceEvidence(
+                  source.toBuilder()
+                      .setOutboxStreamKey(event.outboxStreamKey())
+                      .setEventDigest(event.eventDigest())
+                      .setCanonicalEventJson(event.canonicalJson())
+                      .build());
+            });
+    return builder.build();
+  }
+
+  private static Map<String, String> rekeyMap(Map<String, String> values, String originalTenantId) {
+    Map<String, String> result = new LinkedHashMap<>();
+    values.forEach(
+        (key, value) -> {
+          String rekeyed = originalTenantId.equals(key) ? CANONICAL_TENANT_UUID : key;
+          if (result.putIfAbsent(rekeyed, value) != null) {
+            throw new IllegalArgumentException("Fixture tenant UUID rekey collides");
+          }
+        });
+    return result;
+  }
+
+  private static String rekeyPathTenant(String value, String originalTenantId) {
+    return value.replace("/" + originalTenantId, "/" + CANONICAL_TENANT_UUID);
+  }
+
+  private static String rekeyMembershipEvent(
+      String canonicalJson, String accountId, String originalTenantId) {
+    try {
+      ObjectNode event = (ObjectNode) JSON.readTree(canonicalJson);
+      event.put("tenantId", CANONICAL_TENANT_UUID);
+      event.put(
+          "outboxStreamKey",
+          rekeyPathTenant(event.path("outboxStreamKey").asText(), originalTenantId));
+      event.put("sourceScope", "membership/" + accountId + "/" + CANONICAL_TENANT_UUID);
+      rekeyJsonMap((ObjectNode) event.get("membershipVersion"), originalTenantId);
+      ObjectNode tuple = (ObjectNode) event.get("authorityTuple");
+      rekeyJsonMap((ObjectNode) tuple.get("tenantAuthorityGeneration"), originalTenantId);
+      rekeyJsonMap((ObjectNode) tuple.get("membershipAuthorityGeneration"), originalTenantId);
+      if (tuple.has("privateRealmGrantVersions")) {
+        for (var grant : tuple.withArray("privateRealmGrantVersions")) {
+          if (grant instanceof ObjectNode grantObject
+              && originalTenantId.equals(grantObject.path("tenantId").asText())) {
+            grantObject.put("tenantId", CANONICAL_TENANT_UUID);
+          }
+        }
+      }
+      event.remove("eventDigest");
+      return MembershipAuthorityEventV1Codec.seal(
+              JSON.convertValue(event, new TypeReference<Map<String, Object>>() {}))
+          .canonicalJson();
+    } catch (IOException ex) {
+      throw new AssertionError("test event should be valid JSON", ex);
+    }
+  }
+
+  private static void rekeyJsonMap(ObjectNode values, String originalTenantId) {
+    if (values != null && values.has(originalTenantId)) {
+      var value = values.remove(originalTenantId);
+      values.set(CANONICAL_TENANT_UUID, value);
+    }
   }
 }

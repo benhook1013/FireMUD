@@ -55,6 +55,8 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 
 class AccountClientTest {
+  private static final String ACCOUNT_UUID = "9b80a81b-7971-44af-bd6b-18079027f47a";
+  private static final String TENANT_UUID = "cc5e6d40-88c0-4f91-a6d3-a738f4f2f0a1";
   private static final Instant JOIN_TEST_NOW = Instant.parse("2026-10-02T00:00:00Z");
 
   @Test
@@ -584,7 +586,9 @@ class AccountClientTest {
   @Test
   void realmAccessGrantReturnsCanonicalUnavailableWhenStubIsMissing() throws Exception {
     GetRealmAccessGrantForRuntimeResponse response =
-        newClient(null).getRealmAccessGrantForRuntime("42", "7", "world", "realm", "request-1");
+        newClient(null)
+            .getRealmAccessGrantForRuntime(
+                ACCOUNT_UUID, TENANT_UUID, "world", "realm", "request-1");
 
     assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
     assertThat(response.getError().getMessage()).isEqualTo("Realm grant authority unavailable");
@@ -669,7 +673,7 @@ class AccountClientTest {
   @Test
   void runtimeEntitlementsReturnsCanonicalUnavailableWhenStubIsMissing() throws Exception {
     GetTenantEntitlementsForRuntimeResponse response =
-        newClient(null).getTenantEntitlementsForRuntime("7", "request-1");
+        newClient(null).getTenantEntitlementsForRuntime(TENANT_UUID, "request-1");
 
     assertThat(response.getError().getCode()).isEqualTo("ENTITLEMENT_UNAVAILABLE");
     assertThat(response.getError().getMessage()).isEqualTo("Entitlement authority unavailable");
@@ -688,7 +692,7 @@ class AccountClientTest {
         .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
 
     GetTenantEntitlementsForRuntimeResponse response =
-        fixture.client().getTenantEntitlementsForRuntime("7", "request-1");
+        fixture.client().getTenantEntitlementsForRuntime(TENANT_UUID, "request-1");
 
     assertThat(response.getError().getCode()).isEqualTo("ENTITLEMENT_UNAVAILABLE");
     assertThat(response.getError().getMessage()).isEqualTo("Entitlement authority unavailable");
@@ -697,6 +701,103 @@ class AccountClientTest {
     verify(fixture.retryStub())
         .getTenantEntitlementsForRuntime(any(GetTenantEntitlementsForRuntimeRequest.class));
     verify(fixture.channelFactory()).buildChannel(anyString(), anyInt(), any(), anyBoolean());
+  }
+
+  @Test
+  void runtimeEntitlementsForwardsExactCanonicalTenantUuid() throws Exception {
+    AccountServiceGrpc.AccountServiceBlockingStub stub =
+        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    GetTenantEntitlementsForRuntimeResponse expected =
+        GetTenantEntitlementsForRuntimeResponse.newBuilder()
+            .setTenantId(TENANT_UUID)
+            .setGameplayAvailable(true)
+            .build();
+    when(stub.getTenantEntitlementsForRuntime(any(GetTenantEntitlementsForRuntimeRequest.class)))
+        .thenReturn(expected);
+    AccountClient client = newClient(stub);
+
+    assertThat(client.getTenantEntitlementsForRuntime(TENANT_UUID, "request-1"))
+        .isEqualTo(expected);
+
+    ArgumentCaptor<GetTenantEntitlementsForRuntimeRequest> captor =
+        ArgumentCaptor.forClass(GetTenantEntitlementsForRuntimeRequest.class);
+    verify(stub).getTenantEntitlementsForRuntime(captor.capture());
+    assertThat(captor.getValue().getTenantId()).isEqualTo(TENANT_UUID);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "7",
+        "not-a-uuid",
+        "CC5E6D40-88C0-4F91-A6D3-A738F4F2F0A1",
+        "00000000-0000-0000-0000-000000000000",
+        ""
+      })
+  void runtimeEntitlementsRejectsInvalidTenantUuidBeforeStubOrChannelUse(String tenantId)
+      throws Exception {
+    AccountServiceGrpc.AccountServiceBlockingStub stub =
+        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
+    AccountClient client = newClient(stub, channelFactory);
+
+    GetTenantEntitlementsForRuntimeResponse response =
+        client.getTenantEntitlementsForRuntime(tenantId, "request-1");
+
+    assertThat(response.getError().getCode()).isEqualTo("ENTITLEMENT_UNAVAILABLE");
+    verifyNoInteractions(stub, channelFactory);
+  }
+
+  @Test
+  void realmAccessGrantForwardsExactCanonicalAccountAndTenantUuids() throws Exception {
+    AccountServiceGrpc.AccountServiceBlockingStub stub =
+        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    GetRealmAccessGrantForRuntimeResponse expected =
+        GetRealmAccessGrantForRuntimeResponse.newBuilder()
+            .setAccountId(ACCOUNT_UUID)
+            .setTenantId(TENANT_UUID)
+            .setWorldSlug("world")
+            .setRealmSlug("realm")
+            .setGranted(true)
+            .build();
+    when(stub.getRealmAccessGrantForRuntime(any(GetRealmAccessGrantForRuntimeRequest.class)))
+        .thenReturn(expected);
+    AccountClient client = newClient(stub);
+
+    assertThat(
+            client.getRealmAccessGrantForRuntime(
+                ACCOUNT_UUID, TENANT_UUID, "world", "realm", "request-1"))
+        .isEqualTo(expected);
+
+    ArgumentCaptor<GetRealmAccessGrantForRuntimeRequest> captor =
+        ArgumentCaptor.forClass(GetRealmAccessGrantForRuntimeRequest.class);
+    verify(stub).getRealmAccessGrantForRuntime(captor.capture());
+    assertThat(captor.getValue().getAccountId()).isEqualTo(ACCOUNT_UUID);
+    assertThat(captor.getValue().getTenantId()).isEqualTo(TENANT_UUID);
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "42, cc5e6d40-88c0-4f91-a6d3-a738f4f2f0a1",
+    "not-a-uuid, cc5e6d40-88c0-4f91-a6d3-a738f4f2f0a1",
+    "9b80a81b-7971-44af-bd6b-18079027f47a, 7",
+    "9B80A81B-7971-44AF-BD6B-18079027F47A, cc5e6d40-88c0-4f91-a6d3-a738f4f2f0a1",
+    "9b80a81b-7971-44af-bd6b-18079027f47a, 00000000-0000-0000-0000-000000000000"
+  })
+  void realmAccessGrantRejectsInvalidUuidInputsBeforeStubOrChannelUse(
+      String accountId, String tenantId) throws Exception {
+    AccountServiceGrpc.AccountServiceBlockingStub stub =
+        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
+    AccountClient client = newClient(stub, channelFactory);
+
+    GetRealmAccessGrantForRuntimeResponse response =
+        client.getRealmAccessGrantForRuntime(accountId, tenantId, "world", "realm", "request-1");
+
+    assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
+    verifyNoInteractions(stub, channelFactory);
   }
 
   @Test
@@ -712,7 +813,10 @@ class AccountClientTest {
         .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
 
     GetRealmAccessGrantForRuntimeResponse response =
-        fixture.client().getRealmAccessGrantForRuntime("42", "7", "world", "realm", "request-1");
+        fixture
+            .client()
+            .getRealmAccessGrantForRuntime(
+                ACCOUNT_UUID, TENANT_UUID, "world", "realm", "request-1");
 
     assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
     assertThat(response.getError().getMessage()).isEqualTo("Realm grant authority unavailable");

@@ -3,10 +3,14 @@ package integration.net.firedevops.firemud.gamesession.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
 import java.io.ByteArrayOutputStream;
@@ -25,7 +29,10 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.tenant.GameSessionTenantAssociationEvidence;
+import net.firedevops.firemud.gamesession.client.GameDesignRuntimeTenantIdentityClient;
 import net.firedevops.firemud.gamesession.client.GameDesignRuntimeTenantIdentityClient.LegacyGameSessionTenantAssociationReceipt;
 import net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepository.AssociationConflictException;
@@ -33,6 +40,10 @@ import net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAs
 import net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepository.InvalidAssociationEvidenceException;
 import net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantSnapshot;
 import net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantSnapshotRepository;
+import net.firedevops.firemud.gamesession.service.GameSessionRetainedTenantAssociationService;
+import net.firedevops.firemud.gamesession.service.RetainedRuntimeTenantUuidResolver;
+import net.firedevops.firemud.gamesession.test.GameInstanceTestFixtures;
+import net.firedevops.firemud.gamesession.testsupport.RetainedDemoTenantAssociationFixture;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -41,9 +52,11 @@ import org.jooq.Table;
 import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -60,6 +73,138 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
 
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+
+  @Test
+  void syntheticDemoFixtureRegistersSnapshotAndResolvesItsDeclaredCanonicalTenant() {
+    Fixture fixture = fixture();
+    fixture.seedInstance(1L, 101L, "demo-runtime-v1");
+    RetainedDemoTenantAssociationFixture demoFixture = fixture.demoTenantAssociationFixture();
+
+    AssociationReceipt receipt = demoFixture.ensureAssociation(1L).orElseThrow();
+
+    assertThat(receipt.approval().canonicalTenantId())
+        .isEqualTo(RetainedDemoTenantAssociationFixture.DEMO_CANONICAL_TENANT_ID);
+    assertThat(receipt.approval().legacyGameSessionTenantIdValue()).isEqualTo(1L);
+    assertThat(receipt.approval().gameSessionEvidenceDigest())
+        .isEqualTo(receipt.snapshot().evidenceDigest());
+    assertThat(receipt.snapshot().canonicalJson()).contains("demo-runtime-v1");
+    assertThat(
+            fixture.repository.read(
+                receipt.operationId(),
+                receipt.associationRequestId(),
+                RetainedDemoTenantAssociationFixture.DEMO_CANONICAL_TENANT_ID,
+                1L,
+                NAMESPACE))
+        .contains(receipt);
+    assertThat(fixture.demoResolver().resolveCanonicalTenantId(1L))
+        .contains(RetainedDemoTenantAssociationFixture.DEMO_CANONICAL_TENANT_ID);
+    assertThat(fixture.associationXmin(receipt.associationRequestId())).isNotBlank();
+    assertThat(fixture.dsl.fetchCount(ASSOCIATIONS)).isEqualTo(1);
+  }
+
+  @Test
+  void syntheticDemoFixtureReusesHistoricalReceiptAfterMutableSourceChanges() {
+    Fixture fixture = fixture();
+    fixture.seedInstance(1L, 101L, "demo-runtime-before-change");
+    RetainedDemoTenantAssociationFixture demoFixture = fixture.demoTenantAssociationFixture();
+    AssociationReceipt original = demoFixture.ensureAssociation(1L).orElseThrow();
+    String associationXmin = fixture.associationXmin(original.associationRequestId());
+
+    fixture.dsl.execute(
+        "UPDATE game_instances SET runtime_version = ? WHERE id = ?",
+        "demo-runtime-after-change",
+        101L);
+
+    assertThat(fixture.capture(1L).evidenceDigest())
+        .isNotEqualTo(original.snapshot().evidenceDigest());
+    assertThat(fixture.demoTenantAssociationFixture().ensureAssociation(1L)).contains(original);
+    assertThat(demoFixture.ensureAssociation(1L)).contains(original);
+    assertThat(fixture.associationXmin(original.associationRequestId())).isEqualTo(associationXmin);
+    assertThat(fixture.demoResolver().resolveCanonicalTenantId(1L))
+        .contains(RetainedDemoTenantAssociationFixture.DEMO_CANONICAL_TENANT_ID);
+    assertThat(fixture.dsl.fetchCount(ASSOCIATIONS)).isEqualTo(1);
+  }
+
+  @Test
+  void syntheticDemoFixtureDoesNotInventUnknownOrContradictoryTenantMappings() {
+    Fixture fixture = fixture();
+    fixture.seedInstance(1L, 101L, "demo-runtime-v1");
+    RetainedDemoTenantAssociationFixture demoFixture = fixture.demoTenantAssociationFixture();
+    AssociationReceipt receipt = demoFixture.ensureAssociation(1L).orElseThrow();
+
+    assertThat(demoFixture.ensureAssociation(2L)).isEmpty();
+    assertThat(fixture.demoResolver().resolveCanonicalTenantId(2L)).isEmpty();
+    assertThat(
+            new RetainedRuntimeTenantUuidResolver(
+                    new GameSessionRetainedTenantAssociationRepository(
+                        fixture.dsl, fixture.snapshotRepository, "other-game-session-test"),
+                    "other-game-session-test",
+                    Objects.requireNonNull(fixture.transactions.getTransactionManager()))
+                .resolveCanonicalTenantId(1L))
+        .isEmpty();
+    assertThat(RetainedRuntimeTenantUuidResolver.denyOnly("").resolveCanonicalTenantId(1L))
+        .isEmpty();
+    assertThatThrownBy(
+            () ->
+                fixture.repository.read(
+                    receipt.operationId(),
+                    receipt.associationRequestId(),
+                    UUID.fromString("528846b9-08e8-4c4f-9e3a-e6997a523730"),
+                    1L,
+                    NAMESPACE))
+        .isInstanceOf(InvalidAssociationEvidenceException.class);
+    assertThat(fixture.dsl.fetchCount(ASSOCIATIONS)).isEqualTo(1);
+  }
+
+  @Test
+  void syntheticDefaultPointerTargetsRemainValidAcrossRepeatedFixtureBaselines() {
+    Fixture fixture = fixture();
+    fixture.seedDefaultDemoAndSandboxPointers();
+    var sandboxPointer =
+        Objects.requireNonNull(
+            fixture.dsl.fetchOne(
+                "SELECT visible, public_production_realm FROM gameplay_admission_pointer WHERE id = ?",
+                2L));
+    assertThat(sandboxPointer.get("visible", Boolean.class)).isTrue();
+    assertThat(sandboxPointer.get("public_production_realm", Boolean.class)).isFalse();
+    GameInstanceTestFixtures.ensureDeclaredRunningGameInstance(
+        fixture.jdbc, 1L, 1L, GameInstanceTestFixtures.TEST_OWNER_ACCOUNT_UUID, 501L);
+    GameInstanceTestFixtures.ensureDeclaredRunningGameInstance(
+        fixture.jdbc, 2L, 1L, GameInstanceTestFixtures.TEST_OWNER_ACCOUNT_UUID, 501L);
+    assertThat(fixture.pointerTargets())
+        .containsExactly(new PointerTarget(1L, 1L), new PointerTarget(2L, 2L));
+
+    RetainedDemoTenantAssociationFixture demoFixture = fixture.demoTenantAssociationFixture();
+    AssociationReceipt original = demoFixture.ensureAssociation(1L).orElseThrow();
+    String associationXmin = fixture.associationXmin(original.associationRequestId());
+    String firstInstanceXmin = fixture.instanceXmin(1L);
+    assertThatThrownBy(
+            () ->
+                GameInstanceTestFixtures.ensureDeclaredRunningGameInstance(
+                    fixture.jdbc, 1L, 1L, "528846b9-08e8-4c4f-9e3a-e6997a523730", 501L))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("contradictory tenant or owner identity");
+    assertThat(fixture.instanceXmin(1L)).isEqualTo(firstInstanceXmin);
+
+    fixture.dsl.execute(
+        "UPDATE game_instances SET runtime_version = ? WHERE id = ?",
+        "synthetic-default-runtime-mutated",
+        1L);
+    assertThat(fixture.capture(1L).evidenceDigest())
+        .isNotEqualTo(original.snapshot().evidenceDigest());
+    GameInstanceTestFixtures.ensureDeclaredRunningGameInstance(
+        fixture.jdbc, 1L, 1L, GameInstanceTestFixtures.TEST_OWNER_ACCOUNT_UUID, 501L);
+    GameInstanceTestFixtures.ensureDeclaredRunningGameInstance(
+        fixture.jdbc, 2L, 1L, GameInstanceTestFixtures.TEST_OWNER_ACCOUNT_UUID, 501L);
+
+    assertThat(fixture.pointerTargets())
+        .containsExactly(new PointerTarget(1L, 1L), new PointerTarget(2L, 2L));
+    assertThat(fixture.instanceXmin(1L)).isNotEqualTo(firstInstanceXmin);
+    assertThat(fixture.demoTenantAssociationFixture().ensureAssociation(1L)).contains(original);
+    assertThat(demoFixture.ensureAssociation(1L)).contains(original);
+    assertThat(fixture.associationXmin(original.associationRequestId())).isEqualTo(associationXmin);
+    assertThat(fixture.dsl.fetchCount(ASSOCIATIONS)).isEqualTo(1);
+  }
 
   @Test
   void exactRetryReturnsHistoricalReceiptWithoutRecapturingChangedSource() {
@@ -133,6 +278,333 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
         .hasMessageContaining("configured Game Session workload namespace");
 
     verifyNoInteractions(dsl, snapshots);
+  }
+
+  @Test
+  void retainedKeyLookupReturnsHistoricalUuidOnlyForExactNamespaceAndKey() {
+    Fixture fixture = fixture();
+    fixture.seedInstance(42L, 420L, "runtime-before-association");
+    GameSessionRetainedTenantSnapshot snapshot = fixture.capture(42L);
+    LegacyGameSessionTenantAssociationReceipt approval =
+        fixture.approval(uuid(101), uuid(201), 42L, snapshot);
+    fixture.register(uuid(301), approval);
+
+    assertThat(fixture.repository.readCanonicalTenantIdByRetainedTenantKey(42L, NAMESPACE))
+        .contains(uuid(201));
+    assertThatThrownBy(
+            () ->
+                fixture.transactions.execute(
+                    status ->
+                        fixture.repository.readCanonicalTenantIdByRetainedTenantKey(
+                            42L, NAMESPACE)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("committed-outcome owner read");
+    assertThat(fixture.repository.readCanonicalTenantIdByRetainedTenantKey(999L, NAMESPACE))
+        .isEmpty();
+
+    fixture.dsl.execute(
+        "UPDATE game_instances SET runtime_version = ? WHERE id = ?",
+        "runtime-after-association",
+        420L);
+    assertThat(fixture.repository.readCanonicalTenantIdByRetainedTenantKey(42L, NAMESPACE))
+        .contains(uuid(201));
+
+    GameSessionRetainedTenantAssociationRepository foreignNamespaceRepository =
+        new GameSessionRetainedTenantAssociationRepository(
+            fixture.dsl, fixture.snapshotRepository, "other-namespace");
+    assertThat(
+            foreignNamespaceRepository.readCanonicalTenantIdByRetainedTenantKey(
+                42L, "other-namespace"))
+        .isEmpty();
+    assertThatThrownBy(
+            () ->
+                fixture.repository.readCanonicalTenantIdByRetainedTenantKey(42L, "other-namespace"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("configured Game Session workload namespace");
+    assertThat(fixture.dsl.fetchCount(ASSOCIATIONS)).isEqualTo(1);
+  }
+
+  @Test
+  void serviceReturnsExactCommittedAssociationAfterOwnerTransaction() {
+    Fixture fixture = fixture();
+    fixture.seedInstance(42L, 420L, "runtime-before-service-association");
+    UUID associationRequestId = uuid(1101);
+    UUID approvalOperationId = uuid(1102);
+    UUID canonicalTenantId = uuid(1103);
+    LegacyGameSessionTenantAssociationReceipt approval =
+        fixture.approval(approvalOperationId, canonicalTenantId, 42L, fixture.capture(42L));
+
+    // The transport is mocked; this verifies database composition, not live mTLS.
+    GameDesignRuntimeTenantIdentityClient sourceClient =
+        mock(GameDesignRuntimeTenantIdentityClient.class);
+    AtomicReference<String> ownerReadRequestId = new AtomicReference<>();
+    doAnswer(
+            invocation -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              ownerReadRequestId.set(invocation.getArgument(3, String.class));
+              return approval;
+            })
+        .when(sourceClient)
+        .resolveLegacyGameSessionTenantAssociation(
+            eq(canonicalTenantId.toString()),
+            eq(approvalOperationId.toString()),
+            eq("42"),
+            anyString());
+
+    GameSessionRetainedTenantAssociationRepository committedReadRepository =
+        spy(fixture.repository);
+    AtomicReference<UUID> committedLocalOperationId = new AtomicReference<>();
+    doAnswer(
+            invocation -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              committedLocalOperationId.set(invocation.getArgument(0, UUID.class));
+              return invocation.callRealMethod();
+            })
+        .when(committedReadRepository)
+        .read(
+            any(UUID.class),
+            eq(associationRequestId),
+            eq(canonicalTenantId),
+            eq(42L),
+            eq(NAMESPACE));
+    GameSessionRetainedTenantAssociationService service =
+        new GameSessionRetainedTenantAssociationService(
+            sourceClient,
+            committedReadRepository,
+            Objects.requireNonNull(fixture.transactions.getTransactionManager()),
+            NAMESPACE);
+
+    AssociationReceipt receipt =
+        service.associate(
+            associationRequestId.toString(),
+            canonicalTenantId.toString(),
+            approvalOperationId.toString(),
+            "42");
+
+    assertThat(ownerReadRequestId.get()).isNotBlank();
+    assertThat(UUID.fromString(ownerReadRequestId.get()).toString())
+        .isEqualTo(ownerReadRequestId.get());
+    assertThat(ownerReadRequestId.get())
+        .isNotEqualTo(associationRequestId.toString())
+        .isNotEqualTo(approvalOperationId.toString());
+    assertThat(receipt.operationId()).isEqualTo(committedLocalOperationId.get());
+    assertThat(receipt.operationId())
+        .isNotEqualTo(approvalOperationId)
+        .isNotEqualTo(associationRequestId);
+    verify(sourceClient)
+        .resolveLegacyGameSessionTenantAssociation(
+            canonicalTenantId.toString(),
+            approvalOperationId.toString(),
+            "42",
+            ownerReadRequestId.get());
+    verify(committedReadRepository)
+        .read(receipt.operationId(), associationRequestId, canonicalTenantId, 42L, NAMESPACE);
+    assertThat(receipt)
+        .isEqualTo(
+            committedReadRepository
+                .read(
+                    receipt.operationId(), associationRequestId, canonicalTenantId, 42L, NAMESPACE)
+                .orElseThrow());
+    assertThat(committedReadRepository.readCanonicalTenantIdByRetainedTenantKey(42L, NAMESPACE))
+        .contains(canonicalTenantId);
+    assertThat(fixture.dsl.fetchCount(ASSOCIATIONS)).isEqualTo(1);
+  }
+
+  @Test
+  void serviceRecoversPostCommitReadFailureWithoutRewritingHistoricalAssociation() {
+    Fixture fixture = fixture();
+    fixture.seedInstance(42L, 420L, "runtime-before-post-commit-read-failure");
+    UUID associationRequestId = uuid(1201);
+    UUID approvalOperationId = uuid(1202);
+    UUID canonicalTenantId = uuid(1203);
+    LegacyGameSessionTenantAssociationReceipt approval =
+        fixture.approval(approvalOperationId, canonicalTenantId, 42L, fixture.capture(42L));
+    String sourceXminBefore = fixture.instanceXmin(420L);
+
+    // The transport is mocked; this verifies database composition, not live mTLS.
+    GameDesignRuntimeTenantIdentityClient sourceClient =
+        mock(GameDesignRuntimeTenantIdentityClient.class);
+    doAnswer(
+            invocation -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              return approval;
+            })
+        .when(sourceClient)
+        .resolveLegacyGameSessionTenantAssociation(
+            eq(canonicalTenantId.toString()),
+            eq(approvalOperationId.toString()),
+            eq("42"),
+            anyString());
+
+    GameSessionRetainedTenantSnapshotRepository snapshotRepository =
+        spy(fixture.snapshotRepository);
+    GameSessionRetainedTenantAssociationRepository serviceRepository =
+        spy(
+            new GameSessionRetainedTenantAssociationRepository(
+                fixture.dsl, snapshotRepository, NAMESPACE));
+    AtomicBoolean failFirstPostCommitRead = new AtomicBoolean(true);
+    AtomicReference<UUID> postCommitReadOperationId = new AtomicReference<>();
+    doAnswer(
+            invocation -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              postCommitReadOperationId.set(invocation.getArgument(0, UUID.class));
+              if (failFirstPostCommitRead.compareAndSet(true, false)) {
+                throw new IllegalStateException("simulated post-commit read outage");
+              }
+              return invocation.callRealMethod();
+            })
+        .when(serviceRepository)
+        .read(
+            any(UUID.class),
+            eq(associationRequestId),
+            eq(canonicalTenantId),
+            eq(42L),
+            eq(NAMESPACE));
+    GameSessionRetainedTenantAssociationService service =
+        new GameSessionRetainedTenantAssociationService(
+            sourceClient,
+            serviceRepository,
+            Objects.requireNonNull(fixture.transactions.getTransactionManager()),
+            NAMESPACE);
+
+    assertThatThrownBy(
+            () ->
+                service.associate(
+                    associationRequestId.toString(),
+                    canonicalTenantId.toString(),
+                    approvalOperationId.toString(),
+                    "42"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("simulated post-commit read outage");
+    assertThat(failFirstPostCommitRead.get()).isFalse();
+    assertThat(fixture.instanceRuntimeVersion(420L))
+        .isEqualTo("runtime-before-post-commit-read-failure");
+    assertThat(fixture.instanceXmin(420L)).isEqualTo(sourceXminBefore);
+    assertThat(fixture.dsl.fetchCount(ASSOCIATIONS)).isEqualTo(1);
+    assertThat(fixture.storedRequestCount(associationRequestId)).isEqualTo(1L);
+    UUID localOperationId =
+        fixture.storedByRequest(associationRequestId).get("operation_id", UUID.class);
+    assertThat(localOperationId)
+        .isNotNull()
+        .isNotEqualTo(approvalOperationId)
+        .isNotEqualTo(associationRequestId);
+    assertThat(postCommitReadOperationId.get()).isEqualTo(localOperationId);
+
+    AssociationReceipt historicalReceipt =
+        fixture
+            .repository
+            .read(localOperationId, associationRequestId, canonicalTenantId, 42L, NAMESPACE)
+            .orElseThrow();
+    String associationXmin = fixture.associationXmin(associationRequestId);
+    assertThat(historicalReceipt.approval()).isEqualTo(approval.evidence());
+    assertThat(historicalReceipt.snapshot().evidenceDigest())
+        .isEqualTo(approval.evidence().gameSessionEvidenceDigest());
+
+    fixture.dsl.execute(
+        "UPDATE game_instances SET runtime_version = ? WHERE id = ?",
+        "runtime-after-post-commit-read-failure",
+        420L);
+    assertThat(fixture.instanceRuntimeVersion(420L))
+        .isEqualTo("runtime-after-post-commit-read-failure");
+    assertThat(fixture.capture(42L).evidenceDigest())
+        .isNotEqualTo(historicalReceipt.snapshot().evidenceDigest());
+
+    AssociationReceipt recovered =
+        service.associate(
+            associationRequestId.toString(),
+            canonicalTenantId.toString(),
+            approvalOperationId.toString(),
+            "42");
+
+    assertThat(postCommitReadOperationId.get()).isEqualTo(localOperationId);
+    verify(serviceRepository, times(2))
+        .read(localOperationId, associationRequestId, canonicalTenantId, 42L, NAMESPACE);
+    assertThat(recovered).isEqualTo(historicalReceipt);
+    assertThat(recovered.operationId()).isEqualTo(localOperationId);
+    assertThat(recovered.operationId()).isEqualTo(historicalReceipt.operationId());
+    assertThat(recovered.associationRequestId()).isEqualTo(associationRequestId);
+    assertThat(recovered.requestDigest()).isEqualTo(historicalReceipt.requestDigest());
+    assertThat(recovered.approvalManifestDigest())
+        .isEqualTo(historicalReceipt.approvalManifestDigest());
+    assertThat(recovered.snapshot()).isEqualTo(historicalReceipt.snapshot());
+    assertThat(recovered.snapshot().evidenceDigest())
+        .isEqualTo(historicalReceipt.snapshot().evidenceDigest());
+    assertThat(recovered.receiptDigest()).isEqualTo(historicalReceipt.receiptDigest());
+    assertThat(fixture.dsl.fetchCount(ASSOCIATIONS)).isEqualTo(1);
+    assertThat(fixture.storedRequestCount(associationRequestId)).isEqualTo(1L);
+    assertThat(fixture.associationXmin(associationRequestId)).isEqualTo(associationXmin);
+    verify(snapshotRepository, times(1)).capture(NAMESPACE, "42");
+    verify(sourceClient, times(2))
+        .resolveLegacyGameSessionTenantAssociation(
+            eq(canonicalTenantId.toString()),
+            eq(approvalOperationId.toString()),
+            eq("42"),
+            anyString());
+    assertThat(
+            fixture.repository.read(
+                localOperationId, associationRequestId, canonicalTenantId, 42L, NAMESPACE))
+        .contains(historicalReceipt);
+  }
+
+  @Test
+  void retainedKeyLookupRejectsMalformedAndContradictoryPersistedRows() {
+    Fixture malformedFixture = fixture();
+    malformedFixture.seedInstance(42L, 420L, "runtime-malformed");
+    malformedFixture.register(
+        uuid(301),
+        malformedFixture.approval(uuid(101), uuid(201), 42L, malformedFixture.capture(42L)));
+    disableAssociationImmutabilityTrigger(malformedFixture);
+    try {
+      malformedFixture.dsl.execute(
+          "UPDATE game_session_retained_tenant_association SET approved_by = ? "
+              + "WHERE target_namespace = ? AND legacy_game_session_tenant_id = ?",
+          "changed-reviewer",
+          NAMESPACE,
+          42L);
+    } finally {
+      enableAssociationImmutabilityTrigger(malformedFixture);
+    }
+    assertThatThrownBy(
+            () ->
+                malformedFixture.repository.readCanonicalTenantIdByRetainedTenantKey(
+                    42L, NAMESPACE))
+        .isInstanceOf(InvalidAssociationEvidenceException.class);
+
+    Fixture contradictoryFixture = fixture();
+    contradictoryFixture.seedInstance(43L, 430L, "runtime-contradictory");
+    contradictoryFixture.register(
+        uuid(302),
+        contradictoryFixture.approval(
+            uuid(102), uuid(202), 43L, contradictoryFixture.capture(43L)));
+    disableAssociationImmutabilityTrigger(contradictoryFixture);
+    try {
+      contradictoryFixture.dsl.execute(
+          "UPDATE game_session_retained_tenant_association "
+              + "SET legacy_game_session_tenant_id = ? "
+              + "WHERE target_namespace = ? AND legacy_game_session_tenant_id = ?",
+          44L,
+          NAMESPACE,
+          43L);
+    } finally {
+      enableAssociationImmutabilityTrigger(contradictoryFixture);
+    }
+    assertThatThrownBy(
+            () ->
+                contradictoryFixture.repository.readCanonicalTenantIdByRetainedTenantKey(
+                    44L, NAMESPACE))
+        .isInstanceOf(InvalidAssociationEvidenceException.class);
+  }
+
+  private void disableAssociationImmutabilityTrigger(Fixture fixture) {
+    fixture.dsl.execute(
+        "ALTER TABLE game_session_retained_tenant_association "
+            + "DISABLE TRIGGER game_session_retained_tenant_association_immutable");
+  }
+
+  private void enableAssociationImmutabilityTrigger(Fixture fixture) {
+    fixture.dsl.execute(
+        "ALTER TABLE game_session_retained_tenant_association "
+            + "ENABLE TRIGGER game_session_retained_tenant_association_immutable");
   }
 
   @Test
@@ -355,7 +827,8 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
         new GameSessionRetainedTenantAssociationRepository(
             fixture.dsl, delayedSnapshots, NAMESPACE);
     Fixture delayedFixture =
-        new Fixture(fixture.dsl, delayedSnapshots, delayedRepository, fixture.transactions);
+        new Fixture(
+            fixture.dsl, fixture.jdbc, delayedSnapshots, delayedRepository, fixture.transactions);
     ExecutorService executor = Executors.newFixedThreadPool(2);
     try {
       Future<AssociationReceipt> association =
@@ -433,11 +906,12 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
     TransactionTemplate transactions = new TransactionTemplate(transactionManager);
     DSLContext dsl =
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+    JdbcTemplate jdbc = new JdbcTemplate(new TransactionAwareDataSourceProxy(dataSource));
     GameSessionRetainedTenantSnapshotRepository snapshotRepository =
         new GameSessionRetainedTenantSnapshotRepository(dsl);
     GameSessionRetainedTenantAssociationRepository repository =
         new GameSessionRetainedTenantAssociationRepository(dsl, snapshotRepository, NAMESPACE);
-    return new Fixture(dsl, snapshotRepository, repository, transactions);
+    return new Fixture(dsl, jdbc, snapshotRepository, repository, transactions);
   }
 
   private static void assertCheckViolation(
@@ -498,11 +972,27 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
     }
   }
 
+  private record PointerTarget(long pointerId, long instanceId) {}
+
   private record Fixture(
       DSLContext dsl,
+      JdbcTemplate jdbc,
       GameSessionRetainedTenantSnapshotRepository snapshotRepository,
       GameSessionRetainedTenantAssociationRepository repository,
       TransactionTemplate transactions) {
+    RetainedDemoTenantAssociationFixture demoTenantAssociationFixture() {
+      return new RetainedDemoTenantAssociationFixture(
+          dsl,
+          snapshotRepository,
+          Objects.requireNonNull(transactions.getTransactionManager()),
+          NAMESPACE);
+    }
+
+    RetainedRuntimeTenantUuidResolver demoResolver() {
+      return new RetainedRuntimeTenantUuidResolver(
+          repository, NAMESPACE, Objects.requireNonNull(transactions.getTransactionManager()));
+    }
+
     void seedInstance(long tenantId, long instanceId, String runtimeVersion) {
       dsl.execute(
           "INSERT INTO game_instances "
@@ -514,6 +1004,82 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
           9L,
           "STOPPED",
           0L);
+    }
+
+    void seedDefaultDemoAndSandboxPointers() {
+      UUID sharedNamespace = UUID.fromString("74430559-8ca5-4f4b-8b71-e116232dcb50");
+      dsl.execute(
+          "INSERT INTO gameplay_tenant_shared_playable_state_namespace "
+              + "(tenant_id, playable_state_namespace_id) VALUES (?, ?)",
+          1L,
+          sharedNamespace);
+      seedDefaultPointer(
+          1L,
+          1L,
+          "demo",
+          "production",
+          "Demo",
+          "Production",
+          "a6eea203-4080-4db9-95e3-9ec838aff44a",
+          sharedNamespace,
+          true);
+      seedDefaultPointer(
+          2L,
+          2L,
+          "sandbox",
+          "production",
+          "Sandbox",
+          "Production",
+          "bb8a798d-6706-472a-986b-7eb998748ec2",
+          sharedNamespace,
+          false);
+    }
+
+    private void seedDefaultPointer(
+        long pointerId,
+        long instanceId,
+        String worldSlug,
+        String realmSlug,
+        String worldName,
+        String realmName,
+        String realmId,
+        UUID sharedNamespace,
+        boolean publicProductionRealm) {
+      dsl.execute(
+          "INSERT INTO gameplay_admission_pointer ("
+              + "id, world_slug, world_display_name, realm_slug, realm_display_name, tenant_id, "
+              + "game_instance_id, pointer_version, visible, requires_character_selection, "
+              + "state_scope, character_creation_policy, last_updated_by, last_update_reason, "
+              + "public_production_realm, realm_id, playable_state_namespace_id) "
+              + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          pointerId,
+          worldSlug,
+          worldName,
+          realmSlug,
+          realmName,
+          1L,
+          instanceId,
+          1L,
+          true,
+          false,
+          "SHARED",
+          "OPEN",
+          "test/default-pointer-bootstrap",
+          "synthetic retained-snapshot fixture",
+          publicProductionRealm,
+          UUID.fromString(realmId),
+          sharedNamespace);
+    }
+
+    java.util.List<PointerTarget> pointerTargets() {
+      return dsl.fetch(
+              "SELECT id, game_instance_id FROM gameplay_admission_pointer "
+                  + "WHERE tenant_id = ? ORDER BY id",
+              1L)
+          .map(
+              row ->
+                  new PointerTarget(
+                      row.get("id", Long.class), row.get("game_instance_id", Long.class)));
     }
 
     GameSessionRetainedTenantSnapshot capture(long legacyTenantId) {
@@ -601,6 +1167,12 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
       Record row =
           dsl.fetchOne("SELECT xmin::text AS xmin FROM game_instances WHERE id = ?", instanceId);
       return Objects.requireNonNull(row).get("xmin", String.class);
+    }
+
+    String instanceRuntimeVersion(long instanceId) {
+      Record row =
+          dsl.fetchOne("SELECT runtime_version FROM game_instances WHERE id = ?", instanceId);
+      return Objects.requireNonNull(row).get("runtime_version", String.class);
     }
   }
 }

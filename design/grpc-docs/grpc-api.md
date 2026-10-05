@@ -41,6 +41,7 @@ for conventions on schema evolution and error handling. See each service's
     - [GetTenantEntitlementsForRuntimeResponse](#account-v1-GetTenantEntitlementsForRuntimeResponse)
     - [GetTenantMembershipForRuntimeRequest](#account-v1-GetTenantMembershipForRuntimeRequest)
     - [GetTenantMembershipForRuntimeResponse](#account-v1-GetTenantMembershipForRuntimeResponse)
+    - [GetTenantMembershipForRuntimeResponse.MembershipVersionEntry](#account-v1-GetTenantMembershipForRuntimeResponse-MembershipVersionEntry)
     - [IssueDirectTextConnectScopeRequest](#account-v1-IssueDirectTextConnectScopeRequest)
     - [IssueDirectTextConnectScopeResponse](#account-v1-IssueDirectTextConnectScopeResponse)
     - [JoinPublicProductionMembershipRequest](#account-v1-JoinPublicProductionMembershipRequest)
@@ -58,6 +59,18 @@ for conventions on schema evolution and error handling. See each service's
     - [RequestEmailVerificationResponse](#account-v1-RequestEmailVerificationResponse)
     - [RequestPasswordResetRequest](#account-v1-RequestPasswordResetRequest)
     - [RequestPasswordResetResponse](#account-v1-RequestPasswordResetResponse)
+    - [RuntimeAccountSecurityCutoff](#account-v1-RuntimeAccountSecurityCutoff)
+    - [RuntimeAuthorityTuple](#account-v1-RuntimeAuthorityTuple)
+    - [RuntimeAuthorityTuple.MembershipAuthorityGenerationEntry](#account-v1-RuntimeAuthorityTuple-MembershipAuthorityGenerationEntry)
+    - [RuntimeAuthorityTuple.TenantAuthorityGenerationEntry](#account-v1-RuntimeAuthorityTuple-TenantAuthorityGenerationEntry)
+    - [RuntimeMembershipBaseline](#account-v1-RuntimeMembershipBaseline)
+    - [RuntimeMembershipBaseline.MembershipVersionEntry](#account-v1-RuntimeMembershipBaseline-MembershipVersionEntry)
+    - [RuntimeOutboxCheckpoint](#account-v1-RuntimeOutboxCheckpoint)
+    - [RuntimeOutboxSourceEvidence](#account-v1-RuntimeOutboxSourceEvidence)
+    - [RuntimePrivateRealmGrantVersion](#account-v1-RuntimePrivateRealmGrantVersion)
+    - [RuntimeTenantBillingCutoff](#account-v1-RuntimeTenantBillingCutoff)
+    - [RuntimeTenantBillingCutoffEntry](#account-v1-RuntimeTenantBillingCutoffEntry)
+    - [RuntimeTenantBillingCutoffMap](#account-v1-RuntimeTenantBillingCutoffMap)
     - [UpdateProfileRequest](#account-v1-UpdateProfileRequest)
     - [UpdateProfileResponse](#account-v1-UpdateProfileResponse)
     - [VerifyEmailLoginOtpRequest](#account-v1-VerifyEmailLoginOtpRequest)
@@ -65,6 +78,13 @@ for conventions on schema evolution and error handling. See each service's
     - [VerifyEmailResponse](#account-v1-VerifyEmailResponse)
 
     - [AccountService](#account-v1-AccountService)
+
+- [account/v1/issuer_authority_service.proto](#account_v1_issuer_authority_service-proto)
+    - [IssuerAuthoritySourceSnapshot](#account-v1-IssuerAuthoritySourceSnapshot)
+    - [ReadIssuerAuthorityForRuntimeRequest](#account-v1-ReadIssuerAuthorityForRuntimeRequest)
+    - [ReadIssuerAuthorityForRuntimeResponse](#account-v1-ReadIssuerAuthorityForRuntimeResponse)
+
+    - [IssuerAuthorityService](#account-v1-IssuerAuthorityService)
 
 - [account/v1/notification_service.proto](#account_v1_notification_service-proto)
     - [SendNotificationRequest](#account-v1-SendNotificationRequest)
@@ -356,6 +376,23 @@ for conventions on schema evolution and error handling. See each service's
     - [WorldTopologyScopeModel](#gamedesign-v1-WorldTopologyScopeModel)
 
     - [GameDesignService](#gamedesign-v1-GameDesignService)
+
+- [game-design/v1/tenant_identity_service.proto](#game-design_v1_tenant_identity_service-proto)
+    - [GameSessionTenantAssociationManifestEvidence](#gamedesign-v1-GameSessionTenantAssociationManifestEvidence)
+    - [ResolveAuthoredWorldSourceRequest](#gamedesign-v1-ResolveAuthoredWorldSourceRequest)
+    - [ResolveAuthoredWorldSourceResponse](#gamedesign-v1-ResolveAuthoredWorldSourceResponse)
+    - [ResolveFreshTenantCreationRequest](#gamedesign-v1-ResolveFreshTenantCreationRequest)
+    - [ResolveFreshTenantCreationResponse](#gamedesign-v1-ResolveFreshTenantCreationResponse)
+    - [ResolveLegacyAccountTenantAssociationRequest](#gamedesign-v1-ResolveLegacyAccountTenantAssociationRequest)
+    - [ResolveLegacyAccountTenantAssociationResponse](#gamedesign-v1-ResolveLegacyAccountTenantAssociationResponse)
+    - [ResolveLegacyGameSessionTenantAssociationRequest](#gamedesign-v1-ResolveLegacyGameSessionTenantAssociationRequest)
+    - [ResolveLegacyGameSessionTenantAssociationResponse](#gamedesign-v1-ResolveLegacyGameSessionTenantAssociationResponse)
+    - [ResolveLegacyGameTenantIdentityRequest](#gamedesign-v1-ResolveLegacyGameTenantIdentityRequest)
+    - [ResolveLegacyGameTenantIdentityResponse](#gamedesign-v1-ResolveLegacyGameTenantIdentityResponse)
+    - [ResolveRuntimeTenantIdentityRequest](#gamedesign-v1-ResolveRuntimeTenantIdentityRequest)
+    - [ResolveRuntimeTenantIdentityResponse](#gamedesign-v1-ResolveRuntimeTenantIdentityResponse)
+
+    - [TenantIdentityService](#gamedesign-v1-TenantIdentityService)
 
 - [game-logic/v1/game_logic_service.proto](#game-logic_v1_game_logic_service-proto)
     - [CommunicationRecipientView](#game_logic-v1-CommunicationRecipientView)
@@ -701,7 +738,7 @@ for conventions on schema evolution and error handling. See each service's
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | auth_token | [string](#string) |  |  |
-| account_id | [string](#string) |  |  |
+| account_id | [string](#string) |  | Canonical non-nil Account UUID from the authenticated persisted source row, never its numeric PK. |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
 
@@ -766,7 +803,7 @@ Result of a CreateAccount call.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| account_id | [string](#string) |  | Unique identifier of the newly created account. |
+| account_id | [string](#string) |  | Canonical non-nil Account UUID of the newly created account. |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  | Details about why the creation failed, if applicable. |
 
 
@@ -880,7 +917,7 @@ Result of a CreateAccount call.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | tenant_id | [string](#string) |  |  |
-| account_id | [string](#string) |  |  |
+| account_id | [string](#string) |  | Canonical non-nil Account UUID, exactly matching the authenticated caller subject. |
 
 
 
@@ -989,9 +1026,7 @@ Result of a CreateAccount call.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| account_id | [string](#string) |  |  |
-| tenant_id | [string](#string) |  |  |
-| request_id | [string](#string) |  |  |
+| player_context | [shared.v1.PlayerExecutionContext](#shared-v1-PlayerExecutionContext) |  | account_id and tenant_id are exact canonical UUIDs, never private numeric row keys. The complete selected target is checked separately; this unsigned context is not authority. |
 
 
 
@@ -1009,12 +1044,38 @@ Result of a CreateAccount call.
 | account_id | [string](#string) |  |  |
 | tenant_id | [string](#string) |  |  |
 | gameplay_admission_allowed | [bool](#bool) |  |  |
-| membership_version | [uint64](#uint64) |  |  |
+| membership_version | [GetTenantMembershipForRuntimeResponse.MembershipVersionEntry](#account-v1-GetTenantMembershipForRuntimeResponse-MembershipVersionEntry) | repeated |  |
 | evaluated_at | [string](#string) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 | membership_exists | [bool](#bool) |  |  |
 | membership_lifecycle_state | [string](#string) |  |  |
-| membership_authority_generation | [uint64](#uint64) |  |  |
+| membership_authority_generation | [string](#string) |  |  |
+| authority_tuple | [RuntimeAuthorityTuple](#account-v1-RuntimeAuthorityTuple) |  |  |
+| issuance_fence | [string](#string) |  |  |
+| outbox_checkpoints | [RuntimeOutboxCheckpoint](#account-v1-RuntimeOutboxCheckpoint) | repeated |  |
+| outbox_source_evidence | [RuntimeOutboxSourceEvidence](#account-v1-RuntimeOutboxSourceEvidence) | repeated |  |
+| roles | [string](#string) | repeated |  |
+| membership_baseline | [RuntimeMembershipBaseline](#account-v1-RuntimeMembershipBaseline) |  |  |
+| request_account_id | [string](#string) |  | Exact canonical UUID echo of player_context.account_id. |
+| request_tenant_id | [string](#string) |  | Exact canonical UUID echo of player_context.tenant_id. |
+| request_id | [string](#string) |  |  |
+| authority_availability | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="account-v1-GetTenantMembershipForRuntimeResponse-MembershipVersionEntry"></a>
+
+### GetTenantMembershipForRuntimeResponse.MembershipVersionEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| key | [string](#string) |  |  |
+| value | [string](#string) |  |  |
 
 
 
@@ -1141,6 +1202,7 @@ exact catalog/pointer evidence. Account re-resolves the target before issuance.
 
 ### ListPresenceVisibilityPoliciesRequest
 Internal bounded bulk read used by Social Groups when projecting friend presence.
+Account identities are canonical non-nil UUIDs, never private Account row keys.
 
 
 | Field | Type | Label | Description |
@@ -1203,7 +1265,7 @@ Basic ping response containing a greeting and optional error details.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| account_id | [string](#string) |  |  |
+| account_id | [string](#string) |  | Exact requested Account UUID whose persisted source was verified by Account. |
 | policy | [string](#string) |  |  |
 
 
@@ -1304,6 +1366,212 @@ Basic ping response containing a greeting and optional error details.
 
 
 
+<a name="account-v1-RuntimeAccountSecurityCutoff"></a>
+
+### RuntimeAccountSecurityCutoff
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| account_authority_generation | [string](#string) |  |  |
+| outbox_stream_key | [string](#string) |  |  |
+| outbox_sequence | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="account-v1-RuntimeAuthorityTuple"></a>
+
+### RuntimeAuthorityTuple
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| issuer_auth_generation | [string](#string) |  |  |
+| account_authority_generation | [string](#string) |  |  |
+| tenant_authority_generation | [RuntimeAuthorityTuple.TenantAuthorityGenerationEntry](#account-v1-RuntimeAuthorityTuple-TenantAuthorityGenerationEntry) | repeated |  |
+| membership_authority_generation | [RuntimeAuthorityTuple.MembershipAuthorityGenerationEntry](#account-v1-RuntimeAuthorityTuple-MembershipAuthorityGenerationEntry) | repeated |  |
+| private_realm_grant_versions | [RuntimePrivateRealmGrantVersion](#account-v1-RuntimePrivateRealmGrantVersion) | repeated |  |
+| account_security_cutoff | [RuntimeAccountSecurityCutoff](#account-v1-RuntimeAccountSecurityCutoff) |  |  |
+| tenant_billing_cutoff | [RuntimeTenantBillingCutoffMap](#account-v1-RuntimeTenantBillingCutoffMap) |  |  |
+
+
+
+
+
+
+<a name="account-v1-RuntimeAuthorityTuple-MembershipAuthorityGenerationEntry"></a>
+
+### RuntimeAuthorityTuple.MembershipAuthorityGenerationEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| key | [string](#string) |  |  |
+| value | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="account-v1-RuntimeAuthorityTuple-TenantAuthorityGenerationEntry"></a>
+
+### RuntimeAuthorityTuple.TenantAuthorityGenerationEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| key | [string](#string) |  |  |
+| value | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="account-v1-RuntimeMembershipBaseline"></a>
+
+### RuntimeMembershipBaseline
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| membership_lifecycle_state | [string](#string) |  |  |
+| membership_version | [RuntimeMembershipBaseline.MembershipVersionEntry](#account-v1-RuntimeMembershipBaseline-MembershipVersionEntry) | repeated |  |
+| membership_authority_generation | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="account-v1-RuntimeMembershipBaseline-MembershipVersionEntry"></a>
+
+### RuntimeMembershipBaseline.MembershipVersionEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| key | [string](#string) |  |  |
+| value | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="account-v1-RuntimeOutboxCheckpoint"></a>
+
+### RuntimeOutboxCheckpoint
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| outbox_stream_key | [string](#string) |  |  |
+| outbox_sequence | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="account-v1-RuntimeOutboxSourceEvidence"></a>
+
+### RuntimeOutboxSourceEvidence
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| outbox_stream_key | [string](#string) |  |  |
+| outbox_sequence | [string](#string) |  |  |
+| event_id | [string](#string) |  |  |
+| event_digest | [string](#string) |  |  |
+| canonical_event_json | [string](#string) |  | Exact canonical Account event bytes, carried separately from its two-field checkpoint. |
+
+
+
+
+
+
+<a name="account-v1-RuntimePrivateRealmGrantVersion"></a>
+
+### RuntimePrivateRealmGrantVersion
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| realm_slug | [string](#string) |  |  |
+| playtest_lifecycle_id | [string](#string) |  |  |
+| grant_version | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="account-v1-RuntimeTenantBillingCutoff"></a>
+
+### RuntimeTenantBillingCutoff
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_authority_generation | [string](#string) |  |  |
+| tenant_billing_sequence | [string](#string) |  |  |
+| outbox_stream_key | [string](#string) |  |  |
+| outbox_sequence | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="account-v1-RuntimeTenantBillingCutoffEntry"></a>
+
+### RuntimeTenantBillingCutoffEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| cutoff | [RuntimeTenantBillingCutoff](#account-v1-RuntimeTenantBillingCutoff) |  |  |
+
+
+
+
+
+
+<a name="account-v1-RuntimeTenantBillingCutoffMap"></a>
+
+### RuntimeTenantBillingCutoffMap
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| entries | [RuntimeTenantBillingCutoffEntry](#account-v1-RuntimeTenantBillingCutoffEntry) | repeated |  |
+
+
+
+
+
+
 <a name="account-v1-UpdateProfileRequest"></a>
 
 ### UpdateProfileRequest
@@ -1313,7 +1581,7 @@ Basic ping response containing a greeting and optional error details.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | tenant_id | [string](#string) |  |  |
-| account_id | [string](#string) |  |  |
+| account_id | [string](#string) |  | Canonical non-nil Account UUID, exactly matching the authenticated caller subject. |
 | profile_json | [string](#string) |  |  |
 
 
@@ -1331,6 +1599,8 @@ Basic ping response containing a greeting and optional error details.
 | ----- | ---- | ----- | ----------- |
 | success | [bool](#bool) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| account_id | [string](#string) |  | Successful writes echo the exact persisted Account UUID and tenant selector. |
+| tenant_id | [string](#string) |  |  |
 
 
 
@@ -1418,6 +1688,90 @@ Basic ping response containing a greeting and optional error details.
 | LinkExternalAccount | [LinkExternalAccountRequest](#account-v1-LinkExternalAccountRequest) | [LinkExternalAccountResponse](#account-v1-LinkExternalAccountResponse) |  |
 | RequestEmailVerification | [RequestEmailVerificationRequest](#account-v1-RequestEmailVerificationRequest) | [RequestEmailVerificationResponse](#account-v1-RequestEmailVerificationResponse) |  |
 | VerifyEmail | [VerifyEmailRequest](#account-v1-VerifyEmailRequest) | [VerifyEmailResponse](#account-v1-VerifyEmailResponse) |  |
+
+
+
+
+
+<a name="account_v1_issuer_authority_service-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## account/v1/issuer_authority_service.proto
+
+
+
+<a name="account-v1-IssuerAuthoritySourceSnapshot"></a>
+
+### IssuerAuthoritySourceSnapshot
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| issuer_id | [string](#string) |  |  |
+| source_scope | [string](#string) |  |  |
+| outbox_stream_key | [string](#string) |  |  |
+| issuer_auth_generation | [string](#string) |  |  |
+| source_version | [string](#string) |  |  |
+| outbox_sequence | [string](#string) |  |  |
+| latest_event_canonical_json | [string](#string) | optional | Must be absent at sequence zero, present and exact at positive sequence. |
+
+
+
+
+
+
+<a name="account-v1-ReadIssuerAuthorityForRuntimeRequest"></a>
+
+### ReadIssuerAuthorityForRuntimeRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| issuer_id | [string](#string) |  |  |
+| request_id | [string](#string) |  |  |
+| requested_outbox_sequence | [string](#string) | optional | Omit for current source evidence; when present, must be canonical positive. |
+
+
+
+
+
+
+<a name="account-v1-ReadIssuerAuthorityForRuntimeResponse"></a>
+
+### ReadIssuerAuthorityForRuntimeResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [string](#string) |  |  |
+| target_namespace | [string](#string) |  |  |
+| request_id | [string](#string) |  |  |
+| source_snapshot | [IssuerAuthoritySourceSnapshot](#account-v1-IssuerAuthoritySourceSnapshot) |  |  |
+| requested_event_canonical_json | [string](#string) | optional | Present exactly when the request selected a positive historical sequence. |
+
+
+
+
+
+
+
+
+
+
+
+
+<a name="account-v1-IssuerAuthorityService"></a>
+
+### IssuerAuthorityService
+Owner-local source evidence only; this service is not wired for runtime use.
+Caller and response workload identities must both be verified from mTLS.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| ReadIssuerAuthorityForRuntime | [ReadIssuerAuthorityForRuntimeRequest](#account-v1-ReadIssuerAuthorityForRuntimeRequest) | [ReadIssuerAuthorityForRuntimeResponse](#account-v1-ReadIssuerAuthorityForRuntimeResponse) |  |
 
 
 
@@ -6701,6 +7055,300 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | PutHelpTopic | [PutHelpTopicRequest](#gamedesign-v1-PutHelpTopicRequest) | [PutHelpTopicResponse](#gamedesign-v1-PutHelpTopicResponse) |  |
 | ListHelpTopics | [ListHelpTopicsRequest](#gamedesign-v1-ListHelpTopicsRequest) | [ListHelpTopicsResponse](#gamedesign-v1-ListHelpTopicsResponse) |  |
 | DeleteHelpTopic | [DeleteHelpTopicRequest](#gamedesign-v1-DeleteHelpTopicRequest) | [DeleteHelpTopicResponse](#gamedesign-v1-DeleteHelpTopicResponse) |  |
+
+
+
+
+
+<a name="game-design_v1_tenant_identity_service-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## game-design/v1/tenant_identity_service.proto
+
+
+
+<a name="gamedesign-v1-GameSessionTenantAssociationManifestEvidence"></a>
+
+### GameSessionTenantAssociationManifestEvidence
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| operation_id | [string](#string) |  |  |
+| target_namespace | [string](#string) |  |  |
+| signer_key_id | [string](#string) |  |  |
+| approved_by | [string](#string) |  |  |
+| approval_reference | [string](#string) |  |  |
+| signed_at | [string](#string) |  |  |
+| legacy_game_session_tenant_id | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| source_game_row_id | [string](#string) |  |  |
+| source_game_tenant_key | [string](#string) |  |  |
+| provenance_kind | [string](#string) |  |  |
+| game_session_evidence_digest | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-ResolveAuthoredWorldSourceRequest"></a>
+
+### ResolveAuthoredWorldSourceRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request_id | [string](#string) |  |  |
+| operation_id | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-ResolveAuthoredWorldSourceResponse"></a>
+
+### ResolveAuthoredWorldSourceResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| target_namespace | [string](#string) |  |  |
+| request_id | [string](#string) |  |  |
+| registration_request_id | [string](#string) |  |  |
+| operation_id | [string](#string) |  |  |
+| request_digest | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| tenant_slug | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| world_display_name | [string](#string) |  |  |
+| source_game_row_id | [int64](#int64) |  |  |
+| source_game_tenant_key | [string](#string) |  |  |
+| provenance_kind | [string](#string) |  |  |
+| evidence_digest | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-ResolveFreshTenantCreationRequest"></a>
+
+### ResolveFreshTenantCreationRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| creation_request_id | [string](#string) |  |  |
+| expected_request_digest | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-ResolveFreshTenantCreationResponse"></a>
+
+### ResolveFreshTenantCreationResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| target_namespace | [string](#string) |  |  |
+| creation_request_id | [string](#string) |  |  |
+| operation_id | [string](#string) |  |  |
+| request_digest | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| source_game_row_id | [int64](#int64) |  |  |
+| source_game_tenant_key | [string](#string) |  |  |
+| provenance_kind | [string](#string) |  |  |
+| evidence_digest | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-ResolveLegacyAccountTenantAssociationRequest"></a>
+
+### ResolveLegacyAccountTenantAssociationRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| legacy_account_tenant_id | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-ResolveLegacyAccountTenantAssociationResponse"></a>
+
+### ResolveLegacyAccountTenantAssociationResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| legacy_account_tenant_id | [int64](#int64) |  |  |
+| source_legacy_game_tenant_id | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| source_game_row_id | [int64](#int64) |  |  |
+| account_evidence_digest | [string](#string) |  |  |
+| operation_id | [string](#string) |  |  |
+| manifest_digest | [string](#string) |  |  |
+| target_namespace | [string](#string) |  |  |
+| signer_key_id | [string](#string) |  |  |
+| approved_by | [string](#string) |  |  |
+| approval_reference | [string](#string) |  |  |
+| signed_at | [string](#string) |  |  |
+| operation_entry_count | [int32](#int32) |  |  |
+| manifest_signature | [string](#string) |  |  |
+| manifest_schema_version | [int32](#int32) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-ResolveLegacyGameSessionTenantAssociationRequest"></a>
+
+### ResolveLegacyGameSessionTenantAssociationRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request_id | [string](#string) |  |  |
+| operation_id | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| legacy_game_session_tenant_id | [string](#string) |  | Canonical positive decimal BIGINT provenance, not a public tenant identifier. |
+
+
+
+
+
+
+<a name="gamedesign-v1-ResolveLegacyGameSessionTenantAssociationResponse"></a>
+
+### ResolveLegacyGameSessionTenantAssociationResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request_id | [string](#string) |  |  |
+| manifest | [GameSessionTenantAssociationManifestEvidence](#gamedesign-v1-GameSessionTenantAssociationManifestEvidence) |  |  |
+| manifest_digest | [string](#string) |  |  |
+| ed25519_signature | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-ResolveLegacyGameTenantIdentityRequest"></a>
+
+### ResolveLegacyGameTenantIdentityRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| legacy_game_tenant_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-ResolveLegacyGameTenantIdentityResponse"></a>
+
+### ResolveLegacyGameTenantIdentityResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| canonical_tenant_id | [string](#string) |  |  |
+| source_legacy_game_tenant_id | [string](#string) |  |  |
+| source_game_row_id | [int64](#int64) |  |  |
+| provenance_kind | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-ResolveRuntimeTenantIdentityRequest"></a>
+
+### ResolveRuntimeTenantIdentityRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| canonical_tenant_id | [string](#string) |  |  |
+| request_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-ResolveRuntimeTenantIdentityResponse"></a>
+
+### ResolveRuntimeTenantIdentityResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| target_namespace | [string](#string) |  |  |
+| request_id | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| source_game_row_id | [int64](#int64) |  |  |
+| source_game_tenant_key | [string](#string) |  |  |
+| provenance_kind | [string](#string) |  |  |
+
+
+
+
+
+
+
+
+
+
+
+
+<a name="gamedesign-v1-TenantIdentityService"></a>
+
+### TenantIdentityService
+Owner-local legacy source read. This does not attest an Account numeric tenant key.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| ResolveLegacyGameTenantIdentity | [ResolveLegacyGameTenantIdentityRequest](#gamedesign-v1-ResolveLegacyGameTenantIdentityRequest) | [ResolveLegacyGameTenantIdentityResponse](#gamedesign-v1-ResolveLegacyGameTenantIdentityResponse) |  |
+| ResolveLegacyAccountTenantAssociation | [ResolveLegacyAccountTenantAssociationRequest](#gamedesign-v1-ResolveLegacyAccountTenantAssociationRequest) | [ResolveLegacyAccountTenantAssociationResponse](#gamedesign-v1-ResolveLegacyAccountTenantAssociationResponse) | Owner-approved cross-service legacy association; Account is the sole caller. |
+| ResolveFreshTenantCreation | [ResolveFreshTenantCreationRequest](#gamedesign-v1-ResolveFreshTenantCreationRequest) | [ResolveFreshTenantCreationResponse](#gamedesign-v1-ResolveFreshTenantCreationResponse) | Exact immutable readback of a newly created tenant operation for Account. |
+| ResolveRuntimeTenantIdentity | [ResolveRuntimeTenantIdentityRequest](#gamedesign-v1-ResolveRuntimeTenantIdentityRequest) | [ResolveRuntimeTenantIdentityResponse](#gamedesign-v1-ResolveRuntimeTenantIdentityResponse) | Exact owner-local read of one persisted runtime tenant identity for Game Session. |
+| ResolveAuthoredWorldSource | [ResolveAuthoredWorldSourceRequest](#gamedesign-v1-ResolveAuthoredWorldSourceRequest) | [ResolveAuthoredWorldSourceResponse](#gamedesign-v1-ResolveAuthoredWorldSourceResponse) | Exact immutable authored-selector source for Game Session; not catalog enrollment. |
+| ResolveLegacyGameSessionTenantAssociation | [ResolveLegacyGameSessionTenantAssociationRequest](#gamedesign-v1-ResolveLegacyGameSessionTenantAssociationRequest) | [ResolveLegacyGameSessionTenantAssociationResponse](#gamedesign-v1-ResolveLegacyGameSessionTenantAssociationResponse) | Exact audited retained Game Session association; never an Account manifest or admission. |
 
 
 

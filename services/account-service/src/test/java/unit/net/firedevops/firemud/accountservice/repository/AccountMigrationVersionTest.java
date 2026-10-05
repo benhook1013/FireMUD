@@ -35,6 +35,7 @@ class AccountMigrationVersionTest {
             "V39.1__migrate_empty_account_connect_storage_to_uuid.sql",
             "V40__account_membership_transition_receipts.sql",
             "V41__protect_account_membership_transition_receipts.sql",
+            "V41.1__account_password_reset_operation_receipts.sql",
             "V42__account_membership_left_transition_receipts.sql")
         .doesNotContain(
             "V28__account_join_reconciliation.sql",
@@ -67,6 +68,9 @@ class AccountMigrationVersionTest {
         .isGreaterThan(MigrationVersion.fromVersion("39.1"));
     assertThat(version("V41__protect_account_membership_transition_receipts.sql"))
         .isGreaterThan(version("V40__account_membership_transition_receipts.sql"));
+    assertThat(version("V41.1__account_password_reset_operation_receipts.sql"))
+        .isGreaterThan(version("V41__protect_account_membership_transition_receipts.sql"))
+        .isLessThan(version("V42__account_membership_left_transition_receipts.sql"));
     assertThat(version("V42__account_membership_left_transition_receipts.sql"))
         .isGreaterThan(version("V40__account_membership_transition_receipts.sql"))
         .isGreaterThan(version("V41__protect_account_membership_transition_receipts.sql"));

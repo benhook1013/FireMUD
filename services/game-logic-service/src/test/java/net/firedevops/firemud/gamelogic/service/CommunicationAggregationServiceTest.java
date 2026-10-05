@@ -41,7 +41,7 @@ import org.slf4j.MDC;
 
 @ExtendWith(MockitoExtension.class)
 class CommunicationAggregationServiceTest {
-  private static final String VALID_ACCOUNT_ID = "cc51ef2c-9a14-4c56-98bd-af7f8e4c60c1";
+  private static final String VALID_ACCOUNT_ID = "c91fb96e-5ad8-4e4e-a12d-2838640093b2";
 
   @Mock private SocialGroupsServiceGrpc.SocialGroupsServiceBlockingStub socialStub;
 
@@ -125,7 +125,7 @@ class CommunicationAggregationServiceTest {
   }
 
   @Test
-  void rejectsMissingMalformedAndNoncanonicalAccountIdsBeforeDownstreamCalls() {
+  void rejectsMissingMalformedNonCanonicalAndNilAccountIdsBeforeDownstreamCalls() {
     for (String[] accountIdCase :
         new String[][] {
           {"empty", ""},
