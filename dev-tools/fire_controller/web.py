@@ -502,8 +502,10 @@ def _render_history(data: dict) -> str:
 
     offset = data.get("offset", 0)
     rows = data.get("history", [])
-    content = [f'<article class="job-private"><h1>{title} history</h1>'
-               f'<p class="job-alias">Job alias · {name}</p><p>Recent revisions</p><ol>']
+    content = [(
+        f'<article class="job-private"><h1>{title} history</h1>'
+        f'<p class="job-alias">Job alias · {name}</p><p>Recent revisions</p><ol>'
+    )]
     if isinstance(rows, list):
         for row in rows:
             if not isinstance(row, dict):
