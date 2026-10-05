@@ -182,7 +182,7 @@ grpcurl -cacert "$FIREMUD_GRPC_CA_CERT_PATH" \
   -cert "$FIREMUD_GRPC_CERT_CHAIN_PATH" \
   -key "$FIREMUD_GRPC_PRIVATE_KEY_PATH" \
   -H 'Authorization: Bearer <disposable non-production internal-service JWT>' \
-  -d '{"tenant_id":"1","reporter_account_id":"1","target_account_id":"2","type":"BUG","description":"example"}' \
+  -d '{"tenant_id":"1","reporter_account_id":"550e8400-e29b-41d4-a716-446655440000","target_account_id":"6ba7b810-9dad-41d1-80b4-00c04fd430c8","type":"BUG","description":"example"}' \
   "$FIREMUD_LOGGING_ADMIN_GRPC_TARGET" \
   logging_admin.v1.ReportService/CreateReport
 ```
