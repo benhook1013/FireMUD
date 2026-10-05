@@ -8,6 +8,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.worldmanagement.service.WorldDraftDesignDigestService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredGraphSnapshot.CaptureRequest;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalFrozenTopology.Request;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceEvidence.OwnerBinding;
@@ -31,15 +32,18 @@ public class WorldCanonicalFrozenTopologyRepository {
   private final DSLContext dsl;
   private final WorldAuthoredGraphSnapshotRepository owner;
   private final WorldDraftTopologyCommitRepository topology;
+  private final WorldDraftDesignDigestService digestService;
 
   @SuppressFBWarnings(value = "CT_CONSTRUCTOR_THROW", justification = "No resources or finalizer.")
   public WorldCanonicalFrozenTopologyRepository(
       DSLContext dsl,
       WorldAuthoredGraphSnapshotRepository owner,
-      WorldDraftTopologyCommitRepository topology) {
+      WorldDraftTopologyCommitRepository topology,
+      WorldDraftDesignDigestService digestService) {
     this.dsl = Objects.requireNonNull(dsl, "dsl");
     this.owner = Objects.requireNonNull(owner, "owner");
     this.topology = Objects.requireNonNull(topology, "topology");
+    this.digestService = Objects.requireNonNull(digestService, "digestService");
   }
 
   /** Absence is UNKNOWN, not abort or permission to reopen an owner operation. */
@@ -55,6 +59,9 @@ public class WorldCanonicalFrozenTopologyRepository {
     var provenance = owner.lockAndResolve(request.freeze());
     WorldCanonicalFrozenTopology prior = find(request);
     if (prior != null) return prior;
+    if (request.freeze().digestSchemaVersion() != 3) {
+      throw new ConflictException("New canonical graph capture requires digest schema 3");
+    }
     if (!"FROZEN".equals(provenance.ownerFreezePhase())) {
       throw new ConflictException(
           "New canonical graph capture requires the exact current FROZEN attempt");
@@ -75,6 +82,17 @@ public class WorldCanonicalFrozenTopologyRepository {
     var graph =
         topology.verifyImmutableBytes(request.plan(), stored.graphBytes(), stored.resultBytes());
     requirePrivateKeys(graph, identity);
+    var digest =
+        digestService.getDraftDesignDigest(
+            Long.toString(provenance.localTenantKey()),
+            Long.toString(provenance.localVersionKey()));
+    if (!Long.toString(provenance.localTenantKey()).equals(digest.tenantId())
+        || !Long.toString(provenance.localVersionKey()).equals(digest.scopeValue())
+        || digest.digestSchemaVersion() != 3
+        || !request.freeze().contentDigest().equals(digest.contentDigest())) {
+      throw new ConflictException(
+          "Canonical graph capture differs from exact schema-3 frozen content checkpoint");
+    }
     UUID captureId = UUID.randomUUID();
     String freezeJson = JSON.writeValueAsString(request.freeze());
     String ownerJson = JSON.writeValueAsString(request.plan().ownerBinding());

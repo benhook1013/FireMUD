@@ -6,9 +6,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.util.JsonFormat;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -54,12 +59,18 @@ import net.firedevops.firemud.worldmanagement.v1.RegionDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignAggregateType;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationOperation;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeType;
+import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
+import org.jooq.SQLDialect;
+import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.jdbc.datasource.SingleConnectionDataSource;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -113,6 +124,10 @@ class WorldAuthoredGraphSnapshotPostgresIntegrationTest {
   @Autowired private WorldAuthoredGraphSnapshotRepository snapshotRepository;
   @Autowired private WorldDraftDesignDigestService draftDigestService;
   @Autowired private ObjectMapper objectMapper;
+
+  @Autowired
+  private net.firedevops.firemud.worldmanagement.repository.WorldEntitySpawnBindingRepository
+      spawnRepository;
 
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
 
@@ -170,6 +185,7 @@ class WorldAuthoredGraphSnapshotPostgresIntegrationTest {
       WorldAuthoredGraphSnapshot firstSnapshot = first.get(20, TimeUnit.SECONDS);
       WorldAuthoredGraphSnapshot retrySnapshot = second.get(20, TimeUnit.SECONDS);
       assertThat(retrySnapshot.snapshotId()).isEqualTo(firstSnapshot.snapshotId());
+      assertThat(retrySnapshot.digestSchemaVersion()).isEqualTo(3);
       assertThat(retrySnapshot.graphBytes()).containsExactly(firstSnapshot.graphBytes());
       assertThat(retrySnapshot.ownerCommitProofStatus())
           .isEqualTo(WorldAuthoredGraphSnapshot.OwnerCommitProofStatus.CAPTURED_UNVERIFIED);
@@ -808,6 +824,299 @@ class WorldAuthoredGraphSnapshotPostgresIntegrationTest {
   private WorldAuthoredGraphSnapshotCapture captureComponent() {
     return new WorldAuthoredGraphSnapshotCapture(
         dsl, draftDigestService, snapshotRepository, objectMapper);
+  }
+
+  @Test
+  void retainedNumericSpawnSqlMappingAndPrimaryKeyDigestOrderRemainExact() {
+    Fixture fixture = fixture(false);
+    long first = positiveLong() / 2 + 1;
+    long second = first + 1;
+    ownerTransaction()
+        .execute(
+            status -> {
+              dsl.execute("SET LOCAL session_replication_role='replica'");
+              for (long id : new long[] {Math.max(first, second), Math.min(first, second)}) {
+                dsl.execute(
+                    "INSERT INTO world_entity_spawn_binding (id, tenant_id, version_id, room_id, entity_template_type, entity_template_id) "
+                        + "SELECT ?, tenant_id, version_id, room_id, entity_template_type, entity_template_id + ? FROM world_entity_spawn_binding "
+                        + "WHERE tenant_id=? AND version_id=? AND entity_template_id=?",
+                    id,
+                    id == first ? 1 : 2,
+                    fixture.intakeReceipt().localTenantKey(),
+                    fixture.localVersionKey(),
+                    LARGE_VALUE);
+              }
+              dsl.execute("SET LOCAL session_replication_role='origin'");
+              return null;
+            });
+    var rows =
+        spawnRepository.findByTenantIdAndVersionIdOrderByIdAsc(
+            fixture.intakeReceipt().localTenantKey(), fixture.localVersionKey());
+    assertThat(rows).hasSize(3);
+    assertThat(
+            rows.stream()
+                .map(net.firedevops.firemud.worldmanagement.entity.WorldEntitySpawnBinding::getId)
+                .toList())
+        .isSorted();
+    for (var row : rows) {
+      assertThat(row.getEntityTemplateId()).isPositive();
+      assertThat(row.getEntityCanonicalTenantId()).isNull();
+      assertThat(row.getEntityCanonicalVersionId()).isNull();
+      assertThat(row.getEntityCanonicalTemplateId()).isNull();
+      assertThat(spawnRepository.findById(row.getId()).orElseThrow()).isEqualTo(row);
+    }
+    var digest =
+        draftDigestService.getDraftDesignDigest(
+            Long.toString(fixture.intakeReceipt().localTenantKey()),
+            Long.toString(fixture.localVersionKey()));
+    assertThat(digest.digestSchemaVersion()).isEqualTo(3);
+    assertThat(digest)
+        .isEqualTo(draftDigestService.getDraftDesignDigest(digest.tenantId(), digest.scopeValue()));
+    assertGuardedSessionReplicationRole();
+  }
+
+  @Test
+  void newSchema2NumericSnapshotIsRejectedBeforeContentOrRevisionReads() {
+    Fixture fixture = fixture(false, false);
+    CaptureRequest r = fixture.request();
+    CaptureRequest historical =
+        new CaptureRequest(
+            r.targetNamespace(),
+            r.canonicalTenantId(),
+            r.canonicalVersionId(),
+            r.intakeRequestId(),
+            r.publicationFence(),
+            r.publicationRequestId(),
+            r.requestDigest(),
+            r.versionStateEpoch(),
+            r.publishWorkflowId(),
+            r.appliedCommitId(),
+            r.contentDigest(),
+            2,
+            r.suppliedOwnedAffectedTuples());
+    Fixture old =
+        new Fixture(
+            historical,
+            fixture.localVersionKey(),
+            fixture.gameDesignVersionId(),
+            fixture.versionIdentityOperationId(),
+            fixture.intakeReceipt());
+    CaptureRequest frozen = ownerTransaction().execute(status -> freezeOpenFixture(old));
+    assertThatThrownBy(
+            () -> ownerTransaction().execute(status -> captureComponent().capture(frozen)))
+        .hasMessageContaining("requires digest schema 3");
+    assertThat(snapshotCount(frozen.publicationFence())).isZero();
+  }
+
+  @Test
+  void mismatchedReturnedPrivateVersionDigestCannotCreateSnapshot() {
+    Fixture fixture = fixture(false);
+    var capture =
+        new WorldAuthoredGraphSnapshotCapture(
+            dsl,
+            (tenant, version) ->
+                new WorldDraftDesignDigest(
+                    tenant,
+                    Long.toString(fixture.localVersionKey() + 1),
+                    fixture.request().appliedCommitId(),
+                    fixture.request().contentDigest(),
+                    3),
+            snapshotRepository,
+            objectMapper);
+    assertThatThrownBy(
+            () -> ownerTransaction().execute(status -> capture.capture(fixture.request())))
+        .hasMessageContaining("differs from the V25 frozen checkpoint");
+    assertThat(snapshotCount(fixture.request().publicationFence())).isZero();
+  }
+
+  @Test
+  void v32PreservesOriginalSchema2SnapshotBytesAndExactRetry() throws Exception {
+    Fixture fixture = fixture(false);
+    WorldAuthoredGraphSnapshot original =
+        ownerTransaction().execute(status -> captureComponent().capture(fixture.request()));
+    CaptureRequest r = fixture.request();
+    CaptureRequest historical =
+        new CaptureRequest(
+            r.targetNamespace(),
+            r.canonicalTenantId(),
+            r.canonicalVersionId(),
+            r.intakeRequestId(),
+            r.publicationFence(),
+            r.publicationRequestId(),
+            r.requestDigest(),
+            r.versionStateEpoch(),
+            r.publishWorkflowId(),
+            r.appliedCommitId(),
+            r.contentDigest(),
+            2,
+            r.suppliedOwnedAffectedTuples());
+    String schema = "retained_snapshot2_" + UUID.randomUUID().toString().replace("-", "");
+    Flyway.configure()
+        .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
+        .schemas(schema)
+        .defaultSchema(schema)
+        .placeholders(Map.of("serviceSchema", schema))
+        .locations("classpath:db/migration")
+        .target(MigrationVersion.fromVersion("28"))
+        .load()
+        .migrate();
+    List<String> tables =
+        List.of(
+            "world_authored_source_tenant_association",
+            "world_authored_source_intake",
+            "world_authored_version_identity",
+            "world_design_publication_fence_attempt",
+            "world_design_publication_fence_owner");
+    try (var connection =
+        DriverManager.getConnection(
+            postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())) {
+      DSLContext retained = DSL.using(connection, SQLDialect.POSTGRES);
+      retained.execute("SET search_path TO " + schema + ", public");
+      connection.setAutoCommit(false);
+      retained.execute("SET LOCAL session_replication_role='replica'");
+      for (String table : tables) {
+        String override =
+            table.equals("world_authored_version_identity") ? " OVERRIDING SYSTEM VALUE" : "";
+        retained.execute(
+            "INSERT INTO "
+                + table
+                + override
+                + " SELECT * FROM world_management_service."
+                + table
+                + " WHERE local_tenant_key=?",
+            fixture.intakeReceipt().localTenantKey());
+      }
+      retained.execute(
+          "INSERT INTO world_authored_source_tenant_key_reservation SELECT * "
+              + "FROM world_management_service.world_authored_source_tenant_key_reservation WHERE tenant_key=?",
+          fixture.intakeReceipt().localTenantKey());
+      retained.execute(
+          "UPDATE world_design_publication_fence_attempt SET digest_schema_version=2 WHERE publication_fence=?",
+          r.publicationFence());
+      // Install an original synthetic schema-2 capture under V28 before testing its forward
+      // migration.
+      retained.execute(
+          "INSERT INTO world_authored_graph_snapshot SELECT (jsonb_populate_record(NULL::world_authored_graph_snapshot, "
+              + "to_jsonb(t) || jsonb_build_object('digest_schema_version', 2, 'capture_request_digest', ?))).* "
+              + "FROM world_management_service.world_authored_graph_snapshot t WHERE publication_fence=?",
+          historicalCaptureDigest(original),
+          r.publicationFence());
+      retained.execute("SET LOCAL session_replication_role='origin'");
+      connection.commit();
+      connection.setAutoCommit(true);
+      String before =
+          Objects.requireNonNull(
+                  retained.fetchOne(
+                      "SELECT to_jsonb(t)::text FROM world_authored_graph_snapshot t"),
+                  "expected retained schema-2 snapshot row")
+              .get(0, String.class);
+      String attemptBefore =
+          Objects.requireNonNull(
+                  retained.fetchOne(
+                      "SELECT to_jsonb(t)::text FROM world_design_publication_fence_attempt t"),
+                  "expected retained publication-fence attempt row")
+              .get(0, String.class);
+      Flyway.configure()
+          .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
+          .schemas(schema)
+          .defaultSchema(schema)
+          .placeholders(Map.of("serviceSchema", schema))
+          .locations("classpath:db/migration")
+          .load()
+          .migrate();
+      assertThat(
+              Objects.requireNonNull(
+                      retained.fetchOne(
+                          "SELECT to_jsonb(t)::text FROM world_authored_graph_snapshot t"),
+                      "expected retained schema-2 snapshot row")
+                  .get(0, String.class))
+          .isEqualTo(before);
+      assertThat(
+              Objects.requireNonNull(
+                      retained.fetchOne(
+                          "SELECT to_jsonb(t)::text FROM world_design_publication_fence_attempt t"),
+                      "expected retained publication-fence attempt row")
+                  .get(0, String.class))
+          .isEqualTo(attemptBefore);
+      var repo = new WorldAuthoredGraphSnapshotRepository(retained);
+      var capture =
+          new WorldAuthoredGraphSnapshotCapture(
+              retained,
+              (tenant, version) -> {
+                throw new AssertionError("Historical retry must never recompute content digest");
+              },
+              repo,
+              objectMapper);
+      var tx =
+          new TransactionTemplate(
+              new DataSourceTransactionManager(new SingleConnectionDataSource(connection, true)));
+      tx.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+      var recovered = tx.execute(status -> capture.capture(historical));
+      assertThat(recovered.digestSchemaVersion()).isEqualTo(2);
+      assertThat(recovered.snapshotId()).isEqualTo(original.snapshotId());
+      assertThat(recovered.graphBytes()).containsExactly(original.graphBytes());
+      assertThat(recovered.ownerRevisionEvidenceJson())
+          .isEqualTo(original.ownerRevisionEvidenceJson());
+      assertThat(
+              Objects.requireNonNull(
+                      retained.fetchOne(
+                          "SELECT to_jsonb(t)::text FROM world_authored_graph_snapshot t"),
+                      "expected retained schema-2 snapshot row")
+                  .get(0, String.class))
+          .isEqualTo(before);
+      assertThatThrownBy(() -> tx.execute(status -> capture.capture(r)))
+          .isInstanceOf(SnapshotConflictException.class);
+      // INSERT-only guard rejects schema 2 (and unsupported values), preserving retained reads.
+      for (int denied : new int[] {2, 4}) {
+        assertThatThrownBy(
+                () ->
+                    retained.execute(
+                        "INSERT INTO world_authored_graph_snapshot SELECT "
+                            + "(jsonb_populate_record(NULL::world_authored_graph_snapshot, to_jsonb(t) || jsonb_build_object('snapshot_id', ?, "
+                            + "'digest_schema_version', ?))).* FROM world_authored_graph_snapshot t",
+                        UUID.randomUUID(),
+                        denied))
+            .hasStackTraceContaining("requires digest schema 3");
+      }
+    } finally {
+      dsl.execute("DROP SCHEMA " + schema + " CASCADE");
+    }
+  }
+
+  private String historicalCaptureDigest(WorldAuthoredGraphSnapshot snapshot) throws Exception {
+    // Independent original V28 capture-request preimage: exact ordered fields, no mutable content.
+    var fields = objectMapper.valueToTree(snapshot);
+    Map<String, Object> binding = new LinkedHashMap<>();
+    for (String name :
+        List.of(
+            "targetNamespace",
+            "canonicalTenantId",
+            "canonicalVersionId",
+            "versionIdentityOperationId",
+            "worldSlug",
+            "gameDesignVersionId",
+            "localVersionKey",
+            "localTenantKey",
+            "intakeOperationId",
+            "intakeRequestId",
+            "intakeRequestDigest",
+            "sourceOperationId",
+            "sourceEvidenceDigest",
+            "intakeReceiptDigest",
+            "publicationFence",
+            "publicationRequestId",
+            "requestDigest",
+            "versionStateEpoch",
+            "publishWorkflowId",
+            "appliedCommitId",
+            "contentDigest",
+            "digestSchemaVersion",
+            "suppliedOwnedAffectedTuplesJson")) {
+      binding.put(name, name.equals("digestSchemaVersion") ? 2 : fields.get(name));
+    }
+    return HexFormat.of()
+        .formatHex(
+            MessageDigest.getInstance("SHA-256").digest(objectMapper.writeValueAsBytes(binding)));
   }
 
   private WorldAuthoredGraphSnapshot captureWithGuardedSessionRole(

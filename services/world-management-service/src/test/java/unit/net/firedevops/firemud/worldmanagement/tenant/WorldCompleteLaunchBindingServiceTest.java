@@ -728,7 +728,7 @@ class WorldCompleteLaunchBindingServiceTest {
     String commitId = "commit-41";
     List<AuthoredWorldReleaseAttestationEvidence.Participant> participants =
         List.of(
-            participant("WORLD_MANAGEMENT", 2, "a", false),
+            participant("WORLD_MANAGEMENT", 3, "a", false),
             participant("ENTITY_MANAGEMENT", 2, "b", false),
             participant("GAME_LOGIC", 1, "c", true),
             participant("AUTOMATION_SCRIPTING", 5, "d", false),

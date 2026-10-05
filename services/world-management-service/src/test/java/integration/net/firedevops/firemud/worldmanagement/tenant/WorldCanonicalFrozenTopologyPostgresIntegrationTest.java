@@ -68,10 +68,10 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import tools.jackson.databind.ObjectMapper;
 
 /**
- * Actual V30 rows and V31 capture, with synthetic source/permission and exact V25 checkpoints. The
- * stipulated checkpoint digest is not a computed canonical participant digest. Fixture-only trigger
- * bypasses model terminal/corrupt storage unavailable through the current owner API; origin
- * triggers are restored before every tested capture/read boundary.
+ * Actual V30 rows and V31/V32 capture, with synthetic source/permission and computed schema-3 V25
+ * content checkpoints. Selected commit identities remain synthetic complete-application evidence.
+ * Fixture-only trigger bypasses model terminal/corrupt storage unavailable through the current
+ * owner API; origin triggers are restored before every tested capture/read boundary.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -102,6 +102,15 @@ class WorldCanonicalFrozenTopologyPostgresIntegrationTest {
   @Autowired private WorldDesignPublicationFenceRepository fence;
   @Autowired private WorldAuthoredGraphSnapshotRepository snapshots;
   @Autowired private ObjectMapper mapper;
+
+  @Autowired
+  private net.firedevops.firemud.worldmanagement.repository.WorldEntitySpawnBindingRepository
+      spawnRepository;
+
+  @Autowired
+  private net.firedevops.firemud.worldmanagement.service.WorldDraftDesignDigestService
+      digestService;
+
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
 
   @MockitoBean(enforceOverride = true)
@@ -119,6 +128,7 @@ class WorldCanonicalFrozenTopologyPostgresIntegrationTest {
     Request request = freeze(p);
     var capture = frozen().capture(request);
     assertThat(capture.status()).isEqualTo("CAPTURED_UNVERIFIED");
+    assertThat(capture.request().freeze().digestSchemaVersion()).isEqualTo(3);
     assertThat(capture.graphBytes()).containsExactly(stored.graphBytes());
     assertThat(capture.storageResultBytes()).containsExactly(stored.resultBytes());
     assertThat(capture.request().plan().binding().canonicalBytes())
@@ -145,6 +155,99 @@ class WorldCanonicalFrozenTopologyPostgresIntegrationTest {
     assertThat(frozen().capture(request).resultBytes()).containsExactly(capture.resultBytes());
     assertThat(countCaptures(request)).isEqualTo(1);
     assertOrigin();
+  }
+
+  @Test
+  void canonicalSpawnSqlMappingIsLosslessAndProducesSchema3DigestWithoutWriteBypass() {
+    Fixture f = fixture();
+    var p = plan(f);
+    component().store(p);
+    var spawns =
+        spawnRepository.findByTenantIdAndVersionIdOrderByIdAsc(
+            f.intake().localTenantKey(), f.version().localVersionKey());
+    assertThat(spawns).hasSize(1);
+    var spawn = spawns.getFirst();
+    var row = dsl.fetchOne("SELECT * FROM world_entity_spawn_binding WHERE id=?", spawn.getId());
+    assertThat(spawn.getEntityTemplateId()).isNull();
+    assertThat(spawn.getEntityCanonicalTenantId())
+        .isEqualTo(row.get("entity_canonical_tenant_id", UUID.class));
+    assertThat(spawn.getEntityCanonicalVersionId())
+        .isEqualTo(row.get("entity_canonical_version_id", UUID.class));
+    assertThat(spawn.getEntityCanonicalTemplateId())
+        .isEqualTo(row.get("entity_canonical_template_id", UUID.class));
+    var digest =
+        digestService.getDraftDesignDigest(
+            Long.toString(spawn.getTenantId()), Long.toString(spawn.getVersionId()));
+    assertThat(digest.digestSchemaVersion()).isEqualTo(3);
+    assertThat(digest.contentDigest()).matches("[0-9a-f]{64}");
+    assertThat(spawnRepository.findById(spawn.getId()).orElseThrow()).isEqualTo(spawn);
+    assertThatThrownBy(() -> spawnRepository.save(spawn)).isInstanceOf(RuntimeException.class);
+    assertThat(spawnRepository.findById(spawn.getId()).orElseThrow()).isEqualTo(spawn);
+    assertOrigin();
+  }
+
+  @Test
+  void freshSchema2CaptureIsDeniedByApplicationAndDatabase() {
+    Fixture f = fixture();
+    var p = plan(f);
+    component().store(p);
+    Request request = freeze(p, 2);
+    assertThat(frozen().readCommitted(request)).isEmpty();
+    assertThatThrownBy(() -> frozen().capture(request))
+        .hasMessageContaining("requires digest schema 3");
+    assertThat(countCaptures(request)).isZero();
+    var templatePlan = plan(fixture());
+    component().store(templatePlan);
+    Request template = freeze(templatePlan);
+    // Supply a complete otherwise-valid insertion from an existing schema-3 journal.
+    frozen().capture(template);
+    for (int denied : new int[] {2, 4}) {
+      assertThatThrownBy(
+              () ->
+                  dsl.execute(
+                      "INSERT INTO world_canonical_frozen_topology SELECT (jsonb_populate_record(NULL::world_canonical_frozen_topology, "
+                              + "to_jsonb(t) || jsonb_build_object('capture_id', ?, 'freeze_request_json', "
+                              + "replace(freeze_request_json, '\"digestSchemaVersion\":3', ?)))).* "
+                              + "FROM world_canonical_frozen_topology t WHERE publication_fence=?",
+                          UUID.randomUUID(),
+                      "\"digestSchemaVersion\":" + denied, template.freeze().publicationFence()))
+          .hasStackTraceContaining("requires digest schema 3");
+    }
+    assertOrigin();
+  }
+
+  @Test
+  void newSchema3CaptureRejectsChangedContentDigestAndEveryReturnedScopeField() {
+    Fixture f = fixture();
+    var p = plan(f);
+    component().store(p);
+    Request request = freeze(p);
+    for (int changed = 0; changed < 4; changed++) {
+      int field = changed;
+      var bad =
+          frozen(
+              (tenant, version) ->
+                  new net.firedevops.firemud.worldmanagement.service.WorldDraftDesignDigestService
+                      .WorldDraftDesignDigest(
+                      field == 0 ? "999999999" : tenant,
+                      field == 1 ? "999999999" : version,
+                      "version:" + version,
+                      field == 2 ? "c".repeat(64) : request.freeze().contentDigest(),
+                      field == 3 ? 2 : 3));
+      assertThatThrownBy(() -> bad.capture(request))
+          .hasMessageContaining("differs from exact schema-3 frozen content checkpoint");
+      assertThat(countCaptures(request)).isZero();
+    }
+    var captured = frozen().capture(request);
+    assertThat(captured.request().freeze().digestSchemaVersion()).isEqualTo(3);
+    assertThat(
+            frozen(
+                    (tenant, version) -> {
+                      throw new AssertionError("Exact retry must use retained journal");
+                    })
+                .capture(request)
+                .resultBytes())
+        .containsExactly(captured.resultBytes());
   }
 
   @Test
@@ -498,11 +601,143 @@ class WorldCanonicalFrozenTopologyPostgresIntegrationTest {
   }
 
   private WorldCanonicalFrozenTopologyService frozen() {
+    return frozen(digestService);
+  }
+
+  private WorldCanonicalFrozenTopologyService frozen(
+      net.firedevops.firemud.worldmanagement.service.WorldDraftDesignDigestService producer) {
     return new WorldCanonicalFrozenTopologyService(
-        new WorldCanonicalFrozenTopologyRepository(dsl, snapshots, repository()), manager);
+        new WorldCanonicalFrozenTopologyRepository(dsl, snapshots, repository(), producer),
+        manager);
+  }
+
+  @Test
+  void v32PreservesOriginalSchema2FrozenJournalAndExactHistoricalRetries() throws Exception {
+    Fixture f = fixture();
+    var p = plan(f);
+    component().store(p);
+    Request current = freeze(p);
+    var captured = frozen().capture(current);
+    CaptureRequest r = current.freeze();
+    Request historical =
+        new Request(
+            p,
+            new CaptureRequest(
+                r.targetNamespace(),
+                r.canonicalTenantId(),
+                r.canonicalVersionId(),
+                r.intakeRequestId(),
+                r.publicationFence(),
+                r.publicationRequestId(),
+                r.requestDigest(),
+                r.versionStateEpoch(),
+                r.publishWorkflowId(),
+                r.appliedCommitId(),
+                r.contentDigest(),
+                2,
+                r.suppliedOwnedAffectedTuples()));
+    String schema = "retained_schema2_" + UUID.randomUUID().toString().replace("-", "");
+    Flyway.configure()
+        .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
+        .schemas(schema)
+        .defaultSchema(schema)
+        .placeholders(Map.of("serviceSchema", schema))
+        .locations("classpath:db/migration")
+        .target(MigrationVersion.fromVersion("31"))
+        .load()
+        .migrate();
+    Map<String, String> tables = new LinkedHashMap<>();
+    for (String table :
+        List.of(
+            "world_authored_source_tenant_association",
+            "world_authored_source_intake",
+            "world_authored_version_identity",
+            "world_design_publication_fence_attempt",
+            "world_design_publication_fence_owner",
+            "world_topology_draft_commit")) tables.put(table, "local_tenant_key");
+    tables.put("world_authored_source_tenant_key_reservation", "tenant_key");
+    try (var connection =
+        DriverManager.getConnection(
+            postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())) {
+      DSLContext retained = DSL.using(connection, SQLDialect.POSTGRES);
+      retained.execute("SET search_path TO " + schema + ", public");
+      connection.setAutoCommit(false);
+      retained.execute("SET LOCAL session_replication_role='replica'");
+      for (var table : tables.entrySet()) {
+        String override =
+            table.getKey().equals("world_authored_version_identity")
+                ? " OVERRIDING SYSTEM VALUE"
+                : "";
+        retained.execute(
+            "INSERT INTO "
+                + table.getKey()
+                + override
+                + " SELECT * FROM world_management_service."
+                + table.getKey()
+                + " WHERE "
+                + table.getValue()
+                + "=?",
+            f.intake().localTenantKey());
+      }
+      // Synthetic original schema-2 evidence is installed before V32, never upgraded or rehashed by
+      // it.
+      retained.execute(
+          "UPDATE world_design_publication_fence_attempt SET digest_schema_version=2 WHERE publication_fence=?",
+          r.publicationFence());
+      byte[] originalResult =
+          new String(captured.resultBytes(), StandardCharsets.UTF_8)
+              .replace("\"digestSchemaVersion\":3", "\"digestSchemaVersion\":2")
+              .getBytes(StandardCharsets.UTF_8);
+      retained.execute(
+          "INSERT INTO world_canonical_frozen_topology SELECT (jsonb_populate_record(NULL::world_canonical_frozen_topology, "
+              + "to_jsonb(t) || jsonb_build_object('freeze_request_json', replace(freeze_request_json, '\"digestSchemaVersion\":3', '\"digestSchemaVersion\":2'), "
+              + "'result_bytes', ?::bytea))).* FROM world_management_service.world_canonical_frozen_topology t WHERE publication_fence=?",
+          originalResult,
+          r.publicationFence());
+      retained.execute("SET LOCAL session_replication_role='origin'");
+      connection.commit();
+      connection.setAutoCommit(true);
+      tables.put("world_canonical_frozen_topology", "publication_fence");
+      var before = retainedRows(retained, tables);
+      Flyway.configure()
+          .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
+          .schemas(schema)
+          .defaultSchema(schema)
+          .placeholders(Map.of("serviceSchema", schema))
+          .locations("classpath:db/migration")
+          .load()
+          .migrate();
+      assertThat(retainedRows(retained, tables)).isEqualTo(before);
+      var repo =
+          new WorldCanonicalFrozenTopologyRepository(
+              retained,
+              new WorldAuthoredGraphSnapshotRepository(retained),
+              new WorldDraftTopologyCommitRepository(
+                  retained,
+                  new WorldDesignPublicationFenceRepository(
+                      retained, new WorldAuthoredSourceIntakeRepository(retained)),
+                  mapper),
+              (tenant, version) -> {
+                throw new AssertionError("Historical retry must never recompute content");
+              });
+      var service = new WorldCanonicalFrozenTopologyService(repo, manager);
+      assertThat(service.readCommitted(historical).orElseThrow().resultBytes())
+          .containsExactly(originalResult);
+      assertThat(service.capture(historical).resultBytes()).containsExactly(originalResult);
+      assertThat(service.capture(historical).request().freeze().digestSchemaVersion()).isEqualTo(2);
+      assertThatThrownBy(() -> service.readCommitted(current))
+          .hasMessageContaining("changed complete input");
+      assertThat(retainedRows(retained, tables)).isEqualTo(before);
+    } finally {
+      dsl.execute("DROP SCHEMA " + schema + " CASCADE");
+    }
   }
 
   private Request freeze(WorldDraftTopologyCommitPlan p) {
+    return freeze(p, 3);
+  }
+
+  private Request freeze(WorldDraftTopologyCommitPlan p, int schema) {
     var o = p.ownerBinding();
     String publicationRequest = "capture-" + UUID.randomUUID();
     var evidence =
@@ -522,7 +757,7 @@ class WorldCanonicalFrozenTopologyPostgresIntegrationTest {
             "a".repeat(64),
             1,
             "publish:" + o.canonicalTenantId() + ":publish-request:" + publicationRequest);
-    // Synthetic exact checkpoint deliberately stipulates the selected commit, not complete APPLIED.
+    // Compute content under the exact owner lock; selected commit is still not complete APPLIED.
     var attempt =
         Objects.requireNonNull(
             ownerTransaction()
@@ -530,9 +765,22 @@ class WorldCanonicalFrozenTopologyPostgresIntegrationTest {
                     status ->
                         fence.claimFreeze(
                             evidence,
-                            () ->
-                                new WorldDesignPublicationFenceEvidence.Checkpoint(
-                                    p.binding().commitId().toString(), "b".repeat(64), 2))));
+                            () -> {
+                              var keys =
+                                  Objects.requireNonNull(
+                                      dsl.fetchOne(
+                                          "SELECT local_tenant_key, local_version_key FROM world_authored_version_identity WHERE operation_id=?",
+                                          o.versionIdentityOperationId()),
+                                      "expected owner version-identity row");
+                              var digest =
+                                  digestService.getDraftDesignDigest(
+                                      Long.toString(keys.get("local_tenant_key", Long.class)),
+                                      Long.toString(keys.get("local_version_key", Long.class)));
+                              return new WorldDesignPublicationFenceEvidence.Checkpoint(
+                                  p.binding().commitId().toString(),
+                                  digest.contentDigest(),
+                                  schema);
+                            })));
     var tuples =
         p.binding().affectedUnits(Owner.WORLD_MANAGEMENT).stream()
             .map(

@@ -13,6 +13,32 @@ class WorldAuthoredGraphSnapshotTest {
   private static final String DIGEST = "a".repeat(64);
 
   @Test
+  void acceptsRetainedSchema2AndCurrentSchema3ButRejectsUnsupportedSchemas() {
+    for (int schema : new int[] {2, 3})
+      assertThat(request(schema).digestSchemaVersion()).isEqualTo(schema);
+    for (int schema : new int[] {0, 1, 4}) {
+      assertThatThrownBy(() -> request(schema)).isInstanceOf(IllegalArgumentException.class);
+    }
+  }
+
+  private CaptureRequest request(int schema) {
+    return new CaptureRequest(
+        "firemud",
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        "publish-request-1",
+        DIGEST,
+        1L,
+        "publish:tenant:publish-request:publish-request-1",
+        "commit-1",
+        DIGEST,
+        schema,
+        List.of());
+  }
+
+  @Test
   void captureRequestPreservesTypedEpochAndCanonicalizesTupleOrder() {
     OwnedAffectedTuple scope =
         new OwnedAffectedTuple(

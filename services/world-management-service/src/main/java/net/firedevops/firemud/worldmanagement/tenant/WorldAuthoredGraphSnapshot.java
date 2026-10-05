@@ -68,8 +68,9 @@ public record WorldAuthoredGraphSnapshot(
     requireText(publishWorkflowId, "publishWorkflowId");
     requireText(appliedCommitId, "appliedCommitId");
     requireSha256(contentDigest, "contentDigest");
-    if (digestSchemaVersion != 2) {
-      throw new IllegalArgumentException("World graph snapshot requires digest schema version 2");
+    if (digestSchemaVersion != 2 && digestSchemaVersion != 3) {
+      throw new IllegalArgumentException(
+          "World graph snapshot requires retained schema 2 or current schema 3");
     }
     requireSha256(captureRequestDigest, "captureRequestDigest");
     requireText(suppliedOwnedAffectedTuplesJson, "suppliedOwnedAffectedTuplesJson");
@@ -153,8 +154,9 @@ public record WorldAuthoredGraphSnapshot(
       requireText(publishWorkflowId, "publishWorkflowId");
       requireText(appliedCommitId, "appliedCommitId");
       requireSha256(contentDigest, "contentDigest");
-      if (digestSchemaVersion != 2) {
-        throw new IllegalArgumentException("World graph snapshot requires digest schema version 2");
+      if (digestSchemaVersion != 2 && digestSchemaVersion != 3) {
+        throw new IllegalArgumentException(
+            "World graph snapshot requires retained schema 2 or current schema 3");
       }
       Objects.requireNonNull(suppliedOwnedAffectedTuples, "suppliedOwnedAffectedTuples");
       List<OwnedAffectedTuple> ordered = new ArrayList<>(suppliedOwnedAffectedTuples);

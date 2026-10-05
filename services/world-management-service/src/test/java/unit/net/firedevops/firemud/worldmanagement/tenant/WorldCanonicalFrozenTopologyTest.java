@@ -58,7 +58,7 @@ class WorldCanonicalFrozenTopologyTest {
         "publish:" + owner.canonicalTenantId() + ":publish-request:synthetic-capture",
         selectedCommit,
         "b".repeat(64),
-        2,
+        3,
         tuples ? affected : List.of());
   }
 }

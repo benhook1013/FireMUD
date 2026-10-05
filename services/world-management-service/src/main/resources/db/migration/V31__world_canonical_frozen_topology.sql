@@ -30,7 +30,7 @@ DECLARE
     commit_row "${serviceSchema}".world_topology_draft_commit%ROWTYPE;
     attempt "${serviceSchema}".world_design_publication_fence_attempt%ROWTYPE;
     owner_row "${serviceSchema}".world_design_publication_fence_owner%ROWTYPE;
-    freeze JSONB;
+    frozen_evidence JSONB;
     identity TEXT;
     intake TEXT;
 BEGIN
@@ -49,7 +49,7 @@ BEGIN
         FROM "${serviceSchema}".world_authored_version_identity v
         JOIN "${serviceSchema}".world_authored_source_intake i ON i.operation_id=v.intake_operation_id
         WHERE v.operation_id=NEW.version_identity_operation_id;
-    freeze := NEW.freeze_request_json::jsonb;
+    frozen_evidence := NEW.freeze_request_json::jsonb;
     IF owner_row.owner_freeze_phase <> 'FROZEN'
         OR owner_row.current_publication_fence IS DISTINCT FROM NEW.publication_fence
         OR attempt.owner_binding_schema_version IS DISTINCT FROM 1
@@ -60,18 +60,18 @@ BEGIN
         OR attempt.canonical_version_id IS DISTINCT FROM commit_row.canonical_version_id
         OR attempt.target_namespace IS DISTINCT FROM commit_row.target_namespace
         OR attempt.applied_commit_id IS DISTINCT FROM NEW.commit_id::text
-        OR freeze->>'targetNamespace' IS DISTINCT FROM attempt.target_namespace
-        OR freeze->>'canonicalTenantId' IS DISTINCT FROM attempt.canonical_tenant_id::text
-        OR freeze->>'canonicalVersionId' IS DISTINCT FROM attempt.canonical_version_id::text
-        OR freeze->>'intakeRequestId' IS DISTINCT FROM attempt.intake_request_id::text
-        OR freeze->>'publicationFence' IS DISTINCT FROM attempt.publication_fence::text
-        OR freeze->>'publicationRequestId' IS DISTINCT FROM attempt.publication_request_id
-        OR freeze->>'requestDigest' IS DISTINCT FROM attempt.request_digest
-        OR freeze->>'versionStateEpoch' IS DISTINCT FROM attempt.version_state_epoch::text
-        OR freeze->>'publishWorkflowId' IS DISTINCT FROM attempt.publish_workflow_id
-        OR freeze->>'appliedCommitId' IS DISTINCT FROM attempt.applied_commit_id
-        OR freeze->>'contentDigest' IS DISTINCT FROM attempt.content_digest
-        OR freeze->>'digestSchemaVersion' IS DISTINCT FROM attempt.digest_schema_version::text
+        OR frozen_evidence->>'targetNamespace' IS DISTINCT FROM attempt.target_namespace
+        OR frozen_evidence->>'canonicalTenantId' IS DISTINCT FROM attempt.canonical_tenant_id::text
+        OR frozen_evidence->>'canonicalVersionId' IS DISTINCT FROM attempt.canonical_version_id::text
+        OR frozen_evidence->>'intakeRequestId' IS DISTINCT FROM attempt.intake_request_id::text
+        OR frozen_evidence->>'publicationFence' IS DISTINCT FROM attempt.publication_fence::text
+        OR frozen_evidence->>'publicationRequestId' IS DISTINCT FROM attempt.publication_request_id
+        OR frozen_evidence->>'requestDigest' IS DISTINCT FROM attempt.request_digest
+        OR frozen_evidence->>'versionStateEpoch' IS DISTINCT FROM attempt.version_state_epoch::text
+        OR frozen_evidence->>'publishWorkflowId' IS DISTINCT FROM attempt.publish_workflow_id
+        OR frozen_evidence->>'appliedCommitId' IS DISTINCT FROM attempt.applied_commit_id
+        OR frozen_evidence->>'contentDigest' IS DISTINCT FROM attempt.content_digest
+        OR frozen_evidence->>'digestSchemaVersion' IS DISTINCT FROM attempt.digest_schema_version::text
         OR NEW.owner_binding_json IS DISTINCT FROM commit_row.owner_binding_json
         OR NEW.binding_json IS DISTINCT FROM commit_row.binding_json
         OR NEW.binding_digest IS DISTINCT FROM commit_row.binding_digest

@@ -2182,6 +2182,10 @@ jobs:
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalFrozenTopologyPostgresIntegrationTest#immutableJournalDeniesWritesAndHistoricalReadRejectsEveryTamperedField()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalFrozenTopologyPostgresIntegrationTest#recomputedGraphChecksumCannotHideTypedEndpointOrCanonicalEntityTampering()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalFrozenTopologyPostgresIntegrationTest#twoConcurrentCapturesReturnOneOriginalImmutableResult()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalFrozenTopologyPostgresIntegrationTest#canonicalSpawnSqlMappingIsLosslessAndProducesSchema3DigestWithoutWriteBypass()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalFrozenTopologyPostgresIntegrationTest#freshSchema2CaptureIsDeniedByApplicationAndDatabase()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalFrozenTopologyPostgresIntegrationTest#newSchema3CaptureRejectsChangedContentDigestAndEveryReturnedScopeField()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalFrozenTopologyPostgresIntegrationTest#v32PreservesOriginalSchema2FrozenJournalAndExactHistoricalRetries()' \
             world-management-service
 
       - name: Verify Account authored-draft publication PostgreSQL proof
@@ -2261,6 +2265,10 @@ jobs:
             --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredGraphSnapshotPostgresIntegrationTest#sourceQualifiedStagingRejectsChangedIntakeEvidenceBeforeOwnerCreation()' \
             --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredGraphSnapshotPostgresIntegrationTest#sourceQualifiedStagingRejectsFrozenOwnerBeforeReadingAnInvalidPriorGraph()' \
             --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredGraphSnapshotPostgresIntegrationTest#sourceQualifiedStagingRejectsCrossVersionParentAndLateInvalidRevisionWithoutAnyApply()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredGraphSnapshotPostgresIntegrationTest#retainedNumericSpawnSqlMappingAndPrimaryKeyDigestOrderRemainExact()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredGraphSnapshotPostgresIntegrationTest#newSchema2NumericSnapshotIsRejectedBeforeContentOrRevisionReads()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredGraphSnapshotPostgresIntegrationTest#mismatchedReturnedPrivateVersionDigestCannotCreateSnapshot()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredGraphSnapshotPostgresIntegrationTest#v32PreservesOriginalSchema2SnapshotBytesAndExactRetry()' \
             --require-case 'net.firedevops.firemud.worldmanagement.WorldDesignPublicationFenceIntegrationTest#rollbackAndCommittedExactReadbackRetainOneImmutableAttempt()' \
             --require-case 'net.firedevops.firemud.worldmanagement.WorldDesignPublicationFenceIntegrationTest#schemaZeroAttemptAtResolvedLocalKeyCannotBePromotedByNumericCoincidence()' \
             --require-case 'net.firedevops.firemud.worldmanagement.WorldDesignPublicationFenceIntegrationTest#sameGameDesignSelectorUsesDistinctWorldLocalVersionRowsAcrossIntakes()' \

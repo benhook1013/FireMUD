@@ -57,7 +57,7 @@ public record AuthoredWorldReleaseAttestationEvidence(
           "GAME_DESIGN_CONTROL_PLANE");
   private static final Map<String, Integer> SUPPORTED_PARTICIPANT_DIGEST_SCHEMAS =
       Map.of(
-          "WORLD_MANAGEMENT", 2,
+          "WORLD_MANAGEMENT", 3,
           "ENTITY_MANAGEMENT", 2,
           "GAME_LOGIC", 1,
           "AUTOMATION_SCRIPTING", 5,
