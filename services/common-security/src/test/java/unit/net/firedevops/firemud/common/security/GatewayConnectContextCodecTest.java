@@ -2,6 +2,7 @@ package unit.net.firedevops.firemud.common.security;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -21,6 +22,7 @@ import java.util.Map;
 import net.firedevops.firemud.common.security.GatewayConnectContext;
 import net.firedevops.firemud.common.security.GatewayConnectContextCodec;
 import net.firedevops.firemud.common.security.GatewayConnectContextSignature;
+import net.firedevops.firemud.common.security.HistoricalGatewayConnectEvidence;
 import net.firedevops.firemud.test.SelectedTargetConnectContextTestVectors;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -548,6 +550,138 @@ class GatewayConnectContextCodecTest {
   }
 
   @Test
+  void verifiesExpiredAssertionOnlyAsExactImmutableHistoricalEvidence() throws Exception {
+    Map<String, Object> source = historicalSource();
+    Map<String, Object> claims = historicalContext(source);
+    byte[] payload = json.writeValueAsBytes(claims);
+    String envelope = GatewayConnectContextSignature.sign(payload, KID, keyPair.getPrivate());
+
+    HistoricalGatewayConnectEvidence evidence = verifyHistorical(envelope);
+
+    assertEquals(envelope, evidence.signedEnvelope());
+    assertArrayEquals(payload, evidence.signedPayload());
+    assertEquals(KID, evidence.kid());
+    assertEquals(claims, evidence.claims());
+    assertEquals(BigInteger.valueOf(NOW.getEpochSecond() - 100L), evidence.integer("issuedAt"));
+    assertTrue(evidence.integer("expiresAt").longValueExact() < NOW.getEpochSecond());
+    GatewayConnectContextCodec.requireVerifiedAccountSourceMatchesHistoricalGatewayEvidence(
+        source, evidence);
+
+    byte[] exposedPayload = evidence.signedPayload();
+    exposedPayload[0] ^= 1;
+    assertArrayEquals(payload, evidence.signedPayload());
+    assertThrows(
+        UnsupportedOperationException.class, () -> evidence.claims().put("audience", "other"));
+    @SuppressWarnings("unchecked")
+    Map<String, Object> authorityTuple =
+        (Map<String, Object>) evidence.claims().get("authorityTuple");
+    assertThrows(
+        UnsupportedOperationException.class,
+        () -> authorityTuple.put("accountAuthorityGeneration", BigInteger.ZERO));
+    assertFalse(evidence.toString().contains(envelope));
+    assertFalse(evidence.toString().contains(new String(payload, StandardCharsets.UTF_8)));
+
+    // This is the same old, validly signed assertion: the ordinary reader remains strict.
+    assertThrows(IllegalArgumentException.class, () -> verify(envelope));
+  }
+
+  @Test
+  void historicalEvidenceRejectsUnknownKeyAndForgedSignatureBeforePayloadInterpretation()
+      throws Exception {
+    String malformedJsonEnvelope =
+        GatewayConnectContextSignature.sign(
+            "{".getBytes(StandardCharsets.UTF_8), KID, keyPair.getPrivate());
+    IllegalArgumentException unknownKey =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                GatewayConnectContextCodec.verifyHistoricalEvidence(
+                    malformedJsonEnvelope, Map.of("another-key", keyPair.getPublic())));
+    assertEquals("unknown Gateway verification key", unknownKey.getMessage());
+
+    // A different valid signing key gives a well-formed, wrong-key signature. Flipping a
+    // compressed-point byte can instead fail in the provider's point decoder.
+    KeyPair wrongKeyPair = KeyPairGenerator.getInstance("Ed25519").generateKeyPair();
+    String forgedMalformedJsonEnvelope =
+        GatewayConnectContextSignature.sign(
+            "{".getBytes(StandardCharsets.UTF_8), KID, wrongKeyPair.getPrivate());
+    IllegalArgumentException invalidSignature =
+        assertThrows(
+            IllegalArgumentException.class, () -> verifyHistorical(forgedMalformedJsonEnvelope));
+    assertEquals("invalid Gateway context signature", invalidSignature.getMessage());
+  }
+
+  @Test
+  void historicalEvidenceRejectsWrongReceiverAndOpenOrMalformedSchema() throws Exception {
+    Map<String, Object> wrongAudience = historicalContext(historicalSource());
+    wrongAudience.put("audience", "account-service");
+    assertHistoricalRejected(wrongAudience);
+
+    Map<String, Object> wrongRecipient = historicalContext(historicalSource());
+    wrongRecipient.put("recipient", "another-service");
+    assertHistoricalRejected(wrongRecipient);
+
+    Map<String, Object> missingField = historicalContext(historicalSource());
+    missingField.remove("realmId");
+    assertHistoricalRejected(missingField);
+
+    Map<String, Object> extraField = historicalContext(historicalSource());
+    extraField.put("legacyTenantKey", "42");
+    assertHistoricalRejected(extraField);
+
+    Map<String, Object> invalidTarget = historicalContext(historicalSource());
+    invalidTarget.put("tenantId", "not-a-canonical-uuid");
+    assertHistoricalRejected(invalidTarget);
+  }
+
+  @Test
+  void historicalEvidenceRejectsInvalidOriginalTimestampAndLifetimeGeometry() throws Exception {
+    long issuedAt = NOW.getEpochSecond() - 100L;
+
+    Map<String, Object> zeroLifetime = historicalContext(historicalSource());
+    zeroLifetime.put("expiresAt", BigInteger.valueOf(issuedAt));
+    assertHistoricalRejected(zeroLifetime);
+
+    Map<String, Object> excessiveLifetime = historicalContext(historicalSource());
+    excessiveLifetime.put(
+        "expiresAt",
+        BigInteger.valueOf(issuedAt + GatewayConnectContextCodec.MAX_CONTEXT_LIFETIME_SECONDS + 1));
+    assertHistoricalRejected(excessiveLifetime);
+
+    Map<String, Object> verificationAtExpiry = historicalContext(historicalSource());
+    verificationAtExpiry.put("verifiedAt", verificationAtExpiry.get("expiresAt"));
+    assertHistoricalRejected(verificationAtExpiry);
+
+    Map<String, Object> excessiveFutureIssuedAt = historicalContext(historicalSource());
+    excessiveFutureIssuedAt.put(
+        "issuedAt",
+        BigInteger.valueOf(issuedAt + GatewayConnectContextCodec.MAX_CLOCK_SKEW_SECONDS + 2));
+    assertHistoricalRejected(excessiveFutureIssuedAt);
+
+    Map<String, Object> unsupportedEpoch = historicalContext(historicalSource());
+    BigInteger outsideInstantRange = new BigInteger("1000000000000000000000000");
+    unsupportedEpoch.put("issuedAt", outsideInstantRange);
+    unsupportedEpoch.put("verifiedAt", outsideInstantRange);
+    unsupportedEpoch.put("expiresAt", outsideInstantRange.add(BigInteger.TEN));
+    assertHistoricalRejected(unsupportedEpoch);
+  }
+
+  @Test
+  void historicalSourceCorrespondenceRejectsChangedSourceAndSelectedTarget() throws Exception {
+    Map<String, Object> source = historicalSource();
+    HistoricalGatewayConnectEvidence original = verifyHistorical(sign(historicalContext(source)));
+
+    Map<String, Object> changedSource = historicalSource();
+    changedSource.put("connectScopeId", "different-original-source-scope");
+    assertHistoricalSourceMismatch(changedSource, original);
+
+    Map<String, Object> changedTarget = historicalContext(source);
+    changedTarget.put("realmId", "018f8f0a-8c1d-7f9a-ad6a-bf4a312c0d8e");
+    HistoricalGatewayConnectEvidence changedTargetEvidence = verifyHistorical(sign(changedTarget));
+    assertHistoricalSourceMismatch(source, changedTargetEvidence);
+  }
+
+  @Test
   void rejectsUnknownGatewayKeyAndWrongSignature() throws Exception {
     String envelope = sign(validContext());
     assertThrows(
@@ -597,6 +731,11 @@ class GatewayConnectContextCodecTest {
         envelope, Map.of(KID, keyPair.getPublic()), clock);
   }
 
+  private HistoricalGatewayConnectEvidence verifyHistorical(String envelope) {
+    return GatewayConnectContextCodec.verifyHistoricalEvidence(
+        envelope, Map.of(KID, keyPair.getPublic()));
+  }
+
   private String sign(Map<String, Object> claims) throws Exception {
     return GatewayConnectContextSignature.sign(
         json.writeValueAsBytes(claims), KID, keyPair.getPrivate());
@@ -606,6 +745,10 @@ class GatewayConnectContextCodecTest {
     assertThrows(IllegalArgumentException.class, () -> verify(sign(claims)));
   }
 
+  private void assertHistoricalRejected(Map<String, Object> claims) throws Exception {
+    assertThrows(IllegalArgumentException.class, () -> verifyHistorical(sign(claims)));
+  }
+
   private void assertSourceMismatch(
       Map<String, Object> sourceClaims, GatewayConnectContext verifiedContext) {
     assertThrows(
@@ -613,6 +756,15 @@ class GatewayConnectContextCodecTest {
         () ->
             GatewayConnectContextCodec.requireVerifiedAccountSourceMatchesGatewayContext(
                 sourceClaims, verifiedContext));
+  }
+
+  private void assertHistoricalSourceMismatch(
+      Map<String, Object> sourceClaims, HistoricalGatewayConnectEvidence historicalEvidence) {
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            GatewayConnectContextCodec.requireVerifiedAccountSourceMatchesHistoricalGatewayEvidence(
+                sourceClaims, historicalEvidence));
   }
 
   private static BigInteger nested(
@@ -632,6 +784,19 @@ class GatewayConnectContextCodecTest {
 
   private static Map<String, Object> validContext() {
     return projectContext(SelectedTargetConnectContextTestVectors.sourceConnectTokenClaims());
+  }
+
+  private static Map<String, Object> historicalSource() {
+    Map<String, Object> source = SelectedTargetConnectContextTestVectors.sourceConnectTokenClaims();
+    long issuedAt = NOW.getEpochSecond() - 100L;
+    source.put("iat", BigInteger.valueOf(issuedAt));
+    source.put("exp", BigInteger.valueOf(issuedAt + 20L));
+    return source;
+  }
+
+  private static Map<String, Object> historicalContext(Map<String, Object> source) {
+    long issuedAt = ((BigInteger) source.get("iat")).longValueExact();
+    return projectContext(source, issuedAt + 1L);
   }
 
   private static Map<String, Object> projectContext(Map<String, Object> source) {

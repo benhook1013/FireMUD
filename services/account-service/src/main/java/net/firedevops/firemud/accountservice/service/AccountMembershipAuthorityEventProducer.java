@@ -41,15 +41,18 @@ import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipR
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository.RoleSnapshot;
 import net.firedevops.firemud.accountservice.repository.ApprovedLegacyTenantAssociationRepository.ApprovedAssociation;
+import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepository;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.AuthorityTuple;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.MembershipEvent;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-/** Produces the Account-owned V33 authority event for an explicit public-production JOIN. */
+/** Coordinates Account-owned membership authority events and fenced snapshot evidence. */
 @Service
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
@@ -64,6 +67,7 @@ public class AccountMembershipAuthorityEventProducer {
   private final AccountMembershipPairAuthorityRepository pairAuthorityRepository;
   private final AccountRepository accountRepository;
   private final AccountTenantIdentityResolver tenantIdentityResolver;
+  private final FreshTenantIdentityAssociationRepository freshTenantIdentityAssociationRepository;
   private final AccountAuthorityGenerationRepository authorityGenerationRepository;
   private final AccountAuthorityOutboxRepository authorityOutboxRepository;
   private final AccountMembershipTransitionReceiptRepository transitionReceiptRepository;
@@ -75,6 +79,7 @@ public class AccountMembershipAuthorityEventProducer {
       AccountMembershipPairAuthorityRepository pairAuthorityRepository,
       AccountRepository accountRepository,
       AccountTenantIdentityResolver tenantIdentityResolver,
+      FreshTenantIdentityAssociationRepository freshTenantIdentityAssociationRepository,
       AccountAuthorityGenerationRepository authorityGenerationRepository,
       AccountAuthorityOutboxRepository authorityOutboxRepository,
       AccountMembershipTransitionReceiptRepository transitionReceiptRepository,
@@ -84,6 +89,7 @@ public class AccountMembershipAuthorityEventProducer {
     this.pairAuthorityRepository = pairAuthorityRepository;
     this.accountRepository = accountRepository;
     this.tenantIdentityResolver = tenantIdentityResolver;
+    this.freshTenantIdentityAssociationRepository = freshTenantIdentityAssociationRepository;
     this.authorityGenerationRepository = authorityGenerationRepository;
     this.authorityOutboxRepository = authorityOutboxRepository;
     this.transitionReceiptRepository = transitionReceiptRepository;
@@ -303,6 +309,100 @@ public class AccountMembershipAuthorityEventProducer {
   }
 
   /**
+   * Reads only an already-existing positive membership for exact canonical Account and tenant
+   * UUIDs, under the Account owner transaction and row fence.
+   *
+   * <p>This is membership evidence, not complete current authorization or terminal-recovery
+   * eligibility. It never prepares, enrolls, initializes, or transitions membership authority.
+   * Fresh tenant associations currently have only non-admitting membership state and are denied;
+   * retained membership must have complete exact current row, role, receipt, event, pair, and
+   * generation/fence readback. Missing, inactive, incomplete, or contradictory state fails closed.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public PositiveMembershipSnapshot readExistingPairBoundPositiveMembershipSnapshot(
+      UUID accountUuid, UUID tenantUuid) {
+    requireActiveOwnerTransaction();
+    requireCanonicalUuidInput(accountUuid, "Account UUID");
+    requireCanonicalUuidInput(tenantUuid, "tenant UUID");
+
+    Account initialAccount =
+        accountRepository
+            .findByAccountUuid(accountUuid)
+            .orElseThrow(
+                () -> new IllegalStateException("Membership snapshot Account row is absent"));
+    requirePersistedAccountIdentity(initialAccount, accountUuid);
+    long accountId = initialAccount.getId();
+
+    // Match JOIN's lock order: the numeric Account row is private fence provenance, never a
+    // request identity or tenant alias. Re-read its immutable UUID mapping after acquiring it.
+    joinOperationRepository.lockAccount(accountId);
+    Account fencedAccount =
+        accountRepository
+            .findByAccountUuid(accountUuid)
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "Membership snapshot Account row disappeared at its fence"));
+    requirePersistedAccountIdentity(fencedAccount, accountUuid);
+    if (!Objects.equals(initialAccount.getId(), fencedAccount.getId())
+        || initialAccount.getAccountUuidProvenance() != fencedAccount.getAccountUuidProvenance()
+        || !Objects.equals(
+            initialAccount.getAccountUuidSourceNumericId(),
+            fencedAccount.getAccountUuidSourceNumericId())) {
+      throw new IllegalStateException(
+          "Membership snapshot Account identity changed at its row fence");
+    }
+
+    Optional<FreshTenantCreationEvidence> freshAssociation =
+        freshTenantIdentityAssociationRepository.read(tenantUuid);
+    if (freshAssociation.isPresent()) {
+      if (!tenantUuid.equals(freshAssociation.orElseThrow().canonicalTenantId())) {
+        throw new IllegalStateException(
+            "Fresh tenant association differs from its canonical UUID scope");
+      }
+      throw new IllegalStateException(
+          "Fresh tenant membership has no positive current Account membership readback");
+    }
+
+    ApprovedAssociation retainedAssociation = tenantIdentityResolver.resolve(tenantUuid);
+    if (retainedAssociation.legacyTenantId() <= 0L
+        || !tenantUuid.equals(retainedAssociation.canonicalTenantId())) {
+      throw new IllegalStateException(
+          "Retained tenant UUID has no exact approved private-row association");
+    }
+
+    PositiveMembershipSnapshot positive =
+        readCurrentPairBoundPositiveMembershipSnapshot(
+            accountId, retainedAssociation.legacyTenantId());
+    if (!accountUuid.toString().equals(positive.accountId())
+        || !tenantUuid.toString().equals(positive.tenantId())) {
+      throw new IllegalStateException(
+          "Current Account membership differs from its canonical UUID request");
+    }
+
+    // Recheck both identity sources after reading membership history. The Account lock remains
+    // held, and the resolver repeats its current retained-row digest check.
+    Account finalAccount =
+        accountRepository
+            .findByAccountUuid(accountUuid)
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "Membership snapshot Account row disappeared before readback"));
+    requirePersistedAccountIdentity(finalAccount, accountUuid);
+    if (!Objects.equals(initialAccount.getId(), finalAccount.getId())
+        || initialAccount.getAccountUuidProvenance() != finalAccount.getAccountUuidProvenance()
+        || !Objects.equals(
+            initialAccount.getAccountUuidSourceNumericId(),
+            finalAccount.getAccountUuidSourceNumericId())
+        || !retainedAssociation.equals(tenantIdentityResolver.resolve(tenantUuid))) {
+      throw new IllegalStateException(
+          "Canonical Account or retained tenant identity changed during membership readback");
+    }
+    return positive;
+  }
+
+  /**
    * Reads one same-fence runtime membership result from the proved active-positive or never-joined
    * sequence-zero path.
    *
@@ -321,8 +421,8 @@ public class AccountMembershipAuthorityEventProducer {
       PositiveMembershipSnapshot positive =
           readCurrentPairBoundPositiveMembershipSnapshot(accountId, legacyTenantId);
       return new RuntimeMembershipSnapshotDto(
-          accountId,
-          legacyTenantId,
+          positive.accountId(),
+          positive.tenantId(),
           positive.accountId(),
           positive.tenantId(),
           positive.membershipExists(),
@@ -343,8 +443,8 @@ public class AccountMembershipAuthorityEventProducer {
     NeverJoinedMembershipSnapshot absent =
         readNeverJoinedMembershipSnapshot(accountId, legacyTenantId);
     return new RuntimeMembershipSnapshotDto(
-        accountId,
-        legacyTenantId,
+        absent.accountId(),
+        absent.tenantId(),
         absent.accountId(),
         absent.tenantId(),
         absent.membershipExists(),
@@ -354,6 +454,91 @@ public class AccountMembershipAuthorityEventProducer {
             absent.membershipVersion(),
             absent.membershipAuthorityGeneration()),
         absent.roles(),
+        absent.authorityTuple(),
+        absent.issuanceFence(),
+        absent.evaluatedAt(),
+        absent.outboxCheckpoints(),
+        absent.outboxSourceEvidence(),
+        null);
+  }
+
+  /**
+   * Resolves canonical Account and tenant UUIDs to one owner-fenced runtime membership snapshot.
+   * Fresh tenants use only their immutable V38.1 association and never receive a numeric alias;
+   * retained tenants must resolve through the exact approved UUID association and source digest.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public RuntimeMembershipSnapshotDto readRuntimeMembershipSnapshot(
+      UUID accountUuid, UUID tenantUuid) {
+    requireActiveOwnerTransaction();
+    requireCanonicalUuidInput(accountUuid, "Account UUID");
+    requireCanonicalUuidInput(tenantUuid, "tenant UUID");
+
+    Account initialAccount =
+        accountRepository
+            .findByAccountUuid(accountUuid)
+            .orElseThrow(() -> new IllegalStateException("Runtime snapshot Account row is absent"));
+    requirePersistedAccountIdentity(initialAccount, accountUuid);
+    long accountId = initialAccount.getId();
+
+    // The persisted Account row is the owner fence for every subsequent identity/history read.
+    joinOperationRepository.lockAccount(accountId);
+    Account fencedAccount =
+        accountRepository
+            .findByAccountUuid(accountUuid)
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "Runtime snapshot Account row disappeared at its fence"));
+    requirePersistedAccountIdentity(fencedAccount, accountUuid);
+    if (!Objects.equals(initialAccount.getId(), fencedAccount.getId())
+        || initialAccount.getAccountUuidProvenance() != fencedAccount.getAccountUuidProvenance()
+        || !Objects.equals(
+            initialAccount.getAccountUuidSourceNumericId(),
+            fencedAccount.getAccountUuidSourceNumericId())) {
+      throw new IllegalStateException("Runtime snapshot Account identity changed at its row fence");
+    }
+
+    Optional<FreshTenantCreationEvidence> freshAssociation =
+        freshTenantIdentityAssociationRepository.read(tenantUuid);
+    if (freshAssociation.isPresent()) {
+      NeverJoinedMembershipSnapshot absent =
+          readFreshNeverJoinedMembershipSnapshot(accountUuid, tenantUuid);
+      return toRuntimeMembershipSnapshot(absent);
+    }
+
+    ApprovedAssociation retainedAssociation = tenantIdentityResolver.resolve(tenantUuid);
+    if (retainedAssociation.legacyTenantId() <= 0L
+        || !tenantUuid.equals(retainedAssociation.canonicalTenantId())) {
+      throw new IllegalStateException(
+          "Retained tenant UUID has no exact private numeric association");
+    }
+    RuntimeMembershipSnapshotDto retained =
+        readRuntimeMembershipSnapshot(accountId, retainedAssociation.legacyTenantId());
+    if (!accountUuid.toString().equals(retained.accountUuid())
+        || !tenantUuid.toString().equals(retained.tenantUuid())
+        || !accountUuid.toString().equals(retained.requestAccountUuid())
+        || !tenantUuid.toString().equals(retained.requestTenantUuid())) {
+      throw new IllegalStateException(
+          "Retained numeric membership readback differs from its exact canonical UUID request");
+    }
+    return retained;
+  }
+
+  private RuntimeMembershipSnapshotDto toRuntimeMembershipSnapshot(
+      NeverJoinedMembershipSnapshot absent) {
+    return new RuntimeMembershipSnapshotDto(
+        absent.accountId(),
+        absent.tenantId(),
+        absent.accountId(),
+        absent.tenantId(),
+        false,
+        false,
+        new RuntimeMembershipSnapshotDto.MembershipBaseline(
+            absent.membershipLifecycleState(),
+            absent.membershipVersion(),
+            absent.membershipAuthorityGeneration()),
+        List.of(),
         absent.authorityTuple(),
         absent.issuanceFence(),
         absent.evaluatedAt(),
@@ -379,19 +564,114 @@ public class AccountMembershipAuthorityEventProducer {
       throw new IllegalStateException("Never-joined Account membership row is not absent");
     }
     transitionReceiptRepository.assertNewMembershipTransitionCanStart(accountId, legacyTenantId);
+    return assembleNeverJoinedMembershipSnapshot(
+        identity.accountUuid(), identity.tenantUuid(), verifiedProvenance(identity));
+  }
+
+  /**
+   * Enrolls and reads the non-admitting baseline for one exact Game Design-issued tenant UUID.
+   *
+   * <p>The Account row is the transaction fence. The UUID-to-UUID fresh association is read only
+   * after that row is locked and reread, and no numeric tenant selector or alias is accepted or
+   * derived. This prepares local authority evidence only; it does not create membership, an event,
+   * a credential, or an enabled runtime RPC.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public NeverJoinedMembershipSnapshot readFreshNeverJoinedMembershipSnapshot(
+      UUID accountUuid, UUID tenantUuid) {
+    requireActiveOwnerTransaction();
+    requireCanonicalUuidInput(accountUuid, "Account UUID");
+    requireCanonicalUuidInput(tenantUuid, "tenant UUID");
+
+    Account initialAccount =
+        accountRepository
+            .findByAccountUuid(accountUuid)
+            .orElseThrow(() -> new IllegalStateException("Fresh snapshot Account row is absent"));
+    requirePersistedAccountIdentity(initialAccount, accountUuid);
+    long accountId = initialAccount.getId();
+
+    // Preserve the JOIN lock order: acquire the numeric Account-row lock before consulting tenant
+    // provenance, pair authority, or any membership-snapshot input.
+    joinOperationRepository.lockAccount(accountId);
+    Account fencedAccount =
+        accountRepository
+            .findByAccountUuid(accountUuid)
+            .orElseThrow(
+                () -> new IllegalStateException("Fresh snapshot Account row disappeared at fence"));
+    requirePersistedAccountIdentity(fencedAccount, accountUuid);
+    if (!Objects.equals(initialAccount.getId(), fencedAccount.getId())
+        || initialAccount.getAccountUuidProvenance() != fencedAccount.getAccountUuidProvenance()
+        || !Objects.equals(
+            initialAccount.getAccountUuidSourceNumericId(),
+            fencedAccount.getAccountUuidSourceNumericId())) {
+      throw new IllegalStateException("Fresh snapshot Account identity changed at its row fence");
+    }
+
+    FreshTenantCreationEvidence evidence =
+        freshTenantIdentityAssociationRepository
+            .read(tenantUuid)
+            .orElseThrow(
+                () -> new IllegalStateException("Fresh Game Design tenant association is absent"));
+    if (!tenantUuid.equals(evidence.canonicalTenantId())) {
+      throw new IllegalStateException(
+          "Fresh Game Design tenant association differs from its canonical UUID scope");
+    }
+    VerifiedTenantProvenance provenance =
+        new VerifiedTenantProvenance(
+            null,
+            TenantProvenanceKind.FRESH_GAME_DESIGN,
+            evidence.operationId(),
+            evidence.evidenceDigest());
+
+    // Take upstream generation/fence locks in the composite reader's canonical order before the
+    // membership initializer takes its Account/tenant locks. The Account entity row remains the
+    // outer owner fence, and the full composite snapshot is reread below after enrollment.
+    CompositeSnapshot upstream = lockUpstreamAuthorityScopes(accountUuid, tenantUuid);
+    requireFreshUpstreamSequenceZeroBaseline(accountUuid, tenantUuid, upstream);
+
+    String membershipStreamKey = membershipStreamKey(accountUuid, tenantUuid);
+    Optional<PairAuthority> existingPair =
+        pairAuthorityRepository.readForUpdate(accountUuid, tenantUuid);
+    if (existingPair.isEmpty()) {
+      if (authorityOutboxRepository.readCheckpoint(membershipStreamKey).isPresent()) {
+        throw new IllegalStateException(
+            "Absent fresh Account membership has retained authority-event history");
+      }
+      ScopeState generation =
+          authorityGenerationRepository.initialize(
+              AuthorityScope.membership(accountUuid, tenantUuid));
+      if (generation.generation() != 1L || generation.sourceVersion() != 1L) {
+        throw new IllegalStateException(
+            "Fresh never-joined Account membership generation did not initialize at one");
+      }
+    }
+
+    PairAuthority pair = pairAuthorityRepository.enrollAbsence(accountUuid, tenantUuid, provenance);
+    if (!provenance.equals(pair.provenance())
+        || pair.membershipExists()
+        || pair.membershipVersion() != 1L
+        || pair.lastEventSequence() != 0L) {
+      throw new IllegalStateException(
+          "Fresh never-joined Account membership differs from its positive pair baseline");
+    }
+    return assembleNeverJoinedMembershipSnapshot(accountUuid, tenantUuid, provenance);
+  }
+
+  private NeverJoinedMembershipSnapshot assembleNeverJoinedMembershipSnapshot(
+      UUID accountUuid, UUID tenantUuid, VerifiedTenantProvenance provenance) {
     PairAuthority pair =
         pairAuthorityRepository
-            .readForUpdate(identity.accountUuid(), identity.tenantUuid())
+            .readForUpdate(accountUuid, tenantUuid)
             .orElseThrow(() -> new IllegalStateException("Never-joined pair baseline is absent"));
-    CompositeSnapshot authority = readSnapshot(identity);
+    CompositeSnapshot authority = readSnapshot(accountUuid, tenantUuid);
     ScopeState member = only(authority.memberships(), "membership");
-    requireMatchingFence(authority, member, identity.accountUuid());
+    requireMatchingFence(authority, member, accountUuid);
     List<OutboxCheckpointEntry> upstreamCheckpoints =
-        readBaselineUpstreamCheckpoints(identity, authority);
-    String streamKey = membershipStreamKey(identity);
+        readBaselineUpstreamCheckpoints(accountUuid, tenantUuid, authority);
+    String streamKey = membershipStreamKey(accountUuid, tenantUuid);
     OutboxCheckpointEntry membershipCheckpoint =
         requireSequenceZeroCheckpoint(streamKey, member, "membership");
-    if (!verifiedProvenance(identity).equals(pair.provenance())
+    if (!provenance.equals(pair.provenance())
         || pair.membershipExists()
         || pair.lastEventSequence() != 0L
         || pair.membershipVersion() != 1L
@@ -404,9 +684,8 @@ public class AccountMembershipAuthorityEventProducer {
             decimal(authority.issuer().generation()),
             decimal(authority.account().generation()),
             Map.of(
-                identity.tenantUuid().toString(),
-                decimal(only(authority.tenants(), "tenant").generation())),
-            Map.of(identity.tenantUuid().toString(), decimal(member.generation())),
+                tenantUuid.toString(), decimal(only(authority.tenants(), "tenant").generation())),
+            Map.of(tenantUuid.toString(), decimal(member.generation())),
             List.of(),
             Optional.empty(),
             Optional.empty());
@@ -414,9 +693,9 @@ public class AccountMembershipAuthorityEventProducer {
     checkpoints.add(membershipCheckpoint);
     checkpoints = orderedCheckpoints(checkpoints);
     return new NeverJoinedMembershipSnapshot(
-        identity.accountUuid().toString(),
-        identity.tenantUuid().toString(),
-        Map.of(identity.tenantUuid().toString(), decimal(pair.membershipVersion())),
+        accountUuid.toString(),
+        tenantUuid.toString(),
+        Map.of(tenantUuid.toString(), decimal(pair.membershipVersion())),
         decimal(pair.membershipAuthorityGeneration()),
         tuple,
         decimal(authority.issuanceFence().value()),
@@ -424,6 +703,29 @@ public class AccountMembershipAuthorityEventProducer {
         streamKey,
         checkpoints,
         List.of());
+  }
+
+  private void requireFreshUpstreamSequenceZeroBaseline(
+      UUID accountUuid, UUID tenantUuid, CompositeSnapshot snapshot) {
+    ScopeState tenant = only(snapshot.tenants(), "tenant");
+    if (!AuthorityScope.issuer(AccountServiceImpl.ACCOUNT_JWT_ISSUER)
+            .equals(snapshot.issuer().scope())
+        || !AuthorityScope.account(accountUuid).equals(snapshot.account().scope())
+        || !AuthorityScope.tenant(tenantUuid).equals(tenant.scope())
+        || !snapshot.memberships().isEmpty()
+        || !accountUuid.equals(snapshot.issuanceFence().accountId())
+        || !snapshot.issuanceFence().equals(snapshot.account().issuanceFence())) {
+      throw new IllegalStateException(
+          "Fresh Account authority snapshot does not cover its exact issuer/account/tenant scopes");
+    }
+    requireSequenceZeroCheckpoint(accountStreamKey(accountUuid), snapshot.account(), "account");
+    requireSequenceZeroCheckpoint(issuerStreamKey(), snapshot.issuer(), "issuer");
+    requireSequenceZeroCheckpoint(tenantStreamKey(tenantUuid), tenant, "tenant");
+  }
+
+  private CompositeSnapshot lockUpstreamAuthorityScopes(UUID accountUuid, UUID tenantUuid) {
+    return authorityGenerationRepository.readCompositeSnapshot(
+        AccountServiceImpl.ACCOUNT_JWT_ISSUER, accountUuid, List.of(tenantUuid), List.of());
   }
 
   /**
@@ -441,6 +743,7 @@ public class AccountMembershipAuthorityEventProducer {
       return;
     }
 
+    lockUpstreamAuthorityScopes(identity.accountUuid(), identity.tenantUuid());
     transitionReceiptRepository.assertNewMembershipTransitionCanStart(accountId, legacyTenantId);
     if (authorityOutboxRepository.readCheckpoint(membershipStreamKey(identity)).isPresent()) {
       throw new IllegalStateException(
@@ -1109,12 +1412,17 @@ public class AccountMembershipAuthorityEventProducer {
 
   private List<OutboxCheckpointEntry> readBaselineUpstreamCheckpoints(
       Identity identity, CompositeSnapshot snapshot) {
+    return readBaselineUpstreamCheckpoints(identity.accountUuid(), identity.tenantUuid(), snapshot);
+  }
+
+  private List<OutboxCheckpointEntry> readBaselineUpstreamCheckpoints(
+      UUID accountUuid, UUID tenantUuid, CompositeSnapshot snapshot) {
     ScopeState tenant = only(snapshot.tenants(), "tenant");
     if (!AuthorityScope.issuer(AccountServiceImpl.ACCOUNT_JWT_ISSUER)
             .equals(snapshot.issuer().scope())
-        || !AuthorityScope.account(identity.accountUuid()).equals(snapshot.account().scope())
-        || !AuthorityScope.tenant(identity.tenantUuid()).equals(tenant.scope())
-        || !AuthorityScope.membership(identity.accountUuid(), identity.tenantUuid())
+        || !AuthorityScope.account(accountUuid).equals(snapshot.account().scope())
+        || !AuthorityScope.tenant(tenantUuid).equals(tenant.scope())
+        || !AuthorityScope.membership(accountUuid, tenantUuid)
             .equals(only(snapshot.memberships(), "membership").scope())) {
       throw new IllegalStateException(
           "Account authority snapshot does not cover the exact issuer/account/tenant scopes");
@@ -1123,10 +1431,9 @@ public class AccountMembershipAuthorityEventProducer {
     return orderedCheckpoints(
         List.of(
             requireSequenceZeroCheckpoint(
-                accountStreamKey(identity.accountUuid()), snapshot.account(), "account"),
+                accountStreamKey(accountUuid), snapshot.account(), "account"),
             requireSequenceZeroCheckpoint(issuerStreamKey(), snapshot.issuer(), "issuer"),
-            requireSequenceZeroCheckpoint(
-                tenantStreamKey(identity.tenantUuid()), tenant, "tenant")));
+            requireSequenceZeroCheckpoint(tenantStreamKey(tenantUuid), tenant, "tenant")));
   }
 
   private OutboxCheckpointEntry requireSequenceZeroCheckpoint(
@@ -1199,11 +1506,15 @@ public class AccountMembershipAuthorityEventProducer {
   }
 
   private CompositeSnapshot readSnapshot(Identity identity) {
+    return readSnapshot(identity.accountUuid(), identity.tenantUuid());
+  }
+
+  private CompositeSnapshot readSnapshot(UUID accountUuid, UUID tenantUuid) {
     return authorityGenerationRepository.readCompositeSnapshot(
         AccountServiceImpl.ACCOUNT_JWT_ISSUER,
-        identity.accountUuid(),
-        List.of(identity.tenantUuid()),
-        List.of(identity.tenantUuid()));
+        accountUuid,
+        List.of(tenantUuid),
+        List.of(tenantUuid));
   }
 
   private void requireMatchingFence(
@@ -1253,6 +1564,31 @@ public class AccountMembershipAuthorityEventProducer {
         association);
   }
 
+  private void requirePersistedAccountIdentity(Account account, UUID expectedAccountUuid) {
+    if (account == null
+        || account.getId() == null
+        || account.getId() <= 0L
+        || !expectedAccountUuid.equals(account.getAccountUuid())
+        || account.getAccountUuidProvenance() == null
+        || !Objects.equals(account.getAccountUuidSourceNumericId(), account.getId())) {
+      throw new IllegalStateException(
+          "Fresh snapshot Account UUID does not exactly identify its persisted row");
+    }
+  }
+
+  private void requireCanonicalUuidInput(UUID value, String label) {
+    if (value == null || value.equals(new UUID(0L, 0L))) {
+      throw new IllegalArgumentException(label + " must be a non-nil canonical UUID");
+    }
+  }
+
+  private void requireActiveOwnerTransaction() {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new IllegalStateException(
+          "Fresh Account membership snapshot requires an active owner transaction");
+    }
+  }
+
   private VerifiedTenantProvenance verifiedProvenance(Identity identity) {
     ApprovedAssociation association = identity.association();
     return new VerifiedTenantProvenance(
@@ -1286,11 +1622,15 @@ public class AccountMembershipAuthorityEventProducer {
   }
 
   private String membershipStreamKey(Identity identity) {
+    return membershipStreamKey(identity.accountUuid(), identity.tenantUuid());
+  }
+
+  private String membershipStreamKey(UUID accountUuid, UUID tenantUuid) {
     return MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX
         + "membership/"
-        + identity.accountUuid()
+        + accountUuid
         + "/"
-        + identity.tenantUuid();
+        + tenantUuid;
   }
 
   private String issuerStreamKey() {

@@ -500,7 +500,7 @@ public class AccountBareLoginExchangeRepository {
           "Bare LOGIN exchange source connect operation is not committed");
     }
     if (requiredLong(source, "account_id") != identity.accountId()
-        || requiredLong(source, "tenant_id") != identity.tenantId()
+        || !requiredUuid(source, "tenant_id").equals(identity.tenantId())
         || !identity.connectScopeHash().equals(requiredText(source, "connect_scope_hash"))) {
       throw new IdentityConflictException(
           "Bare LOGIN exchange source connect operation identity does not match");
@@ -512,7 +512,7 @@ public class AccountBareLoginExchangeRepository {
         requiredUuid(row, "operation_id"),
         requiredUuid(row, "source_connect_operation_id"),
         requiredLong(row, "account_id"),
-        requiredLong(row, "tenant_id"),
+        requiredUuid(row, "tenant_id"),
         requiredText(row, "connect_scope_hash"),
         requiredText(row, "request_id"),
         requiredInt(row, "request_digest_version"),
@@ -541,7 +541,7 @@ public class AccountBareLoginExchangeRepository {
             .sourceConnectOperationId()
             .equals(requiredUuid(row, "source_connect_operation_id"))
         || requiredLong(row, "account_id") != identity.accountId()
-        || requiredLong(row, "tenant_id") != identity.tenantId()
+        || !requiredUuid(row, "tenant_id").equals(identity.tenantId())
         || !identity.connectScopeHash().equals(requiredText(row, "connect_scope_hash"))
         || !identity.requestId().equals(requiredText(row, "request_id"))
         || requiredInt(row, "request_digest_version") != REQUEST_DIGEST_VERSION
@@ -569,7 +569,7 @@ public class AccountBareLoginExchangeRepository {
         || !operation.operationId().toString().equals(binding.operationId())
         || !identity.requestId().equals(binding.requestId())
         || !Long.toString(identity.accountId()).equals(binding.accountId())
-        || !Long.toString(identity.tenantId()).equals(binding.tenantId())
+        || !identity.tenantId().toString().equals(binding.tenantId())
         || !identity.connectScopeId().equals(binding.connectScopeId())
         || !identity
             .sourceConnectOperationId()
@@ -658,7 +658,7 @@ public class AccountBareLoginExchangeRepository {
       AccountBareLoginExchangeOperation operation, AccountBareLoginExchangeIdentity identity) {
     if (!identity.sourceConnectOperationId().equals(operation.sourceConnectOperationId())
         || identity.accountId() != operation.accountId()
-        || identity.tenantId() != operation.tenantId()
+        || !identity.tenantId().equals(operation.tenantId())
         || !identity.connectScopeHash().equals(operation.connectScopeHash())
         || !identity.requestId().equals(operation.requestId())) {
       throw new IdentityConflictException(

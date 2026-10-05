@@ -12,6 +12,15 @@ service TenantIdentityService {
   // Owner-approved cross-service legacy association; Account is the sole caller.
   rpc ResolveLegacyAccountTenantAssociation(ResolveLegacyAccountTenantAssociationRequest)
       returns (ResolveLegacyAccountTenantAssociationResponse);
+  // Exact immutable readback of a newly created tenant operation for Account.
+  rpc ResolveFreshTenantCreation(ResolveFreshTenantCreationRequest)
+      returns (ResolveFreshTenantCreationResponse);
+  // Exact owner-local read of one persisted runtime tenant identity for Game Session.
+  rpc ResolveRuntimeTenantIdentity(ResolveRuntimeTenantIdentityRequest)
+      returns (ResolveRuntimeTenantIdentityResponse);
+  // Exact immutable authored-selector source for Game Session; not catalog enrollment.
+  rpc ResolveAuthoredWorldSource(ResolveAuthoredWorldSourceRequest)
+      returns (ResolveAuthoredWorldSourceResponse);
 }
 
 message ResolveLegacyGameTenantIdentityRequest {
@@ -45,4 +54,61 @@ message ResolveLegacyAccountTenantAssociationResponse {
   int32 operation_entry_count = 13;
   string manifest_signature = 14;
   int32 manifest_schema_version = 15;
+}
+
+message ResolveFreshTenantCreationRequest {
+  string creation_request_id = 1;
+  string expected_request_digest = 2;
+}
+
+message ResolveFreshTenantCreationResponse {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string creation_request_id = 3;
+  string operation_id = 4;
+  string request_digest = 5;
+  string canonical_tenant_id = 6;
+  int64 source_game_row_id = 7;
+  string source_game_tenant_key = 8;
+  string provenance_kind = 9;
+  string evidence_digest = 10;
+}
+
+message ResolveRuntimeTenantIdentityRequest {
+  string canonical_tenant_id = 1;
+  string request_id = 2;
+}
+
+message ResolveRuntimeTenantIdentityResponse {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string request_id = 3;
+  string canonical_tenant_id = 4;
+  int64 source_game_row_id = 5;
+  string source_game_tenant_key = 6;
+  string provenance_kind = 7;
+}
+
+message ResolveAuthoredWorldSourceRequest {
+  string request_id = 1;
+  string operation_id = 2;
+  string canonical_tenant_id = 3;
+  string world_slug = 4;
+}
+
+message ResolveAuthoredWorldSourceResponse {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string request_id = 3;
+  string registration_request_id = 4;
+  string operation_id = 5;
+  string request_digest = 6;
+  string canonical_tenant_id = 7;
+  string tenant_slug = 8;
+  string world_slug = 9;
+  string world_display_name = 10;
+  int64 source_game_row_id = 11;
+  string source_game_tenant_key = 12;
+  string provenance_kind = 13;
+  string evidence_digest = 14;
 }

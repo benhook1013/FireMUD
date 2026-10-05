@@ -30,13 +30,17 @@ class AccountMigrationVersionTest {
             "V37__verified_audit_projection_evidence.sql",
             "V37.1__account_bare_login_exchange_storage.sql",
             "V38__account_join_reconciliation.sql",
+            "V38.1__fresh_tenant_identity_associations.sql",
+            "V39__fresh_uuid_membership_pair_authority.sql",
+            "V39.1__migrate_empty_account_connect_storage_to_uuid.sql",
             "V40__account_membership_transition_receipts.sql",
             "V41__protect_account_membership_transition_receipts.sql")
         .doesNotContain(
             "V28__account_join_reconciliation.sql",
             "V28__account_membership_transition_receipts.sql",
             "V28.1__account_membership_transition_receipts.sql",
-            "V37__account_bare_login_exchange_storage.sql");
+            "V37__account_bare_login_exchange_storage.sql",
+            "V38__fresh_tenant_identity_associations.sql");
     assertThat(migrations.stream().map(AccountMigrationVersionTest::version).toList())
         .as("Flyway rejects two different migration descriptions with the same version")
         .doesNotHaveDuplicates();
@@ -48,6 +52,12 @@ class AccountMigrationVersionTest {
         .isLessThan(version("V37.1__account_bare_login_exchange_storage.sql"));
     assertThat(version("V37.1__account_bare_login_exchange_storage.sql"))
         .isLessThan(version("V38__account_join_reconciliation.sql"));
+    assertThat(version("V38__account_join_reconciliation.sql"))
+        .isLessThan(version("V38.1__fresh_tenant_identity_associations.sql"));
+    assertThat(version("V38.1__fresh_tenant_identity_associations.sql"))
+        .isLessThan(version("V39__fresh_uuid_membership_pair_authority.sql"));
+    assertThat(version("V39__fresh_uuid_membership_pair_authority.sql"))
+        .isLessThan(version("V39.1__migrate_empty_account_connect_storage_to_uuid.sql"));
     assertThat(version("V38__account_join_reconciliation.sql"))
         .isLessThan(MigrationVersion.fromVersion("39.1"));
     assertThat(version("V40__account_membership_transition_receipts.sql"))

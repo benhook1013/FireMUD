@@ -29,7 +29,7 @@ public record AccountCommittedConnectSource(
         || !operation.operationId().toString().equals(binding.operationId())
         || !operation.requestId().equals(binding.requestId())
         || !Long.toString(operation.accountId()).equals(binding.accountId())
-        || !Long.toString(operation.tenantId()).equals(binding.tenantId())
+        || !operation.tenantId().toString().equals(binding.tenantId())
         || !operation
             .connectScopeHash()
             .equals(AccountJoinDigest.tokenHash(binding.connectScopeId()))

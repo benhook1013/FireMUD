@@ -137,7 +137,7 @@ public class AccountConnectTokenIssuanceRepository {
             operation.operationId().toString(),
             identity.requestId(),
             Long.toString(identity.accountId()),
-            Long.toString(identity.tenantId()),
+            identity.tenantId().toString(),
             identity.connectScopeId(),
             null,
             operation.requestDigest(),
@@ -671,11 +671,11 @@ public class AccountConnectTokenIssuanceRepository {
   private static AccountConnectTokenIssuanceOperation toOperation(
       Record row, AccountConnectTokenIssuanceIdentity identity) {
     long accountId = requiredLong(row, "account_id");
-    long tenantId = requiredLong(row, "tenant_id");
+    UUID tenantId = requiredUuid(row, "tenant_id");
     String scopeHash = requiredText(row, "connect_scope_hash");
     String requestId = requiredText(row, "request_id");
     if (accountId != identity.accountId()
-        || tenantId != identity.tenantId()
+        || !tenantId.equals(identity.tenantId())
         || !scopeHash.equals(identity.connectScopeHash())
         || !requestId.equals(identity.requestId())) {
       throw new IllegalStateException("Connect-token issuance readback identity does not match");
@@ -713,7 +713,7 @@ public class AccountConnectTokenIssuanceRepository {
     if (!operation.operationId().equals(requiredUuid(row, "operation_id"))
         || !"CONNECT_TOKEN_ISSUANCE".equals(requiredText(row, "operation_kind"))
         || requiredLong(row, "account_id") != identity.accountId()
-        || requiredLong(row, "tenant_id") != identity.tenantId()
+        || !requiredUuid(row, "tenant_id").equals(identity.tenantId())
         || !identity.connectScopeHash().equals(requiredText(row, "connect_scope_hash"))
         || !identity.requestId().equals(requiredText(row, "request_id"))
         || requiredInt(row, "request_digest_version") != REQUEST_DIGEST_VERSION
@@ -741,7 +741,7 @@ public class AccountConnectTokenIssuanceRepository {
         || !operation.operationId().toString().equals(binding.operationId())
         || !identity.requestId().equals(binding.requestId())
         || !Long.toString(identity.accountId()).equals(binding.accountId())
-        || !Long.toString(identity.tenantId()).equals(binding.tenantId())
+        || !identity.tenantId().toString().equals(binding.tenantId())
         || !identity.connectScopeId().equals(binding.connectScopeId())
         || !MessageDigest.isEqual(digest, binding.requestDigest())) {
       throw new EvidenceMismatchException(
