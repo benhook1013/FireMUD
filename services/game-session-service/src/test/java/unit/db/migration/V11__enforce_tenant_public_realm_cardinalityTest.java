@@ -24,7 +24,7 @@ class V11__enforce_tenant_public_realm_cardinalityTest {
   private static final Pattern MIGRATION_FILE = Pattern.compile("^V([^_]+)__.*\\.sql$");
 
   @Test
-  void keepsAdmissionPointerMigrationsUniqueAndOrderedFromTheV7AuditThroughV12()
+  void keepsAdmissionPointerMigrationsUniqueAndOrderedFromTheV7AuditThroughV13()
       throws IOException, URISyntaxException {
     var auditMigrationUrl =
         getClass()
@@ -55,7 +55,9 @@ class V11__enforce_tenant_public_realm_cardinalityTest {
             "V10.1__game_instance_owner_account_uuid.sql",
             "V11__enforce_tenant_public_realm_cardinality.sql",
             "V11.1__game_instance_uuid_identity.sql",
-            "V12__index_gameplay_admission_pointer_event_tenant_lookup.sql");
+            "V12__index_gameplay_admission_pointer_event_tenant_lookup.sql",
+            "V12.1__canonical_realm_catalog.sql",
+            "V13__canonical_closed_admission_pointer.sql");
 
     String v7 = readMigration("V7__audit_gameplay_catalog_revision.sql");
     String normalizedV7 = normalizeSql(v7);

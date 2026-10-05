@@ -16,6 +16,7 @@ import java.util.UUID;
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
 import net.firedevops.firemud.accountservice.dto.AccountAuditDigest;
 import net.firedevops.firemud.accountservice.dto.AccountAuditEnvelope;
+import net.firedevops.firemud.accountservice.dto.AccountAuditTenantIdentity;
 import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -103,6 +104,33 @@ class AccountAuditDeliveryJobTest {
         AccountAuditDigest.ofPayload("{\"accountId\": 1}"));
   }
 
+  @Test
+  void canonicalUuidEnvelopeCanReachTerminalDeliveryWithoutNumericAlias() {
+    String payload = "{\"tenant\":\"canonical\"}";
+    AccountAuditEnvelope envelope =
+        new AccountAuditEnvelope(
+            UUID.randomUUID(),
+            "tenant",
+            AccountAuditTenantIdentity.canonicalTenantV2("33333333-3333-4333-8333-333333333333"),
+            "account-service",
+            "ACCOUNT_JOINED_PUBLIC_PRODUCTION",
+            Instant.parse("2026-10-01T00:00:00Z"),
+            1,
+            1,
+            AccountAuditDigest.ofPayload(payload),
+            payload);
+    when(outbox.pending(eq(50), Mockito.any(Instant.class))).thenReturn(List.of(envelope));
+    when(client.deliver(envelope))
+        .thenReturn(new LoggingAdminClient.AuditDeliveryResult("receipt-v2", "log-v2", false));
+
+    job.deliverPending();
+
+    verify(outbox).markDelivered(envelope.auditEventId(), "receipt-v2", "log-v2", false);
+    assertEquals(2, envelope.tenantIdentityVersion());
+    assertNull(envelope.tenantId());
+    assertEquals("33333333-3333-4333-8333-333333333333", envelope.tenantUuid().toString());
+  }
+
   private static AccountAuditEnvelope platformRegistration() {
     return platformRegistration(UUID.fromString("e9659715-e257-4f88-847e-700653e101d1"));
   }
@@ -112,7 +140,7 @@ class AccountAuditDeliveryJobTest {
     return new AccountAuditEnvelope(
         auditEventId,
         "platform",
-        null,
+        AccountAuditTenantIdentity.platformV1(),
         "account-service",
         "ACCOUNT_REGISTERED",
         Instant.parse("2026-09-24T00:00:00Z"),

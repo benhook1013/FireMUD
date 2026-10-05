@@ -47,6 +47,7 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
   private static final Set<String> MODERATION_POLICY_CALLERS =
       Set.of("game-session-service", "social-groups-service");
   private static final String ACCOUNT_SERVICE = "account-service";
+  private static final UUID NIL_UUID = new UUID(0L, 0L);
   private static final Map<String, Set<String>> ACCOUNT_AUDIT_CALLER_ALLOWLIST =
       Map.of(
           "CreateLogEvent", Set.of(ACCOUNT_SERVICE),
@@ -215,7 +216,6 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
           Status.PERMISSION_DENIED.withDescription(ex.getMessage()).asRuntimeException());
       return;
     }
-
     responseObserver.onError(
         Status.UNAVAILABLE
             .withDescription("Account audit ingress is unavailable")
@@ -264,7 +264,9 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
       ReadLogEventReceiptRequest request) {
     return toAuditRequest(
         request.getScope(),
+        request.getTenantIdentityVersion(),
         request.getTenantId(),
+        request.getTenantUuid(),
         request.getAuditEventId(),
         request.getProducerService(),
         request.getEventType(),
@@ -277,7 +279,9 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
 
   private static net.firedevops.firemud.loggingadmin.dto.CreateLogEventRequest toAuditRequest(
       net.firedevops.firemud.loggingadmin.v1.AccountAuditScope requestScope,
+      int tenantIdentityVersion,
       String tenantIdText,
+      String tenantUuidText,
       String auditEventId,
       String producerService,
       String eventType,
@@ -292,14 +296,27 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
           case ACCOUNT_AUDIT_SCOPE_TENANT -> AccountAuditScope.TENANT;
           default -> throw new IllegalArgumentException("scope must be platform or tenant");
         };
-    Long tenantId;
-    if (scope == AccountAuditScope.TENANT) {
-      tenantId = RequestIdValidation.requirePositiveLong(tenantIdText, "tenantId");
-    } else {
-      if (!tenantIdText.isEmpty()) {
+    Long tenantId = null;
+    UUID tenantUuid = null;
+    if (tenantIdentityVersion == 1) {
+      if (!tenantUuidText.isEmpty()) {
+        throw new IllegalArgumentException("tenantUuid must be absent for tenant identity v1");
+      }
+      if (scope == AccountAuditScope.TENANT) {
+        tenantId = parseCanonicalTenantId(tenantIdText);
+      } else if (!tenantIdText.isEmpty()) {
         throw new IllegalArgumentException("tenantId must be absent for platform scope");
       }
-      tenantId = null;
+    } else if (tenantIdentityVersion == 2) {
+      if (scope != AccountAuditScope.TENANT) {
+        throw new IllegalArgumentException("tenant identity v2 requires tenant scope");
+      }
+      if (!tenantIdText.isEmpty()) {
+        throw new IllegalArgumentException("tenantId must be absent for tenant identity v2");
+      }
+      tenantUuid = parseCanonicalTenantUuid(tenantUuidText);
+    } else {
+      throw new IllegalArgumentException("tenantIdentityVersion must be 1 or 2");
     }
     if (!ACCOUNT_SERVICE.equals(producerService)) {
       throw new IllegalArgumentException(
@@ -316,7 +333,9 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
     }
     return new net.firedevops.firemud.loggingadmin.dto.CreateLogEventRequest(
         scope,
+        tenantIdentityVersion,
         tenantId,
+        tenantUuid,
         auditEventId,
         ACCOUNT_SERVICE,
         eventType,
@@ -325,6 +344,34 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
         payload,
         payloadDigestVersion,
         payloadDigest);
+  }
+
+  private static Long parseCanonicalTenantId(String tenantIdText) {
+    if (tenantIdText == null || !tenantIdText.matches("[1-9][0-9]*")) {
+      throw new IllegalArgumentException("tenantId must be a canonical positive BIGINT decimal");
+    }
+    try {
+      return Long.parseLong(tenantIdText);
+    } catch (NumberFormatException ex) {
+      throw new IllegalArgumentException("tenantId must fit a positive BIGINT", ex);
+    }
+  }
+
+  private static UUID parseCanonicalTenantUuid(String tenantUuidText) {
+    if (tenantUuidText == null || tenantUuidText.isEmpty()) {
+      throw new IllegalArgumentException("tenantUuid is required for tenant identity v2");
+    }
+    UUID tenantUuid;
+    try {
+      tenantUuid = UUID.fromString(tenantUuidText);
+    } catch (IllegalArgumentException ex) {
+      throw new IllegalArgumentException(
+          "tenantUuid must be a canonical lowercase non-nil UUID", ex);
+    }
+    if (!tenantUuid.toString().equals(tenantUuidText) || NIL_UUID.equals(tenantUuid)) {
+      throw new IllegalArgumentException("tenantUuid must be a canonical lowercase non-nil UUID");
+    }
+    return tenantUuid;
   }
 
   static CreateLogEventResponse toCreateLogEventResponse(AccountAuditReceiptDto receipt) {
@@ -337,6 +384,8 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
         .setSchemaVersion(receipt.schemaVersion())
         .setPayloadDigestVersion(receipt.payloadDigestVersion())
         .setPayloadDigest(receipt.payloadDigest())
+        .setTenantIdentityVersion(receipt.tenantIdentityVersion())
+        .setTenantUuid(receipt.tenantUuid() == null ? "" : receipt.tenantUuid().toString())
         .setStatus(toProtoStatus(receipt.status()))
         .setOutcome(toProtoOutcome(receipt.outcome()))
         .setAuditProjectionVersion(1)
@@ -354,6 +403,8 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
         .setSchemaVersion(receipt.schemaVersion())
         .setPayloadDigestVersion(receipt.payloadDigestVersion())
         .setPayloadDigest(receipt.payloadDigest())
+        .setTenantIdentityVersion(receipt.tenantIdentityVersion())
+        .setTenantUuid(receipt.tenantUuid() == null ? "" : receipt.tenantUuid().toString())
         .setStatus(toProtoStatus(receipt.status()))
         .setOutcome(toProtoOutcome(receipt.outcome()))
         .setAuditProjectionVersion(1)

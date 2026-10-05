@@ -12,6 +12,10 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Supplier;
+import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
+import net.firedevops.firemud.accountservice.dto.AccountJoinDigest.EntitlementAvailabilityV2;
+import net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2;
 import net.firedevops.firemud.accountservice.dto.MembershipTransitionReceipt;
 import net.firedevops.firemud.accountservice.dto.MembershipTransitionReceiptDigest;
 import net.firedevops.firemud.accountservice.dto.RuntimeMembershipSnapshotDto;
@@ -1326,6 +1330,114 @@ public class AccountMembershipAuthorityEventProducer {
     return checkpoint;
   }
 
+  /**
+   * Publishes the first canonical UUID membership event from its committed Account sources.
+   *
+   * <p>The UUIDs and request ID select storage lookups only. A caller-supplied membership,
+   * provenance object, scope digest, or policy assertion cannot authorize publication. Account,
+   * tenant association, pending V2 operation/policy, membership, and role evidence are each read
+   * back from their owner stores after acquiring the Account-first transaction fence.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public Checkpoint publishCanonicalFirstJoinMembershipChange(
+      CanonicalJoinScopeV2 scope, String requestId, String callerBinding) {
+    requireWritableOwnerTransaction();
+    Objects.requireNonNull(scope, "canonical JOIN scope is required");
+    UUID accountUuid = scope.accountId();
+    UUID tenantUuid = scope.tenantId();
+    requireCanonicalUuidInput(accountUuid, "Account UUID");
+    requireCanonicalUuidInput(tenantUuid, "tenant UUID");
+    requirePositive(requestId, "canonical JOIN request ID");
+
+    Identity identity = resolveCanonicalIdentity(accountUuid, tenantUuid);
+    AccountTenantMembership membership =
+        membershipRepository
+            .findCanonicalMembershipForUpdate(accountUuid, tenantUuid)
+            .orElseThrow(
+                () -> new IllegalStateException("Canonical first-JOIN membership row is absent"));
+    requireCanonicalMembershipIdentity(identity, membership);
+    if (membership.getMembershipVersion() != 2L
+        || membership.getMembershipAuthorityGeneration() != 1L) {
+      throw new IllegalStateException(
+          "Canonical first JOIN must advance membership version one to two without advancing generation");
+    }
+
+    AccountJoinOperationRepository.CanonicalJoinOperationEvidence operation =
+        joinOperationRepository
+            .findCanonicalEvidenceByRequestId(requestId)
+            .orElseThrow(
+                () -> new IllegalStateException("Canonical first-JOIN V2 operation is absent"));
+    requireCanonicalFirstJoinOperation(identity, scope, requestId, callerBinding, operation);
+
+    RoleSnapshot roles =
+        roleSnapshotRepository
+            .findForCanonicalUpdate(
+                accountUuid,
+                tenantUuid,
+                identity.provenance(),
+                membership.getId(),
+                membership.getMembershipVersion())
+            .orElseThrow(
+                () -> new IllegalStateException("Canonical first-JOIN role snapshot is absent"));
+    requireCanonicalFirstJoinRoles(identity, membership, roles);
+
+    PairAuthority absenceBaseline =
+        pairAuthorityRepository
+            .readForUpdate(accountUuid, tenantUuid)
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "Canonical first JOIN has no committed never-joined pair baseline"));
+    if (!identity.provenance().equals(absenceBaseline.provenance())
+        || absenceBaseline.membershipExists()
+        || absenceBaseline.membershipVersion() != 1L
+        || absenceBaseline.membershipAuthorityGeneration() != 1L
+        || absenceBaseline.lastEventSequence() != 0L
+        || absenceBaseline.lastEventId() != null
+        || absenceBaseline.lastEventDigest() != null
+        || absenceBaseline.lastTransitionInvalidated()) {
+      throw new IllegalStateException(
+          "Canonical first JOIN differs from its exact positive absence baseline");
+    }
+
+    CompositeSnapshot snapshot = readSnapshot(identity);
+    ScopeState membershipState = only(snapshot.memberships(), "membership");
+    requireMatchingFence(snapshot, membershipState, accountUuid);
+    if (membershipState.generation() != 1L) {
+      throw new IllegalStateException(
+          "Canonical first-JOIN membership authority generation is not its initial value");
+    }
+    String streamKey = membershipStreamKey(identity);
+    if (authorityOutboxRepository.readCheckpoint(streamKey).isPresent()) {
+      throw new IllegalStateException(
+          "Canonical first JOIN cannot publish over retained membership-event history");
+    }
+
+    Checkpoint checkpoint =
+        appendAndReadBack(
+            identity, requestId, membership, () -> roles, snapshot, false, true, false);
+    PairAuthority committed =
+        pairAuthorityRepository.commitTransition(
+            absenceBaseline,
+            new PairTransition(
+                true,
+                checkpoint.outboxSequence(),
+                checkpoint.sourceEventId(),
+                checkpoint.sourceEventDigest(),
+                false));
+    if (checkpoint.outboxSequence() != 1L
+        || committed.membershipVersion() != 2L
+        || committed.membershipAuthorityGeneration() != 1L
+        || committed.lastEventSequence() != 1L
+        || !Objects.equals(committed.lastEventId(), checkpoint.sourceEventId())
+        || !Objects.equals(committed.lastEventDigest(), checkpoint.sourceEventDigest())
+        || committed.lastTransitionInvalidated()) {
+      throw new IllegalStateException(
+          "Canonical first-JOIN pair authority readback differs from its exact event");
+    }
+    return checkpoint;
+  }
+
   /** Compare-and-advances an inactive member's existing canonical generation before publication. */
   @Transactional(propagation = Propagation.MANDATORY)
   public Checkpoint publishReactivatedMembershipChange(
@@ -1514,6 +1626,26 @@ public class AccountMembershipAuthorityEventProducer {
       boolean callerBoundAuthorityInvalidated,
       boolean newMembership,
       boolean inactiveMembership) {
+    return appendAndReadBack(
+        identity,
+        requestId,
+        membership,
+        () -> requireRoleSnapshot(identity, membership, inactiveMembership),
+        snapshot,
+        callerBoundAuthorityInvalidated,
+        newMembership,
+        inactiveMembership);
+  }
+
+  private Checkpoint appendAndReadBack(
+      Identity identity,
+      String requestId,
+      AccountTenantMembership membership,
+      Supplier<RoleSnapshot> roleSnapshotSupplier,
+      CompositeSnapshot snapshot,
+      boolean callerBoundAuthorityInvalidated,
+      boolean newMembership,
+      boolean inactiveMembership) {
     requirePositive(requestId, "membership transition request ID");
     if (inactiveMembership) {
       requireInactiveMembership(membership);
@@ -1539,7 +1671,8 @@ public class AccountMembershipAuthorityEventProducer {
     ScopeState issuer = snapshot.issuer();
     ScopeState account = snapshot.account();
     ScopeState tenant = only(snapshot.tenants(), "tenant");
-    RoleSnapshot roles = requireRoleSnapshot(identity, membership, inactiveMembership);
+    RoleSnapshot roles = roleSnapshotSupplier.get();
+    requireRoleSnapshotIdentity(identity, membership, roles, inactiveMembership);
     String streamKey = membershipStreamKey(identity);
     String expectedEventId = eventIdForRequest(requestId);
     MembershipEvent[] candidate = new MembershipEvent[1];
@@ -1626,7 +1759,7 @@ public class AccountMembershipAuthorityEventProducer {
         || !"EXPLICIT_JOIN".equals(authorityProvenance)
         || roleSnapshot == null
         || roleSnapshot.accountId() != identity.accountId()
-        || roleSnapshot.tenantId() != identity.legacyTenantId()
+        || !Objects.equals(roleSnapshot.tenantId(), identity.legacyTenantId())
         || roleSnapshot.membershipId() != membershipId
         || roleSnapshot.snapshotVersion() != membershipVersion) {
       throw new IllegalStateException("Current Account membership and role evidence is incomplete");
@@ -2154,7 +2287,7 @@ public class AccountMembershipAuthorityEventProducer {
           "Account membership role snapshot is not canonical", exception);
     }
     if (snapshot.accountId() != identity.accountId()
-        || snapshot.tenantId() != identity.legacyTenantId()
+        || !Objects.equals(snapshot.tenantId(), identity.legacyTenantId())
         || snapshot.membershipId() != membership.getId()
         || snapshot.snapshotVersion() != membership.getMembershipVersion()
         || (!inactiveMembership && !exactRoles.contains("player"))) {
@@ -2219,12 +2352,182 @@ public class AccountMembershipAuthorityEventProducer {
       throw new IllegalStateException(
           "JOIN retained tenant has no exact approved UUID association");
     }
+    VerifiedTenantProvenance provenance =
+        new VerifiedTenantProvenance(
+            legacyTenantId,
+            TenantProvenanceKind.APPROVED_RETAINED,
+            association.operationId(),
+            association.manifestDigest());
     return new Identity(
         accountId,
         legacyTenantId,
         account.getAccountUuid(),
         association.canonicalTenantId(),
-        association);
+        provenance);
+  }
+
+  private Identity resolveCanonicalIdentity(UUID accountUuid, UUID tenantUuid) {
+    Account initialAccount =
+        accountRepository
+            .findByAccountUuid(accountUuid)
+            .orElseThrow(() -> new IllegalStateException("Canonical JOIN Account row is absent"));
+    requirePersistedAccountIdentity(initialAccount, accountUuid);
+    long accountId = initialAccount.getId();
+
+    // Serialize every first-JOIN publisher on the Account row before tenant/provenance reads.
+    joinOperationRepository.lockAccount(accountId);
+    Account fencedAccount =
+        accountRepository
+            .findByAccountUuid(accountUuid)
+            .orElseThrow(
+                () -> new IllegalStateException("Canonical JOIN Account row disappeared at fence"));
+    requirePersistedAccountIdentity(fencedAccount, accountUuid);
+    if (!Objects.equals(initialAccount.getId(), fencedAccount.getId())
+        || initialAccount.getAccountUuidProvenance() != fencedAccount.getAccountUuidProvenance()
+        || !Objects.equals(
+            initialAccount.getAccountUuidSourceNumericId(),
+            fencedAccount.getAccountUuidSourceNumericId())) {
+      throw new IllegalStateException("Canonical JOIN Account identity changed at its row fence");
+    }
+
+    VerifiedTenantProvenance provenance =
+        freshTenantIdentityAssociationRepository
+            .read(tenantUuid)
+            .map(
+                evidence -> {
+                  if (!tenantUuid.equals(evidence.canonicalTenantId())) {
+                    throw new IllegalStateException(
+                        "Fresh Game Design tenant association differs from its UUID scope");
+                  }
+                  return new VerifiedTenantProvenance(
+                      null,
+                      TenantProvenanceKind.FRESH_GAME_DESIGN,
+                      evidence.operationId(),
+                      evidence.evidenceDigest());
+                })
+            .orElseGet(
+                () -> {
+                  ApprovedAssociation association = tenantIdentityResolver.resolve(tenantUuid);
+                  if (association.legacyTenantId() <= 0L
+                      || !tenantUuid.equals(association.canonicalTenantId())) {
+                    throw new IllegalStateException(
+                        "Retained Account tenant association differs from its UUID scope");
+                  }
+                  return new VerifiedTenantProvenance(
+                      association.legacyTenantId(),
+                      TenantProvenanceKind.APPROVED_RETAINED,
+                      association.operationId(),
+                      association.manifestDigest());
+                });
+    return new Identity(
+        accountId, provenance.legacyTenantId(), accountUuid, tenantUuid, provenance);
+  }
+
+  private void requireCanonicalMembershipIdentity(
+      Identity identity, AccountTenantMembership membership) {
+    VerifiedTenantProvenance provenance = identity.provenance();
+    if (membership == null
+        || membership.getId() == null
+        || membership.getId() <= 0L
+        || membership.getAccount() == null) {
+      throw new IllegalStateException("Canonical JOIN membership row is incomplete");
+    }
+    requirePersistedAccountIdentity(membership.getAccount(), identity.accountUuid());
+    if (membership.getAccount().getId() != identity.accountId()
+        || !identity.tenantUuid().equals(membership.getTenantUuid())
+        || !Objects.equals(membership.getTenantId(), provenance.legacyTenantId())
+        || !provenance.kind().name().equals(membership.getTenantProvenanceKind())
+        || !Objects.equals(membership.getTenantSourceOperationId(), provenance.sourceOperationId())
+        || !Objects.equals(membership.getTenantProvenanceDigest(), provenance.digest())) {
+      throw new IllegalStateException(
+          "Canonical JOIN membership differs from its Account or tenant source association");
+    }
+    requireActiveMembership(membership);
+  }
+
+  private void requireCanonicalFirstJoinOperation(
+      Identity identity,
+      CanonicalJoinScopeV2 requestedScope,
+      String requestId,
+      String callerBinding,
+      AccountJoinOperationRepository.CanonicalJoinOperationEvidence operation) {
+    var scope = operation.scopeEvidence();
+    boolean exactScope =
+        scope.scopeTokenHash().equals(AccountJoinDigest.tokenHash(requestedScope.connectScopeId()))
+            && scope.privateAccountId() == identity.accountId()
+            && scope.targetClass().equals("PUBLIC_PRODUCTION")
+            && scope.accountUuid().equals(requestedScope.accountId())
+            && scope.tenantUuid().equals(requestedScope.tenantId())
+            && scope.realmId().equals(requestedScope.realmId())
+            && scope.tenantSlug().equals(requestedScope.tenantSlug())
+            && scope.worldSlug().equals(requestedScope.worldSlug())
+            && scope.realmSlug().equals(requestedScope.realmSlug())
+            && scope.playableStateNamespaceUuid().equals(requestedScope.playableStateNamespaceId())
+            && scope.playableStateScope().equals(requestedScope.playableStateScope())
+            && scope.gameInstanceUuid().equals(requestedScope.gameInstanceId())
+            && scope.catalogRevision() == requestedScope.catalogRevision()
+            && scope.pointerVersion() == requestedScope.pointerVersion()
+            && scope.evaluatedAt().equals(requestedScope.evaluatedAt())
+            && scope.connectScopeExpiresAt().equals(requestedScope.connectScopeExpiresAt())
+            && scope.scopeDigest().equals(AccountJoinDigest.scopeV2(requestedScope));
+    if (!exactScope
+        || callerBinding == null
+        || !callerBinding.equals(operation.callerBinding())
+        || !AccountJoinDigest.intentV2(requestId, requestedScope, callerBinding)
+            .equals(operation.intentDigest())) {
+      throw new IllegalStateException(
+          "Canonical JOIN request or scope differs from its exact pending V2 operation");
+    }
+    String expectedPolicyDigest =
+        AccountJoinDigest.requestV2(
+            requestedScope,
+            callerBinding,
+            EntitlementAvailabilityV2.AVAILABLE,
+            operation.allowPublicJoin(),
+            operation.entitlementVersion());
+    if (!requestId.equals(operation.requestId())
+        || operation.privateAccountId() != identity.accountId()
+        || operation.operationRepresentationVersion() != 2
+        || operation.intentDigestVersion() != 2
+        || operation.scopeDigestVersion() != 2
+        || !"PENDING".equals(operation.status())
+        || !"AVAILABLE".equals(operation.entitlementAuthorityAvailability())
+        || !Boolean.TRUE.equals(operation.allowPublicJoin())
+        || operation.entitlementVersion() == null
+        || operation.entitlementVersion() <= 0L
+        || !Integer.valueOf(2).equals(operation.requestDigestVersion())
+        || !expectedPolicyDigest.equals(operation.requestDigest())
+        || operation.lastAttemptFailureCode() != null
+        || !"AVAILABLE".equals(operation.lastAttemptAuthorityAvailability())
+        || !"PUBLIC_PRODUCTION".equals(scope.targetClass())
+        || !identity.accountUuid().equals(scope.accountUuid())
+        || !identity.tenantUuid().equals(scope.tenantUuid())
+        || !identity.provenance().equals(scope.tenantProvenance())) {
+      throw new IllegalStateException(
+          "Canonical JOIN operation, target, or available public-join policy differs from its Account sources");
+    }
+  }
+
+  private void requireCanonicalFirstJoinRoles(
+      Identity identity, AccountTenantMembership membership, RoleSnapshot roles) {
+    List<String> exactRoles;
+    try {
+      exactRoles =
+          AccountTenantMembershipRoleSnapshotRepository.requireCanonicalRoleSet(roles.roles());
+    } catch (RuntimeException exception) {
+      throw new IllegalStateException("Canonical JOIN role snapshot is not canonical", exception);
+    }
+    if (roles.accountId() != identity.accountId()
+        || !Objects.equals(roles.tenantId(), identity.provenance().legacyTenantId())
+        || roles.membershipId() != membership.getId()
+        || roles.snapshotVersion() != membership.getMembershipVersion()
+        || !identity.accountUuid().equals(roles.accountUuid())
+        || !identity.tenantUuid().equals(roles.tenantUuid())
+        || !identity.provenance().equals(roles.tenantProvenance())
+        || !exactRoles.contains("player")) {
+      throw new IllegalStateException(
+          "Canonical JOIN role snapshot differs from its exact membership or tenant association");
+    }
   }
 
   private void requirePersistedAccountIdentity(Account account, UUID expectedAccountUuid) {
@@ -2252,13 +2555,42 @@ public class AccountMembershipAuthorityEventProducer {
     }
   }
 
+  private void requireWritableOwnerTransaction() {
+    requireActiveOwnerTransaction();
+    if (TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
+      throw new IllegalStateException(
+          "Canonical Account membership event publication requires a writable owner transaction");
+    }
+  }
+
   private VerifiedTenantProvenance verifiedProvenance(Identity identity) {
-    ApprovedAssociation association = identity.association();
-    return new VerifiedTenantProvenance(
-        identity.legacyTenantId(),
-        TenantProvenanceKind.APPROVED_RETAINED,
-        association.operationId(),
-        association.manifestDigest());
+    return identity.provenance();
+  }
+
+  private void requireRoleSnapshotIdentity(
+      Identity identity,
+      AccountTenantMembership membership,
+      RoleSnapshot roles,
+      boolean inactiveMembership) {
+    List<String> exactRoles;
+    try {
+      exactRoles =
+          AccountTenantMembershipRoleSnapshotRepository.requireCanonicalRoleSet(roles.roles());
+    } catch (RuntimeException exception) {
+      throw new IllegalStateException(
+          "Account membership role snapshot is not canonical", exception);
+    }
+    if (roles.accountId() != identity.accountId()
+        || roles.membershipId() != membership.getId()
+        || roles.snapshotVersion() != membership.getMembershipVersion()
+        || (identity.legacyTenantId() == null
+            ? (!identity.accountUuid().equals(roles.accountUuid())
+                || !identity.tenantUuid().equals(roles.tenantUuid())
+                || !identity.provenance().equals(roles.tenantProvenance()))
+            : !Objects.equals(identity.legacyTenantId(), roles.tenantId()))
+        || (!inactiveMembership && !exactRoles.contains("player"))) {
+      throw new IllegalStateException("Account role snapshot differs from its exact membership");
+    }
   }
 
   private void requireMembershipIdentity(
@@ -2701,10 +3033,10 @@ public class AccountMembershipAuthorityEventProducer {
 
   private record Identity(
       long accountId,
-      long legacyTenantId,
+      Long legacyTenantId,
       UUID accountUuid,
       UUID tenantUuid,
-      ApprovedAssociation association) {}
+      VerifiedTenantProvenance provenance) {}
 
   private enum MembershipSnapshotReadMode {
     ENROLL_IF_NEEDED,

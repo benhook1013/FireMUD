@@ -16,9 +16,11 @@ import net.firedevops.firemud.gamesession.jooq.tables.records.GameplayAdmissionP
 import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionCatalogPolicy;
 import org.jooq.DSLContext;
+import org.jooq.Field;
 import org.jooq.Record;
 import org.jooq.SQLDialect;
 import org.jooq.exception.IntegrityConstraintViolationException;
+import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,6 +29,10 @@ import org.springframework.transaction.annotation.Transactional;
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class GameplayAdmissionPointerRepository {
+  private static final Field<Integer> REPRESENTATION_VERSION =
+      DSL.field(DSL.name("representation_version"), Integer.class);
+  private static final int RETAINED_REPRESENTATION_VERSION = 1;
+
   private final DSLContext dsl;
 
   public GameplayAdmissionPointerRepository(DSLContext dsl) {
@@ -34,7 +40,9 @@ public class GameplayAdmissionPointerRepository {
   }
 
   public long count() {
-    return dsl.fetchCount(GAMEPLAY_ADMISSION_POINTER);
+    return dsl.fetchCount(
+        dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER)
+            .where(REPRESENTATION_VERSION.eq(RETAINED_REPRESENTATION_VERSION)));
   }
 
   public Optional<GameplayAdmissionPointer> findByTenantIdAndWorldSlugAndRealmSlug(
@@ -45,7 +53,8 @@ public class GameplayAdmissionPointerRepository {
                 .TENANT_ID
                 .eq(tenantId)
                 .and(GAMEPLAY_ADMISSION_POINTER.WORLD_SLUG.eq(worldSlug))
-                .and(GAMEPLAY_ADMISSION_POINTER.REALM_SLUG.eq(realmSlug)))
+                .and(GAMEPLAY_ADMISSION_POINTER.REALM_SLUG.eq(realmSlug))
+                .and(REPRESENTATION_VERSION.eq(RETAINED_REPRESENTATION_VERSION)))
         .fetchOptional(this::toEntity);
   }
 
@@ -74,7 +83,8 @@ public class GameplayAdmissionPointerRepository {
             GAMEPLAY_ADMISSION_POINTER
                 .TENANT_ID
                 .eq(tenantId)
-                .and(GAMEPLAY_ADMISSION_POINTER.GAME_INSTANCE_ID.eq(gameInstanceId)))
+                .and(GAMEPLAY_ADMISSION_POINTER.GAME_INSTANCE_ID.eq(gameInstanceId))
+                .and(REPRESENTATION_VERSION.eq(RETAINED_REPRESENTATION_VERSION)))
         .orderBy(
             GAMEPLAY_ADMISSION_POINTER.WORLD_SLUG.asc(),
             GAMEPLAY_ADMISSION_POINTER.REALM_SLUG.asc())
@@ -83,6 +93,7 @@ public class GameplayAdmissionPointerRepository {
 
   public List<GameplayAdmissionPointer> findAllByOrderByWorldSlugAscRealmSlugAsc() {
     return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER)
+        .where(REPRESENTATION_VERSION.eq(RETAINED_REPRESENTATION_VERSION))
         .orderBy(
             GAMEPLAY_ADMISSION_POINTER.WORLD_SLUG.asc(),
             GAMEPLAY_ADMISSION_POINTER.REALM_SLUG.asc())
@@ -239,7 +250,8 @@ public class GameplayAdmissionPointerRepository {
                       .ID
                       .eq(entity.getId())
                       .and(GAMEPLAY_ADMISSION_POINTER.POINTER_VERSION.eq(expectedPointerVersion))
-                      .and(GAMEPLAY_ADMISSION_POINTER.CATALOG_REVISION.eq(expectedCatalogRevision)))
+                      .and(GAMEPLAY_ADMISSION_POINTER.CATALOG_REVISION.eq(expectedCatalogRevision))
+                      .and(REPRESENTATION_VERSION.eq(RETAINED_REPRESENTATION_VERSION)))
               .execute();
     } catch (IntegrityConstraintViolationException ex) {
       throw new IllegalStateException(
@@ -269,18 +281,28 @@ public class GameplayAdmissionPointerRepository {
   }
 
   public void deleteAllInBatch() {
-    dsl.deleteFrom(GAMEPLAY_ADMISSION_POINTER).execute();
+    dsl.deleteFrom(GAMEPLAY_ADMISSION_POINTER)
+        .where(REPRESENTATION_VERSION.eq(RETAINED_REPRESENTATION_VERSION))
+        .execute();
   }
 
   private Optional<GameplayAdmissionPointer> findById(Long id) {
     return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER)
-        .where(GAMEPLAY_ADMISSION_POINTER.ID.eq(id))
+        .where(
+            GAMEPLAY_ADMISSION_POINTER
+                .ID
+                .eq(id)
+                .and(REPRESENTATION_VERSION.eq(RETAINED_REPRESENTATION_VERSION)))
         .fetchOptional(this::toEntity);
   }
 
   private Optional<GameplayAdmissionPointer> findByIdForUpdate(Long id) {
     return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER)
-        .where(GAMEPLAY_ADMISSION_POINTER.ID.eq(id))
+        .where(
+            GAMEPLAY_ADMISSION_POINTER
+                .ID
+                .eq(id)
+                .and(REPRESENTATION_VERSION.eq(RETAINED_REPRESENTATION_VERSION)))
         .forUpdate()
         .fetchOptional(this::toEntity);
   }
@@ -292,7 +314,8 @@ public class GameplayAdmissionPointerRepository {
                 GAMEPLAY_ADMISSION_POINTER
                     .TENANT_ID
                     .eq(tenantId)
-                    .and(GAMEPLAY_ADMISSION_POINTER.GAME_INSTANCE_ID.eq(gameInstanceId))));
+                    .and(GAMEPLAY_ADMISSION_POINTER.GAME_INSTANCE_ID.eq(gameInstanceId))
+                    .and(REPRESENTATION_VERSION.eq(RETAINED_REPRESENTATION_VERSION))));
   }
 
   private long countByRuntimeTargetExcludingId(
@@ -304,7 +327,8 @@ public class GameplayAdmissionPointerRepository {
                     .TENANT_ID
                     .eq(tenantId)
                     .and(GAMEPLAY_ADMISSION_POINTER.GAME_INSTANCE_ID.eq(gameInstanceId))
-                    .and(GAMEPLAY_ADMISSION_POINTER.ID.ne(excludedId))));
+                    .and(GAMEPLAY_ADMISSION_POINTER.ID.ne(excludedId))
+                    .and(REPRESENTATION_VERSION.eq(RETAINED_REPRESENTATION_VERSION))));
   }
 
   private void lockRuntimeTargets(

@@ -50,6 +50,9 @@ message CreateLogEventRequest {
   bytes payload = 11;
   int32 payload_digest_version = 12;
   string payload_digest = 13;
+  // Version 1 carries the retained numeric tenant identity; version 2 carries tenant_uuid.
+  int32 tenant_identity_version = 14;
+  string tenant_uuid = 15;
 }
 
 message CreateLogEventResponse {
@@ -67,6 +70,8 @@ message CreateLogEventResponse {
   // Version 1 attests an exact receipt linked atomically to a distinct audit log projection.
   // Zero or unsupported versions cannot verify delivery or historical producer provenance.
   int32 audit_projection_version = 12;
+  int32 tenant_identity_version = 13;
+  string tenant_uuid = 14;
 }
 
 message ReadLogEventReceiptRequest {
@@ -80,6 +85,8 @@ message ReadLogEventReceiptRequest {
   bytes payload = 8;
   int32 payload_digest_version = 9;
   string payload_digest = 10;
+  int32 tenant_identity_version = 11;
+  string tenant_uuid = 12;
 }
 
 message ReadLogEventReceiptResponse {
@@ -97,6 +104,8 @@ message ReadLogEventReceiptResponse {
   // Same receipt/projection attestation as CreateLogEventResponse; never payload replay proof.
   // Zero or unsupported versions cannot verify delivery or historical producer provenance.
   int32 audit_projection_version = 12;
+  int32 tenant_identity_version = 13;
+  string tenant_uuid = 14;
 }
 
 enum AccountAuditScope {

@@ -24,6 +24,7 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.accountservice.dto.AccountAuditDigest;
 import net.firedevops.firemud.accountservice.dto.AccountAuditEnvelope;
+import net.firedevops.firemud.accountservice.dto.AccountAuditTenantIdentity;
 import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
 import net.firedevops.firemud.accountservice.service.AccountAuditDeliveryJob;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
@@ -54,10 +55,19 @@ class LoggingAdminClientTest {
   void acceptsOnlyExactCommittedReceiptWithCurrentProjectionVersion() throws Exception {
     var stub = mockStub();
     when(stub.createLogEvent(any())).thenReturn(response(1));
-    LoggingAdminClient.AuditDeliveryResult result = newClient(stub).deliver(validEnvelope());
+    AccountAuditEnvelope envelope = validEnvelope();
+    LoggingAdminClient.AuditDeliveryResult result = newClient(stub).deliver(envelope);
     assertThat(result.receiptId()).isEqualTo("receipt-1");
     assertThat(result.logEventId()).isEqualTo("projection-1");
     assertThat(result.minimized()).isFalse();
+
+    ArgumentCaptor<CreateLogEventRequest> requestCaptor =
+        ArgumentCaptor.forClass(CreateLogEventRequest.class);
+    verify(stub).createLogEvent(requestCaptor.capture());
+    assertThat(requestCaptor.getValue().getTenantIdentityVersion())
+        .isEqualTo(envelope.tenantIdentityVersion());
+    assertThat(requestCaptor.getValue().getTenantId()).isEqualTo(Long.toString(TENANT_ID));
+    assertThat(requestCaptor.getValue().getTenantUuid()).isEmpty();
   }
 
   @ParameterizedTest
@@ -191,8 +201,7 @@ class LoggingAdminClientTest {
     var stub = mockStub();
     LoggingAdminClient client = newClient(stub);
 
-    assertThrows(
-        IllegalArgumentException.class, () -> client.deliver(envelopeWithScope(null, null)));
+    assertThrows(NullPointerException.class, () -> client.deliver(envelopeWithScope(null, null)));
     assertThrows(
         IllegalArgumentException.class, () -> client.deliver(envelopeWithScope("other", null)));
     assertThrows(
@@ -209,7 +218,7 @@ class LoggingAdminClientTest {
     return new AccountAuditEnvelope(
         UUID.fromString("8a5f6238-f0d9-4992-80cb-e7f447e0f913"),
         "tenant",
-        TENANT_ID,
+        AccountAuditTenantIdentity.retainedTenantV1(TENANT_ID),
         "account-service",
         "TEST_EVENT",
         Instant.parse("2026-01-01T00:00:00Z"),
@@ -223,7 +232,9 @@ class LoggingAdminClientTest {
     AccountAuditEnvelope envelope = validEnvelope();
     return CreateLogEventResponse.newBuilder()
         .setScope(AccountAuditScope.ACCOUNT_AUDIT_SCOPE_TENANT)
-        .setTenantId(Long.toString(TENANT_ID))
+        .setTenantId(envelope.tenantId() == null ? "" : Long.toString(envelope.tenantId()))
+        .setTenantIdentityVersion(envelope.tenantIdentityVersion())
+        .setTenantUuid(envelope.tenantUuid() == null ? "" : envelope.tenantUuid().toString())
         .setAuditEventId(envelope.auditEventId().toString())
         .setReceiptId("receipt-1")
         .setLogEventId("projection-1")
@@ -238,10 +249,22 @@ class LoggingAdminClientTest {
 
   private static AccountAuditEnvelope envelopeWithScope(String scope, Long tenantId) {
     AccountAuditEnvelope envelope = validEnvelope();
+    AccountAuditTenantIdentity identity;
+    if ("tenant".equals(scope)) {
+      identity =
+          tenantId == null
+              ? new AccountAuditTenantIdentity(AccountAuditTenantIdentity.VERSION_1, null, null)
+              : AccountAuditTenantIdentity.retainedTenantV1(tenantId);
+    } else {
+      identity =
+          tenantId == null
+              ? AccountAuditTenantIdentity.platformV1()
+              : AccountAuditTenantIdentity.retainedTenantV1(tenantId);
+    }
     return new AccountAuditEnvelope(
         envelope.auditEventId(),
         scope,
-        tenantId,
+        identity,
         envelope.producerService(),
         envelope.eventType(),
         envelope.occurredAt(),
@@ -260,6 +283,8 @@ class LoggingAdminClientTest {
 
     assertEquals(AccountAuditScope.ACCOUNT_AUDIT_SCOPE_TENANT, request.getScope());
     assertEquals(Long.toString(TENANT_ID), request.getTenantId());
+    assertEquals(AccountAuditTenantIdentity.VERSION_1, request.getTenantIdentityVersion());
+    assertEquals("", request.getTenantUuid());
     assertEquals(4, UUID.fromString(request.getAuditEventId()).version());
     assertEquals("account-service", request.getProducerService());
     assertEquals("PAYMENT_TXN", request.getEventType());

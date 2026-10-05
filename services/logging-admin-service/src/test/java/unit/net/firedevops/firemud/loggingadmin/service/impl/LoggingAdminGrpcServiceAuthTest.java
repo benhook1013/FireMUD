@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -164,6 +165,8 @@ class LoggingAdminGrpcServiceAuthTest {
     AccountAuditReceiptDto receipt =
         new AccountAuditReceiptDto(
             AccountAuditScope.PLATFORM,
+            1,
+            null,
             null,
             "d2719d4f-3b2a-4f64-a994-0f9ccdfdd2b3",
             "receipt-1",
@@ -189,6 +192,69 @@ class LoggingAdminGrpcServiceAuthTest {
         net.firedevops.firemud.loggingadmin.v1.AccountAuditReceiptOutcome
             .ACCOUNT_AUDIT_RECEIPT_OUTCOME_ACCEPTED,
         response.getOutcome());
+  }
+
+  @Test
+  void offlineFixtureMapsCanonicalUuidReceiptToTypedCreateResponse() {
+    UUID tenantUuid = UUID.fromString("c7a1b80e-a5fa-4fc9-9fc4-cab3cbe44b21");
+    String digest = digest("{\"accountId\":42}".getBytes(StandardCharsets.UTF_8));
+    AccountAuditReceiptDto receipt =
+        new AccountAuditReceiptDto(
+            AccountAuditScope.TENANT,
+            2,
+            null,
+            tenantUuid,
+            "d2719d4f-3b2a-4f64-a994-0f9ccdfdd2b3",
+            "receipt-uuid",
+            78L,
+            1,
+            1,
+            digest,
+            AccountAuditReceiptStatus.COMMITTED,
+            AccountAuditReceiptOutcome.ACCEPTED);
+
+    CreateLogEventResponse response = LoggingAdminGrpcService.toCreateLogEventResponse(receipt);
+
+    assertEquals(2, response.getTenantIdentityVersion());
+    assertEquals(tenantUuid.toString(), response.getTenantUuid());
+    assertEquals("", response.getTenantId());
+    assertEquals(1, response.getAuditProjectionVersion());
+    assertEquals("receipt-uuid", response.getReceiptId());
+    assertEquals("78", response.getLogEventId());
+  }
+
+  @Test
+  void receiptReadRejectsNoncanonicalOrMixedTenantIdentityBeforeServiceCall() {
+    LogEventService logEventService = Mockito.mock(LogEventService.class);
+    LoggingAdminGrpcService service = newService(logEventService);
+    ReadLogEventReceiptRequest noncanonicalNumeric =
+        validReadRequest().toBuilder()
+            .setScope(
+                net.firedevops.firemud.loggingadmin.v1.AccountAuditScope.ACCOUNT_AUDIT_SCOPE_TENANT)
+            .setTenantId("042")
+            .build();
+    ReadLogEventReceiptRequest mixedUuid =
+        validReadRequest().toBuilder()
+            .setScope(
+                net.firedevops.firemud.loggingadmin.v1.AccountAuditScope.ACCOUNT_AUDIT_SCOPE_TENANT)
+            .setTenantId("42")
+            .setTenantUuid("c7a1b80e-a5fa-4fc9-9fc4-cab3cbe44b21")
+            .build();
+    AtomicReference<ReadLogEventReceiptResponse> response = new AtomicReference<>();
+    AtomicReference<Throwable> error = new AtomicReference<>();
+
+    invokeWithPeer(
+        "account-service",
+        () -> service.readLogEventReceipt(noncanonicalNumeric, responseObserver(response, error)));
+    assertEquals(Status.Code.INVALID_ARGUMENT, Status.fromThrowable(error.get()).getCode());
+    assertNull(response.get());
+
+    error.set(null);
+    invokeWithPeer(
+        "account-service",
+        () -> service.readLogEventReceipt(mixedUuid, responseObserver(response, error)));
+    assertEquals(Status.Code.INVALID_ARGUMENT, Status.fromThrowable(error.get()).getCode());
+    verifyNoInteractions(logEventService);
   }
 
   @Test
@@ -261,6 +327,8 @@ class LoggingAdminGrpcServiceAuthTest {
         .thenReturn(
             new AccountAuditReceiptDto(
                 AccountAuditScope.PLATFORM,
+                1,
+                null,
                 null,
                 "d2719d4f-3b2a-4f64-a994-0f9ccdfdd2b3",
                 "receipt-1",
@@ -291,6 +359,59 @@ class LoggingAdminGrpcServiceAuthTest {
   }
 
   @Test
+  void accountMtlsPeerCanReadCanonicalUuidReceiptAndEchoesTypedIdentity() {
+    UUID tenantUuid = UUID.fromString("c7a1b80e-a5fa-4fc9-9fc4-cab3cbe44b21");
+    String digest = digest("{\"accountId\":42}".getBytes(StandardCharsets.UTF_8));
+    LogEventService logEventService = Mockito.mock(LogEventService.class);
+    when(logEventService.readLogEventReceipt(any()))
+        .thenReturn(
+            new AccountAuditReceiptDto(
+                AccountAuditScope.TENANT,
+                2,
+                null,
+                tenantUuid,
+                "d2719d4f-3b2a-4f64-a994-0f9ccdfdd2b3",
+                "receipt-uuid",
+                78L,
+                1,
+                1,
+                digest,
+                AccountAuditReceiptStatus.COMMITTED,
+                AccountAuditReceiptOutcome.DUPLICATE));
+    ReadLogEventReceiptRequest request =
+        validReadRequest().toBuilder()
+            .setScope(
+                net.firedevops.firemud.loggingadmin.v1.AccountAuditScope.ACCOUNT_AUDIT_SCOPE_TENANT)
+            .setTenantId("")
+            .setTenantIdentityVersion(2)
+            .setTenantUuid(tenantUuid.toString())
+            .build();
+    LoggingAdminGrpcService service = newService(logEventService);
+    AtomicReference<ReadLogEventReceiptResponse> response = new AtomicReference<>();
+    AtomicReference<Throwable> error = new AtomicReference<>();
+
+    invokeWithPeer(
+        "account-service",
+        () -> service.readLogEventReceipt(request, responseObserver(response, error)));
+
+    assertNull(error.get());
+    assertNotNull(response.get());
+    assertEquals(2, response.get().getTenantIdentityVersion());
+    assertEquals(tenantUuid.toString(), response.get().getTenantUuid());
+    assertEquals("", response.get().getTenantId());
+    assertEquals("receipt-uuid", response.get().getReceiptId());
+    assertEquals("78", response.get().getLogEventId());
+    assertEquals(1, response.get().getAuditProjectionVersion());
+    verify(logEventService)
+        .readLogEventReceipt(
+            argThat(
+                dto ->
+                    dto.tenantIdentityVersion() == 2
+                        && dto.tenantId() == null
+                        && tenantUuid.equals(dto.tenantUuid())));
+  }
+
+  @Test
   void accountMtlsPeerCanReadMinimizedReceiptThroughActualService() {
     AccountAuditReceiptRepository repository = Mockito.mock(AccountAuditReceiptRepository.class);
     ReadLogEventReceiptRequest wireRequest = validReadRequest().toBuilder().clearPayload().build();
@@ -300,6 +421,8 @@ class LoggingAdminGrpcServiceAuthTest {
     net.firedevops.firemud.loggingadmin.dto.CreateLogEventRequest serviceRequest =
         new net.firedevops.firemud.loggingadmin.dto.CreateLogEventRequest(
             AccountAuditScope.PLATFORM,
+            wireRequest.getTenantIdentityVersion(),
+            null,
             null,
             wireRequest.getAuditEventId(),
             wireRequest.getProducerService(),
@@ -316,6 +439,8 @@ class LoggingAdminGrpcServiceAuthTest {
             77L,
             receiptId,
             "platform",
+            1,
+            null,
             null,
             serviceRequest.auditEventId(),
             serviceRequest.producerService(),
@@ -328,7 +453,7 @@ class LoggingAdminGrpcServiceAuthTest {
             null,
             "MINIMIZED",
             "NON_REPLAYABLE");
-    when(repository.findByIdentity(serviceRequest, 0L)).thenReturn(Optional.of(receipt));
+    when(repository.findByIdentity(serviceRequest)).thenReturn(Optional.of(receipt));
     LoggingAdminGrpcService service = newService(new LogEventServiceImpl(repository));
     AtomicReference<ReadLogEventReceiptResponse> response = new AtomicReference<>();
     AtomicReference<Throwable> error = new AtomicReference<>();
@@ -349,7 +474,7 @@ class LoggingAdminGrpcServiceAuthTest {
         net.firedevops.firemud.loggingadmin.v1.AccountAuditReceiptOutcome
             .ACCOUNT_AUDIT_RECEIPT_OUTCOME_NON_REPLAYABLE,
         response.get().getOutcome());
-    verify(repository).findByIdentity(serviceRequest, 0L);
+    verify(repository).findByIdentity(serviceRequest);
   }
 
   @Test
@@ -976,6 +1101,7 @@ class LoggingAdminGrpcServiceAuthTest {
     return CreateLogEventRequest.newBuilder()
         .setScope(
             net.firedevops.firemud.loggingadmin.v1.AccountAuditScope.ACCOUNT_AUDIT_SCOPE_PLATFORM)
+        .setTenantIdentityVersion(1)
         .setAuditEventId("d2719d4f-3b2a-4f64-a994-0f9ccdfdd2b3")
         .setProducerService("account-service")
         .setEventType("ACCOUNT_REGISTERED")
@@ -991,6 +1117,7 @@ class LoggingAdminGrpcServiceAuthTest {
     CreateLogEventRequest create = validCreateRequest();
     return ReadLogEventReceiptRequest.newBuilder()
         .setScope(create.getScope())
+        .setTenantIdentityVersion(create.getTenantIdentityVersion())
         .setAuditEventId(create.getAuditEventId())
         .setProducerService(create.getProducerService())
         .setEventType(create.getEventType())

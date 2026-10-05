@@ -100,8 +100,6 @@ class AccountRepositoryIntegrationTest {
         new TransactionTemplate(new DataSourceTransactionManager(dataSource));
     DSLContext transactionAwareDsl =
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
-    AccountJoinOperationRepository joinOperations =
-        new AccountJoinOperationRepository(transactionAwareDsl);
     LegacyTenantSourceEvidence legacyTenantSourceEvidence =
         new LegacyTenantSourceEvidence(transactionAwareDsl);
     AccountAuthorityGenerationRepository authorityGenerationRepository =
@@ -115,14 +113,30 @@ class AccountRepositoryIntegrationTest {
     AccountTenantIdentityResolver tenantIdentityResolver =
         new AccountTenantIdentityResolver(
             approvedTenantAssociations, legacyTenantSourceEvidence, "account-service");
+    FreshTenantIdentityAssociationRepository freshTenantIdentityRepository =
+        new FreshTenantIdentityAssociationRepository(transactionAwareDsl, "account-service");
+    AccountRepository accountRepository = new AccountRepository(transactionAwareDsl);
+    AccountConnectScopeRepository connectScopes =
+        new AccountConnectScopeRepository(
+            transactionAwareDsl,
+            accountRepository,
+            tenantIdentityResolver,
+            freshTenantIdentityRepository);
+    AccountJoinOperationRepository joinOperations =
+        new AccountJoinOperationRepository(transactionAwareDsl, connectScopes);
     AccountTenantMembershipRepository memberships =
         new AccountTenantMembershipRepository(
             transactionAwareDsl,
-            new AccountRepository(transactionAwareDsl),
+            accountRepository,
             tenantIdentityResolver,
-            new FreshTenantIdentityAssociationRepository(transactionAwareDsl, "account-service"));
+            freshTenantIdentityRepository);
     AccountAuditOutboxRepository outbox = new AccountAuditOutboxRepository(transactionAwareDsl);
-    AccountConnectScopeRepository scopes = new AccountConnectScopeRepository(transactionAwareDsl);
+    AccountConnectScopeRepository scopes =
+        new AccountConnectScopeRepository(
+            transactionAwareDsl,
+            accountRepository,
+            tenantIdentityResolver,
+            freshTenantIdentityRepository);
     long accountId =
         Objects.requireNonNull(
             jdbc.queryForObject(
@@ -443,8 +457,9 @@ class AccountRepositoryIntegrationTest {
           transactionJdbc.update(
               "INSERT INTO account_audit_outbox "
                   + "(audit_event_id, scope, producer_service, event_type, occurred_at, "
-                  + "schema_version, payload_digest_version, payload_digest, payload, delivery_status) "
-                  + "VALUES (?, 'platform', 'account-service', 'ACCOUNT_REGISTERED', ?, 1, 1, ?, '{}', 'PENDING')",
+                  + "tenant_identity_version, tenant_uuid, schema_version, payload_digest_version, "
+                  + "payload_digest, payload, delivery_status) "
+                  + "VALUES (?, 'platform', 'account-service', 'ACCOUNT_REGISTERED', ?, 1, NULL, 1, 1, ?, '{}', 'PENDING')",
               defaultedEventId,
               LocalDateTime.ofInstant(beforeDefaultInsert, ZoneOffset.UTC),
               AccountAuditDigest.ofPayload("{}"));
@@ -584,7 +599,20 @@ class AccountRepositoryIntegrationTest {
                 "scope-uuid",
                 "scope-uuid@example.com",
                 "hash"));
-    AccountConnectScopeRepository scopes = new AccountConnectScopeRepository(dsl);
+    LegacyTenantSourceEvidence tenantSourceEvidence = new LegacyTenantSourceEvidence(dsl);
+    AccountAuthorityGenerationRepository authorityGenerations =
+        new AccountAuthorityGenerationRepository(dsl);
+    ApprovedLegacyTenantAssociationRepository approvedTenantAssociations =
+        new ApprovedLegacyTenantAssociationRepository(
+            dsl, tenantSourceEvidence, "account-service", authorityGenerations);
+    AccountTenantIdentityResolver retainedTenantIdentities =
+        new AccountTenantIdentityResolver(
+            approvedTenantAssociations, tenantSourceEvidence, "account-service");
+    FreshTenantIdentityAssociationRepository freshTenantIdentities =
+        new FreshTenantIdentityAssociationRepository(dsl, "account-service");
+    AccountConnectScopeRepository scopes =
+        new AccountConnectScopeRepository(
+            dsl, repository, retainedTenantIdentities, freshTenantIdentities);
     VerifiedJoinScope scope = joinScope(accountId);
 
     scopes.insert(scope);
@@ -604,23 +632,34 @@ class AccountRepositoryIntegrationTest {
   @Test
   void expiredConnectScopeCleanupPreservesEveryReferencedStatusAndMalformedEvidence() {
     JdbcTemplate jdbc = new JdbcTemplate(dataSource);
-    AccountConnectScopeRepository scopes = new AccountConnectScopeRepository(dsl);
-    AccountJoinOperationRepository joinOperations = new AccountJoinOperationRepository(dsl);
-    LegacyTenantSourceEvidence sourceEvidence = new LegacyTenantSourceEvidence(dsl);
+    DSLContext transactionAwareDsl =
+        DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+    LegacyTenantSourceEvidence sourceEvidence = new LegacyTenantSourceEvidence(transactionAwareDsl);
     AccountAuthorityGenerationRepository authorityGenerations =
-        new AccountAuthorityGenerationRepository(dsl);
+        new AccountAuthorityGenerationRepository(transactionAwareDsl);
     ApprovedLegacyTenantAssociationRepository approvedTenantAssociations =
         new ApprovedLegacyTenantAssociationRepository(
-            dsl, sourceEvidence, "account-service", authorityGenerations);
+            transactionAwareDsl, sourceEvidence, "account-service", authorityGenerations);
     AccountTenantIdentityResolver tenantIdentityResolver =
         new AccountTenantIdentityResolver(
             approvedTenantAssociations, sourceEvidence, "account-service");
+    FreshTenantIdentityAssociationRepository freshTenantIdentityRepository =
+        new FreshTenantIdentityAssociationRepository(transactionAwareDsl, "account-service");
+    AccountRepository accountRepository = new AccountRepository(transactionAwareDsl);
+    AccountConnectScopeRepository scopes =
+        new AccountConnectScopeRepository(
+            transactionAwareDsl,
+            accountRepository,
+            tenantIdentityResolver,
+            freshTenantIdentityRepository);
+    AccountJoinOperationRepository joinOperations =
+        new AccountJoinOperationRepository(transactionAwareDsl, scopes);
     AccountTenantMembershipRepository memberships =
         new AccountTenantMembershipRepository(
-            dsl,
-            new AccountRepository(dsl),
+            transactionAwareDsl,
+            accountRepository,
             tenantIdentityResolver,
-            new FreshTenantIdentityAssociationRepository(dsl, "account-service"));
+            freshTenantIdentityRepository);
     long accountId =
         Objects.requireNonNull(
             jdbc.queryForObject(
@@ -1357,7 +1396,10 @@ class AccountRepositoryIntegrationTest {
                 + ".account_tenant_membership m WHERE account_id = ?",
             secondAccountId);
     String pendingJoinProjection =
-        "(to_jsonb(j) - 'reconciliation_attempt_count' - 'last_reconciliation_attempt_at' "
+        "(to_jsonb(j) - 'operation_representation_version' - 'scope_digest_version' "
+            + "- 'target_class' - 'account_uuid' - 'tenant_uuid' - 'tenant_slug' "
+            + "- 'playable_state_namespace_uuid' - 'game_instance_uuid' "
+            + "- 'reconciliation_attempt_count' - 'last_reconciliation_attempt_at' "
             + "- 'last_reconciliation_attempt_reason' - 'next_reconciliation_attempt_at')::text";
     String pendingJoinBefore =
         jsonRow(
@@ -1367,21 +1409,87 @@ class AccountRepositoryIntegrationTest {
                 + schema
                 + ".account_join_operations j WHERE request_id = ?",
             pendingJoinRequestId);
+    String connectScopeProjection =
+        "(to_jsonb(s) - 'scope_digest_version' - 'account_uuid' - 'tenant_uuid' "
+            + "- 'tenant_slug' - 'playable_state_namespace_uuid' - 'game_instance_uuid' "
+            + "- 'tenant_provenance_kind' - 'tenant_provenance_legacy_tenant_id' "
+            + "- 'tenant_source_operation_id' - 'tenant_provenance_digest')::text";
     String connectScopeBefore =
         jsonRow(
-            "SELECT to_jsonb(s)::text FROM "
+            "SELECT "
+                + connectScopeProjection
+                + " FROM "
                 + schema
                 + ".account_connect_scope_records s WHERE scope_token_hash = ?",
             scopeTokenHash);
-    String outboxProjection = "(to_jsonb(o) - 'receiver_audit_projection_version')::text";
     String outboxBefore =
         jsonRow(
-            "SELECT "
-                + outboxProjection
-                + " FROM "
+            "SELECT to_jsonb(o)::text FROM "
                 + schema
                 + ".account_audit_outbox o WHERE audit_event_id = ?",
             auditEventId);
+
+    Flyway.configure()
+        .dataSource(dataSource)
+        .locations(MIGRATION_LOCATION)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .target("47")
+        .load()
+        .migrate();
+
+    long secondMembershipId =
+        Objects.requireNonNull(
+                (Number)
+                    dsl.fetchValue(
+                        "SELECT id FROM "
+                            + schema
+                            + ".account_tenant_membership WHERE account_id = ? AND tenant_id = 42",
+                        secondAccountId))
+            .longValue();
+    String receiptStreamKey =
+        "account:membership-transition-receipt:v1:membership/" + secondAccountId + "/42";
+    String receiptRequestId = "retained-v28-membership-transition";
+    UUID receiptId = UUID.fromString("92b9c1a4-2840-4c48-9622-782b9aa83a07");
+    String receiptPayload = "retained membership transition receipt";
+    String receiptDigest = AccountAuditDigest.ofPayload(receiptPayload);
+    dsl.execute(
+        "INSERT INTO "
+            + schema
+            + ".account_membership_transition_receipt_stream_heads "
+            + "(account_id, tenant_id, receipt_stream_key, last_receipt_sequence) "
+            + "VALUES (?, 42, ?, 1)",
+        secondAccountId,
+        receiptStreamKey);
+    dsl.execute(
+        "INSERT INTO "
+            + schema
+            + ".account_membership_transition_receipts "
+            + "(receipt_stream_key, receipt_sequence, account_id, tenant_id, evidence_status, "
+            + "transition_type, request_id, membership_id, membership_lifecycle_state, "
+            + "gameplay_admission_allowed, membership_version, membership_authority_generation, "
+            + "authority_provenance, receipt_id, receipt_digest) "
+            + "VALUES (?, 1, ?, 42, 'PROVISIONAL_TRANSITION_RECEIPT', 'MEMBERSHIP_JOINED', ?, ?, "
+            + "'ACTIVE', TRUE, 2, 3, 'EXPLICIT_JOIN', ?, ?)",
+        receiptStreamKey,
+        secondAccountId,
+        receiptRequestId,
+        secondMembershipId,
+        receiptId,
+        receiptDigest);
+    String receiptStreamHeadBefore =
+        jsonRow(
+            "SELECT to_jsonb(h)::text FROM "
+                + schema
+                + ".account_membership_transition_receipt_stream_heads h "
+                + "WHERE account_id = ? AND tenant_id = 42",
+            secondAccountId);
+    String membershipTransitionReceiptBefore =
+        jsonRow(
+            "SELECT to_jsonb(r)::text FROM "
+                + schema
+                + ".account_membership_transition_receipts r WHERE receipt_id = ?",
+            receiptId);
 
     Flyway.configure()
         .dataSource(dataSource)
@@ -1455,6 +1563,26 @@ class AccountRepositoryIntegrationTest {
                     + ".account_join_operations j WHERE request_id = ?",
                 pendingJoinRequestId))
         .isEqualTo(pendingJoinBefore);
+    Record retainedJoinRepresentation =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT operation_representation_version, scope_digest_version, target_class, "
+                    + "account_uuid, tenant_uuid, tenant_slug, playable_state_namespace_uuid, "
+                    + "game_instance_uuid FROM "
+                    + schema
+                    + ".account_join_operations WHERE request_id = ?",
+                pendingJoinRequestId),
+            "Retained JOIN representation defaults must be readable");
+    assertThat(retainedJoinRepresentation.get("operation_representation_version", Integer.class))
+        .isEqualTo(1);
+    assertThat(retainedJoinRepresentation.get("scope_digest_version", Integer.class)).isEqualTo(1);
+    assertThat(retainedJoinRepresentation.get("target_class", String.class)).isNull();
+    assertThat(retainedJoinRepresentation.get("account_uuid", UUID.class)).isNull();
+    assertThat(retainedJoinRepresentation.get("tenant_uuid", UUID.class)).isNull();
+    assertThat(retainedJoinRepresentation.get("tenant_slug", String.class)).isNull();
+    assertThat(retainedJoinRepresentation.get("playable_state_namespace_uuid", UUID.class))
+        .isNull();
+    assertThat(retainedJoinRepresentation.get("game_instance_uuid", UUID.class)).isNull();
     assertThat(
             dsl.resultQuery(
                     "SELECT COUNT(*) FROM "
@@ -1469,20 +1597,104 @@ class AccountRepositoryIntegrationTest {
         .isEqualTo(1L);
     assertThat(
             jsonRow(
-                "SELECT to_jsonb(s)::text FROM "
+                "SELECT "
+                    + connectScopeProjection
+                    + " FROM "
                     + schema
                     + ".account_connect_scope_records s WHERE scope_token_hash = ?",
                 scopeTokenHash))
         .isEqualTo(connectScopeBefore);
+    Record retainedScopeIdentity =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT scope_digest_version, tenant_id, tenant_uuid, account_uuid, tenant_slug, "
+                    + "playable_state_namespace_uuid, game_instance_uuid, "
+                    + "tenant_provenance_kind, tenant_provenance_legacy_tenant_id, "
+                    + "tenant_source_operation_id, tenant_provenance_digest FROM "
+                    + schema
+                    + ".account_connect_scope_records WHERE scope_token_hash = ?",
+                scopeTokenHash));
+    assertThat(retainedScopeIdentity.get("scope_digest_version", Integer.class)).isEqualTo(1);
+    assertThat(retainedScopeIdentity.get("tenant_id", Long.class)).isEqualTo(42L);
+    for (String canonicalScopeColumn :
+        List.of(
+            "tenant_uuid",
+            "account_uuid",
+            "tenant_slug",
+            "playable_state_namespace_uuid",
+            "game_instance_uuid",
+            "tenant_provenance_kind",
+            "tenant_source_operation_id",
+            "tenant_provenance_digest")) {
+      assertThat(retainedScopeIdentity.get(canonicalScopeColumn)).isNull();
+    }
+    assertThat(retainedScopeIdentity.get("tenant_provenance_legacy_tenant_id")).isNull();
     assertThat(
             jsonRow(
-                "SELECT "
-                    + outboxProjection
-                    + " FROM "
+                "SELECT (to_jsonb(h) - 'receipt_head_id' - 'account_uuid' - 'tenant_uuid' "
+                    + "- 'tenant_provenance_kind' - 'tenant_source_operation_id' "
+                    + "- 'tenant_provenance_digest')::text FROM "
+                    + schema
+                    + ".account_membership_transition_receipt_stream_heads h "
+                    + "WHERE account_id = ? AND tenant_id = 42",
+                secondAccountId))
+        .isEqualTo(receiptStreamHeadBefore);
+    assertThat(
+            jsonRow(
+                "SELECT (to_jsonb(r) - 'receipt_head_id' - 'receipt_version' - 'account_uuid' "
+                    + "- 'tenant_uuid' - 'tenant_provenance_kind' - 'tenant_source_operation_id' "
+                    + "- 'tenant_provenance_digest')::text FROM "
+                    + schema
+                    + ".account_membership_transition_receipts r WHERE receipt_id = ?",
+                receiptId))
+        .isEqualTo(membershipTransitionReceiptBefore);
+    Record retainedReceiptHeadIdentity =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT receipt_head_id, account_uuid, tenant_uuid, tenant_provenance_kind, "
+                    + "tenant_source_operation_id, tenant_provenance_digest FROM "
+                    + schema
+                    + ".account_membership_transition_receipt_stream_heads "
+                    + "WHERE account_id = ? AND tenant_id = 42",
+                secondAccountId));
+    Long retainedReceiptHeadId = retainedReceiptHeadIdentity.get("receipt_head_id", Long.class);
+    assertThat(retainedReceiptHeadId).isNotNull().isPositive();
+    Record retainedReceiptIdentity =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT receipt_head_id, receipt_version, account_uuid, tenant_uuid, "
+                    + "tenant_provenance_kind, tenant_source_operation_id, tenant_provenance_digest "
+                    + "FROM "
+                    + schema
+                    + ".account_membership_transition_receipts WHERE receipt_id = ?",
+                receiptId));
+    assertThat(retainedReceiptIdentity.get("receipt_head_id", Long.class))
+        .isEqualTo(retainedReceiptHeadId);
+    assertThat(retainedReceiptIdentity.get("receipt_version", Short.class)).isEqualTo((short) 1);
+    for (Record retainedIdentity : List.of(retainedReceiptHeadIdentity, retainedReceiptIdentity)) {
+      assertThat(retainedIdentity.get("account_uuid", UUID.class)).isNull();
+      assertThat(retainedIdentity.get("tenant_uuid", UUID.class)).isNull();
+      assertThat(retainedIdentity.get("tenant_provenance_kind", String.class)).isNull();
+      assertThat(retainedIdentity.get("tenant_source_operation_id", UUID.class)).isNull();
+      assertThat(retainedIdentity.get("tenant_provenance_digest", String.class)).isNull();
+    }
+    assertThat(
+            jsonRow(
+                "SELECT (to_jsonb(o) - 'receiver_audit_projection_version' "
+                    + "- 'tenant_identity_version' - 'tenant_uuid')::text FROM "
                     + schema
                     + ".account_audit_outbox o WHERE audit_event_id = ?",
                 auditEventId))
         .isEqualTo(outboxBefore);
+    Record retainedAuditIdentity =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT tenant_identity_version, tenant_uuid FROM "
+                    + schema
+                    + ".account_audit_outbox WHERE audit_event_id = ?",
+                auditEventId));
+    assertThat(retainedAuditIdentity.get("tenant_identity_version", Integer.class)).isEqualTo(1);
+    assertThat(retainedAuditIdentity.get("tenant_uuid", UUID.class)).isNull();
     assertThat(
             dsl.resultQuery(
                     "SELECT COUNT(*) FROM "
