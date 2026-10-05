@@ -71,7 +71,7 @@ Entity Management must also expose a read-only design-time synchronization surfa
 
 - `GetDraftDesignDigest(GetDraftDesignDigestRequest)` uses request shape `{tenantId, scope: oneof {versionId, scriptPatchVersion}}`. Entity Management supports `versionId` scope only and returns `UNSUPPORTED_SCOPE` otherwise.
 - Response returns `{tenantId, scope, appliedCommitId, contentDigest, digestSchemaVersion}` as described in [`world-editing-tools.md`](../game-design-service/world-editing-tools.md).
-- Current drift: the digest handler has no owner/method authorization or exact Game Design publication binding beyond shared bearer parsing. The target workload, tenant/scope/request/workflow/digest context and denial proof are canonical in [Game Design Version Control](../game-design-service/version-control.md#owner-to-owner-digest-authorization-and-tenant-identity).
+- Current implementation: the exact `GetDraftDesignDigest` method is JWT-exempt only for its mTLS-authenticated owner-to-owner call; the handler applies `PublicationReadGuard` to the caller, tenant, scope, and publication binding before returning digest evidence. The target workload, tenant/scope/request/workflow/digest context and denial contract remain canonical in [Game Design Version Control](../game-design-service/version-control.md#owner-to-owner-digest-authorization-and-tenant-identity). Live served-certificate and consumer-convergence proof is still required.
 
 ## Digest Input Manifest
 
@@ -80,8 +80,9 @@ Entity Management is a required publish-gate participant and must maintain a sta
 Implementation Notes:
 
 - The current implementation hashes the version-scoped entity-definition rows for the requested `(tenantId, versionId)` and returns synthetic `appliedCommitId = "version:<versionId>"` until the later applied-revision ledger lands.
-- Current version-scoped digest inputs include `items`, `npcs`, and `crafting_recipes`; later entity-template families must join this same `(tenantId, versionId)` digest contract when introduced.
-- The current item projection omits `equipmentSlotGroupKey`, although runtime equipment admission consumes that authored value when checking an item against an equipment slot definition. A change to the slot-group constraint can therefore leave the Entity participant digest unchanged. The target manifest includes the normalized optional field and bumps `digestSchemaVersion` (from `1` to `2`); proof must show cross-version slot-group changes alter the digest and are caught by the publish gate.
+- The producer fails closed when persisted required equipment slot or body-layout keys are null, blank, or not already in trim-plus-uppercase canonical form; runtime definition lookups use exact stored keys, so normalizing malformed stored definition keys for the digest could attest different semantics. This producer check does not clean up retained rows, and no retained-row cleanup is implemented or proven.
+- Current version-scoped digest inputs include `items`, `npcs`, `crafting_recipes`, `equipment_slot_definitions`, and `body_layout_slot_definitions`; later entity-template families must join this same `(tenantId, versionId)` digest contract when introduced.
+- The current item projection includes optional `equipmentSlot` and `equipmentSlotGroupKey`, normalized like runtime equipment admission (null/blank to empty; otherwise trim and uppercase), and optional `effectPayloadJson`, canonicalized as parsed JSON with recursively stable object-key ordering (null/blank to empty; malformed nonblank JSON fails closed). Equipment-slot definitions contribute normalized slot and group keys plus display name; body-layout membership contributes normalized layout and slot keys. These definition projections follow the relation-specific canonical ordering below and exclude database row IDs and optimistic version counters. It reports `digestSchemaVersion=2`. Focused producer proof covers normalized slot and slot-group equivalents, definition-side slot/group/layout changes, row-order and optimistic-version equivalence, distinct effect payloads, malformed payload rejection, and tenant/version-scoped reads; Game Design's publish gate accepts Entity v2 and rejects v1 or unsupported evidence. Previously recorded v1 evidence still requires affected-scope replay or recomputation, re-recording, and readback before publish; this code change does not perform a live-data migration.
 
 - Included objects:
   - version-scoped entity-template tables such as item, NPC, equipment, loot-table, and balance-curve definitions keyed by `(tenantId, versionId)`;
@@ -91,9 +92,10 @@ Implementation Notes:
   - audit/history/provenance tables and non-semantic timestamps;
   - applied-revision ledgers when those rows do not affect entity semantics.
 - Canonicalization rules:
-  - serialize included relations in stable table order, then primary-key order;
+  - serialize included relations in lexicographic table-name order;
+  - order ordinary relation rows by stable cross-service identifiers where applicable, otherwise by primary key; for schema-v2 `equipment_slot_definitions`, order by normalized `slot_key`, then `display_name` (null to empty), then normalized `slot_group_key`; for `body_layout_slot_definitions`, order by normalized `body_layout_key`, then normalized `slot_key`;
   - include only semantic fields plus stable identifiers referenced cross-service;
-  - normalize encoded structured fields before hashing.
+  - normalize encoded structured fields before hashing; for `effectPayloadJson`, parse nonblank JSON and serialize nested objects with stable lexicographic key ordering, failing closed on malformed nonblank JSON.
 - `digestSchemaVersion` must increment whenever included objects, semantic field selection, or serialization semantics change. For this manifest, once `v2` is deployed, `v1` is unsupported. The schema bump invalidates previously recorded participant evidence for the affected scope: publish/reconciliation must not compare a new-schema digest with a recorded `v1` digest, and Entity must reject a requested or reported unsupported version until the compatible canonicalization is deployed. The migration must explicitly replay or recompute each affected `(tenantId, versionId)` digest, re-record its `appliedCommitId`, digest, and schema version, and provide readback proof before the publish gate accepts the new version; it must not silently reinterpret or migrate old hashes in place.
 
 Publish gating must fail closed if Entity Management cannot attest a digest consistent with this manifest.

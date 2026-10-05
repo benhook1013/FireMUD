@@ -73,6 +73,8 @@ firemud:
     grpc:
       public-methods:
         - entity_management.v1.EntityManagementService/Ping
+        # JWT is not authority for this read: its handler requires an exact mTLS workload peer.
+        - entity_management.v1.EntityManagementService/GetDraftDesignDigest
   grpc:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}
