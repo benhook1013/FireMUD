@@ -281,6 +281,44 @@ class FireControllerWebTest(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIsNone(web.private_route("/public/jobs/job-1", store))
 
+    def test_private_worker_history_lists_all_statuses_without_private_briefs(self):
+        class Jobs:
+            def __init__(self):
+                self.list_calls = []
+
+            def list(self, *, worker):
+                self.list_calls.append(worker)
+                return [
+                    {"id": "current-job", "name": "current", "worker": worker,
+                     "title": "Current assignment", "status": "active", "primary": True,
+                     "summary": "Current summary", "brief": PRIVATE_SENTINEL},
+                    {"id": "parked-job", "name": "parked", "worker": worker,
+                     "title": "Parked assignment", "status": "parked", "primary": False,
+                     "summary": "Parked summary", "brief": PRIVATE_SENTINEL},
+                    {"id": "completed-job", "name": "completed", "worker": worker,
+                     "title": "Completed CI propagation", "status": "completed", "primary": False,
+                     "summary": "Completed summary", "brief": PRIVATE_SENTINEL},
+                ]
+
+        jobs = Jobs()
+        status, headers, body = web.private_route(
+            "/workers/Build%20%26%20Tools/jobs", jobs,
+        )
+        text = body.decode()
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["Cache-Control"], "no-store")
+        self.assertEqual(jobs.list_calls, ["Build & Tools"])
+        self.assertLess(text.index("Current assignment"), text.index("Parked assignment"))
+        self.assertLess(text.index("Parked assignment"), text.index("Completed CI propagation"))
+        self.assertIn('<span class="job-state">completed</span>', text)
+        self.assertIn('href="/jobs/completed-job"', text)
+        self.assertIn('href="/jobs/completed-job/history"', text)
+        self.assertNotIn(PRIVATE_SENTINEL, text)
+        self.assertEqual(
+            web.private_route("/workers/Build%20%26%20Tools/jobs?offset=1", jobs)[0], 400,
+        )
+        self.assertIsNone(web.private_route("/public/workers/Build%20%26%20Tools/jobs", jobs))
+
     def test_workstream_and_inbox_routes_are_private_and_bounded(self):
         class Workstreams:
             def __init__(self):
