@@ -51,6 +51,7 @@ public final class AuthoredWorldVersionStateService {
     return AuthoredWorldVersionStateEvidence.create(
         request,
         result.sourceEvidence(),
+        result.canonicalVersionId(),
         toProtoState(result.versionState()),
         result.versionStateEpoch());
   }

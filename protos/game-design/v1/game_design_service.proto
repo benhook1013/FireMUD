@@ -39,6 +39,8 @@ service GameDesignService {
   rpc ResolveLaunchDescriptor(ResolveLaunchDescriptorRequest)
       returns (ResolveLaunchDescriptorResponse);
   rpc GetLaunchDescriptor(GetLaunchDescriptorRequest) returns (GetLaunchDescriptorResponse);
+  rpc GetCompleteLaunchBinding(GetLaunchDescriptorRequest)
+      returns (GetCompleteLaunchBindingResponse);
   rpc CreateTemplateRemapSet(CreateTemplateRemapSetRequest)
       returns (CreateTemplateRemapSetResponse);
   rpc ApproveTemplateRemapSet(ApproveTemplateRemapSetRequest)
@@ -354,6 +356,7 @@ message AuthoredWorldVersionStateEvidence {
   VersionLifecycleState version_state = 10;
   int64 version_state_epoch = 11;
   string evidence_digest = 12;
+  string canonical_version_id = 13;
 }
 
 // Complete immutable registration receipt, without another RPC's transient read request ID.
@@ -418,6 +421,13 @@ message GetLaunchDescriptorResponse {
   string request_id = 1;
   LaunchDescriptor launch_descriptor = 2;
   shared.v1.ErrorDetail error = 3;
+}
+
+message GetCompleteLaunchBindingResponse {
+  string request_id = 1;
+  LaunchDescriptor launch_descriptor = 2;
+  AuthoredWorldReleaseAttestationEvidence release_attestation = 3;
+  shared.v1.ErrorDetail error = 4;
 }
 
 message CreateTemplateRemapSetRequest {
@@ -616,6 +626,31 @@ message AuthoredWorldLaunchDescriptorEvidence {
   string published_release_bundle_ref = 21;
   optional string remap_set_id = 22;
   string result_digest = 23;
+}
+
+// Separate closed evidence: never extends or reinterprets descriptor/v1.
+message AuthoredWorldReleaseAttestationEvidence {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string descriptor_result_digest = 3;
+  string canonical_tenant_id = 4;
+  string canonical_version_id = 5;
+  string world_slug = 6;
+  string authored_world_source_operation_id = 7;
+  string authored_world_source_evidence_digest = 8;
+  string launch_descriptor_id = 9;
+  string published_release_bundle_ref = 10;
+  int64 version_state_epoch = 11;
+  string publish_workflow_id = 12;
+  string commit_id = 13;
+  repeated ParticipantDigest participant_digests = 14;
+  string manifest_hash = 15;
+  int32 manifest_schema_version = 16;
+  repeated string required_manifest_asset_keys = 17;
+  repeated PublishedArtifactDigest artifact_digests = 18;
+  repeated string command_definitions = 19;
+  string generation_config_revision = 20;
+  string evidence_digest = 21;
 }
 
 message TemplateRemapSet {

@@ -15,4 +15,12 @@ public interface LaunchDescriptorService {
       String controlPlaneRequestId,
       String expectedRequestDigest,
       String expectedResultDigest);
+
+  ResolvedLaunchDescriptorDto getLaunchDescriptorInOwnerSnapshot(
+      UUID readRequestId,
+      UUID canonicalTenantId,
+      String worldSlug,
+      String controlPlaneRequestId,
+      String expectedRequestDigest,
+      String expectedResultDigest);
 }

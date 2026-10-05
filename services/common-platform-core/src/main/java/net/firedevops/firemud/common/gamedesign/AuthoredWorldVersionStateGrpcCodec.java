@@ -86,6 +86,7 @@ public final class AuthoredWorldVersionStateGrpcCodec {
                 .setSourceOperationId(request.sourceOperationId().toString())
                 .setExpectedSourceEvidenceDigest(request.expectedSourceEvidenceDigest())
                 .setVersionId(request.versionId())
+                .setCanonicalVersionId(evidence.canonicalVersionId().toString())
                 .setSourceEvidence(sourceReceipt)
                 .setVersionState(evidence.versionState())
                 .setVersionStateEpoch(evidence.versionStateEpoch())
@@ -154,6 +155,7 @@ public final class AuthoredWorldVersionStateGrpcCodec {
           new net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateEvidence(
               echoedRequest,
               sourceEvidence,
+              parseCanonicalNonNilUuid(wireEvidence.getCanonicalVersionId(), "canonicalVersionId"),
               versionState,
               wireEvidence.getVersionStateEpoch(),
               wireEvidence.getEvidenceDigest());

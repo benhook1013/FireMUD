@@ -1,5 +1,6 @@
 package net.firedevops.firemud.worldmanagement;
 
+import static net.firedevops.firemud.worldmanagement.jooq.tables.GenerationRule.GENERATION_RULE;
 import static net.firedevops.firemud.worldmanagement.jooq.tables.RegionInstance.REGION_INSTANCE;
 import static net.firedevops.firemud.worldmanagement.jooq.tables.WorldEvent.WORLD_EVENT;
 import static net.firedevops.firemud.worldmanagement.jooq.tables.WorldInstance.WORLD_INSTANCE;
@@ -17,7 +18,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import net.firedevops.firemud.common.security.HttpAuthProperties;
+import net.firedevops.firemud.common.security.HttpJwtAuthInterceptor;
 import net.firedevops.firemud.common.security.JwtUtil;
+import net.firedevops.firemud.test.FiremudAuthTestProperties;
 import net.firedevops.firemud.test.HttpTestSupport;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
@@ -34,23 +38,34 @@ import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
 import org.springframework.http.HttpHeaders;
+import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.web.method.HandlerMethod;
+import org.springframework.web.servlet.HandlerExecutionChain;
+import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,
     classes = WorldManagementServiceApplication.class,
-    properties = "spring.grpc.server.port=0")
+    properties = {
+      "spring.grpc.server.port=0",
+      FiremudAuthTestProperties.HTTP_ENABLED,
+      "firemud.auth.http.public-routes[0].method=GET",
+      "firemud.auth.http.public-routes[0].path-pattern=/ping"
+    })
 class WorldManagementServiceApplicationIntegrationTest {
   private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
 
@@ -70,7 +85,10 @@ class WorldManagementServiceApplicationIntegrationTest {
 
   @LocalServerPort private int port;
   @Autowired private JwtUtil jwtUtil;
+  @Autowired private HttpAuthProperties httpAuthProperties;
+  @Autowired private ObjectMapper objectMapper;
   @Autowired private DSLContext dsl;
+  @Autowired private RequestMappingHandlerMapping requestMappingHandlerMapping;
   @Autowired private WorldEventRepository worldEventRepository;
   @Autowired private PlatformTransactionManager transactionManager;
 
@@ -139,6 +157,59 @@ class WorldManagementServiceApplicationIntegrationTest {
     assertThat(response.statusCode()).isEqualTo(400);
     assertThat(response.body()).contains("\"code\":\"INVALID_ARGUMENT\"");
     assertThat(response.body()).contains("\"message\":\"Request body is malformed\"");
+  }
+
+  @Test
+  void saveRuleDeniesAuthenticatedWriteWithoutCanonicalCommitAuthorization() throws Exception {
+    String token = operatorToken();
+    assertThat(httpAuthProperties.isEnabled()).isTrue();
+
+    MockHttpServletRequest servletRequest = new MockHttpServletRequest("POST", "/generation/rules");
+    HandlerExecutionChain handlerExecutionChain =
+        requestMappingHandlerMapping.getHandler(servletRequest);
+    assertThat(handlerExecutionChain).isNotNull();
+    assertThat(handlerExecutionChain.getHandler()).isInstanceOf(HandlerMethod.class);
+    assertThat(handlerExecutionChain.getInterceptors())
+        .anyMatch(HttpJwtAuthInterceptor.class::isInstance);
+
+    var tokenClaims = jwtUtil.parseToken(token).getPayload();
+    assertThat(tokenClaims.get("accountId", String.class))
+        .isEqualTo("018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a");
+    assertThat(tokenClaims.get("globalRoles", List.class)).containsExactly("platformAdmin");
+
+    dsl.insertInto(GENERATION_RULE)
+        .set(GENERATION_RULE.TENANT_ID, 1L)
+        .set(GENERATION_RULE.VERSION_ID, 7L)
+        .set(GENERATION_RULE.NAME, "retained-denial-proof")
+        .set(GENERATION_RULE.SCOPE_TYPE, "ZONE_SUBTREE")
+        .set(GENERATION_RULE.SCOPE_ID, "12")
+        .set(GENERATION_RULE.VALUE, "{\"retained\":true}")
+        .execute();
+    List<Map<String, Object>> generationRulesBefore = generationRuleRows();
+    assertThat(generationRulesBefore).isNotEmpty();
+    HttpRequest request =
+        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/generation/rules"))
+            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+            .header(HttpHeaders.CONTENT_TYPE, "application/json")
+            .POST(
+                HttpRequest.BodyPublishers.ofString(
+                    """
+                    {"tenantId":1,"name":"denied-rule","scopeType":"ZONE_SUBTREE","scopeId":"12","value":"{}"}
+                    """))
+            .build();
+
+    HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+
+    assertThat(response.statusCode()).as("HTTP response body: %s", response.body()).isEqualTo(412);
+    assertThat(response.body()).contains("\"status\":\"ERROR\"");
+    assertThat(response.body()).contains("\"code\":\"FAILED_PRECONDITION\"");
+    assertThat(response.body())
+        .contains(
+            "\"message\":\"Generation rule writes are unavailable without canonical Draft and Account commit authorization\"");
+    JsonNode responseBody = objectMapper.readTree(response.body());
+    assertThat(responseBody.path("status").asText()).isEqualTo("ERROR");
+    assertThat(responseBody.hasNonNull("data")).isFalse();
+    assertThat(generationRuleRows()).isEqualTo(generationRulesBefore);
   }
 
   @Test
@@ -246,6 +317,12 @@ class WorldManagementServiceApplicationIntegrationTest {
       Thread.currentThread().interrupt();
       throw new AssertionError("Interrupted while waiting for transaction coordination", exception);
     }
+  }
+
+  private List<Map<String, Object>> generationRuleRows() {
+    return dsl.selectFrom(GENERATION_RULE)
+        .orderBy(GENERATION_RULE.ID.asc())
+        .fetch(record -> record.intoMap());
   }
 
   private long insertRegion(long tenantId, long gameInstanceId, long fixtureLabel) {

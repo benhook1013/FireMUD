@@ -23,7 +23,6 @@ import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import net.firedevops.firemud.worldmanagement.dto.InitialAdmissionBindHoldDto;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto;
 import net.firedevops.firemud.worldmanagement.dto.RuntimeRoomDto;
-import net.firedevops.firemud.worldmanagement.dto.WorldDesignMutationResultDto;
 import net.firedevops.firemud.worldmanagement.dto.WorldInstanceLifecycleSnapshotDto;
 import net.firedevops.firemud.worldmanagement.service.InitialAdmissionBindHoldService;
 import net.firedevops.firemud.worldmanagement.service.PingService;
@@ -111,6 +110,54 @@ class WorldManagementGrpcServiceTest {
       throw new AssertionError("Digest RPC failed", error.get());
     }
     return ref.get();
+  }
+
+  private static ApplyWorldDesignMutationResponse invokeMutation(
+      WorldManagementGrpcService service, ApplyWorldDesignMutationRequest request) {
+    AtomicReference<ApplyWorldDesignMutationResponse> ref = new AtomicReference<>();
+    service.applyWorldDesignMutation(
+        request,
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ApplyWorldDesignMutationResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+    return ref.get();
+  }
+
+  private static ApplyWorldDesignMutationRequest canonicalLookingMutationRequest() {
+    return ApplyWorldDesignMutationRequest.newBuilder()
+        .setTenantId("1")
+        .setVersionId("7")
+        .setCommitId("commit-1")
+        .setRevisionId("revision-1")
+        .setOperation(WorldDesignMutationOperation.WORLD_DESIGN_MUTATION_OPERATION_UPSERT)
+        .setAggregateType(WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION)
+        .setScopeType(WorldDesignScopeType.WORLD_DESIGN_SCOPE_TYPE_REGION_SUBTREE)
+        .setScopeId("44")
+        .setRegion(RegionDesignMutation.newBuilder().setName("North").build())
+        .build();
+  }
+
+  private static void assertWorldMutationDenied(ApplyWorldDesignMutationResponse response) {
+    assertEquals("FAILED_PRECONDITION", response.getError().getCode());
+    assertEquals(
+        "Canonical World Draft writes are unavailable until current Account commit authorization is verified.",
+        response.getError().getMessage());
+    assertEquals(
+        WorldDesignMutationResult.WORLD_DESIGN_MUTATION_RESULT_UNSPECIFIED, response.getResult());
+    assertEquals("", response.getTenantId());
+    assertEquals("", response.getVersionId());
+    assertEquals("", response.getAggregateId());
+    assertEquals(0L, response.getDraftRevisionEpoch());
+    assertEquals(0L, response.getDraftScopeRevisionEpoch());
   }
 
   private static GetDraftDesignDigestResponse invokeDigestWithPeer(
@@ -587,21 +634,19 @@ class WorldManagementGrpcServiceTest {
   }
 
   @Test
-  void applyWorldDesignMutationReturnsTypedResult() {
+  void applyWorldDesignMutationDeniesCanonicalWritesWithoutAccountCommitAuthorization() {
     PingService pingService = Mockito.mock(PingService.class);
     RoomService roomService = Mockito.mock(RoomService.class);
     WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
     WorldDesignMutationService mutationService = Mockito.mock(WorldDesignMutationService.class);
+    WorldInstanceActivationService activationService =
+        Mockito.mock(WorldInstanceActivationService.class);
     MeterRegistry meterRegistry = new SimpleMeterRegistry();
-    Mockito.when(mutationService.applyMutation(Mockito.any()))
-        .thenReturn(new WorldDesignMutationResultDto("APPLIED", 1L, 7L, 44L, 1L, null));
-    SessionContext.setContext(
-        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
     WorldManagementGrpcService service =
         new WorldManagementGrpcService(
             pingService,
             roomService,
-            Mockito.mock(WorldInstanceActivationService.class),
+            activationService,
             digestService,
             mutationService,
             Mockito.mock(WorldUpgradeValidationService.class),
@@ -610,36 +655,22 @@ class WorldManagementGrpcServiceTest {
             new ObjectMapper(),
             (PublicationReadGuard) null);
 
-    AtomicReference<ApplyWorldDesignMutationResponse> ref = new AtomicReference<>();
-    service.applyWorldDesignMutation(
-        ApplyWorldDesignMutationRequest.newBuilder()
-            .setTenantId("1")
-            .setVersionId("7")
-            .setCommitId("commit-1")
-            .setRevisionId("revision-1")
-            .setOperation(WorldDesignMutationOperation.WORLD_DESIGN_MUTATION_OPERATION_UPSERT)
-            .setAggregateType(WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION)
-            .setScopeType(WorldDesignScopeType.WORLD_DESIGN_SCOPE_TYPE_REGION_SUBTREE)
-            .setScopeId("44")
-            .setRegion(RegionDesignMutation.newBuilder().setName("North").build())
-            .build(),
-        new StreamObserver<>() {
-          @Override
-          public void onNext(ApplyWorldDesignMutationResponse value) {
-            ref.set(value);
-          }
+    ApplyWorldDesignMutationRequest request = canonicalLookingMutationRequest();
+    SessionContext.clear();
+    assertWorldMutationDenied(invokeMutation(service, request));
 
-          @Override
-          public void onError(Throwable t) {}
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "game-design-service", "test-instance");
+    assertWorldMutationDenied(invokeMutation(service, request));
 
-          @Override
-          public void onCompleted() {}
-        });
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "game-design-service", "test-instance");
+    AtomicReference<ApplyWorldDesignMutationResponse> authenticatedPeerResponse =
+        new AtomicReference<>();
+    runAsGameDesign(() -> authenticatedPeerResponse.set(invokeMutation(service, request)));
+    assertWorldMutationDenied(authenticatedPeerResponse.get());
 
-    assertEquals(
-        WorldDesignMutationResult.WORLD_DESIGN_MUTATION_RESULT_APPLIED, ref.get().getResult());
-    assertEquals("44", ref.get().getAggregateId());
-    assertEquals(1L, ref.get().getDraftRevisionEpoch());
+    Mockito.verifyNoInteractions(mutationService, digestService, activationService);
   }
 
   @Test
@@ -648,6 +679,8 @@ class WorldManagementGrpcServiceTest {
     RoomService roomService = Mockito.mock(RoomService.class);
     WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
     WorldDesignMutationService mutationService = Mockito.mock(WorldDesignMutationService.class);
+    WorldInstanceActivationService activationService =
+        Mockito.mock(WorldInstanceActivationService.class);
     MeterRegistry meterRegistry = new SimpleMeterRegistry();
     SessionContext.setContext(
         "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
@@ -655,7 +688,7 @@ class WorldManagementGrpcServiceTest {
         new WorldManagementGrpcService(
             pingService,
             roomService,
-            Mockito.mock(WorldInstanceActivationService.class),
+            activationService,
             digestService,
             mutationService,
             Mockito.mock(WorldUpgradeValidationService.class),
@@ -664,35 +697,23 @@ class WorldManagementGrpcServiceTest {
             new ObjectMapper(),
             (PublicationReadGuard) null);
 
-    AtomicReference<ApplyWorldDesignMutationResponse> ref = new AtomicReference<>();
-    service.applyWorldDesignMutation(
-        ApplyWorldDesignMutationRequest.newBuilder()
-            .setTenantId("1")
-            .setVersionId("0")
-            .setCommitId("commit-1")
-            .setRevisionId("revision-1")
-            .setOperation(WorldDesignMutationOperation.WORLD_DESIGN_MUTATION_OPERATION_UPSERT)
-            .setAggregateType(WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION)
-            .setScopeType(WorldDesignScopeType.WORLD_DESIGN_SCOPE_TYPE_REGION_SUBTREE)
-            .setScopeId("44")
-            .setRegion(RegionDesignMutation.newBuilder().setName("North").build())
-            .build(),
-        new StreamObserver<>() {
-          @Override
-          public void onNext(ApplyWorldDesignMutationResponse value) {
-            ref.set(value);
-          }
+    ApplyWorldDesignMutationResponse response =
+        invokeMutation(
+            service,
+            ApplyWorldDesignMutationRequest.newBuilder()
+                .setTenantId("1")
+                .setVersionId("0")
+                .setCommitId("commit-1")
+                .setRevisionId("revision-1")
+                .setOperation(WorldDesignMutationOperation.WORLD_DESIGN_MUTATION_OPERATION_UPSERT)
+                .setAggregateType(WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION)
+                .setScopeType(WorldDesignScopeType.WORLD_DESIGN_SCOPE_TYPE_REGION_SUBTREE)
+                .setScopeId("44")
+                .setRegion(RegionDesignMutation.newBuilder().setName("North").build())
+                .build());
 
-          @Override
-          public void onError(Throwable t) {}
-
-          @Override
-          public void onCompleted() {}
-        });
-
-    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
-    assertEquals("versionId must be positive", ref.get().getError().getMessage());
-    Mockito.verifyNoInteractions(mutationService);
+    assertWorldMutationDenied(response);
+    Mockito.verifyNoInteractions(mutationService, digestService, activationService);
   }
 
   @Test

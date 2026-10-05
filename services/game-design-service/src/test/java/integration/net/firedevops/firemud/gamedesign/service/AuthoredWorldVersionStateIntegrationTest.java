@@ -99,6 +99,10 @@ class AuthoredWorldVersionStateIntegrationTest {
     assertThat(first.request().canonicalTenantId().toString())
         .isNotEqualTo(fixture.privateTenantKey());
     assertThat(first.sourceEvidence()).isEqualTo(fixture.source());
+    assertThat(first.canonicalVersionId()).isEqualTo(fixture.version().getCanonicalVersionId());
+    assertThat(first.canonicalVersionId()).isNotEqualTo(new UUID(0L, 0L));
+    assertThat(first.canonicalVersionId().toString())
+        .isNotEqualTo(Long.toString(fixture.version().getId()));
     assertThat(first.versionState())
         .isEqualTo(
             net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
@@ -113,6 +117,7 @@ class AuthoredWorldVersionStateIntegrationTest {
 
     AuthoredWorldVersionStateEvidence current = service.read(request(fixture, UUID.randomUUID()));
     assertThat(current.sourceEvidence()).isEqualTo(first.sourceEvidence());
+    assertThat(current.canonicalVersionId()).isEqualTo(first.canonicalVersionId());
     assertThat(current.versionState())
         .isEqualTo(
             net.firedevops.firemud.gamedesign.v1.VersionLifecycleState

@@ -12,6 +12,7 @@ import org.jooq.Field;
 import org.jooq.Record;
 import org.jooq.Table;
 import org.jooq.impl.DSL;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Propagation;
@@ -86,14 +87,34 @@ public class GameAuthoredWorldSourceRepository {
   private static final Field<Long> VERSION_ID = DSL.field(DSL.name("id"), Long.class);
   private static final Field<String> VERSION_TENANT_ID =
       DSL.field(DSL.name("tenant_id"), String.class);
+  private static final Field<UUID> VERSION_CANONICAL_VERSION_ID =
+      DSL.field(DSL.name("canonical_version_id"), UUID.class);
+  private static final Field<UUID> VERSION_CANONICAL_TENANT_ID =
+      DSL.field(DSL.name("canonical_tenant_id"), UUID.class);
+  private static final Field<Long> VERSION_IDENTITY_SOURCE_GAME_ROW_ID =
+      DSL.field(DSL.name("identity_source_game_row_id"), Long.class);
+  private static final Field<String> VERSION_IDENTITY_SOURCE_GAME_TENANT_KEY =
+      DSL.field(DSL.name("identity_source_game_tenant_key"), String.class);
+  private static final Field<String> VERSION_IDENTITY_SOURCE_PROVENANCE_KIND =
+      DSL.field(DSL.name("identity_source_provenance_kind"), String.class);
   private static final Field<String> VERSION_STATE =
       DSL.field(DSL.name("version_state"), String.class);
   private static final Field<Long> VERSION_STATE_EPOCH =
       DSL.field(DSL.name("version_state_epoch"), Long.class);
+  private static final UUID NIL_UUID = new UUID(0L, 0L);
   private final DSLContext dsl;
+  private final GameAuthoredWorldSourceDeliveryRepository deliveryRepository;
 
-  public GameAuthoredWorldSourceRepository(DSLContext dsl) {
+  @Autowired
+  public GameAuthoredWorldSourceRepository(
+      DSLContext dsl, GameAuthoredWorldSourceDeliveryRepository deliveryRepository) {
     this.dsl = dsl;
+    this.deliveryRepository = deliveryRepository;
+  }
+
+  /** Retains the direct owner-test construction path while sharing its owner DSL context. */
+  public GameAuthoredWorldSourceRepository(DSLContext dsl) {
+    this(dsl, new GameAuthoredWorldSourceDeliveryRepository(dsl));
   }
 
   /**
@@ -140,6 +161,10 @@ public class GameAuthoredWorldSourceRepository {
       }
       requireReceiptSource(receipt, source);
       requireTenantBinding(receipt);
+      if (NEW_GAME_ROW.equals(receipt.provenanceKind())) {
+        // A missing pre-V41 delivery claim stays missing; exact source retry does not backfill it.
+        deliveryRepository.validateExistingIfPresent(receipt);
+      }
       return receipt;
     }
 
@@ -198,6 +223,9 @@ public class GameAuthoredWorldSourceRepository {
     AuthoredWorldSourceEvidence receipt = toEvidence(persisted);
     requireReceiptSource(receipt, source);
     requireTenantBinding(receipt);
+    if (NEW_GAME_ROW.equals(receipt.provenanceKind())) {
+      deliveryRepository.enqueueFresh(receipt);
+    }
     return receipt;
   }
 
@@ -292,7 +320,16 @@ public class GameAuthoredWorldSourceRepository {
     requireTenantBinding(receipt);
 
     Record versionRecord =
-        dsl.select(VERSION_ID, VERSION_TENANT_ID, VERSION_STATE, VERSION_STATE_EPOCH)
+        dsl.select(
+                VERSION_ID,
+                VERSION_TENANT_ID,
+                VERSION_CANONICAL_VERSION_ID,
+                VERSION_CANONICAL_TENANT_ID,
+                VERSION_IDENTITY_SOURCE_GAME_ROW_ID,
+                VERSION_IDENTITY_SOURCE_GAME_TENANT_KEY,
+                VERSION_IDENTITY_SOURCE_PROVENANCE_KIND,
+                VERSION_STATE,
+                VERSION_STATE_EPOCH)
             .from(VERSION)
             .where(VERSION_ID.eq(versionId))
             .fetchOne();
@@ -303,6 +340,24 @@ public class GameAuthoredWorldSourceRepository {
     if (versionTenantId == null || !source.sourceGameTenantKey().equals(versionTenantId)) {
       throw new InvalidSourceEvidenceException(
           "Requested version is not owned by the exact Game Design source game");
+    }
+    UUID canonicalVersionId = versionRecord.get(VERSION_CANONICAL_VERSION_ID);
+    if (canonicalVersionId == null || NIL_UUID.equals(canonicalVersionId)) {
+      throw new InvalidSourceEvidenceException(
+          "Requested version has no persisted canonical non-nil Version UUID");
+    }
+    if (!source.canonicalTenantId().equals(versionRecord.get(VERSION_CANONICAL_TENANT_ID))
+        || !Long.valueOf(source.sourceGameRowId())
+            .equals(versionRecord.get(VERSION_IDENTITY_SOURCE_GAME_ROW_ID))
+        || !source
+            .sourceGameTenantKey()
+            .equals(versionRecord.get(VERSION_IDENTITY_SOURCE_GAME_TENANT_KEY))
+        || !source
+            .provenanceKind()
+            .equals(versionRecord.get(VERSION_IDENTITY_SOURCE_PROVENANCE_KIND))) {
+      throw new InvalidSourceEvidenceException(
+          "Requested version canonical identity provenance does not match "
+              + "the exact Game Design source game");
     }
 
     VersionLifecycleState versionState;
@@ -318,7 +373,8 @@ public class GameAuthoredWorldSourceRepository {
           "Persisted version lifecycle state or epoch is invalid", exception);
     }
     return Optional.of(
-        new AuthoredWorldVersionStateSnapshot(receipt, versionState, versionStateEpoch));
+        new AuthoredWorldVersionStateSnapshot(
+            receipt, canonicalVersionId, versionState, versionStateEpoch));
   }
 
   private void ensureTenantSlugBinding(
@@ -543,6 +599,7 @@ public class GameAuthoredWorldSourceRepository {
 
   public record AuthoredWorldVersionStateSnapshot(
       AuthoredWorldSourceEvidence sourceEvidence,
+      UUID canonicalVersionId,
       VersionLifecycleState versionState,
       long versionStateEpoch) {}
 

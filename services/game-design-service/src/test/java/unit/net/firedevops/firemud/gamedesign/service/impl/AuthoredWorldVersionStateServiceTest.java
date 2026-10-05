@@ -27,6 +27,7 @@ class AuthoredWorldVersionStateServiceTest {
   private static final UUID TENANT_ID = uuid("22222222-2222-4222-8222-222222222222");
   private static final UUID SOURCE_OPERATION_ID = uuid("33333333-3333-4333-8333-333333333333");
   private static final UUID REGISTRATION_REQUEST_ID = uuid("44444444-4444-4444-8444-444444444444");
+  private static final UUID CANONICAL_VERSION_ID = uuid("55555555-5555-4555-8555-555555555555");
 
   @Test
   void readsCompleteSourceAndVersionInsideFreshReadOnlyRepeatableReadTransaction() {
@@ -45,6 +46,7 @@ class AuthoredWorldVersionStateServiceTest {
             Optional.of(
                 new AuthoredWorldVersionStateSnapshot(
                     source,
+                    CANONICAL_VERSION_ID,
                     net.firedevops.firemud.gamedesign.model.VersionLifecycleState.PUBLISHED,
                     7L)));
     AuthoredWorldVersionStateService service =
@@ -53,6 +55,7 @@ class AuthoredWorldVersionStateServiceTest {
     AuthoredWorldVersionStateEvidence evidence = service.read(request(source.evidenceDigest()));
 
     assertThat(evidence.sourceEvidence()).isEqualTo(source);
+    assertThat(evidence.canonicalVersionId()).isEqualTo(CANONICAL_VERSION_ID);
     assertThat(evidence.versionState())
         .isEqualTo(VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED);
     assertThat(evidence.versionStateEpoch()).isEqualTo(7L);
@@ -115,6 +118,42 @@ class AuthoredWorldVersionStateServiceTest {
     assertThatThrownBy(() -> service.read(request("sha256:" + "a".repeat(64))))
         .isInstanceOf(GameAuthoredWorldSourceRepository.InvalidSourceEvidenceException.class)
         .hasMessageContaining("source binding changed");
+  }
+
+  @Test
+  void missingOrNilPersistedCanonicalVersionIdFailsClosed() {
+    for (UUID canonicalVersionId : new UUID[] {null, new UUID(0L, 0L)}) {
+      RecordingTransactionManager transactionManager = new RecordingTransactionManager();
+      GameAuthoredWorldSourceRepository repository = mock(GameAuthoredWorldSourceRepository.class);
+      AuthoredWorldSourceEvidence source = sourceEvidence();
+      when(repository.readVersionStateSnapshot(
+              NAMESPACE,
+              READ_REQUEST_ID,
+              TENANT_ID,
+              "cafe-coast",
+              SOURCE_OPERATION_ID,
+              source.evidenceDigest(),
+              19L))
+          .thenReturn(
+              Optional.of(
+                  new AuthoredWorldVersionStateSnapshot(
+                      source,
+                      canonicalVersionId,
+                      net.firedevops.firemud.gamedesign.model.VersionLifecycleState.PUBLISHED,
+                      7L)));
+      AuthoredWorldVersionStateService service =
+          new AuthoredWorldVersionStateService(transactionManager, repository);
+
+      if (canonicalVersionId == null) {
+        assertThatThrownBy(() -> service.read(request(source.evidenceDigest())))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessageContaining("canonicalVersionId");
+      } else {
+        assertThatThrownBy(() -> service.read(request(source.evidenceDigest())))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("non-nil UUID");
+      }
+    }
   }
 
   private static AuthoredWorldVersionStateEvidence.Request request(String sourceDigest) {

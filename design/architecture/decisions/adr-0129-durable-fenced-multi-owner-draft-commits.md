@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-The current implementation does not satisfy this decision. `SaveRevision` can call World Management before Game Design persists its local revision. World aggregate and scope epochs are read and then saved without the expected epoch in the database update predicate, and some mutation shapes can omit scope fencing. There is no Game Design-owned durable commit/proposal coordinator with exact base and digest binding, complete affected-scope capture, per-owner apply status, or a creator-visible synchronized read fence. Existing revision ledgers and publish digests are useful seams but do not prove this contract.
+The current implementation does not fully satisfy this decision. The held-back World mutation algorithm now advances its declared aggregate and scope epochs with expected-epoch storage predicates, including conflict-safe first claims; execution and remaining limitations are recorded in the [World tracker](../../project-management/implementation-tracking/world-runtime-and-movement.md#current-status). Some mutation shapes can still omit required scope fencing. `SaveRevision` can call World Management before Game Design persists its local revision, and there is no Game Design-owned durable commit/proposal coordinator with exact base and digest binding, complete affected-scope capture, per-owner apply status, or a creator-visible synchronized read fence. The registered World write remains denied without Account commit authorization. Existing revision ledgers and publish digests do not prove the complete contract.
 
 ## Decision Record
 

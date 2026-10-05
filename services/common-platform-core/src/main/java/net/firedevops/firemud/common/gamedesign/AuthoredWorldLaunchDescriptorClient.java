@@ -15,6 +15,7 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
 import net.firedevops.firemud.gamedesign.v1.GameDesignServiceGrpc;
+import net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorRequest;
 
 /**
  * Explicit mTLS client for exact authored-world launch descriptor resolution and owner readback.
@@ -94,6 +95,26 @@ public final class AuthoredWorldLaunchDescriptorClient
     } catch (IllegalArgumentException exception) {
       throw new IllegalStateException(
           "Game Design returned invalid exact authored-world launch descriptor readback",
+          exception);
+    }
+  }
+
+  /** Reads and validates the descriptor and separate release attestation as one exact pair. */
+  public CompleteLaunchBindingEvidence getComplete(GetLaunchDescriptorRequest request) {
+    Objects.requireNonNull(request, "request");
+    GameDesignServiceGrpc.GameDesignServiceBlockingStub currentStub = requireStub();
+    var response =
+        currentStub
+            .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+            .getCompleteLaunchBinding(request);
+    try {
+      CompleteLaunchBindingEvidence evidence =
+          AuthoredWorldLaunchDescriptorGrpcCodec.fromCompleteResponse(request, response);
+      requireNamespace(evidence.descriptor().targetNamespace());
+      return evidence;
+    } catch (IllegalArgumentException exception) {
+      throw new IllegalStateException(
+          "Game Design returned invalid complete authored-world launch binding evidence",
           exception);
     }
   }

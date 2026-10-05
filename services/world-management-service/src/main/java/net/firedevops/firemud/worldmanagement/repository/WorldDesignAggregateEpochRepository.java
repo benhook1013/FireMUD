@@ -42,6 +42,56 @@ public class WorldDesignAggregateEpochRepository {
         .fetchOptional(this::toEntity);
   }
 
+  public boolean compareAndAdvance(
+      Long tenantId,
+      Long versionId,
+      String aggregateType,
+      Long aggregateId,
+      Long expectedEpoch,
+      LocalDateTime updatedAt) {
+    if (expectedEpoch == null || expectedEpoch < 0L || expectedEpoch == Long.MAX_VALUE) {
+      return false;
+    }
+
+    long nextEpoch = expectedEpoch + 1L;
+    LocalDateTime advancementTime = updatedAt == null ? LocalDateTime.now() : updatedAt;
+    int updated =
+        dsl.update(WORLD_DESIGN_AGGREGATE_EPOCH)
+            .set(WORLD_DESIGN_AGGREGATE_EPOCH.DRAFT_REVISION_EPOCH, nextEpoch)
+            .set(WORLD_DESIGN_AGGREGATE_EPOCH.UPDATED_AT, advancementTime)
+            .where(
+                WORLD_DESIGN_AGGREGATE_EPOCH
+                    .TENANT_ID
+                    .eq(tenantId)
+                    .and(WORLD_DESIGN_AGGREGATE_EPOCH.VERSION_ID.eq(versionId))
+                    .and(WORLD_DESIGN_AGGREGATE_EPOCH.AGGREGATE_TYPE.eq(aggregateType))
+                    .and(WORLD_DESIGN_AGGREGATE_EPOCH.AGGREGATE_ID.eq(aggregateId))
+                    .and(WORLD_DESIGN_AGGREGATE_EPOCH.DRAFT_REVISION_EPOCH.eq(expectedEpoch)))
+            .execute();
+    if (updated == 1) {
+      return true;
+    }
+    if (expectedEpoch != 0L) {
+      return false;
+    }
+
+    return dsl.insertInto(WORLD_DESIGN_AGGREGATE_EPOCH)
+            .set(WORLD_DESIGN_AGGREGATE_EPOCH.TENANT_ID, tenantId)
+            .set(WORLD_DESIGN_AGGREGATE_EPOCH.VERSION_ID, versionId)
+            .set(WORLD_DESIGN_AGGREGATE_EPOCH.AGGREGATE_TYPE, aggregateType)
+            .set(WORLD_DESIGN_AGGREGATE_EPOCH.AGGREGATE_ID, aggregateId)
+            .set(WORLD_DESIGN_AGGREGATE_EPOCH.DRAFT_REVISION_EPOCH, nextEpoch)
+            .set(WORLD_DESIGN_AGGREGATE_EPOCH.UPDATED_AT, advancementTime)
+            .onConflict(
+                WORLD_DESIGN_AGGREGATE_EPOCH.TENANT_ID,
+                WORLD_DESIGN_AGGREGATE_EPOCH.VERSION_ID,
+                WORLD_DESIGN_AGGREGATE_EPOCH.AGGREGATE_TYPE,
+                WORLD_DESIGN_AGGREGATE_EPOCH.AGGREGATE_ID)
+            .doNothing()
+            .execute()
+        == 1;
+  }
+
   public WorldDesignAggregateEpoch save(WorldDesignAggregateEpoch entity) {
     if (entity.getId() == null) {
       WorldDesignAggregateEpochRecord record = dsl.newRecord(WORLD_DESIGN_AGGREGATE_EPOCH);

@@ -4,10 +4,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.google.protobuf.UnknownFieldSet;
+import java.util.List;
 import java.util.UUID;
+import net.firedevops.firemud.gamedesign.v1.GetCompleteLaunchBindingResponse;
+import net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorRequest;
 import net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorResponse;
 import net.firedevops.firemud.gamedesign.v1.LaunchDescriptor;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorResponse;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.Test;
 
 class AuthoredWorldLaunchDescriptorGrpcCodecTest {
@@ -18,6 +22,7 @@ class AuthoredWorldLaunchDescriptorGrpcCodecTest {
       UUID.fromString("32345678-1234-4234-8234-123456789abc");
   private static final UUID WRONG_READ_REQUEST_ID =
       UUID.fromString("42345678-1234-4234-8234-123456789abc");
+  private static final UUID VERSION_UUID = UUID.fromString("52345678-1234-4234-8234-123456789abc");
 
   @Test
   void resolvesAndReadsBackSharedDigestVectorWithExactOptionalPresence() {
@@ -260,6 +265,153 @@ class AuthoredWorldLaunchDescriptorGrpcCodecTest {
         .hasMessageContaining("distinct");
   }
 
+  @Test
+  void completeReadRoundTripsTheAtomicPairAndPreservesOptionalAbilityDigestPresence() {
+    var descriptor = evidence(request("test", "copper-coast", false));
+    var release = releaseAttestation(descriptor);
+    var request = completeRequest(descriptor);
+    var response = completeResponse(request, descriptor, release);
+
+    CompleteLaunchBindingEvidence pair =
+        AuthoredWorldLaunchDescriptorGrpcCodec.fromCompleteResponse(request, response);
+    var encoded =
+        AuthoredWorldLaunchDescriptorGrpcCodec.toReleaseAttestation(pair.releaseAttestation());
+
+    assertThat(pair.descriptor()).isEqualTo(descriptor);
+    assertThat(pair.releaseAttestation()).isEqualTo(release);
+    assertThat(encoded.getParticipantDigests(0).hasAbilitySchemaDigest()).isFalse();
+    assertThat(encoded.getParticipantDigests(2).hasAbilitySchemaDigest()).isTrue();
+    assertThat(encoded.getParticipantDigests(2).getAbilitySchemaDigest())
+        .isEqualTo("sha256:" + "f".repeat(64));
+    assertThat(encoded.getArtifactDigests(0).getImmutableObjectKey())
+        .isEqualTo(release.artifactDigests().get(0).immutableObjectKey());
+  }
+
+  @Test
+  void completeReadRejectsMissingConflictingAndUnknownEvidenceAtEveryMessageLevel() {
+    var descriptor = evidence(request("test", "copper-coast", false));
+    var release = releaseAttestation(descriptor);
+    var request = completeRequest(descriptor);
+    var good = completeResponse(request, descriptor, release);
+    var unknown = unknownFields();
+
+    assertThatThrownBy(
+            () ->
+                AuthoredWorldLaunchDescriptorGrpcCodec.fromCompleteResponse(
+                    request,
+                    good.toBuilder().setRequestId(WRONG_READ_REQUEST_ID.toString()).build()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("echo changed");
+    assertThatThrownBy(
+            () ->
+                AuthoredWorldLaunchDescriptorGrpcCodec.fromCompleteResponse(
+                    request.toBuilder().setWorldSlug("copper-shore").build(), good))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("exact read selector");
+    assertThatThrownBy(
+            () ->
+                AuthoredWorldLaunchDescriptorGrpcCodec.fromCompleteResponse(
+                    request, good.toBuilder().clearReleaseAttestation().build()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("both descriptor and release attestation");
+    assertThatThrownBy(
+            () ->
+                AuthoredWorldLaunchDescriptorGrpcCodec.fromCompleteResponse(
+                    request, good.toBuilder().clearLaunchDescriptor().build()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("both descriptor and release attestation");
+    assertThatThrownBy(
+            () ->
+                AuthoredWorldLaunchDescriptorGrpcCodec.fromCompleteResponse(
+                    request,
+                    good.toBuilder().setError(ErrorDetail.newBuilder().setCode("DENIED")).build()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("rejected");
+
+    assertCompleteUnknownRejected(request.toBuilder().setUnknownFields(unknown).build(), good);
+    assertCompleteUnknownRejected(request, good.toBuilder().setUnknownFields(unknown).build());
+    assertCompleteUnknownRejected(
+        request,
+        good.toBuilder()
+            .setLaunchDescriptor(descriptor(descriptor).toBuilder().setUnknownFields(unknown))
+            .build());
+    assertCompleteUnknownRejected(
+        request,
+        good.toBuilder()
+            .setLaunchDescriptor(
+                descriptor(descriptor).toBuilder()
+                    .setAuthoredWorldBinding(
+                        descriptor(descriptor).getAuthoredWorldBinding().toBuilder()
+                            .setUnknownFields(unknown)))
+            .build());
+    assertCompleteUnknownRejected(
+        request,
+        good.toBuilder()
+            .setReleaseAttestation(
+                good.getReleaseAttestation().toBuilder().setUnknownFields(unknown))
+            .build());
+    assertCompleteUnknownRejected(
+        request,
+        good.toBuilder()
+            .setReleaseAttestation(
+                good.getReleaseAttestation().toBuilder()
+                    .setParticipantDigests(
+                        0,
+                        good.getReleaseAttestation().getParticipantDigests(0).toBuilder()
+                            .setUnknownFields(unknown)))
+            .build());
+    assertCompleteUnknownRejected(
+        request,
+        good.toBuilder()
+            .setReleaseAttestation(
+                good.getReleaseAttestation().toBuilder()
+                    .setArtifactDigests(
+                        0,
+                        good.getReleaseAttestation().getArtifactDigests(0).toBuilder()
+                            .setUnknownFields(unknown)))
+            .build());
+    assertThatThrownBy(
+            () ->
+                AuthoredWorldLaunchDescriptorGrpcCodec.fromCompleteResponse(
+                    request,
+                    good.toBuilder()
+                        .setError(
+                            ErrorDetail.newBuilder().setUnknownFields(unknown).setCode("DENIED"))
+                        .build()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("unsupported fields");
+
+    assertThatThrownBy(
+            () ->
+                AuthoredWorldLaunchDescriptorGrpcCodec.fromCompleteResponse(
+                    request,
+                    good.toBuilder()
+                        .setReleaseAttestation(
+                            good.getReleaseAttestation().toBuilder()
+                                .setEvidenceDigest("sha256:" + "0".repeat(64)))
+                        .build()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("invalid");
+    assertThatThrownBy(
+            () ->
+                AuthoredWorldLaunchDescriptorGrpcCodec.fromCompleteResponse(
+                    request,
+                    good.toBuilder()
+                        .setReleaseAttestation(
+                            good.getReleaseAttestation().toBuilder()
+                                .setParticipantDigests(
+                                    0,
+                                    good
+                                        .getReleaseAttestation()
+                                        .getParticipantDigests(0)
+                                        .toBuilder()
+                                        .setDigestSchemaVersion(999)))
+                        .build()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Release-attestation evidence is invalid")
+        .hasRootCauseMessage("Participant digest schema is unsupported for its owner");
+  }
+
   private static void assertFlatDuplicateRejected(LaunchDescriptor descriptor) {
     var expected = request("test", "copper-coast", false);
     assertThatThrownBy(
@@ -271,6 +423,88 @@ class AuthoredWorldLaunchDescriptorGrpcCodecTest {
                         .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("does not match evidence");
+  }
+
+  private static void assertCompleteUnknownRejected(
+      GetLaunchDescriptorRequest request, GetCompleteLaunchBindingResponse response) {
+    assertThatThrownBy(
+            () -> AuthoredWorldLaunchDescriptorGrpcCodec.fromCompleteResponse(request, response))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("unsupported fields");
+  }
+
+  private static GetLaunchDescriptorRequest completeRequest(
+      AuthoredWorldLaunchDescriptorEvidence descriptor) {
+    return GetLaunchDescriptorRequest.newBuilder()
+        .setRequestId(READ_REQUEST_ID.toString())
+        .setCanonicalTenantId(descriptor.canonicalTenantId().toString())
+        .setWorldSlug(descriptor.worldSlug())
+        .setControlPlaneRequestId(descriptor.controlPlaneRequestId())
+        .setExpectedRequestDigest(descriptor.requestDigest())
+        .setExpectedResultDigest(descriptor.resultDigest())
+        .build();
+  }
+
+  private static GetCompleteLaunchBindingResponse completeResponse(
+      GetLaunchDescriptorRequest request,
+      AuthoredWorldLaunchDescriptorEvidence descriptor,
+      AuthoredWorldReleaseAttestationEvidence release) {
+    return GetCompleteLaunchBindingResponse.newBuilder()
+        .setRequestId(request.getRequestId())
+        .setLaunchDescriptor(descriptor(descriptor))
+        .setReleaseAttestation(AuthoredWorldLaunchDescriptorGrpcCodec.toReleaseAttestation(release))
+        .build();
+  }
+
+  private static AuthoredWorldReleaseAttestationEvidence releaseAttestation(
+      AuthoredWorldLaunchDescriptorEvidence descriptor) {
+    String commitId = "commit-雪";
+    List<AuthoredWorldReleaseAttestationEvidence.Participant> participants =
+        new java.util.ArrayList<>();
+    int index = 0;
+    for (String key : AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder()) {
+      boolean ability = "GAME_LOGIC".equals(key);
+      participants.add(
+          new AuthoredWorldReleaseAttestationEvidence.Participant(
+              key,
+              Long.toString(descriptor.versionId()),
+              false,
+              null,
+              commitId,
+              String.valueOf((char) ('a' + index++)).repeat(64),
+              AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(key),
+              ability,
+              ability ? "sha256:" + "f".repeat(64) : null));
+    }
+    String artifactDigest = "sha256:" + "e".repeat(64);
+    var artifact =
+        new AuthoredWorldReleaseAttestationEvidence.Artifact(
+            "world/雪",
+            "WORLD_CONTENT",
+            "artifacts/sha256/" + "e".repeat(64),
+            artifactDigest,
+            "application/octet-stream",
+            1);
+    return AuthoredWorldReleaseAttestationEvidence.create(
+        descriptor.targetNamespace(),
+        descriptor.resultDigest(),
+        descriptor.canonicalTenantId(),
+        VERSION_UUID,
+        descriptor.worldSlug(),
+        descriptor.authoredWorldSourceOperationId(),
+        descriptor.authoredWorldSourceEvidenceDigest(),
+        descriptor.launchDescriptorId(),
+        descriptor.publishedReleaseBundleRef(),
+        descriptor.versionStateEpoch(),
+        "publish:tenant-key:private-workflow:雪",
+        commitId,
+        participants,
+        "sha256:" + "d".repeat(64),
+        1,
+        List.of(artifact.usageKey()),
+        List.of(artifact),
+        List.of("say 雪"),
+        descriptor.generationConfigRevision());
   }
 
   private static AuthoredWorldLaunchDescriptorEvidence.Request request(

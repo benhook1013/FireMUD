@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 
 import com.google.protobuf.Message;
 import io.grpc.ForwardingServerCall;
+import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
 import io.grpc.Server;
 import io.grpc.ServerCall;
@@ -36,6 +37,9 @@ import java.security.cert.X509Certificate;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.Date;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -56,12 +60,21 @@ import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec.I
 import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec.ReadRequest;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.worldmanagement.client.GrpcGameSessionInitialAdmissionBindProofClient;
+import net.firedevops.firemud.worldmanagement.service.impl.WorldManagementGrpcService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeGrpcService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeReceipt;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeService;
+import net.firedevops.firemud.worldmanagement.v1.ApplyWorldDesignMutationRequest;
+import net.firedevops.firemud.worldmanagement.v1.ApplyWorldDesignMutationResponse;
 import net.firedevops.firemud.worldmanagement.v1.IntakeAuthoredWorldSourceResponse;
 import net.firedevops.firemud.worldmanagement.v1.ReadAuthoredWorldSourceIntakeResponse;
+import net.firedevops.firemud.worldmanagement.v1.RegionDesignMutation;
+import net.firedevops.firemud.worldmanagement.v1.WorldDesignAggregateType;
+import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationOperation;
+import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationResult;
+import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeType;
+import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
 import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.asn1.x509.BasicConstraints;
 import org.bouncycastle.asn1.x509.ExtendedKeyUsage;
@@ -103,6 +116,32 @@ import org.testcontainers.junit.jupiter.Testcontainers;
     properties = "spring.grpc.server.port=0")
 class WorldAuthoredSourceIntakeMtlsIntegrationTest {
   private static final String NAMESPACE = "firemud";
+  private static final List<String> WORLD_MUTATION_SNAPSHOT_TABLES =
+      List.of(
+          "region",
+          "zone",
+          "room",
+          "instance",
+          "room_exit",
+          "generation_rule",
+          "world_instance",
+          "region_instance",
+          "zone_instance",
+          "room_instance",
+          "room_instance_exit",
+          "world_event",
+          "world_design_revision_ledger",
+          "world_design_aggregate_epoch",
+          "world_design_scope_epoch",
+          "world_entity_spawn_binding",
+          "initial_admission_bind_hold",
+          "world_authored_source_tenant_association",
+          "world_authored_source_tenant_key_reservation",
+          "world_authored_source_intake",
+          "world_design_publication_fence_attempt",
+          "world_design_publication_fence_owner",
+          "world_complete_launch_binding",
+          "world_authored_version_identity");
   private static final String WORLD_SERVER_URI =
       "spiffe://firemud/ns/firemud/sa/world-management-service";
   private static final AtomicLong CERTIFICATE_SERIAL = new AtomicLong(1);
@@ -120,6 +159,7 @@ class WorldAuthoredSourceIntakeMtlsIntegrationTest {
   @Autowired private WorldAuthoredSourceIntakeRepository repository;
   @Autowired private DSLContext dsl;
   @Autowired private PlatformTransactionManager transactionManager;
+  @Autowired private WorldManagementGrpcService worldManagementGrpcService;
 
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
 
@@ -289,6 +329,37 @@ class WorldAuthoredSourceIntakeMtlsIntegrationTest {
     }
   }
 
+  @Test
+  void registeredDraftMutationDeniesGameDesignPeerWithoutAccountCommitAuthorization()
+      throws Exception {
+    startRegisteredWorldManagementReceiver();
+    Map<String, List<String>> before = worldMutationRowSnapshot();
+
+    ApplyWorldDesignMutationResponse response =
+        applyWorldDesignMutation(
+            pki.gameDesignClient(), "gd-draft-denial", canonicalLookingDraftMutation());
+
+    assertDraftMutationDenied(response);
+    assertThat(worldMutationRowSnapshot())
+        .as("World content, source, association, lifecycle and publication rows stay unchanged")
+        .isEqualTo(before);
+  }
+
+  @Test
+  void registeredDraftMutationDeniesOtherAuthenticatedPeerBeforeOwnerMutation() throws Exception {
+    startRegisteredWorldManagementReceiver();
+    Map<String, List<String>> before = worldMutationRowSnapshot();
+
+    ApplyWorldDesignMutationResponse response =
+        applyWorldDesignMutation(
+            pki.accountClient(), "account-draft-denial", canonicalLookingDraftMutation());
+
+    assertDraftMutationDenied(response);
+    assertThat(worldMutationRowSnapshot())
+        .as("World content, source, association, lifecycle and publication rows stay unchanged")
+        .isEqualTo(before);
+  }
+
   private AuthoredWorldSourceClient sourceBoundary(Scenario scenario) {
     AuthoredWorldSourceClient syntheticSource = mock(AuthoredWorldSourceClient.class);
     when(syntheticSource.read(any(AuthoredWorldSourceGrpcCodec.ReadRequest.class)))
@@ -331,6 +402,43 @@ class WorldAuthoredSourceIntakeMtlsIntegrationTest {
             .addService(withResponseCapture)
             .build()
             .start();
+  }
+
+  private void startRegisteredWorldManagementReceiver() throws Exception {
+    var withPeerIdentity =
+        ServerInterceptors.intercept(worldManagementGrpcService, new GrpcPeerIdentityInterceptor());
+    server =
+        NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
+            .sslContext(
+                GrpcSslContexts.configure(
+                        SslContextBuilder.forServer(
+                            pki.worldServer().privateKey(), pki.worldServer().certificate()))
+                    .trustManager(pki.caCertificate())
+                    .clientAuth(ClientAuth.REQUIRE)
+                    .build())
+            .addService(withPeerIdentity)
+            .build()
+            .start();
+  }
+
+  private ApplyWorldDesignMutationResponse applyWorldDesignMutation(
+      TestCertificate certificate, String label, ApplyWorldDesignMutationRequest request)
+      throws Exception {
+    ManagedChannel channel =
+        new GrpcChannelFactory()
+            .buildChannel(
+                "127.0.0.1:" + server.getPort(),
+                server.getPort(),
+                tlsProperties(certificate, label),
+                false);
+    try {
+      return WorldManagementServiceGrpc.newBlockingStub(channel)
+          .withDeadlineAfter(5, TimeUnit.SECONDS)
+          .applyWorldDesignMutation(request);
+    } finally {
+      channel.shutdownNow();
+      assertThat(channel.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
+    }
   }
 
   private WorldAuthoredSourceIntakeClient intakeClient(TestCertificate certificate, String label)
@@ -442,6 +550,17 @@ class WorldAuthoredSourceIntakeMtlsIntegrationTest {
             scenario.canonicalTenantId()));
   }
 
+  private Map<String, List<String>> worldMutationRowSnapshot() {
+    Map<String, List<String>> snapshot = new LinkedHashMap<>();
+    for (String table : WORLD_MUTATION_SNAPSHOT_TABLES) {
+      snapshot.put(
+          table,
+          dsl.fetch("SELECT to_jsonb(world_row)::text FROM " + table + " AS world_row ORDER BY 1")
+              .getValues(0, String.class));
+    }
+    return snapshot;
+  }
+
   private long count(String query, Object... bindings) {
     return Objects.requireNonNull(
             dsl.fetchOne(query, bindings), "World intake count query returned no row")
@@ -512,6 +631,37 @@ class WorldAuthoredSourceIntakeMtlsIntegrationTest {
         .isInstanceOf(StatusRuntimeException.class)
         .satisfies(
             failure -> assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(expected));
+  }
+
+  private static ApplyWorldDesignMutationRequest canonicalLookingDraftMutation() {
+    return ApplyWorldDesignMutationRequest.newBuilder()
+        .setTenantId("11111111-1111-4111-8111-111111111111")
+        .setVersionId("22222222-2222-4222-8222-222222222222")
+        .setCommitId("commit-1")
+        .setRevisionId("revision-1")
+        .setOperation(WorldDesignMutationOperation.WORLD_DESIGN_MUTATION_OPERATION_UPSERT)
+        .setAggregateType(WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION)
+        .setScopeType(WorldDesignScopeType.WORLD_DESIGN_SCOPE_TYPE_REGION_SUBTREE)
+        .setScopeId("44")
+        .setRegion(RegionDesignMutation.newBuilder().setName("North").build())
+        .build();
+  }
+
+  private static void assertDraftMutationDenied(ApplyWorldDesignMutationResponse response) {
+    assertThat(response.hasError()).isTrue();
+    assertThat(response.getError().getCode()).isEqualTo("FAILED_PRECONDITION");
+    assertThat(response.getError().getMessage())
+        .isEqualTo(
+            "Canonical World Draft writes are unavailable until current Account commit authorization is verified.");
+    assertThat(response.getResult())
+        .isEqualTo(WorldDesignMutationResult.WORLD_DESIGN_MUTATION_RESULT_UNSPECIFIED);
+    assertThat(response.getTenantId()).isEmpty();
+    assertThat(response.getVersionId()).isEmpty();
+    assertThat(response.getAggregateId()).isEmpty();
+    assertThat(response.getDraftRevisionEpoch()).isZero();
+    assertThat(response.getDraftScopeRevisionEpoch()).isZero();
+    assertThat(response.getAllFields().keySet())
+        .containsExactly(ApplyWorldDesignMutationResponse.getDescriptor().findFieldByName("error"));
   }
 
   private static String pem(String type, byte[] bytes) {

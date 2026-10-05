@@ -2,11 +2,13 @@ package net.firedevops.firemud.worldmanagement.controller;
 
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.ApiResponse;
+import net.firedevops.firemud.common.ErrorDetail;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.worldmanagement.dto.GenerationRuleDto;
 import net.firedevops.firemud.worldmanagement.service.GenerationRuleService;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -24,8 +26,12 @@ public class GenerationRuleController {
   @PostMapping
   public ResponseEntity<ApiResponse<GenerationRuleDto>> save(@RequestBody GenerationRuleDto dto) {
     SessionContext.requireTenantAccess(dto.tenantId());
-    GenerationRuleDto result = generationRuleService.saveRule(dto);
-    return ResponseEntity.ok(ApiResponse.success(result));
+    return ResponseEntity.status(HttpStatus.PRECONDITION_FAILED)
+        .body(
+            ApiResponse.error(
+                new ErrorDetail(
+                    "FAILED_PRECONDITION",
+                    "Generation rule writes are unavailable without canonical Draft and Account commit authorization")));
   }
 
   @GetMapping

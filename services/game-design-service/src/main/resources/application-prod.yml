@@ -57,6 +57,7 @@ firemud:
         - gamedesign.v1.TenantIdentityService/ResolveLegacyGameSessionTenantAssociation
         - gamedesign.v1.GameDesignService/ResolveLaunchDescriptor
         - gamedesign.v1.GameDesignService/GetLaunchDescriptor
+        - gamedesign.v1.GameDesignService/GetCompleteLaunchBinding
   grpc:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}

@@ -1,8 +1,14 @@
 package integration.net.firedevops.firemud.gamedesign.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.grpc.Context;
+import io.grpc.Metadata;
 import io.grpc.Server;
+import io.grpc.ServerCall;
+import io.grpc.ServerCallHandler;
+import io.grpc.ServerInterceptor;
 import io.grpc.ServerInterceptors;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
@@ -24,15 +30,19 @@ import java.security.cert.X509Certificate;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.Date;
+import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Supplier;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateClient;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateEvidence;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamedesign.GameDesignServiceApplication;
@@ -46,6 +56,11 @@ import net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldVersionStateG
 import net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldVersionStateService;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
+import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeReceipt;
+import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeRepository;
+import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredVersionIdentityReceipt;
+import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredVersionIdentityRepository;
+import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredVersionIdentityService;
 import org.assertj.core.api.Assertions;
 import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.asn1.x509.BasicConstraints;
@@ -59,6 +74,11 @@ import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
 import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
+import org.flywaydb.core.Flyway;
+import org.jooq.DSLContext;
+import org.jooq.SQLDialect;
+import org.jooq.impl.DSL;
+import org.jooq.impl.DataSourceConnectionProvider;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -67,9 +87,13 @@ import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -79,11 +103,14 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  * PostgreSQL-to-physical-mTLS-socket proof for the unregistered current version-state read.
  *
  * <p>Fixtures are synthetic persisted Game Design source/version rows. The producer, repositories,
- * transaction manager, standalone production handler, peer interceptor, and World client are real.
- * This proves neither automatic delivery nor World mutation/publication behavior. Ephemeral
- * test-only certificates cover the one authorized World client and Game Design server needed here;
- * the socket-only {@code AuthoredWorldVersionStateMtlsTest} retains wrong-peer and
- * malformed-evidence coverage.
+ * transaction manager, standalone production handler, peer interceptor, physical World client, and
+ * World identity owner repositories are real. The World source intake is explicitly
+ * fixture-injected from the exact persisted Game Design source under the authenticated
+ * same-namespace caller context; this does not prove automatic delivery. The proof creates no World
+ * content or lifecycle rows and does not prove publication or activation. Ephemeral test-only
+ * certificates cover the one authorized World client and Game Design server needed here; the
+ * socket-only {@code AuthoredWorldVersionStateMtlsTest} retains wrong-peer and malformed-evidence
+ * coverage.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest(
@@ -104,9 +131,30 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 class AuthoredWorldVersionStateMtlsIntegrationTest {
   private static final String NAMESPACE = "authored-version-state-mtls-test";
   private static final AtomicLong CERTIFICATE_SERIAL = new AtomicLong(1L);
+  private static final java.util.List<String> WORLD_CONTENT_AND_LIFECYCLE_TABLES =
+      java.util.List.of(
+          "generation_rule",
+          "instance",
+          "region",
+          "region_instance",
+          "room",
+          "room_exit",
+          "room_instance",
+          "room_instance_exit",
+          "world_design_aggregate_epoch",
+          "world_design_revision_ledger",
+          "world_design_scope_epoch",
+          "world_entity_spawn_binding",
+          "world_event",
+          "world_instance",
+          "zone",
+          "zone_instance");
 
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+
+  @Container
+  static PostgreSQLContainer<?> worldPostgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
   private static TestPki pki;
 
@@ -124,6 +172,7 @@ class AuthoredWorldVersionStateMtlsIntegrationTest {
   @Autowired private org.jooq.DSLContext dsl;
 
   private Server server;
+  private final AtomicLong producerReadCalls = new AtomicLong();
 
   @BeforeAll
   static void createEphemeralTestCertificates() throws Exception {
@@ -156,6 +205,7 @@ class AuthoredWorldVersionStateMtlsIntegrationTest {
   void startProductionHandlerOnPhysicalMutualTlsSocket() throws Exception {
     AuthoredWorldVersionStateGrpcService handler =
         new AuthoredWorldVersionStateGrpcService(versionStateService, NAMESPACE);
+    producerReadCalls.set(0L);
     server =
         NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
             .sslContext(
@@ -166,7 +216,24 @@ class AuthoredWorldVersionStateMtlsIntegrationTest {
                     .trustManager(pki.caCertificate())
                     .clientAuth(ClientAuth.REQUIRE)
                     .build())
-            .addService(ServerInterceptors.intercept(handler, new GrpcPeerIdentityInterceptor()))
+            .addService(
+                ServerInterceptors.intercept(
+                    handler,
+                    new GrpcPeerIdentityInterceptor(),
+                    new ServerInterceptor() {
+                      @Override
+                      public <RequestT, ResponseT> ServerCall.Listener<RequestT> interceptCall(
+                          ServerCall<RequestT, ResponseT> call,
+                          Metadata headers,
+                          ServerCallHandler<RequestT, ResponseT> next) {
+                        if (call.getMethodDescriptor()
+                            .getBareMethodName()
+                            .equals("GetAuthoredWorldVersionState")) {
+                          producerReadCalls.incrementAndGet();
+                        }
+                        return next.startCall(call, headers);
+                      }
+                    }))
             .build()
             .start();
   }
@@ -197,10 +264,12 @@ class AuthoredWorldVersionStateMtlsIntegrationTest {
         AuthoredWorldVersionStateEvidence.create(
             request,
             fixture.source(),
+            fixture.version().getCanonicalVersionId(),
             net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
                 .VERSION_LIFECYCLE_STATE_DRAFT,
             1L);
     assertThat(actual).isEqualTo(expected);
+    assertThat(actual.canonicalVersionId()).isEqualTo(fixture.version().getCanonicalVersionId());
     assertThat(actual.request()).isEqualTo(request);
     assertThat(actual.sourceEvidence()).isEqualTo(fixture.source());
     assertThat(actual.request().canonicalTenantId().toString())
@@ -280,6 +349,7 @@ class AuthoredWorldVersionStateMtlsIntegrationTest {
 
     assertThat(first.request()).isEqualTo(sameRequest);
     assertThat(first.sourceEvidence()).isEqualTo(fixture.source());
+    assertThat(first.canonicalVersionId()).isEqualTo(fixture.version().getCanonicalVersionId());
     assertThat(first.versionState())
         .isEqualTo(
             net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
@@ -287,12 +357,296 @@ class AuthoredWorldVersionStateMtlsIntegrationTest {
     assertThat(first.versionStateEpoch()).isEqualTo(1L);
     assertThat(current.request()).isEqualTo(sameRequest);
     assertThat(current.sourceEvidence()).isEqualTo(first.sourceEvidence());
+    assertThat(current.canonicalVersionId()).isEqualTo(first.canonicalVersionId());
     assertThat(current.versionState())
         .isEqualTo(
             net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
                 .VERSION_LIFECYCLE_STATE_RETIRED);
     assertThat(current.versionStateEpoch()).isEqualTo(2L);
     assertThat(current.evidenceDigest()).isNotEqualTo(first.evidenceDigest());
+  }
+
+  @Test
+  void composesPersistedGameDesignVersionOverMtlsWithWorldIdentityReadbackAndExactRetry(
+      @TempDir Path directory) throws Exception {
+    Fixture fixture = fixture("world-version-identity-over-mtls");
+    WorldFixture world = worldFixture();
+    WorldAuthoredSourceIntakeReceipt intake = acceptWorldSourceIntake(world, fixture);
+    Map<String, Long> contentBefore = worldContentAndLifecycleCounts(world.dsl());
+    assertThat(contentBefore.values()).containsOnly(0L);
+    assertThat(worldIdentityCount(world.dsl())).isZero();
+
+    UUID canonicalVersionId = fixture.version().getCanonicalVersionId();
+    long gameDesignVersionId = fixture.version().getId();
+    UUID initialReadRequestId = UUID.randomUUID();
+    AuthoredWorldVersionStateEvidence.Request initialRequest =
+        request(fixture, initialReadRequestId);
+    AuthoredWorldVersionStateEvidence expectedOriginalEvidence =
+        AuthoredWorldVersionStateEvidence.create(
+            initialRequest,
+            fixture.source(),
+            canonicalVersionId,
+            net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                .VERSION_LIFECYCLE_STATE_DRAFT,
+            1L);
+
+    try (AuthoredWorldVersionStateClient client = newClient(directory)) {
+      client.init();
+      WorldAuthoredVersionIdentityRepository identityRepository =
+          new WorldAuthoredVersionIdentityRepository(world.dsl());
+      WorldAuthoredVersionIdentityService identityService =
+          new WorldAuthoredVersionIdentityService(
+              client,
+              identityRepository,
+              world.sourceRepository(),
+              world.transactionManager(),
+              NAMESPACE);
+
+      WorldAuthoredVersionIdentityReceipt first =
+          associate(identityService, fixture, canonicalVersionId, initialReadRequestId);
+
+      assertThat(producerReadCalls.get()).isEqualTo(1L);
+      assertThat(first.sourceIntakeReceipt()).isEqualTo(intake);
+      assertThat(first.sourceIntakeReceipt().source()).isEqualTo(fixture.source());
+      assertThat(first.sourceIntakeReceipt().localTenantKey()).isPositive();
+      assertThat(first.localVersionKey()).isPositive();
+      assertThat(first.canonicalVersionId()).isEqualTo(canonicalVersionId);
+      assertThat(first.gameDesignVersionId()).isEqualTo(gameDesignVersionId);
+      assertThat(first.versionStateEvidence()).isEqualTo(expectedOriginalEvidence);
+      assertThat(first.versionStateEvidence().request()).isEqualTo(initialRequest);
+      assertThat(first.versionStateEvidence().sourceEvidence()).isEqualTo(fixture.source());
+      assertThat(first.versionStateEvidence().versionStateEpoch()).isEqualTo(1L);
+
+      Map<String, String> beforeAdvance = rowVersions(fixture);
+      Version advanced = fixture.version();
+      advanced.setVersionState(VersionLifecycleState.RETIRED);
+      advanced.setVersionStateEpoch(2L);
+      new TransactionTemplate(transactionManager)
+          .execute(status -> versionRepository.save(advanced));
+      Map<String, String> afterAdvance = rowVersions(fixture);
+      assertThat(afterAdvance).containsEntry("game", beforeAdvance.get("game"));
+      assertThat(afterAdvance).containsEntry("binding", beforeAdvance.get("binding"));
+      assertThat(afterAdvance).containsEntry("source", beforeAdvance.get("source"));
+      assertThat(afterAdvance.get("version")).isNotEqualTo(beforeAdvance.get("version"));
+      var advancedVersionRow =
+          Objects.requireNonNull(
+              dsl.fetchOne(
+                  "SELECT version_state, version_state_epoch FROM version WHERE id = ?",
+                  gameDesignVersionId),
+              "Advanced Game Design Version row is missing");
+      assertThat(advancedVersionRow.get("version_state", String.class)).isEqualTo("RETIRED");
+      assertThat(advancedVersionRow.get("version_state_epoch", Long.class)).isEqualTo(2L);
+
+      WorldAuthoredVersionIdentityReceipt retry =
+          associate(identityService, fixture, canonicalVersionId, UUID.randomUUID());
+      assertThat(retry).isEqualTo(first);
+      assertThat(retry.versionStateEvidence()).isEqualTo(expectedOriginalEvidence);
+      assertThat(producerReadCalls.get()).isEqualTo(1L);
+      assertThat(rowVersions(fixture)).isEqualTo(afterAdvance);
+
+      assertThat(
+              identityRepository.readByCanonicalVersion(
+                  NAMESPACE,
+                  fixture.canonicalTenantId(),
+                  fixture.source().worldSlug(),
+                  canonicalVersionId))
+          .contains(first);
+      assertThat(
+              identityRepository.readByGameDesignVersion(
+                  NAMESPACE,
+                  fixture.canonicalTenantId(),
+                  fixture.source().worldSlug(),
+                  gameDesignVersionId))
+          .contains(first);
+      assertThat(world.sourceRepository().read(NAMESPACE, intake.intakeRequestId()))
+          .contains(intake);
+      assertThat(worldIdentityCount(world.dsl())).isEqualTo(1L);
+      assertThat(worldContentAndLifecycleCounts(world.dsl()).values()).containsOnly(0L);
+    }
+  }
+
+  @Test
+  void rejectsSubstitutedCanonicalVersionBeforeWorldIdentityPersistence(@TempDir Path directory)
+      throws Exception {
+    Fixture fixture = fixture("world-version-identity-substituted-uuid");
+    WorldFixture world = worldFixture();
+    WorldAuthoredSourceIntakeReceipt intake = acceptWorldSourceIntake(world, fixture);
+    Map<String, Long> contentBefore = worldContentAndLifecycleCounts(world.dsl());
+    assertThat(contentBefore.values()).containsOnly(0L);
+
+    UUID canonicalVersionId = fixture.version().getCanonicalVersionId();
+    UUID substitutedCanonicalVersionId = UUID.randomUUID();
+    assertThat(substitutedCanonicalVersionId).isNotEqualTo(canonicalVersionId);
+    long gameDesignVersionId = fixture.version().getId();
+    WorldAuthoredVersionIdentityRepository identityRepository =
+        new WorldAuthoredVersionIdentityRepository(world.dsl());
+
+    try (AuthoredWorldVersionStateClient client = newClient(directory)) {
+      client.init();
+      WorldAuthoredVersionIdentityService identityService =
+          new WorldAuthoredVersionIdentityService(
+              client,
+              identityRepository,
+              world.sourceRepository(),
+              world.transactionManager(),
+              NAMESPACE);
+
+      assertThatThrownBy(
+              () ->
+                  associate(
+                      identityService, fixture, substitutedCanonicalVersionId, UUID.randomUUID()))
+          .isInstanceOf(
+              WorldAuthoredVersionIdentityRepository.InvalidIdentityEvidenceException.class)
+          .hasMessageContaining("expected UUID");
+
+      assertThat(producerReadCalls.get()).isEqualTo(1L);
+      assertThat(worldIdentityCount(world.dsl())).isZero();
+      assertThat(world.sourceRepository().read(NAMESPACE, intake.intakeRequestId()))
+          .contains(intake);
+      assertThat(worldContentAndLifecycleCounts(world.dsl())).isEqualTo(contentBefore);
+
+      WorldAuthoredVersionIdentityReceipt accepted =
+          associate(identityService, fixture, canonicalVersionId, UUID.randomUUID());
+      assertThat(accepted.canonicalVersionId()).isEqualTo(canonicalVersionId);
+      assertThat(accepted.gameDesignVersionId()).isEqualTo(gameDesignVersionId);
+      assertThat(accepted.sourceIntakeReceipt()).isEqualTo(intake);
+      assertThat(accepted.versionStateEvidence().sourceEvidence()).isEqualTo(fixture.source());
+      assertThat(producerReadCalls.get()).isEqualTo(2L);
+      assertThat(worldIdentityCount(world.dsl())).isEqualTo(1L);
+      assertThat(
+              identityRepository.readByCanonicalVersion(
+                  NAMESPACE,
+                  fixture.canonicalTenantId(),
+                  fixture.source().worldSlug(),
+                  canonicalVersionId))
+          .contains(accepted);
+      assertThat(world.sourceRepository().read(NAMESPACE, intake.intakeRequestId()))
+          .contains(intake);
+      assertThat(worldContentAndLifecycleCounts(world.dsl()).values()).containsOnly(0L);
+    }
+  }
+
+  private WorldFixture worldFixture() throws Exception {
+    String schema = "world_identity_mtls_" + UUID.randomUUID().toString().replace("-", "");
+    DriverManagerDataSource dataSource = new DriverManagerDataSource();
+    dataSource.setUrl(worldPostgres.getJdbcUrl());
+    dataSource.setUsername(worldPostgres.getUsername());
+    dataSource.setPassword(worldPostgres.getPassword());
+    dataSource.setSchema(schema);
+
+    Path repositoryRoot = repositoryRoot();
+    Path worldMigrations =
+        repositoryRoot.resolve("services/world-management-service/src/main/resources/db/migration");
+    Path sagaMigrations =
+        repositoryRoot.resolve("services/common-saga/src/main/resources/db/migration/saga");
+    Flyway.configure()
+        .dataSource(dataSource)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .placeholders(Map.of("serviceSchema", schema))
+        .locations("filesystem:" + worldMigrations, "filesystem:" + sagaMigrations)
+        .load()
+        .migrate();
+
+    DSLContext worldDsl =
+        DSL.using(
+            new DataSourceConnectionProvider(new TransactionAwareDataSourceProxy(dataSource)),
+            SQLDialect.POSTGRES);
+    PlatformTransactionManager worldTransactionManager =
+        new DataSourceTransactionManager(dataSource);
+    return new WorldFixture(
+        worldDsl, new WorldAuthoredSourceIntakeRepository(worldDsl), worldTransactionManager);
+  }
+
+  private static Path repositoryRoot() {
+    Path current = Path.of("").toAbsolutePath();
+    while (current != null) {
+      if (Files.exists(current.resolve("settings.gradle.kts"))) {
+        return current;
+      }
+      current = current.getParent();
+    }
+    throw new IllegalStateException("Unable to locate repository migration sources");
+  }
+
+  /**
+   * Persists the exact Game Design owner receipt as test-fixture World intake under the same
+   * authenticated caller context. This fixture injection is not automatic service delivery.
+   */
+  private WorldAuthoredSourceIntakeReceipt acceptWorldSourceIntake(
+      WorldFixture world, Fixture gameDesignFixture) {
+    UUID intakeRequestId = UUID.randomUUID();
+    TransactionTemplate ownerTransaction = new TransactionTemplate(world.transactionManager());
+    ownerTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    WorldAuthoredSourceIntakeReceipt accepted =
+        ownerTransaction.execute(
+            status ->
+                withGameDesign(
+                    () ->
+                        world
+                            .sourceRepository()
+                            .acceptFresh(NAMESPACE, intakeRequestId, gameDesignFixture.source())));
+    assertThat(accepted).isNotNull();
+    WorldAuthoredSourceIntakeReceipt independentReadback =
+        withGameDesign(
+            () ->
+                world
+                    .sourceRepository()
+                    .read(NAMESPACE, intakeRequestId)
+                    .orElseThrow(
+                        () -> new IllegalStateException("World source intake is missing")));
+    assertThat(independentReadback).isEqualTo(accepted);
+    return independentReadback;
+  }
+
+  private static WorldAuthoredVersionIdentityReceipt associate(
+      WorldAuthoredVersionIdentityService service,
+      Fixture fixture,
+      UUID expectedCanonicalVersionId,
+      UUID readRequestId) {
+    return withGameDesign(
+        () ->
+            service.associate(
+                NAMESPACE,
+                fixture.canonicalTenantId(),
+                fixture.source().worldSlug(),
+                fixture.source().operationId(),
+                fixture.source().evidenceDigest(),
+                expectedCanonicalVersionId,
+                fixture.version().getId(),
+                readRequestId));
+  }
+
+  private static <T> T withGameDesign(Supplier<T> action) {
+    GrpcPeerIdentity peer =
+        new GrpcPeerIdentity(
+            "spiffe://firemud/ns/" + NAMESPACE + "/sa/game-design-service",
+            NAMESPACE,
+            "game-design-service");
+    Context authenticated = Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer);
+    Context previous = authenticated.attach();
+    try {
+      return action.get();
+    } finally {
+      authenticated.detach(previous);
+    }
+  }
+
+  private static long worldIdentityCount(DSLContext worldDsl) {
+    return Objects.requireNonNull(
+            worldDsl.fetchOne("SELECT COUNT(*) FROM world_authored_version_identity"))
+        .get(0, Long.class);
+  }
+
+  private static Map<String, Long> worldContentAndLifecycleCounts(DSLContext worldDsl) {
+    Map<String, Long> counts = new LinkedHashMap<>();
+    for (String table : WORLD_CONTENT_AND_LIFECYCLE_TABLES) {
+      counts.put(
+          table,
+          Objects.requireNonNull(worldDsl.fetchOne("SELECT COUNT(*) FROM " + table))
+              .get(0, Long.class));
+    }
+    return Map.copyOf(counts);
   }
 
   private AuthoredWorldVersionStateClient newClient(Path directory) throws Exception {
@@ -492,6 +846,11 @@ class AuthoredWorldVersionStateMtlsIntegrationTest {
       String privateTenantKey,
       AuthoredWorldSourceEvidence source,
       Version version) {}
+
+  private record WorldFixture(
+      DSLContext dsl,
+      WorldAuthoredSourceIntakeRepository sourceRepository,
+      PlatformTransactionManager transactionManager) {}
 
   private record TestCertificate(PrivateKey privateKey, X509Certificate certificate) {}
 

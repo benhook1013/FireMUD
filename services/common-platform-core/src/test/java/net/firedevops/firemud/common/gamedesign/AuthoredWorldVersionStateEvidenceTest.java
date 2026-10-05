@@ -3,6 +3,7 @@ package net.firedevops.firemud.common.gamedesign;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
@@ -14,6 +15,9 @@ class AuthoredWorldVersionStateEvidenceTest {
   private static final UUID TENANT_ID = uuid("22222222-2222-4222-8222-222222222222");
   private static final UUID SOURCE_OPERATION_ID = uuid("33333333-3333-4333-8333-333333333333");
   private static final UUID REGISTRATION_REQUEST_ID = uuid("44444444-4444-4444-8444-444444444444");
+  private static final UUID CANONICAL_VERSION_ID = uuid("abcdefab-cdef-4abc-8def-abcdefabcdef");
+  private static final UUID OTHER_CANONICAL_VERSION_ID =
+      uuid("fedcbafe-dcba-4fed-8cba-fedcbafedcba");
   private static final String SOURCE_DIGEST = "sha256:" + "a".repeat(64);
 
   @Test
@@ -23,11 +27,33 @@ class AuthoredWorldVersionStateEvidenceTest {
         AuthoredWorldVersionStateEvidence.create(
             request,
             independentVectorSource(),
+            CANONICAL_VERSION_ID,
             VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
             9_223_372_036_854_775_804L);
 
     assertThat(evidence.evidenceDigest())
-        .isEqualTo("sha256:b17f213002a2ee26d4ccd7aeaf33b50e36ef7cc9d59684913d7916844fde14bd");
+        .isEqualTo("sha256:6d041ac372af81cb2fc6bd427e48118d85216427bd68e699d0c4af240feb655e");
+    String expectedPreimage =
+        "43:game-design-authored-world-version-state/v1"
+            + "1:1"
+            + "7:firemud"
+            + "36:33333333-3333-4333-8333-333333333333"
+            + "36:11111111-1111-4111-8111-111111111111"
+            + "12:violet-wilds"
+            + "36:22222222-2222-4222-8222-222222222222"
+            + "71:sha256:75961752d010261b637ece6ce33eeb714ea032986836bf118397473cc8a2895b"
+            + "19:9223372036854775805"
+            + "36:abcdefab-cdef-4abc-8def-abcdefabcdef"
+            + "5:DRAFT"
+            + "19:9223372036854775804";
+    byte[] preimage =
+        AuthoredWorldVersionStateEvidence.evidencePreimage(
+            request,
+            CANONICAL_VERSION_ID,
+            VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
+            9_223_372_036_854_775_804L);
+    assertThat(new String(preimage, StandardCharsets.UTF_8)).isEqualTo(expectedPreimage);
+    assertThat(preimage).hasSize(354);
     assertThat(evidence.sourceEvidence().requestDigest())
         .isEqualTo("sha256:c8853aa8d2fbdf1bc7905c80d931bdedf32b16c89e49a2c08e821a039b175e23");
     assertThat(evidence.sourceEvidence().evidenceDigest())
@@ -39,27 +65,45 @@ class AuthoredWorldVersionStateEvidenceTest {
     var original = request("cafe-coast", 19L);
     String originalDigest =
         AuthoredWorldVersionStateEvidence.evidenceDigest(
-            original, VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT, 7L);
+            original,
+            CANONICAL_VERSION_ID,
+            VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
+            7L);
 
     assertThat(
             AuthoredWorldVersionStateEvidence.evidenceDigest(
                 request("cafe-cliff", 19L),
+                CANONICAL_VERSION_ID,
                 VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
                 7L))
         .isNotEqualTo(originalDigest);
     assertThat(
             AuthoredWorldVersionStateEvidence.evidenceDigest(
                 request("cafe-coast", 20L),
+                CANONICAL_VERSION_ID,
                 VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
                 7L))
         .isNotEqualTo(originalDigest);
     assertThat(
             AuthoredWorldVersionStateEvidence.evidenceDigest(
-                original, VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED, 7L))
+                original,
+                CANONICAL_VERSION_ID,
+                VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED,
+                7L))
         .isNotEqualTo(originalDigest);
     assertThat(
             AuthoredWorldVersionStateEvidence.evidenceDigest(
-                original, VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT, 8L))
+                original,
+                CANONICAL_VERSION_ID,
+                VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
+                8L))
+        .isNotEqualTo(originalDigest);
+    assertThat(
+            AuthoredWorldVersionStateEvidence.evidenceDigest(
+                original,
+                OTHER_CANONICAL_VERSION_ID,
+                VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
+                7L))
         .isNotEqualTo(originalDigest);
   }
 
@@ -83,6 +127,7 @@ class AuthoredWorldVersionStateEvidenceTest {
             () ->
                 AuthoredWorldVersionStateEvidence.evidenceDigest(
                     request("cafe-coast", 19L),
+                    CANONICAL_VERSION_ID,
                     VersionLifecycleState.VERSION_LIFECYCLE_STATE_UNSPECIFIED,
                     7L))
         .isInstanceOf(IllegalArgumentException.class)
@@ -92,6 +137,7 @@ class AuthoredWorldVersionStateEvidenceTest {
                 AuthoredWorldVersionStateEvidence.create(
                     request("cafe-coast", 19L),
                     sourceEvidence("Café 🐉"),
+                    CANONICAL_VERSION_ID,
                     VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
                     0L))
         .isInstanceOf(IllegalArgumentException.class)
@@ -101,6 +147,7 @@ class AuthoredWorldVersionStateEvidenceTest {
                 AuthoredWorldVersionStateEvidence.create(
                     request("other-world", 19L),
                     sourceEvidence("Café 🐉"),
+                    CANONICAL_VERSION_ID,
                     VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
                     7L))
         .isInstanceOf(IllegalArgumentException.class)
@@ -121,10 +168,21 @@ class AuthoredWorldVersionStateEvidenceTest {
                 AuthoredWorldVersionStateEvidence.create(
                     reusedRegistrationIdentity,
                     source,
+                    CANONICAL_VERSION_ID,
                     VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
                     7L))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("original source registration request");
+    assertThatThrownBy(
+            () ->
+                AuthoredWorldVersionStateEvidence.create(
+                    request("cafe-coast", 19L),
+                    sourceEvidence("Café 🐉"),
+                    new UUID(0L, 0L),
+                    VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
+                    7L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("non-nil UUID");
   }
 
   private static AuthoredWorldVersionStateEvidence.Request request(
