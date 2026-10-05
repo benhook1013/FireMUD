@@ -21,7 +21,6 @@ import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.socialgroups.v1.AddFriendResponse;
 import net.firedevops.firemud.socialgroups.v1.FriendPresenceActivityState;
 import net.firedevops.firemud.socialgroups.v1.FriendPresenceEntry;
-import net.firedevops.firemud.socialgroups.v1.FriendRecentPresenceDisposition;
 import net.firedevops.firemud.socialgroups.v1.FriendRosterEntry;
 import net.firedevops.firemud.socialgroups.v1.FriendRosterFilter;
 import net.firedevops.firemud.socialgroups.v1.GetFriendByOrdinalResponse;
@@ -107,6 +106,9 @@ public class FriendsCommandHandler {
 
   private TextCommandInterpretationResult handleList(
       SessionContext context, FriendListFilter filter, String rawCommandText) {
+    if (!isPlayerSafeFilter(filter)) {
+      return friendFilterUnavailable();
+    }
     ListFriendsResponse response =
         filter == FriendListFilter.ALL
             ? socialGroupsClient.listFriends(context.tenantId(), context.accountId())
@@ -133,6 +135,19 @@ public class FriendsCommandHandler {
     publishCommandEvent(context, rawCommandText);
     return new TextCommandInterpretationResult(
         CommandEnqueueResult.success(), List.of(PlayerOutput.view(view)));
+  }
+
+  private TextCommandInterpretationResult friendFilterUnavailable() {
+    return new TextCommandInterpretationResult(
+        CommandEnqueueResult.failure("FRIEND_PRESENCE_UNAVAILABLE", "Friend presence unavailable"),
+        List.of(PlayerOutput.error("FRIEND_PRESENCE_UNAVAILABLE", "Friend presence unavailable")));
+  }
+
+  private boolean isPlayerSafeFilter(FriendListFilter filter) {
+    return switch (filter) {
+      case OFFLINE, PUBLIC, FRIENDS_ONLY, PRIVATE, SHARED, ISOLATED, UNSPECIFIED_SCOPE -> false;
+      default -> true;
+    };
   }
 
   private TextCommandInterpretationResult handleAdd(
@@ -266,19 +281,7 @@ public class FriendsCommandHandler {
         CommandEnqueueResult.success(),
         List.of(
             PlayerOutput.view(
-                new FriendRosterSummaryViewOutput(
-                    response.getSummary().getTotalCount(),
-                    response.getSummary().getOnlineCount(),
-                    response.getSummary().getOfflineCount(),
-                    response.getSummary().getRecentCount(),
-                    response.getSummary().getPublicCount(),
-                    response.getSummary().getFriendsOnlyCount(),
-                    response.getSummary().getPrivateCount(),
-                    response.getSummary().getHiddenStaffCount(),
-                    response.getSummary().getUnspecifiedVisibilityCount(),
-                    response.getSummary().getSharedCount(),
-                    response.getSummary().getIsolatedCount(),
-                    response.getSummary().getUnspecifiedScopeCount()))));
+                new FriendRosterSummaryViewOutput(response.getSummary().getTotalCount()))));
   }
 
   private TextCommandInterpretationResult handleVisibilityView(
@@ -309,12 +312,6 @@ public class FriendsCommandHandler {
         parseVisibilityPolicy(targetToken);
     if (visibilityPolicy == null) {
       return invalidUsage("FRIENDS VISIBILITY <PUBLIC|FRIENDS_ONLY|PRIVATE>");
-    }
-    if (visibilityPolicy
-        == net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy
-            .FRIEND_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF) {
-      return friendTargetError(
-          "INVALID_ARGUMENT", "HIDDEN_STAFF is reserved and cannot be set from gameplay");
     }
     UpdateFriendPresencePolicyResponse response =
         socialGroupsClient.updateFriendPresencePolicy(
@@ -430,13 +427,15 @@ public class FriendsCommandHandler {
     List<FriendPresenceViewOutput.Entry> mapped =
         canonicalFiltered ? allEntries : allEntries.stream().filter(filter::matches).toList();
     int totalCount = response.getTotalCount() > 0 ? response.getTotalCount() : allEntries.size();
-    int matchCount = response.getMatchCount() > 0 ? response.getMatchCount() : mapped.size();
-    return new FriendPresenceViewOutput(filter.name(), totalCount, matchCount, mapped);
+    return new FriendPresenceViewOutput(filter.name(), totalCount, mapped);
   }
 
   private FriendPresenceViewOutput.Entry toEntry(int ordinal, FriendRosterEntry entry) {
     FriendPresenceEntry presence = entry.getPresence();
     long friendAccountId = requireFriendAccountId(entry.getFriendAccountId());
+    if (!isPlayerDisclosablePolicy(presence.getVisibilityPolicy())) {
+      return redactedEntry(ordinal, entry, friendAccountId, "Friend #" + friendAccountId);
+    }
     String characterName =
         presence.getCharacterName().isBlank() ? null : presence.getCharacterName().trim();
     return new FriendPresenceViewOutput.Entry(
@@ -447,17 +446,48 @@ public class FriendsCommandHandler {
         entry.getCreatedAtMs() > 0 ? entry.getCreatedAtMs() : null,
         characterName != null ? characterName : "Friend #" + friendAccountId,
         presence.getOnline(),
-        blankToNull(presence.getWorldSlug()),
-        blankToNull(presence.getWorldDisplayName()),
-        blankToNull(presence.getRealmSlug()),
-        blankToNull(presence.getRealmDisplayName()),
+        null,
+        null,
+        null,
+        null,
         characterName,
-        playableStateScope(presence.getPlayableStateScope()),
-        presence.getPointerVersion() > 0 ? presence.getPointerVersion() : null,
+        null,
+        null,
         activityState(presence.getActivityState()),
         presence.getLastSeenAtMs() > 0 ? presence.getLastSeenAtMs() : null,
-        recentDisposition(presence.getRecentDisposition()),
         visibilityPolicy(presence.getVisibilityPolicy()));
+  }
+
+  private FriendPresenceViewOutput.Entry redactedEntry(
+      int ordinal, FriendRosterEntry entry, long friendAccountId, String displayName) {
+    return new FriendPresenceViewOutput.Entry(
+        ordinal,
+        parseOptionalLong(entry.getFriendLinkId()),
+        friendAccountId,
+        blankToNull(entry.getStatus()),
+        entry.getCreatedAtMs() > 0 ? entry.getCreatedAtMs() : null,
+        displayName,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null);
+  }
+
+  private boolean isPlayerDisclosablePolicy(
+      net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy policy) {
+    return policy
+            == net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy
+                .FRIEND_PRESENCE_VISIBILITY_POLICY_PUBLIC
+        || policy
+            == net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy
+                .FRIEND_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY;
   }
 
   private String activityState(FriendPresenceActivityState activityState) {
@@ -493,30 +523,12 @@ public class FriendsCommandHandler {
     return value == null || value.isBlank() ? null : value;
   }
 
-  private String recentDisposition(FriendRecentPresenceDisposition disposition) {
-    return switch (disposition) {
-      case FRIEND_RECENT_PRESENCE_DISPOSITION_TRANSPORT_LOSS -> "TRANSPORT_LOSS";
-      case FRIEND_RECENT_PRESENCE_DISPOSITION_LOGOUT -> "LOGOUT";
-      case FRIEND_RECENT_PRESENCE_DISPOSITION_TAKEOVER -> "TAKEOVER";
-      default -> null;
-    };
-  }
-
-  private String playableStateScope(PlayableStateScope scope) {
-    return switch (scope) {
-      case PLAYABLE_STATE_SCOPE_SHARED -> "SHARED";
-      case PLAYABLE_STATE_SCOPE_ISOLATED -> "ISOLATED";
-      default -> null;
-    };
-  }
-
   private String visibilityPolicy(
       net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy visibilityPolicy) {
     return switch (visibilityPolicy) {
       case FRIEND_PRESENCE_VISIBILITY_POLICY_PUBLIC -> "PUBLIC";
       case FRIEND_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY -> "FRIENDS_ONLY";
       case FRIEND_PRESENCE_VISIBILITY_POLICY_PRIVATE -> "PRIVATE";
-      case FRIEND_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF -> "HIDDEN_STAFF";
       default -> null;
     };
   }
@@ -558,16 +570,10 @@ public class FriendsCommandHandler {
               FriendActionKind.LIST, "LIST", FriendListFilter.FRIENDS_ONLY, null, null);
       case "PRIVATE" ->
           new FriendAction(FriendActionKind.LIST, "LIST", FriendListFilter.PRIVATE, null, null);
-      case "HIDDEN_STAFF", "HIDDEN-STAFF", "HIDDEN" ->
-          new FriendAction(
-              FriendActionKind.LIST, "LIST", FriendListFilter.HIDDEN_STAFF, null, null);
       case "SHARED" ->
           new FriendAction(FriendActionKind.LIST, "LIST", FriendListFilter.SHARED, null, null);
       case "ISOLATED" ->
           new FriendAction(FriendActionKind.LIST, "LIST", FriendListFilter.ISOLATED, null, null);
-      case "UNSPECIFIED", "UNKNOWN", "UNSPECIFIED_VISIBILITY" ->
-          new FriendAction(
-              FriendActionKind.LIST, "LIST", FriendListFilter.UNSPECIFIED_VISIBILITY, null, null);
       case "UNSCOPED", "UNKNOWN_SCOPE", "UNSPECIFIED_SCOPE" ->
           new FriendAction(
               FriendActionKind.LIST, "LIST", FriendListFilter.UNSPECIFIED_SCOPE, null, null);
@@ -577,7 +583,7 @@ public class FriendsCommandHandler {
               "INVALID",
               FriendListFilter.ALL,
               null,
-              "FRIENDS [ADD|REMOVE|SHOW|SUMMARY|VISIBILITY|ONLINE|OFFLINE|RECENT|PUBLIC|FRIENDS_ONLY|PRIVATE|HIDDEN_STAFF|UNSPECIFIED_VISIBILITY|SHARED|ISOLATED|UNSPECIFIED_SCOPE]");
+              "FRIENDS [ADD|REMOVE|SHOW|SUMMARY|VISIBILITY|ONLINE|RECENT|SHARED|ISOLATED]");
     };
   }
 
@@ -680,8 +686,6 @@ public class FriendsCommandHandler {
       case PUBLIC -> FriendRosterFilter.FRIEND_ROSTER_FILTER_PUBLIC;
       case FRIENDS_ONLY -> FriendRosterFilter.FRIEND_ROSTER_FILTER_FRIENDS_ONLY;
       case PRIVATE -> FriendRosterFilter.FRIEND_ROSTER_FILTER_PRIVATE;
-      case HIDDEN_STAFF -> FriendRosterFilter.FRIEND_ROSTER_FILTER_HIDDEN_STAFF;
-      case UNSPECIFIED_VISIBILITY -> FriendRosterFilter.FRIEND_ROSTER_FILTER_UNSPECIFIED_VISIBILITY;
       case SHARED -> FriendRosterFilter.FRIEND_ROSTER_FILTER_SHARED;
       case ISOLATED -> FriendRosterFilter.FRIEND_ROSTER_FILTER_ISOLATED;
       case UNSPECIFIED_SCOPE -> FriendRosterFilter.FRIEND_ROSTER_FILTER_UNSPECIFIED_SCOPE;
@@ -716,37 +720,35 @@ public class FriendsCommandHandler {
 
   private FriendPresencePolicyViewOutput friendPresencePolicyView(
       net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy current) {
+    net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy effectiveCurrent =
+        isPlayerDisclosablePolicy(current)
+            ? current
+            : net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy
+                .FRIEND_PRESENCE_VISIBILITY_POLICY_PRIVATE;
     return new FriendPresencePolicyViewOutput(
-        visibilityPolicy(current),
+        visibilityPolicy(effectiveCurrent),
         List.of(
             new FriendPresencePolicyViewOutput.Option(
                 "PUBLIC",
                 "Show the normal bounded friend-presence payload to approved social consumers.",
-                current
+                effectiveCurrent
                     == net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy
                         .FRIEND_PRESENCE_VISIBILITY_POLICY_PUBLIC,
                 true),
             new FriendPresencePolicyViewOutput.Option(
                 "FRIENDS_ONLY",
                 "Expose richer live identity only to approved friends.",
-                current
+                effectiveCurrent
                     == net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy
                         .FRIEND_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY,
                 true),
             new FriendPresencePolicyViewOutput.Option(
                 "PRIVATE",
-                "Suppress current live character identity and expose only coarse online or recent activity.",
-                current
+                "Do not expose current presence, recent activity, or location details.",
+                effectiveCurrent
                     == net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy
                         .FRIEND_PRESENCE_VISIBILITY_POLICY_PRIVATE,
-                true),
-            new FriendPresencePolicyViewOutput.Option(
-                "HIDDEN_STAFF",
-                "Reserved for staff-hidden role clamps and not set directly from gameplay.",
-                current
-                    == net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy
-                        .FRIEND_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF,
-                false)));
+                true)));
   }
 
   private net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy
@@ -765,9 +767,6 @@ public class FriendsCommandHandler {
       case "PRIVATE" ->
           net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy
               .FRIEND_PRESENCE_VISIBILITY_POLICY_PRIVATE;
-      case "HIDDEN_STAFF" ->
-          net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy
-              .FRIEND_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF;
       default -> null;
     };
   }
@@ -792,19 +791,19 @@ public class FriendsCommandHandler {
     ONLINE {
       @Override
       boolean matches(FriendPresenceViewOutput.Entry entry) {
-        return entry.online();
+        return Boolean.TRUE.equals(entry.online());
       }
     },
     OFFLINE {
       @Override
       boolean matches(FriendPresenceViewOutput.Entry entry) {
-        return !entry.online();
+        return Boolean.FALSE.equals(entry.online());
       }
     },
     RECENT {
       @Override
       boolean matches(FriendPresenceViewOutput.Entry entry) {
-        return !entry.online() && entry.lastSeenAtEpochMs() != null;
+        return Boolean.FALSE.equals(entry.online()) && entry.lastSeenAtEpochMs() != null;
       }
     },
     PUBLIC {
@@ -822,13 +821,7 @@ public class FriendsCommandHandler {
     PRIVATE {
       @Override
       boolean matches(FriendPresenceViewOutput.Entry entry) {
-        return "PRIVATE".equals(entry.visibilityPolicy());
-      }
-    },
-    HIDDEN_STAFF {
-      @Override
-      boolean matches(FriendPresenceViewOutput.Entry entry) {
-        return "HIDDEN_STAFF".equals(entry.visibilityPolicy());
+        return !StringUtils.hasText(entry.visibilityPolicy());
       }
     },
     SHARED {
@@ -841,12 +834,6 @@ public class FriendsCommandHandler {
       @Override
       boolean matches(FriendPresenceViewOutput.Entry entry) {
         return "ISOLATED".equals(entry.playableStateScope());
-      }
-    },
-    UNSPECIFIED_VISIBILITY {
-      @Override
-      boolean matches(FriendPresenceViewOutput.Entry entry) {
-        return !StringUtils.hasText(entry.visibilityPolicy());
       }
     },
     UNSPECIFIED_SCOPE {

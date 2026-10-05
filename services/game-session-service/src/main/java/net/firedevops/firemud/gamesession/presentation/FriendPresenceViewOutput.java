@@ -1,14 +1,15 @@
 package net.firedevops.firemud.gamesession.presentation;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import java.util.List;
 
-public record FriendPresenceViewOutput(
-    String filter, int totalCount, int matchCount, List<Entry> friends)
+public record FriendPresenceViewOutput(String filter, int totalCount, List<Entry> friends)
     implements PlayerOutputPayload {
   public FriendPresenceViewOutput {
     friends = List.copyOf(friends);
   }
 
+  @JsonInclude(JsonInclude.Include.NON_NULL)
   public record Entry(
       int ordinal,
       Long friendLinkId,
@@ -16,7 +17,7 @@ public record FriendPresenceViewOutput(
       String status,
       Long linkedAtEpochMs,
       String displayName,
-      boolean online,
+      Boolean online,
       String worldSlug,
       String worldDisplayName,
       String realmSlug,
@@ -26,6 +27,5 @@ public record FriendPresenceViewOutput(
       Long pointerVersion,
       String activityState,
       Long lastSeenAtEpochMs,
-      String recentDisposition,
       String visibilityPolicy) {}
 }

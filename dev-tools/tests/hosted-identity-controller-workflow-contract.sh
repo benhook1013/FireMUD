@@ -651,6 +651,12 @@ contains "$waiter" 'get secret "$secret_name" --ignore-not-found -o json'
 contains "$waiter" 'get namespace "$runtime_namespace" --ignore-not-found -o json'
 # shellcheck disable=SC2016 # Match literal shell source in the waiter.
 contains "$waiter" 'get hostedenvironmentidentity "$identity_name" --ignore-not-found -o json'
+# shellcheck disable=SC2016 # Match literal shell source in the waiter.
+contains "$waiter" 'namespace_kubeconfig="${NAMESPACE_KUBECONFIG:-}"'
+# shellcheck disable=SC2016 # Match literal shell source in the waiter.
+contains "$waiter" 'identity_kubeconfig="${IDENTITY_KUBECONFIG:-}"'
+# shellcheck disable=SC2016 # Match literal shell source in the waiter.
+contains "$waiter" 'kubectl_prefix=(--kubeconfig "$kubeconfig_path")'
 contains "$waiter" 'Unable to determine controller projection'
 contains "$waiter" 'Unable to determine runtime namespace'
 contains "$waiter" 'Unable to determine HostedEnvironmentIdentity'
@@ -1762,7 +1768,6 @@ assert deploy_steps.index(active_request) < deploy_steps.index(deploy_requester_
 assert "Remember preview runtime kubeconfig" not in deploy_by_name
 assert "Restore preview runtime kubeconfig" not in deploy_by_name
 runtime_kubeconfig_path = "${{ runner.temp }}/preview-runtime.kubeconfig"
-runtime_kubeconfig_cleanup = 'rm -f -- "$RUNNER_TEMP/preview-runtime.kubeconfig"\n'
 runtime_kubeconfig_marker = '"$RUNNER_TEMP/preview-runtime.kubeconfig"'
 manager_kubeconfig_path = "${{ runner.temp }}/preview-namespace-manager.kubeconfig"
 manager_kubeconfig_cleanup = 'rm -f -- "$RUNNER_TEMP/preview-namespace-manager.kubeconfig"'
@@ -1787,7 +1792,13 @@ for job_name, job in jobs.items():
         assert runtime_kubeconfig_marker in cleanup["run"], job_name
         assert manager_kubeconfig_marker in cleanup["run"], job_name
     else:
-        assert cleanup["run"] == runtime_kubeconfig_cleanup, job_name
+        for expected_cleanup_file in (
+            "preview-runtime.kubeconfig",
+            "preview-telnet-semantics.json",
+            "preview-wss-semantics.json",
+            "preview-playable-proof.json",
+        ):
+            assert f'"$RUNNER_TEMP/{expected_cleanup_file}"' in cleanup["run"], job_name
     assert steps[-1] == cleanup, job_name
 assert runtime_kubeconfig_jobs == {"deploy-runtime", "verify-runtime"}
 manager_kubeconfig_jobs = set()
@@ -1812,7 +1823,7 @@ for job_name, job in jobs.items():
     else:
         assert manager_kubeconfig_marker in cleanup["run"], job_name
 assert manager_kubeconfig_jobs == {
-    "deploy-runtime", "publish-preview-proof", "destroy-runtime"
+    "deploy-runtime", "verify-runtime", "publish-preview-proof", "destroy-runtime"
 }
 assert "Set up Helm" not in deploy_by_name
 assert not any(
@@ -2139,7 +2150,7 @@ assert apply_run.count(revalidate_target) == 2
 source_binding_helper = (
     "bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh"
 )
-assert trusted_source.count(source_binding_helper) == 9
+assert trusted_source.count(source_binding_helper) == 11
 assert trusted_source.count('pull_request_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"') == 1
 assert "current_pull_request_json" not in trusted_source
 assert "(.head.repo.full_name == $repository)" not in trusted_source
@@ -2289,8 +2300,36 @@ assert "Wait for exact controller identity readiness" not in deploy_by_name
 assert "Wait for runtime rollouts before operator validation" not in deploy_by_name
 
 verify_steps = jobs["verify-runtime"]["steps"]
+assert jobs["verify-runtime"]["env"] == {
+    "HOSTED_PLAYABLE_EMAIL": "demo@example.com",
+    "HOSTED_PLAYABLE_PASSWORD": "swordfish",
+    "HOSTED_PLAYABLE_WORLD": "demo",
+    "HOSTED_PLAYABLE_REALM": "production",
+    "HOSTED_PLAYABLE_CHARACTER": "",
+}
 verify_by_name = {
     step.get("name"): step for step in verify_steps if isinstance(step, dict)
+}
+verify_runtime_write = verify_by_name["Write runtime kubeconfig"]
+verify_manager_write = verify_by_name["Write trusted namespace-manager kubeconfig"]
+verify_requester_write = verify_by_name["Write requester kubeconfig"]
+assert verify_runtime_write["with"] == {
+    "content": "${{ secrets.TRUSTED_HOSTED_PREVIEW_RUNTIME_KUBECONFIG }}",
+    "path": "${{ runner.temp }}/preview-runtime.kubeconfig",
+    "export-to-github-env": "false",
+}
+assert verify_manager_write["with"] == {
+    "content": "${{ secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG }}",
+    "path": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
+    "export-to-github-env": "false",
+}
+assert verify_requester_write["if"] == (
+    "${{ needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}"
+)
+assert verify_requester_write["with"] == {
+    "content": "${{ secrets.TRUSTED_HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}",
+    "path": "${{ runner.temp }}/hosted-identity-requester.kubeconfig",
+    "export-to-github-env": "false",
 }
 proof_steps = jobs["publish-preview-proof"]["steps"]
 proof_by_name = {
@@ -2323,9 +2362,13 @@ capture_uid_step_index = next(
 capture_uid_step = verify_by_name[
     "Capture exact runtime Namespace UID before verification"
 ]
-assert capture_uid_step_index == verify_head_step_index + 1
+assert verify_steps.index(verify_runtime_write) < verify_steps.index(verify_manager_write)
+assert verify_steps.index(verify_manager_write) < verify_steps.index(verify_requester_write)
+assert verify_steps.index(verify_requester_write) < verify_head_step_index
+assert verify_steps.index(verify_requester_write) < capture_uid_step_index
 assert capture_uid_step["id"] == "capture-runtime-namespace"
 assert capture_uid_step["env"] == {
+    "KUBECONFIG": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
     "PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
     "EXPECTED_BASE_SHA": "${{ needs.validate-target.outputs.base_sha }}",
     "EXPECTED_HEAD_SHA": "${{ needs.validate-target.outputs.head_sha }}",
@@ -2357,9 +2400,12 @@ runtime_port_run = verify_by_name["Read allocated TCP port"]["run"]
 assert verify_by_name["Read allocated TCP port"]["if"] == (
     "${{ needs.validate-target.outputs.exposure_mode == 'public' }}"
 )
+assert verify_by_name["Read allocated TCP port"]["env"]["KUBECONFIG"] == (
+    "${{ runner.temp }}/preview-runtime.kubeconfig"
+)
 assert "::error title=Invalid runtime Telnet port::" in runtime_port_run
 assert "actual value was ${port:-empty}." in runtime_port_run
-verify_success_index = next(
+proof_success_index = next(
     index
     for index, step in enumerate(proof_steps)
     if step.get("name") == "Publish trusted preview success"
@@ -2369,8 +2415,8 @@ verify_failure_index = next(
     for index, step in enumerate(verify_steps)
     if step.get("name") == "Publish trusted preview verification failure"
 )
-verify_success = proof_steps[verify_success_index]
-assert verify_success["if"] == "${{ success() }}"
+proof_success = proof_steps[proof_success_index]
+assert proof_success["if"] == "${{ success() }}"
 assert "needs.validate-target.outputs.exposure_mode == 'public'" in verify_by_name[
     "Smoke hosted preview over TCP"
 ]["if"]
@@ -2378,18 +2424,23 @@ controller_wait = verify_by_name["Wait for exact controller identity projection"
 assert controller_wait["if"] == (
     "${{ needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}"
 )
+assert controller_wait["env"] == {
+    "KUBECONFIG": "${{ runner.temp }}/preview-runtime.kubeconfig",
+    "NAMESPACE_KUBECONFIG": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
+    "IDENTITY_KUBECONFIG": "${{ runner.temp }}/hosted-identity-requester.kubeconfig",
+}
 assert '"${{ needs.validate-target.outputs.exposure_mode }}"' in controller_wait["run"]
-final_uid_step_index = next(
+proof_final_uid_step_index = next(
     index
     for index, step in enumerate(proof_steps)
     if step.get("name")
     == "Revalidate exact source binding and runtime Namespace UID before proof publication"
 )
-final_uid_step = proof_by_name[
+proof_final_uid_step = proof_by_name[
     "Revalidate exact source binding and runtime Namespace UID before proof publication"
 ]
-assert final_uid_step_index + 1 == verify_success_index
-assert final_uid_step["env"] == {
+assert proof_final_uid_step_index + 1 == proof_success_index
+assert proof_final_uid_step["env"] == {
     "GH_TOKEN": "${{ github.token }}",
     "KUBECONFIG": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
     "PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
@@ -2405,12 +2456,12 @@ assert final_uid_step["env"] == {
         "${{ needs.verify-runtime.outputs.runtime_namespace_uid }}"
     ),
 }
-final_uid_run = final_uid_step["run"]
-source_revalidation_position = final_uid_run.index(source_binding_helper)
-namespace_lookup_position = final_uid_run.index(
+proof_final_uid_run = proof_final_uid_step["run"]
+source_revalidation_position = proof_final_uid_run.index(source_binding_helper)
+namespace_lookup_position = proof_final_uid_run.index(
     'kubectl get namespace "$RUNTIME_NAMESPACE" --ignore-not-found -o json'
 )
-uid_comparison_position = final_uid_run.index(
+uid_comparison_position = proof_final_uid_run.index(
     'IFS=\'|\' read -r namespace_uid namespace_resource_version <<<"$namespace_identity"'
 )
 assert source_revalidation_position < namespace_lookup_position < uid_comparison_position
@@ -2423,29 +2474,158 @@ for required in (
     '::error title=Missing deployed preview Namespace UID::The deploy job did not publish its Namespace UID.',
     '::error title=Preview runtime proof fence failed::',
 ):
-    assert required in final_uid_run, required
-proof_tuple_step = proof_by_name[
-    "Revalidate exact source binding and runtime Namespace UID before proof publication"
+    assert required in proof_final_uid_run, required
+gate2_final_uid_step_index = next(
+    index
+    for index, step in enumerate(verify_steps)
+    if step.get("name")
+    == "Revalidate exact source binding and runtime Namespace UID after diagnostic evidence"
+)
+gate2_final_uid_step = verify_by_name[
+    "Revalidate exact source binding and runtime Namespace UID after diagnostic evidence"
 ]
-assert proof_tuple_step["env"] == {
-    "KUBECONFIG": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
+assert gate2_final_uid_step["env"] == {
     "GH_TOKEN": "${{ github.token }}",
+    "KUBECONFIG": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
     "PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
-    "EXPECTED_BASE_SHA": "${{ needs.validate-target.outputs.base_sha }}",
     "EXPECTED_HEAD_SHA": "${{ needs.validate-target.outputs.head_sha }}",
+    "EXPECTED_BASE_SHA": "${{ needs.validate-target.outputs.base_sha }}",
     "EXPECTED_MERGE_SHA": "${{ needs.validate-target.outputs.merge_sha }}",
-    "EXPECTED_IMAGE_TAG": "${{ needs.validate-target.outputs.image_tag }}",
     "RUNTIME_NAMESPACE": "${{ needs.validate-target.outputs.namespace }}",
     "EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID": (
         "${{ needs.deploy-runtime.outputs.runtime_namespace_uid }}"
     ),
-    "CAPTURED_RUNTIME_NAMESPACE_UID": (
-        "${{ needs.verify-runtime.outputs.runtime_namespace_uid }}"
-    ),
+    "IMAGE_TAG": "${{ needs.validate-target.outputs.image_tag }}",
 }
-proof_tuple_run = proof_tuple_step["run"]
+gate2_final_uid_run = gate2_final_uid_step["run"]
+gate2_source_revalidation_position = gate2_final_uid_run.index(source_binding_helper)
+gate2_namespace_lookup_position = gate2_final_uid_run.index(
+    'kubectl get namespace "$RUNTIME_NAMESPACE" -o json'
+)
+gate2_uid_comparison_position = gate2_final_uid_run.index(
+    '[[ "$observed_uid" == "$EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID" ]] || {'
+)
+assert (
+    gate2_source_revalidation_position
+    < gate2_namespace_lookup_position
+    < gate2_uid_comparison_position
+)
 for required in (
-    'kubectl get namespace "$RUNTIME_NAMESPACE" --ignore-not-found -o json',
+    '"firemud.dev/preview"',
+    '"firemud.dev/pr-number"',
+    "firemud.dev/requested-preview-base-sha",
+    "firemud.dev/requested-preview-merge-sha",
+    "firemud.dev/last-preview-base-sha",
+    "firemud.dev/last-preview-merge-sha",
+    "firemud.dev/last-preview-image-tag",
+    "firemud.dev/last-preview-head-sha",
+    "EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID",
+    "Preview runtime Namespace UID changed after diagnostics",
+):
+    assert required in gate2_final_uid_run, required
+verify_setup_python = verify_by_name["Set up canonical Python dependencies"]
+assert verify_setup_python["uses"] == "./.github/actions/setup-python"
+assert verify_setup_python["with"] == {"requirements": "smoke"}
+telnet_diagnostic = verify_by_name["Smoke hosted preview over TCP"]
+wss_diagnostic = verify_by_name["Smoke first-party hosted WSS and compare Telnet LOOK"]
+proof_writer = verify_by_name["Write bounded hosted playable diagnostic evidence"]
+proof_upload = verify_by_name["Upload bounded hosted playable diagnostic evidence"]
+final_evidence_recheck = verify_by_name[
+    "Revalidate exact source binding and runtime Namespace UID after diagnostic evidence"
+]
+public_controller_condition = (
+    "${{ needs.validate-target.outputs.exposure_mode == 'public' && "
+    "needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}"
+)
+assert telnet_diagnostic["env"]["CERTIFICATE_IDENTITY_MODE"] == (
+    "${{ needs.validate-target.outputs.certificate_identity_mode }}"
+)
+assert 'if [[ "$CERTIFICATE_IDENTITY_MODE" == hosted-controller ]]; then' in telnet_diagnostic["run"]
+assert 'export SMOKE_SEMANTIC_OUT="$RUNNER_TEMP/preview-telnet-semantics.json"' in telnet_diagnostic["run"]
+for target, source in (
+    ("SMOKE_LOGIN_EMAIL", "HOSTED_PLAYABLE_EMAIL"),
+    ("SMOKE_PASSWORD", "HOSTED_PLAYABLE_PASSWORD"),
+    ("SMOKE_WORLD", "HOSTED_PLAYABLE_WORLD"),
+    ("SMOKE_REALM", "HOSTED_PLAYABLE_REALM"),
+    ("SMOKE_CHARACTER", "HOSTED_PLAYABLE_CHARACTER"),
+):
+    assert f'export {target}="${source}"' in telnet_diagnostic["run"]
+for flag, source in (
+    ("username", "HOSTED_PLAYABLE_EMAIL"),
+    ("password", "HOSTED_PLAYABLE_PASSWORD"),
+    ("world", "HOSTED_PLAYABLE_WORLD"),
+    ("realm", "HOSTED_PLAYABLE_REALM"),
+    ("character", "HOSTED_PLAYABLE_CHARACTER"),
+):
+    assert f'--{flag} "${source}"' in wss_diagnostic["run"]
+for required_wss_argument in (
+    '--gateway-base "https://${PREVIEW_HOSTNAME}"',
+    '--auth-base "https://${PREVIEW_HOSTNAME}"',
+    '--auth-prefix "/api/account"',
+    '--websocket-url "wss://${PREVIEW_HOSTNAME}/ws/game"',
+    '--origin "https://${PREVIEW_HOSTNAME}"',
+    '--readiness-url ""',
+    '--revoke-url ""',
+    '--expected-room-id "$room_id"',
+    "--reconnect",
+):
+    assert required_wss_argument in wss_diagnostic["run"], required_wss_argument
+for diagnostic in (wss_diagnostic, proof_writer, proof_upload):
+    assert diagnostic["if"] == public_controller_condition
+assert proof_writer["env"]["NAMESPACE_KUBECONFIG"] == (
+    "${{ runner.temp }}/preview-namespace-manager.kubeconfig"
+)
+assert proof_writer["env"]["IDENTITY_KUBECONFIG"] == (
+    "${{ runner.temp }}/hosted-identity-requester.kubeconfig"
+)
+assert proof_writer["env"]["RUNTIME_KUBECONFIG"] == (
+    "${{ runner.temp }}/preview-runtime.kubeconfig"
+)
+for credential_path in (
+    '"$NAMESPACE_KUBECONFIG"',
+    '"$IDENTITY_KUBECONFIG"',
+    '"$RUNTIME_KUBECONFIG"',
+):
+    assert credential_path in proof_writer["run"]
+assert "--expected-room-id \"$room_id\"" in wss_diagnostic["run"]
+assert "--reconnect" in wss_diagnostic["run"]
+assert "--logout" not in wss_diagnostic["run"]
+assert '.logout == false' in wss_diagnostic["run"]
+assert '.replayRejected == true' in wss_diagnostic["run"]
+assert '.steps == ["LOGIN", "PLAY", "LOOK"]' in wss_diagnostic["run"]
+assert "write-playable-proof.py" in proof_writer["run"]
+assert "--base-sha \"$BASE_SHA\"" in proof_writer["run"]
+assert "--merge-sha \"$MERGE_SHA\"" in proof_writer["run"]
+assert "--telnet-outcome passed --wss-outcome passed" in proof_writer["run"]
+assert proof_upload["with"]["path"] == "${{ runner.temp }}/preview-playable-proof.json"
+assert proof_upload["with"]["if-no-files-found"] == "error"
+assert proof_upload["with"]["retention-days"] == 7
+assert "revalidate-preview-source-binding.sh" in final_evidence_recheck["run"]
+assert "firemud.dev/requested-preview-base-sha" in final_evidence_recheck["run"]
+assert "firemud.dev/requested-preview-merge-sha" in final_evidence_recheck["run"]
+assert "firemud.dev/last-preview-base-sha" in final_evidence_recheck["run"]
+assert "firemud.dev/last-preview-merge-sha" in final_evidence_recheck["run"]
+assert "firemud.dev/last-preview-image-tag" in final_evidence_recheck["run"]
+assert "firemud.dev/last-preview-head-sha" in final_evidence_recheck["run"]
+assert "EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID" in final_evidence_recheck["run"]
+assert (
+    verify_steps.index(telnet_diagnostic)
+    < verify_steps.index(wss_diagnostic)
+    < verify_steps.index(
+        verify_by_name["Revalidate exact source binding and runtime Namespace UID before diagnostics"]
+    )
+    < verify_steps.index(proof_writer)
+    < verify_steps.index(final_evidence_recheck)
+    < verify_steps.index(proof_upload)
+)
+for required in (
+    '"firemud.dev/preview"',
+    '"firemud.dev/pr-number"',
+    '"firemud.dev/requested-preview-head-sha"',
+    '"firemud.dev/last-preview-head-sha"',
+    '"$CAPTURED_RUNTIME_NAMESPACE_UID" == "$EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID"',
+    '::error title=Missing deployed preview Namespace UID::The deploy job did not publish its Namespace UID.',
+    '::error title=Preview runtime proof fence failed::',
     'select($metadata.uid == $expected_namespace_uid)',
     '"firemud.dev/proof-preview-base-sha=${EXPECTED_BASE_SHA}"',
     '"firemud.dev/proof-preview-head-sha=${EXPECTED_HEAD_SHA}"',
@@ -2454,7 +2634,7 @@ for required in (
     '"firemud.dev/proof-preview-namespace-uid=${namespace_uid}"',
     '--resource-version "$namespace_resource_version"',
 ):
-    assert required in proof_tuple_run, required
+    assert required in proof_final_uid_run, required
 verify_failure = verify_steps[verify_failure_index]
 assert verify_failure["if"] == "${{ !cancelled() && failure() }}"
 assert verify_failure["env"] == {
@@ -2469,23 +2649,320 @@ assert verify_failure["env"] == {
     "EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID": (
         "${{ needs.deploy-runtime.outputs.runtime_namespace_uid }}"
     ),
+    "KUBECONFIG": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
 }
 failure_script = verify_failure["with"]["script"]
-for fragment in (
-    'const { execFileSync } = require("node:child_process");',
-    '"--ignore-not-found"',
-    "JSON.parse(namespaceJson)",
-    "observedUid !== process.env.EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID",
-    "Skipping stale preview verification failure publication",
-    "core.warning(",
-):
-    assert fragment in failure_script, fragment
-assert 'mode: "failure"' in failure_script
-assert 'markerPolicy: "replace"' in failure_script
-assert 'statePolicy: "expected-open"' in failure_script
-assert 'telnetPort: "unavailable"' in failure_script
-assert 'failureStage: "verify-runtime"' in failure_script
-assert verify_failure["uses"] == verify_success["uses"]
+assert verify_failure["uses"] == proof_success["uses"]
+proof_failure = proof_by_name["Publish trusted preview proof failure"]
+assert proof_failure["if"] == "${{ !cancelled() && failure() }}"
+assert proof_failure["env"] == {
+    "KUBECONFIG": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
+    "PREVIEW_PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
+    "PREVIEW_HEAD_SHA": "${{ needs.validate-target.outputs.head_sha }}",
+    "PREVIEW_BASE_SHA": "${{ needs.validate-target.outputs.base_sha }}",
+    "PREVIEW_MERGE_SHA": "${{ needs.validate-target.outputs.merge_sha }}",
+    "PREVIEW_IMAGE_TAG": "${{ needs.validate-target.outputs.image_tag }}",
+    "PREVIEW_HOSTNAME": "${{ needs.validate-target.outputs.hostname }}",
+    "PREVIEW_EXPOSURE_MODE": "${{ needs.validate-target.outputs.exposure_mode }}",
+    "RUNTIME_NAMESPACE": "${{ needs.validate-target.outputs.namespace }}",
+    "EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID": (
+        "${{ needs.deploy-runtime.outputs.runtime_namespace_uid }}"
+    ),
+}
+
+failure_scripts = (
+    ("verification", failure_script),
+    ("proof", proof_failure["with"]["script"]),
+)
+for failure_kind, inline_failure_script in failure_scripts:
+    for fragment in (
+        'const { execFileSync } = require("node:child_process");',
+        '"--ignore-not-found"',
+        "JSON.parse(namespaceJson)",
+        '"firemud.dev/requested-preview-base-sha"',
+        '"firemud.dev/requested-preview-head-sha"',
+        '"firemud.dev/requested-preview-merge-sha"',
+        '"firemud.dev/requested-preview-image-tag"',
+        '"firemud.dev/last-preview-base-sha"',
+        '"firemud.dev/last-preview-head-sha"',
+        '"firemud.dev/last-preview-merge-sha"',
+        '"firemud.dev/last-preview-image-tag"',
+        "metadata.uid !== expectedUid",
+        "process.env.RUNTIME_NAMESPACE !== expectedNamespace",
+        f"Skipping stale preview {failure_kind} failure publication",
+        'markerPolicy: "preserve-reclaimed"',
+        'statePolicy: "expected-open"',
+        'telnetPort: "unavailable"',
+        'failureStage: "verify-runtime"',
+    ):
+        assert fragment in inline_failure_script, (failure_kind, fragment)
+    assert 'mode: "failure"' in inline_failure_script
+
+node_failure_fence_harness = r"""
+const assert = require("node:assert/strict");
+const { publishPreviewComment: publishRealPreviewComment } = require(
+  process.env.PUBLISHER_PATH,
+);
+const sourceTuple = {
+  "firemud.dev/requested-preview-base-sha": process.env.PREVIEW_BASE_SHA,
+  "firemud.dev/requested-preview-head-sha": process.env.PREVIEW_HEAD_SHA,
+  "firemud.dev/requested-preview-merge-sha": process.env.PREVIEW_MERGE_SHA,
+  "firemud.dev/requested-preview-image-tag": process.env.PREVIEW_IMAGE_TAG,
+  "firemud.dev/last-preview-base-sha": process.env.PREVIEW_BASE_SHA,
+  "firemud.dev/last-preview-head-sha": process.env.PREVIEW_HEAD_SHA,
+  "firemud.dev/last-preview-merge-sha": process.env.PREVIEW_MERGE_SHA,
+  "firemud.dev/last-preview-image-tag": process.env.PREVIEW_IMAGE_TAG,
+};
+const reclaimedMarker = "<!-- firemud-preview-reclaimed -->";
+
+function namespaceFor(uid, annotationOverrides = {}) {
+  return {
+    metadata: {
+      name: "pr-42",
+      uid,
+      labels: { "firemud.dev/preview": "true", "firemud.dev/pr-number": "42" },
+      annotations: { ...sourceTuple, ...annotationOverrides },
+    },
+  };
+}
+
+async function runScenario(scenario, inlineScript) {
+  let comments = [];
+  const mutations = [];
+  const publishCalls = [];
+  const core = { info() {}, notice() {}, warning() {} };
+  const context = { repo: { owner: "FireMUD", repo: "FireMUD" } };
+  const github = {
+    rest: {
+      pulls: {
+        async get() {
+          return {
+            data: {
+              state: "open",
+              head: { sha: process.env.PREVIEW_HEAD_SHA },
+              merge_commit_sha: process.env.PREVIEW_MERGE_SHA,
+              base: { ref: "main" },
+            },
+          };
+        },
+      },
+      git: {
+        async getRef() {
+          return { data: { object: { sha: process.env.PREVIEW_BASE_SHA } } };
+        },
+      },
+      repos: {
+        async getCommit() {
+          return {
+            data: {
+              sha: process.env.PREVIEW_MERGE_SHA,
+              parents: [
+                { sha: process.env.PREVIEW_BASE_SHA },
+                { sha: process.env.PREVIEW_HEAD_SHA },
+              ],
+            },
+          };
+        },
+      },
+      issues: {
+        async listComments() {
+          return { data: comments };
+        },
+        async createComment({ body }) {
+          mutations.push({ type: "create", body });
+          comments.push({
+            id: 3,
+            created_at: "2026-01-03T00:00:00Z",
+            user: { login: "github-actions[bot]" },
+            body,
+          });
+        },
+        async updateComment({ comment_id, body }) {
+          mutations.push({ type: "update", id: comment_id, body });
+          comments = comments.map((comment) =>
+            comment.id === comment_id ? { ...comment, body } : comment,
+          );
+        },
+        async deleteComment({ comment_id }) {
+          mutations.push({ type: "delete", id: comment_id });
+          comments = comments.filter((comment) => comment.id !== comment_id);
+        },
+      },
+    },
+    async paginate() {
+      return comments;
+    },
+  };
+
+  if (scenario === "exact-reclaimed") {
+    comments = [
+      {
+        id: 1,
+        created_at: "2026-01-01T00:00:00Z",
+        user: { login: "github-actions[bot]" },
+        body: "<!-- firemud-preview-summary -->\n### Preview Summary\nold failure",
+      },
+      {
+        id: 2,
+        created_at: "2026-01-02T00:00:00Z",
+        user: { login: "github-actions[bot]" },
+        body: `<!-- firemud-preview-summary -->\n### Preview Summary\n${reclaimedMarker}\nPreview unavailable`,
+      },
+    ];
+  } else if (scenario !== "exact") {
+    comments = [
+      {
+        id: 2,
+        created_at: "2026-01-02T00:00:00Z",
+        user: { login: "github-actions[bot]" },
+        body: `<!-- firemud-preview-summary -->\n### Preview Summary\n${reclaimedMarker}\nPreview unavailable`,
+      },
+    ];
+  }
+
+  function requireForWorkflow(moduleName) {
+    if (moduleName === "node:child_process") {
+      return {
+        execFileSync(binary, args) {
+          assert.equal(binary, "kubectl");
+          assert.deepEqual(args, [
+            "get",
+            "namespace",
+            process.env.RUNTIME_NAMESPACE,
+            "--ignore-not-found",
+            "-o",
+            "json",
+          ]);
+          if (scenario === "error") throw new Error("redacted kube read failure");
+          if (scenario === "absent") return "";
+          if (scenario === "malformed") return "{";
+          if (scenario === "malformed-object") return JSON.stringify({ metadata: { uid: 17 } });
+          if (scenario === "recreated") return JSON.stringify(namespaceFor("uid-recreated"));
+          let namespace = namespaceFor("uid-expected");
+          if (scenario.startsWith("wrong-annotation:")) {
+            const annotation = scenario.slice("wrong-annotation:".length);
+            namespace.metadata.annotations[annotation] = "wrong-tuple-value";
+          }
+          if (scenario === "missing-uid") delete namespace.metadata.uid;
+          if (scenario === "missing-name") delete namespace.metadata.name;
+          if (scenario === "wrong-name") namespace.metadata.name = "pr-43";
+          if (scenario === "missing-labels") delete namespace.metadata.labels;
+          if (scenario === "wrong-preview-label") {
+            namespace.metadata.labels["firemud.dev/preview"] = "false";
+          }
+          if (scenario === "wrong-pr-number-label") {
+            namespace.metadata.labels["firemud.dev/pr-number"] = "43";
+          }
+          if (scenario === "missing-annotations") delete namespace.metadata.annotations;
+          return JSON.stringify(namespace);
+        },
+      };
+    }
+    if (moduleName.endsWith("/publish-preview-comment.js")) {
+      return {
+        async publishPreviewComment(options) {
+          publishCalls.push(options);
+          return publishRealPreviewComment({
+            ...options,
+            summaryExecutor: () => "failure summary from exact tuple\n",
+          });
+        },
+      };
+    }
+    throw new Error(`Unexpected workflow require: ${moduleName}`);
+  }
+
+  const runInlineScript = new Function(
+    "github",
+    "context",
+    "core",
+    "require",
+    `return (async () => {\n${inlineScript}\n})()`,
+  );
+  await runInlineScript(github, context, core, requireForWorkflow);
+
+  const expectedPublication = scenario.startsWith("exact");
+  assert.equal(publishCalls.length, expectedPublication ? 1 : 0, scenario);
+  if (!expectedPublication) {
+    assert.equal(mutations.length, 0, `${scenario} must not overwrite a reclaimed or current status`);
+    assert.equal(comments.length, 1);
+    assert.match(comments[0].body, /firemud-preview-reclaimed/);
+    return;
+  }
+
+  assert.equal(publishCalls[0].mode, "failure");
+  assert.equal(publishCalls[0].markerPolicy, "preserve-reclaimed");
+  assert.equal(publishCalls[0].failureStage, "verify-runtime");
+  if (scenario === "exact") {
+    assert.equal(mutations.length, 1);
+    assert.equal(mutations[0].type, "create");
+    assert.match(mutations[0].body, /failure summary from exact tuple/);
+  } else {
+    assert.ok(mutations.some((mutation) => mutation.type === "update"));
+    assert.ok(mutations.some((mutation) => mutation.type === "delete"));
+    assert.equal(comments.length, 1);
+    assert.match(comments[0].body, /firemud-preview-reclaimed/);
+    assert.doesNotMatch(comments[0].body, /failure summary from exact tuple/);
+  }
+}
+
+(async () => {
+  const scenarios = [
+    "absent",
+    "recreated",
+    "malformed",
+    "malformed-object",
+    "missing-uid",
+    "missing-name",
+    "wrong-name",
+    "missing-labels",
+    "wrong-preview-label",
+    "wrong-pr-number-label",
+    "missing-annotations",
+    "error",
+    "exact",
+    "exact-reclaimed",
+    ...Object.keys(sourceTuple).map((annotation) => `wrong-annotation:${annotation}`),
+  ];
+  for (const scenario of scenarios) {
+    await runScenario(scenario, process.env.INLINE_FAILURE_SCRIPT);
+  }
+})().catch((error) => {
+  process.stderr.write(`${error.stack || error}\n`);
+  process.exitCode = 1;
+});
+"""
+for failure_kind, inline_failure_script in failure_scripts:
+    node_environment = os.environ.copy()
+    node_environment.update(
+        {
+            "INLINE_FAILURE_SCRIPT": inline_failure_script,
+            "PUBLISHER_PATH": str(
+                Path(sys.argv[1]).parents[2]
+                / "dev-tools/hosted/preview/publish-preview-comment.js"
+            ),
+            "PREVIEW_PR_NUMBER": "42",
+            "PREVIEW_HEAD_SHA": "b" * 40,
+            "PREVIEW_BASE_SHA": "a" * 40,
+            "PREVIEW_MERGE_SHA": "c" * 40,
+            "PREVIEW_IMAGE_TAG": f"pr-merge-{'c' * 40}",
+            "PREVIEW_HOSTNAME": "pr-42.preview.firemud.test",
+            "RUNTIME_NAMESPACE": "pr-42",
+            "EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID": "uid-expected",
+        }
+    )
+    failure_fence_result = subprocess.run(
+        ["node", "-e", node_failure_fence_harness],
+        cwd=Path(sys.argv[1]).parents[2],
+        env=node_environment,
+        capture_output=True,
+        text=True,
+    )
+    assert failure_fence_result.returncode == 0, (
+        failure_kind,
+        failure_fence_result.stdout,
+        failure_fence_result.stderr,
+    )
 
 destroy_steps = jobs["destroy-runtime"]["steps"]
 destroy_by_name = {
@@ -5729,7 +6206,16 @@ cat >"$waiter_stub_dir/kubectl" <<'SH'
 set -euo pipefail
 
 scenario="${WAITER_SCENARIO:?}"
+kubectl_kubeconfig=""
+if [[ "${1:-}" == --kubeconfig ]]; then
+  [[ $# -ge 3 ]]
+  kubectl_kubeconfig="$2"
+  shift 2
+fi
 printf '%s\n' "$*" >>"${WAITER_KUBECTL_LOG:?}"
+if [[ -n "${WAITER_KUBECONFIG_LOG:-}" ]]; then
+  printf '%s\t%s\n' "$kubectl_kubeconfig" "$*" >>"$WAITER_KUBECONFIG_LOG"
+fi
 
 next_count() {
   local name="$1"
@@ -6072,6 +6558,35 @@ run_active_waiter_fixture namespace-transport-recovery 0 4 2
 run_active_waiter_fixture namespace-transport-exhaustion 45 3 2 'Unable to connect to the server'
 run_active_waiter_fixture identity-transport-recovery 0 6 2
 run_active_waiter_fixture identity-transport-exhaustion 46 6 2 'Unable to connect to the server'
+
+# Trusted verification keeps runtime data-plane credentials separate from the
+# control-plane Namespace and HostedEnvironmentIdentity reads.
+credential_separation_log="$TEMP_DIR/active-credential-separation.kubectl.log"
+credential_separation_count_root="$TEMP_DIR/active-credential-separation.counts"
+credential_separation_output="$TEMP_DIR/active-credential-separation.output"
+credential_separation_error="$TEMP_DIR/active-credential-separation.error"
+mkdir -p "$credential_separation_count_root"
+: >"$credential_separation_log"
+env \
+  PATH="$waiter_stub_dir:$PATH" \
+  WAITER_SCENARIO=success \
+  WAITER_EXPECTED_HEAD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  WAITER_COUNT_ROOT="$credential_separation_count_root" \
+  WAITER_KUBECTL_LOG="$TEMP_DIR/active-credential-separation.calls.log" \
+  WAITER_KUBECONFIG_LOG="$credential_separation_log" \
+  KUBECONFIG="$TEMP_DIR/runtime.kubeconfig" \
+  NAMESPACE_KUBECONFIG="$TEMP_DIR/namespace-manager.kubeconfig" \
+  IDENTITY_KUBECONFIG="$TEMP_DIR/requester.kubeconfig" \
+  bash "$waiter" pr-42 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa pr-42 60 \
+  >"$credential_separation_output" 2>"$credential_separation_error"
+grep -Fqx -- "$TEMP_DIR/namespace-manager.kubeconfig$(printf '\t')get namespace pr-42 --ignore-not-found -o json" \
+  "$credential_separation_log"
+grep -Fqx -- "$TEMP_DIR/requester.kubeconfig$(printf '\t')-n firemud-system get hostedenvironmentidentity pr-42 --ignore-not-found -o json" \
+  "$credential_separation_log"
+if grep -Fq -- "$TEMP_DIR/runtime.kubeconfig" "$credential_separation_log"; then
+  echo "active waiter used the runtime kubeconfig for control-plane reads" >&2
+  exit 1
+fi
 
 # Every waiter mode keeps the existing positive-integer diagnostic while
 # enforcing the shared bounded timeout ceiling.
