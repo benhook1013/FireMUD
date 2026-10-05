@@ -715,9 +715,10 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       PublishedReleaseBundleDto bundle =
           versionService.getPublishedReleaseBundle(request.getTenantId(), request.getVersionId());
       PublishedReleaseBundleContract.requireSupportedSchemaForRead(bundle);
+      requireCanonicalReleaseIdentityPair(bundle);
       TemporalVersionPublishWorkflowMetadataResolver.WorkflowMetadata workflowMetadata =
           publishWorkflowMetadataResolver.resolve(bundle.publishWorkflowId());
-      builder.setBundle(
+      var bundleBuilder =
           net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle.newBuilder()
               .setId(bundle.id())
               .setVersionId(bundle.versionId())
@@ -753,8 +754,13 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               .setIsScriptOnly(bundle.scriptOnly())
               .setScriptPatchVersion(
                   bundle.scriptPatchVersion() == null ? "" : bundle.scriptPatchVersion())
-              .setPublishedAt(bundle.publishedAt().toString())
-              .build());
+              .setPublishedAt(bundle.publishedAt().toString());
+      if (bundle.canonicalTenantId() != null) {
+        bundleBuilder
+            .setCanonicalTenantId(bundle.canonicalTenantId().toString())
+            .setCanonicalVersionId(bundle.canonicalVersionId().toString());
+      }
+      builder.setBundle(bundleBuilder.build());
     } catch (AdminAuthorizationException ex) {
       builder.setError(
           GrpcAppErrors.error(
@@ -791,6 +797,21 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
     }
     responseObserver.onNext(builder.build());
     responseObserver.onCompleted();
+  }
+
+  private void requireCanonicalReleaseIdentityPair(PublishedReleaseBundleDto bundle) {
+    UUID canonicalTenantId = bundle.canonicalTenantId();
+    UUID canonicalVersionId = bundle.canonicalVersionId();
+    if (canonicalTenantId == null && canonicalVersionId == null) {
+      return;
+    }
+    UUID nilUuid = new UUID(0L, 0L);
+    if (canonicalTenantId == null
+        || canonicalVersionId == null
+        || canonicalTenantId.equals(nilUuid)
+        || canonicalVersionId.equals(nilUuid)) {
+      throw new IllegalArgumentException("published release canonical identity pair is invalid");
+    }
   }
 
   @Override

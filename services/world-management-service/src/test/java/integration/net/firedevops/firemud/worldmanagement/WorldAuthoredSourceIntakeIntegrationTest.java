@@ -3,9 +3,17 @@ package net.firedevops.firemud.worldmanagement;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -20,10 +28,12 @@ import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
 import net.firedevops.firemud.worldmanagement.client.GameSessionClient;
+import net.firedevops.firemud.worldmanagement.client.GrpcGameSessionInitialAdmissionBindProofClient;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeReceipt;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeRepository;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationInfo;
+import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
 import org.jooq.exception.DataAccessException;
 import org.junit.jupiter.api.Test;
@@ -50,6 +60,24 @@ import org.testcontainers.junit.jupiter.Testcontainers;
     properties = "spring.grpc.server.port=0")
 class WorldAuthoredSourceIntakeIntegrationTest {
   private static final String NAMESPACE = "firemud";
+  private static final Set<String> PROTECTED_TENANT_TABLES =
+      Set.of(
+          "generation_rule",
+          "instance",
+          "region",
+          "region_instance",
+          "room",
+          "room_exit",
+          "room_instance",
+          "room_instance_exit",
+          "world_design_aggregate_epoch",
+          "world_design_revision_ledger",
+          "world_design_scope_epoch",
+          "world_entity_spawn_binding",
+          "world_event",
+          "world_instance",
+          "zone",
+          "zone_instance");
   private static final String OCCUPIED_LEGACY_KEYS =
       "SELECT COUNT(*) FROM ("
           + "SELECT tenant_id AS occupied_key FROM generation_rule UNION ALL "
@@ -111,6 +139,10 @@ class WorldAuthoredSourceIntakeIntegrationTest {
   @Autowired private PlatformTransactionManager transactionManager;
 
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
+
+  @MockitoBean(enforceOverride = true)
+  private GrpcGameSessionInitialAdmissionBindProofClient bindProofClient;
+
   @MockitoBean private GameDesignClient gameDesignClient;
   @MockitoBean private GameSessionClient gameSessionClient;
   @MockitoBean private EntityManagementClient entityManagementClient;
@@ -200,6 +232,184 @@ class WorldAuthoredSourceIntakeIntegrationTest {
     assertThat(second.source().sourceGameTenantKey())
         .isEqualTo(first.source().sourceGameTenantKey());
     assertThat(second.source().provenanceKind()).isEqualTo("NEW_GAME_ROW");
+  }
+
+  @Test
+  void readBySourceReturnsExactCommittedReceiptOnRepeatedCallsWithoutGrowth() {
+    UUID tenant = UUID.randomUUID();
+    AuthoredWorldSourceEvidence source =
+        source(tenant, tenantSlug(tenant), "source-read-world", sourceRowId(tenant), "Source Read");
+    WorldAuthoredSourceIntakeReceipt receipt = accept(UUID.randomUUID(), source);
+    long intakeCount = countRows("world_authored_source_intake");
+    long associationCount = countRows("world_authored_source_tenant_association");
+    long reservationCount = countRows("world_authored_source_tenant_key_reservation");
+
+    assertThat(
+            repository.readBySource(
+                NAMESPACE,
+                source.canonicalTenantId(),
+                source.worldSlug(),
+                source.operationId(),
+                source.evidenceDigest()))
+        .contains(receipt);
+    assertThat(
+            repository.readBySource(
+                NAMESPACE,
+                source.canonicalTenantId(),
+                source.worldSlug(),
+                source.operationId(),
+                source.evidenceDigest()))
+        .contains(receipt);
+    assertThat(countRows("world_authored_source_intake")).isEqualTo(intakeCount);
+    assertThat(countRows("world_authored_source_tenant_association")).isEqualTo(associationCount);
+    assertThat(countRows("world_authored_source_tenant_key_reservation"))
+        .isEqualTo(reservationCount);
+  }
+
+  @Test
+  void readBySourceRejectsAnyChangedBindingAndRetainedOrUnmappedEvidence() {
+    UUID tenant = UUID.randomUUID();
+    String tenantSlug = tenantSlug(tenant);
+    long sourceRowId = sourceRowId(tenant);
+    AuthoredWorldSourceEvidence source =
+        source(tenant, tenantSlug, "source-binding-world", sourceRowId, "Source Binding");
+    accept(UUID.randomUUID(), source);
+
+    assertThat(
+            repository.readBySource(
+                "other-namespace",
+                tenant,
+                source.worldSlug(),
+                source.operationId(),
+                source.evidenceDigest()))
+        .isEmpty();
+    assertThat(
+            repository.readBySource(
+                NAMESPACE,
+                UUID.randomUUID(),
+                source.worldSlug(),
+                source.operationId(),
+                source.evidenceDigest()))
+        .isEmpty();
+    assertThat(
+            repository.readBySource(
+                NAMESPACE, tenant, "another-world", source.operationId(), source.evidenceDigest()))
+        .isEmpty();
+    assertThat(
+            repository.readBySource(
+                NAMESPACE, tenant, source.worldSlug(), UUID.randomUUID(), source.evidenceDigest()))
+        .isEmpty();
+    assertThat(
+            repository.readBySource(
+                NAMESPACE,
+                tenant,
+                source.worldSlug(),
+                source.operationId(),
+                "sha256:" + "0".repeat(64)))
+        .isEmpty();
+
+    AuthoredWorldSourceEvidence retainedSource =
+        source(tenant, tenantSlug, "retained-world", sourceRowId, "Retained", "RETAINED_GAME_V30");
+    assertThat(
+            repository.readBySource(
+                NAMESPACE,
+                retainedSource.canonicalTenantId(),
+                retainedSource.worldSlug(),
+                retainedSource.operationId(),
+                retainedSource.evidenceDigest()))
+        .isEmpty();
+    assertThat(
+            repository.readBySource(
+                NAMESPACE,
+                UUID.randomUUID(),
+                "unmapped-world",
+                UUID.randomUUID(),
+                source.evidenceDigest()))
+        .isEmpty();
+  }
+
+  @Test
+  void readBySourceRejectsMalformedBinding() {
+    UUID tenant = UUID.randomUUID();
+    AuthoredWorldSourceEvidence source =
+        source(
+            tenant, tenantSlug(tenant), "malformed-read-world", sourceRowId(tenant), "Malformed");
+    UUID nilUuid = new UUID(0L, 0L);
+
+    assertThatThrownBy(
+            () ->
+                repository.readBySource(
+                    "FireMud",
+                    tenant,
+                    source.worldSlug(),
+                    source.operationId(),
+                    source.evidenceDigest()))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                repository.readBySource(
+                    NAMESPACE,
+                    nilUuid,
+                    source.worldSlug(),
+                    source.operationId(),
+                    source.evidenceDigest()))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                repository.readBySource(
+                    NAMESPACE,
+                    tenant,
+                    "Malformed-World",
+                    source.operationId(),
+                    source.evidenceDigest()))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                repository.readBySource(
+                    NAMESPACE, tenant, source.worldSlug(), nilUuid, source.evidenceDigest()))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                repository.readBySource(
+                    NAMESPACE, tenant, source.worldSlug(), source.operationId(), "sha256:BAD"))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void readBySourceDoesNotExposeUncommittedOwnerEvidence() {
+    UUID tenant = UUID.randomUUID();
+    UUID requestId = UUID.randomUUID();
+    AuthoredWorldSourceEvidence source =
+        source(
+            tenant,
+            tenantSlug(tenant),
+            "uncommitted-read-world",
+            sourceRowId(tenant),
+            "Uncommitted");
+    TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
+
+    transactionTemplate.execute(
+        status -> {
+          repository.acceptFresh(NAMESPACE, requestId, source);
+          assertThat(
+                  repository.readBySource(
+                      NAMESPACE,
+                      tenant,
+                      source.worldSlug(),
+                      source.operationId(),
+                      source.evidenceDigest()))
+              .isEmpty();
+          return null;
+        });
+
+    assertThat(
+            repository.readBySource(
+                NAMESPACE,
+                tenant,
+                source.worldSlug(),
+                source.operationId(),
+                source.evidenceDigest()))
+        .contains(repository.read(NAMESPACE, requestId).orElseThrow());
   }
 
   @Test
@@ -355,6 +565,80 @@ class WorldAuthoredSourceIntakeIntegrationTest {
     assertThat(read(requestId)).contains(receipt);
     assertThat(countForCanonicalTenant(tenant)).isEqualTo(1L);
     assertThat(countReservationsForCanonicalTenant(tenant)).isEqualTo(1L);
+  }
+
+  @Test
+  void canonicalReservationsGuardEveryWorldRowMutationTrigger() throws SQLException {
+    String schema = "world_canonical_guard_" + UUID.randomUUID().toString().replace("-", "");
+    UUID canonicalTenantId = UUID.randomUUID();
+    long canonicalTenantKey =
+        80_000_000_000_000L + ThreadLocalRandom.current().nextLong(1_000_000L);
+    long legacyTenantKey = canonicalTenantKey + 1L;
+
+    try {
+      migrateFixture(schema, MigrationVersion.fromVersion("23.1"));
+      long canonicalRegionId =
+          seedCanonicalRegionBeforeGuard(schema, canonicalTenantId, canonicalTenantKey);
+      migrateFixture(schema, MigrationVersion.fromVersion("24"));
+
+      try (Connection connection = fixtureConnection(schema)) {
+        assertProtectedReservationTriggerCatalog(connection);
+        assertProtectedTenantTruncateTriggerCatalog(connection);
+
+        for (String table : PROTECTED_TENANT_TABLES) {
+          assertSqlState("23514", () -> insertTenantKeyRow(connection, table, canonicalTenantKey));
+          long expectedRows = table.equals("region") ? 1L : 0L;
+          assertThat(countRowsForTenant(connection, table, canonicalTenantKey))
+              .as("canonical-key insert side effects for %s", table)
+              .isEqualTo(expectedRows);
+        }
+
+        long legacyRegionId = insertRegion(connection, legacyTenantKey, "legacy-before-update");
+        assertSqlState(
+            "23514",
+            () ->
+                updateRegion(
+                    connection,
+                    canonicalRegionId,
+                    legacyTenantKey,
+                    "attempted move from canonical key"));
+        assertCanonicalRegion(
+            connection, canonicalRegionId, canonicalTenantKey, "test-only canonical row");
+        assertThat(countRowsForTenant(connection, "region", legacyTenantKey)).isEqualTo(1L);
+        assertThat(readReservationClaimKind(connection, legacyTenantKey))
+            .isEqualTo("LEGACY_NUMERIC");
+
+        assertSqlState(
+            "23514",
+            () -> updateRegionPayload(connection, canonicalRegionId, "attempted payload update"));
+        assertCanonicalRegion(
+            connection, canonicalRegionId, canonicalTenantKey, "test-only canonical row");
+
+        assertSqlState("23514", () -> deleteRegion(connection, canonicalRegionId));
+        assertCanonicalRegion(
+            connection, canonicalRegionId, canonicalTenantKey, "test-only canonical row");
+        assertThat(readReservationClaimKind(connection, canonicalTenantKey))
+            .isEqualTo("CANONICAL_AUTHORED_SOURCE");
+
+        updateRegionPayload(connection, legacyRegionId, "legacy payload update remains allowed");
+        assertThat(readRegionName(connection, legacyRegionId))
+            .isEqualTo("legacy payload update remains allowed");
+        deleteRegion(connection, legacyRegionId);
+        assertThat(countRowsForTenant(connection, "region", legacyTenantKey)).isZero();
+        assertThat(readReservationClaimKind(connection, legacyTenantKey))
+            .isEqualTo("LEGACY_NUMERIC");
+
+        assertSqlState("23514", () -> truncateTenantTable(connection, "region"));
+        assertCanonicalRegion(
+            connection, canonicalRegionId, canonicalTenantKey, "test-only canonical row");
+        assertThat(countRowsForTenant(connection, "region", canonicalTenantKey)).isEqualTo(1L);
+        assertThat(readReservationClaimKind(connection, canonicalTenantKey))
+            .isEqualTo("CANONICAL_AUTHORED_SOURCE");
+        assertThat(countCanonicalAssociations(connection, canonicalTenantId)).isEqualTo(1L);
+      }
+    } finally {
+      dropFixtureSchema(schema);
+    }
   }
 
   @Test
@@ -569,6 +853,288 @@ class WorldAuthoredSourceIntakeIntegrationTest {
     }
   }
 
+  private static void migrateFixture(String schema, MigrationVersion target) {
+    var configuration =
+        Flyway.configure()
+            .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
+            .schemas(schema)
+            .defaultSchema(schema)
+            .placeholders(Map.of("serviceSchema", schema))
+            .locations("classpath:db/migration");
+    if (target != null) {
+      configuration.target(target);
+    }
+    configuration.load().migrate();
+  }
+
+  private static long seedCanonicalRegionBeforeGuard(
+      String schema, UUID canonicalTenantId, long canonicalTenantKey) throws SQLException {
+    try (Connection connection = fixtureConnection(schema);
+        Statement controls = connection.createStatement()) {
+      // Test-only bypass in this isolated V23.1 schema; restore triggers before applying V24.
+      controls.execute("SET session_replication_role = replica");
+      try {
+        String tenantSlug = tenantSlug(canonicalTenantId);
+        String sourceKey = "src-" + canonicalTenantId.toString().replace("-", "");
+        try (PreparedStatement association =
+            connection.prepareStatement(
+                "INSERT INTO world_authored_source_tenant_association "
+                    + "(target_namespace, canonical_tenant_id, tenant_slug, "
+                    + "source_game_row_id, source_game_tenant_key, "
+                    + "source_provenance_kind, local_tenant_key) "
+                    + "VALUES (?, ?, ?, ?, ?, 'NEW_GAME_ROW', ?)")) {
+          association.setString(1, NAMESPACE);
+          association.setObject(2, canonicalTenantId);
+          association.setString(3, tenantSlug);
+          association.setLong(4, sourceRowId(canonicalTenantId));
+          association.setString(5, sourceKey);
+          association.setLong(6, canonicalTenantKey);
+          association.executeUpdate();
+        }
+        try (PreparedStatement reservation =
+            connection.prepareStatement(
+                "INSERT INTO world_authored_source_tenant_key_reservation "
+                    + "(tenant_key, claim_kind, target_namespace, canonical_tenant_id) "
+                    + "VALUES (?, 'CANONICAL_AUTHORED_SOURCE', ?, ?)")) {
+          reservation.setLong(1, canonicalTenantKey);
+          reservation.setString(2, NAMESPACE);
+          reservation.setObject(3, canonicalTenantId);
+          reservation.executeUpdate();
+        }
+        try (PreparedStatement region =
+            connection.prepareStatement(
+                "INSERT INTO region (tenant_id, name) VALUES (?, ?) RETURNING id")) {
+          region.setLong(1, canonicalTenantKey);
+          region.setString(2, "test-only canonical row");
+          try (ResultSet result = region.executeQuery()) {
+            if (!result.next()) {
+              throw new SQLException("Test-only canonical region seed returned no row");
+            }
+            return result.getLong(1);
+          }
+        }
+      } finally {
+        controls.execute("SET session_replication_role = origin");
+      }
+    }
+  }
+
+  private static Connection fixtureConnection(String schema) throws SQLException {
+    Connection connection =
+        DriverManager.getConnection(
+            postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+    connection.setSchema(schema);
+    return connection;
+  }
+
+  private static void dropFixtureSchema(String schema) throws SQLException {
+    try (Connection connection =
+            DriverManager.getConnection(
+                postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+        Statement statement = connection.createStatement()) {
+      statement.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
+    }
+  }
+
+  private static void assertProtectedReservationTriggerCatalog(Connection connection)
+      throws SQLException {
+    Set<String> actualTables = new HashSet<>();
+    try (Statement statement = connection.createStatement();
+        ResultSet result =
+            statement.executeQuery(
+                "SELECT table_row.relname, trigger_row.tgname, function_row.proname, "
+                    + "trigger_row.tgtype, trigger_row.tgenabled "
+                    + "FROM pg_trigger AS trigger_row "
+                    + "JOIN pg_class AS table_row ON table_row.oid = trigger_row.tgrelid "
+                    + "JOIN pg_namespace AS namespace_row "
+                    + "ON namespace_row.oid = table_row.relnamespace "
+                    + "JOIN pg_proc AS function_row ON function_row.oid = trigger_row.tgfoid "
+                    + "WHERE namespace_row.nspname = current_schema() "
+                    + "AND trigger_row.tgname LIKE 'trg_reserve_%_tenant_key' "
+                    + "AND NOT trigger_row.tgisinternal")) {
+      while (result.next()) {
+        String table = result.getString(1);
+        actualTables.add(table);
+        assertThat(result.getString(2)).isEqualTo("trg_reserve_" + table + "_tenant_key");
+        assertThat(result.getString(3)).isEqualTo("world_claim_legacy_numeric_tenant_key");
+        assertThat(result.getInt(4)).isEqualTo(31);
+        assertThat(result.getString(5)).isEqualTo("O");
+      }
+    }
+    assertThat(actualTables).containsExactlyInAnyOrderElementsOf(PROTECTED_TENANT_TABLES);
+  }
+
+  private static void assertProtectedTenantTruncateTriggerCatalog(Connection connection)
+      throws SQLException {
+    Set<String> actualTables = new HashSet<>();
+    try (Statement statement = connection.createStatement();
+        ResultSet result =
+            statement.executeQuery(
+                "SELECT table_row.relname, trigger_row.tgname, trigger_row.tgtype, "
+                    + "trigger_row.tgenabled "
+                    + "FROM pg_trigger AS trigger_row "
+                    + "JOIN pg_class AS table_row ON table_row.oid = trigger_row.tgrelid "
+                    + "JOIN pg_namespace AS namespace_row "
+                    + "ON namespace_row.oid = table_row.relnamespace "
+                    + "JOIN pg_proc AS function_row ON function_row.oid = trigger_row.tgfoid "
+                    + "WHERE namespace_row.nspname = current_schema() "
+                    + "AND function_row.proname = 'world_reject_tenant_table_truncate' "
+                    + "AND NOT trigger_row.tgisinternal")) {
+      while (result.next()) {
+        String table = result.getString(1);
+        actualTables.add(table);
+        assertThat(result.getString(2)).isEqualTo("trg_" + table + "_no_truncate");
+        assertThat(result.getInt(3)).isEqualTo(34);
+        assertThat(result.getString(4)).isEqualTo("O");
+      }
+    }
+    assertThat(actualTables).containsExactlyInAnyOrderElementsOf(PROTECTED_TENANT_TABLES);
+  }
+
+  private static void truncateTenantTable(Connection connection, String table) throws SQLException {
+    try (Statement statement = connection.createStatement()) {
+      statement.execute("TRUNCATE " + table + " CASCADE");
+    }
+  }
+
+  private static void insertTenantKeyRow(Connection connection, String table, long tenantKey)
+      throws SQLException {
+    try (PreparedStatement statement =
+        connection.prepareStatement("INSERT INTO " + table + " (tenant_id) VALUES (?)")) {
+      statement.setLong(1, tenantKey);
+      statement.executeUpdate();
+    }
+  }
+
+  private static long insertRegion(Connection connection, long tenantKey, String name)
+      throws SQLException {
+    try (PreparedStatement statement =
+        connection.prepareStatement(
+            "INSERT INTO region (tenant_id, name) VALUES (?, ?) RETURNING id")) {
+      statement.setLong(1, tenantKey);
+      statement.setString(2, name);
+      try (ResultSet result = statement.executeQuery()) {
+        if (!result.next()) {
+          throw new SQLException("Region fixture insert returned no row");
+        }
+        return result.getLong(1);
+      }
+    }
+  }
+
+  private static void updateRegion(
+      Connection connection, long regionId, long tenantKey, String name) throws SQLException {
+    try (PreparedStatement statement =
+        connection.prepareStatement("UPDATE region SET tenant_id = ?, name = ? WHERE id = ?")) {
+      statement.setLong(1, tenantKey);
+      statement.setString(2, name);
+      statement.setLong(3, regionId);
+      statement.executeUpdate();
+    }
+  }
+
+  private static void updateRegionPayload(Connection connection, long regionId, String name)
+      throws SQLException {
+    try (PreparedStatement statement =
+        connection.prepareStatement("UPDATE region SET name = ? WHERE id = ?")) {
+      statement.setString(1, name);
+      statement.setLong(2, regionId);
+      statement.executeUpdate();
+    }
+  }
+
+  private static void deleteRegion(Connection connection, long regionId) throws SQLException {
+    try (PreparedStatement statement =
+        connection.prepareStatement("DELETE FROM region WHERE id = ?")) {
+      statement.setLong(1, regionId);
+      statement.executeUpdate();
+    }
+  }
+
+  private static long countRowsForTenant(Connection connection, String table, long tenantKey)
+      throws SQLException {
+    try (PreparedStatement statement =
+        connection.prepareStatement("SELECT COUNT(*) FROM " + table + " WHERE tenant_id = ?")) {
+      statement.setLong(1, tenantKey);
+      try (ResultSet result = statement.executeQuery()) {
+        result.next();
+        return result.getLong(1);
+      }
+    }
+  }
+
+  private static String readRegionName(Connection connection, long regionId) throws SQLException {
+    try (PreparedStatement statement =
+        connection.prepareStatement("SELECT name FROM region WHERE id = ?")) {
+      statement.setLong(1, regionId);
+      try (ResultSet result = statement.executeQuery()) {
+        if (!result.next()) {
+          throw new SQLException("Expected region fixture row was missing");
+        }
+        return result.getString(1);
+      }
+    }
+  }
+
+  private static void assertCanonicalRegion(
+      Connection connection, long regionId, long tenantKey, String name) throws SQLException {
+    try (PreparedStatement statement =
+        connection.prepareStatement("SELECT tenant_id, name FROM region WHERE id = ?")) {
+      statement.setLong(1, regionId);
+      try (ResultSet result = statement.executeQuery()) {
+        assertThat(result.next()).isTrue();
+        assertThat(result.getLong(1)).isEqualTo(tenantKey);
+        assertThat(result.getString(2)).isEqualTo(name);
+      }
+    }
+  }
+
+  private static String readReservationClaimKind(Connection connection, long tenantKey)
+      throws SQLException {
+    try (PreparedStatement statement =
+        connection.prepareStatement(
+            "SELECT claim_kind FROM world_authored_source_tenant_key_reservation "
+                + "WHERE tenant_key = ?")) {
+      statement.setLong(1, tenantKey);
+      try (ResultSet result = statement.executeQuery()) {
+        return result.next() ? result.getString(1) : null;
+      }
+    }
+  }
+
+  private static long countCanonicalAssociations(Connection connection, UUID canonicalTenantId)
+      throws SQLException {
+    try (PreparedStatement statement =
+        connection.prepareStatement(
+            "SELECT COUNT(*) FROM world_authored_source_tenant_association "
+                + "WHERE target_namespace = ? AND canonical_tenant_id = ?")) {
+      statement.setString(1, NAMESPACE);
+      statement.setObject(2, canonicalTenantId);
+      try (ResultSet result = statement.executeQuery()) {
+        result.next();
+        return result.getLong(1);
+      }
+    }
+  }
+
+  private static void assertSqlState(String expected, SqlAction action) throws SQLException {
+    SQLException rejected = null;
+    try {
+      action.execute();
+    } catch (SQLException exception) {
+      rejected = exception;
+    }
+    if (rejected == null) {
+      throw new AssertionError("Expected PostgreSQL rejection with SQLSTATE " + expected);
+    }
+    assertThat(rejected.getSQLState()).isEqualTo(expected);
+  }
+
+  @FunctionalInterface
+  private interface SqlAction {
+    void execute() throws SQLException;
+  }
+
   private WorldAuthoredSourceIntakeReceipt accept(
       UUID requestId, AuthoredWorldSourceEvidence source) {
     TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
@@ -590,6 +1156,13 @@ class WorldAuthoredSourceIntakeIntegrationTest {
 
   private java.util.Optional<WorldAuthoredSourceIntakeReceipt> read(UUID requestId) {
     return repository.read(NAMESPACE, requestId);
+  }
+
+  private long countRows(String tableName) {
+    return Objects.requireNonNull(
+            dsl.fetchOne("SELECT COUNT(*) FROM " + tableName),
+            "table row count query returned no row")
+        .get(0, Long.class);
   }
 
   private long countForCanonicalTenant(UUID tenantId) {

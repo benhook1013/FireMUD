@@ -1803,7 +1803,9 @@ class VersionServiceImplTest {
         "genrev-1",
         false,
         null,
-        LocalDateTime.parse("2026-04-26T10:00:00"));
+        LocalDateTime.parse("2026-04-26T10:00:00"),
+        null,
+        null);
   }
 
   private PublishedPluginVersion uploadedPluginVersion(

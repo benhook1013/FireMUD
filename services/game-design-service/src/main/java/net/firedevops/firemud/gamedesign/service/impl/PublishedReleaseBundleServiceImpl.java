@@ -9,12 +9,14 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleRepository;
 import net.firedevops.firemud.gamedesign.repository.RevisionRepository;
+import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
 import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
 import org.springframework.stereotype.Service;
@@ -29,15 +31,19 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
 
   private final PublishedReleaseBundleRepository repository;
   private final RevisionRepository revisionRepository;
+  private final VersionRepository versionRepository;
   private final ObjectMapper objectMapper;
 
   public PublishedReleaseBundleServiceImpl(
       PublishedReleaseBundleRepository repository,
       RevisionRepository revisionRepository,
+      VersionRepository versionRepository,
       ObjectMapper objectMapper) {
     this.repository = Objects.requireNonNull(repository, "repository must not be null");
     this.revisionRepository =
         Objects.requireNonNull(revisionRepository, "revisionRepository must not be null");
+    this.versionRepository =
+        Objects.requireNonNull(versionRepository, "versionRepository must not be null");
     this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper must not be null");
   }
 
@@ -58,9 +64,26 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
             ignored -> {
               throw new IllegalStateException("published release bundle already exists");
             });
+    var identitySource =
+        versionRepository
+            .findByTenantIdAndId(version.tenantId(), version.id())
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "published release canonical identity source missing"));
+    UUID canonicalTenantId = identitySource.getCanonicalTenantId();
+    UUID canonicalVersionId = identitySource.getCanonicalVersionId();
+    if (!version.id().equals(identitySource.getId())
+        || !version.tenantId().equals(identitySource.getTenantId())
+        || !isCanonicalNonNilUuid(canonicalTenantId)
+        || !isCanonicalNonNilUuid(canonicalVersionId)) {
+      throw new IllegalStateException("published release canonical identity source is invalid");
+    }
     PublishedReleaseBundle entity = new PublishedReleaseBundle();
     entity.setTenantId(version.tenantId());
     entity.setVersionId(version.id());
+    entity.setCanonicalTenantId(canonicalTenantId);
+    entity.setCanonicalVersionId(canonicalVersionId);
     entity.setVersionNumber(version.versionNumber());
     entity.setAttestationSchemaVersion(
         PublishedReleaseBundleContract.SUPPORTED_ATTESTATION_SCHEMA_VERSION);
@@ -113,7 +136,13 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
         entity.getGenerationConfigRevision(),
         entity.isScriptOnly(),
         entity.getScriptPatchVersion(),
-        entity.getPublishedAt());
+        entity.getPublishedAt(),
+        entity.getCanonicalTenantId(),
+        entity.getCanonicalVersionId());
+  }
+
+  private boolean isCanonicalNonNilUuid(UUID value) {
+    return value != null && !value.equals(new UUID(0L, 0L));
   }
 
   private String serializeKeys(List<String> keys) {

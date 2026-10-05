@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamedesign.service.impl;
 import static net.firedevops.firemud.gamedesign.service.impl.CommandDefinitionFixtures.commandDefinition;
 import static net.firedevops.firemud.gamedesign.service.impl.CommandDefinitionFixtures.validCommandDefinition;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
@@ -10,13 +11,16 @@ import static org.mockito.Mockito.when;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.entity.Revision;
+import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleRepository;
 import net.firedevops.firemud.gamedesign.repository.RevisionRepository;
+import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -27,6 +31,7 @@ import tools.jackson.databind.ObjectMapper;
 class PublishedReleaseBundleServiceImplTest {
   @Mock private PublishedReleaseBundleRepository repository;
   @Mock private RevisionRepository revisionRepository;
+  @Mock private VersionRepository versionRepository;
 
   private PublishedReleaseBundleServiceImpl service;
 
@@ -34,7 +39,14 @@ class PublishedReleaseBundleServiceImplTest {
   void setUp() {
     MockitoAnnotations.openMocks(this);
     service =
-        new PublishedReleaseBundleServiceImpl(repository, revisionRepository, new ObjectMapper());
+        new PublishedReleaseBundleServiceImpl(
+            repository, revisionRepository, versionRepository, new ObjectMapper());
+    Version source = new Version();
+    source.setId(7L);
+    source.setTenantId("tenant-1");
+    source.setCanonicalTenantId(UUID.fromString("67d7b75b-42d1-4ac6-9572-684c5e633cda"));
+    source.setCanonicalVersionId(UUID.fromString("c472ebd1-56d8-49df-b8fa-85963dd940f8"));
+    when(versionRepository.findByTenantIdAndId("tenant-1", 7L)).thenReturn(Optional.of(source));
   }
 
   @Test
@@ -85,6 +97,37 @@ class PublishedReleaseBundleServiceImplTest {
     assertEquals(1, dto.participantDigests().size());
     assertEquals(List.of(validCommandDefinition()), dto.commandDefinitions());
     assertEquals("v1", dto.attestationSchemaVersion());
+    assertEquals(sourceIdentity().getCanonicalTenantId(), dto.canonicalTenantId());
+    assertEquals(sourceIdentity().getCanonicalVersionId(), dto.canonicalVersionId());
+    org.mockito.Mockito.verify(repository)
+        .save(
+            org.mockito.ArgumentMatchers.argThat(
+                saved ->
+                    sourceIdentity().getCanonicalTenantId().equals(saved.getCanonicalTenantId())
+                        && sourceIdentity()
+                            .getCanonicalVersionId()
+                            .equals(saved.getCanonicalVersionId())));
+  }
+
+  @Test
+  void retainedBundleWithoutCanonicalIdentityStaysAbsent() {
+    PublishedReleaseBundle retained = new PublishedReleaseBundle();
+    retained.setId(11L);
+    retained.setTenantId("tenant-1");
+    retained.setVersionId(7L);
+    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.of(retained));
+
+    var dto = service.findPublishedReleaseBundle("tenant-1", 7L).orElseThrow();
+
+    assertNull(dto.canonicalTenantId());
+    assertNull(dto.canonicalVersionId());
+  }
+
+  private Version sourceIdentity() {
+    Version version = new Version();
+    version.setCanonicalTenantId(UUID.fromString("67d7b75b-42d1-4ac6-9572-684c5e633cda"));
+    version.setCanonicalVersionId(UUID.fromString("c472ebd1-56d8-49df-b8fa-85963dd940f8"));
+    return version;
   }
 
   @Test

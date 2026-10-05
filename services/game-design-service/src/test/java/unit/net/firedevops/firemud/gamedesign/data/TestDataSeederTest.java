@@ -2,9 +2,12 @@ package net.firedevops.firemud.gamedesign.data;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.time.LocalDateTime;
+import java.util.UUID;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.GameTemplate;
 import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
@@ -101,5 +104,72 @@ class TestDataSeederTest {
     assertThat(artifactCaptor.getValue().getVersionId()).isEqualTo(7L);
     assertThat(artifactCaptor.getValue().getLastWorkflowId()).isEqualTo("demo-seed-publish");
     assertThat(artifactCaptor.getValue().getManifestHash()).isEqualTo("demo-manifest-hash");
+  }
+
+  @Test
+  void runReusesExistingPublishedReleaseBundleWithoutSavingOrChangingItsMetadata() {
+    when(gameRepository.findByTenantId("1")).thenReturn(null);
+    when(versionRepository.findByTenantIdAndVersionNumber("1", 1))
+        .thenReturn(java.util.Optional.empty());
+    Version version = new Version();
+    version.setId(7L);
+    version.setTenantId("1");
+    version.setVersionNumber(1);
+    when(versionRepository.save(any(Version.class))).thenReturn(version);
+    when(templateRepository.findByTenantIdAndName("1", "Default Template"))
+        .thenReturn(java.util.Optional.empty());
+    when(revisionRepository.findByTenantIdAndVersionIdAndRevisionKind("1", 7L, "GENERIC"))
+        .thenReturn(java.util.Optional.empty());
+
+    LocalDateTime publishedAt = LocalDateTime.of(2025, 3, 4, 5, 6, 7);
+    PublishedReleaseBundle existingBundle = new PublishedReleaseBundle();
+    existingBundle.setId(19L);
+    existingBundle.setTenantId("1");
+    existingBundle.setVersionId(7L);
+    existingBundle.setCanonicalTenantId(UUID.fromString("11111111-1111-4111-8111-111111111111"));
+    existingBundle.setCanonicalVersionId(UUID.fromString("22222222-2222-4222-8222-222222222222"));
+    existingBundle.setVersionNumber(42);
+    existingBundle.setAttestationSchemaVersion("stored-schema");
+    existingBundle.setPublishWorkflowId("stored-workflow");
+    existingBundle.setManifestHash("stored-manifest");
+    existingBundle.setGenerationConfigRevision("stored-generation-revision");
+    existingBundle.setRequiredManifestAssetKeysJson("[\"stored-asset\"]");
+    existingBundle.setParticipantDigestsJson("[\"stored-participant\"]");
+    existingBundle.setCommandDefinitionsJson("[\"stored-command\"]");
+    existingBundle.setScriptOnly(true);
+    existingBundle.setScriptPatchVersion("stored-patch");
+    existingBundle.setPublishedAt(publishedAt);
+    when(publishedReleaseBundleRepository.findByTenantIdAndVersionId("1", 7L))
+        .thenReturn(java.util.Optional.of(existingBundle));
+    when(versionAssetArtifactRepository.findByTenantIdAndVersionId("1", 7L))
+        .thenReturn(java.util.Optional.empty());
+    when(versionAssetArtifactRepository.save(any(VersionAssetArtifact.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    seeder.run(new DefaultApplicationArguments(new String[] {}));
+
+    verify(publishedReleaseBundleRepository, never()).save(any(PublishedReleaseBundle.class));
+    assertThat(existingBundle.getId()).isEqualTo(19L);
+    assertThat(existingBundle.getCanonicalTenantId())
+        .isEqualTo(UUID.fromString("11111111-1111-4111-8111-111111111111"));
+    assertThat(existingBundle.getCanonicalVersionId())
+        .isEqualTo(UUID.fromString("22222222-2222-4222-8222-222222222222"));
+    assertThat(existingBundle.getVersionNumber()).isEqualTo(42);
+    assertThat(existingBundle.getAttestationSchemaVersion()).isEqualTo("stored-schema");
+    assertThat(existingBundle.getPublishWorkflowId()).isEqualTo("stored-workflow");
+    assertThat(existingBundle.getManifestHash()).isEqualTo("stored-manifest");
+    assertThat(existingBundle.getGenerationConfigRevision())
+        .isEqualTo("stored-generation-revision");
+    assertThat(existingBundle.getRequiredManifestAssetKeysJson()).isEqualTo("[\"stored-asset\"]");
+    assertThat(existingBundle.getParticipantDigestsJson()).isEqualTo("[\"stored-participant\"]");
+    assertThat(existingBundle.getCommandDefinitionsJson()).isEqualTo("[\"stored-command\"]");
+    assertThat(existingBundle.isScriptOnly()).isTrue();
+    assertThat(existingBundle.getScriptPatchVersion()).isEqualTo("stored-patch");
+    assertThat(existingBundle.getPublishedAt()).isEqualTo(publishedAt);
+
+    ArgumentCaptor<VersionAssetArtifact> artifactCaptor =
+        ArgumentCaptor.forClass(VersionAssetArtifact.class);
+    verify(versionAssetArtifactRepository).save(artifactCaptor.capture());
+    assertThat(artifactCaptor.getValue().getManifestHash()).isEqualTo("stored-manifest");
   }
 }

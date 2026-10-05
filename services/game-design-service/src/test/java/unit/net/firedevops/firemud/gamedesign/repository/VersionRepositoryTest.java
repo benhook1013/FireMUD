@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.sql.DriverManager;
+import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Locale;
@@ -13,6 +14,9 @@ import net.firedevops.firemud.common.config.PostgresProperties;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import org.jooq.DSLContext;
+import org.jooq.Field;
+import org.jooq.Record;
+import org.jooq.Result;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.jooq.tools.jdbc.MockConnection;
@@ -41,6 +45,64 @@ class VersionRepositoryTest {
     assertThat(sql.get())
         .contains(
             "\"isolated_game_design_owner\".\"lock_version_for_entity_digest_baseline_migration\"");
+  }
+
+  @Test
+  void entityDigestBaselineProjectionDoesNotFabricateCanonicalVersionIdentity() {
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    Field<Long> id = DSL.field(DSL.name("id"), Long.class);
+    Field<String> tenantId = DSL.field(DSL.name("tenant_id"), String.class);
+    Field<Integer> versionNumber = DSL.field(DSL.name("version_number"), Integer.class);
+    Field<String> versionState = DSL.field(DSL.name("version_state"), String.class);
+    Field<Long> versionStateEpoch = DSL.field(DSL.name("version_state_epoch"), Long.class);
+    Field<String> scriptPatchVersion = DSL.field(DSL.name("script_patch_version"), String.class);
+    Field<Long> baseVersionId = DSL.field(DSL.name("base_version_id"), Long.class);
+    Field<Boolean> scriptOnly = DSL.field(DSL.name("is_script_only"), Boolean.class);
+    Field<String> notes = DSL.field(DSL.name("notes"), String.class);
+    Field<Timestamp> createdAt = DSL.field(DSL.name("created_at"), Timestamp.class);
+    Field<Timestamp> updatedAt = DSL.field(DSL.name("updated_at"), Timestamp.class);
+    Field<?>[] fields = {
+      id,
+      tenantId,
+      versionNumber,
+      versionState,
+      versionStateEpoch,
+      scriptPatchVersion,
+      baseVersionId,
+      scriptOnly,
+      notes,
+      createdAt,
+      updatedAt
+    };
+    Result<Record> result = resultDsl.newResult(fields);
+    Record row = resultDsl.newRecord(fields);
+    row.set(id, 17L);
+    row.set(tenantId, "tenant");
+    row.set(versionNumber, 6);
+    row.set(versionState, VersionLifecycleState.DRAFT.name());
+    row.set(versionStateEpoch, 2L);
+    row.set(scriptOnly, false);
+    row.set(notes, "baseline read");
+    row.set(createdAt, Timestamp.valueOf(LocalDateTime.of(2026, 10, 1, 12, 0)));
+    row.set(updatedAt, Timestamp.valueOf(LocalDateTime.of(2026, 10, 1, 12, 1)));
+    result.add(row);
+
+    MockDataProvider provider = context -> new MockResult[] {new MockResult(1, result)};
+    DSLContext dsl = DSL.using(new MockConnection(provider), SQLDialect.POSTGRES);
+    PostgresProperties postgres = new PostgresProperties();
+    postgres.setSchema("isolated_game_design_owner");
+
+    Version version =
+        new VersionRepository(dsl, postgres)
+            .findByTenantIdAndIdForEntityDigestBaselineMigration("tenant", 17L)
+            .orElseThrow();
+
+    assertThat(version.getId()).isEqualTo(17L);
+    assertThat(version.getCanonicalVersionId()).isNull();
+    assertThat(version.getCanonicalTenantId()).isNull();
+    assertThat(version.getIdentitySourceGameRowId()).isNull();
+    assertThat(version.getIdentitySourceGameTenantKey()).isNull();
+    assertThat(version.getIdentitySourceProvenanceKind()).isNull();
   }
 
   @Test
@@ -79,6 +141,11 @@ class VersionRepositoryTest {
           "CREATE TABLE \"version\" ("
               + "\"id\" BIGINT PRIMARY KEY, "
               + "\"tenant_id\" VARCHAR(36) NOT NULL, "
+              + "\"canonical_version_id\" UUID, "
+              + "\"canonical_tenant_id\" UUID, "
+              + "\"identity_source_game_row_id\" BIGINT, "
+              + "\"identity_source_game_tenant_key\" VARCHAR(36), "
+              + "\"identity_source_provenance_kind\" VARCHAR(32), "
               + "\"version_number\" INT NOT NULL, "
               + "\"version_state\" VARCHAR(32) NOT NULL, "
               + "\"version_state_epoch\" BIGINT NOT NULL, "

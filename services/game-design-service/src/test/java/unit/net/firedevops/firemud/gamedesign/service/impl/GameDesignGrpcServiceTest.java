@@ -191,7 +191,9 @@ class GameDesignGrpcServiceTest {
                 "genrev-1",
                 false,
                 null,
-                LocalDateTime.parse("2026-04-14T12:00:00")));
+                LocalDateTime.parse("2026-04-14T12:00:00"),
+                UUID.fromString("67d7b75b-42d1-4ac6-9572-684c5e633cda"),
+                UUID.fromString("c472ebd1-56d8-49df-b8fa-85963dd940f8")));
 
     AtomicReference<GetPublishedReleaseBundleResponse> ref = new AtomicReference<>();
     try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
@@ -212,8 +214,82 @@ class GameDesignGrpcServiceTest {
         List.of("{\"commandId\":\"block\",\"schemaVersion\":1}"),
         ref.get().getBundle().getCommandDefinitionsList());
     assertEquals(1, ref.get().getBundle().getParticipantDigestsCount());
+    assertEquals(
+        "67d7b75b-42d1-4ac6-9572-684c5e633cda", ref.get().getBundle().getCanonicalTenantId());
+    assertEquals(
+        "c472ebd1-56d8-49df-b8fa-85963dd940f8", ref.get().getBundle().getCanonicalVersionId());
     assertEquals("publish", ref.get().getBundle().getWorkflowFamily());
     assertEquals("TEMPORAL_DISABLED", ref.get().getBundle().getWorkflowStatus());
+  }
+
+  @Test
+  void getPublishedReleaseBundleRejectsPartialCanonicalIdentity() {
+    Mockito.when(versionService.getPublishedReleaseBundle("tenant-1", 7L))
+        .thenReturn(
+            new PublishedReleaseBundleDto(
+                11L,
+                "tenant-1",
+                7L,
+                8,
+                "v1",
+                "workflow-1",
+                "abc123",
+                List.of("manifest.json"),
+                List.of(),
+                "genrev-1",
+                false,
+                null,
+                LocalDateTime.parse("2026-04-14T12:00:00"),
+                UUID.fromString("67d7b75b-42d1-4ac6-9572-684c5e633cda"),
+                null));
+    AtomicReference<GetPublishedReleaseBundleResponse> ref = new AtomicReference<>();
+
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.getPublishedReleaseBundle(
+          GetPublishedReleaseBundleRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setVersionId(7L)
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals(false, ref.get().hasBundle());
+  }
+
+  @Test
+  void getPublishedReleaseBundleRejectsNilCanonicalIdentity() {
+    Mockito.when(versionService.getPublishedReleaseBundle("tenant-1", 7L))
+        .thenReturn(
+            new PublishedReleaseBundleDto(
+                11L,
+                "tenant-1",
+                7L,
+                8,
+                "v1",
+                "workflow-1",
+                "abc123",
+                List.of("manifest.json"),
+                List.of(),
+                "genrev-1",
+                false,
+                null,
+                LocalDateTime.parse("2026-04-14T12:00:00"),
+                UUID.fromString("00000000-0000-0000-0000-000000000000"),
+                UUID.fromString("c472ebd1-56d8-49df-b8fa-85963dd940f8")));
+    AtomicReference<GetPublishedReleaseBundleResponse> ref = new AtomicReference<>();
+
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.getPublishedReleaseBundle(
+          GetPublishedReleaseBundleRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setVersionId(7L)
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals(false, ref.get().hasBundle());
   }
 
   @Test
@@ -1065,7 +1141,9 @@ class GameDesignGrpcServiceTest {
                 "genrev-1",
                 false,
                 null,
-                LocalDateTime.parse("2026-04-14T12:00:00")));
+                LocalDateTime.parse("2026-04-14T12:00:00"),
+                null,
+                null));
 
     AtomicReference<GetPublishedReleaseBundleResponse> ref = new AtomicReference<>();
     try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {

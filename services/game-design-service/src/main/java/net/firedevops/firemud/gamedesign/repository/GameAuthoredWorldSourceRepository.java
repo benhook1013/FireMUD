@@ -5,12 +5,15 @@ import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
+import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record;
 import org.jooq.Table;
 import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -78,6 +81,15 @@ public class GameAuthoredWorldSourceRepository {
       DSL.field(DSL.name("provenance_kind"), String.class);
   private static final Field<String> EVIDENCE_DIGEST =
       DSL.field(DSL.name("evidence_digest"), String.class);
+
+  private static final Table<?> VERSION = DSL.table(DSL.name("version"));
+  private static final Field<Long> VERSION_ID = DSL.field(DSL.name("id"), Long.class);
+  private static final Field<String> VERSION_TENANT_ID =
+      DSL.field(DSL.name("tenant_id"), String.class);
+  private static final Field<String> VERSION_STATE =
+      DSL.field(DSL.name("version_state"), String.class);
+  private static final Field<Long> VERSION_STATE_EPOCH =
+      DSL.field(DSL.name("version_state_epoch"), Long.class);
   private final DSLContext dsl;
 
   public GameAuthoredWorldSourceRepository(DSLContext dsl) {
@@ -221,6 +233,92 @@ public class GameAuthoredWorldSourceRepository {
     requireReceiptSource(receipt, source);
     requireTenantBinding(receipt);
     return Optional.of(receipt);
+  }
+
+  /**
+   * Reads the exact source receipt and its source-owned version from the caller's owner snapshot.
+   *
+   * <p>This method is intentionally separate from {@link #read}: the latter suspends any ambient
+   * transaction to read a committed outcome, while this owner-current read requires the dedicated
+   * read-only REPEATABLE_READ transaction opened by AuthoredWorldVersionStateService.
+   */
+  @Transactional(propagation = Propagation.MANDATORY, readOnly = true)
+  public Optional<AuthoredWorldVersionStateSnapshot> readVersionStateSnapshot(
+      String targetNamespace,
+      UUID readRequestId,
+      UUID canonicalTenantId,
+      String worldSlug,
+      UUID sourceOperationId,
+      String expectedSourceEvidenceDigest,
+      long versionId) {
+    requireOwnerSnapshot();
+    AuthoredWorldSourceDigest.validateReadSelector(targetNamespace, canonicalTenantId, worldSlug);
+    requireNonNil(readRequestId, "readRequestId");
+    requireNonNil(sourceOperationId, "sourceOperationId");
+    if (readRequestId.equals(sourceOperationId)) {
+      throw new IllegalArgumentException("readRequestId must be separate from sourceOperationId");
+    }
+    if (!GameTenantCreationDigest.isDigest(expectedSourceEvidenceDigest)) {
+      throw new IllegalArgumentException("Expected source evidence digest is not canonical");
+    }
+    if (versionId <= 0) {
+      throw new IllegalArgumentException("versionId must be positive");
+    }
+
+    Record sourceRecord =
+        dsl.selectFrom(OPERATION).where(OPERATION_ID.eq(sourceOperationId)).fetchOne();
+    if (sourceRecord == null) {
+      return Optional.empty();
+    }
+    AuthoredWorldSourceEvidence receipt = toEvidence(sourceRecord);
+    if (!targetNamespace.equals(receipt.targetNamespace())
+        || !canonicalTenantId.equals(receipt.canonicalTenantId())
+        || !worldSlug.equals(receipt.worldSlug())
+        || !sourceOperationId.equals(receipt.operationId())) {
+      throw new InvalidSourceEvidenceException(
+          "Authored-world source operation does not match the exact requested scope");
+    }
+    if (!expectedSourceEvidenceDigest.equals(receipt.evidenceDigest())) {
+      throw new InvalidSourceEvidenceException(
+          "Authored-world source evidence digest no longer matches the requested binding");
+    }
+
+    GameSource source = findGameSourceByRow(receipt.sourceGameRowId());
+    if (source == null) {
+      throw new InvalidSourceEvidenceException("Authored-world source game row is missing");
+    }
+    requireConsistentGameSource(source);
+    requireReceiptSource(receipt, source);
+    requireTenantBinding(receipt);
+
+    Record versionRecord =
+        dsl.select(VERSION_ID, VERSION_TENANT_ID, VERSION_STATE, VERSION_STATE_EPOCH)
+            .from(VERSION)
+            .where(VERSION_ID.eq(versionId))
+            .fetchOne();
+    if (versionRecord == null) {
+      return Optional.empty();
+    }
+    String versionTenantId = versionRecord.get(VERSION_TENANT_ID);
+    if (versionTenantId == null || !source.sourceGameTenantKey().equals(versionTenantId)) {
+      throw new InvalidSourceEvidenceException(
+          "Requested version is not owned by the exact Game Design source game");
+    }
+
+    VersionLifecycleState versionState;
+    Long versionStateEpoch = versionRecord.get(VERSION_STATE_EPOCH);
+    try {
+      String versionStateName = versionRecord.get(VERSION_STATE);
+      if (versionStateName == null || versionStateEpoch == null || versionStateEpoch <= 0) {
+        throw new IllegalArgumentException("Version lifecycle state or epoch is invalid");
+      }
+      versionState = VersionLifecycleState.valueOf(versionStateName);
+    } catch (IllegalArgumentException exception) {
+      throw new InvalidSourceEvidenceException(
+          "Persisted version lifecycle state or epoch is invalid", exception);
+    }
+    return Optional.of(
+        new AuthoredWorldVersionStateSnapshot(receipt, versionState, versionStateEpoch));
   }
 
   private void ensureTenantSlugBinding(
@@ -426,6 +524,27 @@ public class GameAuthoredWorldSourceRepository {
           "Authored-world source registration requires an active Game Design owner transaction");
     }
   }
+
+  private void requireOwnerSnapshot() {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || !TransactionSynchronizationManager.isCurrentTransactionReadOnly()
+        || !Integer.valueOf(TransactionDefinition.ISOLATION_REPEATABLE_READ)
+            .equals(TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())) {
+      throw new IllegalStateException(
+          "Authored-world version-state read requires a read-only REPEATABLE_READ owner snapshot");
+    }
+  }
+
+  private void requireNonNil(UUID value, String label) {
+    if (value == null || value.equals(new UUID(0L, 0L))) {
+      throw new IllegalArgumentException(label + " must be a canonical non-nil UUID");
+    }
+  }
+
+  public record AuthoredWorldVersionStateSnapshot(
+      AuthoredWorldSourceEvidence sourceEvidence,
+      VersionLifecycleState versionState,
+      long versionStateEpoch) {}
 
   private record GameSource(
       long sourceGameRowId,
