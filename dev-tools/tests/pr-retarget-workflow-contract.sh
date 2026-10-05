@@ -1563,6 +1563,15 @@ runtime_service = "services/account-service/src/Main.java"
 
 assert run_scope([controller_service]) == {"run_smoke_full": "false"}
 assert run_scope([controller_smoke_script]) == {"run_smoke_full": "false"}
+# Source-built MinIO helpers must require runtime proof even when no Dockerfile changes.
+root = Path(sys.argv[1]).resolve().parents[2]
+preview_resolver = (root / "dev-tools/hosted/preview/resolve-preview-image-tag.sh").read_text()
+preview_predicate = preview_resolver[preview_resolver.index("runtime_relevant() {"):preview_resolver.index('\nif [[ -n "${pr_number}"')]
+for helper in ("dev-tools/minio/base_image_refs.py", "dev-tools/minio/build-and-smoke-images.sh"):
+    assert run_scope([helper]) == {"run_smoke_full": "true"}, helper
+    preview = subprocess.run(["bash", "-c", preview_predicate + '\nruntime_relevant "$1"', "preview-scope", helper], check=False)
+    assert preview.returncode == 0, helper
+assert subprocess.run(["bash", "-c", preview_predicate + '\nruntime_relevant "$1"', "preview-scope", "design/example.md"], check=False).returncode != 0
 assert run_scope([runtime_service]) == {"run_smoke_full": "true"}
 assert run_scope([controller_service, runtime_service]) == {"run_smoke_full": "true"}
 PY

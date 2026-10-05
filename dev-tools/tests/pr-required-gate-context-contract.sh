@@ -219,7 +219,7 @@ while IFS='|' read -r workflow gate_job_id gate workflow_name workflow_file work
   }
   harden_block="$(awk '/^      - name: Harden runner$/{in_harden=1} in_harden{if (/^      - / && $0 != "      - name: Harden runner") exit; print}' <<<"$gate_block")"
   if grep -Fq '        if:' <<<"$harden_block" ||
-    ! grep -Eq '        uses: step-security/harden-runner@[0-9a-f]{40}$' <<<"$harden_block" ||
+    ! grep -Eq '        uses: step-security/harden-runner@[0-9a-f]{40}( # v[0-9]+(\.[0-9]+){0,2})?$' <<<"$harden_block" ||
     ! grep -Fq '          egress-policy: audit' <<<"$harden_block"; then
     echo "$workflow $gate hardening must remain unconditional and retain its pinned audit configuration" >&2
     exit 1
