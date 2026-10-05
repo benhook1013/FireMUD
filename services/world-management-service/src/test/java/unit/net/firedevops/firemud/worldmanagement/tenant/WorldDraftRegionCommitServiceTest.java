@@ -5,9 +5,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
+import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -82,5 +85,37 @@ class WorldDraftRegionCommitServiceTest {
     order.verify(manager).getTransaction(any());
     order.verify(repository).store(plan);
     order.verify(manager).rollback(status);
+  }
+
+  @Test
+  void committedReadbackReturnsOriginalEvidenceWithoutVerifierOrTransactionInteractions() {
+    WorldDraftRegionCommitEvidence evidence = mock(WorldDraftRegionCommitEvidence.class);
+    when(repository.readCommitted(plan)).thenReturn(Optional.of(evidence));
+    WorldDraftRegionCommitService service =
+        new WorldDraftRegionCommitService(repository, manager, verifier);
+    assertThat(service.readCommitted(plan)).containsSame(evidence);
+    verify(repository).readCommitted(plan);
+    verifyNoMoreInteractions(repository);
+    verifyNoInteractions(verifier, manager);
+  }
+
+  @Test
+  void missingCommittedReadbackRemainsUnknownWithoutAttemptingDeniedWriter() {
+    when(repository.readCommitted(plan)).thenReturn(Optional.empty());
+    WorldDraftRegionCommitService service = new WorldDraftRegionCommitService(repository, manager);
+    assertThat(service.readCommitted(plan)).isEmpty();
+    verify(repository).readCommitted(plan);
+    verifyNoMoreInteractions(repository);
+    verifyNoInteractions(verifier, manager);
+  }
+
+  @Test
+  void committedReadbackRejectsActiveCallerBeforeAnyCollaboratorInteraction() {
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    WorldDraftRegionCommitService service =
+        new WorldDraftRegionCommitService(repository, manager, verifier);
+    assertThatThrownBy(() -> service.readCommitted(plan))
+        .hasMessageContaining("no active caller transaction");
+    verifyNoInteractions(repository, verifier, manager, plan);
   }
 }

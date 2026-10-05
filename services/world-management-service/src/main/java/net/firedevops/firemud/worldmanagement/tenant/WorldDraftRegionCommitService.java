@@ -1,6 +1,7 @@
 package net.firedevops.firemud.worldmanagement.tenant;
 
 import java.util.Objects;
+import java.util.Optional;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceRepository.ConflictException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -59,5 +60,19 @@ public final class WorldDraftRegionCommitService {
     }
     verifier.verify(plan);
     return Objects.requireNonNull(transaction.execute(status -> repository.store(plan)));
+  }
+
+  /**
+   * Reads original committed storage evidence without invoking permission verification or a writer
+   * transaction. The result remains permission-unverified; absence is unknown rather than an abort
+   * or definitive no-commit outcome.
+   */
+  public Optional<WorldDraftRegionCommitEvidence> readCommitted(WorldDraftRegionCommitPlan plan) {
+    Objects.requireNonNull(plan, "plan");
+    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new ConflictException(
+          "World complete storage readback requires no active caller transaction");
+    }
+    return repository.readCommitted(plan);
   }
 }

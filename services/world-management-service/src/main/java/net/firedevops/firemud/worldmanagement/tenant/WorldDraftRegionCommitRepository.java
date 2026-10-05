@@ -9,6 +9,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceRepository.ConflictException;
@@ -40,6 +41,19 @@ public class WorldDraftRegionCommitRepository {
     this.mapper = Objects.requireNonNull(mapper, "mapper");
     reader = new WorldAuthoredGraphReader(dsl);
     stager = new WorldDraftRegionGraphStager();
+  }
+
+  /**
+   * Independently reads the exact committed storage evidence without claiming an owner lock or
+   * write permission. Absence is unknown, never proof of abort or that an operation cannot commit.
+   */
+  public Optional<WorldDraftRegionCommitEvidence> readCommitted(WorldDraftRegionCommitPlan plan) {
+    Objects.requireNonNull(plan, "plan");
+    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new ConflictException(
+          "World complete storage readback requires no active caller transaction");
+    }
+    return Optional.ofNullable(find(plan, mapper.writeValueAsString(plan.ownerBinding())));
   }
 
   WorldDraftRegionCommitEvidence store(WorldDraftRegionCommitPlan plan) {

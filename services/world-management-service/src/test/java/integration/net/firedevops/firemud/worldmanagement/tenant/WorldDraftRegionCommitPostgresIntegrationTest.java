@@ -144,6 +144,34 @@ class WorldDraftRegionCommitPostgresIntegrationTest {
   }
 
   @Test
+  void committedReadbackReturnsOriginalFrozenHistoryWithoutPermissionOrMutation() {
+    Fixture f = fixture();
+    WorldDraftRegionCommitPlan original = plan(f, List.of(f.first(), f.second()), 0, "original");
+    // The default verifier denies storage, but independent readback needs no fresh permission.
+    WorldDraftRegionCommitService readback =
+        new WorldDraftRegionCommitService(repository(), manager);
+    Map<String, List<String>> absentState = regionOperationState();
+    assertThat(readback.readCommitted(original)).isEmpty();
+    assertThat(regionOperationState()).isEqualTo(absentState);
+    assertThatThrownBy(() -> ownerTransaction().execute(status -> readback.readCommitted(original)))
+        .hasMessageContaining("no active caller transaction");
+    assertThat(regionOperationState()).isEqualTo(absentState);
+    WorldDraftRegionCommitEvidence first = component().store(original);
+    component().store(plan(f, List.of(f.first(), f.second()), 1, "later"));
+    freeze(f);
+    Map<String, List<String>> beforeRead = regionOperationState();
+    WorldDraftRegionCommitEvidence retained = readback.readCommitted(original).orElseThrow();
+    assertThat(retained.binding()).isEqualTo(original.binding());
+    assertThat(retained.ownerBinding()).isEqualTo(original.ownerBinding());
+    assertThat(retained.graphBytes()).containsExactly(first.graphBytes());
+    assertThat(retained.resultBytes()).containsExactly(first.resultBytes());
+    assertThat(retained.status()).isEqualTo("STORED_PERMISSION_UNVERIFIED");
+    assertThat(name(f.first())).startsWith("later-");
+    assertEpochs(f, 2, 2);
+    assertThat(regionOperationState()).isEqualTo(beforeRead);
+  }
+
+  @Test
   void lastScopeConflictRollsBackEarlierRegionPayloadEpochsAndEntireHistory() {
     Fixture f = fixture();
     seedScope(f, f.second(), 3);
@@ -407,6 +435,12 @@ class WorldDraftRegionCommitPostgresIntegrationTest {
             });
     assertThatThrownBy(() -> component().store(plan))
         .hasMessageContaining("immutable result differs");
+    Map<String, List<String>> beforeRead = regionOperationState();
+    WorldDraftRegionCommitService readback =
+        new WorldDraftRegionCommitService(repository(), manager);
+    assertThatThrownBy(() -> readback.readCommitted(plan))
+        .hasMessageContaining("immutable result differs");
+    assertThat(regionOperationState()).isEqualTo(beforeRead);
     assertEpochs(f, 1, 1);
     assertThat(name(f.first())).startsWith("retained-");
   }
@@ -609,6 +643,26 @@ class WorldDraftRegionCommitPostgresIntegrationTest {
     return rows;
   }
 
+  private Map<String, List<String>> regionOperationState() {
+    return retainedRows(
+        dsl,
+        List.of(
+            "region",
+            "zone",
+            "room",
+            "room_exit",
+            "generation_rule",
+            "world_entity_spawn_binding",
+            "world_design_aggregate_epoch",
+            "world_design_scope_epoch",
+            "world_region_draft_commit",
+            "world_region_draft_execution_manifest",
+            "world_authored_source_intake",
+            "world_authored_version_identity",
+            "world_design_publication_fence_owner",
+            "world_design_publication_fence_attempt"));
+  }
+
   private void race(Fixture f, long epoch) throws Exception {
     CountDownLatch begin = new CountDownLatch(1);
     ExecutorService executor = Executors.newFixedThreadPool(2);
@@ -649,6 +703,12 @@ class WorldDraftRegionCommitPostgresIntegrationTest {
                 prior.target(), prior.requestId(), prior.commitId(), base, revisions, units),
             original.ownerBinding());
     assertThatThrownBy(() -> component().store(changed)).hasMessageContaining("changed full input");
+    Map<String, List<String>> beforeRead = regionOperationState();
+    WorldDraftRegionCommitService readback =
+        new WorldDraftRegionCommitService(repository(), manager);
+    assertThatThrownBy(() -> readback.readCommitted(changed))
+        .hasMessageContaining("changed full input");
+    assertThat(regionOperationState()).isEqualTo(beforeRead);
   }
 
   private WorldDraftRegionCommitPlan plan(Fixture f, List<Long> regions, long epoch, String name) {
