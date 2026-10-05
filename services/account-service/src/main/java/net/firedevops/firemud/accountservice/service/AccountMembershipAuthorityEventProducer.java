@@ -13,15 +13,19 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Supplier;
+import net.firedevops.firemud.accountservice.dto.AccountAuditDigest;
+import net.firedevops.firemud.accountservice.dto.AccountAuditEnvelope;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest.EntitlementAvailabilityV2;
 import net.firedevops.firemud.accountservice.dto.AccountMembershipCaptureSources;
 import net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2;
+import net.firedevops.firemud.accountservice.dto.CanonicalMembershipTransitionReceipt;
 import net.firedevops.firemud.accountservice.dto.MembershipTransitionReceipt;
 import net.firedevops.firemud.accountservice.dto.MembershipTransitionReceiptDigest;
 import net.firedevops.firemud.accountservice.dto.RuntimeMembershipSnapshotDto;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
+import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.AuthorityScope;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.CompositeSnapshot;
@@ -41,6 +45,7 @@ import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAut
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.TenantProvenanceKind;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipTransitionReceiptRepository;
+import net.firedevops.firemud.accountservice.repository.AccountMembershipTransitionReceiptRepository.TransitionReceiptEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantIdentityResolver;
@@ -48,6 +53,12 @@ import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipR
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository.JoinMembershipProof;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository.RoleSnapshot;
+import net.firedevops.firemud.accountservice.repository.AccountTenantRoleMutationDigest;
+import net.firedevops.firemud.accountservice.repository.AccountTenantRoleOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantRoleOperationRepository.AuditEvidence;
+import net.firedevops.firemud.accountservice.repository.AccountTenantRoleOperationRepository.CurrentMemberEvidence;
+import net.firedevops.firemud.accountservice.repository.AccountTenantRoleOperationRepository.OperationEvidence;
+import net.firedevops.firemud.accountservice.repository.AccountTenantRoleOperationRepository.Request;
 import net.firedevops.firemud.accountservice.repository.ApprovedLegacyTenantAssociationRepository.ApprovedAssociation;
 import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepository;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
@@ -88,6 +99,8 @@ public class AccountMembershipAuthorityEventProducer {
   private final AccountMembershipTransitionReceiptRepository transitionReceiptRepository;
   private final AccountTenantMembershipRepository membershipRepository;
   private final AccountTenantMembershipRoleSnapshotRepository roleSnapshotRepository;
+  private final AccountAuditOutboxRepository auditOutboxRepository;
+  private final AccountTenantRoleOperationRepository tenantRoleOperationRepository;
 
   public AccountMembershipAuthorityEventProducer(
       AccountJoinOperationRepository joinOperationRepository,
@@ -101,7 +114,9 @@ public class AccountMembershipAuthorityEventProducer {
       AccountLogoutAllOperationRepository logoutAllOperationRepository,
       AccountMembershipTransitionReceiptRepository transitionReceiptRepository,
       AccountTenantMembershipRepository membershipRepository,
-      AccountTenantMembershipRoleSnapshotRepository roleSnapshotRepository) {
+      AccountTenantMembershipRoleSnapshotRepository roleSnapshotRepository,
+      AccountAuditOutboxRepository auditOutboxRepository,
+      AccountTenantRoleOperationRepository tenantRoleOperationRepository) {
     this.joinOperationRepository = joinOperationRepository;
     this.pairAuthorityRepository = pairAuthorityRepository;
     this.accountRepository = accountRepository;
@@ -117,6 +132,8 @@ public class AccountMembershipAuthorityEventProducer {
     this.transitionReceiptRepository = transitionReceiptRepository;
     this.membershipRepository = membershipRepository;
     this.roleSnapshotRepository = roleSnapshotRepository;
+    this.auditOutboxRepository = auditOutboxRepository;
+    this.tenantRoleOperationRepository = tenantRoleOperationRepository;
   }
 
   /**
@@ -179,29 +196,6 @@ public class AccountMembershipAuthorityEventProducer {
           "Current Account role snapshot differs from its exact active membership");
     }
 
-    MembershipTransitionReceipt transitionReceipt =
-        transitionReceiptRepository
-            .findLatestReceipt(accountId, legacyTenantId)
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        "Current Account membership has no positive transition receipt"));
-    if (!MembershipTransitionReceiptDigest.receiptStreamKey(accountId, legacyTenantId)
-            .equals(transitionReceipt.receiptStreamKey())
-        || transitionReceipt.receiptSequence() <= 0L
-        || transitionReceipt.receiptId() == null
-        || transitionReceipt.receiptDigest() == null
-        || !MembershipTransitionReceiptDigest.EVIDENCE_STATUS.equals(
-            transitionReceipt.evidenceStatus())
-        || (!"MEMBERSHIP_JOINED".equals(transitionReceipt.transitionType())
-            && !"MEMBERSHIP_REACTIVATED".equals(transitionReceipt.transitionType()))
-        || transitionReceipt.requestId() == null
-        || transitionReceipt.requestId().isBlank()
-        || transitionReceipt.membershipId() != membership.membershipId()) {
-      throw new IllegalStateException(
-          "Current Account membership transition receipt is incomplete or mismatched");
-    }
-
     CompositeSnapshot authoritySnapshot = readSnapshot(identity);
     ScopeState membershipAuthority = only(authoritySnapshot.memberships(), "membership");
     requireMatchingFence(authoritySnapshot, membershipAuthority, identity.accountUuid());
@@ -233,22 +227,77 @@ public class AccountMembershipAuthorityEventProducer {
           "Current Account membership checkpoint differs from its event");
     }
     MembershipEvent verified = verifyStoredEvent(event, identity, event.requestId());
-    if (!transitionReceipt.requestId().equals(verified.requestId())) {
-      throw new IllegalStateException(
-          "Current Account membership receipt differs from its latest V33 event");
+    Optional<CurrentMemberEvidence> tenantRoleEvidence =
+        tenantRoleOperationRepository.findCurrentMemberEvidenceForUpdate(
+            identity.accountUuid(), identity.tenantUuid(), verified.requestId());
+    MembershipTransitionReceipt transitionReceipt;
+    boolean currentTransitionInvalidated;
+    if (tenantRoleEvidence.isPresent()) {
+      CurrentMemberEvidence exactRoleEvidence = tenantRoleEvidence.orElseThrow();
+      requireExactCurrentTenantRoleEvidence(
+          exactRoleEvidence, membership, roles, event, verified, identity);
+      currentTransitionInvalidated = exactRoleEvidence.member().callerBoundAuthorityInvalidated();
+      requireCurrentMembershipEvent(
+          identity,
+          membership.membershipId(),
+          membership.lifecycleState(),
+          membership.gameplayAdmissionAllowed(),
+          membership.membershipVersion(),
+          membership.membershipAuthorityGeneration(),
+          membership.authorityProvenance(),
+          roles,
+          verified.requestId(),
+          currentTransitionInvalidated,
+          authoritySnapshot);
+
+      TransitionReceiptEvidence historicalReceipt =
+          transitionReceiptRepository
+              .findLatestHistoricalReceipt(accountId, legacyTenantId)
+              .orElseThrow(
+                  () ->
+                      new IllegalStateException(
+                          "Current Account membership has no historical lifecycle receipt"));
+      requireHistoricalMembershipJoinReceipt(historicalReceipt, membership, event);
+      transitionReceipt = historicalReceipt.receipt();
+    } else {
+      transitionReceipt =
+          transitionReceiptRepository
+              .findLatestReceipt(accountId, legacyTenantId)
+              .orElseThrow(
+                  () ->
+                      new IllegalStateException(
+                          "Current Account membership has no positive transition receipt"));
+      if (!MembershipTransitionReceiptDigest.receiptStreamKey(accountId, legacyTenantId)
+              .equals(transitionReceipt.receiptStreamKey())
+          || transitionReceipt.receiptSequence() <= 0L
+          || transitionReceipt.receiptId() == null
+          || transitionReceipt.receiptDigest() == null
+          || !MembershipTransitionReceiptDigest.EVIDENCE_STATUS.equals(
+              transitionReceipt.evidenceStatus())
+          || (!"MEMBERSHIP_JOINED".equals(transitionReceipt.transitionType())
+              && !"MEMBERSHIP_REACTIVATED".equals(transitionReceipt.transitionType()))
+          || transitionReceipt.requestId() == null
+          || transitionReceipt.requestId().isBlank()
+          || transitionReceipt.membershipId() != membership.membershipId()
+          || !transitionReceipt.requestId().equals(verified.requestId())) {
+        throw new IllegalStateException(
+            "Current Account membership transition receipt is incomplete or mismatched");
+      }
+      currentTransitionInvalidated =
+          "MEMBERSHIP_REACTIVATED".equals(transitionReceipt.transitionType());
+      requireCurrentMembershipEvent(
+          identity,
+          membership.membershipId(),
+          membership.lifecycleState(),
+          membership.gameplayAdmissionAllowed(),
+          membership.membershipVersion(),
+          membership.membershipAuthorityGeneration(),
+          membership.authorityProvenance(),
+          roles,
+          transitionReceipt.requestId(),
+          currentTransitionInvalidated,
+          authoritySnapshot);
     }
-    requireCurrentMembershipEvent(
-        identity,
-        membership.membershipId(),
-        membership.lifecycleState(),
-        membership.gameplayAdmissionAllowed(),
-        membership.membershipVersion(),
-        membership.membershipAuthorityGeneration(),
-        membership.authorityProvenance(),
-        roles,
-        transitionReceipt.requestId(),
-        "MEMBERSHIP_REACTIVATED".equals(transitionReceipt.transitionType()),
-        authoritySnapshot);
 
     List<OutboxCheckpointEntry> checkpoints = new ArrayList<>(currentSources.checkpoints());
     checkpoints.add(
@@ -275,7 +324,291 @@ public class AccountMembershipAuthorityEventProducer {
         checkpoints,
         sourceEvidence,
         transitionReceipt,
-        verified);
+        verified,
+        tenantRoleEvidence.map(CurrentMemberEvidence::operation));
+  }
+
+  private void requireHistoricalMembershipJoinReceipt(
+      TransitionReceiptEvidence evidence, JoinMembershipProof membership, Event currentRoleEvent) {
+    MembershipTransitionReceipt receipt = evidence.receipt();
+    if (evidence.accountId() != membership.accountId()
+        || evidence.tenantId() != membership.tenantId()
+        || !MembershipTransitionReceiptDigest.receiptStreamKey(
+                membership.accountId(), membership.tenantId())
+            .equals(receipt.receiptStreamKey())
+        || receipt.receiptSequence() <= 0L
+        || receipt.receiptId() == null
+        || receipt.receiptDigest() == null
+        || !MembershipTransitionReceiptDigest.EVIDENCE_STATUS.equals(receipt.evidenceStatus())
+        || (!"MEMBERSHIP_JOINED".equals(receipt.transitionType())
+            && !"MEMBERSHIP_REACTIVATED".equals(receipt.transitionType()))
+        || receipt.requestId() == null
+        || receipt.requestId().isBlank()
+        || receipt.requestId().equals(currentRoleEvent.requestId())
+        || currentRoleEvent.outboxSequence() <= 1L
+        || receipt.membershipId() != membership.membershipId()
+        || !"ACTIVE".equals(evidence.lifecycleState())
+        || !evidence.gameplayAdmissionAllowed()
+        || evidence.membershipVersion() <= 0L
+        || evidence.membershipVersion() >= membership.membershipVersion()
+        || evidence.membershipAuthorityGeneration() <= 0L
+        || evidence.membershipAuthorityGeneration() > membership.membershipAuthorityGeneration()
+        || !"EXPLICIT_JOIN".equals(evidence.authorityProvenance())
+        || !"ACTIVE".equals(membership.lifecycleState())
+        || !membership.gameplayAdmissionAllowed()
+        || !"EXPLICIT_JOIN".equals(membership.authorityProvenance())) {
+      throw new IllegalStateException(
+          "Current Account role event has no exact prior explicit-membership lifecycle receipt");
+    }
+  }
+
+  private void requireExactCurrentTenantRoleEvidence(
+      CurrentMemberEvidence evidence,
+      JoinMembershipProof membership,
+      RoleSnapshot roles,
+      Event event,
+      MembershipEvent verified,
+      Identity identity) {
+    OperationEvidence operation = evidence.operation();
+    AccountTenantRoleMutationDigest.MemberResult member = evidence.member();
+    Request request = operation.request();
+    if (!"COMMITTED".equals(operation.status())
+        || !identity.tenantUuid().equals(request.tenantUuid())
+        || !identity.accountUuid().equals(member.accountUuid())
+        || !identity.tenantUuid().equals(member.tenantUuid())
+        || member.membershipVersion() != membership.membershipVersion()
+        || member.membershipAuthorityGeneration() != membership.membershipAuthorityGeneration()
+        || member.eventSequence() != event.outboxSequence()
+        || !member.eventRequestId().equals(event.requestId())
+        || !member.eventId().equals(event.eventId())
+        || !member.eventDigest().equals(event.eventDigest())
+        || !Arrays.equals(member.eventPayload(), event.payload())
+        || member.callerBoundAuthorityInvalidated() != verified.callerBoundAuthorityInvalidated()
+        || !List.of("GRANT_DESIGNER", "REVOKE_DESIGNER", "TRANSFER_TENANT_ADMIN")
+            .contains(request.action().name())
+        || !"ACTIVE".equals(membership.lifecycleState())
+        || !membership.gameplayAdmissionAllowed()
+        || !verified.roles().equals(roles.roles())) {
+      throw new IllegalStateException(
+          "Current Account membership differs from its exact tenant-role journal evidence");
+    }
+    AuditEvidence audit =
+        Objects.requireNonNull(
+            operation.audit(), "Committed tenant-role audit evidence is required");
+    String payload = new String(audit.payload(), StandardCharsets.UTF_8);
+    AccountAuditEnvelope envelope =
+        auditOutboxRepository
+            .findCanonicalTenantRoleEnvelopeForUpdate(
+                audit.auditEventId(),
+                identity.tenantUuid(),
+                audit.occurredAt(),
+                audit.payloadDigest(),
+                payload)
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "Current Account tenant-role operation audit envelope is absent"));
+    if (!Arrays.equals(audit.payload(), envelope.payload().getBytes(StandardCharsets.UTF_8))) {
+      throw new IllegalStateException("Current tenant-role audit payload bytes differ");
+    }
+  }
+
+  /**
+   * Appends one exact role-only transition to an existing retained explicit-join membership. This
+   * is an owner-source primitive, not an authenticated ingress or an authorization API.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public TenantRoleEventEvidence appendTenantRoleEvent(
+      Request request,
+      AccountTenantMembership membership,
+      RoleSnapshot roles,
+      PairAuthority priorPair,
+      boolean callerBoundAuthorityInvalidated) {
+    requireWritableOwnerTransaction();
+    if (request == null
+        || membership == null
+        || membership.getAccount() == null
+        || membership.getAccount().getId() == null
+        || membership.getAccount().getAccountUuid() == null
+        || membership.getId() == null
+        || roles == null
+        || priorPair == null
+        || !priorPair.membershipExists()
+        || priorPair.lastEventSequence() <= 0L
+        || !request.tenantUuid().equals(membership.getTenantUuid())
+        || !request.tenantUuid().equals(priorPair.tenantUuid())
+        || !membership.getAccount().getAccountUuid().equals(priorPair.accountUuid())
+        || membership.getMembershipVersion() <= 0L
+        || membership.getMembershipAuthorityGeneration() <= 0L
+        || !"ACTIVE".equals(membership.getLifecycleState())
+        || !membership.isGameplayAdmissionAllowed()
+        || !"EXPLICIT_JOIN".equals(membership.getAuthorityProvenance())) {
+      throw new IllegalArgumentException(
+          "Role mutation event requires an existing active explicit-join membership");
+    }
+    VerifiedTenantProvenance provenance = membershipProvenance(membership);
+    if (provenance.kind() != TenantProvenanceKind.APPROVED_RETAINED
+        || !provenance.equals(priorPair.provenance())
+        || roles.accountId() != membership.getAccount().getId()
+        || roles.membershipId() != membership.getId()
+        || roles.snapshotVersion() != membership.getMembershipVersion()
+        || !Objects.equals(roles.tenantId(), membership.getTenantId())
+        || !request.tenantUuid().equals(roles.tenantUuid())
+        || !provenance.equals(roles.tenantProvenance())) {
+      throw new IllegalStateException(
+          "Role mutation event source differs from its retained membership and pair");
+    }
+    List<String> exactRoles =
+        AccountTenantMembershipRoleSnapshotRepository.requireCanonicalRoleSet(roles.roles());
+    if (!exactRoles.contains("player")) {
+      throw new IllegalStateException(
+          "Role mutation cannot remove the explicit membership player role");
+    }
+
+    UUID accountUuid = membership.getAccount().getAccountUuid();
+    Identity identity =
+        new Identity(
+            membership.getAccount().getId(),
+            membership.getTenantId(),
+            accountUuid,
+            request.tenantUuid(),
+            provenance);
+    CompositeSnapshot current = readSnapshot(identity);
+    ScopeState memberState = only(current.memberships(), "membership");
+    requireMatchingFence(current, memberState, accountUuid);
+    if (memberState.generation() != membership.getMembershipAuthorityGeneration()) {
+      throw new IllegalStateException(
+          "Role mutation member generation differs from its current Account source");
+    }
+    CurrentSourceEvidence currentSources =
+        readCurrentUpstreamSourceEvidence(accountUuid, request.tenantUuid(), current);
+    String streamKey = membershipStreamKey(identity);
+    String eventRequestId =
+        AccountTenantRoleOperationRepository.eventRequestId(request.requestId(), accountUuid);
+    String eventId = eventIdForRequest(eventRequestId);
+    MembershipEvent[] candidate = new MembershipEvent[1];
+    Event appended =
+        authorityOutboxRepository.append(
+            streamKey,
+            eventRequestId,
+            sequence -> {
+              MembershipEvent event =
+                  MembershipAuthorityEventV1Codec.seal(
+                      preimage(
+                          identity,
+                          eventRequestId,
+                          eventId,
+                          streamKey,
+                          sequence,
+                          current.issuer(),
+                          current.account(),
+                          only(current.tenants(), "tenant"),
+                          memberState,
+                          current.issuanceFence().value(),
+                          currentSources.accountSecurityCutoff(),
+                          membership,
+                          exactRoles,
+                          callerBoundAuthorityInvalidated));
+              candidate[0] = event;
+              return new EventEvidence(
+                  event.eventId(), event.eventDigest(), event.canonicalJsonUtf8());
+            });
+    MembershipEvent expected = candidate[0];
+    long expectedSequence =
+        incrementCounter(priorPair.lastEventSequence(), "membership event sequence");
+    if (expected == null
+        || appended.outboxSequence() != expectedSequence
+        || !appended.outboxStreamKey().equals(streamKey)
+        || !appended.requestId().equals(eventRequestId)
+        || !appended.eventId().equals(expected.eventId())
+        || !appended.eventDigest().equals(expected.eventDigest())
+        || !Arrays.equals(appended.payload(), expected.canonicalJsonUtf8())) {
+      throw new IllegalStateException("Tenant-role event append differs from its exact candidate");
+    }
+    Event exactEvent =
+        authorityOutboxRepository
+            .findEvent(streamKey, eventRequestId)
+            .orElseThrow(() -> new IllegalStateException("Tenant-role event readback is absent"));
+    if (!appended.equals(exactEvent)) {
+      throw new IllegalStateException("Tenant-role event readback differs from its append");
+    }
+    MembershipEvent verified = verifyStoredEvent(exactEvent, identity, eventRequestId);
+    Checkpoint checkpoint =
+        authorityOutboxRepository
+            .readCheckpoint(streamKey)
+            .orElseThrow(() -> new IllegalStateException("Tenant-role event checkpoint is absent"));
+    if (!checkpointMatches(checkpoint, exactEvent)
+        || !verified.canonicalJson().equals(expected.canonicalJson())
+        || !verified.roles().equals(exactRoles)
+        || !Long.toString(membership.getMembershipVersion())
+            .equals(
+                membershipVersionValue(
+                    verified.membershipVersion(), request.tenantUuid().toString()))
+        || verified.callerBoundAuthorityInvalidated() != callerBoundAuthorityInvalidated) {
+      throw new IllegalStateException("Tenant-role event codec or checkpoint readback differs");
+    }
+    return new TenantRoleEventEvidence(checkpoint, exactEvent, verified);
+  }
+
+  /**
+   * Verifies original event bytes for an immutable operation retry, even after later transitions.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public Event readExactTenantRoleEvent(
+      Request request, AccountTenantRoleMutationDigest.MemberResult expected) {
+    requireActiveOwnerTransaction();
+    Objects.requireNonNull(request, "Tenant-role request is required");
+    Objects.requireNonNull(expected, "Tenant-role event result is required");
+    String eventRequestId =
+        AccountTenantRoleOperationRepository.eventRequestId(
+            request.requestId(), expected.accountUuid());
+    if (!request.tenantUuid().equals(expected.tenantUuid())
+        || !eventRequestId.equals(expected.eventRequestId())) {
+      throw new IllegalStateException(
+          "Tenant-role immutable event identity differs from its request");
+    }
+    String streamKey =
+        AccountTenantRoleOperationRepository.eventStreamKey(
+            expected.accountUuid(), expected.tenantUuid());
+    Event exact =
+        authorityOutboxRepository
+            .findEvent(streamKey, eventRequestId)
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "Original tenant-role event is absent from Account outbox"));
+    MembershipEvent verified;
+    try {
+      verified =
+          MembershipAuthorityEventV1Codec.verify(
+              new String(exact.payload(), StandardCharsets.UTF_8));
+    } catch (RuntimeException malformed) {
+      throw new IllegalStateException(
+          "Original tenant-role event bytes are not canonical", malformed);
+    }
+    if (!exact.outboxStreamKey().equals(streamKey)
+        || !exact.requestId().equals(eventRequestId)
+        || exact.outboxSequence() != expected.eventSequence()
+        || !exact.eventId().equals(expected.eventId())
+        || !exact.eventDigest().equals(expected.eventDigest())
+        || !Arrays.equals(exact.payload(), expected.eventPayload())
+        || !verified.accountId().equals(expected.accountUuid().toString())
+        || !verified.tenantId().equals(expected.tenantUuid().toString())
+        || !verified.requestId().equals(eventRequestId)
+        || !verified
+            .membershipVersion()
+            .equals(
+                Map.of(
+                    expected.tenantUuid().toString(), Long.toString(expected.membershipVersion())))
+        || !verified
+            .membershipAuthorityGeneration()
+            .equals(Long.toString(expected.membershipAuthorityGeneration()))
+        || verified.callerBoundAuthorityInvalidated()
+            != expected.callerBoundAuthorityInvalidated()) {
+      throw new IllegalStateException(
+          "Original tenant-role event differs from immutable result bytes");
+    }
+    return exact;
   }
 
   /**
@@ -507,7 +840,7 @@ public class AccountMembershipAuthorityEventProducer {
    *
    * <p>This is membership evidence, not complete current authorization or terminal-recovery
    * eligibility. It never prepares, enrolls, initializes, or transitions membership authority.
-   * Fresh tenant associations currently have only non-admitting membership state and are denied;
+   * Fresh associations use the separate canonical first-JOIN path in the runtime snapshot reader;
    * retained membership must have complete exact current row, role, receipt, event, pair, and
    * generation/fence readback. Missing, inactive, incomplete, or contradictory state fails closed.
    */
@@ -769,19 +1102,60 @@ public class AccountMembershipAuthorityEventProducer {
     Optional<FreshTenantCreationEvidence> finalFreshAssociation =
         freshTenantIdentityAssociationRepository.read(tenantUuid);
     if (freshAssociation.isPresent()) {
+      FreshTenantCreationEvidence freshEvidence = freshAssociation.orElseThrow();
       if (!freshAssociation.equals(finalFreshAssociation)) {
         throw new IllegalStateException(
             "Fresh Game Design tenant association changed during membership readback");
       }
-      if (membershipSnapshot.membershipExists()
-          || !membershipSnapshot.roles().isEmpty()
-          || membershipRepository
-              .findCanonicalMembershipForUpdate(accountUuid, tenantUuid)
-              .isPresent()) {
-        throw new IllegalStateException(
-            "Fresh tenant membership source contradicts its non-admitting baseline");
+      Identity freshIdentity =
+          new Identity(
+              fencedAccount.getId(),
+              null,
+              accountUuid,
+              tenantUuid,
+              freshTenantProvenance(freshEvidence));
+      Optional<AccountTenantMembership> currentFreshMembership =
+          membershipRepository.findCanonicalMembershipForUpdate(accountUuid, tenantUuid);
+      if (membershipSnapshot.membershipExists()) {
+        AccountTenantMembership membership =
+            currentFreshMembership.orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "Fresh positive membership disappeared from its canonical UUID source"));
+        requireCanonicalMembershipIdentity(freshIdentity, membership);
+        if (!Objects.equals(membership.getAccount().getId(), fencedAccount.getId())) {
+          throw new IllegalStateException(
+              "Fresh membership Account row differs from its locked private Account identity");
+        }
+        RoleSnapshot exactFreshRoles =
+            roleSnapshotRepository
+                .findForCanonicalUpdate(
+                    accountUuid,
+                    tenantUuid,
+                    freshIdentity.provenance(),
+                    membership.getId(),
+                    membership.getMembershipVersion())
+                .orElseThrow(
+                    () ->
+                        new IllegalStateException(
+                            "Fresh positive membership role source is absent"));
+        requireCanonicalFirstJoinRoles(freshIdentity, membership, exactFreshRoles);
+        if (!List.of("player").equals(exactFreshRoles.roles())) {
+          throw new IllegalStateException(
+              "Fresh first-JOIN role source differs from its exact player-only authority");
+        }
+        if (!exactFreshRoles.roles().equals(membershipSnapshot.roles())) {
+          throw new IllegalStateException(
+              "Fresh role source differs from its exact membership snapshot");
+        }
+        roleSource = Optional.of(exactFreshRoles);
+      } else {
+        if (currentFreshMembership.isPresent() || !membershipSnapshot.roles().isEmpty()) {
+          throw new IllegalStateException(
+              "Fresh non-admitting absence contradicts its canonical membership source");
+        }
+        roleSource = Optional.empty();
       }
-      roleSource = Optional.empty();
     } else {
       if (finalFreshAssociation.isPresent()
           || !retainedAssociation.equals(tenantIdentityResolver.resolve(tenantUuid))) {
@@ -803,7 +1177,8 @@ public class AccountMembershipAuthorityEventProducer {
         authoritySnapshot,
         membershipSnapshot,
         roleSource,
-        Optional.ofNullable(retainedAssociation));
+        Optional.ofNullable(retainedAssociation),
+        freshAssociation);
   }
 
   private Optional<RoleSnapshot> readExactExistingRoleSource(
@@ -927,14 +1302,39 @@ public class AccountMembershipAuthorityEventProducer {
         freshTenantIdentityAssociationRepository.read(tenantUuid);
     if (freshAssociation.isPresent()) {
       FreshTenantCreationEvidence evidence = freshAssociation.orElseThrow();
+      if (!tenantUuid.equals(evidence.canonicalTenantId())) {
+        throw new IllegalStateException(
+            "Fresh Game Design tenant association differs from its canonical UUID scope");
+      }
+
+      Optional<AccountTenantMembership> currentMembership =
+          membershipRepository.findCanonicalMembershipForUpdate(accountUuid, tenantUuid);
+      if (currentMembership.isPresent()) {
+        RuntimeMembershipSnapshotDto positive =
+            readCurrentFreshCanonicalPositiveMembershipSnapshot(
+                new Identity(
+                    accountId, null, accountUuid, tenantUuid, freshTenantProvenance(evidence)),
+                currentMembership.orElseThrow());
+        verifyExistingRuntimeSnapshotIdentity(positive, accountUuid, tenantUuid);
+        requireUnchangedAccountIdentity(initialAccount, accountUuid);
+        FreshTenantCreationEvidence finalAssociation =
+            freshTenantIdentityAssociationRepository
+                .read(tenantUuid)
+                .orElseThrow(
+                    () ->
+                        new IllegalStateException(
+                            "Fresh Game Design tenant association disappeared during membership readback"));
+        if (!evidence.equals(finalAssociation)) {
+          throw new IllegalStateException(
+              "Fresh Game Design tenant association changed during membership readback");
+        }
+        return positive;
+      }
+
       if (readMode == MembershipSnapshotReadMode.ENROLL_IF_NEEDED) {
         NeverJoinedMembershipSnapshot absent =
             readFreshNeverJoinedMembershipSnapshot(accountUuid, tenantUuid);
         return toRuntimeMembershipSnapshot(absent);
-      }
-      if (!tenantUuid.equals(evidence.canonicalTenantId())) {
-        throw new IllegalStateException(
-            "Fresh Game Design tenant association differs from its canonical UUID scope");
       }
 
       RuntimeMembershipSnapshotDto existing =
@@ -1004,6 +1404,13 @@ public class AccountMembershipAuthorityEventProducer {
       UUID accountUuid, UUID tenantUuid, FreshTenantCreationEvidence evidence) {
     VerifiedTenantProvenance provenance = freshTenantProvenance(evidence);
 
+    if (membershipRepository
+        .findCanonicalMembershipForUpdate(accountUuid, tenantUuid)
+        .isPresent()) {
+      throw new IllegalStateException(
+          "Fresh Account membership is not absent from its canonical UUID scope");
+    }
+
     // Preserve the source reader's canonical upstream lock order before inspecting the existing
     // pair. This path performs no initializer or enrollment call.
     CompositeSnapshot upstream = lockUpstreamAuthorityScopes(accountUuid, tenantUuid);
@@ -1015,6 +1422,235 @@ public class AccountMembershipAuthorityEventProducer {
 
     return toRuntimeMembershipSnapshot(
         assembleNeverJoinedMembershipSnapshot(accountUuid, tenantUuid, provenance));
+  }
+
+  /**
+   * Reads a committed first canonical JOIN from its exact V2 receipt, terminal operation, audit,
+   * current event/checkpoint, pair, roles, and authority sources. No source is inferred from the
+   * membership row or used to repair a missing pair.
+   */
+  private RuntimeMembershipSnapshotDto readCurrentFreshCanonicalPositiveMembershipSnapshot(
+      Identity identity, AccountTenantMembership membership) {
+    requireWritableOwnerTransaction();
+    requireCanonicalMembershipIdentity(identity, membership);
+    if (membership.getMembershipVersion() != 2L
+        || membership.getMembershipAuthorityGeneration() != 1L) {
+      throw new IllegalStateException(
+          "Fresh Account membership is not the exact first canonical JOIN state");
+    }
+
+    RoleSnapshot roles =
+        roleSnapshotRepository
+            .findForCanonicalUpdate(
+                identity.accountUuid(),
+                identity.tenantUuid(),
+                identity.provenance(),
+                membership.getId(),
+                membership.getMembershipVersion())
+            .orElseThrow(
+                () -> new IllegalStateException("Fresh canonical JOIN role snapshot is absent"));
+    requireCanonicalFirstJoinRoles(identity, membership, roles);
+    List<String> exactRoles =
+        AccountTenantMembershipRoleSnapshotRepository.requireCanonicalRoleSet(roles.roles());
+
+    CanonicalMembershipTransitionReceipt receipt =
+        transitionReceiptRepository
+            .findLatestCanonicalReceipt(identity.accountUuid(), identity.tenantUuid())
+            .orElseThrow(
+                () -> new IllegalStateException("Fresh canonical JOIN V2 receipt is absent"));
+    requireFreshCanonicalJoinReceipt(identity, membership, receipt);
+
+    CanonicalJoinOperationEvidence operation =
+        joinOperationRepository
+            .findCanonicalEvidenceByRequestId(receipt.requestId())
+            .orElseThrow(
+                () -> new IllegalStateException("Fresh canonical JOIN V2 operation is absent"));
+    requireFreshCanonicalJoinOperation(identity, membership, receipt, operation);
+    requireFreshCanonicalJoinAudit(identity, operation);
+
+    PairAuthority pair =
+        pairAuthorityRepository
+            .readForUpdate(identity.accountUuid(), identity.tenantUuid())
+            .orElseThrow(
+                () -> new IllegalStateException("Fresh canonical JOIN pair authority is absent"));
+    String streamKey = membershipStreamKey(identity);
+    Checkpoint checkpoint =
+        authorityOutboxRepository
+            .readCheckpoint(streamKey)
+            .orElseThrow(
+                () -> new IllegalStateException("Fresh canonical JOIN event checkpoint is absent"));
+    Event event =
+        authorityOutboxRepository
+            .findEvent(streamKey, checkpoint.outboxSequence())
+            .orElseThrow(
+                () -> new IllegalStateException("Fresh canonical JOIN checkpoint has no event"));
+    if (checkpoint.outboxSequence() != 1L
+        || !checkpointMatches(checkpoint, event)
+        || !receipt.requestId().equals(event.requestId())) {
+      throw new IllegalStateException(
+          "Fresh canonical JOIN checkpoint is not its exact first membership event");
+    }
+    MembershipEvent verified = verifyStoredEvent(event, identity, receipt.requestId());
+    Map<String, String> exactMembershipVersion =
+        Map.of(identity.tenantUuid().toString(), Long.toString(membership.getMembershipVersion()));
+    if (!"ACTIVE".equals(verified.membershipLifecycleState())
+        || !verified.gameplayAdmissionAllowed()
+        || !exactMembershipVersion.equals(verified.membershipVersion())
+        || !"1".equals(verified.membershipAuthorityGeneration())
+        || !exactRoles.equals(verified.roles())
+        || verified.callerBoundAuthorityInvalidated()
+        || !pair.equals(
+            new PairAuthority(
+                identity.accountUuid(),
+                identity.tenantUuid(),
+                identity.provenance(),
+                true,
+                membership.getMembershipVersion(),
+                membership.getMembershipAuthorityGeneration(),
+                1L,
+                event.eventId(),
+                event.eventDigest(),
+                false))) {
+      throw new IllegalStateException(
+          "Fresh canonical JOIN event or pair differs from its exact positive membership");
+    }
+
+    CompositeSnapshot authority = readSnapshot(identity);
+    ScopeState membershipAuthority = only(authority.memberships(), "membership");
+    requireMatchingFence(authority, membershipAuthority, identity.accountUuid());
+    if (membershipAuthority.generation() != membership.getMembershipAuthorityGeneration()) {
+      throw new IllegalStateException(
+          "Fresh canonical JOIN differs from its current membership authority generation");
+    }
+    CurrentSourceEvidence currentSources =
+        readCurrentUpstreamSourceEvidence(identity.accountUuid(), identity.tenantUuid(), authority);
+    requireCurrentMembershipEvent(
+        identity,
+        membership.getId(),
+        membership.getLifecycleState(),
+        membership.isGameplayAdmissionAllowed(),
+        membership.getMembershipVersion(),
+        membership.getMembershipAuthorityGeneration(),
+        membership.getAuthorityProvenance(),
+        roles,
+        receipt.requestId(),
+        false,
+        authority);
+
+    List<OutboxCheckpointEntry> checkpoints = new ArrayList<>(currentSources.checkpoints());
+    checkpoints.add(
+        new OutboxCheckpointEntry(streamKey, Long.toString(checkpoint.outboxSequence())));
+    List<OutboxSourceEvidence> sourceEvidence = new ArrayList<>(currentSources.sourceEvidence());
+    sourceEvidence.add(sourceEvidence(checkpoint, event));
+    return new RuntimeMembershipSnapshotDto(
+        identity.accountUuid().toString(),
+        identity.tenantUuid().toString(),
+        identity.accountUuid().toString(),
+        identity.tenantUuid().toString(),
+        true,
+        true,
+        new RuntimeMembershipSnapshotDto.MembershipBaseline(
+            membership.getLifecycleState(),
+            exactMembershipVersion,
+            Long.toString(membership.getMembershipAuthorityGeneration())),
+        exactRoles,
+        currentAuthorityTuple(identity.tenantUuid(), authority, currentSources),
+        decimal(authority.issuanceFence().value()),
+        Instant.now(),
+        orderedCheckpoints(checkpoints),
+        orderedSourceEvidence(sourceEvidence),
+        verified);
+  }
+
+  private void requireFreshCanonicalJoinReceipt(
+      Identity identity,
+      AccountTenantMembership membership,
+      CanonicalMembershipTransitionReceipt receipt) {
+    if (receipt.receiptSequence() != 1L
+        || !identity.accountUuid().equals(receipt.accountId())
+        || !identity.tenantUuid().equals(receipt.tenantId())
+        || !"MEMBERSHIP_JOINED".equals(receipt.transitionType())
+        || !"ACTIVE".equals(receipt.membershipLifecycleState())
+        || !receipt.gameplayAdmissionAllowed()
+        || !Map.of(identity.tenantUuid().toString(), "2").equals(receipt.membershipVersion())
+        || receipt.membershipAuthorityGeneration() != 1L
+        || !"EXPLICIT_JOIN".equals(receipt.authorityProvenance())
+        || !TenantProvenanceKind.FRESH_GAME_DESIGN.name().equals(receipt.tenantProvenanceKind())
+        || !identity.provenance().sourceOperationId().equals(receipt.tenantSourceOperationId())
+        || !identity.provenance().digest().equals(receipt.tenantProvenanceDigest())
+        || membership.getMembershipVersion() != 2L) {
+      throw new IllegalStateException(
+          "Fresh canonical JOIN V2 receipt differs from its exact current membership");
+    }
+  }
+
+  private void requireFreshCanonicalJoinOperation(
+      Identity identity,
+      AccountTenantMembership membership,
+      CanonicalMembershipTransitionReceipt receipt,
+      CanonicalJoinOperationEvidence operation) {
+    var scope = operation.scopeEvidence();
+    if (!receipt.requestId().equals(operation.requestId())
+        || operation.privateAccountId() != identity.accountId()
+        || operation.operationRepresentationVersion() != 2
+        || operation.scopeDigestVersion() != 2
+        || operation.intentDigestVersion() != 2
+        || !"COMMITTED".equals(operation.status())
+        || !"JOINED".equals(operation.outcome())
+        || !Objects.equals(operation.membershipId(), membership.getId())
+        || !Objects.equals(operation.membershipVersion(), membership.getMembershipVersion())
+        || !Objects.equals(
+            operation.membershipAuthorityGeneration(),
+            membership.getMembershipAuthorityGeneration())
+        || !"AVAILABLE".equals(operation.entitlementAuthorityAvailability())
+        || !Boolean.TRUE.equals(operation.allowPublicJoin())
+        || operation.entitlementVersion() == null
+        || operation.entitlementVersion() <= 0L
+        || !Integer.valueOf(2).equals(operation.requestDigestVersion())
+        || operation.requestDigest() == null
+        || operation.requestDigest().isBlank()
+        || !"PUBLIC_PRODUCTION".equals(scope.targetClass())
+        || !identity.accountUuid().equals(scope.accountUuid())
+        || !identity.tenantUuid().equals(scope.tenantUuid())
+        || scope.privateAccountId() != identity.accountId()
+        || !identity.provenance().equals(scope.tenantProvenance())) {
+      throw new IllegalStateException(
+          "Fresh canonical JOIN operation or available policy differs from its exact receipt");
+    }
+  }
+
+  private void requireFreshCanonicalJoinAudit(
+      Identity identity, CanonicalJoinOperationEvidence operation) {
+    var scope = operation.scopeEvidence();
+    UUID expectedAuditId = joinAuditEventId(operation.requestId());
+    AccountAuditEnvelope envelope =
+        auditOutboxRepository
+            .findCanonicalJoinEnvelopeForUpdate(expectedAuditId, identity.tenantUuid())
+            .orElseThrow(
+                () -> new IllegalStateException("Fresh canonical JOIN audit envelope is absent"));
+    String expectedPayload =
+        AccountAuditOutboxRepository.canonicalJoinPayload(
+            identity.accountUuid(),
+            identity.tenantUuid(),
+            scope.worldSlug(),
+            scope.realmSlug(),
+            Map.of(identity.tenantUuid().toString(), "2"),
+            operation.requestId());
+    if (envelope.payload() == null
+        || envelope.schemaVersion() != 1
+        || envelope.payloadDigestVersion() != 1
+        || !AccountAuditDigest.isValid(envelope.payloadDigest())
+        || !envelope.payloadDigest().equals(AccountAuditDigest.ofPayload(envelope.payload()))
+        || !expectedAuditId.equals(envelope.auditEventId())
+        || !expectedPayload.equals(envelope.payload())) {
+      throw new IllegalStateException(
+          "Fresh canonical JOIN audit envelope differs from its exact operation");
+    }
+  }
+
+  private static UUID joinAuditEventId(String requestId) {
+    return UUID.nameUUIDFromBytes(
+        ("account-join-audit/v1:" + requestId).getBytes(StandardCharsets.UTF_8));
   }
 
   private RuntimeMembershipSnapshotDto readExistingRetainedRuntimeMembershipSnapshot(
@@ -1188,6 +1824,12 @@ public class AccountMembershipAuthorityEventProducer {
     if (!tenantUuid.equals(evidence.canonicalTenantId())) {
       throw new IllegalStateException(
           "Fresh Game Design tenant association differs from its canonical UUID scope");
+    }
+    if (membershipRepository
+        .findCanonicalMembershipForUpdate(accountUuid, tenantUuid)
+        .isPresent()) {
+      throw new IllegalStateException(
+          "Fresh Account membership is not absent from its canonical UUID scope");
     }
     VerifiedTenantProvenance provenance =
         new VerifiedTenantProvenance(
@@ -2907,6 +3549,26 @@ public class AccountMembershipAuthorityEventProducer {
     return identity.provenance();
   }
 
+  private VerifiedTenantProvenance membershipProvenance(AccountTenantMembership membership) {
+    try {
+      return new VerifiedTenantProvenance(
+          membership.getTenantId(),
+          TenantProvenanceKind.valueOf(membership.getTenantProvenanceKind()),
+          membership.getTenantSourceOperationId(),
+          membership.getTenantProvenanceDigest());
+    } catch (RuntimeException malformed) {
+      throw new IllegalStateException("Membership tenant provenance is malformed", malformed);
+    }
+  }
+
+  private static long incrementCounter(long value, String label) {
+    try {
+      return Math.addExact(value, 1L);
+    } catch (ArithmeticException overflow) {
+      throw new IllegalStateException("Account " + label + " is exhausted", overflow);
+    }
+  }
+
   private void requireRoleSnapshotIdentity(
       Identity identity,
       AccountTenantMembership membership,
@@ -3112,6 +3774,22 @@ public class AccountMembershipAuthorityEventProducer {
     }
   }
 
+  /** Exact append result returned to the role-operation transaction before pair commit. */
+  public record TenantRoleEventEvidence(
+      Checkpoint checkpoint, Event event, MembershipEvent verifiedEvent) {
+    public TenantRoleEventEvidence {
+      Objects.requireNonNull(checkpoint, "tenant-role event checkpoint is required");
+      Objects.requireNonNull(event, "tenant-role event is required");
+      Objects.requireNonNull(verifiedEvent, "verified tenant-role event is required");
+      if (!checkpointMatches(checkpoint, event)
+          || !event.eventId().equals(verifiedEvent.eventId())
+          || !event.eventDigest().equals(verifiedEvent.eventDigest())
+          || !event.requestId().equals(verifiedEvent.requestId())) {
+        throw new IllegalArgumentException("Tenant-role event evidence is inconsistent");
+      }
+    }
+  }
+
   /**
    * Local V36 absence evidence with an exact one-tenant membership-version map. The sequence-zero
    * checkpoints carry no source event identity or digest and never authorize gameplay.
@@ -3231,7 +3909,8 @@ public class AccountMembershipAuthorityEventProducer {
       List<OutboxCheckpointEntry> outboxCheckpoints,
       List<OutboxSourceEvidence> outboxSourceEvidence,
       MembershipTransitionReceipt transitionReceipt,
-      MembershipEvent authorityEvent) {
+      MembershipEvent authorityEvent,
+      Optional<OperationEvidence> tenantRoleOperationEvidence) {
     public PositiveMembershipSnapshot {
       accountId = requireCanonicalUuid(accountId, "canonical Account UUID");
       tenantId = requireCanonicalUuid(tenantId, "canonical tenant UUID");
@@ -3252,6 +3931,35 @@ public class AccountMembershipAuthorityEventProducer {
       outboxSourceEvidence = List.copyOf(outboxSourceEvidence);
       Objects.requireNonNull(transitionReceipt, "membership transition receipt is required");
       Objects.requireNonNull(authorityEvent, "canonical membership authority event is required");
+      tenantRoleOperationEvidence =
+          Objects.requireNonNull(
+              tenantRoleOperationEvidence, "tenant-role operation evidence presence is required");
+      boolean lifecycleEventMatches =
+          transitionReceipt.requestId().equals(authorityEvent.requestId());
+      String canonicalAccountId = accountId;
+      String canonicalTenantId = tenantId;
+      String currentMembershipVersion = membershipVersion.get(tenantId);
+      String currentMembershipAuthorityGeneration = membershipAuthorityGeneration;
+      boolean roleEventMatches =
+          tenantRoleOperationEvidence
+              .map(
+                  operation ->
+                      operation.members().stream()
+                          .anyMatch(
+                              member ->
+                                  member.accountUuid().toString().equals(canonicalAccountId)
+                                      && member.tenantUuid().toString().equals(canonicalTenantId)
+                                      && member.eventRequestId().equals(authorityEvent.requestId())
+                                      && Long.toString(member.membershipVersion())
+                                          .equals(currentMembershipVersion)
+                                      && Long.toString(member.membershipAuthorityGeneration())
+                                          .equals(currentMembershipAuthorityGeneration)
+                                      && member.eventId().equals(authorityEvent.eventId())
+                                      && member.eventDigest().equals(authorityEvent.eventDigest())
+                                      && Arrays.equals(
+                                          member.eventPayload(),
+                                          authorityEvent.canonicalJsonUtf8())))
+              .orElse(false);
 
       if (!membershipExists
           || !"ACTIVE".equals(membershipLifecycleState)
@@ -3268,7 +3976,8 @@ public class AccountMembershipAuthorityEventProducer {
               .equals(authorityTuple.membershipAuthorityGeneration())
           || !authorityTuple.privateRealmGrantVersions().isEmpty()
           || authorityTuple.tenantBillingCutoff().isPresent()
-          || !transitionReceipt.requestId().equals(authorityEvent.requestId())) {
+          || lifecycleEventMatches == tenantRoleOperationEvidence.isPresent()
+          || (tenantRoleOperationEvidence.isPresent() && !roleEventMatches)) {
         throw new IllegalArgumentException(
             "Positive Account membership snapshot evidence is internally inconsistent");
       }

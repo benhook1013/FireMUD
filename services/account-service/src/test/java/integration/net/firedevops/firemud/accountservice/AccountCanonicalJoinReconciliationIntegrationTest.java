@@ -2,11 +2,42 @@ package integration.net.firedevops.firemud.accountservice;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 
+import io.grpc.ManagedChannel;
+import io.grpc.Metadata;
+import io.grpc.Server;
+import io.grpc.ServerCall;
+import io.grpc.ServerCallHandler;
+import io.grpc.ServerInterceptor;
+import io.grpc.ServerInterceptors;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
+import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
+import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
+import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
+import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
+import io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder;
+import java.math.BigInteger;
+import java.net.InetSocketAddress;
+import java.net.Socket;
+import java.nio.charset.StandardCharsets;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.security.KeyStore;
+import java.security.PrivateKey;
+import java.security.Security;
+import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -16,18 +47,36 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import javax.net.ssl.KeyManager;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLParameters;
+import javax.net.ssl.SSLSocket;
+import javax.net.ssl.TrustManagerFactory;
+import net.firedevops.firemud.account.v1.AccountServiceGrpc;
+import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
+import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.accountservice.AccountServiceApplication;
 import net.firedevops.firemud.accountservice.client.EntityManagementClient;
 import net.firedevops.firemud.accountservice.client.GameSessionClient;
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
+import net.firedevops.firemud.accountservice.dto.AccountAuditDigest;
+import net.firedevops.firemud.accountservice.dto.AccountMembershipCaptureSources;
 import net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2;
+import net.firedevops.firemud.accountservice.dto.RuntimeMembershipSnapshotDto;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
 import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Event;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.EventEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.CanonicalJoinOperationEvidence;
+import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository;
+import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.PairAuthority;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.TenantProvenanceKind;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipTransitionReceiptRepository;
@@ -37,11 +86,28 @@ import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipR
 import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepository;
 import net.firedevops.firemud.accountservice.service.AccountCanonicalJoinReconciliationService;
 import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer;
+import net.firedevops.firemud.accountservice.service.impl.AccountMembershipAuthorityGrpcService;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
+import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
+import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 import net.firedevops.firemud.test.GatewayTestProperties;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
+import net.firedevops.firemud.test.TlsTestSupport;
+import org.bouncycastle.asn1.x500.X500Name;
+import org.bouncycastle.asn1.x509.BasicConstraints;
+import org.bouncycastle.asn1.x509.ExtendedKeyUsage;
+import org.bouncycastle.asn1.x509.Extension;
+import org.bouncycastle.asn1.x509.GeneralName;
+import org.bouncycastle.asn1.x509.GeneralNames;
+import org.bouncycastle.asn1.x509.KeyPurposeId;
+import org.bouncycastle.asn1.x509.KeyUsage;
+import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
+import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder;
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -50,7 +116,9 @@ import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.util.AopTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -58,11 +126,12 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
- * PostgreSQL composition proof for the explicitly unwired canonical JOIN readback component.
+ * PostgreSQL composition and physical-transport proof for explicitly unwired canonical JOIN and
+ * membership readback components.
  *
- * <p>These fixtures call Account owner repositories directly and establish storage/recovery proof
- * only. In particular, historical event/receipt/audit rows seeded beside already-expired scopes do
- * not exercise or claim authenticated entitlement, caller, or public JOIN authorization.
+ * <p>The storage fixtures call Account owner repositories directly. The physical mTLS cases serve
+ * only the held-back Account membership producer and use synthetic JOIN caller/policy evidence;
+ * none of these tests proves authenticated entitlement, caller, or public JOIN authorization.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -78,6 +147,11 @@ import org.testcontainers.junit.jupiter.Testcontainers;
     })
 class AccountCanonicalJoinReconciliationIntegrationTest {
   private static final String TEST_NAMESPACE = "firemud-unit1b";
+  private static final String ACCOUNT_SERVER_URI =
+      "spiffe://firemud/ns/firemud-unit1b/sa/account-service";
+  private static final String GAME_SESSION_CLIENT_URI =
+      "spiffe://firemud/ns/firemud-unit1b/sa/game-session-service";
+  private static final AtomicLong CERTIFICATE_SERIAL = new AtomicLong(1L);
   private static final int MAX_ATTEMPTS = 12;
   private static final DateTimeFormatter RFC3339 = DateTimeFormatter.ISO_INSTANT;
 
@@ -99,6 +173,8 @@ class AccountCanonicalJoinReconciliationIntegrationTest {
   @Autowired private AccountCanonicalJoinReconciliationService reconciliationService;
   @Autowired private AccountMembershipAuthorityEventProducer membershipEventProducer;
   @Autowired private AccountAuthorityGenerationRepository generations;
+  @Autowired private AccountAuthorityOutboxRepository authorityOutbox;
+  @Autowired private AccountMembershipPairAuthorityRepository pairAuthorities;
   @Autowired private AccountConnectScopeRepository connectScopes;
   @Autowired private AccountJoinOperationRepository joinOperations;
   @Autowired private AccountRepository accounts;
@@ -136,6 +212,183 @@ class AccountCanonicalJoinReconciliationIntegrationTest {
     assertThat(committed.reconciliationAttemptCount()).isEqualTo(1);
     assertThat(evidenceCounts(fixture)).isEqualTo(before);
     assertThat(issuanceFence(fixture.account().accountUuid())).isEqualTo(fenceBefore);
+  }
+
+  @Test
+  void committedFreshUuidJoinReturnsExactPositiveSnapshotAndCaptureWithoutChangingSources() {
+    // This fixture proves persisted Account-owner composition only. Its caller binding is synthetic
+    // and does not exercise or claim an authenticated JOIN producer.
+    JoinFixture fixture = committedFreshJoinFixture();
+    EvidenceCounts before = evidenceCounts(fixture);
+    PairAuthority pairBefore = pairAuthority(fixture);
+    long fenceBefore = issuanceFence(fixture.account().accountUuid());
+    FreshTenantCreationEvidence freshSource =
+        inTransaction(() -> freshAssociations.read(fixture.tenantUuid()).orElseThrow());
+
+    RuntimeMembershipSnapshotDto existingOnly =
+        inTransaction(
+            () ->
+                membershipEventProducer.readExistingRuntimeMembershipSnapshot(
+                    fixture.account().accountUuid(), fixture.tenantUuid()));
+    RuntimeMembershipSnapshotDto enrollMode =
+        inTransaction(
+            () ->
+                membershipEventProducer.readRuntimeMembershipSnapshot(
+                    fixture.account().accountUuid(), fixture.tenantUuid()));
+    AccountMembershipCaptureSources capturedSources =
+        inTransaction(
+            () ->
+                membershipEventProducer.readExistingRuntimeMembershipCaptureSources(
+                    fixture.account().accountUuid(), fixture.tenantUuid()));
+
+    assertThat(existingOnly.membershipExists()).isTrue();
+    assertThat(existingOnly.gameplayAdmissionAllowed()).isTrue();
+    assertThat(existingOnly.membershipBaseline().membershipLifecycleState()).isEqualTo("ACTIVE");
+    assertThat(existingOnly.membershipBaseline().membershipVersion())
+        .containsExactly(Map.entry(fixture.tenantUuid().toString(), "2"));
+    assertThat(existingOnly.membershipBaseline().membershipAuthorityGeneration()).isEqualTo("1");
+    assertThat(existingOnly.roles()).contains("player");
+    assertThat(existingOnly.requireConsistentSourceEvent().outboxSequence()).isEqualTo("1");
+    assertThat(enrollMode.membershipBaseline()).isEqualTo(existingOnly.membershipBaseline());
+    assertThat(enrollMode.roles()).isEqualTo(existingOnly.roles());
+    assertThat(enrollMode.sourceEvent().canonicalJson())
+        .isEqualTo(existingOnly.sourceEvent().canonicalJson());
+    assertThat(capturedSources.membershipSnapshot().membershipExists()).isTrue();
+    assertThat(capturedSources.membershipSnapshot().sourceEvent().canonicalJson())
+        .isEqualTo(existingOnly.sourceEvent().canonicalJson());
+    assertThat(capturedSources.freshTenantAssociation()).contains(freshSource);
+    assertThat(capturedSources.retainedTenantAssociation()).isEmpty();
+    var capturedRole = capturedSources.roleSource().orElseThrow();
+    assertThat(capturedRole.accountId()).isEqualTo(fixture.account().accountId());
+    assertThat(capturedRole.accountUuid()).isEqualTo(fixture.account().accountUuid());
+    assertThat(capturedRole.membershipId()).isEqualTo(readOperation(fixture).membershipId());
+    assertThat(capturedRole.tenantId()).isNull();
+    assertThat(capturedRole.tenantUuid()).isEqualTo(fixture.tenantUuid());
+    assertThat(capturedRole.tenantProvenance())
+        .isEqualTo(
+            new VerifiedTenantProvenance(
+                null,
+                TenantProvenanceKind.FRESH_GAME_DESIGN,
+                freshSource.operationId(),
+                freshSource.evidenceDigest()));
+    assertThat(capturedRole.snapshotVersion()).isEqualTo(2L);
+    assertThat(capturedRole.roles()).isEqualTo(existingOnly.roles());
+    assertThat(capturedSources.authoritySnapshot().memberships().getFirst().generation())
+        .isEqualTo(1L);
+    assertThat(capturedSources.authoritySnapshot().memberships().getFirst().sourceVersion())
+        .isEqualTo(1L);
+    assertThat(capturedSources.membershipSnapshot().outboxCheckpoints())
+        .anySatisfy(
+            checkpoint -> {
+              assertThat(checkpoint.outboxStreamKey()).isEqualTo(eventStreamKey(fixture));
+              assertThat(checkpoint.outboxSequence()).isEqualTo("1");
+            });
+    assertThat(capturedSources.membershipSnapshot().outboxSourceEvidence())
+        .anySatisfy(
+            source -> {
+              assertThat(source.outboxStreamKey()).isEqualTo(eventStreamKey(fixture));
+              assertThat(source.outboxSequence()).isEqualTo("1");
+            });
+    assertThat(evidenceCounts(fixture)).isEqualTo(before);
+    assertThat(pairAuthority(fixture)).isEqualTo(pairBefore);
+    assertThat(issuanceFence(fixture.account().accountUuid())).isEqualTo(fenceBefore);
+  }
+
+  @Test
+  void existingOnlyFreshUuidReadPreservesProvedAbsenceAndPendingOperation() {
+    JoinFixture fixture = fixture(true);
+    EvidenceCounts before = evidenceCounts(fixture);
+    PairAuthority pairBefore = pairAuthority(fixture);
+
+    RuntimeMembershipSnapshotDto absent =
+        inTransaction(
+            () ->
+                membershipEventProducer.readExistingRuntimeMembershipSnapshot(
+                    fixture.account().accountUuid(), fixture.tenantUuid()));
+
+    assertThat(absent.membershipExists()).isFalse();
+    assertThat(absent.membershipBaseline().membershipLifecycleState()).isEqualTo("MISSING");
+    assertThat(absent.membershipBaseline().membershipVersion())
+        .containsExactly(Map.entry(fixture.tenantUuid().toString(), "1"));
+    assertThat(readOperation(fixture).status()).isEqualTo("PENDING");
+    assertThat(evidenceCounts(fixture)).isEqualTo(before);
+    assertThat(pairAuthority(fixture)).isEqualTo(pairBefore);
+  }
+
+  @Test
+  void pendingCanonicalJoinCannotAuthorizePositiveReadbackOrCauseMutation() {
+    JoinFixture fixture = fixture(true);
+    persistEvidence(fixture, EvidenceShape.COMPLETE);
+    EvidenceCounts before = evidenceCounts(fixture);
+    PairAuthority pairBefore = pairAuthority(fixture);
+
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    () ->
+                        membershipEventProducer.readExistingRuntimeMembershipSnapshot(
+                            fixture.account().accountUuid(), fixture.tenantUuid())))
+        .isInstanceOf(IllegalStateException.class);
+
+    assertThat(readOperation(fixture).status()).isEqualTo("PENDING");
+    assertThat(evidenceCounts(fixture)).isEqualTo(before);
+    assertThat(pairAuthority(fixture)).isEqualTo(pairBefore);
+  }
+
+  @Test
+  void freshUuidReadRejectsContradictoryReceiptEventRolesPairAndAuditWithoutMutation() {
+    for (Contradiction contradiction : Contradiction.values()) {
+      JoinFixture fixture = committedFreshJoinFixture();
+      introduceContradiction(fixture, contradiction);
+      EvidenceCounts before = evidenceCounts(fixture);
+      PairAuthority pairBefore = pairAuthority(fixture);
+
+      assertThatThrownBy(
+              () ->
+                  inTransaction(
+                      () ->
+                          membershipEventProducer.readExistingRuntimeMembershipSnapshot(
+                              fixture.account().accountUuid(), fixture.tenantUuid())))
+          .as(contradiction.name())
+          .isInstanceOf(IllegalStateException.class);
+
+      assertThat(evidenceCounts(fixture)).as(contradiction.name()).isEqualTo(before);
+      assertThat(pairAuthority(fixture)).as(contradiction.name()).isEqualTo(pairBefore);
+    }
+  }
+
+  @Test
+  void existingOnlyFreshUuidReadRejectsWrongAccountAndTenantSources() {
+    JoinFixture fixture = committedFreshJoinFixture();
+    PairAuthority pairBefore = pairAuthority(fixture);
+    AccountFixture otherAccount = accountFixture();
+    UUID otherTenantUuid = UUID.randomUUID();
+    FreshTenantCreationEvidence otherTenantSource = freshTenantEvidence(otherTenantUuid);
+    inTransaction(
+        () -> {
+          freshAssociations.importVerified(otherTenantSource);
+          generations.initializeTenantIfAbsent(otherTenantUuid);
+          return null;
+        });
+
+    // Neither different scope has its own durable absence baseline. Existing-only readback must
+    // deny rather than fabricate MISSING authority from an absent row or borrow the joined pair.
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    () ->
+                        membershipEventProducer.readExistingRuntimeMembershipSnapshot(
+                            otherAccount.accountUuid(), fixture.tenantUuid())))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    () ->
+                        membershipEventProducer.readExistingRuntimeMembershipSnapshot(
+                            fixture.account().accountUuid(), otherTenantUuid)))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(evidenceCounts(fixture)).isEqualTo(new EvidenceCounts(1L, 1L, 1L, 1L));
+    assertThat(pairAuthority(fixture)).isEqualTo(pairBefore);
   }
 
   @Test
@@ -265,6 +518,473 @@ class AccountCanonicalJoinReconciliationIntegrationTest {
     assertThat(evidenceCounts(fixture)).isEqualTo(before);
   }
 
+  @Test
+  void committedFreshUuidJoinRoundTripsExactSnapshotOverPhysicalMtls() throws Exception {
+    // The persisted policy/caller fixture is synthetic. This proves only the held-back producer
+    // transport and does not claim authenticated public JOIN or Game Session consumer activation.
+    JoinFixture fixture = committedFreshJoinFixture();
+    EvidenceCounts countsBefore = evidenceCounts(fixture);
+    CanonicalJoinOperationEvidence operationBefore = readOperation(fixture);
+    PairAuthority pairBefore = pairAuthority(fixture);
+    long fenceBefore = issuanceFence(fixture.account().accountUuid());
+    FreshTenantCreationEvidence freshSourceBefore =
+        inTransaction(() -> freshAssociations.read(fixture.tenantUuid()).orElseThrow());
+    RuntimeMembershipSnapshotDto snapshotBefore = readRuntimeSnapshot(fixture);
+
+    AccountMembershipAuthorityEventProducer producerTarget =
+        AopTestUtils.getUltimateTargetObject(membershipEventProducer);
+    AccountMembershipAuthorityEventProducer producerTargetSpy = spy(producerTarget);
+    doAnswer(
+            invocation -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+              return invocation.callRealMethod();
+            })
+        .when(producerTargetSpy)
+        .readRuntimeMembershipSnapshot(fixture.account().accountUuid(), fixture.tenantUuid());
+
+    TestPki pki = newTestPki();
+    AtomicInteger applicationCalls = new AtomicInteger();
+    Server server = startPhysicalMembershipServer(producerTargetSpy, pki, applicationCalls);
+    ManagedChannel channel =
+        newPhysicalMembershipChannel(server.getPort(), pki.gameSessionClient(), pki);
+    PlayerExecutionContext playerContext = runtimePlayerContext(fixture);
+    try {
+      GetTenantMembershipForRuntimeResponse response =
+          membershipStub(channel)
+              .withDeadlineAfter(10, TimeUnit.SECONDS)
+              .getTenantMembershipForRuntime(
+                  GetTenantMembershipForRuntimeRequest.newBuilder()
+                      .setPlayerContext(playerContext)
+                      .build());
+      RuntimeMembershipSnapshotDto snapshotAfter = readRuntimeSnapshot(fixture);
+
+      assertRuntimeMembershipResponseMatches(response, playerContext, snapshotBefore);
+      assertThat(Instant.parse(response.getEvaluatedAt()))
+          .isBetween(snapshotBefore.evaluatedAt(), snapshotAfter.evaluatedAt());
+      assertThat(GetTenantMembershipForRuntimeResponse.parseFrom(response.toByteArray()))
+          .isEqualTo(response);
+      assertThat(applicationCalls).hasValue(1);
+      verify(producerTargetSpy, times(1))
+          .readRuntimeMembershipSnapshot(fixture.account().accountUuid(), fixture.tenantUuid());
+      assertOwnerEvidenceUnchanged(
+          fixture,
+          snapshotBefore,
+          snapshotAfter,
+          operationBefore,
+          pairBefore,
+          freshSourceBefore,
+          countsBefore,
+          fenceBefore);
+    } finally {
+      stopPhysicalTransport(server, channel);
+    }
+  }
+
+  @Test
+  void physicalMembershipTransportRejectsWrongPeersBeforeProducerAccess() throws Exception {
+    JoinFixture fixture = committedFreshJoinFixture();
+    EvidenceCounts countsBefore = evidenceCounts(fixture);
+    CanonicalJoinOperationEvidence operationBefore = readOperation(fixture);
+    PairAuthority pairBefore = pairAuthority(fixture);
+    long fenceBefore = issuanceFence(fixture.account().accountUuid());
+    FreshTenantCreationEvidence freshSourceBefore =
+        inTransaction(() -> freshAssociations.read(fixture.tenantUuid()).orElseThrow());
+    RuntimeMembershipSnapshotDto snapshotBefore = readRuntimeSnapshot(fixture);
+
+    AccountMembershipAuthorityEventProducer producerTarget =
+        AopTestUtils.getUltimateTargetObject(membershipEventProducer);
+    AccountMembershipAuthorityEventProducer producerTargetSpy = spy(producerTarget);
+    TestPki pki = newTestPki();
+    AtomicInteger applicationCalls = new AtomicInteger();
+    Server server = startPhysicalMembershipServer(producerTargetSpy, pki, applicationCalls);
+    ManagedChannel wrongWorkloadChannel =
+        newPhysicalMembershipChannel(server.getPort(), pki.wrongWorkloadClient(), pki);
+    ManagedChannel wrongNamespaceChannel =
+        newPhysicalMembershipChannel(server.getPort(), pki.wrongNamespaceGameSessionClient(), pki);
+    PlayerExecutionContext playerContext = runtimePlayerContext(fixture);
+    try {
+      assertMembershipPeerDenied(wrongWorkloadChannel, playerContext);
+      assertThat(applicationCalls).hasValue(1);
+      verifyNoInteractions(producerTargetSpy);
+
+      assertMembershipPeerDenied(wrongNamespaceChannel, playerContext);
+      assertThat(applicationCalls).hasValue(2);
+      verifyNoInteractions(producerTargetSpy);
+
+      assertMissingClientCertificateHandshakeRejected(server, pki);
+      assertThat(applicationCalls)
+          .as("a missing client certificate must fail before gRPC application dispatch")
+          .hasValue(2);
+      verifyNoInteractions(producerTargetSpy);
+
+      RuntimeMembershipSnapshotDto snapshotAfter = readRuntimeSnapshot(fixture);
+      assertOwnerEvidenceUnchanged(
+          fixture,
+          snapshotBefore,
+          snapshotAfter,
+          operationBefore,
+          pairBefore,
+          freshSourceBefore,
+          countsBefore,
+          fenceBefore);
+    } finally {
+      stopPhysicalTransport(server, wrongWorkloadChannel, wrongNamespaceChannel);
+    }
+  }
+
+  private RuntimeMembershipSnapshotDto readRuntimeSnapshot(JoinFixture fixture) {
+    return inTransaction(
+        () ->
+            membershipEventProducer.readRuntimeMembershipSnapshot(
+                fixture.account().accountUuid(), fixture.tenantUuid()));
+  }
+
+  private void assertRuntimeMembershipResponseMatches(
+      GetTenantMembershipForRuntimeResponse response,
+      PlayerExecutionContext request,
+      RuntimeMembershipSnapshotDto expected) {
+    assertThat(response.getUnknownFields().asMap()).isEmpty();
+    assertThat(response.hasError()).isFalse();
+    assertThat(response.getAuthorityAvailability()).isEqualTo("AVAILABLE");
+    assertThat(response.getAccountId()).isEqualTo(expected.accountUuid());
+    assertThat(response.getTenantId()).isEqualTo(expected.tenantUuid());
+    assertThat(response.getRequestAccountId()).isEqualTo(request.getAccountId());
+    assertThat(response.getRequestTenantId()).isEqualTo(request.getTenantId());
+    assertThat(response.getRequestId()).isEqualTo(request.getRequestId());
+    assertThat(response.getMembershipExists()).isEqualTo(expected.membershipExists());
+    assertThat(response.getGameplayAdmissionAllowed())
+        .isEqualTo(expected.gameplayAdmissionAllowed());
+    assertThat(response.getMembershipLifecycleState())
+        .isEqualTo(expected.membershipBaseline().membershipLifecycleState());
+    assertThat(response.getMembershipVersionMap())
+        .isEqualTo(expected.membershipBaseline().membershipVersion());
+    assertThat(response.getMembershipAuthorityGeneration())
+        .isEqualTo(expected.membershipBaseline().membershipAuthorityGeneration());
+    assertThat(response.getMembershipBaseline().getMembershipLifecycleState())
+        .isEqualTo(expected.membershipBaseline().membershipLifecycleState());
+    assertThat(response.getMembershipBaseline().getMembershipVersionMap())
+        .isEqualTo(expected.membershipBaseline().membershipVersion());
+    assertThat(response.getMembershipBaseline().getMembershipAuthorityGeneration())
+        .isEqualTo(expected.membershipBaseline().membershipAuthorityGeneration());
+    assertThat(response.getRolesList()).containsExactlyElementsOf(expected.roles());
+    assertThat(response.getIssuanceFence()).isEqualTo(expected.issuanceFence());
+
+    String tenantUuid = expected.tenantUuid();
+    assertThat(expected.membershipExists()).isTrue();
+    assertThat(expected.gameplayAdmissionAllowed()).isTrue();
+    assertThat(expected.membershipBaseline().membershipLifecycleState()).isEqualTo("ACTIVE");
+    assertThat(expected.membershipBaseline().membershipVersion())
+        .isEqualTo(Map.of(tenantUuid, "2"));
+    assertThat(expected.membershipBaseline().membershipAuthorityGeneration()).isEqualTo("1");
+    assertThat(expected.issuanceFence()).isEqualTo("1");
+    var expectedTuple = expected.authorityTuple();
+    var actualTuple = response.getAuthorityTuple();
+    assertThat(actualTuple.getIssuerAuthGeneration())
+        .isEqualTo(expectedTuple.issuerAuthGeneration());
+    assertThat(actualTuple.getAccountAuthorityGeneration())
+        .isEqualTo(expectedTuple.accountAuthorityGeneration());
+    assertThat(actualTuple.getTenantAuthorityGenerationMap())
+        .isEqualTo(expectedTuple.tenantAuthorityGeneration());
+    assertThat(actualTuple.getMembershipAuthorityGenerationMap())
+        .isEqualTo(expectedTuple.membershipAuthorityGeneration());
+    assertThat(expectedTuple.issuerAuthGeneration()).isEqualTo("1");
+    assertThat(expectedTuple.accountAuthorityGeneration()).isEqualTo("1");
+    assertThat(expectedTuple.tenantAuthorityGeneration()).isEqualTo(Map.of(tenantUuid, "1"));
+    assertThat(expectedTuple.membershipAuthorityGeneration()).isEqualTo(Map.of(tenantUuid, "1"));
+    assertThat(actualTuple.getPrivateRealmGrantVersionsCount())
+        .isEqualTo(expectedTuple.privateRealmGrantVersions().size());
+    assertThat(actualTuple.hasAccountSecurityCutoff())
+        .isEqualTo(expectedTuple.accountSecurityCutoff().isPresent());
+    expectedTuple
+        .accountSecurityCutoff()
+        .ifPresent(
+            cutoff -> {
+              assertThat(actualTuple.getAccountSecurityCutoff().getAccountAuthorityGeneration())
+                  .isEqualTo(cutoff.accountAuthorityGeneration());
+              assertThat(actualTuple.getAccountSecurityCutoff().getOutboxStreamKey())
+                  .isEqualTo(cutoff.outboxStreamKey());
+              assertThat(actualTuple.getAccountSecurityCutoff().getOutboxSequence())
+                  .isEqualTo(cutoff.outboxSequence());
+            });
+    assertThat(actualTuple.hasTenantBillingCutoff())
+        .isEqualTo(expectedTuple.tenantBillingCutoff().isPresent());
+    assertThat(expectedTuple.privateRealmGrantVersions()).isEmpty();
+    assertThat(expectedTuple.accountSecurityCutoff()).isEmpty();
+    assertThat(expectedTuple.tenantBillingCutoff()).isEmpty();
+
+    assertThat(response.getOutboxCheckpointsCount()).isEqualTo(expected.outboxCheckpoints().size());
+    for (int index = 0; index < expected.outboxCheckpoints().size(); index++) {
+      var actual = response.getOutboxCheckpoints(index);
+      var checkpoint = expected.outboxCheckpoints().get(index);
+      assertThat(actual.getOutboxStreamKey()).isEqualTo(checkpoint.outboxStreamKey());
+      assertThat(actual.getOutboxSequence()).isEqualTo(checkpoint.outboxSequence());
+      assertThat(actual.getUnknownFields().asMap()).isEmpty();
+    }
+    assertThat(response.getOutboxSourceEvidenceCount())
+        .isEqualTo(expected.outboxSourceEvidence().size());
+    for (int index = 0; index < expected.outboxSourceEvidence().size(); index++) {
+      var actual = response.getOutboxSourceEvidence(index);
+      var source = expected.outboxSourceEvidence().get(index);
+      assertThat(actual.getOutboxStreamKey()).isEqualTo(source.outboxStreamKey());
+      assertThat(actual.getOutboxSequence()).isEqualTo(source.outboxSequence());
+      assertThat(actual.getEventId()).isEqualTo(source.eventId());
+      assertThat(actual.getEventDigest()).isEqualTo(source.eventDigest());
+      assertThat(actual.getCanonicalEventJson()).isEqualTo(source.canonicalEventJson());
+      assertThat(actual.getUnknownFields().asMap()).isEmpty();
+    }
+    assertThat(expected.sourceEvent()).isNotNull();
+    assertThat(response.getOutboxSourceEvidenceCount()).isEqualTo(1);
+    assertThat(response.getOutboxSourceEvidence(0).getOutboxStreamKey())
+        .isEqualTo(eventStreamKey(expected.accountUuid(), expected.tenantUuid()));
+    assertThat(response.getOutboxSourceEvidence(0).getOutboxSequence()).isEqualTo("1");
+    assertThat(response.getOutboxSourceEvidence(0).getCanonicalEventJson())
+        .isEqualTo(expected.sourceEvent().canonicalJson());
+  }
+
+  private void assertMembershipPeerDenied(
+      ManagedChannel channel, PlayerExecutionContext playerContext) {
+    Throwable failure =
+        catchThrowable(
+            () ->
+                membershipStub(channel)
+                    .withDeadlineAfter(10, TimeUnit.SECONDS)
+                    .getTenantMembershipForRuntime(
+                        GetTenantMembershipForRuntimeRequest.newBuilder()
+                            .setPlayerContext(playerContext)
+                            .build()));
+    assertThat(failure).isInstanceOf(StatusRuntimeException.class);
+    assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(Status.Code.PERMISSION_DENIED);
+  }
+
+  private AccountServiceGrpc.AccountServiceBlockingStub membershipStub(ManagedChannel channel) {
+    return AccountServiceGrpc.newBlockingStub(channel)
+        .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(ACCOUNT_SERVER_URI));
+  }
+
+  private void assertOwnerEvidenceUnchanged(
+      JoinFixture fixture,
+      RuntimeMembershipSnapshotDto snapshotBefore,
+      RuntimeMembershipSnapshotDto snapshotAfter,
+      CanonicalJoinOperationEvidence operationBefore,
+      PairAuthority pairBefore,
+      FreshTenantCreationEvidence freshSourceBefore,
+      EvidenceCounts countsBefore,
+      long fenceBefore) {
+    assertThat(snapshotAfter)
+        .usingRecursiveComparison()
+        .ignoringFields("evaluatedAt")
+        .isEqualTo(snapshotBefore);
+    assertThat(readOperation(fixture)).isEqualTo(operationBefore);
+    assertThat(pairAuthority(fixture)).isEqualTo(pairBefore);
+    assertThat(inTransaction(() -> freshAssociations.read(fixture.tenantUuid()).orElseThrow()))
+        .isEqualTo(freshSourceBefore);
+    assertThat(evidenceCounts(fixture)).isEqualTo(countsBefore);
+    assertThat(issuanceFence(fixture.account().accountUuid())).isEqualTo(fenceBefore);
+  }
+
+  private Server startPhysicalMembershipServer(
+      AccountMembershipAuthorityEventProducer producer, TestPki pki, AtomicInteger applicationCalls)
+      throws Exception {
+    AccountMembershipAuthorityGrpcService candidate =
+        new AccountMembershipAuthorityGrpcService(producer, transactionManager, TEST_NAMESPACE);
+    ServerInterceptor dispatchCounter =
+        new ServerInterceptor() {
+          @Override
+          public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
+              ServerCall<ReqT, RespT> call, Metadata headers, ServerCallHandler<ReqT, RespT> next) {
+            applicationCalls.incrementAndGet();
+            return next.startCall(call, headers);
+          }
+        };
+    return NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
+        .sslContext(
+            GrpcSslContexts.configure(
+                    SslContextBuilder.forServer(
+                        pki.accountServer().privateKey(), pki.accountServer().certificate()))
+                .trustManager(pki.caCertificate())
+                .clientAuth(ClientAuth.REQUIRE)
+                .build())
+        .addService(
+            ServerInterceptors.intercept(
+                candidate, dispatchCounter, new GrpcPeerIdentityInterceptor()))
+        .build()
+        .start();
+  }
+
+  private ManagedChannel newPhysicalMembershipChannel(
+      int port, TestCertificate clientCertificate, TestPki pki) throws Exception {
+    return NettyChannelBuilder.forAddress(new InetSocketAddress("127.0.0.1", port))
+        .sslContext(
+            GrpcSslContexts.configure(
+                    SslContextBuilder.forClient()
+                        .trustManager(pki.caCertificate())
+                        .keyManager(
+                            clientCertificate.privateKey(), clientCertificate.certificate()))
+                .build())
+        .build();
+  }
+
+  private void assertMissingClientCertificateHandshakeRejected(Server server, TestPki pki)
+      throws Exception {
+    Throwable handshakeFailure =
+        catchThrowable(
+            () -> {
+              try (Socket transport = new Socket()) {
+                transport.connect(new InetSocketAddress("127.0.0.1", server.getPort()), 5_000);
+                try (SSLSocket socket =
+                    (SSLSocket)
+                        trustOnlyClientContext(pki)
+                            .getSocketFactory()
+                            .createSocket(transport, "127.0.0.1", server.getPort(), true)) {
+                  socket.setSoTimeout(5_000);
+                  SSLParameters parameters = socket.getSSLParameters();
+                  parameters.setApplicationProtocols(new String[] {"h2"});
+                  parameters.setEndpointIdentificationAlgorithm("HTTPS");
+                  socket.setSSLParameters(parameters);
+                  socket.startHandshake();
+                  // TLS 1.3 can report the required client-certificate rejection on first read.
+                  socket
+                      .getOutputStream()
+                      .write(
+                          "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
+                  socket.getOutputStream().flush();
+                  socket.getInputStream().read();
+                }
+              }
+            });
+    assertThat(handshakeFailure)
+        .as("the REQUIRED client-certificate handshake must fail")
+        .isNotNull();
+    assertThat(TlsTestSupport.isTlsHandshakeRejection(handshakeFailure))
+        .as("failure must identify certificate rejection")
+        .isTrue();
+  }
+
+  private SSLContext trustOnlyClientContext(TestPki pki) throws Exception {
+    KeyStore trustStore = KeyStore.getInstance(KeyStore.getDefaultType());
+    trustStore.load(null);
+    trustStore.setCertificateEntry("account-membership-test-ca", pki.caCertificate());
+    TrustManagerFactory trustManagers =
+        TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+    trustManagers.init(trustStore);
+    SSLContext context = SSLContext.getInstance("TLS");
+    context.init(new KeyManager[0], trustManagers.getTrustManagers(), null);
+    return context;
+  }
+
+  private TestPki newTestPki() throws Exception {
+    if (Security.getProvider(BouncyCastleProvider.PROVIDER_NAME) == null) {
+      Security.addProvider(new BouncyCastleProvider());
+    }
+    KeyPair caKeyPair = newRsaKeyPair();
+    X500Name caName = new X500Name("CN=Account Membership Integration Test CA, O=FireMUD Test");
+    X509Certificate caCertificate =
+        issueCertificate(caName, caKeyPair.getPublic(), caName, caKeyPair.getPrivate(), true, null);
+    return new TestPki(
+        caCertificate,
+        issueLeaf(caName, caKeyPair.getPrivate(), "account-service", ACCOUNT_SERVER_URI),
+        issueLeaf(caName, caKeyPair.getPrivate(), "game-session-service", GAME_SESSION_CLIENT_URI),
+        issueLeaf(
+            caName,
+            caKeyPair.getPrivate(),
+            "world-management-service",
+            "spiffe://firemud/ns/" + TEST_NAMESPACE + "/sa/world-management-service"),
+        issueLeaf(
+            caName,
+            caKeyPair.getPrivate(),
+            "game-session-service-wrong-namespace",
+            "spiffe://firemud/ns/other/sa/game-session-service"));
+  }
+
+  private static TestCertificate issueLeaf(
+      X500Name caName, PrivateKey caPrivateKey, String commonName, String workloadUri)
+      throws Exception {
+    KeyPair keyPair = newRsaKeyPair();
+    X500Name subject = new X500Name("CN=" + commonName + ", O=FireMUD Test");
+    GeneralNames subjectAltNames =
+        new GeneralNames(
+            new GeneralName[] {
+              new GeneralName(GeneralName.uniformResourceIdentifier, workloadUri),
+              new GeneralName(GeneralName.dNSName, "localhost"),
+              new GeneralName(GeneralName.iPAddress, "127.0.0.1")
+            });
+    X509Certificate certificate =
+        issueCertificate(
+            subject, keyPair.getPublic(), caName, caPrivateKey, false, subjectAltNames);
+    return new TestCertificate(keyPair.getPrivate(), certificate);
+  }
+
+  private static X509Certificate issueCertificate(
+      X500Name subject,
+      java.security.PublicKey publicKey,
+      X500Name issuer,
+      PrivateKey issuerPrivateKey,
+      boolean ca,
+      GeneralNames subjectAltNames)
+      throws Exception {
+    Instant notBefore = Instant.now().minusSeconds(60);
+    JcaX509v3CertificateBuilder builder =
+        new JcaX509v3CertificateBuilder(
+            issuer,
+            BigInteger.valueOf(CERTIFICATE_SERIAL.getAndIncrement()),
+            Date.from(notBefore),
+            Date.from(notBefore.plusSeconds(60L * 60L * 24L * 14L)),
+            subject,
+            publicKey);
+    builder.addExtension(Extension.basicConstraints, true, new BasicConstraints(ca));
+    if (ca) {
+      builder.addExtension(
+          Extension.keyUsage, true, new KeyUsage(KeyUsage.keyCertSign | KeyUsage.cRLSign));
+    } else {
+      builder.addExtension(
+          Extension.keyUsage,
+          true,
+          new KeyUsage(KeyUsage.digitalSignature | KeyUsage.keyEncipherment));
+      builder.addExtension(
+          Extension.extendedKeyUsage,
+          false,
+          new ExtendedKeyUsage(
+              new KeyPurposeId[] {KeyPurposeId.id_kp_serverAuth, KeyPurposeId.id_kp_clientAuth}));
+      builder.addExtension(Extension.subjectAlternativeName, false, subjectAltNames);
+    }
+    return new JcaX509CertificateConverter()
+        .setProvider(BouncyCastleProvider.PROVIDER_NAME)
+        .getCertificate(
+            builder.build(
+                new JcaContentSignerBuilder("SHA256withRSA")
+                    .setProvider(BouncyCastleProvider.PROVIDER_NAME)
+                    .build(issuerPrivateKey)));
+  }
+
+  private static KeyPair newRsaKeyPair() throws Exception {
+    KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+    generator.initialize(2048);
+    return generator.generateKeyPair();
+  }
+
+  private void stopPhysicalTransport(Server server, ManagedChannel... channels)
+      throws InterruptedException {
+    for (ManagedChannel channel : channels) {
+      channel.shutdownNow();
+      assertThat(channel.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
+    }
+    server.shutdownNow();
+    assertThat(server.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
+  }
+
+  private PlayerExecutionContext runtimePlayerContext(JoinFixture fixture) {
+    return PlayerExecutionContext.newBuilder()
+        .setAccountId(fixture.account().accountUuid().toString())
+        .setTenantId(fixture.tenantUuid().toString())
+        .setRealmId(UUID.randomUUID().toString())
+        .setPlayableStateNamespaceId(UUID.randomUUID().toString())
+        .setPlayableStateScope("SHARED")
+        .setGameInstanceId(UUID.randomUUID().toString())
+        .setSessionId("9001")
+        .setRequestId(UUID.randomUUID().toString())
+        .build();
+  }
+
   private JoinFixture fixture(Boolean allowPublicJoin) {
     AccountFixture account = accountFixture();
     UUID tenantUuid = UUID.randomUUID();
@@ -315,6 +1035,88 @@ class AccountCanonicalJoinReconciliationIntegrationTest {
           return null;
         });
     return new JoinFixture(account, tenantUuid, provenance, scope, requestId, callerBinding);
+  }
+
+  private JoinFixture committedFreshJoinFixture() {
+    JoinFixture fixture = fixture(true);
+    persistEvidence(fixture, EvidenceShape.COMPLETE);
+    recordLaterUnavailableAttempt(fixture);
+    reconciliationService.reconcileDueOperations(reconciliationTime(fixture));
+    assertThat(readOperation(fixture).status()).isEqualTo("COMMITTED");
+    return fixture;
+  }
+
+  private void introduceContradiction(JoinFixture fixture, Contradiction contradiction) {
+    switch (contradiction) {
+      case LATEST_RECEIPT ->
+          inTransactionWithoutResult(
+              () ->
+                  receipts.appendCanonicalTransition(
+                      fixture.account().accountUuid(),
+                      fixture.tenantUuid(),
+                      "MEMBERSHIP_JOINED",
+                      UUID.randomUUID().toString()));
+      case LATEST_EVENT ->
+          inTransactionWithoutResult(
+              () -> {
+                String stream = eventStreamKey(fixture);
+                Event current =
+                    authorityOutbox
+                        .readCheckpoint(stream)
+                        .flatMap(
+                            checkpoint ->
+                                authorityOutbox.findEvent(stream, checkpoint.outboxSequence()))
+                        .orElseThrow();
+                authorityOutbox.append(
+                    stream,
+                    "unmatched-current-event-" + UUID.randomUUID(),
+                    ignoredSequence ->
+                        new EventEvidence(
+                            UUID.randomUUID().toString(),
+                            "sha256:" + "0".repeat(64),
+                            current.payload()));
+              });
+      case CURRENT_ROLES ->
+          inTransactionWithoutResult(
+              () -> {
+                AccountTenantMembership membership =
+                    memberships
+                        .findCanonicalMembershipForUpdate(
+                            fixture.account().accountUuid(), fixture.tenantUuid())
+                        .orElseThrow();
+                roleSnapshots.replaceCanonical(
+                    membership,
+                    fixture.account().accountUuid(),
+                    fixture.tenantUuid(),
+                    fixture.provenance(),
+                    membership.getMembershipVersion(),
+                    List.of("player", "moderator"));
+              });
+      case PAIR ->
+          dsl.execute(
+              "UPDATE account_membership_pair_authority SET membership_version = membership_version + 1, "
+                  + "last_event_sequence = last_event_sequence + 1, last_event_id = ?, "
+                  + "last_event_digest = ? WHERE account_uuid = ? AND tenant_uuid = ?",
+              "unmatched-pair-event-" + UUID.randomUUID(),
+              "sha256:" + "1".repeat(64),
+              fixture.account().accountUuid(),
+              fixture.tenantUuid());
+      case AUDIT -> {
+        String contradictoryPayload =
+            AccountAuditOutboxRepository.canonicalJoinPayload(
+                UUID.randomUUID(),
+                fixture.tenantUuid(),
+                fixture.scope().worldSlug(),
+                fixture.scope().realmSlug(),
+                Map.of(fixture.tenantUuid().toString(), "2"),
+                fixture.requestId());
+        dsl.execute(
+            "UPDATE account_audit_outbox SET payload = ?, payload_digest = ? WHERE audit_event_id = ?",
+            contradictoryPayload,
+            AccountAuditDigest.ofPayload(contradictoryPayload),
+            auditEventId(fixture.requestId()));
+      }
+    }
   }
 
   private void persistEvidence(JoinFixture fixture, EvidenceShape shape) {
@@ -466,6 +1268,14 @@ class AccountCanonicalJoinReconciliationIntegrationTest {
         () -> joinOperations.findCanonicalEvidenceByRequestId(fixture.requestId()).orElseThrow());
   }
 
+  private PairAuthority pairAuthority(JoinFixture fixture) {
+    return inTransaction(
+        () ->
+            pairAuthorities
+                .readForUpdate(fixture.account().accountUuid(), fixture.tenantUuid())
+                .orElseThrow());
+  }
+
   private long membershipId(JoinFixture fixture) {
     return Objects.requireNonNull(
         dsl.resultQuery(
@@ -520,6 +1330,10 @@ class AccountCanonicalJoinReconciliationIntegrationTest {
         + fixture.tenantUuid();
   }
 
+  private String eventStreamKey(String accountUuid, String tenantUuid) {
+    return "account:auth-authority:v1:membership/" + accountUuid + "/" + tenantUuid;
+  }
+
   private static UUID auditEventId(String requestId) {
     return UUID.nameUUIDFromBytes(
         ("account-join-audit/v1:" + requestId).getBytes(java.nio.charset.StandardCharsets.UTF_8));
@@ -564,6 +1378,23 @@ class AccountCanonicalJoinReconciliationIntegrationTest {
       String callerBinding) {}
 
   private record EvidenceCounts(long memberships, long events, long receipts, long audits) {}
+
+  private record TestCertificate(PrivateKey privateKey, X509Certificate certificate) {}
+
+  private record TestPki(
+      X509Certificate caCertificate,
+      TestCertificate accountServer,
+      TestCertificate gameSessionClient,
+      TestCertificate wrongWorkloadClient,
+      TestCertificate wrongNamespaceGameSessionClient) {}
+
+  private enum Contradiction {
+    LATEST_RECEIPT,
+    LATEST_EVENT,
+    CURRENT_ROLES,
+    PAIR,
+    AUDIT
+  }
 
   private record Case(String description, Boolean allowPublicJoin, EvidenceShape evidenceShape) {}
 

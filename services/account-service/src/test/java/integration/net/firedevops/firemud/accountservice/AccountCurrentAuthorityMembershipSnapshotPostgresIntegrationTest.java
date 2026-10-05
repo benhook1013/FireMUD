@@ -684,7 +684,8 @@ class AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest {
                         authority.issuanceFence()),
                     absence.membershipSnapshot(),
                     absence.roleSource(),
-                    absence.retainedTenantAssociation()))
+                    absence.retainedTenantAssociation(),
+                    absence.freshTenantAssociation()))
         .isInstanceOf(IllegalArgumentException.class);
 
     JoinFixture active = fixture();
@@ -750,7 +751,8 @@ class AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest {
                     existing.authoritySnapshot(),
                     existing.membershipSnapshot(),
                     Optional.of(mixedRoleHeader),
-                    existing.retainedTenantAssociation()))
+                    existing.retainedTenantAssociation(),
+                    existing.freshTenantAssociation()))
         .isInstanceOf(IllegalArgumentException.class);
     assertThat(membershipAuthoritySourceFingerprint(active)).isEqualTo(activeBeforeRead);
   }

@@ -46,6 +46,17 @@ public class AccountRepository {
             .fetchOne(this::toEntity));
   }
 
+  /** Locks one exact UUID-qualified Account owner row for ordered multi-member mutations. */
+  public Optional<Account> findByAccountUuidForUpdate(UUID accountUuid) {
+    Objects.requireNonNull(accountUuid, "accountUuid must not be null");
+    AccountsRecord row =
+        dsl.selectFrom(ACCOUNTS)
+            .where(ACCOUNTS.ACCOUNT_UUID.eq(accountUuid))
+            .forUpdate()
+            .fetchOne();
+    return Optional.ofNullable(row).map(this::toEntity);
+  }
+
   public Optional<Account> findByUsername(String username) {
     return Optional.ofNullable(
         dsl.selectFrom(ACCOUNTS).where(ACCOUNTS.USERNAME.eq(username)).fetchOne(this::toEntity));

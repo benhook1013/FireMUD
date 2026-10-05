@@ -58,6 +58,29 @@ class AccountMembershipAuthorityEventProducerCanonicalJoinTest {
     }
   }
 
+  @Test
+  void existingUuidMembershipReadRequiresOwnerTransactionBeforeRepositoryReads() {
+    Repositories repositories = new Repositories();
+    boolean previousActive = TransactionSynchronizationManager.isActualTransactionActive();
+    boolean previousReadOnly = TransactionSynchronizationManager.isCurrentTransactionReadOnly();
+    TransactionSynchronizationManager.setActualTransactionActive(false);
+    TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
+
+    try {
+      assertThatThrownBy(
+              () ->
+                  repositories
+                      .producer()
+                      .readExistingRuntimeMembershipSnapshot(UUID.randomUUID(), UUID.randomUUID()))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("active owner transaction");
+      repositories.verifyNoReads();
+    } finally {
+      TransactionSynchronizationManager.setActualTransactionActive(previousActive);
+      TransactionSynchronizationManager.setCurrentTransactionReadOnly(previousReadOnly);
+    }
+  }
+
   private static final class Repositories {
     private final AccountJoinOperationRepository joinOperations =
         mock(AccountJoinOperationRepository.class);
@@ -92,7 +115,11 @@ class AccountMembershipAuthorityEventProducerCanonicalJoinTest {
           mock(AccountLogoutAllOperationRepository.class),
           transitionReceipts,
           memberships,
-          roleSnapshots);
+          roleSnapshots,
+          mock(net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository.class),
+          mock(
+              net.firedevops.firemud.accountservice.repository.AccountTenantRoleOperationRepository
+                  .class));
     }
 
     private void verifyNoReads() {

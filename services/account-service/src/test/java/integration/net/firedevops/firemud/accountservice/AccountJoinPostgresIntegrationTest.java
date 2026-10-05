@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
@@ -25,6 +27,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.accountservice.client.EntityManagementClient;
 import net.firedevops.firemud.accountservice.client.GameSessionClient;
@@ -38,20 +41,42 @@ import net.firedevops.firemud.accountservice.dto.JoinPublicProductionResult;
 import net.firedevops.firemud.accountservice.dto.MembershipTransitionReceipt;
 import net.firedevops.firemud.accountservice.dto.MembershipTransitionReceiptDigest;
 import net.firedevops.firemud.accountservice.dto.RuntimeMembershipSnapshotDto;
+import net.firedevops.firemud.accountservice.entity.Account;
+import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
 import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.AuthorityScope;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository;
+import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.PairAuthority;
+import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.ProvenPositiveCheckpoint;
+import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.TenantProvenanceKind;
+import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipTransitionReceiptRepository;
+import net.firedevops.firemud.accountservice.repository.AccountRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantIdentityResolver;
+import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository.RoleSnapshot;
+import net.firedevops.firemud.accountservice.repository.AccountTenantRoleOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantRoleOperationRepository.Action;
+import net.firedevops.firemud.accountservice.repository.AccountTenantRoleOperationRepository.OperationEvidence;
+import net.firedevops.firemud.accountservice.repository.AccountTenantRoleOperationRepository.Request;
 import net.firedevops.firemud.accountservice.repository.ApprovedLegacyTenantAssociationRepository;
+import net.firedevops.firemud.accountservice.repository.ApprovedLegacyTenantAssociationRepository.ApprovedAssociation;
 import net.firedevops.firemud.accountservice.repository.LegacyTenantSourceEvidence;
 import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer;
 import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer.OutboxCheckpointEntry;
 import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer.OutboxSourceEvidence;
+import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer.PositiveMembershipSnapshot;
 import net.firedevops.firemud.accountservice.service.AccountMembershipLifecycleService;
 import net.firedevops.firemud.accountservice.service.AccountService;
+import net.firedevops.firemud.accountservice.service.AccountTenantRoleMutationService;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
+import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.MembershipEvent;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyAccountTenantAssociationResponse;
 import net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer;
 import net.firedevops.firemud.gamesession.v1.GameplayRealm;
@@ -66,6 +91,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.test.util.AopTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -112,11 +138,18 @@ class AccountJoinPostgresIntegrationTest {
 
   @Autowired private DSLContext dsl;
   @Autowired private AccountService accountService;
-  @Autowired private AccountMembershipAuthorityEventProducer membershipAuthorityEventProducer;
+  @MockitoSpyBean private AccountMembershipAuthorityEventProducer membershipAuthorityEventProducer;
   @Autowired private AccountMembershipLifecycleService membershipLifecycleService;
-  @Autowired private AccountAuthorityOutboxRepository authorityOutboxRepository;
+  @Autowired private AccountTenantRoleMutationService tenantRoleMutationService;
+  @MockitoSpyBean private AccountAuthorityOutboxRepository authorityOutboxRepository;
   @MockitoSpyBean private AccountAuditOutboxRepository auditOutboxRepository;
   @Autowired private PlatformTransactionManager transactionManager;
+  @Autowired private AccountRepository accountRepository;
+  @Autowired private AccountAuthorityGenerationRepository authorityGenerationRepository;
+  @Autowired private AccountMembershipPairAuthorityRepository pairAuthorityRepository;
+  @Autowired private AccountTenantIdentityResolver tenantIdentityResolver;
+  @Autowired private AccountTenantMembershipRepository membershipRepository;
+  @Autowired private AccountTenantMembershipRoleSnapshotRepository roleSnapshotRepository;
 
   @Autowired
   private AccountMembershipTransitionReceiptRepository membershipTransitionReceiptRepository;
@@ -672,7 +705,8 @@ class AccountJoinPostgresIntegrationTest {
 
     assertThatThrownBy(() -> leave(fixture, "leave-contradictory-" + UUID.randomUUID()))
         .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("receipt differs from its latest V33 event");
+        .hasMessageContaining(
+            "Current Account membership transition receipt is incomplete or mismatched");
 
     assertThat(membershipSnapshot(fixture)).isEqualTo(membershipBefore);
     assertThat(membershipPairAuthorityRow(fixture)).isEqualTo(pairBefore);
@@ -1460,6 +1494,561 @@ class AccountJoinPostgresIntegrationTest {
   }
 
   @Test
+  void tenantRoleMutationDeniesNonAdminWithoutChangingAnyAccountSource() {
+    JoinFixture fixture = fixture("active");
+    JoinPublicProductionResult joined = join(fixture);
+    Map<String, Object> sourceBefore = membershipAuthorityReadEvidenceSnapshot(fixture);
+    long auditCountBefore = countAuditOutboxRows(fixture);
+    long operationCountBefore =
+        Objects.requireNonNull(
+            Objects.requireNonNull(
+                    dsl.resultQuery(
+                            "SELECT count(*) FROM account_tenant_role_operations WHERE request_id = ?",
+                            UUID.nameUUIDFromBytes(
+                                ("tenant-role-denied:" + fixture.requestId())
+                                    .getBytes(StandardCharsets.UTF_8)))
+                        .fetchOne(),
+                    "Expected tenant-role operation count row")
+                .get(0, Long.class),
+            "Expected tenant-role operation count value");
+
+    UUID requestId =
+        UUID.nameUUIDFromBytes(
+            ("tenant-role-denied:" + fixture.requestId()).getBytes(StandardCharsets.UTF_8));
+    assertThatThrownBy(
+            () ->
+                tenantRoleMutationService.mutate(
+                    new AccountTenantRoleOperationRepository.Request(
+                        requestId,
+                        fixture.accountUuid(),
+                        fixture.tenantUuid(),
+                        fixture.accountUuid(),
+                        AccountTenantRoleOperationRepository.Action.GRANT_DESIGNER,
+                        joined.membershipVersion(),
+                        joined.membershipVersion())))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("not a tenant administrator");
+
+    assertThat(membershipAuthorityReadEvidenceSnapshot(fixture)).isEqualTo(sourceBefore);
+    assertThat(countAuditOutboxRows(fixture)).isEqualTo(auditCountBefore);
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT count(*) FROM account_tenant_role_operations WHERE request_id = ?",
+                    requestId)
+                .fetchOne(0, Long.class))
+        .isEqualTo(operationCountBefore);
+    assertThat(committedRoles(fixture)).containsExactly("player");
+  }
+
+  @Test
+  void tenantRoleMutationRejectsStaleMembershipWithoutChangingAnyAccountSource() {
+    JoinFixture fixture = fixture("active");
+    JoinPublicProductionResult joined = join(fixture);
+    Map<String, Object> sourceBefore = membershipAuthorityReadEvidenceSnapshot(fixture);
+    long auditCountBefore = countAuditOutboxRows(fixture);
+    UUID requestId =
+        UUID.nameUUIDFromBytes(
+            ("tenant-role-stale:" + fixture.requestId()).getBytes(StandardCharsets.UTF_8));
+
+    assertThatThrownBy(
+            () ->
+                tenantRoleMutationService.mutate(
+                    new AccountTenantRoleOperationRepository.Request(
+                        requestId,
+                        fixture.accountUuid(),
+                        fixture.tenantUuid(),
+                        fixture.accountUuid(),
+                        AccountTenantRoleOperationRepository.Action.GRANT_DESIGNER,
+                        joined.membershipVersion() + 1,
+                        joined.membershipVersion() + 1)))
+        .isInstanceOf(AccountTenantRoleOperationRepository.OperationConflictException.class)
+        .hasMessageContaining("membership version is stale");
+
+    assertThat(membershipAuthorityReadEvidenceSnapshot(fixture)).isEqualTo(sourceBefore);
+    assertThat(countAuditOutboxRows(fixture)).isEqualTo(auditCountBefore);
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT count(*) FROM account_tenant_role_operations WHERE request_id = ?",
+                    requestId)
+                .fetchOne(0, Long.class))
+        .isZero();
+    assertThat(committedRoles(fixture)).containsExactly("player");
+  }
+
+  @Test
+  void tenantRoleMutationRejectsMissingCurrentMembershipWithoutCreatingEvidence() {
+    JoinFixture fixture = fixture("active");
+    UUID requestId =
+        UUID.nameUUIDFromBytes(
+            ("tenant-role-no-current:" + fixture.requestId()).getBytes(StandardCharsets.UTF_8));
+    long auditCountBefore = countAuditOutboxRows(fixture);
+
+    assertThatThrownBy(
+            () ->
+                tenantRoleMutationService.mutate(
+                    new AccountTenantRoleOperationRepository.Request(
+                        requestId,
+                        fixture.accountUuid(),
+                        fixture.tenantUuid(),
+                        fixture.accountUuid(),
+                        AccountTenantRoleOperationRepository.Action.GRANT_DESIGNER,
+                        1L,
+                        1L)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Current Account membership row is absent");
+
+    assertThat(countMemberships(fixture)).isZero();
+    assertThat(countMembershipPairAuthorities(fixture)).isZero();
+    assertThat(countMembershipTransitionReceipts(fixture)).isZero();
+    assertThat(countAuthorityMembershipEvents(fixture)).isZero();
+    assertThat(countAuthorityMembershipStreams(fixture)).isZero();
+    assertThat(countAuditOutboxRows(fixture)).isEqualTo(auditCountBefore);
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT count(*) FROM account_tenant_role_operations WHERE request_id = ?",
+                    requestId)
+                .fetchOne(0, Long.class))
+        .isZero();
+  }
+
+  @Test
+  void tenantRoleMutationCommitsGrantRevokeTransferAndReplaysOriginalGrantAfterLaterChange() {
+    TenantRoleFixture fixture = syntheticRetainedAdminFixture();
+    PositiveMembershipSnapshot initialAdmin =
+        readExistingPairBoundPositiveMembershipSnapshot(fixture.admin());
+    PositiveMembershipSnapshot initialTarget =
+        readExistingPairBoundPositiveMembershipSnapshot(fixture.target());
+    assertThat(initialAdmin.roles()).containsExactly("player", "tenantAdmin");
+    assertThat(initialTarget.roles()).containsExactly("player");
+    assertThat(initialAdmin.membershipVersion().get(fixture.admin().tenantUuid().toString()))
+        .isEqualTo("2");
+    assertThat(initialTarget.membershipVersion().get(fixture.target().tenantUuid().toString()))
+        .isEqualTo("2");
+
+    UUID grantRequestId = UUID.randomUUID();
+    Request grantRequest =
+        new Request(
+            grantRequestId,
+            fixture.admin().accountUuid(),
+            fixture.admin().tenantUuid(),
+            fixture.target().accountUuid(),
+            Action.GRANT_DESIGNER,
+            2L,
+            2L);
+    OperationEvidence grant = tenantRoleMutationService.mutate(grantRequest);
+    assertThat(grant.status()).isEqualTo("COMMITTED");
+    assertThat(grant.members()).hasSize(1);
+
+    MembershipTransitionReceipt originalJoinReceipt =
+        membershipTransitionReceipt(fixture.target(), 1L);
+    Map<String, Object> targetBeforeHistoricalReceiptReads =
+        membershipAuthorityReadEvidenceSnapshot(fixture.target());
+    long auditRowsBeforeHistoricalReceiptReads = countAuditOutboxRows(fixture.target());
+    assertThatThrownBy(
+            () ->
+                membershipTransitionReceiptRepository.findLatestReceipt(
+                    fixture.target().accountId(), fixture.target().tenantId()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("does not match its latest provisional receipt");
+
+    var historicalReceiptEvidence =
+        Objects.requireNonNull(
+            new TransactionTemplate(transactionManager)
+                .execute(
+                    status ->
+                        membershipTransitionReceiptRepository
+                            .findLatestHistoricalReceipt(
+                                fixture.target().accountId(), fixture.target().tenantId())
+                            .orElseThrow()));
+    assertThat(historicalReceiptEvidence.receipt()).isEqualTo(originalJoinReceipt);
+    assertThat(historicalReceiptEvidence.accountId()).isEqualTo(fixture.target().accountId());
+    assertThat(historicalReceiptEvidence.tenantId()).isEqualTo(fixture.target().tenantId());
+    assertThat(historicalReceiptEvidence.lifecycleState()).isEqualTo("ACTIVE");
+    assertThat(historicalReceiptEvidence.gameplayAdmissionAllowed()).isTrue();
+    assertThat(historicalReceiptEvidence.membershipVersion()).isEqualTo(2L);
+    assertThat(historicalReceiptEvidence.membershipAuthorityGeneration()).isEqualTo(1L);
+    assertThat(historicalReceiptEvidence.authorityProvenance()).isEqualTo("EXPLICIT_JOIN");
+
+    PositiveMembershipSnapshot afterRoleGrant =
+        readExistingPairBoundPositiveMembershipSnapshot(fixture.target());
+    assertThat(afterRoleGrant.membershipVersion())
+        .isEqualTo(Map.of(fixture.target().tenantUuid().toString(), "3"));
+    assertThat(afterRoleGrant.roles()).containsExactly("designer", "player");
+    assertThat(afterRoleGrant.authorityEvent().outboxSequence()).isEqualTo("2");
+    assertThat(membershipAuthorityReadEvidenceSnapshot(fixture.target()))
+        .isEqualTo(targetBeforeHistoricalReceiptReads);
+    assertThat(countAuditOutboxRows(fixture.target()))
+        .isEqualTo(auditRowsBeforeHistoricalReceiptReads);
+
+    assertCurrentRoleMutationState(
+        fixture.target(), 3L, 1L, 2L, 1L, List.of("designer", "player"), false);
+    assertCurrentRoleMutationState(
+        fixture.admin(), 2L, 1L, 1L, 1L, List.of("player", "tenantAdmin"), false);
+
+    UUID revokeRequestId = UUID.randomUUID();
+    OperationEvidence revoke =
+        tenantRoleMutationService.mutate(
+            new Request(
+                revokeRequestId,
+                fixture.admin().accountUuid(),
+                fixture.admin().tenantUuid(),
+                fixture.target().accountUuid(),
+                Action.REVOKE_DESIGNER,
+                2L,
+                3L));
+    assertThat(revoke.status()).isEqualTo("COMMITTED");
+    assertCurrentRoleMutationState(fixture.target(), 4L, 2L, 3L, 2L, List.of("player"), true);
+    assertCurrentRoleMutationState(
+        fixture.admin(), 2L, 1L, 1L, 1L, List.of("player", "tenantAdmin"), false);
+
+    Map<String, Object> adminBeforeRetry = membershipAuthorityReadEvidenceSnapshot(fixture.admin());
+    Map<String, Object> targetBeforeRetry =
+        membershipAuthorityReadEvidenceSnapshot(fixture.target());
+    long auditCountBeforeRetry = countAuditOutboxRows(fixture.admin());
+    OperationEvidence replay = tenantRoleMutationService.mutate(grantRequest);
+    assertExactTenantRoleOperation(grant, replay);
+    assertThat(membershipAuthorityReadEvidenceSnapshot(fixture.admin()))
+        .isEqualTo(adminBeforeRetry);
+    assertThat(membershipAuthorityReadEvidenceSnapshot(fixture.target()))
+        .isEqualTo(targetBeforeRetry);
+    assertThat(countAuditOutboxRows(fixture.admin())).isEqualTo(auditCountBeforeRetry);
+
+    assertThatThrownBy(
+            () ->
+                tenantRoleMutationService.mutate(
+                    new Request(
+                        grantRequestId,
+                        grantRequest.actorAccountUuid(),
+                        grantRequest.tenantUuid(),
+                        grantRequest.targetAccountUuid(),
+                        Action.REVOKE_DESIGNER,
+                        grantRequest.expectedActorMembershipVersion(),
+                        grantRequest.expectedTargetMembershipVersion())))
+        .isInstanceOf(AccountTenantRoleOperationRepository.OperationConflictException.class)
+        .hasMessageContaining("changed immutable input");
+    assertThat(membershipAuthorityReadEvidenceSnapshot(fixture.admin()))
+        .isEqualTo(adminBeforeRetry);
+    assertThat(membershipAuthorityReadEvidenceSnapshot(fixture.target()))
+        .isEqualTo(targetBeforeRetry);
+
+    OperationEvidence transfer =
+        tenantRoleMutationService.mutate(
+            new Request(
+                UUID.randomUUID(),
+                fixture.admin().accountUuid(),
+                fixture.admin().tenantUuid(),
+                fixture.target().accountUuid(),
+                Action.TRANSFER_TENANT_ADMIN,
+                2L,
+                4L));
+    assertThat(transfer.status()).isEqualTo("COMMITTED");
+    assertThat(transfer.members()).hasSize(2);
+    assertCurrentRoleMutationState(fixture.admin(), 3L, 2L, 2L, 2L, List.of("player"), true);
+    assertCurrentRoleMutationState(
+        fixture.target(), 5L, 2L, 4L, 2L, List.of("player", "tenantAdmin"), false);
+    assertThat(countTenantRoleOperations(fixture.admin())).isEqualTo(3L);
+    assertThat(countAuditOutboxRows(fixture.admin())).isEqualTo(3L);
+    assertThat(authorityGeneration("TENANT", null, null, fixture.admin().tenantUuid()))
+        .isEqualTo(1L);
+  }
+
+  @Test
+  void tenantRoleMutationRollsBackAllSourcesWhenEventAppendFailsAfterWriting() {
+    TenantRoleFixture fixture = syntheticRetainedAdminFixture();
+    Map<String, Object> adminBefore = membershipAuthorityReadEvidenceSnapshot(fixture.admin());
+    Map<String, Object> targetBefore = membershipAuthorityReadEvidenceSnapshot(fixture.target());
+    long auditCountBefore = countAuditOutboxRows(fixture.admin());
+    UUID requestId = UUID.randomUUID();
+    Request request =
+        new Request(
+            requestId,
+            fixture.admin().accountUuid(),
+            fixture.admin().tenantUuid(),
+            fixture.target().accountUuid(),
+            Action.GRANT_DESIGNER,
+            2L,
+            2L);
+
+    AccountMembershipAuthorityEventProducer producerTarget =
+        AopTestUtils.getUltimateTargetObject(membershipAuthorityEventProducer);
+    doAnswer(
+            invocation -> {
+              invocation.callRealMethod();
+              throw new IllegalStateException("injected failure after role event append");
+            })
+        .when(producerTarget)
+        .appendTenantRoleEvent(
+            any(Request.class),
+            any(AccountTenantMembership.class),
+            any(RoleSnapshot.class),
+            any(PairAuthority.class),
+            anyBoolean());
+
+    assertThatThrownBy(() -> tenantRoleMutationService.mutate(request))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("injected failure after role event append");
+    assertThat(membershipAuthorityReadEvidenceSnapshot(fixture.admin())).isEqualTo(adminBefore);
+    assertThat(membershipAuthorityReadEvidenceSnapshot(fixture.target())).isEqualTo(targetBefore);
+    assertThat(countAuditOutboxRows(fixture.admin())).isEqualTo(auditCountBefore);
+    assertThat(countAuthorityMembershipEvents(fixture.target())).isEqualTo(1L);
+    assertTenantRoleOperationAbsent(requestId);
+  }
+
+  @Test
+  void tenantRoleMutationRollsBackAllSourcesWhenAuditAppendFailsAfterWriting() {
+    TenantRoleFixture fixture = syntheticRetainedAdminFixture();
+    Map<String, Object> adminBefore = membershipAuthorityReadEvidenceSnapshot(fixture.admin());
+    Map<String, Object> targetBefore = membershipAuthorityReadEvidenceSnapshot(fixture.target());
+    long auditCountBefore = countAuditOutboxRows(fixture.admin());
+    UUID requestId = UUID.randomUUID();
+    Request request =
+        new Request(
+            requestId,
+            fixture.admin().accountUuid(),
+            fixture.admin().tenantUuid(),
+            fixture.target().accountUuid(),
+            Action.GRANT_DESIGNER,
+            2L,
+            2L);
+
+    AccountAuditOutboxRepository auditOutboxTarget =
+        AopTestUtils.getUltimateTargetObject(auditOutboxRepository);
+    doAnswer(
+            invocation -> {
+              invocation.callRealMethod();
+              throw new IllegalStateException("injected failure after role audit append");
+            })
+        .when(auditOutboxTarget)
+        .appendCanonicalTenant(any(UUID.class), anyString(), anyString(), anyString());
+
+    assertThatThrownBy(() -> tenantRoleMutationService.mutate(request))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("injected failure after role audit append");
+    assertThat(membershipAuthorityReadEvidenceSnapshot(fixture.admin())).isEqualTo(adminBefore);
+    assertThat(membershipAuthorityReadEvidenceSnapshot(fixture.target())).isEqualTo(targetBefore);
+    assertThat(countAuditOutboxRows(fixture.admin())).isEqualTo(auditCountBefore);
+    assertThat(countAuthorityMembershipEvents(fixture.target())).isEqualTo(1L);
+    assertTenantRoleOperationAbsent(requestId);
+  }
+
+  @Test
+  void tenantRoleMutationRollsBackAllSourcesWhenFinalCurrentReadbackFails() {
+    TenantRoleFixture fixture = syntheticRetainedAdminFixture();
+    Map<String, Object> adminBefore = membershipAuthorityReadEvidenceSnapshot(fixture.admin());
+    Map<String, Object> targetBefore = membershipAuthorityReadEvidenceSnapshot(fixture.target());
+    long auditCountBefore = countAuditOutboxRows(fixture.admin());
+    UUID requestId = UUID.randomUUID();
+    Request request =
+        new Request(
+            requestId,
+            fixture.admin().accountUuid(),
+            fixture.admin().tenantUuid(),
+            fixture.target().accountUuid(),
+            Action.GRANT_DESIGNER,
+            2L,
+            2L);
+    AtomicInteger readbackCalls = new AtomicInteger();
+
+    AccountMembershipAuthorityEventProducer producerTarget =
+        AopTestUtils.getUltimateTargetObject(membershipAuthorityEventProducer);
+    doAnswer(
+            invocation -> {
+              PositiveMembershipSnapshot result =
+                  (PositiveMembershipSnapshot) invocation.callRealMethod();
+              if (readbackCalls.incrementAndGet() == 3) {
+                throw new IllegalStateException("injected failure after role current readback");
+              }
+              return result;
+            })
+        .when(producerTarget)
+        .readCurrentPairBoundPositiveMembershipSnapshot(anyLong(), anyLong());
+
+    assertThatThrownBy(() -> tenantRoleMutationService.mutate(request))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("injected failure after role current readback");
+    assertThat(membershipAuthorityReadEvidenceSnapshot(fixture.admin())).isEqualTo(adminBefore);
+    assertThat(membershipAuthorityReadEvidenceSnapshot(fixture.target())).isEqualTo(targetBefore);
+    assertThat(countAuditOutboxRows(fixture.admin())).isEqualTo(auditCountBefore);
+    assertThat(countAuthorityMembershipEvents(fixture.target())).isEqualTo(1L);
+    assertTenantRoleOperationAbsent(requestId);
+  }
+
+  @Test
+  void tenantRoleMutationRejectsWrongTenantWithoutChangingAnyAccountSource() {
+    TenantRoleFixture fixture = syntheticRetainedAdminFixture();
+    Map<String, Object> adminBefore = membershipAuthorityReadEvidenceSnapshot(fixture.admin());
+    Map<String, Object> targetBefore = membershipAuthorityReadEvidenceSnapshot(fixture.target());
+    long auditCountBefore = countAuditOutboxRows(fixture.admin());
+    UUID requestId = UUID.randomUUID();
+
+    assertThatThrownBy(
+            () ->
+                tenantRoleMutationService.mutate(
+                    new Request(
+                        requestId,
+                        fixture.admin().accountUuid(),
+                        UUID.randomUUID(),
+                        fixture.target().accountUuid(),
+                        Action.GRANT_DESIGNER,
+                        2L,
+                        2L)))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(membershipAuthorityReadEvidenceSnapshot(fixture.admin())).isEqualTo(adminBefore);
+    assertThat(membershipAuthorityReadEvidenceSnapshot(fixture.target())).isEqualTo(targetBefore);
+    assertThat(countAuditOutboxRows(fixture.admin())).isEqualTo(auditCountBefore);
+    assertTenantRoleOperationAbsent(requestId);
+  }
+
+  @Test
+  void tenantRoleMutationRejectsNonExplicitMembershipWithoutChangingAnyAccountSource() {
+    JoinFixture fixture = fixture("active");
+    new TransactionTemplate(transactionManager)
+        .execute(
+            status -> {
+              seedSyntheticRetainedActiveMembership(fixture, List.of("player", "tenantAdmin"));
+              ApprovedAssociation association =
+                  tenantIdentityResolver.resolve(fixture.tenantUuid());
+              VerifiedTenantProvenance provenance =
+                  new VerifiedTenantProvenance(
+                      association.legacyTenantId(),
+                      TenantProvenanceKind.APPROVED_RETAINED,
+                      association.operationId(),
+                      association.manifestDigest());
+              AccountTenantMembership membership =
+                  membershipRepository
+                      .findCanonicalMembershipForUpdate(fixture.accountUuid(), fixture.tenantUuid())
+                      .orElseThrow();
+              // The transition-receipt contract accepts explicit joins, so install the unsupported
+              // source only after creating that valid historical receipt.
+              membership.setAuthorityProvenance("SEEDED_DEMO");
+              membershipRepository.saveCanonical(
+                  membership, fixture.accountUuid(), fixture.tenantUuid(), provenance);
+              return null;
+            });
+    Map<String, Object> sourceBefore = membershipAuthorityReadEvidenceSnapshot(fixture);
+    long auditCountBefore = countAuditOutboxRows(fixture);
+    UUID requestId = UUID.randomUUID();
+
+    assertThatThrownBy(
+            () ->
+                tenantRoleMutationService.mutate(
+                    new Request(
+                        requestId,
+                        fixture.accountUuid(),
+                        fixture.tenantUuid(),
+                        fixture.accountUuid(),
+                        Action.GRANT_DESIGNER,
+                        2L,
+                        2L)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining(
+            "Current Account membership is not a positive active explicit membership");
+    assertThat(membershipAuthorityReadEvidenceSnapshot(fixture)).isEqualTo(sourceBefore);
+    assertThat(countAuditOutboxRows(fixture)).isEqualTo(auditCountBefore);
+    assertTenantRoleOperationAbsent(requestId);
+  }
+
+  @Test
+  void invalidatingTenantRoleMutationDeniesFenceOverflowWithoutChangingAnyAccountSource() {
+    JoinFixture fixture = fixture("active", TenantAssociationSetup.APPROVED, Long.MAX_VALUE);
+    new TransactionTemplate(transactionManager)
+        .execute(
+            status -> {
+              seedSyntheticRetainedActiveMembership(
+                  fixture, List.of("designer", "player", "tenantAdmin"));
+              return null;
+            });
+    PositiveMembershipSnapshot current = readExistingPairBoundPositiveMembershipSnapshot(fixture);
+    assertThat(current.issuanceFence()).isEqualTo(Long.toString(Long.MAX_VALUE));
+    Map<String, Object> sourceBefore = membershipAuthorityReadEvidenceSnapshot(fixture);
+    long auditCountBefore = countAuditOutboxRows(fixture);
+    UUID requestId = UUID.randomUUID();
+
+    assertThatThrownBy(
+            () ->
+                tenantRoleMutationService.mutate(
+                    new Request(
+                        requestId,
+                        fixture.accountUuid(),
+                        fixture.tenantUuid(),
+                        fixture.accountUuid(),
+                        Action.REVOKE_DESIGNER,
+                        2L,
+                        2L)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("issuance fence is exhausted");
+    assertThat(membershipAuthorityReadEvidenceSnapshot(fixture)).isEqualTo(sourceBefore);
+    assertThat(countAuditOutboxRows(fixture)).isEqualTo(auditCountBefore);
+    assertTenantRoleOperationAbsent(requestId);
+  }
+
+  @Test
+  void concurrentOpposingTenantAdminTransfersLeaveOneCurrentAdministrator() throws Exception {
+    TenantRoleFixture fixture = syntheticRetainedAdminFixture();
+    Request currentAdminTransfer =
+        new Request(
+            UUID.randomUUID(),
+            fixture.admin().accountUuid(),
+            fixture.admin().tenantUuid(),
+            fixture.target().accountUuid(),
+            Action.TRANSFER_TENANT_ADMIN,
+            2L,
+            2L);
+    Request nonAdminOpposition =
+        new Request(
+            UUID.randomUUID(),
+            fixture.target().accountUuid(),
+            fixture.admin().tenantUuid(),
+            fixture.admin().accountUuid(),
+            Action.TRANSFER_TENANT_ADMIN,
+            2L,
+            2L);
+    CountDownLatch start = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      Future<OperationEvidence> transfer =
+          executor.submit(
+              () -> {
+                start.await();
+                return tenantRoleMutationService.mutate(currentAdminTransfer);
+              });
+      Future<OperationEvidence> opposition =
+          executor.submit(
+              () -> {
+                start.await();
+                return tenantRoleMutationService.mutate(nonAdminOpposition);
+              });
+      start.countDown();
+
+      int committed = 0;
+      int denied = 0;
+      for (Future<OperationEvidence> result : List.of(transfer, opposition)) {
+        try {
+          assertThat(result.get(20, TimeUnit.SECONDS).status()).isEqualTo("COMMITTED");
+          committed++;
+        } catch (ExecutionException failure) {
+          assertThat(failure.getCause()).isInstanceOf(IllegalStateException.class);
+          denied++;
+        }
+      }
+      assertThat(committed).isEqualTo(1);
+      assertThat(denied).isEqualTo(1);
+    } finally {
+      executor.shutdownNow();
+    }
+
+    PositiveMembershipSnapshot finalAdmin =
+        readExistingPairBoundPositiveMembershipSnapshot(fixture.target());
+    PositiveMembershipSnapshot formerAdmin =
+        readExistingPairBoundPositiveMembershipSnapshot(fixture.admin());
+    assertThat(finalAdmin.roles()).contains("tenantAdmin", "player");
+    assertThat(formerAdmin.roles()).containsExactly("player");
+    assertThat(finalAdmin.gameplayAdmissionAllowed()).isTrue();
+    assertThat(finalAdmin.membershipLifecycleState()).isEqualTo("ACTIVE");
+    assertThat(countTenantRoleOperations(fixture.admin())).isEqualTo(1L);
+  }
+
+  @Test
   void canonicalExistingPairBoundPositiveMembershipSnapshotRepeatsWithoutMutation() {
     JoinFixture fixture = fixture("active");
     JoinPublicProductionResult joined = join(fixture);
@@ -1522,24 +2111,26 @@ class AccountJoinPostgresIntegrationTest {
     assertThat(membershipAuthorityReadEvidenceSnapshot(absent)).isEqualTo(absentBeforeRead);
 
     JoinFixture missingReceipt = fixture("active");
-    dsl.execute(
-        "INSERT INTO account_tenant_membership "
-            + "(account_id, tenant_id, gameplay_admission_allowed, lifecycle_state, "
-            + "membership_version, membership_authority_generation, authority_provenance) "
-            + "VALUES (?, ?, TRUE, 'ACTIVE', 1, 1, 'EXPLICIT_JOIN')",
-        missingReceipt.accountId(),
-        missingReceipt.tenantId());
-    long retainedMembershipId = seedPlayerRoleSnapshot(missingReceipt);
+    long retainedMembershipId =
+        new TransactionTemplate(transactionManager)
+            .execute(
+                status ->
+                    seedSyntheticRetainedActiveMembership(
+                        missingReceipt, List.of("player"), false));
     Map<String, Object> retainedMembership = membershipSnapshot(missingReceipt);
+    Map<String, Object> sourceBeforeRead = membershipAuthorityReadEvidenceSnapshot(missingReceipt);
+    long authorityEventCountBefore = countAuthorityMembershipEvents(missingReceipt);
 
     assertThat(retainedMembershipId).isPositive();
+    assertThat(authorityEventCountBefore).isEqualTo(1L);
     assertThat(countMembershipTransitionReceipts(missingReceipt)).isZero();
     assertThatThrownBy(() -> readPositiveMembershipSnapshot(missingReceipt))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("Account membership exists without a provisional transition receipt");
     assertThat(membershipSnapshot(missingReceipt)).isEqualTo(retainedMembership);
+    assertThat(membershipAuthorityReadEvidenceSnapshot(missingReceipt)).isEqualTo(sourceBeforeRead);
     assertThat(countMembershipTransitionReceipts(missingReceipt)).isZero();
-    assertThat(countAuthorityMembershipEvents(missingReceipt)).isZero();
+    assertThat(countAuthorityMembershipEvents(missingReceipt)).isEqualTo(authorityEventCountBefore);
   }
 
   @Test
@@ -2358,6 +2949,13 @@ class AccountJoinPostgresIntegrationTest {
   }
 
   private JoinFixture fixture(String subscriptionStatus, TenantAssociationSetup associationSetup) {
+    return fixture(subscriptionStatus, associationSetup, 1L);
+  }
+
+  private JoinFixture fixture(
+      String subscriptionStatus,
+      TenantAssociationSetup associationSetup,
+      long initialIssuanceFence) {
     String suffix = UUID.randomUUID().toString();
     long accountId =
         Objects.requireNonNull(
@@ -2372,7 +2970,7 @@ class AccountJoinPostgresIntegrationTest {
         Objects.requireNonNull(
             dsl.resultQuery("SELECT account_uuid FROM accounts WHERE id = ?", accountId)
                 .fetchOne(0, UUID.class));
-    seedAccountAuthorityState(accountUuid);
+    seedAccountAuthorityState(accountUuid, initialIssuanceFence);
     return fixture(subscriptionStatus, accountId, accountUuid, associationSetup, suffix);
   }
 
@@ -2441,6 +3039,305 @@ class AccountJoinPostgresIntegrationTest {
         existing.tenantId(),
         existing.tenantUuid(),
         UUID.randomUUID().toString());
+  }
+
+  private JoinFixture fixtureForSecondAccountInTenant(JoinFixture existing) {
+    String suffix = UUID.randomUUID().toString();
+    String requestId = "join-proof-" + suffix;
+    long accountId =
+        Objects.requireNonNull(
+            dsl.resultQuery(
+                    "INSERT INTO accounts (username, email, password_hash) "
+                        + "VALUES (?, ?, ?) RETURNING id",
+                    "join-proof-" + suffix,
+                    "join-proof-" + suffix + "@example.com",
+                    "test-hash")
+                .fetchOne(0, Long.class));
+    UUID accountUuid =
+        Objects.requireNonNull(
+            dsl.resultQuery("SELECT account_uuid FROM accounts WHERE id = ?", accountId)
+                .fetchOne(0, UUID.class));
+    seedAccountAuthorityState(accountUuid);
+    // Entitlements are tenant-scoped; the existing fixture already seeded the sole subscription.
+    DirectTextCallerContext caller =
+        new DirectTextCallerContext(
+            accountId,
+            existing.tenantId(),
+            REALM_ID,
+            NAMESPACE_ID,
+            "SHARED",
+            GAME_INSTANCE_ID,
+            "join-session-" + suffix,
+            requestId);
+    DirectTextJoinTarget target =
+        new DirectTextJoinTarget(
+            existing.tenantId(),
+            REALM_ID,
+            WORLD_SLUG,
+            REALM_SLUG,
+            NAMESPACE_ID,
+            "SHARED",
+            GAME_INSTANCE_ID,
+            CATALOG_REVISION,
+            POINTER_VERSION);
+    DirectTextJoinScope scope = accountService.issueDirectTextConnectScope(caller, target);
+    return new JoinFixture(
+        accountId,
+        accountUuid,
+        existing.tenantId(),
+        existing.tenantUuid(),
+        requestId,
+        caller,
+        scope.connectScopeId());
+  }
+
+  /**
+   * Creates a test-only historical retained current source, not an authorization or bootstrap
+   * producer proof. It preserves the ordinary JOIN writer and event history; the test installs a
+   * coherent preexisting V1 receipt, V1-sealed membership event, role source, generation, and pair.
+   */
+  private TenantRoleFixture syntheticRetainedAdminFixture() {
+    JoinFixture admin = fixture("active");
+    JoinFixture target = fixtureForSecondAccountInTenant(admin);
+    new TransactionTemplate(transactionManager)
+        .execute(
+            status -> {
+              seedSyntheticRetainedActiveMembership(admin, List.of("player", "tenantAdmin"));
+              seedSyntheticRetainedActiveMembership(target, List.of("player"));
+              PositiveMembershipSnapshot adminSnapshot =
+                  membershipAuthorityEventProducer.readExistingPairBoundPositiveMembershipSnapshot(
+                      admin.accountUuid(), admin.tenantUuid());
+              PositiveMembershipSnapshot targetSnapshot =
+                  membershipAuthorityEventProducer.readExistingPairBoundPositiveMembershipSnapshot(
+                      target.accountUuid(), target.tenantUuid());
+              assertThat(adminSnapshot.roles()).containsExactly("player", "tenantAdmin");
+              assertThat(targetSnapshot.roles()).containsExactly("player");
+              return null;
+            });
+    return new TenantRoleFixture(admin, target);
+  }
+
+  private void seedSyntheticRetainedActiveMembership(JoinFixture fixture, List<String> roles) {
+    seedSyntheticRetainedActiveMembership(fixture, roles, true);
+  }
+
+  private long seedSyntheticRetainedActiveMembership(
+      JoinFixture fixture, List<String> roles, boolean includeTransitionReceipt) {
+    Account account =
+        accountRepository.findByAccountUuidForUpdate(fixture.accountUuid()).orElseThrow();
+    ApprovedAssociation association = tenantIdentityResolver.resolve(fixture.tenantUuid());
+    VerifiedTenantProvenance provenance =
+        new VerifiedTenantProvenance(
+            association.legacyTenantId(),
+            TenantProvenanceKind.APPROVED_RETAINED,
+            association.operationId(),
+            association.manifestDigest());
+
+    authorityGenerationRepository.initializeIssuerIfAbsent(AccountServiceImpl.ACCOUNT_JWT_ISSUER);
+    authorityGenerationRepository.initialize(
+        AuthorityScope.membership(fixture.accountUuid(), fixture.tenantUuid()));
+
+    AccountTenantMembership membership = new AccountTenantMembership();
+    membership.setAccount(account);
+    membership.setTenantId(association.legacyTenantId());
+    membership.setTenantUuid(fixture.tenantUuid());
+    membership.setTenantProvenanceKind(TenantProvenanceKind.APPROVED_RETAINED.name());
+    membership.setTenantSourceOperationId(association.operationId());
+    membership.setTenantProvenanceDigest(association.manifestDigest());
+    membership.setGameplayAdmissionAllowed(true);
+    membership.setLifecycleState("ACTIVE");
+    membership.setMembershipVersion(2L);
+    membership.setMembershipAuthorityGeneration(1L);
+    membership.setAuthorityProvenance("EXPLICIT_JOIN");
+    AccountTenantMembership persisted =
+        membershipRepository.saveCanonical(
+            membership, fixture.accountUuid(), fixture.tenantUuid(), provenance);
+    RoleSnapshot roleSnapshot =
+        roleSnapshotRepository.replaceCanonical(
+            persisted, fixture.accountUuid(), fixture.tenantUuid(), provenance, 2L, roles);
+
+    String historicalRequestId = "synthetic-retained-membership-join-" + UUID.randomUUID();
+    if (includeTransitionReceipt) {
+      MembershipTransitionReceipt receipt =
+          membershipTransitionReceiptRepository.appendTransition(
+              persisted, "MEMBERSHIP_JOINED", historicalRequestId);
+      assertThat(receipt.requestId()).isEqualTo(historicalRequestId);
+    }
+
+    var authority =
+        authorityGenerationRepository.readCompositeSnapshot(
+            AccountServiceImpl.ACCOUNT_JWT_ISSUER,
+            fixture.accountUuid(),
+            List.of(fixture.tenantUuid()),
+            List.of(fixture.tenantUuid()));
+    String streamKey = authorityStreamKey(fixture);
+    UUID eventUuid =
+        UUID.nameUUIDFromBytes(
+            (MembershipAuthorityEventV1Codec.SCHEMA_VERSION + ":" + historicalRequestId)
+                .getBytes(StandardCharsets.UTF_8));
+    MembershipEvent event =
+        MembershipAuthorityEventV1Codec.seal(
+            Map.ofEntries(
+                Map.entry("schemaVersion", MembershipAuthorityEventV1Codec.SCHEMA_VERSION),
+                Map.entry("eventType", MembershipAuthorityEventV1Codec.EVENT_TYPE),
+                Map.entry("eventId", eventUuid.toString()),
+                Map.entry("requestId", historicalRequestId),
+                Map.entry("outboxStreamKey", streamKey),
+                Map.entry("outboxSequence", "1"),
+                Map.entry(
+                    "sourceScope",
+                    streamKey.substring(
+                        MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX.length())),
+                Map.entry("accountId", fixture.accountUuid().toString()),
+                Map.entry("tenantId", fixture.tenantUuid().toString()),
+                Map.entry("membershipExists", true),
+                Map.entry("membershipLifecycleState", "ACTIVE"),
+                Map.entry("membershipVersion", Map.of(fixture.tenantUuid().toString(), "2")),
+                Map.entry("membershipAuthorityGeneration", "1"),
+                Map.entry(
+                    "authorityTuple",
+                    Map.of(
+                        "issuerAuthGeneration", Long.toString(authority.issuer().generation()),
+                        "accountAuthorityGeneration",
+                            Long.toString(authority.account().generation()),
+                        "tenantAuthorityGeneration",
+                            Map.of(
+                                fixture.tenantUuid().toString(),
+                                Long.toString(authority.tenants().getFirst().generation())),
+                        "membershipAuthorityGeneration",
+                            Map.of(fixture.tenantUuid().toString(), "1"),
+                        "privateRealmGrantVersions", List.of())),
+                Map.entry("issuanceFence", Long.toString(authority.issuanceFence().value())),
+                Map.entry("roles", roleSnapshot.roles()),
+                Map.entry("gameplayAdmissionAllowed", true),
+                Map.entry("callerBoundAuthorityInvalidated", false)));
+    AccountAuthorityOutboxRepository.Event appended =
+        authorityOutboxRepository.append(
+            streamKey,
+            historicalRequestId,
+            event.eventId(),
+            event.eventDigest(),
+            event.canonicalJsonUtf8());
+    pairAuthorityRepository.enrollProvenPositive(
+        fixture.accountUuid(),
+        fixture.tenantUuid(),
+        provenance,
+        new ProvenPositiveCheckpoint(
+            2L, 1L, 1L, appended.eventId(), appended.eventDigest(), false));
+    return persisted.getId();
+  }
+
+  private void assertCurrentRoleMutationState(
+      JoinFixture fixture,
+      long version,
+      long generation,
+      long sequence,
+      long fence,
+      List<String> roles,
+      boolean invalidated) {
+    PositiveMembershipSnapshot snapshot = readExistingPairBoundPositiveMembershipSnapshot(fixture);
+    assertThat(snapshot.membershipExists()).isTrue();
+    assertThat(snapshot.membershipLifecycleState()).isEqualTo("ACTIVE");
+    assertThat(snapshot.gameplayAdmissionAllowed()).isTrue();
+    assertThat(snapshot.membershipVersion())
+        .isEqualTo(Map.of(fixture.tenantUuid().toString(), Long.toString(version)));
+    assertThat(snapshot.membershipAuthorityGeneration()).isEqualTo(Long.toString(generation));
+    assertThat(snapshot.authorityTuple().membershipAuthorityGeneration())
+        .isEqualTo(Map.of(fixture.tenantUuid().toString(), Long.toString(generation)));
+    assertThat(snapshot.authorityTuple().tenantAuthorityGeneration())
+        .isEqualTo(Map.of(fixture.tenantUuid().toString(), "1"));
+    assertThat(snapshot.authorityTuple().privateRealmGrantVersions()).isEmpty();
+    assertThat(snapshot.authorityEvent().outboxSequence()).isEqualTo(Long.toString(sequence));
+    assertThat(snapshot.authorityEvent().callerBoundAuthorityInvalidated()).isEqualTo(invalidated);
+    assertThat(snapshot.issuanceFence()).isEqualTo(Long.toString(fence));
+    assertThat(snapshot.roles()).containsExactlyElementsOf(roles);
+    assertThat(snapshot.authorityEvent().membershipVersion())
+        .isEqualTo(Map.of(fixture.tenantUuid().toString(), Long.toString(version)));
+    assertThat(snapshot.authorityEvent().roles()).containsExactlyElementsOf(roles);
+    assertThat(snapshot.outboxCheckpoints())
+        .contains(new OutboxCheckpointEntry(authorityStreamKey(fixture), Long.toString(sequence)));
+    assertThat(snapshot.outboxSourceEvidence())
+        .anySatisfy(
+            evidence -> {
+              assertThat(evidence.outboxStreamKey()).isEqualTo(authorityStreamKey(fixture));
+              assertThat(evidence.outboxSequence()).isEqualTo(Long.toString(sequence));
+              assertThat(evidence.eventId()).isEqualTo(snapshot.authorityEvent().eventId());
+              assertThat(evidence.eventDigest()).isEqualTo(snapshot.authorityEvent().eventDigest());
+              assertThat(evidence.canonicalEventJson())
+                  .isEqualTo(snapshot.authorityEvent().canonicalJson());
+            });
+
+    var pair =
+        dsl.resultQuery(
+                "SELECT membership_version, membership_authority_generation, last_event_sequence, "
+                    + "last_transition_invalidated FROM account_membership_pair_authority "
+                    + "WHERE account_uuid = ? AND tenant_uuid = ?",
+                fixture.accountUuid(),
+                fixture.tenantUuid())
+            .fetchOne();
+    assertThat(pair).isNotNull();
+    assertThat(pair.get("membership_version", Long.class)).isEqualTo(version);
+    assertThat(pair.get("membership_authority_generation", Long.class)).isEqualTo(generation);
+    assertThat(pair.get("last_event_sequence", Long.class)).isEqualTo(sequence);
+    assertThat(pair.get("last_transition_invalidated", Boolean.class)).isEqualTo(invalidated);
+    assertThat(accountIssuanceFence(fixture)).isEqualTo(fence);
+    assertThat(authorityGeneration("MEMBERSHIP", null, fixture.accountUuid(), fixture.tenantUuid()))
+        .isEqualTo(generation);
+  }
+
+  private static void assertExactTenantRoleOperation(
+      OperationEvidence expected, OperationEvidence actual) {
+    assertThat(actual.request()).isEqualTo(expected.request());
+    assertThat(actual.requestPayload()).containsExactly(expected.requestPayload());
+    assertThat(actual.requestDigest()).isEqualTo(expected.requestDigest());
+    assertThat(actual.status()).isEqualTo(expected.status());
+    assertThat(actual.audit().auditEventId()).isEqualTo(expected.audit().auditEventId());
+    assertThat(actual.audit().eventType()).isEqualTo(expected.audit().eventType());
+    assertThat(actual.audit().occurredAt()).isEqualTo(expected.audit().occurredAt());
+    assertThat(actual.audit().payloadDigest()).isEqualTo(expected.audit().payloadDigest());
+    assertThat(actual.audit().payload()).containsExactly(expected.audit().payload());
+    assertThat(actual.resultPayload()).containsExactly(expected.resultPayload());
+    assertThat(actual.resultDigest()).isEqualTo(expected.resultDigest());
+    assertThat(actual.members()).hasSize(expected.members().size());
+    for (int index = 0; index < expected.members().size(); index++) {
+      var expectedMember = expected.members().get(index);
+      var actualMember = actual.members().get(index);
+      assertThat(actualMember.accountUuid()).isEqualTo(expectedMember.accountUuid());
+      assertThat(actualMember.tenantUuid()).isEqualTo(expectedMember.tenantUuid());
+      assertThat(actualMember.membershipVersion()).isEqualTo(expectedMember.membershipVersion());
+      assertThat(actualMember.membershipAuthorityGeneration())
+          .isEqualTo(expectedMember.membershipAuthorityGeneration());
+      assertThat(actualMember.eventSequence()).isEqualTo(expectedMember.eventSequence());
+      assertThat(actualMember.eventRequestId()).isEqualTo(expectedMember.eventRequestId());
+      assertThat(actualMember.eventId()).isEqualTo(expectedMember.eventId());
+      assertThat(actualMember.eventDigest()).isEqualTo(expectedMember.eventDigest());
+      assertThat(actualMember.callerBoundAuthorityInvalidated())
+          .isEqualTo(expectedMember.callerBoundAuthorityInvalidated());
+      assertThat(actualMember.eventPayload()).containsExactly(expectedMember.eventPayload());
+    }
+  }
+
+  private long countTenantRoleOperations(JoinFixture fixture) {
+    return Objects.requireNonNull(
+        dsl.resultQuery(
+                "SELECT count(*) FROM account_tenant_role_operations WHERE tenant_uuid = ?",
+                fixture.tenantUuid())
+            .fetchOne(0, Long.class));
+  }
+
+  private void assertTenantRoleOperationAbsent(UUID requestId) {
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT count(*) FROM account_tenant_role_operations WHERE request_id = ?",
+                    requestId)
+                .fetchOne(0, Long.class))
+        .isZero();
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT count(*) FROM account_tenant_role_operation_members WHERE request_id = ?",
+                    requestId)
+                .fetchOne(0, Long.class))
+        .isZero();
   }
 
   private JoinFixture fixture(
@@ -2554,6 +3451,10 @@ class AccountJoinPostgresIntegrationTest {
   }
 
   private void seedAccountAuthorityState(UUID accountUuid) {
+    seedAccountAuthorityState(accountUuid, 1L);
+  }
+
+  private void seedAccountAuthorityState(UUID accountUuid, long initialIssuanceFence) {
     dsl.execute(
         "INSERT INTO account_authority_generations "
             + "(scope_kind, account_uuid, generation, source_version) "
@@ -2561,8 +3462,10 @@ class AccountJoinPostgresIntegrationTest {
         accountUuid);
     dsl.execute(
         "INSERT INTO account_authority_issuance_fences "
-            + "(account_uuid, issuance_fence, source_version) VALUES (?, 1, 1)",
-        accountUuid);
+            + "(account_uuid, issuance_fence, source_version) VALUES (?, ?, ?)",
+        accountUuid,
+        initialIssuanceFence,
+        initialIssuanceFence);
   }
 
   private void seedTenantAuthorityGeneration(UUID tenantUuid) {
@@ -2763,6 +3666,15 @@ class AccountJoinPostgresIntegrationTest {
                 "SELECT COUNT(*) FROM account_audit_outbox WHERE scope = 'tenant' "
                     + "AND tenant_id = ? AND event_type = 'ACCOUNT_MEMBERSHIP_LEFT'",
                 fixture.tenantId())
+            .fetchOne(0, Long.class));
+  }
+
+  private long countAuditOutboxRows(JoinFixture fixture) {
+    return Objects.requireNonNull(
+        dsl.resultQuery(
+                "SELECT COUNT(*) FROM account_audit_outbox WHERE scope = 'tenant' "
+                    + "AND tenant_uuid = ?",
+                fixture.tenantUuid())
             .fetchOne(0, Long.class));
   }
 
@@ -3532,6 +4444,8 @@ class AccountJoinPostgresIntegrationTest {
       String requestId,
       DirectTextCallerContext caller,
       String connectScopeId) {}
+
+  private record TenantRoleFixture(JoinFixture admin, JoinFixture target) {}
 
   private record MembershipScopeSnapshot(
       Map<String, Object> membership,

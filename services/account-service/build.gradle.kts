@@ -19,6 +19,7 @@ dependencies {
     implementation(libs.stripe.java)
     // Test-only JDBC mocks need narrowly scoped resource-analysis annotations.
     testCompileOnly(libs.spotbugs.annotations)
+    testImplementation(libs.bouncycastle.pkix)
     // Integration analysis follows the real producer's annotated Account collaborators.
     add("integrationTestImplementation", "com.github.spotbugs:spotbugs-annotations:4.9.8")
 }

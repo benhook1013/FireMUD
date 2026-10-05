@@ -55,7 +55,13 @@ class AccountMembershipAuthorityEventProducerTest {
             mock(AccountLogoutAllOperationRepository.class),
             receiptRepository,
             membershipRepository,
-            rolesRepository);
+            rolesRepository,
+            mock(
+                net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository
+                    .class),
+            mock(
+                net.firedevops.firemud.accountservice.repository
+                    .AccountTenantRoleOperationRepository.class));
     boolean previouslyActive = TransactionSynchronizationManager.isActualTransactionActive();
     TransactionSynchronizationManager.setActualTransactionActive(false);
 
@@ -102,7 +108,13 @@ class AccountMembershipAuthorityEventProducerTest {
             mock(AccountLogoutAllOperationRepository.class),
             mock(AccountMembershipTransitionReceiptRepository.class),
             mock(AccountTenantMembershipRepository.class),
-            mock(AccountTenantMembershipRoleSnapshotRepository.class));
+            mock(AccountTenantMembershipRoleSnapshotRepository.class),
+            mock(
+                net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository
+                    .class),
+            mock(
+                net.firedevops.firemud.accountservice.repository
+                    .AccountTenantRoleOperationRepository.class));
 
     assertThatThrownBy(
             () ->
@@ -135,7 +147,13 @@ class AccountMembershipAuthorityEventProducerTest {
             mock(AccountLogoutAllOperationRepository.class),
             mock(AccountMembershipTransitionReceiptRepository.class),
             mock(AccountTenantMembershipRepository.class),
-            mock(AccountTenantMembershipRoleSnapshotRepository.class));
+            mock(AccountTenantMembershipRoleSnapshotRepository.class),
+            mock(
+                net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository
+                    .class),
+            mock(
+                net.firedevops.firemud.accountservice.repository
+                    .AccountTenantRoleOperationRepository.class));
 
     assertThatThrownBy(
             () -> producer.readRuntimeMembershipSnapshot(UUID.randomUUID(), UUID.randomUUID()))
@@ -182,7 +200,13 @@ class AccountMembershipAuthorityEventProducerTest {
             mock(AccountLogoutAllOperationRepository.class),
             transitionReceiptRepository,
             membershipRepository,
-            roleSnapshotRepository);
+            roleSnapshotRepository,
+            mock(
+                net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository
+                    .class),
+            mock(
+                net.firedevops.firemud.accountservice.repository
+                    .AccountTenantRoleOperationRepository.class));
 
     assertThatThrownBy(
             () ->
@@ -237,7 +261,13 @@ class AccountMembershipAuthorityEventProducerTest {
             mock(AccountLogoutAllOperationRepository.class),
             transitionReceiptRepository,
             membershipRepository,
-            roleSnapshotRepository);
+            roleSnapshotRepository,
+            mock(
+                net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository
+                    .class),
+            mock(
+                net.firedevops.firemud.accountservice.repository
+                    .AccountTenantRoleOperationRepository.class));
 
     assertThatThrownBy(
             () ->

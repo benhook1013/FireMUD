@@ -22,14 +22,15 @@ import net.firedevops.firemud.common.account.authority.IssuerGenerationAuthority
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.PasswordResetAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.TenantGenerationAuthorityEventV1Codec;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 
 /**
  * Immutable source material retained from one owner-local existing-membership read.
  *
  * <p>This value is not authorization. It preserves the exact locked authority rows, their
  * independent source versions and Account fence, alongside the membership projection that carries
- * the corresponding source checkpoints and events. A raw retained role header remains unchanged;
- * its audited tenant association is carried separately for identity binding.
+ * the corresponding source checkpoints and events. The applicable retained or fresh tenant identity
+ * receipt is carried separately from the raw role header for exact source binding.
  */
 public record AccountMembershipCaptureSources(
     UUID requestedAccountUuid,
@@ -37,7 +38,8 @@ public record AccountMembershipCaptureSources(
     CompositeSnapshot authoritySnapshot,
     RuntimeMembershipSnapshotDto membershipSnapshot,
     Optional<RoleSnapshot> roleSource,
-    Optional<ApprovedAssociation> retainedTenantAssociation) {
+    Optional<ApprovedAssociation> retainedTenantAssociation,
+    Optional<FreshTenantCreationEvidence> freshTenantAssociation) {
   private static final String AUTHORITY_STREAM_PREFIX =
       MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX;
 
@@ -50,6 +52,13 @@ public record AccountMembershipCaptureSources(
     retainedTenantAssociation =
         Objects.requireNonNull(
             retainedTenantAssociation, "retained tenant association presence is required");
+    freshTenantAssociation =
+        Objects.requireNonNull(
+            freshTenantAssociation, "fresh tenant association presence is required");
+    if (retainedTenantAssociation.isPresent() == freshTenantAssociation.isPresent()) {
+      throw new IllegalArgumentException(
+          "Exactly one retained or fresh tenant association must identify the source");
+    }
 
     String accountId = requestedAccountUuid.toString();
     String tenantId = requestedTenantUuid.toString();
@@ -115,12 +124,17 @@ public record AccountMembershipCaptureSources(
         retainedTenantAssociation
             .map(association -> requireRetainedAssociation(requestedTenantUuid, association))
             .orElse(null);
+    VerifiedTenantProvenance freshProvenance =
+        freshTenantAssociation
+            .map(association -> requireFreshAssociation(requestedTenantUuid, association))
+            .orElse(null);
     requireRoleSource(
         requestedAccountUuid,
         requestedTenantUuid,
         membershipSnapshot,
         roleSource.orElse(null),
         retainedProvenance,
+        freshProvenance,
         version);
   }
 
@@ -271,6 +285,7 @@ public record AccountMembershipCaptureSources(
       RuntimeMembershipSnapshotDto snapshot,
       RoleSnapshot roleSource,
       VerifiedTenantProvenance retainedProvenance,
+      VerifiedTenantProvenance freshProvenance,
       String membershipVersion) {
     if (!snapshot.membershipExists()) {
       if (roleSource != null || !snapshot.roles().isEmpty()) {
@@ -280,24 +295,37 @@ public record AccountMembershipCaptureSources(
       return;
     }
 
-    boolean canonicalTenantUuidPresent = roleSource != null && roleSource.tenantUuid() != null;
-    boolean canonicalProvenancePresent =
-        roleSource != null && roleSource.tenantProvenance() != null;
     if (roleSource == null
-        || retainedProvenance == null
         || roleSource.accountUuid() == null
         || !accountUuid.equals(roleSource.accountUuid())
         || roleSource.accountId() <= 0L
-        || !Objects.equals(roleSource.tenantId(), retainedProvenance.legacyTenantId())
         || roleSource.membershipId() <= 0L
-        || roleSource.snapshotVersion() != Long.parseLong(membershipVersion)
-        || !roleSource.roles().equals(snapshot.roles())
+        || !Long.toString(roleSource.snapshotVersion()).equals(membershipVersion)
+        || !roleSource.roles().equals(snapshot.roles())) {
+      throw new IllegalArgumentException(
+          "Current membership roles lack the exact existing role header and identity");
+    }
+
+    if (freshProvenance != null) {
+      if (roleSource.tenantId() != null
+          || !tenantUuid.equals(roleSource.tenantUuid())
+          || !freshProvenance.equals(roleSource.tenantProvenance())) {
+        throw new IllegalArgumentException(
+            "Fresh membership role header differs from its exact UUID source receipt");
+      }
+      return;
+    }
+
+    boolean canonicalTenantUuidPresent = roleSource.tenantUuid() != null;
+    boolean canonicalProvenancePresent = roleSource.tenantProvenance() != null;
+    if (retainedProvenance == null
+        || !Objects.equals(roleSource.tenantId(), retainedProvenance.legacyTenantId())
         || canonicalTenantUuidPresent != canonicalProvenancePresent
         || (canonicalTenantUuidPresent
             && (!tenantUuid.equals(roleSource.tenantUuid())
                 || !retainedProvenance.equals(roleSource.tenantProvenance())))) {
       throw new IllegalArgumentException(
-          "Current membership roles lack the exact existing role header and identity");
+          "Current membership roles lack the exact retained tenant association");
     }
   }
 
@@ -314,6 +342,20 @@ public record AccountMembershipCaptureSources(
         TenantProvenanceKind.APPROVED_RETAINED,
         association.operationId(),
         association.manifestDigest());
+  }
+
+  private static VerifiedTenantProvenance requireFreshAssociation(
+      UUID tenantUuid, FreshTenantCreationEvidence association) {
+    if (association.canonicalTenantId() == null
+        || !tenantUuid.equals(association.canonicalTenantId())) {
+      throw new IllegalArgumentException(
+          "Fresh tenant association differs from the exact canonical request");
+    }
+    return new VerifiedTenantProvenance(
+        null,
+        TenantProvenanceKind.FRESH_GAME_DESIGN,
+        association.operationId(),
+        association.evidenceDigest());
   }
 
   private static String membershipSequence(RuntimeMembershipSnapshotDto snapshot) {
