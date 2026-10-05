@@ -15,7 +15,6 @@ import net.firedevops.firemud.common.saga.SagaBuilder;
 import net.firedevops.firemud.common.saga.SagaException;
 import net.firedevops.firemud.common.saga.SagaRunner;
 import net.firedevops.firemud.common.security.RequestIdValidation;
-import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.GameDesignClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
@@ -1265,69 +1264,9 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   }
 
   private ResolvedLaunchDescriptor preflightLaunch(StartSessionRequest request) {
-    if (gameDesignClient == null) {
-      throw new IllegalStateException("launch descriptor authority unavailable");
-    }
-    var descriptorResponse =
-        gameDesignClient.resolveLaunchDescriptor(
-            request.tenantId(), request.gameTemplateId(), request.controlPlaneRequestId());
-    if (descriptorResponse.hasError()) {
-      throw new IllegalArgumentException(
-          descriptorResponse.getError().getCode()
-              + ": "
-              + descriptorResponse.getError().getMessage());
-    }
-    var descriptor = descriptorResponse.getLaunchDescriptor();
-    var bundleResponse =
-        gameDesignClient.getPublishedReleaseBundle(request.tenantId(), descriptor.getVersionId());
-    if (bundleResponse.hasError()) {
-      throw new IllegalArgumentException(
-          bundleResponse.getError().getCode() + ": " + bundleResponse.getError().getMessage());
-    }
-    var bundle = bundleResponse.getBundle();
-    requireSupportedReleaseAttestationSchema(bundle.getAttestationSchemaVersion());
-    if (bundle.getId() != descriptor.getReleaseBundleId()
-        || bundle.getVersionId() != descriptor.getVersionId()
-        || !bundle.getGenerationConfigRevision().equals(descriptor.getGenerationConfigRevision())
-        || !releaseBundleRef(request.tenantId(), descriptor.getVersionId(), bundle.getId())
-            .equals(descriptor.getPublishedReleaseBundleRef())) {
-      throw new IllegalArgumentException(
-          "RELEASE_ATTESTATION_MISMATCH: resolved launch descriptor does not match the published"
-              + " release bundle");
-    }
-    validatePublishedAssetProof(request.tenantId(), descriptor.getVersionId(), bundle);
-    var versionStateResponse =
-        gameDesignClient.getVersionState(request.tenantId(), descriptor.getVersionId());
-    if (versionStateResponse.hasError()) {
-      throw new IllegalArgumentException(
-          versionStateResponse.getError().getCode()
-              + ": "
-              + versionStateResponse.getError().getMessage());
-    }
-    var versionState = versionStateResponse.getVersionState();
-    if (versionState.getVersionState() != VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED
-        && versionState.getVersionState() != VersionLifecycleState.VERSION_LIFECYCLE_STATE_ACTIVE) {
-      throw new IllegalArgumentException(
-          "VERSION_STATE_EPOCH_STALE: resolved version is not activation-eligible");
-    }
-    if (versionState.getVersionStateEpoch() != descriptor.getVersionStateEpoch()) {
-      throw new IllegalArgumentException(
-          "VERSION_STATE_EPOCH_STALE: resolved launch descriptor epoch does not match current"
-              + " version state");
-    }
-    return new ResolvedLaunchDescriptor(
-        descriptor.getLaunchDescriptorId(),
-        requirePositiveExternalId(descriptor.getTenantId(), "tenantId"),
-        descriptor.getGameTemplateId(),
-        descriptor.getControlPlaneRequestId(),
-        descriptor.getVersionId(),
-        descriptor.getScriptPatchVersion().isBlank() ? null : descriptor.getScriptPatchVersion(),
-        descriptor.getRuntimeFlagsJson(),
-        descriptor.getGenerationConfigRevision(),
-        descriptor.getVersionStateEpoch(),
-        descriptor.getReleaseBundleId(),
-        descriptor.getPublishedReleaseBundleRef(),
-        descriptor.getRemapSetId().isBlank() ? null : descriptor.getRemapSetId());
+    throw new IllegalArgumentException(
+        "AUTHORED_WORLD_LAUNCH_BINDING_REQUIRED: canonical authored-world launch binding is"
+            + " required");
   }
 
   private void validatePublishedAssetProof(

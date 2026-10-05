@@ -1,20 +1,23 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
 import io.micrometer.core.annotation.Timed;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.LinkedHashMap;
-import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
-import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
+import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.ResolvedLaunchDescriptorDto;
 import net.firedevops.firemud.gamedesign.dto.TemplateRemapSetDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.LaunchDescriptor;
 import net.firedevops.firemud.gamedesign.model.TemplateReferencePhase;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
+import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTemplateLaunchConfigView;
 import net.firedevops.firemud.gamedesign.repository.GameTemplateRepository;
 import net.firedevops.firemud.gamedesign.repository.LaunchDescriptorRepository;
@@ -22,260 +25,567 @@ import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
 import net.firedevops.firemud.gamedesign.service.TemplateRemapSetService;
-import org.slf4j.Logger;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import tools.jackson.core.exc.StreamReadException;
 import tools.jackson.databind.ObjectMapper;
 
 @Service
 @RequiredArgsConstructor
 public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
-  private static final Logger logger = LoggingUtil.getLogger(LaunchDescriptorServiceImpl.class);
-
+  private static final UUID NIL_UUID = new UUID(0L, 0L);
   private final GameTemplateRepository gameTemplateRepository;
   private final LaunchDescriptorRepository launchDescriptorRepository;
   private final VersionRepository versionRepository;
   private final PublishedReleaseBundleService publishedReleaseBundleService;
   private final TemplateRemapSetService templateRemapSetService;
+  private final GameAuthoredWorldSourceRepository authoredWorldSourceRepository;
   private final ObjectMapper objectMapper;
 
+  @Value("${firemud.grpc.workload-namespace:}")
+  private String workloadNamespace;
+
   @Override
-  @Transactional
+  @Transactional(noRollbackFor = FrozenLaunchDescriptorDenialException.class)
   @Timed(value = "gamedesign.launchDescriptor.resolve")
   public ResolvedLaunchDescriptorDto resolveLaunchDescriptor(
-      String tenantId,
-      long gameTemplateId,
-      String controlPlaneRequestId,
-      String requestedScriptPatchVersion,
-      Long sourceVersionId,
-      Long targetVersionId,
-      String requestedRuntimeFlagsJson) {
-    if (controlPlaneRequestId == null || controlPlaneRequestId.isBlank()) {
-      throw new IllegalArgumentException(
-          "INVALID_TEMPLATE_CONFIGURATION: controlPlaneRequestId is required");
+      AuthoredWorldLaunchDescriptorEvidence.Request request) {
+    requireConfiguredNamespace(request.targetNamespace());
+    launchDescriptorRepository.lockBoundRequest(
+        workloadNamespace, request.canonicalTenantId(), request.controlPlaneRequestId());
+    String requestJson = writeJson(request);
+
+    Optional<LaunchDescriptor> stored =
+        launchDescriptorRepository.findBoundByRequest(
+            workloadNamespace, request.canonicalTenantId(), request.controlPlaneRequestId());
+    if (stored.isPresent()) {
+      LaunchDescriptor descriptor = stored.orElseThrow();
+      requireStoredRequestMatches(descriptor, request, requestJson);
+      AuthoredWorldSourceEvidence source = readExactSource(request);
+      String sourceJson = writeJson(source);
+      if (LaunchDescriptor.OUTCOME_FAILED.equals(descriptor.getOutcomeStatus())) {
+        throwStoredFailure(
+            descriptor, request, requestJson, sourceJson, source.sourceGameTenantKey());
+      }
+      if (!LaunchDescriptor.OUTCOME_SUCCESS.equals(descriptor.getOutcomeStatus())) {
+        throw new IllegalArgumentException("LAUNCH_DESCRIPTOR_CONFLICT: stored outcome is unknown");
+      }
+      return readStored(descriptor, request, requestJson, sourceJson);
     }
+    AuthoredWorldSourceEvidence source = readExactSource(request);
+    String sourceJson = writeJson(source);
+    if (launchDescriptorRepository
+        .findByPrivateRequest(source.sourceGameTenantKey(), request.controlPlaneRequestId())
+        .isPresent()) {
+      throw new IllegalArgumentException(
+          "LAUNCH_DESCRIPTOR_CONFLICT: retained private-owner request history is unbound or bound to another canonical identity");
+    }
+
+    try {
+      return resolveNewLaunchDescriptor(request, source, requestJson, sourceJson);
+    } catch (FrozenLaunchDescriptorDenialException denial) {
+      LaunchDescriptor failure = frozenFailure(request, source, requestJson, sourceJson, denial);
+      LaunchDescriptor persisted = launchDescriptorRepository.insertImmutable(failure);
+      throwStoredFailure(persisted, request, requestJson, sourceJson, source.sourceGameTenantKey());
+      throw new IllegalStateException("Persisted deterministic launch denial was not returned");
+    }
+  }
+
+  private ResolvedLaunchDescriptorDto resolveNewLaunchDescriptor(
+      AuthoredWorldLaunchDescriptorEvidence.Request request,
+      AuthoredWorldSourceEvidence source,
+      String requestJson,
+      String sourceJson) {
     GameTemplateLaunchConfigView template =
         gameTemplateRepository
-            .findLaunchConfigByTenantIdAndId(tenantId, gameTemplateId)
+            .findLaunchConfigByTenantIdAndId(source.sourceGameTenantKey(), request.gameTemplateId())
+            .filter(row -> row.getId() == request.gameTemplateId())
+            .filter(row -> source.sourceGameTenantKey().equals(row.getTenantId()))
             .orElseThrow(
                 () ->
-                    new IllegalArgumentException(
-                        "INVALID_TEMPLATE_CONFIGURATION: game template not found"));
-    String requestHash =
-        hashRequest(
-            tenantId,
-            gameTemplateId,
-            controlPlaneRequestId,
-            requestedScriptPatchVersion,
-            sourceVersionId,
-            targetVersionId,
-            requestedRuntimeFlagsJson);
-    var existing =
-        launchDescriptorRepository.findByTenantIdAndGameTemplateIdAndControlPlaneRequestId(
-            tenantId, gameTemplateId, controlPlaneRequestId);
-    if (existing.isPresent()) {
-      if (!existing.get().getRequestHash().equals(requestHash)) {
-        throw new IllegalArgumentException(
-            "INVALID_TEMPLATE_CONFIGURATION: controlPlaneRequestId already resolved with different inputs");
-      }
-      requireReadyScriptPatch(requestedScriptPatchVersion);
-      requireReadyScriptPatch(existing.get().getScriptPatchVersion());
-      return toDto(existing.get());
-    }
+                    denial(
+                        "INVALID_TEMPLATE_CONFIGURATION",
+                        "template is not owned by the source game"));
     if (template.getTemplateReferencePhase() != TemplateReferencePhase.ENFORCED) {
-      throw new IllegalArgumentException(
-          "TEMPLATE_REFERENCE_PHASE_NOT_ENFORCED: template reference phase is not enforced");
+      throw denial(
+          "TEMPLATE_REFERENCE_PHASE_NOT_ENFORCED", "template reference phase is not enforced");
     }
-    Long resolvedVersionId =
-        targetVersionId != null ? targetVersionId : template.getDefaultVersionId();
-    if (resolvedVersionId == null || resolvedVersionId <= 0L) {
-      throw new IllegalArgumentException(
-          "INVALID_TEMPLATE_CONFIGURATION: template defaultVersionId is required");
+    Long versionId =
+        request.targetVersionIdPresent()
+            ? request.targetVersionId()
+            : template.getDefaultVersionId();
+    if (versionId == null || versionId <= 0) {
+      throw denial("INVALID_TEMPLATE_CONFIGURATION", "template defaultVersionId is required");
     }
     VersionDto version =
         versionRepository
-            .findById(resolvedVersionId)
-            .filter(found -> found.getTenantId().equals(tenantId))
+            .findById(versionId)
+            .filter(row -> row.getId().equals(versionId))
+            .filter(row -> source.sourceGameTenantKey().equals(row.getTenantId()))
             .map(
-                found ->
+                row ->
                     new VersionDto(
-                        found.getId(),
-                        found.getTenantId(),
-                        found.getVersionNumber(),
-                        found.getVersionState(),
-                        found.getVersionStateEpoch(),
-                        found.getScriptPatchVersion(),
-                        found.getBaseVersionId(),
-                        found.isScriptOnly(),
-                        found.getNotes(),
-                        found.getCreatedAt(),
-                        found.getUpdatedAt()))
+                        row.getId(),
+                        row.getTenantId(),
+                        row.getVersionNumber(),
+                        row.getVersionState(),
+                        row.getVersionStateEpoch(),
+                        row.getScriptPatchVersion(),
+                        row.getBaseVersionId(),
+                        row.isScriptOnly(),
+                        row.getNotes(),
+                        row.getCreatedAt(),
+                        row.getUpdatedAt()))
             .orElseThrow(
                 () ->
-                    new IllegalArgumentException(
-                        "INVALID_TEMPLATE_CONFIGURATION: target version not found"));
+                    denial(
+                        "INVALID_TEMPLATE_CONFIGURATION",
+                        "target version is not owned by the source game"));
     if (version.versionState() != VersionLifecycleState.PUBLISHED
         && version.versionState() != VersionLifecycleState.ACTIVE) {
-      throw new IllegalArgumentException(
-          "VERSION_STATE_EPOCH_STALE: resolved version is not activation-eligible");
+      throw denial("VERSION_STATE_EPOCH_STALE", "resolved version is not activation-eligible");
     }
+    requireReadyScriptPatch(
+        request.requestedScriptPatchVersionPresent()
+            ? request.requestedScriptPatchVersion()
+            : null);
+    requireReadyScriptPatch(template.getDefaultScriptPatchVersion());
     requireReadyScriptPatch(version.scriptPatchVersion());
-    String resolvedScriptPatchVersion =
-        resolveScriptPatchVersion(template, requestedScriptPatchVersion, version);
-    requireReadyScriptPatch(resolvedScriptPatchVersion);
-    String resolvedRuntimeFlagsJson = resolveRuntimeFlagsJson(template, requestedRuntimeFlagsJson);
+    String scriptPatch = resolveScriptPatchVersion(template, request, version);
+    String runtimeFlags = resolveRuntimeFlagsJson(template, request);
+
     String remapSetId = null;
-    if (sourceVersionId != null && !sourceVersionId.equals(resolvedVersionId)) {
-      TemplateRemapSetDto remapSet =
+    if (request.sourceVersionIdPresent() && !request.sourceVersionId().equals(versionId)) {
+      TemplateRemapSetDto remap =
           templateRemapSetService
-              .findApprovedTemplateRemapSet(tenantId, sourceVersionId, resolvedVersionId)
+              .findApprovedTemplateRemapSet(
+                  source.sourceGameTenantKey(), request.sourceVersionId(), versionId)
               .orElseThrow(
                   () ->
-                      new IllegalArgumentException(
-                          "LAUNCH_REMAP_REQUIRED: replacement-instance launch requires an approved remapSetId"));
-      remapSetId = remapSet.remapSetId();
+                      denial(
+                          "LAUNCH_REMAP_REQUIRED",
+                          "replacement-instance launch requires an approved remapSetId"));
+      remapSetId = remap.remapSetId();
     }
-    var bundle = requirePublishedReleaseBundle(tenantId, resolvedVersionId);
-    PublishedReleaseBundleContract.requireSupportedSchemaForLaunch(bundle);
+    PublishedReleaseBundleDto bundle =
+        requirePublishedReleaseBundle(source.sourceGameTenantKey(), versionId);
+    if (!source.sourceGameTenantKey().equals(bundle.tenantId())
+        || !Objects.equals(bundle.versionId(), versionId)) {
+      throw denial(
+          "RELEASE_BUNDLE_NOT_FOUND", "release bundle is not owned by the resolved source version");
+    }
+    if (!PublishedReleaseBundleContract.SUPPORTED_ATTESTATION_SCHEMA_VERSION.equals(
+        bundle.attestationSchemaVersion())) {
+      throw denial(
+          PublishedReleaseBundleContract.SCHEMA_VERSION_UNSUPPORTED,
+          "unsupported published release bundle attestation schema "
+              + bundle.attestationSchemaVersion());
+    }
+
+    String descriptorId = "ld-" + UUID.randomUUID();
+    AuthoredWorldLaunchDescriptorEvidence evidence =
+        AuthoredWorldLaunchDescriptorEvidence.create(
+            request,
+            descriptorId,
+            versionId,
+            scriptPatch != null,
+            scriptPatch,
+            runtimeFlags,
+            bundle.generationConfigRevision(),
+            version.versionStateEpoch(),
+            bundle.id(),
+            releaseBundleRef(request.canonicalTenantId().toString(), bundle.id(), versionId),
+            remapSetId != null,
+            remapSetId);
     LaunchDescriptor descriptor = new LaunchDescriptor();
-    descriptor.setLaunchDescriptorId("ld-" + UUID.randomUUID());
-    descriptor.setTenantId(tenantId);
-    descriptor.setGameTemplateId(gameTemplateId);
-    descriptor.setControlPlaneRequestId(controlPlaneRequestId);
-    descriptor.setRequestHash(requestHash);
-    descriptor.setVersionId(resolvedVersionId);
-    descriptor.setScriptPatchVersion(resolvedScriptPatchVersion);
-    descriptor.setRuntimeFlagsJson(resolvedRuntimeFlagsJson);
+    descriptor.setLaunchDescriptorId(descriptorId);
+    descriptor.setTenantId(source.sourceGameTenantKey());
+    descriptor.setGameTemplateId(request.gameTemplateId());
+    descriptor.setControlPlaneRequestId(request.controlPlaneRequestId());
+    descriptor.setRequestHash(evidence.requestDigest());
+    descriptor.setVersionId(versionId);
+    descriptor.setScriptPatchVersion(scriptPatch);
+    descriptor.setRuntimeFlagsJson(runtimeFlags);
     descriptor.setGenerationConfigRevision(bundle.generationConfigRevision());
     descriptor.setVersionStateEpoch(version.versionStateEpoch());
     descriptor.setReleaseBundleId(bundle.id());
-    descriptor.setPublishedReleaseBundleRef(
-        releaseBundleRef(tenantId, bundle.id(), resolvedVersionId));
+    descriptor.setPublishedReleaseBundleRef(evidence.publishedReleaseBundleRef());
     descriptor.setRemapSetId(remapSetId);
-    logger.info(
-        "Resolved launch descriptor tenant={} template={} controlPlaneRequestId={} version={} remapSetId={}",
-        tenantId,
-        gameTemplateId,
-        controlPlaneRequestId,
-        resolvedVersionId,
-        remapSetId);
-    return toDto(launchDescriptorRepository.save(descriptor));
+    descriptor.setDescriptorSchemaVersion(evidence.schemaVersion());
+    descriptor.setTargetNamespace(workloadNamespace);
+    descriptor.setCanonicalTenantId(request.canonicalTenantId().toString());
+    descriptor.setWorldSlug(request.worldSlug());
+    descriptor.setAuthoredWorldSourceOperationId(
+        request.authoredWorldSourceOperationId().toString());
+    descriptor.setAuthoredWorldSourceEvidenceDigest(request.authoredWorldSourceEvidenceDigest());
+    descriptor.setRequestDigest(evidence.requestDigest());
+    descriptor.setResultDigest(evidence.resultDigest());
+    descriptor.setOriginalRequestJson(requestJson);
+    descriptor.setSourceEvidenceJson(sourceJson);
+    return readStored(
+        launchDescriptorRepository.insertImmutable(descriptor), request, requestJson, sourceJson);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  @Timed(value = "gamedesign.launchDescriptor.read")
+  public ResolvedLaunchDescriptorDto getLaunchDescriptor(
+      UUID readRequestId,
+      UUID canonicalTenantId,
+      String worldSlug,
+      String controlPlaneRequestId,
+      String expectedRequestDigest,
+      String expectedResultDigest) {
+    if (readRequestId == null || NIL_UUID.equals(readRequestId)) {
+      throw new IllegalArgumentException("Canonical nonnil read request ID is required");
+    }
+    requireConfiguredNamespace(workloadNamespace);
+    AuthoredWorldSourceDigest.validateReadSelector(workloadNamespace, canonicalTenantId, worldSlug);
+    if (controlPlaneRequestId == null
+        || controlPlaneRequestId.isBlank()
+        || !GameTenantCreationDigest.isDigest(expectedRequestDigest)
+        || !GameTenantCreationDigest.isDigest(expectedResultDigest)) {
+      throw new IllegalArgumentException("Exact descriptor read selector and digests are required");
+    }
+    LaunchDescriptor descriptor =
+        launchDescriptorRepository
+            .findBoundByRequest(workloadNamespace, canonicalTenantId, controlPlaneRequestId)
+            .orElseThrow(
+                () ->
+                    new IllegalArgumentException(
+                        "LAUNCH_DESCRIPTOR_NOT_FOUND: no descriptor exists for the exact request"));
+    if (!LaunchDescriptor.OUTCOME_SUCCESS.equals(descriptor.getOutcomeStatus())) {
+      throw new IllegalArgumentException(
+          "LAUNCH_DESCRIPTOR_CONFLICT: request outcome is not a successful descriptor");
+    }
+    if (descriptor.getDescriptorSchemaVersion() == null) {
+      throw new IllegalArgumentException(
+          "LAUNCH_DESCRIPTOR_UNBOUND: retained descriptor history has no authored-world binding");
+    }
+    if (!worldSlug.equals(descriptor.getWorldSlug())
+        || !canonicalTenantId.toString().equals(descriptor.getCanonicalTenantId())
+        || !expectedRequestDigest.equals(descriptor.getRequestDigest())
+        || !expectedResultDigest.equals(descriptor.getResultDigest())) {
+      throw new IllegalArgumentException(
+          "LAUNCH_DESCRIPTOR_CONFLICT: exact readback selector or digest does not match");
+    }
+    AuthoredWorldLaunchDescriptorEvidence.Request storedRequest =
+        readRequest(descriptor.getOriginalRequestJson());
+    AuthoredWorldSourceEvidence source = readExactSource(storedRequest);
+    String sourceJson = writeJson(source);
+    if (!sourceJson.equals(descriptor.getSourceEvidenceJson())) {
+      throw new IllegalArgumentException(
+          "AUTHORED_WORLD_SOURCE_CHANGED: committed source differs from descriptor history");
+    }
+    return readStored(
+        descriptor,
+        storedRequest,
+        descriptor.getOriginalRequestJson(),
+        descriptor.getSourceEvidenceJson());
+  }
+
+  private AuthoredWorldSourceEvidence readExactSource(
+      AuthoredWorldLaunchDescriptorEvidence.Request request) {
+    AuthoredWorldSourceEvidence source =
+        authoredWorldSourceRepository
+            .read(
+                request.authoredWorldSourceOperationId(),
+                request.canonicalTenantId(),
+                request.worldSlug(),
+                workloadNamespace)
+            .orElseThrow(
+                () ->
+                    new IllegalArgumentException(
+                        "AUTHORED_WORLD_SOURCE_NOT_FOUND: exact committed source evidence is missing"));
+    if (!workloadNamespace.equals(source.targetNamespace())
+        || !request.canonicalTenantId().equals(source.canonicalTenantId())
+        || !request.worldSlug().equals(source.worldSlug())
+        || !request.authoredWorldSourceOperationId().equals(source.operationId())
+        || !request.authoredWorldSourceEvidenceDigest().equals(source.evidenceDigest())) {
+      throw new IllegalArgumentException(
+          "AUTHORED_WORLD_SOURCE_CHANGED: source evidence does not match the exact request");
+    }
+    return source;
+  }
+
+  private ResolvedLaunchDescriptorDto readStored(
+      LaunchDescriptor descriptor,
+      AuthoredWorldLaunchDescriptorEvidence.Request request,
+      String requestJson,
+      String sourceJson) {
+    if (!LaunchDescriptor.OUTCOME_SUCCESS.equals(descriptor.getOutcomeStatus())
+        || descriptor.getFailureCode() != null
+        || descriptor.getFailureMessage() != null
+        || descriptor.getDescriptorSchemaVersion() == null
+        || !Objects.equals(
+            descriptor.getDescriptorSchemaVersion(),
+            AuthoredWorldLaunchDescriptorEvidence.SCHEMA_VERSION)
+        || !workloadNamespace.equals(descriptor.getTargetNamespace())
+        || !request.canonicalTenantId().toString().equals(descriptor.getCanonicalTenantId())
+        || !request.worldSlug().equals(descriptor.getWorldSlug())
+        || !request
+            .authoredWorldSourceOperationId()
+            .toString()
+            .equals(descriptor.getAuthoredWorldSourceOperationId())
+        || !request
+            .authoredWorldSourceEvidenceDigest()
+            .equals(descriptor.getAuthoredWorldSourceEvidenceDigest())
+        || !request.controlPlaneRequestId().equals(descriptor.getControlPlaneRequestId())
+        || request.gameTemplateId() != descriptor.getGameTemplateId()
+        || !requestJson.equals(descriptor.getOriginalRequestJson())
+        || !sourceJson.equals(descriptor.getSourceEvidenceJson())
+        || !request.requestDigest().equals(descriptor.getRequestHash())
+        || !request.requestDigest().equals(descriptor.getRequestDigest())) {
+      throw new IllegalArgumentException(
+          "LAUNCH_DESCRIPTOR_CONFLICT: stored descriptor is not the exact immutable request");
+    }
+    AuthoredWorldLaunchDescriptorEvidence evidence =
+        AuthoredWorldLaunchDescriptorEvidence.create(
+            request,
+            descriptor.getLaunchDescriptorId(),
+            descriptor.getVersionId(),
+            descriptor.getScriptPatchVersion() != null,
+            descriptor.getScriptPatchVersion(),
+            descriptor.getRuntimeFlagsJson(),
+            descriptor.getGenerationConfigRevision(),
+            descriptor.getVersionStateEpoch(),
+            descriptor.getReleaseBundleId(),
+            descriptor.getPublishedReleaseBundleRef(),
+            descriptor.getRemapSetId() != null,
+            descriptor.getRemapSetId());
+    evidence.requireValid();
+    if (!evidence.resultDigest().equals(descriptor.getResultDigest())) {
+      throw new IllegalArgumentException(
+          "LAUNCH_DESCRIPTOR_CONFLICT: stored resolved result digest is inconsistent");
+    }
+    return new ResolvedLaunchDescriptorDto(
+        evidence.launchDescriptorId(),
+        evidence.canonicalTenantId().toString(),
+        evidence.gameTemplateId(),
+        evidence.controlPlaneRequestId(),
+        evidence.versionId(),
+        evidence.scriptPatchVersion(),
+        evidence.runtimeFlagsJson(),
+        evidence.generationConfigRevision(),
+        evidence.versionStateEpoch(),
+        evidence.releaseBundleId(),
+        evidence.publishedReleaseBundleRef(),
+        evidence.remapSetId(),
+        evidence);
+  }
+
+  private LaunchDescriptor frozenFailure(
+      AuthoredWorldLaunchDescriptorEvidence.Request request,
+      AuthoredWorldSourceEvidence source,
+      String requestJson,
+      String sourceJson,
+      FrozenLaunchDescriptorDenialException denial) {
+    LaunchDescriptor descriptor = new LaunchDescriptor();
+    descriptor.setTenantId(source.sourceGameTenantKey());
+    descriptor.setControlPlaneRequestId(request.controlPlaneRequestId());
+    descriptor.setRequestHash(request.requestDigest());
+    descriptor.setDescriptorSchemaVersion(AuthoredWorldLaunchDescriptorEvidence.SCHEMA_VERSION);
+    descriptor.setTargetNamespace(workloadNamespace);
+    descriptor.setCanonicalTenantId(request.canonicalTenantId().toString());
+    descriptor.setWorldSlug(request.worldSlug());
+    descriptor.setAuthoredWorldSourceOperationId(
+        request.authoredWorldSourceOperationId().toString());
+    descriptor.setAuthoredWorldSourceEvidenceDigest(request.authoredWorldSourceEvidenceDigest());
+    descriptor.setRequestDigest(request.requestDigest());
+    descriptor.setOriginalRequestJson(requestJson);
+    descriptor.setSourceEvidenceJson(sourceJson);
+    descriptor.setOutcomeStatus(LaunchDescriptor.OUTCOME_FAILED);
+    descriptor.setFailureCode(denial.failureCode());
+    descriptor.setFailureMessage(denial.getMessage());
+    return descriptor;
+  }
+
+  private void requireStoredRequestMatches(
+      LaunchDescriptor descriptor,
+      AuthoredWorldLaunchDescriptorEvidence.Request request,
+      String requestJson) {
+    if (!workloadNamespace.equals(descriptor.getTargetNamespace())
+        || !request.canonicalTenantId().toString().equals(descriptor.getCanonicalTenantId())
+        || !request.controlPlaneRequestId().equals(descriptor.getControlPlaneRequestId())
+        || !request.requestDigest().equals(descriptor.getRequestDigest())
+        || !request.requestDigest().equals(descriptor.getRequestHash())
+        || !requestJson.equals(descriptor.getOriginalRequestJson())) {
+      throw new IllegalArgumentException(
+          "LAUNCH_DESCRIPTOR_CONFLICT: control-plane request identity was reused with changed input");
+    }
+  }
+
+  private void throwStoredFailure(
+      LaunchDescriptor descriptor,
+      AuthoredWorldLaunchDescriptorEvidence.Request request,
+      String requestJson,
+      String sourceJson,
+      String sourceGameTenantKey) {
+    if (!LaunchDescriptor.OUTCOME_FAILED.equals(descriptor.getOutcomeStatus())
+        || !Objects.equals(
+            descriptor.getDescriptorSchemaVersion(),
+            AuthoredWorldLaunchDescriptorEvidence.SCHEMA_VERSION)
+        || !workloadNamespace.equals(descriptor.getTargetNamespace())
+        || !request.canonicalTenantId().toString().equals(descriptor.getCanonicalTenantId())
+        || !request.worldSlug().equals(descriptor.getWorldSlug())
+        || !request
+            .authoredWorldSourceOperationId()
+            .toString()
+            .equals(descriptor.getAuthoredWorldSourceOperationId())
+        || !request
+            .authoredWorldSourceEvidenceDigest()
+            .equals(descriptor.getAuthoredWorldSourceEvidenceDigest())
+        || !request.controlPlaneRequestId().equals(descriptor.getControlPlaneRequestId())
+        || !request.requestDigest().equals(descriptor.getRequestDigest())
+        || !request.requestDigest().equals(descriptor.getRequestHash())
+        || !requestJson.equals(descriptor.getOriginalRequestJson())
+        || !sourceJson.equals(descriptor.getSourceEvidenceJson())
+        || !sourceGameTenantKey.equals(descriptor.getTenantId())
+        || descriptor.getLaunchDescriptorId() != null
+        || descriptor.getGameTemplateId() != null
+        || descriptor.getVersionId() != null
+        || descriptor.getScriptPatchVersion() != null
+        || descriptor.getRuntimeFlagsJson() != null
+        || descriptor.getGenerationConfigRevision() != null
+        || descriptor.getVersionStateEpoch() != null
+        || descriptor.getReleaseBundleId() != null
+        || descriptor.getPublishedReleaseBundleRef() != null
+        || descriptor.getRemapSetId() != null
+        || descriptor.getResultDigest() != null
+        || !isPersistableFailureCode(descriptor.getFailureCode())
+        || descriptor.getFailureMessage() == null
+        || descriptor.getFailureMessage().isBlank()) {
+      throw new IllegalArgumentException(
+          "LAUNCH_DESCRIPTOR_CONFLICT: stored failure is not the exact immutable request outcome");
+    }
+    throw FrozenLaunchDescriptorDenialException.fromStored(
+        descriptor.getFailureCode(), descriptor.getFailureMessage());
+  }
+
+  private boolean isPersistableFailureCode(String failureCode) {
+    return switch (failureCode == null ? "" : failureCode) {
+      case "TEMPLATE_REFERENCE_PHASE_NOT_ENFORCED",
+          "INVALID_TEMPLATE_CONFIGURATION",
+          "SCRIPT_PATCH_OVERRIDE_CONFLICT",
+          "SCRIPT_PATCH_NOT_READY",
+          "RELEASE_BUNDLE_NOT_FOUND",
+          "RELEASE_ATTESTATION_MISMATCH",
+          "VERSION_STATE_EPOCH_STALE",
+          "LAUNCH_REMAP_REQUIRED",
+          PublishedReleaseBundleContract.SCHEMA_VERSION_UNSUPPORTED ->
+          true;
+      default -> false;
+    };
+  }
+
+  private static FrozenLaunchDescriptorDenialException denial(String code, String detail) {
+    return FrozenLaunchDescriptorDenialException.create(code, detail);
+  }
+
+  private AuthoredWorldLaunchDescriptorEvidence.Request readRequest(String json) {
+    if (json == null) {
+      throw new IllegalArgumentException("LAUNCH_DESCRIPTOR_UNBOUND: original request is missing");
+    }
+    try {
+      AuthoredWorldLaunchDescriptorEvidence.Request request =
+          objectMapper.readValue(json, AuthoredWorldLaunchDescriptorEvidence.Request.class);
+      if (!writeJson(request).equals(json)) {
+        throw new IllegalArgumentException(
+            "LAUNCH_DESCRIPTOR_UNBOUND: original request is not the closed owner encoding");
+      }
+      return request;
+    } catch (Exception exception) {
+      throw new IllegalArgumentException(
+          "LAUNCH_DESCRIPTOR_UNBOUND: original request is unreadable", exception);
+    }
+  }
+
+  private String writeJson(Object value) {
+    try {
+      return objectMapper.writeValueAsString(value);
+    } catch (Exception exception) {
+      throw new IllegalStateException(
+          "Launch descriptor evidence could not be serialized", exception);
+    }
+  }
+
+  private void requireConfiguredNamespace(String requestNamespace) {
+    if (!GrpcPeerIdentity.isValidNamespace(workloadNamespace)
+        || !workloadNamespace.equals(requestNamespace)) {
+      throw new IllegalArgumentException(
+          "LAUNCH_DESCRIPTOR_NAMESPACE_MISMATCH: configured workload namespace is required");
+    }
   }
 
   private String resolveScriptPatchVersion(
       GameTemplateLaunchConfigView template,
-      String requestedScriptPatchVersion,
+      AuthoredWorldLaunchDescriptorEvidence.Request request,
       VersionDto version) {
     String templateDefault = normalizeBlank(template.getDefaultScriptPatchVersion());
-    String requested = normalizeBlank(requestedScriptPatchVersion);
+    String requested =
+        request.requestedScriptPatchVersionPresent()
+            ? normalizeBlank(request.requestedScriptPatchVersion())
+            : null;
     if (templateDefault != null && requested != null && !templateDefault.equals(requested)) {
-      throw new IllegalArgumentException(
-          "SCRIPT_PATCH_OVERRIDE_CONFLICT: requested script patch conflicts with template default");
+      throw denial(
+          "SCRIPT_PATCH_OVERRIDE_CONFLICT",
+          "requested script patch conflicts with template default");
     }
     String resolved = requested != null ? requested : templateDefault;
     if (resolved != null
         && version.scriptPatchVersion() != null
         && !version.scriptPatchVersion().isBlank()
         && !version.scriptPatchVersion().equals(resolved)) {
-      throw new IllegalArgumentException(
-          "SCRIPT_PATCH_NOT_READY: requested script patch is not published for the resolved version");
+      throw denial(
+          "SCRIPT_PATCH_NOT_READY",
+          "requested script patch is not published for the resolved version");
     }
     return resolved;
   }
 
   private String resolveRuntimeFlagsJson(
-      GameTemplateLaunchConfigView template, String requestedRuntimeFlagsJson) {
+      GameTemplateLaunchConfigView template,
+      AuthoredWorldLaunchDescriptorEvidence.Request request) {
     String templateFlags =
         normalizeBlank(template.getDefaultRuntimeFlagsJson()) == null
             ? "{}"
             : template.getDefaultRuntimeFlagsJson();
-    String requested = normalizeBlank(requestedRuntimeFlagsJson);
+    String requested =
+        request.requestedRuntimeFlagsJsonPresent()
+            ? normalizeBlank(request.requestedRuntimeFlagsJson())
+            : null;
     if (requested == null) {
       return templateFlags;
     }
     if (!"{}".equals(templateFlags)) {
-      throw new IllegalArgumentException(
-          "INVALID_TEMPLATE_CONFIGURATION: template-owned runtime flags cannot be overridden");
+      throw denial(
+          "INVALID_TEMPLATE_CONFIGURATION", "template-owned runtime flags cannot be overridden");
     }
     return requested;
   }
 
   private void requireReadyScriptPatch(String scriptPatchVersion) {
     if (scriptPatchVersion != null && !scriptPatchVersion.isBlank()) {
-      throw new IllegalArgumentException(
-          "SCRIPT_PATCH_NOT_READY: exact published-for-base and Automation READY evidence is unavailable");
+      throw denial(
+          "SCRIPT_PATCH_NOT_READY",
+          "exact published-for-base and Automation READY evidence is unavailable");
     }
   }
 
-  private net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto
-      requirePublishedReleaseBundle(String tenantId, long resolvedVersionId) {
+  private PublishedReleaseBundleDto requirePublishedReleaseBundle(String tenantId, long versionId) {
     try {
-      return publishedReleaseBundleService.getPublishedReleaseBundle(tenantId, resolvedVersionId);
-    } catch (PublishedReleaseBundleNotFoundException ex) {
-      throw new IllegalArgumentException(
-          "RELEASE_BUNDLE_NOT_FOUND: no published release bundle for the resolved version");
+      return publishedReleaseBundleService.getPublishedReleaseBundle(tenantId, versionId);
+    } catch (PublishedReleaseBundleNotFoundException exception) {
+      throw denial(
+          "RELEASE_BUNDLE_NOT_FOUND", "no published release bundle for the resolved version");
     }
   }
 
-  private ResolvedLaunchDescriptorDto toDto(LaunchDescriptor descriptor) {
-    return new ResolvedLaunchDescriptorDto(
-        descriptor.getLaunchDescriptorId(),
-        descriptor.getTenantId(),
-        descriptor.getGameTemplateId(),
-        descriptor.getControlPlaneRequestId(),
-        descriptor.getVersionId(),
-        descriptor.getScriptPatchVersion(),
-        descriptor.getRuntimeFlagsJson(),
-        descriptor.getGenerationConfigRevision(),
-        descriptor.getVersionStateEpoch(),
-        descriptor.getReleaseBundleId(),
-        descriptor.getPublishedReleaseBundleRef(),
-        descriptor.getRemapSetId());
+  private String releaseBundleRef(String canonicalTenantId, long bundleId, long versionId) {
+    return "release-bundle:" + canonicalTenantId + ":" + versionId + ":" + bundleId;
   }
 
-  private String hashRequest(
-      String tenantId,
-      long gameTemplateId,
-      String controlPlaneRequestId,
-      String requestedScriptPatchVersion,
-      Long sourceVersionId,
-      Long targetVersionId,
-      String requestedRuntimeFlagsJson) {
-    Map<String, Object> request = new LinkedHashMap<>();
-    request.put("tenantId", tenantId);
-    request.put("gameTemplateId", gameTemplateId);
-    request.put("controlPlaneRequestId", controlPlaneRequestId);
-    request.put("requestedScriptPatchVersion", normalizeBlank(requestedScriptPatchVersion));
-    request.put("sourceVersionId", sourceVersionId);
-    request.put("targetVersionId", targetVersionId);
-    request.put("requestedRuntimeFlagsJson", normalizeBlank(requestedRuntimeFlagsJson));
-    try {
-      return sha256(objectMapper.writeValueAsString(request));
-    } catch (StreamReadException | tools.jackson.databind.DatabindException ex) {
-      throw new IllegalStateException("failed to hash launch descriptor request", ex);
-    }
-  }
-
-  private String releaseBundleRef(String tenantId, long bundleId, long versionId) {
-    return "prb:" + tenantId + ":" + versionId + ":" + bundleId;
-  }
-
-  private String sha256(String value) {
-    try {
-      MessageDigest digest = MessageDigest.getInstance("SHA-256");
-      byte[] bytes = digest.digest(value.getBytes(StandardCharsets.UTF_8));
-      StringBuilder builder = new StringBuilder(bytes.length * 2);
-      for (byte current : bytes) {
-        builder.append(String.format("%02x", current));
-      }
-      return builder.toString();
-    } catch (NoSuchAlgorithmException ex) {
-      throw new IllegalStateException("sha-256 unavailable", ex);
-    }
-  }
-
-  private String normalizeBlank(String value) {
+  private static String normalizeBlank(String value) {
     return value == null || value.isBlank() ? null : value;
   }
 }

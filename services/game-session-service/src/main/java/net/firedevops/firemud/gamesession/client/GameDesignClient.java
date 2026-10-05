@@ -21,8 +21,6 @@ import net.firedevops.firemud.gamedesign.v1.GetVersionStateResponse;
 import net.firedevops.firemud.gamedesign.v1.HelpTopicScope;
 import net.firedevops.firemud.gamedesign.v1.ResolveHelpTopicRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveHelpTopicResponse;
-import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorRequest;
-import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorResponse;
 import net.firedevops.firemud.gamesession.service.GameAuthoredHelpReader;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.springframework.stereotype.Component;
@@ -60,31 +58,6 @@ public final class GameDesignClient
       io.grpc.ManagedChannel channel) {
     return applyStubCustomizer(
         GameDesignServiceGrpc.newBlockingStub(channel).withCompression("gzip"));
-  }
-
-  public ResolveLaunchDescriptorResponse resolveLaunchDescriptor(
-      long tenantId, long gameTemplateId, String controlPlaneRequestId) {
-    return resolveLaunchDescriptor(tenantId, gameTemplateId, controlPlaneRequestId, null, null);
-  }
-
-  public ResolveLaunchDescriptorResponse resolveLaunchDescriptor(
-      long tenantId,
-      long gameTemplateId,
-      String controlPlaneRequestId,
-      Long sourceVersionId,
-      Long targetVersionId) {
-    ResolveLaunchDescriptorRequest.Builder request =
-        ResolveLaunchDescriptorRequest.newBuilder()
-            .setTenantId(Long.toString(tenantId))
-            .setGameTemplateId(gameTemplateId)
-            .setControlPlaneRequestId(controlPlaneRequestId);
-    if (sourceVersionId != null) {
-      request.setSourceVersionId(sourceVersionId);
-    }
-    if (targetVersionId != null) {
-      request.setTargetVersionId(targetVersionId);
-    }
-    return callStub().resolveLaunchDescriptor(request.build());
   }
 
   public GetPublishedReleaseBundleResponse getPublishedReleaseBundle(

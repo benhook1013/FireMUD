@@ -437,10 +437,11 @@ public class TenantIdentityGrpcService
   public void resolveAuthoredWorldSource(
       ResolveAuthoredWorldSourceRequest request,
       StreamObserver<ResolveAuthoredWorldSourceResponse> responseObserver) {
-    if (!isGameSessionPeer()) {
+    if (!isAuthoredWorldSourceReaderPeer()) {
       responseObserver.onError(
           Status.PERMISSION_DENIED
-              .withDescription("Verified Game Session workload identity is required")
+              .withDescription(
+                  "Verified same-namespace Game Session or World Management identity is required")
               .asRuntimeException());
       return;
     }
@@ -653,6 +654,15 @@ public class TenantIdentityGrpcService
         && GrpcPeerIdentity.isValidNamespace(workloadNamespace)
         && peer.uri()
             .equals("spiffe://firemud/ns/" + workloadNamespace + "/sa/game-session-service");
+  }
+
+  private boolean isAuthoredWorldSourceReaderPeer() {
+    GrpcPeerIdentity peer = GrpcPeerIdentity.current();
+    String expectedPrefix = "spiffe://firemud/ns/" + workloadNamespace + "/sa/";
+    return peer != null
+        && GrpcPeerIdentity.isValidNamespace(workloadNamespace)
+        && (peer.uri().equals(expectedPrefix + "game-session-service")
+            || peer.uri().equals(expectedPrefix + "world-management-service"));
   }
 
   private static UUID parseCanonicalNonNilUuid(String value) {

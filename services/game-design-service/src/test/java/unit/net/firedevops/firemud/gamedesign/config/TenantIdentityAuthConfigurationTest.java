@@ -42,6 +42,10 @@ class TenantIdentityAuthConfigurationTest {
       "gamedesign.v1.TenantIdentityService/ResolveLegacyGameSessionTenantAssociation";
   private static final String ACCOUNT_LEGACY_IDENTITY_METHOD =
       "gamedesign.v1.TenantIdentityService/ResolveLegacyGameTenantIdentity";
+  private static final String RESOLVE_LAUNCH_DESCRIPTOR_METHOD =
+      "gamedesign.v1.GameDesignService/ResolveLaunchDescriptor";
+  private static final String GET_LAUNCH_DESCRIPTOR_METHOD =
+      "gamedesign.v1.GameDesignService/GetLaunchDescriptor";
 
   @Test
   void baseConfigurationExemptsOnlyTheIntendedTenantIdentityMethods() throws IOException {
@@ -79,7 +83,9 @@ class TenantIdentityAuthConfigurationTest {
             FRESH_CREATION_METHOD,
             RUNTIME_TENANT_METHOD,
             AUTHORED_WORLD_SOURCE_METHOD,
-            GAME_SESSION_ASSOCIATION_METHOD);
+            GAME_SESSION_ASSOCIATION_METHOD,
+            RESOLVE_LAUNCH_DESCRIPTOR_METHOD,
+            GET_LAUNCH_DESCRIPTOR_METHOD);
 
     AuthTokenInterceptor interceptor =
         new AuthTokenInterceptor(null, Set.copyOf(properties.getPublicMethods()));

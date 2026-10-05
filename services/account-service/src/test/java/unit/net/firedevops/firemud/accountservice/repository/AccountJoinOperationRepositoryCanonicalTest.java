@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 
+import java.time.Instant;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
@@ -13,6 +14,31 @@ import org.junit.jupiter.api.Test;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class AccountJoinOperationRepositoryCanonicalTest {
+  @Test
+  void reconciliationAttemptAtIntegerMaximumIsRejectedBeforeJournalAccess() {
+    DSLContext dsl = mock(DSLContext.class);
+    AccountJoinOperationRepository repository =
+        new AccountJoinOperationRepository(dsl, mock(AccountConnectScopeRepository.class));
+    boolean wasTransactionActive = TransactionSynchronizationManager.isActualTransactionActive();
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    try {
+      assertThatThrownBy(
+              () ->
+                  repository.recordCanonicalReconciliationAttempt(
+                      "request-v2",
+                      Integer.MAX_VALUE,
+                      Integer.MAX_VALUE,
+                      Instant.EPOCH,
+                      "counter is capped",
+                      Instant.EPOCH))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage("JOIN reconciliation attempt count is outside its limit");
+    } finally {
+      TransactionSynchronizationManager.setActualTransactionActive(wasTransactionActive);
+    }
+    verifyNoInteractions(dsl);
+  }
+
   @Test
   void canonicalIntentAndPolicyMethodsRequireOwnerTransactionBeforeReadingScopeOrJournal() {
     DSLContext dsl = mock(DSLContext.class);
@@ -43,6 +69,25 @@ class AccountJoinOperationRepositoryCanonicalTest {
           .hasMessage(
               "Canonical Account JOIN operation access requires an active owner transaction");
       assertThatThrownBy(() -> repository.findCanonicalEvidenceByRequestId("request-v2"))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage(
+              "Canonical Account JOIN operation access requires an active owner transaction");
+      assertThatThrownBy(
+              () -> repository.findDueCanonicalPendingReconciliation(Instant.now(), 10, 3))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage(
+              "Canonical Account JOIN operation access requires an active owner transaction");
+      assertThatThrownBy(
+              () ->
+                  repository.recordCanonicalReconciliationAttempt(
+                      "request-v2", 0, 3, Instant.now(), "scope unavailable", Instant.now()))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage(
+              "Canonical Account JOIN operation access requires an active owner transaction");
+      assertThatThrownBy(
+              () ->
+                  repository.finishCanonicalOperation(
+                      "request-v2", "COMMITTED", "JOINED", 1L, 2L, 1L))
           .isInstanceOf(IllegalStateException.class)
           .hasMessage(
               "Canonical Account JOIN operation access requires an active owner transaction");

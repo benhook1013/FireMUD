@@ -4,6 +4,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import org.jooq.DSLContext;
@@ -197,6 +198,35 @@ public class GameSessionAuthoredWorldSourceRepository {
       return Optional.empty();
     }
     IntakeReceipt receipt = toReceipt(record);
+    requireTenantBinding(receipt.source());
+    return Optional.of(receipt);
+  }
+
+  /** Reads an exact committed retry by its stable intake request without allocating owner state. */
+  @Transactional(propagation = Propagation.NOT_SUPPORTED, readOnly = true)
+  public Optional<IntakeReceipt> readByIntakeRequest(String namespace, UUID intakeRequestId) {
+    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new IllegalStateException(
+          "Authored-world source intake read requires a committed-outcome owner read");
+    }
+    if (!GrpcPeerIdentity.isValidNamespace(namespace)) {
+      throw new IllegalArgumentException("Game Session workload namespace is invalid");
+    }
+    requireNonNil(intakeRequestId, "intakeRequestId");
+
+    Record record =
+        dsl.selectFrom(INTAKE)
+            .where(OPERATION_NAMESPACE.eq(namespace).and(INTAKE_REQUEST_ID.eq(intakeRequestId)))
+            .fetchOne();
+    if (record == null) {
+      return Optional.empty();
+    }
+    IntakeReceipt receipt = toReceipt(record);
+    if (!receipt.intakeRequestId().equals(intakeRequestId)
+        || !receipt.source().targetNamespace().equals(namespace)) {
+      throw new InvalidIntakeEvidenceException(
+          "Persisted authored-world source intake request binding is invalid");
+    }
     requireTenantBinding(receipt.source());
     return Optional.of(receipt);
   }

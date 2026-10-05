@@ -5,10 +5,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -132,42 +132,6 @@ class GameInstanceServiceLifecycleIntegrationTest {
                   entity.getOwnerAccountId(),
                   entity.getStatus());
             });
-    when(gameDesignClient.resolveLaunchDescriptor(42L, 7L, "cp-1"))
-        .thenReturn(
-            net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorResponse.newBuilder()
-                .setLaunchDescriptor(
-                    net.firedevops.firemud.gamedesign.v1.LaunchDescriptor.newBuilder()
-                        .setLaunchDescriptorId("ld-1")
-                        .setTenantId("42")
-                        .setGameTemplateId(7L)
-                        .setControlPlaneRequestId("cp-1")
-                        .setVersionId(11L)
-                        .setScriptPatchVersion("patch-1")
-                        .setRuntimeFlagsJson("{}")
-                        .setGenerationConfigRevision("genrev-11")
-                        .setVersionStateEpoch(77L)
-                        .setReleaseBundleId(77L)
-                        .setPublishedReleaseBundleRef("prb:42:11:77")
-                        .build())
-                .build());
-    when(gameDesignClient.resolveLaunchDescriptor(42L, 7L, "cp-2"))
-        .thenReturn(
-            net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorResponse.newBuilder()
-                .setLaunchDescriptor(
-                    net.firedevops.firemud.gamedesign.v1.LaunchDescriptor.newBuilder()
-                        .setLaunchDescriptorId("ld-2")
-                        .setTenantId("42")
-                        .setGameTemplateId(7L)
-                        .setControlPlaneRequestId("cp-2")
-                        .setVersionId(12L)
-                        .setScriptPatchVersion("patch-2")
-                        .setRuntimeFlagsJson("{}")
-                        .setGenerationConfigRevision("genrev-12")
-                        .setVersionStateEpoch(78L)
-                        .setReleaseBundleId(78L)
-                        .setPublishedReleaseBundleRef("prb:42:12:78")
-                        .build())
-                .build());
     when(gameDesignClient.getPublishedReleaseBundle(42L, 11L))
         .thenReturn(
             net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse.newBuilder()
@@ -362,23 +326,20 @@ class GameInstanceServiceLifecycleIntegrationTest {
   }
 
   @Test
-  void startSessionRollsBackWhenStatePropagationFails() {
-    doThrow(new IllegalStateException("state propagation failed"))
-        .when(sessionStateService)
-        .saveState(any());
-
+  void legacyNumericStartIsDeniedBeforeStateOrWorldMutation() {
     assertThatThrownBy(
             () ->
                 service.startSession(new StartSessionRequest(42L, 7L, "cp-1", OWNER_ACCOUNT_UUID)))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessage("state propagation failed");
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("AUTHORED_WORLD_LAUNCH_BINDING_REQUIRED");
 
     assertThat(repository.findAll()).isEmpty();
-    verify(sessionStateService).saveState(any());
+    verifyNoInteractions(sessionStateService, gameDesignClient, worldManagementClient);
   }
 
   @Test
   void stopSessionRollsBackWhenStatePropagationFails() {
+    // This direct retained-row fixture exercises stop independently of the denied numeric start.
     GameInstance instance = new GameInstance();
     instance.setTenantId(42L);
     instance.setRuntimeVersion("1.0.0");
@@ -405,6 +366,7 @@ class GameInstanceServiceLifecycleIntegrationTest {
 
   @Test
   void restartSessionRollsBackWhenStatePropagationFails() {
+    // This direct retained-row fixture exercises restart independently of the denied numeric start.
     GameInstance instance = new GameInstance();
     instance.setTenantId(42L);
     instance.setRuntimeVersion("1.0.0");
@@ -435,7 +397,8 @@ class GameInstanceServiceLifecycleIntegrationTest {
   }
 
   @Test
-  void replacingExistingSessionRestoresPriorRunningSessionWhenNewStartFails() {
+  void legacyNumericReplacementLeavesRetainedSessionUntouched() {
+    // The row is seeded as retained state; this test proves only that legacy replacement is denied.
     GameInstance existing = new GameInstance();
     existing.setTenantId(42L);
     existing.setRuntimeVersion("1.0.0");
@@ -447,16 +410,12 @@ class GameInstanceServiceLifecycleIntegrationTest {
     existing = repository.saveAndFlush(existing);
     long existingId = existing.getId();
 
-    doThrow(new IllegalStateException("state propagation failed"))
-        .when(sessionStateService)
-        .saveState(any());
-
     assertThatThrownBy(
             () ->
                 service.startSession(
                     new StartSessionRequest(42L, 7L, "cp-2", OWNER_ACCOUNT_UUID), true))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessage("state propagation failed");
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("AUTHORED_WORLD_LAUNCH_BINDING_REQUIRED");
 
     assertThat(repository.findAll()).hasSize(1);
     GameInstance restored = repository.findById(existingId).orElseThrow();
@@ -466,10 +425,12 @@ class GameInstanceServiceLifecycleIntegrationTest {
     assertThat(restored.getScriptPinEpoch()).isEqualTo(1L);
     assertThat(restored.getScriptPatchPinnedControlPlaneRequestId()).isEqualTo("pin-request-1");
     assertThat(restored.getOwnerAccountId()).isEqualTo(OWNER_ACCOUNT_UUID);
+    verifyNoInteractions(sessionStateService, gameDesignClient, worldManagementClient);
   }
 
   @Test
-  void replacingExistingSessionTerminatesPriorWorldBeforeFinalizingReplacement() {
+  void legacyNumericReplacementDoesNotTerminateRetainedWorld() {
+    // No World lifecycle call is expected until a canonical bound replacement path exists.
     GameInstance existing = new GameInstance();
     existing.setTenantId(42L);
     existing.setRuntimeVersion("1.0.0");
@@ -481,15 +442,16 @@ class GameInstanceServiceLifecycleIntegrationTest {
     existing = repository.saveAndFlush(existing);
     long existingId = existing.getId();
 
-    GameInstanceDto started =
-        service.startSession(new StartSessionRequest(42L, 7L, "cp-2", OWNER_ACCOUNT_UUID), true);
+    assertThatThrownBy(
+            () ->
+                service.startSession(
+                    new StartSessionRequest(42L, 7L, "cp-2", OWNER_ACCOUNT_UUID), true))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("AUTHORED_WORLD_LAUNCH_BINDING_REQUIRED");
 
-    assertThat(started.status()).isEqualTo("RUNNING");
     assertThat(repository.findById(existingId)).isPresent();
-    assertThat(repository.findById(existingId).orElseThrow().getStatus()).isEqualTo("STOPPED");
-    verify(worldManagementClient).getWorldInstanceLifecycle(42L, existingId);
-    verify(worldManagementClient)
-        .terminateWorldInstance(anyLong(), eq(existingId), anyLong(), any(), any());
+    assertThat(repository.findById(existingId).orElseThrow().getStatus()).isEqualTo("RUNNING");
+    verifyNoInteractions(sessionStateService, gameDesignClient, worldManagementClient);
   }
 
   @TestConfiguration
