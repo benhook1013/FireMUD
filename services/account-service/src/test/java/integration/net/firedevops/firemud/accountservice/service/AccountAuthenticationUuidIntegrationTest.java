@@ -7,10 +7,12 @@ import static org.mockito.Mockito.doAnswer;
 
 import de.mkammerer.argon2.Argon2;
 import de.mkammerer.argon2.Argon2Factory;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.accountservice.AccountServiceApplication;
@@ -34,6 +36,10 @@ import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.test.GatewayTestProperties;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import org.jooq.DSLContext;
+import org.jooq.ExecuteContext;
+import org.jooq.ExecuteListenerProvider;
+import org.jooq.impl.DefaultExecuteListener;
+import org.jooq.impl.DefaultExecuteListenerProvider;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -103,23 +109,38 @@ class AccountAuthenticationUuidIntegrationTest {
   @MockitoBean private JavaMailSender mailSender;
   @MockitoBean private NotificationService notificationService;
   @MockitoSpyBean private AccountEmailLoginChallengeRepository challengeRepositorySpy;
+  private ExecuteListenerProvider[] previousExecuteListenerProviders;
+  private final AtomicInteger observedChallengeLockExecutions = new AtomicInteger();
 
   @BeforeEach
   void observeOwnerTransaction() {
-    AccountEmailLoginChallengeRepository challengeRepositoryTarget =
-        AopTestUtils.getUltimateTargetObject(challengeRepositorySpy);
-    doAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
-              invocation.callRealMethod();
-              return null;
-            })
-        .when(challengeRepositoryTarget)
-        .lockAccountChallenge(anyLong());
+    observedChallengeLockExecutions.set(0);
+    var configuration = dsl.configuration();
+    previousExecuteListenerProviders = configuration.executeListenerProviders();
+    ExecuteListenerProvider[] providers =
+        Arrays.copyOf(
+            previousExecuteListenerProviders, previousExecuteListenerProviders.length + 1);
+    providers[previousExecuteListenerProviders.length] =
+        new DefaultExecuteListenerProvider(
+            new DefaultExecuteListener() {
+              @Override
+              public void executeStart(ExecuteContext context) {
+                String sql = context.sql();
+                if (sql != null && "select pg_advisory_xact_lock(?)".equalsIgnoreCase(sql.trim())) {
+                  assertThat(TransactionSynchronizationManager.isActualTransactionActive())
+                      .isTrue();
+                  observedChallengeLockExecutions.incrementAndGet();
+                }
+              }
+            });
+    configuration.set(providers);
   }
 
   @AfterEach
   void clearCallerContext() {
+    if (previousExecuteListenerProviders != null) {
+      dsl.configuration().set(previousExecuteListenerProviders);
+    }
     SessionContext.clear();
   }
 
@@ -212,25 +233,31 @@ class AccountAuthenticationUuidIntegrationTest {
     String deliveredCode = requestEmailLoginOtpAndCaptureCode(email);
 
     String wrongCode = wrongOtpCode(deliveredCode);
+    int wrongCodeLockCount = observedChallengeLockExecutions.get();
     assertThatThrownBy(() -> accountService.verifyEmailLoginOtp(email, wrongCode))
         .isInstanceOf(AuthenticationException.class)
         .hasMessage("Invalid credentials");
+    assertChallengeLockObservedSince(wrongCodeLockCount);
     var challengeAfterWrongCode =
         challengeRepositorySpy.findByAccountId(persisted.getId()).orElseThrow();
     assertThat(challengeAfterWrongCode.getInvalidAttemptCount()).isEqualTo(1);
     assertThat(challengeAfterWrongCode.getCodeHash()).isNotEqualTo(deliveredCode);
     assertThat(accountUuidFor(persisted.getId())).isEqualTo(expectedAccountUuid);
 
+    int successfulVerificationLockCount = observedChallengeLockExecutions.get();
     var result = accountService.verifyEmailLoginOtp(email, deliveredCode);
+    assertChallengeLockObservedSince(successfulVerificationLockCount);
     assertThat(jwtUtil.parseToken(result.authToken()).getPayload().getAudience())
         .containsOnly("account-service");
     assertAuthenticationAndPrivateLookup(persisted.getId(), expectedAccountUuid, result);
     assertThat(challengeRepositorySpy.findByAccountId(persisted.getId())).isEmpty();
     assertThat(emailLoginChallengeCount(persisted.getId())).isZero();
 
+    int consumedChallengeRetryLockCount = observedChallengeLockExecutions.get();
     assertThatThrownBy(() -> accountService.verifyEmailLoginOtp(email, deliveredCode))
         .isInstanceOf(AuthenticationException.class)
         .hasMessage("Invalid credentials");
+    assertChallengeLockObservedSince(consumedChallengeRetryLockCount);
     assertThat(accountUuidFor(persisted.getId())).isEqualTo(expectedAccountUuid);
     assertThat(emailLoginChallengeCount(persisted.getId())).isZero();
   }
@@ -241,7 +268,9 @@ class AccountAuthenticationUuidIntegrationTest {
     UUID expectedAccountUuid = persisted.getAccountUuid();
     String deliveredCode = requestEmailLoginOtpAndCaptureCode(persisted.getEmail());
 
+    int successfulBootstrapLockCount = observedChallengeLockExecutions.get();
     var result = accountService.issuePlayerBootstrap(persisted.getEmail(), deliveredCode);
+    assertChallengeLockObservedSince(successfulBootstrapLockCount);
 
     assertThat(result.accountId())
         .isEqualTo(expectedAccountUuid.toString())
@@ -258,10 +287,12 @@ class AccountAuthenticationUuidIntegrationTest {
     assertThat(sessionService.isAccountSessionActive(persisted.getId(), result.bootstrapToken()))
         .isTrue();
 
+    int consumedChallengeRetryLockCount = observedChallengeLockExecutions.get();
     assertThatThrownBy(
             () -> accountService.issuePlayerBootstrap(persisted.getEmail(), deliveredCode))
         .isInstanceOf(AuthenticationException.class)
         .hasMessage("Invalid credentials");
+    assertChallengeLockObservedSince(consumedChallengeRetryLockCount);
     assertThat(challengeRepositorySpy.findByAccountId(persisted.getId())).isEmpty();
     assertThat(emailLoginChallengeCount(persisted.getId())).isZero();
     assertThat(sessionService.isAccountSessionActive(persisted.getId(), result.bootstrapToken()))
@@ -365,10 +396,12 @@ class AccountAuthenticationUuidIntegrationTest {
     var challengeBeforeWrongCode =
         challengeRepositorySpy.findByAccountId(persisted.getId()).orElseThrow();
 
+    int rejectedOtpLockCount = observedChallengeLockExecutions.get();
     assertThatThrownBy(
             () -> attemptEmailOtpAuthentication(entryPoint, persisted.getEmail(), wrongCode))
         .isInstanceOf(AuthenticationException.class)
         .hasMessage("Invalid credentials");
+    assertChallengeLockObservedSince(rejectedOtpLockCount);
 
     var challengeAfterWrongCode =
         challengeRepositorySpy.findByAccountId(persisted.getId()).orElseThrow();
@@ -404,10 +437,12 @@ class AccountAuthenticationUuidIntegrationTest {
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.anyLong());
 
+    int rollbackOtpLockCount = observedChallengeLockExecutions.get();
     assertThatThrownBy(
             () -> accountService.verifyEmailLoginOtp(persisted.getEmail(), deliveredCode))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("simulated session storage failure");
+    assertChallengeLockObservedSince(rollbackOtpLockCount);
 
     ArgumentCaptor<String> tokenCaptor = ArgumentCaptor.forClass(String.class);
     org.mockito.Mockito.verify(sessionServiceTarget)
@@ -654,7 +689,9 @@ class AccountAuthenticationUuidIntegrationTest {
   }
 
   private String requestEmailLoginOtpAndCaptureCode(String email) {
+    int requestLockCount = observedChallengeLockExecutions.get();
     accountService.requestEmailLoginOtp(email);
+    assertChallengeLockObservedSince(requestLockCount);
 
     ArgumentCaptor<SimpleMailMessage> mailCaptor = ArgumentCaptor.forClass(SimpleMailMessage.class);
     org.mockito.Mockito.verify(mailSender).send(mailCaptor.capture());
@@ -666,6 +703,10 @@ class AccountAuthenticationUuidIntegrationTest {
     Matcher codeMatcher = OTP_CODE_PATTERN.matcher(deliveredBody);
     assertThat(codeMatcher.find()).isTrue();
     return codeMatcher.group(1);
+  }
+
+  private void assertChallengeLockObservedSince(int previousExecutionCount) {
+    assertThat(observedChallengeLockExecutions.get()).isGreaterThan(previousExecutionCount);
   }
 
   private String wrongOtpCode(String deliveredCode) {
