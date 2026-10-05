@@ -8,6 +8,7 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerati
 import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepository;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
@@ -47,6 +48,10 @@ public final class FreshTenantIdentityEnrollmentService {
         || creationRequestId.equals(new UUID(0L, 0L))
         || !GameTenantCreationDigest.isDigest(expectedDigest)) {
       throw new IllegalArgumentException("Fresh tenant request identity or digest is invalid");
+    }
+    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new IllegalStateException(
+          "Fresh tenant owner evidence must be resolved outside an Account transaction");
     }
 
     FreshTenantCreationEvidence ownerEvidence =

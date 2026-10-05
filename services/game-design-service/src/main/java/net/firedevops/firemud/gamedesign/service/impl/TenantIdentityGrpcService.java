@@ -6,6 +6,7 @@ import java.sql.SQLException;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository;
@@ -19,7 +20,7 @@ import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.TransientDataAccessException;
 import org.springframework.grpc.server.service.GrpcService;
 
-/** Read-only same-namespace Account handoff for exact, persisted fresh tenant evidence. */
+/** Read-only owner handoff for one exact, persisted fresh tenant creation. */
 @GrpcService
 public class TenantIdentityGrpcService
     extends TenantIdentityServiceGrpc.TenantIdentityServiceImplBase {
@@ -37,10 +38,13 @@ public class TenantIdentityGrpcService
   public void resolveFreshTenantCreation(
       ResolveFreshTenantCreationRequest request,
       StreamObserver<ResolveFreshTenantCreationResponse> responseObserver) {
-    if (!isAccountPeer()) {
+    if (SessionContext.hasAuthenticatedCallerContext()
+        || (!isAccountPeer() && !isGameSessionPeer())) {
       responseObserver.onError(
           Status.PERMISSION_DENIED
-              .withDescription("Verified same-namespace Account workload identity is required")
+              .withDescription(
+                  "Verified same-namespace Account or Game Session workload identity without "
+                      + "caller context is required")
               .asRuntimeException());
       return;
     }
@@ -152,6 +156,14 @@ public class TenantIdentityGrpcService
             .setEvidenceDigest(receipt.evidenceDigest())
             .build());
     responseObserver.onCompleted();
+  }
+
+  private boolean isGameSessionPeer() {
+    GrpcPeerIdentity peer = GrpcPeerIdentity.current();
+    return peer != null
+        && GrpcPeerIdentity.isValidNamespace(workloadNamespace)
+        && peer.uri()
+            .equals("spiffe://firemud/ns/" + workloadNamespace + "/sa/game-session-service");
   }
 
   private boolean isAccountPeer() {

@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
-import java.nio.file.Path;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.time.Instant;
@@ -13,6 +12,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -57,30 +57,43 @@ import org.springframework.transaction.support.TransactionTemplate;
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class AccountRepositoryIntegrationTest {
   private static final UUID REALM_ID = UUID.fromString("4c4b57d8-e3a2-48fe-9977-e7df0fdce901");
-  private static final String MIGRATION_LOCATION =
-      "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize();
-  private static final String MIGRATION_PROOF_SCHEMA = schemaName("account_migration_proof");
+  private static final String MIGRATION_LOCATION = "classpath:db/migration";
+  private static final String SCHEMA_SUFFIX =
+      UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+  private static final String TEST_SCHEMA = "account_repository_" + SCHEMA_SUFFIX;
+  private static final String MIGRATION_PROOF_SCHEMA = "account_migration_proof_" + SCHEMA_SUFFIX;
   private static final String COLLISION_MIGRATION_PROOF_SCHEMA =
-      schemaName("account_migration_collision_proof");
+      "account_migration_collision_proof_" + SCHEMA_SUFFIX;
   private static final String PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA =
-      schemaName("account_profile_identity_migration_proof");
+      "account_profile_identity_migration_proof_" + SCHEMA_SUFFIX;
   private static final String GLOBAL_REGISTRATION_MIGRATION_PROOF_SCHEMA =
-      schemaName("account_global_registration_migration_proof");
+      "account_global_registration_migration_proof_" + SCHEMA_SUFFIX;
   private static final String ACCOUNT_UUID_MIGRATION_PROOF_SCHEMA =
-      schemaName("account_uuid_migration_proof");
+      "account_uuid_migration_proof_" + SCHEMA_SUFFIX;
 
-  private final AccountPostgresIntegrationFixture postgres =
+  private static final AccountPostgresIntegrationFixture postgres =
       new AccountPostgresIntegrationFixture();
 
-  private DriverManagerDataSource rootDataSource;
   private DriverManagerDataSource dataSource;
   private DSLContext dsl;
   private AccountRepository repository;
 
   @BeforeAll
-  void setUpDataSource() {
+  void setUpRepository() {
     postgres.start();
-    rootDataSource = postgres.dataSource();
+    dataSource = postgres.dataSource(TEST_SCHEMA);
+
+    Flyway.configure()
+        .dataSource(dataSource)
+        .schemas(TEST_SCHEMA)
+        .defaultSchema(TEST_SCHEMA)
+        .placeholders(Map.of("serviceSchema", TEST_SCHEMA))
+        .locations(MIGRATION_LOCATION)
+        .load()
+        .migrate();
+
+    dsl = DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+    repository = new AccountRepository(dsl);
   }
 
   @AfterAll
@@ -89,20 +102,9 @@ class AccountRepositoryIntegrationTest {
   }
 
   @BeforeEach
-  void createIsolatedMainSchema() {
-    String schema = "account_repository_test_" + UUID.randomUUID().toString().replace("-", "");
-    new JdbcTemplate(rootDataSource).execute("CREATE SCHEMA " + schema);
-    dataSource = postgres.dataSource(schema);
-    Flyway.configure()
-        .dataSource(dataSource)
-        .locations(MIGRATION_LOCATION)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .placeholders(java.util.Map.of("serviceSchema", schema))
-        .load()
-        .migrate();
-    dsl = DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
-    repository = new AccountRepository(dsl);
+  void cleanTables() {
+    dsl.execute("TRUNCATE TABLE account_audit_outbox CASCADE");
+    dsl.execute("TRUNCATE TABLE accounts RESTART IDENTITY CASCADE");
   }
 
   @Test
@@ -112,14 +114,16 @@ class AccountRepositoryIntegrationTest {
         new TransactionTemplate(new DataSourceTransactionManager(dataSource));
     DSLContext transactionAwareDsl =
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+    AccountRepository accounts = new AccountRepository(transactionAwareDsl);
+    FreshTenantIdentityAssociationRepository freshTenants =
+        new FreshTenantIdentityAssociationRepository(transactionAwareDsl, "prod");
+    AccountMembershipPairAuthorityRepository pairAuthority =
+        new AccountMembershipPairAuthorityRepository(transactionAwareDsl);
     AccountJoinOperationRepository joinOperations =
         new AccountJoinOperationRepository(transactionAwareDsl);
     AccountTenantMembershipRepository memberships =
         new AccountTenantMembershipRepository(
-            transactionAwareDsl,
-            new AccountRepository(transactionAwareDsl),
-            new FreshTenantIdentityAssociationRepository(transactionAwareDsl, "prod"),
-            new AccountMembershipPairAuthorityRepository(transactionAwareDsl));
+            transactionAwareDsl, accounts, freshTenants, pairAuthority);
     AccountAuditOutboxRepository outbox = new AccountAuditOutboxRepository(transactionAwareDsl);
     AccountConnectScopeRepository scopes = new AccountConnectScopeRepository(transactionAwareDsl);
     long accountId =
@@ -704,12 +708,12 @@ class AccountRepositoryIntegrationTest {
     JdbcTemplate jdbc = new JdbcTemplate(dataSource);
     AccountConnectScopeRepository scopes = new AccountConnectScopeRepository(dsl);
     AccountJoinOperationRepository joinOperations = new AccountJoinOperationRepository(dsl);
+    FreshTenantIdentityAssociationRepository freshTenants =
+        new FreshTenantIdentityAssociationRepository(dsl, "prod");
+    AccountMembershipPairAuthorityRepository pairAuthority =
+        new AccountMembershipPairAuthorityRepository(dsl);
     AccountTenantMembershipRepository memberships =
-        new AccountTenantMembershipRepository(
-            dsl,
-            new AccountRepository(dsl),
-            new FreshTenantIdentityAssociationRepository(dsl, "prod"),
-            new AccountMembershipPairAuthorityRepository(dsl));
+        new AccountTenantMembershipRepository(dsl, repository, freshTenants, pairAuthority);
     long accountId =
         Objects.requireNonNull(
             jdbc.queryForObject(
@@ -1027,6 +1031,35 @@ class AccountRepositoryIntegrationTest {
         .isEqualTo(accountUuid);
   }
 
+  @Test
+  void rejectedHardDeleteRetainsAccountRowAndSourceIdentityEvidence() {
+    Account saved =
+        saveInTransaction(
+            account(
+                "retained-delete", "retained-delete@example.com", AccountLifecycleState.ACTIVE));
+    UUID accountUuid = saved.getAccountUuid();
+
+    assertThatThrownBy(() -> repository.delete(saved))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage(
+            "Account hard deletion is unavailable until the pending-deletion retention workflow exists");
+
+    var retained =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT account_uuid, account_uuid_provenance, account_uuid_source_numeric_id "
+                    + "FROM accounts WHERE id = ?",
+                saved.getId()));
+    assertThat(retained.get("account_uuid", UUID.class)).isEqualTo(accountUuid);
+    assertThat(retained.get("account_uuid_provenance", String.class))
+        .isEqualTo(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT.name());
+    assertThat(retained.get("account_uuid_source_numeric_id", Long.class)).isEqualTo(saved.getId());
+    assertThat(
+            dsl.resultQuery("SELECT COUNT(*) FROM accounts WHERE id = ?", saved.getId())
+                .fetchOne(0, Long.class))
+        .isEqualTo(1L);
+  }
+
   @ParameterizedTest
   @NullSource
   @ValueSource(strings = {"", "   "})
@@ -1043,7 +1076,7 @@ class AccountRepositoryIntegrationTest {
         .locations(MIGRATION_LOCATION)
         .schemas(MIGRATION_PROOF_SCHEMA)
         .defaultSchema(MIGRATION_PROOF_SCHEMA)
-        .placeholders(java.util.Map.of("serviceSchema", MIGRATION_PROOF_SCHEMA))
+        .placeholders(Map.of("serviceSchema", MIGRATION_PROOF_SCHEMA))
         .target("21")
         .load()
         .migrate();
@@ -1059,7 +1092,7 @@ class AccountRepositoryIntegrationTest {
         .locations(MIGRATION_LOCATION)
         .schemas(MIGRATION_PROOF_SCHEMA)
         .defaultSchema(MIGRATION_PROOF_SCHEMA)
-        .placeholders(java.util.Map.of("serviceSchema", MIGRATION_PROOF_SCHEMA))
+        .placeholders(Map.of("serviceSchema", MIGRATION_PROOF_SCHEMA))
         .load()
         .migrate();
 
@@ -1086,7 +1119,7 @@ class AccountRepositoryIntegrationTest {
         .locations(MIGRATION_LOCATION)
         .schemas(COLLISION_MIGRATION_PROOF_SCHEMA)
         .defaultSchema(COLLISION_MIGRATION_PROOF_SCHEMA)
-        .placeholders(java.util.Map.of("serviceSchema", COLLISION_MIGRATION_PROOF_SCHEMA))
+        .placeholders(Map.of("serviceSchema", COLLISION_MIGRATION_PROOF_SCHEMA))
         .target("21")
         .load()
         .migrate();
@@ -1109,8 +1142,7 @@ class AccountRepositoryIntegrationTest {
                     .locations(MIGRATION_LOCATION)
                     .schemas(COLLISION_MIGRATION_PROOF_SCHEMA)
                     .defaultSchema(COLLISION_MIGRATION_PROOF_SCHEMA)
-                    .placeholders(
-                        java.util.Map.of("serviceSchema", COLLISION_MIGRATION_PROOF_SCHEMA))
+                    .placeholders(Map.of("serviceSchema", COLLISION_MIGRATION_PROOF_SCHEMA))
                     .load()
                     .migrate())
         .isInstanceOf(FlywayException.class)
@@ -1175,8 +1207,7 @@ class AccountRepositoryIntegrationTest {
         .locations(MIGRATION_LOCATION)
         .schemas(PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA)
         .defaultSchema(PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA)
-        .placeholders(
-            java.util.Map.of("serviceSchema", PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA))
+        .placeholders(Map.of("serviceSchema", PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA))
         .target("24")
         .load()
         .migrate();
@@ -1213,8 +1244,7 @@ class AccountRepositoryIntegrationTest {
                     .locations(MIGRATION_LOCATION)
                     .schemas(PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA)
                     .defaultSchema(PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA)
-                    .placeholders(
-                        java.util.Map.of("serviceSchema", PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA))
+                    .placeholders(Map.of("serviceSchema", PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA))
                     .load()
                     .migrate())
         .isInstanceOf(FlywayException.class)
@@ -1239,7 +1269,7 @@ class AccountRepositoryIntegrationTest {
         .locations(MIGRATION_LOCATION)
         .schemas(schema)
         .defaultSchema(schema)
-        .placeholders(java.util.Map.of("serviceSchema", schema))
+        .placeholders(Map.of("serviceSchema", schema))
         .target("25")
         .load()
         .migrate();
@@ -1270,7 +1300,7 @@ class AccountRepositoryIntegrationTest {
         .locations(MIGRATION_LOCATION)
         .schemas(schema)
         .defaultSchema(schema)
-        .placeholders(java.util.Map.of("serviceSchema", schema))
+        .placeholders(Map.of("serviceSchema", schema))
         .load()
         .migrate();
 
@@ -1339,7 +1369,7 @@ class AccountRepositoryIntegrationTest {
         .locations(MIGRATION_LOCATION)
         .schemas(schema)
         .defaultSchema(schema)
-        .placeholders(java.util.Map.of("serviceSchema", schema))
+        .placeholders(Map.of("serviceSchema", schema))
         .target("28")
         .load()
         .migrate();
@@ -1547,7 +1577,7 @@ class AccountRepositoryIntegrationTest {
         .locations(MIGRATION_LOCATION)
         .schemas(schema)
         .defaultSchema(schema)
-        .placeholders(java.util.Map.of("serviceSchema", schema))
+        .placeholders(Map.of("serviceSchema", schema))
         .load()
         .migrate();
 
@@ -1895,7 +1925,4 @@ class AccountRepositoryIntegrationTest {
     return Objects.requireNonNull(dsl.fetchOne(query, bindings)).get(0, String.class);
   }
 
-  private static String schemaName(String prefix) {
-    return prefix + "_" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
-  }
 }

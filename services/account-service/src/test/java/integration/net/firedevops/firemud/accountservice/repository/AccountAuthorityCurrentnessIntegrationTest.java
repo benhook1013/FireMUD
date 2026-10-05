@@ -4,12 +4,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.Instant;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountRealmAccessGrant;
 import net.firedevops.firemud.accountservice.entity.Subscription;
 import net.firedevops.firemud.accountservice.repository.AccountRealmAccessGrantRepository;
-import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.SubscriptionRepository;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
@@ -23,7 +23,7 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.support.TransactionTemplate;
 
-/** Physical V31/V32 currentness proof on the complete Account migration chain. */
+/** Physical V31/V32 currentness proof, isolated from Account lifecycle/source writers. */
 class AccountAuthorityCurrentnessIntegrationTest {
   private static final AccountPostgresIntegrationFixture postgres =
       new AccountPostgresIntegrationFixture();
@@ -53,18 +53,20 @@ class AccountAuthorityCurrentnessIntegrationTest {
     JdbcTemplate jdbc = new JdbcTemplate(dataSource);
     DSLContext dsl =
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
-    TransactionTemplate transaction =
-        new TransactionTemplate(new DataSourceTransactionManager(dataSource));
-
-    AccountRepository accounts = new AccountRepository(dsl);
-    Account account = account("currentness");
-    transaction.executeWithoutResult(status -> accounts.save(account));
+    Long accountId =
+        Objects.requireNonNull(
+            jdbc.queryForObject(
+                "INSERT INTO accounts (username, email, password_hash) VALUES (?, ?, ?) RETURNING id",
+                Long.class,
+                "currentness-" + UUID.randomUUID(),
+                "currentness-" + UUID.randomUUID() + "@example.test",
+                "test-hash"));
 
     long tenantId = 7_654_322L;
     jdbc.update(
         "INSERT INTO subscription (account_id, plan_id, status, tenant_id, entitlement_version) "
             + "VALUES (?, 'test-plan', 'active', ?, 1)",
-        account.getId(),
+        accountId,
         tenantId);
     SubscriptionRepository subscriptions = new SubscriptionRepository(dsl);
     Subscription subscription = subscriptions.findByTenantId(tenantId).getFirst();
@@ -73,7 +75,7 @@ class AccountAuthorityCurrentnessIntegrationTest {
     assertThat(subscription.getEntitlementVersion()).isEqualTo(1L);
 
     subscription.setStatus("past_due");
-    transaction.executeWithoutResult(status -> subscriptions.save(subscription));
+    subscriptions.save(subscription);
     Subscription repositoryUpdated = subscriptions.findByTenantId(tenantId).getFirst();
     assertThat(repositoryUpdated.getTenantAuthorityGeneration())
         .isNotEqualTo(initialTenantGeneration);
@@ -85,6 +87,8 @@ class AccountAuthorityCurrentnessIntegrationTest {
         .isNotEqualTo(repositoryUpdated.getTenantAuthorityGeneration());
     assertThat(directlyUpdated.getEntitlementVersion()).isEqualTo(3L);
 
+    Account account = new Account();
+    account.setId(accountId);
     AccountRealmAccessGrant grant = new AccountRealmAccessGrant();
     grant.setAccount(account);
     grant.setTenantId(tenantId);
@@ -96,22 +100,24 @@ class AccountAuthorityCurrentnessIntegrationTest {
     grant.setCreatedAt(Instant.now());
     grant.setUpdatedAt(Instant.now());
     AccountRealmAccessGrantRepository grants = new AccountRealmAccessGrantRepository(dsl);
-    transaction.executeWithoutResult(status -> grants.save(grant));
+    grants.save(grant);
     AccountRealmAccessGrant original =
         grants
             .findByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
-                account.getId(), tenantId, "world", "private")
+                accountId, tenantId, "world", "private")
             .orElseThrow();
     UUID originalGrantGeneration = original.getGrantAuthorityGeneration();
 
+    TransactionTemplate transaction =
+        new TransactionTemplate(new DataSourceTransactionManager(dataSource));
     transaction.executeWithoutResult(
         status ->
             grants.revokeByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
-                account.getId(), tenantId, "world", "private"));
+                accountId, tenantId, "world", "private"));
     AccountRealmAccessGrant revoked =
         grants
             .findByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
-                account.getId(), tenantId, "world", "private")
+                accountId, tenantId, "world", "private")
             .orElseThrow();
     assertThat(revoked.isGranted()).isFalse();
     assertThat(revoked.getGrantVersion()).isEqualTo(2L);
@@ -125,17 +131,7 @@ class AccountAuthorityCurrentnessIntegrationTest {
         .isEqualTo(1L);
     assertThat(
             grants.existsByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
-                account.getId(), tenantId, "world", "private"))
+                accountId, tenantId, "world", "private"))
         .isFalse();
-  }
-
-  private static Account account(String label) {
-    String suffix = UUID.randomUUID().toString().replace("-", "");
-    Account account = new Account();
-    account.setUsername(label + "-" + suffix);
-    account.setEmail(label + "-" + suffix + "@example.test");
-    account.setPasswordHash("non-secret-test-hash");
-    account.setRole("player");
-    return account;
   }
 }

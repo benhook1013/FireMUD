@@ -5,7 +5,7 @@ package gamedesign.v1;
 option java_package = "net.firedevops.firemud.gamedesign.v1";
 option java_multiple_files = true;
 
-// Account-only readback of one exact persisted fresh tenant creation operation.
+// Read-only exact Account/Game Session workload handoff for owner-created tenant evidence.
 service TenantIdentityService {
   rpc ResolveFreshTenantCreation(ResolveFreshTenantCreationRequest)
       returns (ResolveFreshTenantCreationResponse);

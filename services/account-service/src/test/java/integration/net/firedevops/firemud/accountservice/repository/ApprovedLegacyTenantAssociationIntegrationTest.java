@@ -11,6 +11,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.Base64;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.client.OwnerApprovedAccountTenantAssociation;
 import org.flywaydb.core.Flyway;
@@ -84,10 +85,11 @@ class ApprovedLegacyTenantAssociationIntegrationTest {
                 evidence.operationId()))
         .isNotNull();
     assertThat(
-            dsl.fetchOne(
-                    "SELECT COUNT(*) FROM information_schema.columns "
-                        + "WHERE table_name = 'account_approved_legacy_tenant_associations' "
-                        + "AND column_name IN ('account_evidence_digest', 'manifest_digest')")
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT COUNT(*) FROM information_schema.columns "
+                            + "WHERE table_name = 'account_approved_legacy_tenant_associations' "
+                        + "AND column_name IN ('account_evidence_digest', 'manifest_digest')"))
                 .get(0, Long.class))
         .isZero();
 
@@ -238,11 +240,12 @@ class ApprovedLegacyTenantAssociationIntegrationTest {
   }
 
   private long insertAccount(String username) {
-    return dsl.fetchOne(
-            "INSERT INTO accounts (username, email, password_hash) VALUES (?, ?, ?) RETURNING id",
-            username,
-            username + "@example.test",
-            "test-hash")
+    return Objects.requireNonNull(
+            dsl.fetchOne(
+                "INSERT INTO accounts (username, email, password_hash) VALUES (?, ?, ?) RETURNING id",
+                username,
+                username + "@example.test",
+                "test-hash"))
         .get(0, Long.class);
   }
 

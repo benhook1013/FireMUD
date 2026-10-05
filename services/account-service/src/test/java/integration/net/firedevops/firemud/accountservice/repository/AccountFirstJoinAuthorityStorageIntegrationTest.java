@@ -7,7 +7,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -34,18 +36,19 @@ import org.jooq.SQLDialect;
 import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
-import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.support.TransactionTemplate;
 
 class AccountFirstJoinAuthorityStorageIntegrationTest {
   private static final String SCHEMA_PREFIX = "first_join_authority_storage_proof";
-
   private static final AccountPostgresIntegrationFixture postgres =
       new AccountPostgresIntegrationFixture();
+  private final Set<String> schemas = ConcurrentHashMap.newKeySet();
 
   @BeforeAll
   static void startPostgres() {
@@ -55,6 +58,18 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
   @AfterAll
   static void stopPostgres() {
     postgres.stop();
+  }
+
+  @AfterEach
+  void dropRunOwnedSchemas() {
+    JdbcTemplate jdbc = new JdbcTemplate(postgres.dataSource());
+    for (String schema : schemas) {
+      if (!schema.startsWith(SCHEMA_PREFIX + "_") || !schema.matches("[a-z][a-z0-9_]{0,62}")) {
+        throw new IllegalStateException("Refusing to clean an unowned PostgreSQL schema");
+      }
+      jdbc.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
+    }
+    schemas.clear();
   }
 
   @Test
@@ -145,7 +160,7 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
         dsl.fetchOne(
             "INSERT INTO accounts (username, email, password_hash, role) VALUES (?, ?, ?, ?) "
                 + "RETURNING id, account_uuid",
-            "authority-storage-" + UUID.randomUUID(),
+            "authority-" + UUID.randomUUID(),
             "authority-storage-" + UUID.randomUUID() + "@example.test",
             "test-hash",
             "platformAdmin");
@@ -465,7 +480,7 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
                 inTransaction(
                     transaction,
                     () -> {
-                      dsl.execute("TRUNCATE TABLE account_authority_outbox_events");
+                      dsl.execute("TRUNCATE TABLE account_authority_outbox_events CASCADE");
                       return null;
                     }))
         .isInstanceOf(DataAccessException.class)
@@ -509,7 +524,9 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
 
   @Test
   void callerRollbackRemovesAppendAndConcurrentExactRetriesShareOneSequence() throws Exception {
-    TestContext context = newTestContext();
+    // This is a passive outbox storage proof. Later migrations require owner source rows for
+    // issuer/Account streams, which is outside this fixture's storage-only boundary.
+    TestContext context = newTestContextAtV39();
     AccountAuthorityOutboxRepository repository = context.repository();
     TransactionTemplate transaction = context.transaction();
     String rollbackStream = "account:auth-authority:v1:account/" + UUID.randomUUID();
@@ -576,7 +593,8 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
 
   @Test
   void exhaustedSequenceRejectsAppendWithoutChangingEventCheckpointOrCallerSentinel() {
-    TestContext context = newTestContext();
+    // The synthetic owner stream is seeded only to exercise storage overflow behavior.
+    TestContext context = newTestContextAtV39();
     AccountAuthorityOutboxRepository repository = context.repository();
     TransactionTemplate transaction = context.transaction();
     DSLContext dsl = context.dsl();
@@ -698,17 +716,22 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
   }
 
   private TestContext newTestContext() {
-    return newTestContext(true);
+    return newTestContextAt(null);
   }
 
   private TestContext newTestContextBeforeV38() {
-    return newTestContext(false);
+    return newTestContextAt("37");
   }
 
-  private TestContext newTestContext(boolean latest) {
+  private TestContext newTestContextAtV39() {
+    return newTestContextAt("39");
+  }
+
+  private TestContext newTestContextAt(String targetVersion) {
     String schema =
-        SCHEMA_PREFIX + "_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
-    DriverManagerDataSource dataSource = postgres.dataSource(schema);
+        SCHEMA_PREFIX + "_" + UUID.randomUUID().toString().replace("-", "").substring(0, 24);
+    schemas.add(schema);
+    var dataSource = postgres.dataSource(schema);
     var configuration =
         Flyway.configure()
             .dataSource(dataSource)
@@ -716,8 +739,8 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
             .defaultSchema(schema)
             .placeholders(Map.of("serviceSchema", schema))
             .locations("classpath:db/migration");
-    if (!latest) {
-      configuration.target(org.flywaydb.core.api.MigrationVersion.fromVersion("37"));
+    if (targetVersion != null) {
+      configuration.target(org.flywaydb.core.api.MigrationVersion.fromVersion(targetVersion));
     }
     configuration.load().migrate();
 

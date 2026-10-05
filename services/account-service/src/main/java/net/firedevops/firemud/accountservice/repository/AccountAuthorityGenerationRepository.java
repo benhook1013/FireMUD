@@ -137,7 +137,8 @@ public class AccountAuthorityGenerationRepository {
    *
    * <p>Account and membership advances also require and advance the account-local issuance fence.
    * Issuer and tenant advances are fenced by their exact generation row; a composite token issuance
-   * must lock and compare every applicable scope row in the same caller transaction.
+   * must lock and compare every applicable scope row in the same caller transaction. Source-evidence
+   * updates advance Account state and its issuance fence atomically.
    */
   @Transactional(propagation = Propagation.MANDATORY)
   public ScopeState advance(ScopeState expectedState, IssuanceFence expectedIssuanceFence) {

@@ -65,6 +65,10 @@ public class AccountConnectScopeRepository {
   private final FreshTenantIdentityAssociationRepository freshTenantIdentities;
 
   /** Retained for existing v1-only repository fixtures. */
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification =
+          "Preserve the injected DSLContext precondition; Spring must proxy this non-final repository.")
   public AccountConnectScopeRepository(DSLContext dsl) {
     this.dsl = Objects.requireNonNull(dsl);
     this.retainedTenantIdentities = null;
@@ -72,6 +76,10 @@ public class AccountConnectScopeRepository {
   }
 
   @Autowired
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification =
+          "Preserve the injected dependency preconditions; Spring must proxy this non-final repository.")
   public AccountConnectScopeRepository(
       DSLContext dsl,
       AccountTenantIdentityResolver retainedTenantIdentities,

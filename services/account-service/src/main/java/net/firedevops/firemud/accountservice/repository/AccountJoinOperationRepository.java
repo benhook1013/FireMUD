@@ -54,12 +54,20 @@ public class AccountJoinOperationRepository {
   /**
    * Retained for V1-only fixtures; canonical methods fail closed without the owner scope reader.
    */
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification =
+          "Preserve the injected DSLContext precondition; Spring must proxy this non-final repository.")
   public AccountJoinOperationRepository(DSLContext dsl) {
     this.dsl = Objects.requireNonNull(dsl);
     this.connectScopes = null;
   }
 
   @Autowired
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification =
+          "Preserve the injected dependency preconditions; Spring must proxy this non-final repository.")
   public AccountJoinOperationRepository(
       DSLContext dsl, AccountConnectScopeRepository connectScopes) {
     this.dsl = Objects.requireNonNull(dsl);
