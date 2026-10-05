@@ -44,6 +44,8 @@ import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -58,6 +60,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
     })
 class AccountApplicationIntegrationTest {
   private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
+  private static final ObjectMapper JSON = new ObjectMapper();
 
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
@@ -116,6 +119,10 @@ class AccountApplicationIntegrationTest {
         dsl.resultQuery("SELECT account_uuid FROM accounts WHERE email = ?", email)
             .fetchOne(0, UUID.class);
     assertThat(accountUuid).isNotNull();
+    JsonNode responseData = JSON.readTree(response.body()).path("data");
+    assertThat(responseData.path("id").isTextual()).isTrue();
+    assertThat(responseData.path("id").asText()).isEqualTo(accountUuid.toString());
+    assertThat(responseData.path("id").asText()).isNotEqualTo(accountId.toString());
     assertThat(
             dsl.resultQuery(
                     "SELECT COUNT(*) FROM account_authority_generations "
@@ -174,7 +181,7 @@ class AccountApplicationIntegrationTest {
                 "SELECT COUNT(*) FROM account_audit_outbox "
                     + "WHERE scope = 'platform' AND tenant_id IS NULL "
                     + "AND event_type = 'ACCOUNT_REGISTERED' AND payload = ?",
-                "{\"accountId\":" + accountId.longValue() + "}"))
+                "{\"accountId\":\"" + accountUuid + "\"}"))
         .isEqualTo(1L);
   }
 
@@ -389,7 +396,8 @@ class AccountApplicationIntegrationTest {
 
     assertThat(response.statusCode()).isEqualTo(400);
     assertThat(response.body()).contains("\"code\":\"INVALID_ARGUMENT\"");
-    assertThat(response.body()).contains("\"message\":\"accountId must be numeric\"");
+    assertThat(response.body())
+        .contains("\"message\":\"accountId must be a canonical non-nil UUID\"");
   }
 
   @Test
@@ -415,9 +423,10 @@ class AccountApplicationIntegrationTest {
 
   @Test
   void updateProfileRejectsZeroTenantIdWithInvalidArgumentEnvelope() throws Exception {
-    String token = jwtUtil.generateToken("2", java.util.Map.of("accountId", "2"));
+    String accountUuid = "457336d4-63d7-4a3a-a481-ceecb1c8c296";
+    String token = jwtUtil.generateToken(accountUuid, java.util.Map.of("accountId", accountUuid));
     HttpRequest request =
-        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/profiles/2"))
+        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/profiles/" + accountUuid))
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
             .header(HttpHeaders.CONTENT_TYPE, "application/json")
             .PUT(

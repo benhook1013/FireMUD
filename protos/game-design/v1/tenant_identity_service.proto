@@ -21,6 +21,40 @@ service TenantIdentityService {
   // Exact immutable authored-selector source for Game Session; not catalog enrollment.
   rpc ResolveAuthoredWorldSource(ResolveAuthoredWorldSourceRequest)
       returns (ResolveAuthoredWorldSourceResponse);
+  // Exact audited retained Game Session association; never an Account manifest or admission.
+  rpc ResolveLegacyGameSessionTenantAssociation(ResolveLegacyGameSessionTenantAssociationRequest)
+      returns (ResolveLegacyGameSessionTenantAssociationResponse);
+}
+
+message ResolveLegacyGameSessionTenantAssociationRequest {
+  string request_id = 1;
+  string operation_id = 2;
+  string canonical_tenant_id = 3;
+  // Canonical positive decimal BIGINT provenance, not a public tenant identifier.
+  string legacy_game_session_tenant_id = 4;
+}
+
+message GameSessionTenantAssociationManifestEvidence {
+  int32 schema_version = 1;
+  string operation_id = 2;
+  string target_namespace = 3;
+  string signer_key_id = 4;
+  string approved_by = 5;
+  string approval_reference = 6;
+  string signed_at = 7;
+  string legacy_game_session_tenant_id = 8;
+  string canonical_tenant_id = 9;
+  string source_game_row_id = 10;
+  string source_game_tenant_key = 11;
+  string provenance_kind = 12;
+  string game_session_evidence_digest = 13;
+}
+
+message ResolveLegacyGameSessionTenantAssociationResponse {
+  string request_id = 1;
+  GameSessionTenantAssociationManifestEvidence manifest = 2;
+  string manifest_digest = 3;
+  string ed25519_signature = 4;
 }
 
 message ResolveLegacyGameTenantIdentityRequest {

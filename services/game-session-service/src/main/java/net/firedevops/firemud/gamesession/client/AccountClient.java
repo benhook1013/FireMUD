@@ -6,7 +6,6 @@ import jakarta.annotation.PostConstruct;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Objects;
-import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
@@ -32,6 +31,7 @@ import net.firedevops.firemud.common.grpc.AbstractBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.gamesession.service.AccountIds;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 import org.slf4j.Logger;
@@ -322,8 +322,8 @@ public final class AccountClient
   public GetTenantMembershipForRuntimeResponse getTenantMembershipForRuntime(
       PlayerExecutionContext playerContext) {
     if (playerContext == null
-        || !isCanonicalNonNilUuid(playerContext.getAccountId())
-        || !isCanonicalNonNilUuid(playerContext.getTenantId())) {
+        || !AccountIds.isCanonicalNonNilUuid(playerContext.getAccountId())
+        || !AccountIds.isCanonicalNonNilUuid(playerContext.getTenantId())) {
       return membershipAuthorityUnavailable();
     }
     if (stub() == null) {
@@ -351,18 +351,6 @@ public final class AccountClient
       logger.warn("Failed to call Account Service runtime membership endpoint", ex);
     }
     return membershipAuthorityUnavailable();
-  }
-
-  private static boolean isCanonicalNonNilUuid(String value) {
-    if (value == null || value.isEmpty()) {
-      return false;
-    }
-    try {
-      UUID parsed = UUID.fromString(value);
-      return !parsed.equals(new UUID(0L, 0L)) && parsed.toString().equals(value);
-    } catch (IllegalArgumentException ex) {
-      return false;
-    }
   }
 
   private GetTenantMembershipForRuntimeResponse membershipAuthorityUnavailable() {

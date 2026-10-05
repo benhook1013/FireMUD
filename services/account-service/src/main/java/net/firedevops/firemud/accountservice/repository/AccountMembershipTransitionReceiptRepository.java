@@ -11,9 +11,11 @@ import org.jooq.Record;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
- * Retains provisional Account JOIN/reactivation receipts without claiming complete authority proof.
+ * Retains provisional Account membership-transition receipts without claiming complete authority
+ * proof.
  */
 @Repository
 @SuppressFBWarnings(
@@ -22,6 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class AccountMembershipTransitionReceiptRepository {
   private static final String MEMBERSHIP_JOINED = "MEMBERSHIP_JOINED";
   private static final String MEMBERSHIP_REACTIVATED = "MEMBERSHIP_REACTIVATED";
+  private static final String MEMBERSHIP_LEFT = "MEMBERSHIP_LEFT";
 
   private final DSLContext dsl;
 
@@ -29,10 +32,11 @@ public class AccountMembershipTransitionReceiptRepository {
     this.dsl = dsl;
   }
 
-  /** Appends one provisional receipt inside the surrounding Account JOIN transaction. */
+  /** Appends one provisional receipt inside the surrounding Account membership transaction. */
   @Transactional(propagation = Propagation.MANDATORY)
   public MembershipTransitionReceipt appendTransition(
       AccountTenantMembership membership, String transitionType, String requestId) {
+    requireOwnerTransaction();
     if (membership == null
         || membership.getAccount() == null
         || membership.getAccount().getId() == null
@@ -42,15 +46,7 @@ public class AccountMembershipTransitionReceiptRepository {
     long accountId = membership.getAccount().getId();
     long tenantId = membership.getTenantId();
     long membershipId = membership.getId();
-    if (!MEMBERSHIP_JOINED.equals(transitionType)
-        && !MEMBERSHIP_REACTIVATED.equals(transitionType)) {
-      throw new IllegalArgumentException("Membership transition type is unsupported");
-    }
-    if (!"ACTIVE".equals(membership.getLifecycleState())
-        || !membership.isGameplayAdmissionAllowed()
-        || !"EXPLICIT_JOIN".equals(membership.getAuthorityProvenance())) {
-      throw new IllegalArgumentException("JOIN receipt requires its committed active state");
-    }
+    requireTransitionState(membership, transitionType);
 
     String streamKey = MembershipTransitionReceiptDigest.receiptStreamKey(accountId, tenantId);
     UUID receiptId = MembershipTransitionReceiptDigest.receiptIdForRequest(requestId);
@@ -142,8 +138,10 @@ public class AccountMembershipTransitionReceiptRepository {
     Long currentMembershipId = snapshot.currentMembershipId();
     if (currentMembershipId != null
         && (currentMembershipId.longValue() != receipt.membershipId()
-            || !"ACTIVE".equals(snapshot.currentLifecycleState())
-            || !snapshot.currentAdmissionAllowed()
+            || !receiptStateMatches(
+                receipt.transitionType(),
+                snapshot.currentLifecycleState(),
+                snapshot.currentAdmissionAllowed())
             || snapshot.currentMembershipVersion() != snapshot.receiptMembershipVersion()
             || snapshot.currentAuthorityGeneration() != snapshot.receiptAuthorityGeneration()
             || !"EXPLICIT_JOIN".equals(snapshot.currentAuthorityProvenance()))) {
@@ -151,6 +149,119 @@ public class AccountMembershipTransitionReceiptRepository {
           "Account membership row does not match its latest provisional receipt");
     }
     return Optional.of(receipt);
+  }
+
+  /**
+   * Reads one immutable transition receipt by its globally unique request ID without requiring it
+   * to remain the current receipt. This supports exact, non-authorizing replay after a later
+   * membership transition; callers must separately prove the matching event and audit envelope.
+   */
+  @Transactional(propagation = Propagation.MANDATORY, readOnly = true)
+  public Optional<TransitionReceiptEvidence> findByRequestId(String requestId) {
+    requireOwnerTransaction();
+    if (requestId == null || requestId.isBlank()) {
+      throw new IllegalArgumentException("Account membership request ID is required");
+    }
+    Record row =
+        dsl.fetchOne(
+            "SELECT r.receipt_stream_key, r.receipt_sequence, r.account_id, r.tenant_id, "
+                + "h.receipt_stream_key AS head_stream_key, "
+                + "h.last_receipt_sequence AS head_receipt_sequence, r.evidence_status, "
+                + "r.transition_type, r.request_id, r.membership_id, r.membership_lifecycle_state, "
+                + "r.gameplay_admission_allowed, r.membership_version, "
+                + "r.membership_authority_generation, r.authority_provenance, r.receipt_id, r.receipt_digest "
+                + "FROM account_membership_transition_receipts r "
+                + "JOIN account_membership_transition_receipt_stream_heads h "
+                + "ON h.account_id = r.account_id AND h.tenant_id = r.tenant_id "
+                + "WHERE r.request_id = ?",
+            requestId);
+    if (row == null) {
+      return Optional.empty();
+    }
+    String streamKey = row.get("receipt_stream_key", String.class);
+    Long sequence = row.get("receipt_sequence", Long.class);
+    Long headSequence = row.get("head_receipt_sequence", Long.class);
+    String headStreamKey = row.get("head_stream_key", String.class);
+    Long accountId = row.get("account_id", Long.class);
+    Long tenantId = row.get("tenant_id", Long.class);
+    String evidenceStatus = row.get("evidence_status", String.class);
+    String transitionType = row.get("transition_type", String.class);
+    String retainedRequestId = row.get("request_id", String.class);
+    Long membershipId = row.get("membership_id", Long.class);
+    String lifecycleState = row.get("membership_lifecycle_state", String.class);
+    Boolean admissionAllowed = row.get("gameplay_admission_allowed", Boolean.class);
+    Long membershipVersion = row.get("membership_version", Long.class);
+    Long authorityGeneration = row.get("membership_authority_generation", Long.class);
+    String authorityProvenance = row.get("authority_provenance", String.class);
+    UUID receiptId = row.get("receipt_id", UUID.class);
+    String receiptDigest = row.get("receipt_digest", String.class);
+    if (sequence == null
+        || sequence <= 0L
+        || headSequence == null
+        || headSequence < sequence
+        || accountId == null
+        || accountId <= 0L
+        || tenantId == null
+        || tenantId <= 0L
+        || !requestId.equals(retainedRequestId)
+        || membershipId == null
+        || membershipId <= 0L
+        || lifecycleState == null
+        || admissionAllowed == null
+        || membershipVersion == null
+        || membershipVersion <= 0L
+        || authorityGeneration == null
+        || authorityGeneration <= 0L
+        || authorityProvenance == null
+        || receiptId == null
+        || receiptDigest == null
+        || !MembershipTransitionReceiptDigest.receiptStreamKey(accountId, tenantId)
+            .equals(streamKey)
+        || !streamKey.equals(headStreamKey)
+        || !MembershipTransitionReceiptDigest.EVIDENCE_STATUS.equals(evidenceStatus)
+        || !receiptId.equals(MembershipTransitionReceiptDigest.receiptIdForRequest(requestId))) {
+      throw new IllegalStateException(
+          "Account membership transition receipt scope is inconsistent");
+    }
+    String expectedDigest =
+        MembershipTransitionReceiptDigest.transitionDigest(
+            streamKey,
+            sequence,
+            receiptId,
+            transitionType,
+            requestId,
+            accountId,
+            tenantId,
+            membershipId,
+            lifecycleState,
+            admissionAllowed,
+            membershipVersion,
+            authorityGeneration,
+            authorityProvenance);
+    if (!expectedDigest.equals(receiptDigest)) {
+      throw new IllegalStateException(
+          "Account membership transition receipt digest is inconsistent");
+    }
+    MembershipTransitionReceipt receipt =
+        new MembershipTransitionReceipt(
+            streamKey,
+            sequence,
+            receiptId,
+            receiptDigest,
+            evidenceStatus,
+            transitionType,
+            requestId,
+            membershipId);
+    return Optional.of(
+        new TransitionReceiptEvidence(
+            receipt,
+            accountId,
+            tenantId,
+            lifecycleState,
+            admissionAllowed,
+            membershipVersion,
+            authorityGeneration,
+            authorityProvenance));
   }
 
   /**
@@ -358,6 +469,46 @@ public class AccountMembershipTransitionReceiptRepository {
     return Boolean.TRUE.equals(hasHistory);
   }
 
+  private static void requireTransitionState(
+      AccountTenantMembership membership, String transitionType) {
+    if (MEMBERSHIP_JOINED.equals(transitionType) || MEMBERSHIP_REACTIVATED.equals(transitionType)) {
+      if (!"ACTIVE".equals(membership.getLifecycleState())
+          || !membership.isGameplayAdmissionAllowed()
+          || !"EXPLICIT_JOIN".equals(membership.getAuthorityProvenance())) {
+        throw new IllegalArgumentException("JOIN receipt requires its committed active state");
+      }
+      return;
+    }
+    if (MEMBERSHIP_LEFT.equals(transitionType)) {
+      if (!"INACTIVE".equals(membership.getLifecycleState())
+          || membership.isGameplayAdmissionAllowed()
+          || !"EXPLICIT_JOIN".equals(membership.getAuthorityProvenance())) {
+        throw new IllegalArgumentException(
+            "LEAVE receipt requires its committed inactive non-admitting state");
+      }
+      return;
+    }
+    throw new IllegalArgumentException("Membership transition type is unsupported");
+  }
+
+  private static boolean receiptStateMatches(
+      String transitionType, String lifecycleState, boolean gameplayAdmissionAllowed) {
+    return ((MEMBERSHIP_JOINED.equals(transitionType)
+                || MEMBERSHIP_REACTIVATED.equals(transitionType))
+            && "ACTIVE".equals(lifecycleState)
+            && gameplayAdmissionAllowed)
+        || (MEMBERSHIP_LEFT.equals(transitionType)
+            && "INACTIVE".equals(lifecycleState)
+            && !gameplayAdmissionAllowed);
+  }
+
+  private void requireOwnerTransaction() {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new IllegalStateException(
+          "Account membership receipt access requires an active owner transaction");
+    }
+  }
+
   private record ReceiptSnapshot(
       MembershipTransitionReceipt receipt,
       Long currentMembershipId,
@@ -368,4 +519,15 @@ public class AccountMembershipTransitionReceiptRepository {
       String currentAuthorityProvenance,
       long receiptMembershipVersion,
       long receiptAuthorityGeneration) {}
+
+  /** Immutable receipt bytes plus the state needed to bind it to its original event. */
+  public record TransitionReceiptEvidence(
+      MembershipTransitionReceipt receipt,
+      long accountId,
+      long tenantId,
+      String lifecycleState,
+      boolean gameplayAdmissionAllowed,
+      long membershipVersion,
+      long membershipAuthorityGeneration,
+      String authorityProvenance) {}
 }

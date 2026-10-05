@@ -287,3 +287,28 @@ Entry format:
   - Context: a final #2917 tracker edit began a paragraph with a PR hash, which Markdown lint interpreted as a malformed heading. The documentation gate exited nonzero, but its redirected log was not inspected before the local commit.
   - Observation: no push occurred; inspection identified the lint failure and the unvalidated claim was corrected in a follow-up commit. Earlier successful documentation checks did not cover that last edit.
   - Expected pattern: consume every final gate's exit status and failure log before committing or publishing proof claims; after a status-only edit, validate that exact edited scope rather than inheriting the preceding green result.
+
+- `2026-10-01`: Pin module-local configuration in configuration contract tests
+  - Context: the Game Design owner-read test loaded `application.yml` by its generic classpath name, while several modules provide that same resource name.
+  - Observation: the test saw an empty method allowlist rather than the owning service's configuration. Loading the module's explicit `src/main/resources` files exposed the actual default and production lists; the corrected assertion passed without weakening the required methods. This is local configuration proof, not live workload authentication.
+  - Expected pattern: use an explicit owner-module resource when proving a service's configuration, and keep runtime classpath precedence and authenticated deployment proof separate.
+
+- `2026-10-02`: Use explicit typed result extraction for jOOQ SQL fixture readback
+  - Context: repeated Account PostgreSQL fixtures supplied `Long.class` or `UUID.class` to `DSLContext.fetchValue(String, Object...)` as if that SQL overload selected a return type.
+  - Observation: the class is a bind argument, not a type selector; compilation alone did not prove correct SQL binding. Integration inspection corrected the fixtures before claiming execution.
+  - Expected pattern: bind only actual SQL parameters with `resultQuery(sql, parameters)`, then use `fetchOne(columnIndex, type)` for typed extraction and an explicit required-row check where absence is impossible. Retain separate PostgreSQL execution proof; analyzer or compiler success is not that proof.
+
+- `2026-10-02`: Use the affected SpotBugs task's detailed log when no report is emitted
+  - Context: an Account `fullCheck` failed at `spotbugsTest` with exit code 1 but no report artifact or finding in the normal log.
+  - Observation: rerunning the affected canonical task with `-PfullCheck --info` exposed the exact unused-method finding. The obsolete numeric assertion helper was removed and the consolidated gate rerun; no analyzer suppression or disabled check was needed.
+  - Expected pattern: inspect the affected task's detailed output before searching for a report that its configuration does not emit, and keep the diagnostic run separate from the final consolidated proof.
+
+- `2026-10-02`: Stub the underlying Mockito target, not a Spring repository proxy
+  - Context: exact Account PostgreSQL CI36888416843 executed all14required UUID/OTP/HTTP cases but failed one setup with `UnfinishedStubbingException`; its stack crossed the persistence-exception-translation proxy while configuring `doAnswer`.
+  - Observation: a prior green run did not establish stable spy setup. The fixture correction unwraps the ultimate Mockito target for setup and verification, while production calls still traverse the injected Spring proxy and the real owner transaction. A separately logged scheduled-cleanup warning is not proved to cause this failure.
+  - Expected pattern: use `AopTestUtils.getUltimateTargetObject` when configuring a proxied spy, preserve the actual proxy on the tested call path and retain transaction/no-mutation assertions. Require executed runner proof for the corrected setup; local compilation and Docker-skipped tests cannot establish recovery.
+
+- `2026-10-02`: Bind test servers before discovering their ephemeral port
+  - Context: the consolidated Unit 1B Game Session check failed `WorldManagementStubServerTest.unknownRoomInstanceIdReturnsNotFound` before its behavior assertion with `Address already in use` on a port selected by `TestSocketUtils.findAvailableTcpPort`.
+  - Observation: checking a free port and releasing it before the actual bind leaves a race. The existing stub already accepts port zero and reports its bound port; its three tests now use that interface without changing their domain assertions. The colliding process was not identified. All three tests and the complete corrected Account/Game Session/Common Test Support check subsequently passed, establishing local recovery without a domain-assertion change.
+  - Expected pattern: use kernel-assigned port-zero binding and the started server's actual port when the fixture supports it, rather than an unreserved free-port probe. Do not weaken an assertion or label a failure as flaky without its exact bind evidence.

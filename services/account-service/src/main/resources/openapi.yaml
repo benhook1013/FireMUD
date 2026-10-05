@@ -54,7 +54,9 @@ components:
       type: object
       properties:
         id:
-          type: integer
+          type: string
+          format: uuid
+          description: Canonical non-nil Account UUID; never the numeric database primary key.
         username:
           type: string
         email:
@@ -112,14 +114,19 @@ components:
       type: object
       properties:
         accountId:
-          type: integer
+          type: string
+          format: uuid
+          description: Canonical non-nil Account-owned UUID read back from the authenticated source row; never the numeric database primary key.
         authToken:
           type: string
+      required: [accountId, authToken]
     PlayerBootstrapResult:
       type: object
       properties:
         accountId:
-          type: integer
+          type: string
+          format: uuid
+          description: Canonical non-nil persisted Account UUID; never the numeric database primary key.
         bootstrapToken:
           type: string
         issuedAt:
@@ -626,7 +633,8 @@ paths:
           in: path
           required: true
           schema:
-            type: integer
+            type: string
+            format: uuid
       responses:
         '200':
           description: Exported data
@@ -642,6 +650,7 @@ paths:
           required: true
           schema:
             type: string
+            format: uuid
       responses:
         '200':
           description: Allowed login mechanisms
@@ -662,6 +671,7 @@ paths:
           required: true
           schema:
             type: string
+            format: uuid
       requestBody:
         required: true
         content:
@@ -677,37 +687,39 @@ paths:
           description: Recent ordinary reauthentication is required, but this mutation is unavailable until Account implements its evidence mechanism
   /accounts/{accountId}/tenant-export:
     get:
-      summary: Export tenant-scoped account data
+      summary: Tenant-scoped export (currently unavailable)
       operationId: exportTenantData
       parameters:
         - name: accountId
           in: path
           required: true
           schema:
-            type: integer
+            type: string
+            format: uuid
         - name: tenantId
           in: query
           required: true
           schema:
             type: string
       responses:
-        '200':
-          description: Exported tenant data
+        '501':
+          description: Tenant-admin export is unavailable before any account or tenant data read
         '400':
           description: Invalid account or tenant ID
   /accounts/{accountId}:
     delete:
-      summary: Delete global account after billing preconditions pass
+      summary: Global account deletion (currently unavailable before mutation)
       operationId: deleteAccount
       parameters:
         - name: accountId
           in: path
           required: true
           schema:
-            type: integer
+            type: string
+            format: uuid
       responses:
-        '200':
-          description: Deletion success
+        '409':
+          description: ACCOUNT_DELETE_WORKFLOW_UNAVAILABLE; no mutation
         '400':
           description: Invalid account ID
   /profiles/{accountId}:
@@ -719,7 +731,8 @@ paths:
           in: path
           required: true
           schema:
-            type: integer
+            type: string
+            format: uuid
         - name: tenantId
           in: query
           required: true
@@ -742,7 +755,8 @@ paths:
           in: path
           required: true
           schema:
-            type: integer
+            type: string
+            format: uuid
       requestBody:
         required: true
         content:

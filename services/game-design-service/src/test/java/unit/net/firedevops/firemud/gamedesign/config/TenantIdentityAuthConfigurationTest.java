@@ -38,6 +38,8 @@ class TenantIdentityAuthConfigurationTest {
       "gamedesign.v1.TenantIdentityService/ResolveRuntimeTenantIdentity";
   private static final String AUTHORED_WORLD_SOURCE_METHOD =
       "gamedesign.v1.TenantIdentityService/ResolveAuthoredWorldSource";
+  private static final String GAME_SESSION_ASSOCIATION_METHOD =
+      "gamedesign.v1.TenantIdentityService/ResolveLegacyGameSessionTenantAssociation";
   private static final String ACCOUNT_LEGACY_IDENTITY_METHOD =
       "gamedesign.v1.TenantIdentityService/ResolveLegacyGameTenantIdentity";
 
@@ -76,7 +78,8 @@ class TenantIdentityAuthConfigurationTest {
             ACCOUNT_ASSOCIATION_METHOD,
             FRESH_CREATION_METHOD,
             RUNTIME_TENANT_METHOD,
-            AUTHORED_WORLD_SOURCE_METHOD);
+            AUTHORED_WORLD_SOURCE_METHOD,
+            GAME_SESSION_ASSOCIATION_METHOD);
 
     AuthTokenInterceptor interceptor =
         new AuthTokenInterceptor(null, Set.copyOf(properties.getPublicMethods()));

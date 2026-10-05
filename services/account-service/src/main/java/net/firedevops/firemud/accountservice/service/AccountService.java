@@ -1,5 +1,6 @@
 package net.firedevops.firemud.accountservice.service;
 
+import java.util.UUID;
 import net.firedevops.firemud.accountservice.dto.AccountDataExportDto;
 import net.firedevops.firemud.accountservice.dto.AccountDto;
 import net.firedevops.firemud.accountservice.dto.AccountLoginAuthModesDto;
@@ -72,6 +73,9 @@ public interface AccountService {
   void revokeRealmAccess(Long accountId, Long tenantId, String worldSlug, String realmSlug);
 
   RuntimeEntitlementsDto getTenantEntitlementsForRuntime(Long tenantId, String requestId);
+
+  /** Resolves a proved canonical Account UUID to its private Account-local storage key. */
+  Long resolveAccountStorageId(UUID accountUuid);
 
   ProfileDto getProfile(Long tenantId, Long accountId);
 

@@ -4,6 +4,10 @@ import static net.firedevops.firemud.accountservice.jooq.tables.AccountAuditOutb
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import java.sql.SQLException;
 import java.time.Instant;
@@ -12,6 +16,7 @@ import java.time.ZoneOffset;
 import java.util.Locale;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.accountservice.dto.AccountAuditDigest;
 import net.firedevops.firemud.accountservice.dto.AccountAuditEnvelope;
 import net.firedevops.firemud.accountservice.jooq.tables.records.AccountAuditOutboxRecord;
 import org.jooq.DSLContext;
@@ -19,6 +24,7 @@ import org.jooq.RecordContext;
 import org.jooq.RecordListener;
 import org.jooq.Result;
 import org.jooq.SQLDialect;
+import org.jooq.exception.NoDataFoundException;
 import org.jooq.impl.DSL;
 import org.jooq.impl.DefaultConfiguration;
 import org.jooq.impl.DefaultRecordListenerProvider;
@@ -31,6 +37,73 @@ class AccountAuditOutboxRepositoryTest {
   private static final UUID EVENT_ID = UUID.fromString("8a5f6238-f0d9-4992-80cb-e7f447e0f913");
   private static final String RECEIPT_ID = "receipt-1";
   private static final String LOG_EVENT_ID = "log-1";
+
+  private final DSLContext dsl = mock(DSLContext.class);
+  private final AccountAuditOutboxRepository repository = new AccountAuditOutboxRepository(dsl);
+
+  @Test
+  void appendReturnsRefreshedPersistedEnvelope() {
+    UUID auditEventId = UUID.randomUUID();
+    AccountAuditOutboxRecord row = mock(AccountAuditOutboxRecord.class);
+    when(dsl.newRecord(ACCOUNT_AUDIT_OUTBOX)).thenReturn(row);
+    String persistedPayload = "{\"persisted\":\"exact material\"}";
+    String persistedDigest = AccountAuditDigest.ofPayload(persistedPayload);
+    LocalDateTime persistedOccurredAt = LocalDateTime.parse("2026-10-01T12:34:56.123456");
+    doAnswer(
+            invocation -> {
+              when(row.getAuditEventId()).thenReturn(auditEventId);
+              when(row.getScope()).thenReturn("tenant");
+              when(row.getTenantId()).thenReturn(73L);
+              when(row.getProducerService()).thenReturn("account-service");
+              when(row.getEventType()).thenReturn("ACCOUNT_MEMBERSHIP_LEFT");
+              when(row.getOccurredAt()).thenReturn(persistedOccurredAt);
+              when(row.getSchemaVersion()).thenReturn(1);
+              when(row.getPayloadDigestVersion()).thenReturn(1);
+              when(row.getPayloadDigest()).thenReturn(persistedDigest);
+              when(row.getPayload()).thenReturn(persistedPayload);
+              return null;
+            })
+        .when(row)
+        .refresh();
+
+    AccountAuditEnvelope envelope =
+        repository.append(
+            auditEventId,
+            "tenant",
+            73L,
+            "ACCOUNT_MEMBERSHIP_LEFT",
+            "{\"requested\":\"in-memory material\"}");
+
+    assertThat(envelope)
+        .isEqualTo(
+            new AccountAuditEnvelope(
+                auditEventId,
+                "tenant",
+                73L,
+                "account-service",
+                "ACCOUNT_MEMBERSHIP_LEFT",
+                persistedOccurredAt.toInstant(ZoneOffset.UTC),
+                1,
+                1,
+                persistedDigest,
+                persistedPayload));
+    assertThat(envelope.payloadDigest())
+        .isEqualTo(AccountAuditDigest.ofPayload(envelope.payload()));
+  }
+
+  @Test
+  void appendFailsClosedWhenStoredEnvelopeCannotBeReadBack() {
+    AccountAuditOutboxRecord row = mock(AccountAuditOutboxRecord.class);
+    when(dsl.newRecord(ACCOUNT_AUDIT_OUTBOX)).thenReturn(row);
+    doThrow(new NoDataFoundException("Stored audit envelope is missing")).when(row).refresh();
+
+    assertThatThrownBy(
+            () ->
+                repository.append(
+                    UUID.randomUUID(), "tenant", 73L, "ACCOUNT_MEMBERSHIP_LEFT", "{}"))
+        .isInstanceOf(NoDataFoundException.class)
+        .hasMessageContaining("Stored audit envelope is missing");
+  }
 
   @Test
   void exactCommittedOrMinimizedTerminalReceiptAfterLostCompareAndSetIsANoOp() {
@@ -94,21 +167,44 @@ class AccountAuditOutboxRepositoryTest {
     AtomicReference<String> executedSql = new AtomicReference<>();
     AtomicReference<LocalDateTime> storedOccurredAt = new AtomicReference<>();
     AtomicReference<LocalDateTime> storedNextAttemptAt = new AtomicReference<>();
+    AtomicReference<AccountAuditOutboxRecord> insertedRow = new AtomicReference<>();
+    AtomicReference<AccountAuditOutboxRecord> persistedRow = new AtomicReference<>();
+    AtomicReference<AccountAuditOutboxRecord> refreshedRow = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     MockDataProvider provider =
         context -> {
           String sql = context.sql().toLowerCase(Locale.ROOT);
           if (sql.stripLeading().startsWith("insert") && sql.contains("account_audit_outbox")) {
             executedSql.set(sql);
+            AccountAuditOutboxRecord inserted = insertedRow.get();
+            if (inserted == null) {
+              throw new SQLException("Audit outbox row was not prepared before insert");
+            }
+            AccountAuditOutboxRecord persisted = copyAsPersistedRow(resultDsl, inserted);
+            persistedRow.set(persisted);
+            Result<AccountAuditOutboxRecord> rows = resultDsl.newResult(ACCOUNT_AUDIT_OUTBOX);
+            rows.add(persisted);
+            return new MockResult[] {new MockResult(1, rows)};
           }
-          Result<AccountAuditOutboxRecord> rows =
-              DSL.using(SQLDialect.POSTGRES).newResult(ACCOUNT_AUDIT_OUTBOX);
-          return new MockResult[] {new MockResult(1, rows)};
+          if (sql.stripLeading().startsWith("select") && sql.contains("account_audit_outbox")) {
+            AccountAuditOutboxRecord persisted = persistedRow.get();
+            if (persisted == null) {
+              throw new SQLException("Audit outbox row was not inserted before refresh");
+            }
+            Result<AccountAuditOutboxRecord> rows = resultDsl.newResult(ACCOUNT_AUDIT_OUTBOX);
+            AccountAuditOutboxRecord readback = copyAsPersistedRow(resultDsl, persisted);
+            refreshedRow.set(readback);
+            rows.add(readback);
+            return new MockResult[] {new MockResult(1, rows)};
+          }
+          throw new SQLException("Unexpected Account audit outbox query");
         };
     RecordListener recordListener =
         new RecordListener() {
           @Override
           public void storeStart(RecordContext context) {
             if (context.record() instanceof AccountAuditOutboxRecord record) {
+              insertedRow.set(record);
               storedOccurredAt.set(record.getOccurredAt());
               storedNextAttemptAt.set(record.getNextAttemptAt());
             }
@@ -129,6 +225,12 @@ class AccountAuditOutboxRepositoryTest {
     LocalDateTime expectedUtc = LocalDateTime.ofInstant(envelope.occurredAt(), ZoneOffset.UTC);
     assertThat(storedOccurredAt.get()).isEqualTo(expectedUtc);
     assertThat(storedNextAttemptAt.get()).isEqualTo(expectedUtc);
+    assertThat(refreshedRow.get()).isNotNull();
+    assertThat(refreshedRow.get().getOccurredAt()).isEqualTo(expectedUtc);
+    assertThat(refreshedRow.get().getNextAttemptAt()).isEqualTo(expectedUtc);
+    assertThat(persistedRow.get()).isNotNull();
+    assertThat(persistedRow.get().getOccurredAt()).isEqualTo(expectedUtc);
+    assertThat(persistedRow.get().getNextAttemptAt()).isEqualTo(expectedUtc);
   }
 
   @Test
@@ -163,6 +265,33 @@ class AccountAuditOutboxRepositoryTest {
             () -> repository.markDelivered(EVENT_ID, RECEIPT_ID, LOG_EVENT_ID, minimized))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Audit delivery state changed concurrently");
+  }
+
+  private static AccountAuditOutboxRecord copyAsPersistedRow(
+      DSLContext dsl, AccountAuditOutboxRecord source) {
+    AccountAuditOutboxRecord persisted = dsl.newRecord(ACCOUNT_AUDIT_OUTBOX);
+    persisted.setAuditEventId(source.getAuditEventId());
+    persisted.setScope(source.getScope());
+    persisted.setTenantId(source.getTenantId());
+    persisted.setProducerService(source.getProducerService());
+    persisted.setEventType(source.getEventType());
+    persisted.setOccurredAt(source.getOccurredAt());
+    persisted.setSchemaVersion(source.getSchemaVersion());
+    persisted.setPayloadDigestVersion(source.getPayloadDigestVersion());
+    persisted.setPayloadDigest(source.getPayloadDigest());
+    persisted.setPayload(source.getPayload());
+    persisted.setReceiverReceiptId(source.getReceiverReceiptId());
+    persisted.setReceiverLogEventId(source.getReceiverLogEventId());
+    persisted.setDeliveryStatus(
+        source.getDeliveryStatus() == null ? "PENDING" : source.getDeliveryStatus());
+    persisted.setLastAttemptAt(source.getLastAttemptAt());
+    persisted.setCreatedAt(
+        source.getCreatedAt() == null ? LocalDateTime.now(ZoneOffset.UTC) : source.getCreatedAt());
+    persisted.setAttemptCount(
+        source.getAttemptCount() == null ? Integer.valueOf(0) : source.getAttemptCount());
+    persisted.setNextAttemptAt(source.getNextAttemptAt());
+    persisted.setReceiverAuditProjectionVersion(source.getReceiverAuditProjectionVersion());
+    return persisted;
   }
 
   private static AccountAuditOutboxRepository repositoryWithReadback(

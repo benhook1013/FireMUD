@@ -940,6 +940,106 @@ jobs:
           build-scan-terms-of-use-agree: 'yes'
           cache-read-only: false
 
+      - name: Run Game Design retained Game Session association PostgreSQL component proof
+        if: ${{ matrix.module == 'game-design-service' }}
+        run: |
+          ./gradlew :game-design-service:integrationTest \
+            --tests integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest \
+            -PfullCheck --no-build-cache --no-configuration-cache
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest#appliesAuditedAssociationForFreshAndRetainedGameSources()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest#concurrentExactFirstWritersReturnOneImmutableReceipt()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest#ownerRollbackLeavesNoClaimAndLostAcknowledgementRetryReadsExactReceipt()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest#databaseRejectsAssociationUpdatesDeletesTruncatesAndContradictorySourceInsert()' \
+            game-design-service
+
+      - name: Run Game Session authored-world intake PostgreSQL component proof
+        if: ${{ matrix.module == 'game-session-service' }}
+        run: |
+          ./gradlew :game-session-service:integrationTest \
+            --tests integration.net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepositoryIntegrationTest \
+            -PfullCheck --no-build-cache --no-configuration-cache
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepositoryIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepositoryIntegrationTest#registersAdditionalWorldsAndReplaysExactReceiptWithoutMutation()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepositoryIntegrationTest#requiresOwnerTransactionRollsBackClaimsAndReadsOnlyCommittedRows()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepositoryIntegrationTest#concurrentExactIntakeRetriesReturnOneReceiptAndSlugRaceHasOneWinner()' \
+            game-session-service
+
+      - name: Run Game Session retained tenant snapshot and association PostgreSQL component proof
+        if: ${{ matrix.module == 'game-session-service' }}
+        run: |
+          ./gradlew :game-session-service:integrationTest \
+            --tests integration.net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantSnapshotRepositoryIntegrationTest \
+            --tests integration.net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepositoryIntegrationTest \
+            -PfullCheck --no-build-cache --no-configuration-cache
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantSnapshotRepositoryIntegrationTest \
+            --require-suite integration.net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepositoryIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantSnapshotRepositoryIntegrationTest#capturesExactOrderedTenantProjectionAndStableDigestUnderReadCommittedOwnerTransaction()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantSnapshotRepositoryIntegrationTest#captureUsesNowaitToRejectAnExistingWriterThenSucceedsAfterRollback()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantSnapshotRepositoryIntegrationTest#shareFenceBlocksConcurrentInsertUpdateDeleteAcrossEverySourceFamilyAndReleasesAfterCommitOrRollback()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepositoryIntegrationTest#exactRetryReturnsHistoricalReceiptWithoutRecapturingChangedSource()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepositoryIntegrationTest#lostAcknowledgementExactRetryReturnsSameOriginalOperationAndBytesWithoutMutation()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepositoryIntegrationTest#rollbackLeavesNoAssociationClaimAndNewAttemptSucceeds()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepositoryIntegrationTest#concurrentExactFirstWritersReturnSameImmutableReceipt()' \
+            game-session-service
+
+      - name: Run Account persisted UUID authentication PostgreSQL component proof
+        if: ${{ matrix.module == 'account-service' }}
+        run: |
+          ./gradlew :account-service:integrationTest \
+            --tests net.firedevops.firemud.accountservice.service.AccountAuthenticationUuidIntegrationTest \
+            --tests net.firedevops.firemud.accountservice.AccountApplicationIntegrationTest.publicRegistrationCreatesGlobalIdentityAndDurablePlatformAuditOnly \
+            --tests net.firedevops.firemud.accountservice.AccountApplicationIntegrationTest.exportAccountRejectsMalformedAccountIdWithInvalidArgumentEnvelope \
+            --tests net.firedevops.firemud.accountservice.AccountApplicationIntegrationTest.updateProfileRejectsZeroTenantIdWithInvalidArgumentEnvelope \
+            -PfullCheck --no-build-cache --no-configuration-cache
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite net.firedevops.firemud.accountservice.service.AccountAuthenticationUuidIntegrationTest \
+            --require-suite net.firedevops.firemud.accountservice.AccountApplicationIntegrationTest \
+            --require-case 'net.firedevops.firemud.accountservice.service.AccountAuthenticationUuidIntegrationTest#repositoryInsertAuthenticationUsesExactPersistedUuidAndPrivateStorageKey()' \
+            --require-case 'net.firedevops.firemud.accountservice.service.AccountAuthenticationUuidIntegrationTest#databaseInsertAuthenticationUsesTriggerProvedUuidAndCannotRemapItsSource()' \
+            --require-case 'net.firedevops.firemud.accountservice.service.AccountAuthenticationUuidIntegrationTest#unmappedUuidDeniesProfileMutationEvenWhenBodyNamesAnExistingPrivateRow()' \
+            --require-case 'net.firedevops.firemud.accountservice.service.AccountAuthenticationUuidIntegrationTest#emailOtpAuthenticationIssuesPersistedUuidAndConsumesTheChallengeExactlyOnce()' \
+            --require-case 'net.firedevops.firemud.accountservice.service.AccountAuthenticationUuidIntegrationTest#playerBootstrapEmailOtpCarriesPersistedUuidAndConsumesChallengeExactlyOnce()' \
+            --require-case 'net.firedevops.firemud.accountservice.service.AccountAuthenticationUuidIntegrationTest#bootstrapConsumerRejectsUnmappedAccountUuidBeforeSessionLookup()' \
+            --require-case 'net.firedevops.firemud.accountservice.service.AccountAuthenticationUuidIntegrationTest#bootstrapConnectScopeRejectsUnmappedAccountUuidBeforeScopeUse()' \
+            --require-case 'net.firedevops.firemud.accountservice.service.AccountAuthenticationUuidIntegrationTest#rejectedEmailOtpPersistsChallengeAttemptForControlUiAuthentication()' \
+            --require-case 'net.firedevops.firemud.accountservice.service.AccountAuthenticationUuidIntegrationTest#rejectedEmailOtpPersistsChallengeAttemptForGameplayAuthentication()' \
+            --require-case 'net.firedevops.firemud.accountservice.service.AccountAuthenticationUuidIntegrationTest#rejectedEmailOtpPersistsChallengeAttemptForOtpCompletion()' \
+            --require-case 'net.firedevops.firemud.accountservice.service.AccountAuthenticationUuidIntegrationTest#rejectedEmailOtpPersistsChallengeAttemptForPlayerBootstrap()' \
+            --require-case 'net.firedevops.firemud.accountservice.service.AccountAuthenticationUuidIntegrationTest#nonAuthenticationSessionFailureRollsBackOtpConsumption()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountApplicationIntegrationTest#exportAccountRejectsMalformedAccountIdWithInvalidArgumentEnvelope()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountApplicationIntegrationTest#updateProfileRejectsZeroTenantIdWithInvalidArgumentEnvelope()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountApplicationIntegrationTest#publicRegistrationCreatesGlobalIdentityAndDurablePlatformAuditOnly()' \
+            account-service
+
+      - name: Run Game Session command Account UUID storage PostgreSQL component proof
+        if: ${{ matrix.module == 'game-session-service' }}
+        run: |
+          ./gradlew :game-session-service:integrationTest \
+            --tests net.firedevops.firemud.gamesession.repository.GameplayCommandRepositoryIntegrationTest.saveRoundTripsExplicitAccountUuidWithoutChangingLegacyNumericAccountId \
+            --tests net.firedevops.firemud.gamesession.repository.GameplayCommandRepositoryIntegrationTest.saveRoundTripsNullableAccountUuidAlongsideLegacyNumericAccountId \
+            --tests net.firedevops.firemud.gamesession.repository.GameplayCommandRepositoryIntegrationTest.saveRejectsNilAccountUuidAtDatabaseFence \
+            --tests net.firedevops.firemud.gamesession.repository.GameplayCommandRepositoryIntegrationTest.accountUuidEvidenceInsertRollsBackWithItsContainingTransaction \
+            --tests net.firedevops.firemud.gamesession.repository.GameplayCommandAccountUuidMigrationIntegrationTest \
+            -PfullCheck --no-build-cache --no-configuration-cache
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite net.firedevops.firemud.gamesession.repository.GameplayCommandRepositoryIntegrationTest \
+            --require-suite net.firedevops.firemud.gamesession.repository.GameplayCommandAccountUuidMigrationIntegrationTest \
+            --require-case 'net.firedevops.firemud.gamesession.repository.GameplayCommandRepositoryIntegrationTest#saveRoundTripsExplicitAccountUuidWithoutChangingLegacyNumericAccountId()' \
+            --require-case 'net.firedevops.firemud.gamesession.repository.GameplayCommandRepositoryIntegrationTest#saveRoundTripsNullableAccountUuidAlongsideLegacyNumericAccountId()' \
+            --require-case 'net.firedevops.firemud.gamesession.repository.GameplayCommandRepositoryIntegrationTest#saveRejectsNilAccountUuidAtDatabaseFence()' \
+            --require-case 'net.firedevops.firemud.gamesession.repository.GameplayCommandRepositoryIntegrationTest#accountUuidEvidenceInsertRollsBackWithItsContainingTransaction()' \
+            --require-case 'net.firedevops.firemud.gamesession.repository.GameplayCommandAccountUuidMigrationIntegrationTest#migrationRetainsLegacyCommandRowsAndDoesNotInventAccountUuids()' \
+            game-session-service
+
       - name: 🧪 Run Gradle Checks
         id: checks
         run: |
@@ -962,6 +1062,14 @@ jobs:
             --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#positiveMembershipSnapshotRejectsScalarAndWrongTenantVersionMaps()' \
             --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#concurrentFirstJoinCannotMixWithCompleteFencedRuntimeMembershipSnapshot()' \
             --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#canonicalExistingPairBoundPositiveMembershipSnapshotRepeatsWithoutMutation()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#leftCommitsClosedAuthorityAndRetainedInactiveRuntimeSnapshot()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#auditAppendReadsBackExactStoredTimestampAndEnvelope()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#concurrentExactLeftRetriesAndReplayAfterReactivationDoNotChurnCurrentAuthority()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#committedLeftWithLostAcknowledgementReadsBackExactReceiptWithoutChurn()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#reusedLeftAndJoinRequestIdsAreRejectedWithoutCrossScopeMutation()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#contradictoryLatestEventDeniesLeftWithoutMembershipOrOutboxMutation()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#auditFailureRollsBackCompleteOwnerLeftTransaction()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#concurrentLeftAndReactivationSerializeAsCompleteAccountTransitions()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountBareLoginExchangeRepositoryIntegrationTest#claimOnlyTransactionRollsBackPendingExchange()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceRepositoryIntegrationTest#concurrentExactIssuanceClaimsHaveOneTerminalFirstWriter()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceRepositoryIntegrationTest#lostIssuanceResponseRecoversExactEncryptedResultFromDurableReadback(Path)' \
@@ -975,6 +1083,7 @@ jobs:
             --strict \
             --require-suite integration.net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationIntegrationTest \
             --require-suite integration.net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepositoryIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationIntegrationTest#compositeSnapshotBlocksIssuerAndTenantAdvanceAndKeepsScopeSetsIndependent()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationIntegrationTest#exhaustedAccountCountersRollbackTheWholeCallerTransaction()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepositoryIntegrationTest#exhaustedSequenceRejectsAppendWithoutChangingEventCheckpointOrCallerSentinel()' \
             account-service
