@@ -199,6 +199,13 @@ class FireControllerWebTest(unittest.TestCase):
         self.assertIn("after-review", page)
         self.assertIn("/jobs/job-1/history", page)
 
+    def test_private_job_title_is_escaped_once_in_heading_and_document_title(self):
+        detail = {**FakeStore().detail, "title": 'Task <one> & "done"'}
+        page = web.render_job(detail)
+        self.assertIn("<title>Task &lt;one&gt; &amp; &quot;done&quot; · FireController job</title>", page)
+        self.assertIn("<h1>Task &lt;one&gt; &amp; &quot;done&quot;</h1>", page)
+        self.assertNotIn("&amp;amp;", page)
+
     def test_private_time_metadata_uses_nz_fallback_and_preserves_iso_attributes(self):
         rendered = web._time_metadata("2026-10-04T08:47:13Z")
         self.assertEqual(
@@ -415,6 +422,24 @@ class PrivateWebHistoryTests(unittest.TestCase):
         self.assertIn("<h1>Current task title history</h1>", page)
         self.assertIn('<p class="job-alias">Job alias · Current</p>', page)
         self.assertIn("Historical title", page)
+
+    def test_history_page_titles_escape_current_and_historical_titles_once(self):
+        title = 'Task <one> & "done"'
+        escaped_title = 'Task &lt;one&gt; &amp; &quot;done&quot;'
+        job = {"id": "job-1", "name": "Current", "title": title}
+        revision = web.render_job({"job": job, "revision_entry": {
+            "revision": 2, "title": 'Past <title> & "kept"'}}, history=True)
+        self.assertIn(f"<title>{escaped_title} history</title>", revision)
+        self.assertIn(f"<h1>{escaped_title} · Revision 2</h1>", revision)
+        self.assertIn("<p>Past &lt;title&gt; &amp; &quot;kept&quot;</p>", revision)
+        self.assertNotIn("&amp;amp;", revision)
+
+        history = web.render_job({"job": job, "history": [
+            {"revision": 2, "status": "blocked", "title": 'Past <title> & "kept"'}]}, history=True)
+        self.assertIn(f"<title>{escaped_title} history</title>", history)
+        self.assertIn(f"<h1>{escaped_title} history</h1>", history)
+        self.assertIn("Past &lt;title&gt; &amp; &quot;kept&quot;", history)
+        self.assertNotIn("&amp;amp;", history)
 
     def test_workstream_pagination_and_historical_phases(self):
         class Store:
