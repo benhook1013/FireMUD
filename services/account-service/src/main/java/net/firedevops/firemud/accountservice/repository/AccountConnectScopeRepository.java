@@ -3,15 +3,30 @@ package net.firedevops.firemud.accountservice.repository;
 import static net.firedevops.firemud.accountservice.jooq.Tables.ACCOUNT_CONNECT_SCOPE_RECORDS;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
+import net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2;
 import net.firedevops.firemud.accountservice.dto.VerifiedJoinScope;
+import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.TenantProvenanceKind;
+import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance;
+import net.firedevops.firemud.accountservice.repository.ApprovedLegacyTenantAssociationRepository.ApprovedAssociation;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import org.jooq.DSLContext;
 import org.jooq.Record;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Durable, exact-byte scope evidence; its token hash is only a lookup key, never authority. */
 @Repository
@@ -19,6 +34,10 @@ import org.springframework.stereotype.Repository;
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class AccountConnectScopeRepository {
+  private static final Pattern SHA256 = Pattern.compile("sha256:[0-9a-f]{64}");
+  private static final Pattern UTC_RFC3339 =
+      Pattern.compile(
+          "([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})(?:\\.([0-9]+))?Z");
   private static final String DELETE_EXPIRED_UNREFERENCED_SQL =
       "DELETE FROM account_connect_scope_records scope "
           + "WHERE scope.ctid IN ("
@@ -42,9 +61,24 @@ public class AccountConnectScopeRepository {
           + ")";
 
   private final DSLContext dsl;
+  private final AccountTenantIdentityResolver retainedTenantIdentities;
+  private final FreshTenantIdentityAssociationRepository freshTenantIdentities;
 
+  /** Retained for existing v1-only repository fixtures. */
   public AccountConnectScopeRepository(DSLContext dsl) {
-    this.dsl = dsl;
+    this.dsl = Objects.requireNonNull(dsl);
+    this.retainedTenantIdentities = null;
+    this.freshTenantIdentities = null;
+  }
+
+  @Autowired
+  public AccountConnectScopeRepository(
+      DSLContext dsl,
+      AccountTenantIdentityResolver retainedTenantIdentities,
+      FreshTenantIdentityAssociationRepository freshTenantIdentities) {
+    this.dsl = Objects.requireNonNull(dsl);
+    this.retainedTenantIdentities = Objects.requireNonNull(retainedTenantIdentities);
+    this.freshTenantIdentities = Objects.requireNonNull(freshTenantIdentities);
   }
 
   public void insert(VerifiedJoinScope scope) {
@@ -74,9 +108,378 @@ public class AccountConnectScopeRepository {
   public Optional<VerifiedJoinScope> find(String connectScopeId) {
     return dsl.selectFrom(ACCOUNT_CONNECT_SCOPE_RECORDS)
         .where(
-            ACCOUNT_CONNECT_SCOPE_RECORDS.SCOPE_TOKEN_HASH.eq(
-                AccountJoinDigest.tokenHash(connectScopeId)))
+            ACCOUNT_CONNECT_SCOPE_RECORDS
+                .SCOPE_TOKEN_HASH
+                .eq(AccountJoinDigest.tokenHash(connectScopeId))
+                .and(org.jooq.impl.DSL.field("scope_digest_version", Integer.class).eq(1)))
         .fetchOptional(record -> toScope(record, connectScopeId));
+  }
+
+  /**
+   * Persists canonical UUID scope storage beside retained v1 rows. This stores evidence only; the
+   * caller must obtain this scope from authenticated Account identity and a Game Session owner
+   * runtime read before invoking the method.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public void insertCanonical(
+      long privateAccountId,
+      CanonicalJoinScopeV2 scope,
+      VerifiedTenantProvenance tenantProvenance) {
+    requireWritableOwnerTransaction();
+    requireCanonicalDependencies();
+    Objects.requireNonNull(scope, "Canonical JOIN scope is required");
+    Objects.requireNonNull(tenantProvenance, "Verified tenant provenance is required");
+    if (privateAccountId <= 0L) {
+      throw new IllegalArgumentException("A positive private Account row key is required");
+    }
+    requireStoredScopeLengths(scope);
+    requireOrderedScopeTimes(scope);
+    verifyAccountIdentity(privateAccountId, scope.accountId());
+    verifyTenantIdentity(scope.tenantId(), tenantProvenance);
+
+    String tokenHash = AccountJoinDigest.tokenHash(scope.connectScopeId());
+    String scopeDigest = AccountJoinDigest.scopeV2(scope);
+    CanonicalConnectScopeEvidence expected =
+        new CanonicalConnectScopeEvidence(
+            tokenHash,
+            privateAccountId,
+            "PUBLIC_PRODUCTION",
+            scope.accountId(),
+            scope.tenantId(),
+            scope.realmId(),
+            scope.tenantSlug(),
+            scope.worldSlug(),
+            scope.realmSlug(),
+            scope.playableStateNamespaceId(),
+            scope.playableStateScope(),
+            scope.gameInstanceId(),
+            scope.catalogRevision(),
+            scope.pointerVersion(),
+            scope.evaluatedAt(),
+            scope.connectScopeExpiresAt(),
+            2,
+            scopeDigest,
+            tenantProvenance);
+
+    int inserted =
+        dsl.execute(
+            "INSERT INTO account_connect_scope_records "
+                + "(scope_token_hash, account_id, target_class, tenant_id, realm_id, world_slug, "
+                + "realm_slug, playable_state_namespace_id, playable_state_scope, game_instance_id, "
+                + "catalog_revision, pointer_version, evaluated_at, connect_scope_expires_at, "
+                + "snapshot_digest, scope_digest_version, account_uuid, tenant_uuid, tenant_slug, "
+                + "playable_state_namespace_uuid, game_instance_uuid, tenant_provenance_kind, "
+                + "tenant_provenance_legacy_tenant_id, tenant_source_operation_id, "
+                + "tenant_provenance_digest) "
+                + "VALUES (?, ?, ?, NULL, ?, ?, ?, NULL, ?, NULL, ?, ?, ?, ?, ?, 2, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                + "ON CONFLICT (scope_token_hash) DO NOTHING",
+            expected.scopeTokenHash(),
+            expected.privateAccountId(),
+            expected.targetClass(),
+            expected.realmId(),
+            expected.worldSlug(),
+            expected.realmSlug(),
+            expected.playableStateScope(),
+            expected.catalogRevision(),
+            expected.pointerVersion(),
+            expected.evaluatedAt(),
+            expected.connectScopeExpiresAt(),
+            expected.scopeDigest(),
+            expected.accountUuid(),
+            expected.tenantUuid(),
+            expected.tenantSlug(),
+            expected.playableStateNamespaceUuid(),
+            expected.gameInstanceUuid(),
+            expected.tenantProvenance().kind().name(),
+            expected.tenantProvenance().legacyTenantId(),
+            expected.tenantProvenance().sourceOperationId(),
+            expected.tenantProvenance().digest());
+    if (inserted < 0 || inserted > 1) {
+      throw new IllegalStateException("Canonical Account connect scope insert was ambiguous");
+    }
+
+    CanonicalConnectScopeEvidence committed =
+        readCanonicalEvidenceByTokenHash(tokenHash)
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "Canonical Account connect scope insert readback is absent"));
+    if (!committed.equals(expected)) {
+      throw new CanonicalScopeConflictException(
+          "Canonical Account connect scope conflicts with immutable token-hash evidence");
+    }
+  }
+
+  /** Resolves v2 only from a bearer whose exact immutable owner evidence is persisted. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public Optional<CanonicalJoinScopeV2> findCanonical(String connectScopeId) {
+    requireOwnerTransaction();
+    requireCanonicalDependencies();
+    Objects.requireNonNull(connectScopeId, "Connect scope bearer is required");
+    if (connectScopeId.isBlank()) {
+      throw new IllegalArgumentException("Connect scope bearer is required");
+    }
+    String tokenHash = AccountJoinDigest.tokenHash(connectScopeId);
+    return readCanonicalEvidenceByTokenHash(tokenHash)
+        .map(
+            evidence -> {
+              CanonicalJoinScopeV2 scope = toCanonicalScope(evidence, connectScopeId);
+              if (!evidence.scopeDigest().equals(AccountJoinDigest.scopeV2(scope))) {
+                throw new IllegalStateException("Canonical JOIN scope digest mismatch");
+              }
+              return scope;
+            });
+  }
+
+  /** Hash-only V2 evidence for operation cross-readback; it never reconstructs the bearer. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public Optional<CanonicalConnectScopeEvidence> findCanonicalEvidenceByTokenHash(
+      String scopeTokenHash) {
+    requireWritableOwnerTransaction();
+    requireCanonicalDependencies();
+    requireSha256(scopeTokenHash, "JOIN scope token hash");
+    return readCanonicalEvidenceByTokenHash(scopeTokenHash);
+  }
+
+  private Optional<CanonicalConnectScopeEvidence> readCanonicalEvidenceByTokenHash(
+      String scopeTokenHash) {
+    Record record =
+        dsl.fetchOne(
+            "SELECT scope_token_hash, account_id, target_class, tenant_id, realm_id, world_slug, "
+                + "realm_slug, playable_state_namespace_id, playable_state_scope, game_instance_id, "
+                + "catalog_revision, pointer_version, evaluated_at, connect_scope_expires_at, "
+                + "snapshot_digest, scope_digest_version, account_uuid, tenant_uuid, tenant_slug, "
+                + "playable_state_namespace_uuid, game_instance_uuid, tenant_provenance_kind, "
+                + "tenant_provenance_legacy_tenant_id, tenant_source_operation_id, "
+                + "tenant_provenance_digest FROM account_connect_scope_records "
+                + "WHERE scope_token_hash = ?",
+            scopeTokenHash);
+    if (record == null) {
+      return Optional.empty();
+    }
+    CanonicalConnectScopeEvidence evidence = toCanonicalEvidence(record);
+    verifyAccountIdentity(evidence.privateAccountId(), evidence.accountUuid());
+    verifyTenantIdentity(evidence.tenantUuid(), evidence.tenantProvenance());
+    return Optional.of(evidence);
+  }
+
+  private void verifyAccountIdentity(long privateAccountId, UUID expectedAccountUuid) {
+    Record account =
+        dsl.fetchOne(
+            "SELECT id, account_uuid, account_uuid_source_numeric_id, account_uuid_provenance "
+                + "FROM accounts WHERE id = ? FOR UPDATE",
+            privateAccountId);
+    if (account == null
+        || !Objects.equals(account.get("id", Long.class), privateAccountId)
+        || !Objects.equals(account.get("account_uuid", UUID.class), expectedAccountUuid)
+        || !Objects.equals(
+            account.get("account_uuid_source_numeric_id", Long.class), privateAccountId)
+        || account.get("account_uuid_provenance", String.class) == null) {
+      throw new IllegalStateException(
+          "Canonical JOIN scope does not match the locked persisted Account identity");
+    }
+  }
+
+  private void verifyTenantIdentity(
+      UUID expectedTenantUuid, VerifiedTenantProvenance expectedProvenance) {
+    if (expectedProvenance.kind() == TenantProvenanceKind.APPROVED_RETAINED) {
+      ApprovedAssociation association = retainedTenantIdentities.resolve(expectedTenantUuid);
+      String manifestDigest =
+          dsl.resultQuery(
+                  "SELECT manifest_digest FROM account_approved_legacy_tenant_association_payload "
+                      + "WHERE operation_id = ?",
+                  expectedProvenance.sourceOperationId())
+              .fetchOne(0, String.class);
+      if (!expectedTenantUuid.equals(association.canonicalTenantId())
+          || expectedProvenance.legacyTenantId() != association.legacyTenantId()
+          || !expectedProvenance.sourceOperationId().equals(association.operationId())
+          || !expectedProvenance.digest().equals(manifestDigest)) {
+        throw new IllegalStateException(
+            "Canonical JOIN scope retained tenant provenance differs from owner readback");
+      }
+      return;
+    }
+    if (expectedProvenance.kind() == TenantProvenanceKind.FRESH_GAME_DESIGN) {
+      FreshTenantCreationEvidence association =
+          freshTenantIdentities
+              .read(expectedTenantUuid)
+              .orElseThrow(
+                  () ->
+                      new IllegalStateException(
+                          "Canonical JOIN scope fresh tenant source is absent"));
+      if (!expectedTenantUuid.equals(association.canonicalTenantId())
+          || expectedProvenance.legacyTenantId() != null
+          || !expectedProvenance.sourceOperationId().equals(association.operationId())
+          || !expectedProvenance.digest().equals(association.evidenceDigest())) {
+        throw new IllegalStateException(
+            "Canonical JOIN scope fresh tenant provenance differs from owner readback");
+      }
+      return;
+    }
+    throw new IllegalStateException("Canonical JOIN scope tenant provenance kind is unsupported");
+  }
+
+  private static CanonicalJoinScopeV2 toCanonicalScope(
+      CanonicalConnectScopeEvidence evidence, String connectScopeId) {
+    return new CanonicalJoinScopeV2(
+        connectScopeId,
+        evidence.accountUuid(),
+        evidence.tenantUuid(),
+        evidence.realmId(),
+        evidence.tenantSlug(),
+        evidence.worldSlug(),
+        evidence.realmSlug(),
+        evidence.playableStateNamespaceUuid(),
+        evidence.playableStateScope(),
+        evidence.gameInstanceUuid(),
+        evidence.catalogRevision(),
+        evidence.pointerVersion(),
+        evidence.evaluatedAt(),
+        evidence.connectScopeExpiresAt());
+  }
+
+  private static CanonicalConnectScopeEvidence toCanonicalEvidence(Record record) {
+    Integer digestVersion = record.get("scope_digest_version", Integer.class);
+    if (!Integer.valueOf(2).equals(digestVersion)) {
+      throw new CanonicalScopeConflictException(
+          "Connect-scope token hash is retained under a different representation");
+    }
+    if (record.get("tenant_id", Long.class) != null
+        || record.get("game_instance_id", Long.class) != null
+        || record.get("playable_state_namespace_id", String.class) != null) {
+      throw new IllegalStateException("Canonical JOIN scope contains a numeric identity alias");
+    }
+    TenantProvenanceKind kind;
+    try {
+      kind =
+          TenantProvenanceKind.valueOf(
+              required(record.get("tenant_provenance_kind", String.class), "tenant kind"));
+    } catch (IllegalArgumentException exception) {
+      throw new IllegalStateException(
+          "Canonical JOIN scope tenant provenance is invalid", exception);
+    }
+    VerifiedTenantProvenance tenantProvenance =
+        new VerifiedTenantProvenance(
+            record.get("tenant_provenance_legacy_tenant_id", Long.class),
+            kind,
+            required(
+                record.get("tenant_source_operation_id", UUID.class), "tenant source operation"),
+            required(record.get("tenant_provenance_digest", String.class), "tenant source digest"));
+    return new CanonicalConnectScopeEvidence(
+        required(record.get("scope_token_hash", String.class), "scope token hash"),
+        required(record.get("account_id", Long.class), "private Account row key"),
+        required(record.get("target_class", String.class), "scope target"),
+        required(record.get("account_uuid", UUID.class), "Account UUID"),
+        required(record.get("tenant_uuid", UUID.class), "tenant UUID"),
+        required(record.get("realm_id", UUID.class), "realm UUID"),
+        required(record.get("tenant_slug", String.class), "tenant slug"),
+        required(record.get("world_slug", String.class), "world slug"),
+        required(record.get("realm_slug", String.class), "realm slug"),
+        required(
+            record.get("playable_state_namespace_uuid", UUID.class), "playable namespace UUID"),
+        required(record.get("playable_state_scope", String.class), "playable state scope"),
+        required(record.get("game_instance_uuid", UUID.class), "game instance UUID"),
+        required(record.get("catalog_revision", Long.class), "catalog revision"),
+        required(record.get("pointer_version", Long.class), "pointer version"),
+        required(record.get("evaluated_at", String.class), "scope evaluation time"),
+        required(record.get("connect_scope_expires_at", String.class), "scope expiry time"),
+        digestVersion,
+        required(record.get("snapshot_digest", String.class), "scope digest"),
+        tenantProvenance);
+  }
+
+  private static <T> T required(T value, String field) {
+    if (value == null) {
+      throw new IllegalStateException("Canonical JOIN scope is missing " + field);
+    }
+    return value;
+  }
+
+  private static void requireSha256(String value, String field) {
+    if (value == null || !SHA256.matcher(value).matches()) {
+      throw new IllegalArgumentException(field + " must be a lowercase SHA-256 digest");
+    }
+  }
+
+  private static void requireOwnerTransaction() {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new IllegalStateException(
+          "Canonical Account connect scope access requires an active owner transaction");
+    }
+  }
+
+  private static void requireWritableOwnerTransaction() {
+    requireOwnerTransaction();
+    if (TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
+      throw new IllegalStateException(
+          "Canonical Account connect scope write requires a writable owner transaction");
+    }
+  }
+
+  private void requireCanonicalDependencies() {
+    if (retainedTenantIdentities == null || freshTenantIdentities == null) {
+      throw new IllegalStateException(
+          "Canonical Account connect scope source readers are unavailable");
+    }
+  }
+
+  private static void requireOrderedScopeTimes(CanonicalJoinScopeV2 scope) {
+    requireOrderedScopeTimes(scope.evaluatedAt(), scope.connectScopeExpiresAt());
+  }
+
+  private static void requireOrderedScopeTimes(String evaluatedAtText, String expiresAtText) {
+    BigDecimal evaluatedAt = epochSeconds(evaluatedAtText);
+    BigDecimal expiresAt = epochSeconds(expiresAtText);
+    if (expiresAt.compareTo(evaluatedAt) <= 0) {
+      throw new IllegalArgumentException(
+          "Canonical JOIN scope expiry must be after its exact evaluation time");
+    }
+  }
+
+  private static BigDecimal epochSeconds(String timestamp) {
+    Matcher matcher = UTC_RFC3339.matcher(timestamp);
+    if (!matcher.matches()) {
+      throw new IllegalArgumentException("Canonical JOIN scope time is not exact UTC RFC3339");
+    }
+    LocalDate date =
+        LocalDate.of(
+            Integer.parseInt(matcher.group(1)),
+            Integer.parseInt(matcher.group(2)),
+            Integer.parseInt(matcher.group(3)));
+    int hour = Integer.parseInt(matcher.group(4));
+    int minute = Integer.parseInt(matcher.group(5));
+    int second = Integer.parseInt(matcher.group(6));
+    if (hour > 23 || minute > 59 || second > 60) {
+      throw new IllegalArgumentException("Canonical JOIN scope time is not valid UTC RFC3339");
+    }
+    long wholeSeconds =
+        date.atStartOfDay().toEpochSecond(ZoneOffset.UTC)
+            + (hour * 60L + minute) * 60L
+            + Math.min(second, 59);
+    if (second == 60) {
+      wholeSeconds++;
+    }
+    BigDecimal exactTime = BigDecimal.valueOf(wholeSeconds);
+    String fraction = matcher.group(7);
+    if (fraction != null) {
+      exactTime = exactTime.add(new BigDecimal("0." + fraction));
+    }
+    return exactTime;
+  }
+
+  private static void requireStoredScopeLengths(CanonicalJoinScopeV2 scope) {
+    requireDatabaseCharacterLimit("tenantSlug", scope.tenantSlug(), 128);
+    requireDatabaseCharacterLimit("worldSlug", scope.worldSlug(), 128);
+    requireDatabaseCharacterLimit("realmSlug", scope.realmSlug(), 128);
+    requireDatabaseCharacterLimit("evaluatedAt", scope.evaluatedAt(), 40);
+    requireDatabaseCharacterLimit("connectScopeExpiresAt", scope.connectScopeExpiresAt(), 40);
+  }
+
+  private static void requireDatabaseCharacterLimit(String field, String value, int limit) {
+    if (value.codePointCount(0, value.length()) > limit) {
+      throw new IllegalArgumentException(
+          "Canonical JOIN scope " + field + " exceeds its durable storage limit");
+    }
   }
 
   /**
@@ -121,5 +524,71 @@ public class AccountConnectScopeRepository {
       throw new IllegalStateException("JOIN scope digest mismatch");
     }
     return scope;
+  }
+
+  /** Hash-only V2 scope recovery evidence; intentionally contains no connect-scope bearer. */
+  public record CanonicalConnectScopeEvidence(
+      String scopeTokenHash,
+      long privateAccountId,
+      String targetClass,
+      UUID accountUuid,
+      UUID tenantUuid,
+      UUID realmId,
+      String tenantSlug,
+      String worldSlug,
+      String realmSlug,
+      UUID playableStateNamespaceUuid,
+      String playableStateScope,
+      UUID gameInstanceUuid,
+      long catalogRevision,
+      long pointerVersion,
+      String evaluatedAt,
+      String connectScopeExpiresAt,
+      int scopeDigestVersion,
+      String scopeDigest,
+      VerifiedTenantProvenance tenantProvenance) {
+    public CanonicalConnectScopeEvidence {
+      requireSha256(scopeTokenHash, "JOIN scope token hash");
+      if (privateAccountId <= 0L
+          || !"PUBLIC_PRODUCTION".equals(targetClass)
+          || isNil(accountUuid)
+          || isNil(tenantUuid)
+          || isNil(realmId)
+          || tenantSlug == null
+          || tenantSlug.isEmpty()
+          || worldSlug == null
+          || worldSlug.isEmpty()
+          || realmSlug == null
+          || realmSlug.isEmpty()
+          || isNil(playableStateNamespaceUuid)
+          || (!"SHARED".equals(playableStateScope) && !"ISOLATED".equals(playableStateScope))
+          || isNil(gameInstanceUuid)
+          || catalogRevision <= 0L
+          || pointerVersion <= 0L
+          || evaluatedAt == null
+          || connectScopeExpiresAt == null
+          || scopeDigestVersion != 2
+          || tenantProvenance == null) {
+        throw new IllegalArgumentException("Canonical JOIN scope evidence is incomplete");
+      }
+      requireDatabaseCharacterLimit("tenantSlug", tenantSlug, 128);
+      requireDatabaseCharacterLimit("worldSlug", worldSlug, 128);
+      requireDatabaseCharacterLimit("realmSlug", realmSlug, 128);
+      requireDatabaseCharacterLimit("evaluatedAt", evaluatedAt, 40);
+      requireDatabaseCharacterLimit("connectScopeExpiresAt", connectScopeExpiresAt, 40);
+      requireOrderedScopeTimes(evaluatedAt, connectScopeExpiresAt);
+      requireSha256(scopeDigest, "Canonical JOIN scope digest");
+    }
+
+    private static boolean isNil(UUID value) {
+      return value == null || new UUID(0L, 0L).equals(value);
+    }
+  }
+
+  /** Conflicting reuse of a global scope-token hash cannot replace its original evidence. */
+  public static final class CanonicalScopeConflictException extends IllegalStateException {
+    public CanonicalScopeConflictException(String message) {
+      super(message);
+    }
   }
 }

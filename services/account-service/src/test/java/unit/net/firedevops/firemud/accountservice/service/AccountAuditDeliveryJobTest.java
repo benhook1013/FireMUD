@@ -103,7 +103,7 @@ class AccountAuditDeliveryJobTest {
     return new AccountAuditEnvelope(
         auditEventId,
         "platform",
-        null,
+        (Long) null,
         "account-service",
         "ACCOUNT_REGISTERED",
         Instant.parse("2026-09-24T00:00:00Z"),

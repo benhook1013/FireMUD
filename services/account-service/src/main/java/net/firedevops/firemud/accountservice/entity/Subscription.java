@@ -2,6 +2,7 @@ package net.firedevops.firemud.accountservice.entity;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.LocalDateTime;
+import java.util.UUID;
 import lombok.Data;
 import lombok.Getter;
 import lombok.Setter;
@@ -28,4 +29,5 @@ public class Subscription {
   private LocalDateTime endedAt;
   private Long tenantId;
   private long entitlementVersion = 1L;
+  private UUID tenantAuthorityGeneration;
 }

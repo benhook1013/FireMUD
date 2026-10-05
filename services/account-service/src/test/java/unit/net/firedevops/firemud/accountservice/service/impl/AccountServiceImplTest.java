@@ -5398,6 +5398,14 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void revokeRealmAccessUsesDurableRepositoryRevocation() {
+    service.revokeRealmAccess(11L, 7L, "demo", "preview");
+
+    org.mockito.Mockito.verify(accountRealmAccessGrantRepository)
+        .revokeByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(11L, 7L, "demo", "preview");
+  }
+
+  @Test
   void getRealmAccessGrantForRuntimeReturnsGrantState() {
     Account account = new Account();
     account.setId(11L);

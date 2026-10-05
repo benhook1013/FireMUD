@@ -113,7 +113,8 @@ public class AccountRepository {
 
   public void delete(Account entity) {
     if (entity != null && entity.getId() != null) {
-      dsl.deleteFrom(ACCOUNTS).where(ACCOUNTS.ID.eq(entity.getId())).execute();
+      throw new IllegalStateException(
+          "Account hard deletion is unavailable until the pending-deletion retention workflow exists");
     }
   }
 
