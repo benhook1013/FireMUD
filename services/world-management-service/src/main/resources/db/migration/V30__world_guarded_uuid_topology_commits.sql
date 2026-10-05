@@ -383,7 +383,7 @@ BEGIN
                 WHERE m.request_id = mapping.request_id AND m.family = 'ZONE'
                     AND m.template_id = (payload->>'zoneId')::UUID;
             SELECT z.region_id INTO STRICT other_key FROM "${serviceSchema}".zone z WHERE z.id = parent_key;
-            IF scope_key <> CASE scope_type WHEN 'REGION_SUBTREE' THEN other_key ELSE parent_key END THEN
+            IF scope_key <> (CASE scope_type WHEN 'REGION_SUBTREE' THEN other_key ELSE parent_key END) THEN
                 RAISE EXCEPTION 'Room scope substitution' USING ERRCODE = '23514';
             END IF;
             content := content || jsonb_build_object('name',coalesce(payload->>'name',''),
