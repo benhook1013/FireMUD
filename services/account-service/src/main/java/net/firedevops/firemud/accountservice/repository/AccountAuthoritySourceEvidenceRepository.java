@@ -102,7 +102,11 @@ public class AccountAuthoritySourceEvidenceRepository {
 
     AuthorityScope scope = AuthorityScope.account(proof.accountUuid());
     ScopeState current = generations.read(scope);
-    CurrentSourceEvidence currentEvidence = readCurrentSource(scope, current);
+    // AccountRepository has already applied this exact update in the surrounding transaction.
+    // Validate the event head against the immutable repository-captured before image here; normal
+    // source reads and the post-append readback below still require equality with the live row.
+    CurrentSourceEvidence currentEvidence =
+        readCurrentSource(scope, current, Optional.of(proof.before().toEventState()));
     IssuanceFence expectedFence =
         Objects.requireNonNull(current.issuanceFence(), "Account source fence is required");
     ScopeState advanced = generations.advanceForSourceEvidence(current, expectedFence);
@@ -272,6 +276,13 @@ public class AccountAuthoritySourceEvidenceRepository {
   }
 
   private CurrentSourceEvidence readCurrentSource(AuthorityScope scope, ScopeState authority) {
+    return readCurrentSource(scope, authority, Optional.empty());
+  }
+
+  private CurrentSourceEvidence readCurrentSource(
+      AuthorityScope scope,
+      ScopeState authority,
+      Optional<AccountState> expectedPreUpdateAccountState) {
     String key = streamKey(scope);
     Record source =
         dsl.fetchOne(
@@ -371,9 +382,12 @@ public class AccountAuthoritySourceEvidenceRepository {
     }
     if (scope.kind() == ScopeKind.ACCOUNT) {
       requireAccountSourceIdentity(source, scope);
-      if (latest instanceof AccountEvent accountEvent
-          && !accountEvent.accountState().equals(readAccountState(scope.accountId()))) {
-        throw new SourceEvidenceUnavailableException();
+      if (latest instanceof AccountEvent accountEvent) {
+        AccountState expectedAccountState =
+            expectedPreUpdateAccountState.orElseGet(() -> readAccountState(scope.accountId()));
+        if (!accountEvent.accountState().equals(expectedAccountState)) {
+          throw new SourceEvidenceUnavailableException();
+        }
       }
     }
     return new CurrentSourceEvidence(

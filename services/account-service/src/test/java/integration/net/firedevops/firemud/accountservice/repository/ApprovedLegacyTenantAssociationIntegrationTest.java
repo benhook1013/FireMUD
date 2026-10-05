@@ -145,7 +145,8 @@ class ApprovedLegacyTenantAssociationIntegrationTest {
                 duplicateEvidence.operationId()))
         .isNull();
 
-    assertThatThrownBy(() -> dsl.execute("TRUNCATE account_approved_legacy_tenant_associations"))
+    assertThatThrownBy(
+            () -> dsl.execute("TRUNCATE account_approved_legacy_tenant_associations CASCADE"))
         .hasMessageContaining("immutable");
     assertThatThrownBy(
             () ->
@@ -318,7 +319,7 @@ class ApprovedLegacyTenantAssociationIntegrationTest {
         "INSERT INTO account_approved_legacy_tenant_associations "
             + "(legacy_tenant_id, canonical_tenant_id, source_legacy_game_tenant_id, "
             + "source_game_row_id, operation_id, target_namespace, source_captured_at) "
-            + "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            + "VALUES (?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP WITH TIME ZONE))",
         evidence.legacyAccountTenantId(),
         evidence.canonicalTenantId(),
         evidence.sourceLegacyGameTenantId(),
@@ -341,7 +342,7 @@ class ApprovedLegacyTenantAssociationIntegrationTest {
             + "(operation_id, account_evidence_digest, manifest_digest, signer_key_id, "
             + "approved_by, approval_reference, signed_at, manifest_signature, "
             + "operation_entry_count, manifest_schema_version) "
-            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            + "VALUES (?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP WITH TIME ZONE), ?, ?, ?)",
         evidence.operationId(),
         evidence.accountEvidenceDigest(),
         evidence.manifestDigest(),

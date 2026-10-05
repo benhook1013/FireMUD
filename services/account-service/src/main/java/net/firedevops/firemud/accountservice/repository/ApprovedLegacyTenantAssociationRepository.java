@@ -81,14 +81,14 @@ public class ApprovedLegacyTenantAssociationRepository {
         "INSERT INTO account_approved_legacy_tenant_associations "
             + "(legacy_tenant_id, canonical_tenant_id, source_legacy_game_tenant_id, "
             + "source_game_row_id, operation_id, target_namespace, source_captured_at) "
-            + "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            + "VALUES (?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP WITH TIME ZONE))",
         expected.legacyAccountTenantId(),
         expected.canonicalTenantId(),
         expected.sourceLegacyGameTenantId(),
         expected.sourceGameRowId(),
         expected.operationId(),
         expected.targetNamespace(),
-        expected.sourceCapturedAt());
+        expected.sourceCapturedAt().atOffset(java.time.ZoneOffset.UTC));
     dsl.execute(
         "INSERT INTO account_approved_legacy_tenant_association_payload "
             + "(operation_id, account_evidence_digest, manifest_digest, signer_key_id, "

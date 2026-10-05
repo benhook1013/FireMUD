@@ -750,7 +750,7 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
     UUID requestId = UUID.randomUUID();
     UUID operationId = UUID.randomUUID();
     String requestDigest = "sha256:" + "a".repeat(64);
-    String sourceTenantKey = "first-join-" + UUID.randomUUID().toString().replace("-", "");
+    String sourceTenantKey = "fj-" + UUID.randomUUID().toString().replace("-", "");
     String evidenceDigest =
         GameTenantCreationDigest.evidenceDigest(
             "prod",
