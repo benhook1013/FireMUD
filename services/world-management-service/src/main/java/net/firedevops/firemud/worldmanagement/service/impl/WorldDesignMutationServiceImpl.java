@@ -91,14 +91,20 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
     validateExpectedAggregateEpochBeforeMutation(request);
 
     Long aggregateId = applyAggregateMutation(request);
-    WorldDesignAggregateEpoch aggregateEpoch =
-        aggregateEpochRepository
-            .findByTenantIdAndVersionIdAndAggregateTypeAndAggregateId(
-                request.tenantId(), request.versionId(), request.aggregateType(), aggregateId)
-            .orElseGet(() -> newAggregateEpoch(request, aggregateId));
-    aggregateEpoch.setDraftRevisionEpoch(aggregateEpoch.getDraftRevisionEpoch() + 1L);
-    aggregateEpoch.setUpdatedAt(LocalDateTime.now());
-    aggregateEpochRepository.save(aggregateEpoch);
+    long aggregateEpochAfter = request.expectedDraftRevisionEpoch() + 1L;
+    if (!aggregateEpochRepository.compareAndAdvance(
+        request.tenantId(),
+        request.versionId(),
+        request.aggregateType(),
+        aggregateId,
+        request.expectedDraftRevisionEpoch(),
+        LocalDateTime.now())) {
+      throw appError(
+          "DRAFT_WRITE_CONFLICT",
+          "expected Draft aggregate epoch "
+              + request.expectedDraftRevisionEpoch()
+              + " changed before the mutation could commit");
+    }
 
     Long scopeEpochAfter = advanceScopeEpoch(request);
 
@@ -112,7 +118,7 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
     ledger.setRequestedAggregateId(requestedAggregateId);
     ledger.setAppliedAggregateId(aggregateId);
     ledger.setResult(RESULT_APPLIED);
-    ledger.setAggregateEpochAfter(aggregateEpoch.getDraftRevisionEpoch());
+    ledger.setAggregateEpochAfter(aggregateEpochAfter);
     ledger.setScopeEpochAfter(scopeEpochAfter);
     ledgerRepository.save(ledger);
 
@@ -121,7 +127,7 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
         request.tenantId(),
         request.versionId(),
         aggregateId,
-        aggregateEpoch.getDraftRevisionEpoch(),
+        aggregateEpochAfter,
         scopeEpochAfter);
   }
 
@@ -374,6 +380,10 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
   }
 
   private void validateExpectedAggregateEpochBeforeMutation(WorldDesignMutationRequestDto request) {
+    if (!isAdvanceableEpoch(request.expectedDraftRevisionEpoch())) {
+      throw appError(
+          "DRAFT_WRITE_CONFLICT", "expected Draft aggregate epoch cannot be advanced safely");
+    }
     if (StringUtils.hasText(request.aggregateId())) {
       validateExpectedAggregateEpoch(request, parseId(request.aggregateId(), "aggregate_id"));
       return;
@@ -408,6 +418,10 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
   private void validateExpectedScopeEpochBeforeMutation(WorldDesignMutationRequestDto request) {
     if (!StringUtils.hasText(request.scopeType()) && !StringUtils.hasText(request.scopeId())) {
       return;
+    }
+    if (!isAdvanceableEpoch(request.expectedDraftScopeRevisionEpoch())) {
+      throw appError(
+          "DRAFT_WRITE_CONFLICT", "expected Draft scope epoch cannot be advanced safely");
     }
     String scopeType = requireText(request.scopeType(), "scope_type");
     String scopeId = requireNormalizedScopeId(request);
@@ -733,24 +747,20 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
     }
     String scopeType = requireText(request.scopeType(), "scope_type");
     String scopeId = requireNormalizedScopeId(request);
-    WorldDesignScopeEpoch scopeEpoch =
-        scopeEpochRepository
-            .findByTenantIdAndVersionIdAndScopeTypeAndScopeId(
-                request.tenantId(), request.versionId(), scopeType, scopeId)
-            .orElseGet(() -> newScopeEpoch(request, scopeType, scopeId));
-    if (!scopeEpoch
-        .getDraftScopeRevisionEpoch()
-        .equals(request.expectedDraftScopeRevisionEpoch())) {
+    if (!scopeEpochRepository.compareAndAdvance(
+        request.tenantId(),
+        request.versionId(),
+        scopeType,
+        scopeId,
+        request.expectedDraftScopeRevisionEpoch(),
+        LocalDateTime.now())) {
       throw appError(
           "DRAFT_WRITE_CONFLICT",
           "expected Draft scope epoch "
               + request.expectedDraftScopeRevisionEpoch()
-              + " but found "
-              + scopeEpoch.getDraftScopeRevisionEpoch());
+              + " changed before the mutation could commit");
     }
-    scopeEpoch.setDraftScopeRevisionEpoch(scopeEpoch.getDraftScopeRevisionEpoch() + 1L);
-    scopeEpoch.setUpdatedAt(LocalDateTime.now());
-    return scopeEpochRepository.save(scopeEpoch).getDraftScopeRevisionEpoch();
+    return request.expectedDraftScopeRevisionEpoch() + 1L;
   }
 
   private void requireDraftVersion(long tenantId, long versionId) {
@@ -817,24 +827,8 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
     }
   }
 
-  private WorldDesignAggregateEpoch newAggregateEpoch(
-      WorldDesignMutationRequestDto request, Long aggregateId) {
-    WorldDesignAggregateEpoch epoch = new WorldDesignAggregateEpoch();
-    epoch.setTenantId(request.tenantId());
-    epoch.setVersionId(request.versionId());
-    epoch.setAggregateType(request.aggregateType());
-    epoch.setAggregateId(aggregateId);
-    return epoch;
-  }
-
-  private WorldDesignScopeEpoch newScopeEpoch(
-      WorldDesignMutationRequestDto request, String scopeType, String scopeId) {
-    WorldDesignScopeEpoch epoch = new WorldDesignScopeEpoch();
-    epoch.setTenantId(request.tenantId());
-    epoch.setVersionId(request.versionId());
-    epoch.setScopeType(scopeType);
-    epoch.setScopeId(scopeId);
-    return epoch;
+  private boolean isAdvanceableEpoch(long epoch) {
+    return epoch >= 0L && epoch < Long.MAX_VALUE;
   }
 
   private Region existingRegion(WorldDesignMutationRequestDto request) {

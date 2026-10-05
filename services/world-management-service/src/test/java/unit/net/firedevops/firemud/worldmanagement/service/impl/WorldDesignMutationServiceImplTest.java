@@ -3,6 +3,7 @@ package net.firedevops.firemud.worldmanagement.service.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -87,12 +88,13 @@ class WorldDesignMutationServiceImplTest {
               region.setId(44L);
               return region;
             });
-    when(aggregateEpochRepository.save(any(WorldDesignAggregateEpoch.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(aggregateEpochRepository.compareAndAdvance(any(), any(), any(), any(), any(), any()))
+        .thenReturn(true);
     when(scopeEpochRepository.findByTenantIdAndVersionIdAndScopeTypeAndScopeId(
             any(Long.class), any(Long.class), any(String.class), any(String.class)))
         .thenReturn(Optional.empty());
-    when(scopeEpochRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    when(scopeEpochRepository.compareAndAdvance(any(), any(), any(), any(), any(), any()))
+        .thenReturn(true);
     when(ledgerRepository.save(any(WorldDesignRevisionLedger.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
   }
@@ -263,6 +265,73 @@ class WorldDesignMutationServiceImplTest {
     assertEquals(
         "DRAFT_WRITE_CONFLICT: expected Draft aggregate epoch 1 but found 0", ex.getMessage());
     verify(regionRepository, never()).save(any(Region.class));
+  }
+
+  @Test
+  void negativeOrOverflowingAggregateEpochFailsBeforeMutation() {
+    for (long expectedEpoch : new long[] {-1L, Long.MAX_VALUE}) {
+      IllegalArgumentException ex =
+          assertThrows(
+              IllegalArgumentException.class,
+              () -> service.applyMutation(regionCreateRequestWithExpectedEpoch(expectedEpoch)));
+
+      assertEquals(
+          "DRAFT_WRITE_CONFLICT: expected Draft aggregate epoch cannot be advanced safely",
+          ex.getMessage());
+    }
+
+    verify(regionRepository, never()).save(any(Region.class));
+  }
+
+  @Test
+  void negativeOrOverflowingScopeEpochFailsBeforeMutation() {
+    for (long expectedEpoch : new long[] {-1L, Long.MAX_VALUE}) {
+      IllegalArgumentException ex =
+          assertThrows(
+              IllegalArgumentException.class,
+              () ->
+                  service.applyMutation(
+                      regionCreateRequestWithScope("REGION_SUBTREE", "12", expectedEpoch)));
+
+      assertEquals(
+          "DRAFT_WRITE_CONFLICT: expected Draft scope epoch cannot be advanced safely",
+          ex.getMessage());
+    }
+
+    verify(regionRepository, never()).save(any(Region.class));
+  }
+
+  @Test
+  void aggregateEpochCompareAndAdvanceConflictRejectsMutation() {
+    when(aggregateEpochRepository.compareAndAdvance(
+            eq(1L), eq(7L), eq("REGION"), eq(44L), eq(0L), any()))
+        .thenReturn(false);
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class, () -> service.applyMutation(regionCreateRequest()));
+
+    assertEquals(true, ex.getMessage().startsWith("DRAFT_WRITE_CONFLICT:"));
+    verify(regionRepository).save(any(Region.class));
+    verify(ledgerRepository, never()).save(any(WorldDesignRevisionLedger.class));
+  }
+
+  @Test
+  void scopeEpochCompareAndAdvanceConflictRejectsMutation() {
+    when(scopeEpochRepository.compareAndAdvance(
+            eq(1L), eq(7L), eq("NEW_EMPTY_REGION"), eq("12"), eq(0L), any()))
+        .thenReturn(false);
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.applyMutation(regionCreateRequestWithScope("NEW_EMPTY_REGION", "12")));
+
+    assertEquals(true, ex.getMessage().startsWith("DRAFT_WRITE_CONFLICT:"));
+    verify(regionRepository).save(any(Region.class));
+    verify(aggregateEpochRepository)
+        .compareAndAdvance(eq(1L), eq(7L), eq("REGION"), eq(44L), eq(0L), any());
+    verify(ledgerRepository, never()).save(any(WorldDesignRevisionLedger.class));
   }
 
   @Test
@@ -897,6 +966,11 @@ class WorldDesignMutationServiceImplTest {
 
   private WorldDesignMutationRequestDto regionCreateRequestWithScope(
       String scopeType, String scopeId) {
+    return regionCreateRequestWithScope(scopeType, scopeId, 0L);
+  }
+
+  private WorldDesignMutationRequestDto regionCreateRequestWithScope(
+      String scopeType, String scopeId, long expectedScopeEpoch) {
     return new WorldDesignMutationRequestDto(
         1L,
         7L,
@@ -908,7 +982,7 @@ class WorldDesignMutationServiceImplTest {
         0L,
         scopeType,
         scopeId,
-        0L,
+        expectedScopeEpoch,
         "REPLACE_SCOPE",
         new WorldDesignMutationRequestDto.RegionMutationDto(
             "North", "rain", 0, 123L, "ROOM_GRAPH", "{}", 1.0d),
