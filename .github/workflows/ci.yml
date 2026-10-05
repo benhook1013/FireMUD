@@ -1342,7 +1342,9 @@ jobs:
             --strict \
             --require-suite net.firedevops.firemud.worldmanagement.WorldDesignPublicationFenceIntegrationTest \
             --require-case 'net.firedevops.firemud.worldmanagement.WorldDesignPublicationFenceIntegrationTest#rollbackAndCommittedExactReadbackRetainOneImmutableAttempt()' \
-            --require-case 'net.firedevops.firemud.worldmanagement.WorldDesignPublicationFenceIntegrationTest#sameCanonicalTenantAndVersionRowCanBeLockedThroughDifferentIntakes()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldDesignPublicationFenceIntegrationTest#schemaZeroAttemptAtResolvedLocalKeyCannotBePromotedByNumericCoincidence()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldDesignPublicationFenceIntegrationTest#sameGameDesignSelectorUsesDistinctWorldLocalVersionRowsAcrossIntakes()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldDesignPublicationFenceIntegrationTest#identicalRequestAcrossVersionsUsesOnlyEachResolvedWorldLocalKey()' \
             --require-case 'net.firedevops.firemud.worldmanagement.WorldDesignPublicationFenceIntegrationTest#concurrentExactFreezeRetryReturnsTheSameFenceAndCheckpoint()' \
             --require-case 'net.firedevops.firemud.worldmanagement.WorldDesignPublicationFenceIntegrationTest#writerHoldingTheOpenLockCommitsBeforeFreezeCapturesItsCheckpoint()' \
             --require-case 'net.firedevops.firemud.worldmanagement.WorldDesignPublicationFenceIntegrationTest#freezeHoldingTheLockMakesAWaitingOrdinaryWriterFailClosed()' \
@@ -2064,6 +2066,111 @@ jobs:
             ./gradlew :${{ matrix.module }}:check -PfullCheck
           fi
           echo "::endgroup::"
+
+      - name: Capture Account authored-draft publication PostgreSQL XML
+        if: ${{ always() && matrix.module == 'account-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: account-authored-draft-publication-postgresql-proof-${{ github.sha }}-${{ github.run_attempt }}
+          path: services/account-service/build/test-results/integrationTest/TEST-*DraftAuthorizationFencePostgresIntegrationTest.xml
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Capture Game Design draft commit coordinator PostgreSQL XML
+        if: ${{ always() && matrix.module == 'game-design-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: game-design-draft-commit-coordinator-postgresql-proof-${{ github.sha }}-${{ github.run_attempt }}
+          path: services/game-design-service/build/test-results/integrationTest/TEST-*DraftCommitCoordinatorRepositoryIntegrationTest.xml
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Capture Game Design authored-draft publish selection PostgreSQL XML
+        if: ${{ always() && matrix.module == 'game-design-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: game-design-authored-draft-publish-selection-postgresql-proof-${{ github.sha }}-${{ github.run_attempt }}
+          path: services/game-design-service/build/test-results/integrationTest/TEST-*AuthoredDraftPublishSelectionRepositoryIntegrationTest.xml
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Capture World authored-graph snapshot PostgreSQL XML
+        if: ${{ always() && matrix.module == 'world-management-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: world-authored-graph-snapshot-postgresql-proof-${{ github.sha }}-${{ github.run_attempt }}
+          path: services/world-management-service/build/test-results/integrationTest/TEST-*WorldAuthoredGraphSnapshotPostgresIntegrationTest.xml
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Capture World publication fence PostgreSQL XML
+        if: ${{ always() && matrix.module == 'world-management-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: world-publication-fence-postgresql-proof-${{ github.sha }}-${{ github.run_attempt }}
+          path: services/world-management-service/build/test-results/integrationTest/TEST-*WorldDesignPublicationFenceIntegrationTest.xml
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Verify Account authored-draft publication PostgreSQL proof
+        if: ${{ !cancelled() && matrix.module == 'account-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#revokeBeforeCommitDeniesDelayedRequestsUntilBothDefinitiveAborts()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#worldCommittedAndGameDesignUnknownSurviveRestartAndBlockSourceUntilExactBothReadbacks()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#commitOrderWithBothDefinitiveAbortsReleasesOriginalWaitingIntentWithoutReopening()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#bothMixedDirectionsFailNonpublicationAndReleaseOnlyAfterBothExactReadbacks()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#revokeOrderWithEitherMixedDirectionCannotAuthorizeSourceMutation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#changedCompleteBindingsConflictWithoutRewritingOriginal()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#inconsistentOrMalformedCompleteBindingsFailBeforeReservationStorage()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#rollbackPreservesReservationAndIntentTogetherAndDisjointSourcesDoNotConflict()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#concurrentCommitOrderAndRevocationChooseExactlyOneDurableOrdering()' \
+            account-service
+
+      - name: Verify Game Design authored-draft publication PostgreSQL proof
+        if: ${{ !cancelled() && matrix.module == 'game-design-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepositoryIntegrationTest \
+            --require-suite net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepositoryIntegrationTest \
+            --require-case 'net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepositoryIntegrationTest#exactClaimReplayRetainsFullBindingAndChangedRetryConflictsWithoutRewrite()' \
+            --require-case 'net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepositoryIntegrationTest#pendingBindingAndOwnerRowsRollBackTogether()' \
+            --require-case 'net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepositoryIntegrationTest#concurrentExactClaimsConvergeOnOneImmutableBinding()' \
+            --require-case 'net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepositoryIntegrationTest#partialUnknownOwnerResultKeepsApplicationSlotAndCannotCreateVisibilityFence()' \
+            --require-case 'net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepositoryIntegrationTest#exactAppliedResultReplayIsImmutableBeforeAndAfterSlotRelease()' \
+            --require-case 'net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepositoryIntegrationTest#mixedFinalAbortPreservesPriorFenceAndOwnerEvidenceAndFencesDelayedAttempts()' \
+            --require-case 'net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepositoryIntegrationTest#unknownOwnerAndMissingRowsCannotProduceFinalAbort()' \
+            --require-case 'net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepositoryIntegrationTest#allAppliedOwnersIncludingGameDesignCanBeFinalAbortedWithoutVisibility()' \
+            --require-case 'net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepositoryIntegrationTest#directSqlFinalAbortRejectsMissingRequiredOwnerRows()' \
+            --require-case 'net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepositoryIntegrationTest#reusesExistingAuthoredVersionAndExactReplayIgnoresLaterServerState()' \
+            --require-case 'net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepositoryIntegrationTest#rejectsPublishedScriptOnlyUnmappedPartialStaleAndMismatchedTargets()' \
+            --require-case 'net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepositoryIntegrationTest#failedReservationTransactionLeavesNoSelection()' \
+            --require-case 'net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepositoryIntegrationTest#versionRowLockSerializesSelectionAgainstApplicationSlotClaim()' \
+            game-design-service
+
+      - name: Verify World authored-draft publication PostgreSQL proof
+        if: ${{ !cancelled() && matrix.module == 'world-management-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite net.firedevops.firemud.worldmanagement.WorldAuthoredGraphSnapshotPostgresIntegrationTest \
+            --require-suite net.firedevops.firemud.worldmanagement.WorldDesignPublicationFenceIntegrationTest \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredGraphSnapshotPostgresIntegrationTest#exactSnapshotSurvivesRollbackAndConcurrentRetryWithFullGraphReadback()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredGraphSnapshotPostgresIntegrationTest#wrongTenantVersionParentEdgeDeniesCaptureBeforeSnapshotRetention()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredGraphSnapshotPostgresIntegrationTest#schemaOneAttemptCannotOmitExactIntakeRequestDigestOrMutateOwnerHistory()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredGraphSnapshotPostgresIntegrationTest#canonicalAuthoredRowsStillRejectLegacyWritesAfterSyntheticFixtureSetup()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldDesignPublicationFenceIntegrationTest#rollbackAndCommittedExactReadbackRetainOneImmutableAttempt()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldDesignPublicationFenceIntegrationTest#schemaZeroAttemptAtResolvedLocalKeyCannotBePromotedByNumericCoincidence()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldDesignPublicationFenceIntegrationTest#sameGameDesignSelectorUsesDistinctWorldLocalVersionRowsAcrossIntakes()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldDesignPublicationFenceIntegrationTest#identicalRequestAcrossVersionsUsesOnlyEachResolvedWorldLocalKey()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldDesignPublicationFenceIntegrationTest#concurrentExactFreezeRetryReturnsTheSameFenceAndCheckpoint()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldDesignPublicationFenceIntegrationTest#writerHoldingTheOpenLockCommitsBeforeFreezeCapturesItsCheckpoint()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldDesignPublicationFenceIntegrationTest#freezeHoldingTheLockMakesAWaitingOrdinaryWriterFailClosed()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldDesignPublicationFenceIntegrationTest#changedAssociationSourceRequestDigestEpochAndMissingCheckpointDoNotMutate()' \
+            world-management-service
 
       - name: Capture Account retained tenant-role PostgreSQL raw proof
         if: ${{ always() && matrix.module == 'account-service' }}
