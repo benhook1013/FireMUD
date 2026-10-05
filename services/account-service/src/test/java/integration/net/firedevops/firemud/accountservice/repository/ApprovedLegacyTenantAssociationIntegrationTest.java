@@ -3,18 +3,21 @@ package net.firedevops.firemud.accountservice.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.Base64;
+import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.client.OwnerApprovedAccountTenantAssociation;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
@@ -22,11 +25,7 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
-@Testcontainers(disabledWithoutDocker = true)
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class ApprovedLegacyTenantAssociationIntegrationTest {
   private static final String MIGRATION_LOCATION =
@@ -34,8 +33,8 @@ class ApprovedLegacyTenantAssociationIntegrationTest {
   private static final String NAMESPACE = "firemud";
   private static final String MANIFEST_DIGEST = "sha256:" + "b".repeat(64);
 
-  @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  private final AccountPostgresIntegrationFixture postgres =
+      new AccountPostgresIntegrationFixture();
 
   private DriverManagerDataSource dataSource;
   private DSLContext dsl;
@@ -45,16 +44,26 @@ class ApprovedLegacyTenantAssociationIntegrationTest {
 
   @BeforeAll
   void migrate() {
-    dataSource = new DriverManagerDataSource();
-    dataSource.setDriverClassName(postgres.getDriverClassName());
-    dataSource.setUrl(postgres.getJdbcUrl());
-    dataSource.setUsername(postgres.getUsername());
-    dataSource.setPassword(postgres.getPassword());
-    Flyway.configure().dataSource(dataSource).locations(MIGRATION_LOCATION).load().migrate();
+    postgres.start();
+    String schema = "approved_legacy_association_" + UUID.randomUUID().toString().replace("-", "");
+    dataSource = postgres.dataSource(schema);
+    Flyway.configure()
+        .dataSource(dataSource)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .placeholders(Map.of("serviceSchema", schema))
+        .locations(MIGRATION_LOCATION)
+        .load()
+        .migrate();
     dsl = DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
     transaction = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
     sourceEvidence = new LegacyTenantSourceEvidence(dsl);
     associations = new ApprovedLegacyTenantAssociationRepository(dsl, sourceEvidence, NAMESPACE);
+  }
+
+  @AfterAll
+  void stopPostgres() {
+    postgres.stop();
   }
 
   @Test

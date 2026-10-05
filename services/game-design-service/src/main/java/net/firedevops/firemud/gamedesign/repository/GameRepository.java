@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamedesign.repository;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import org.jooq.Condition;
@@ -119,6 +120,23 @@ public class GameRepository {
         .fetchOne(this::toEntity);
   }
 
+  /** Resolves one exact owner key and validates persisted provenance against its game row. */
+  public Optional<GameTenantIdentity> findRuntimeTenantIdentityByTenantKey(String tenantKey) {
+    if (tenantKey == null || tenantKey.isBlank()) {
+      throw new IllegalArgumentException("Exact Game Design tenant key is required");
+    }
+    return dsl.select(
+            ID,
+            TENANT_ID,
+            CANONICAL_TENANT_ID,
+            TENANT_IDENTITY_PROVENANCE_KIND,
+            TENANT_IDENTITY_SOURCE_GAME_ID,
+            TENANT_IDENTITY_SOURCE_LEGACY_TENANT_ID)
+        .from(GAME_TABLE)
+        .where(TENANT_ID.eq(tenantKey))
+        .fetchOptional(this::toRuntimeTenantIdentity);
+  }
+
   private Game toEntity(Record record) {
     if (record == null) {
       return null;
@@ -154,5 +172,37 @@ public class GameRepository {
     }
     return new GameTenantIdentity(
         canonicalTenantId, provenanceKind, sourceGameId, sourceLegacyTenantId);
+  }
+
+  private GameTenantIdentity toRuntimeTenantIdentity(Record record) {
+    Long actualGameId = record.get(ID);
+    String actualTenantKey = record.get(TENANT_ID);
+    UUID canonicalTenantId = record.get(CANONICAL_TENANT_ID);
+    String provenanceKindValue = record.get(TENANT_IDENTITY_PROVENANCE_KIND);
+    Long sourceGameId = record.get(TENANT_IDENTITY_SOURCE_GAME_ID);
+    String sourceTenantKey = record.get(TENANT_IDENTITY_SOURCE_LEGACY_TENANT_ID);
+    if (actualGameId == null
+        || actualGameId <= 0
+        || actualTenantKey == null
+        || actualTenantKey.isBlank()
+        || canonicalTenantId == null
+        || provenanceKindValue == null
+        || sourceGameId == null
+        || sourceGameId <= 0
+        || sourceTenantKey == null
+        || !actualGameId.equals(sourceGameId)
+        || !actualTenantKey.equals(sourceTenantKey)) {
+      throw new IllegalStateException(
+          "Persisted runtime tenant identity provenance does not match its game row");
+    }
+
+    GameTenantIdentity.ProvenanceKind provenanceKind;
+    try {
+      provenanceKind = GameTenantIdentity.ProvenanceKind.valueOf(provenanceKindValue);
+    } catch (IllegalArgumentException exception) {
+      throw new IllegalStateException(
+          "Persisted runtime tenant identity provenance kind is unknown", exception);
+    }
+    return new GameTenantIdentity(canonicalTenantId, provenanceKind, actualGameId, actualTenantKey);
   }
 }

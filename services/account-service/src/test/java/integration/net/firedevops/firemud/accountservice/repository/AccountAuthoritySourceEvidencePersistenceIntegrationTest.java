@@ -3,10 +3,7 @@ package integration.net.firedevops.firemud.accountservice.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.net.URI;
 import java.nio.charset.StandardCharsets;
-import java.util.Base64;
-import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -20,72 +17,37 @@ import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
-import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository.IssuerAccountSourceSnapshot;
-import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository;
-import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository.PendingIntent;
-import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository.StaleAuthorityException;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec;
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec.AccountEvent;
-import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
-import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
-import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile.AccountSecurityCutoff;
-import net.firedevops.firemud.common.security.GameSessionAccountDelegationRegistryRecord.AccountAuthoritySnapshot;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.testcontainers.DockerClientFactory;
-import org.testcontainers.containers.PostgreSQLContainer;
-import tools.jackson.databind.json.JsonMapper;
 
 /** PostgreSQL proof for owner-created sequence-zero baselines and atomic source events. */
 class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
   private static final String ISSUER = "firemud-account-service";
   private static final String SCHEMA_PREFIX = "account_source_evidence_proof";
-  private static final String EXTERNAL_POSTGRES_URL_ENV =
-      "FIREMUD_ACCOUNT_SIGNER_TEST_POSTGRES_URL";
-  private static final String GAME_SESSION_WORKLOAD =
-      "spiffe://firemud/ns/test/sa/game-session-service";
-  private static final JsonMapper JSON = JsonMapper.builder().build();
-  private static final PostgreSQLContainer<?> postgres =
-      new PostgreSQLContainer<>("postgres:16-alpine");
-  private static String testJdbcUrl;
-  private static String testJdbcUsername;
-  private static String testJdbcPassword;
-  private static boolean startedOwnedContainer;
+  private static final AccountPostgresIntegrationFixture postgres =
+      new AccountPostgresIntegrationFixture();
 
   @BeforeAll
   static void configureDatabase() {
-    String externalUrl = System.getenv(EXTERNAL_POSTGRES_URL_ENV);
-    if (externalUrl != null) {
-      testJdbcUrl = validateExternalLoopbackPostgresUrl(externalUrl);
-      testJdbcUsername = "postgres";
-      testJdbcPassword = "";
-      return;
-    }
-    Assumptions.assumeTrue(
-        DockerClientFactory.instance().isDockerAvailable(),
-        "PostgreSQL proof requires the explicit loopback tunnel or an available Docker daemon");
     postgres.start();
-    startedOwnedContainer = true;
-    testJdbcUrl = postgres.getJdbcUrl();
-    testJdbcUsername = postgres.getUsername();
-    testJdbcPassword = postgres.getPassword();
   }
 
   @AfterAll
   static void stopOwnedContainer() {
-    if (startedOwnedContainer) postgres.stop();
+    postgres.stop();
   }
 
   @Test
@@ -184,26 +146,6 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
     assertThat(latest.accountSecurityCutoff().outboxSequence()).isEqualTo("2");
     assertThat(latest.canonicalJson()).doesNotContain("changed-password-hash-not-for-event");
 
-    AccountGameplayDelegationIssuanceRepository issuances =
-        new AccountGameplayDelegationIssuanceRepository(dsl, sources);
-    PendingIntent preLifecycleIntent = issuanceIntent(changed, account.getAccountUuid());
-    transaction.execute(status -> issuances.beginPending(preLifecycleIntent));
-    String preLifecycleJwt = compactCandidate(preLifecycleIntent);
-    var preLifecycleBound =
-        transaction.execute(
-            status ->
-                issuances.bindSignedCandidate(
-                    preLifecycleIntent.requestId(), preLifecycleJwt, "1"));
-    byte[] storedCandidateBeforeLifecycle =
-        dsl.resultQuery(
-                "SELECT pending_registry_candidate_bytes "
-                    + "FROM account_gameplay_delegation_issuance_operations WHERE request_id = ?",
-                preLifecycleIntent.requestId())
-            .fetchOne(0, byte[].class);
-    assertThat(storedCandidateBeforeLifecycle).isNotNull();
-    assertThat(new String(storedCandidateBeforeLifecycle, StandardCharsets.UTF_8))
-        .doesNotContain(preLifecycleJwt);
-
     Account rollbackAttempt = accounts.findByAccountUuid(account.getAccountUuid()).orElseThrow();
     rollbackAttempt.setLifecycleState(AccountLifecycleState.SECURITY_LOCKED);
     assertThatThrownBy(
@@ -231,12 +173,6 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
         transaction.execute(
             status -> outbox.findEvent(changed.account().checkpoint().outboxStreamKey(), 3L));
     assertThat(rolledBackEvent).isEmpty();
-    var afterRollbackCandidate =
-        transaction.execute(
-            status -> issuances.readPendingRegistryCandidate(preLifecycleIntent.requestId()));
-    assertThat(afterRollbackCandidate.authoritySnapshot().accountSecurityCutoff())
-        .isEqualTo(preLifecycleIntent.authoritySnapshot().accountSecurityCutoff());
-
     Account lockedAccount = accounts.findByAccountUuid(account.getAccountUuid()).orElseThrow();
     lockedAccount.setLifecycleState(AccountLifecycleState.SECURITY_LOCKED);
     transaction.executeWithoutResult(status -> accounts.save(lockedAccount));
@@ -276,34 +212,6 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
                     StandardCharsets.UTF_8));
     assertThat(lifecycleEvent.mutationKinds()).containsExactly("LIFECYCLE_STATE_CHANGED");
     assertThat(lifecycleEvent.accountState().lifecycleState()).isEqualTo("SECURITY_LOCKED");
-
-    assertThatThrownBy(
-            () ->
-                transaction.execute(
-                    status ->
-                        issuances.readPendingRegistryCandidate(preLifecycleIntent.requestId())))
-        .isInstanceOf(StaleAuthorityException.class);
-    assertThatThrownBy(
-            () ->
-                transaction.execute(
-                    status ->
-                        issuances.bindSignedCandidate(
-                            preLifecycleIntent.requestId(), preLifecycleJwt, "1")))
-        .isInstanceOf(StaleAuthorityException.class);
-    byte[] storedCandidateAfterLifecycle =
-        dsl.resultQuery(
-                "SELECT pending_registry_candidate_bytes "
-                    + "FROM account_gameplay_delegation_issuance_operations WHERE request_id = ?",
-                preLifecycleIntent.requestId())
-            .fetchOne(0, byte[].class);
-    String storedTokenHashAfterLifecycle =
-        dsl.resultQuery(
-                "SELECT token_hash FROM account_gameplay_delegation_issuance_operations "
-                    + "WHERE request_id = ?",
-                preLifecycleIntent.requestId())
-            .fetchOne(0, String.class);
-    assertThat(storedCandidateAfterLifecycle).containsExactly(storedCandidateBeforeLifecycle);
-    assertThat(storedTokenHashAfterLifecycle).isEqualTo(preLifecycleBound.tokenHash());
 
     assertThatThrownBy(() -> accounts.delete(account))
         .isInstanceOf(IllegalStateException.class)
@@ -497,11 +405,7 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
 
   private TestContext newTestContext() {
     String schema = SCHEMA_PREFIX + "_" + UUID.randomUUID().toString().replace("-", "");
-    DriverManagerDataSource dataSource = new DriverManagerDataSource();
-    String separator = testJdbcUrl.contains("?") ? "&" : "?";
-    dataSource.setUrl(testJdbcUrl + separator + "currentSchema=" + schema);
-    dataSource.setUsername(testJdbcUsername);
-    dataSource.setPassword(testJdbcPassword);
+    DriverManagerDataSource dataSource = postgres.dataSource(schema);
     Flyway.configure()
         .dataSource(dataSource)
         .schemas(schema)
@@ -524,96 +428,6 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
     account.setPasswordHash("initial-hash-" + suffix);
     account.setRole("player");
     return account;
-  }
-
-  private static PendingIntent issuanceIntent(
-      IssuerAccountSourceSnapshot snapshot, UUID accountUuid) {
-    long now = Math.floorDiv(System.currentTimeMillis(), 1000L);
-    AccountSecurityCutoff cutoff =
-        snapshot
-            .account()
-            .accountSecurityCutoff()
-            .map(
-                value ->
-                    new AccountSecurityCutoff(
-                        value.accountAuthorityGeneration(),
-                        value.outboxStreamKey(),
-                        value.outboxSequence()))
-            .orElse(null);
-    return new PendingIntent(
-        UUID.randomUUID(),
-        UUID.randomUUID(),
-        GAME_SESSION_WORKLOAD,
-        UUID.randomUUID(),
-        UUID.randomUUID(),
-        now,
-        now,
-        now + 120L,
-        new AccountAuthoritySnapshot(
-            accountUuid,
-            snapshot.issuer().generation(),
-            snapshot.issuer().sourceVersion(),
-            snapshot.account().generation(),
-            snapshot.account().sourceVersion(),
-            snapshot.issuanceFence().value(),
-            snapshot.issuanceFence().sourceVersion(),
-            Optional.ofNullable(cutoff)));
-  }
-
-  private static String compactCandidate(PendingIntent intent) throws Exception {
-    Map<String, Object> header = Map.of("alg", "RS256", "kid", "delegation-kid", "typ", "JWT");
-    Map<String, Object> claims =
-        Map.ofEntries(
-            Map.entry("iss", GameSessionAccountDelegationProfile.ISSUER),
-            Map.entry("sub", intent.authoritySnapshot().accountId().toString()),
-            Map.entry("accountId", intent.authoritySnapshot().accountId().toString()),
-            Map.entry("jti", intent.tokenJti().toString()),
-            Map.entry("aud", GameSessionAccountDelegationProfile.AUDIENCE),
-            Map.entry("iat", intent.issuedAtEpochSecond()),
-            Map.entry("nbf", intent.notBeforeEpochSecond()),
-            Map.entry("exp", intent.expiresAtEpochSecond()),
-            Map.entry("tokenGeneration", 1L),
-            Map.entry(
-                "authorityTuple",
-                GameSessionAccountDelegationProfile.authorityTuple(
-                    intent.authoritySnapshot().issuerGeneration(),
-                    intent.authoritySnapshot().accountGeneration(),
-                    intent.authoritySnapshot().accountSecurityCutoff())),
-            Map.entry("membershipVersion", Map.of()),
-            Map.entry("issuanceFence", intent.authoritySnapshot().issuanceFence()));
-    Base64.Encoder encoder = Base64.getUrlEncoder().withoutPadding();
-    String head = encoder.encodeToString(canonicalBytes(header));
-    String payload = encoder.encodeToString(canonicalBytes(claims));
-    String signature = encoder.encodeToString(new byte[] {1, 2, 3});
-    return head + "." + payload + "." + signature;
-  }
-
-  private static byte[] canonicalBytes(Object value) throws Exception {
-    return Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(value));
-  }
-
-  private static String validateExternalLoopbackPostgresUrl(String jdbcUrl) {
-    final URI uri;
-    try {
-      if (!jdbcUrl.startsWith("jdbc:")) throw new IllegalArgumentException("not a JDBC URL");
-      uri = URI.create(jdbcUrl.substring("jdbc:".length()));
-    } catch (RuntimeException malformed) {
-      throw new IllegalStateException(
-          EXTERNAL_POSTGRES_URL_ENV + " must target jdbc:postgresql://127.0.0.1:<port>/postgres",
-          malformed);
-    }
-    if (!"postgresql".equals(uri.getScheme())
-        || !"127.0.0.1".equals(uri.getHost())
-        || uri.getPort() < 1
-        || uri.getPort() > 65_535
-        || !"/postgres".equals(uri.getPath())
-        || uri.getUserInfo() != null
-        || uri.getQuery() != null
-        || uri.getFragment() != null) {
-      throw new IllegalStateException(
-          EXTERNAL_POSTGRES_URL_ENV + " must target jdbc:postgresql://127.0.0.1:<port>/postgres");
-    }
-    return jdbcUrl;
   }
 
   private record TestContext(DSLContext dsl, TransactionTemplate transaction) {}

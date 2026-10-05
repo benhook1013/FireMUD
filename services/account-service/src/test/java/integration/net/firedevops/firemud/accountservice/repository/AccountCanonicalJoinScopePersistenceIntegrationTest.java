@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -25,34 +26,46 @@ import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 /** PostgreSQL migration and exact V2 scope/PENDING-intent persistence proof. */
-@Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
 class AccountCanonicalJoinScopePersistenceIntegrationTest {
   private static final String CONNECT_SCOPE_ID = "canonical-connect-scope-integration";
   private static final String OTHER_ACCOUNT_SCOPE_ID = "canonical-connect-scope-other-account";
   private static final UUID TENANT_ID = UUID.fromString("9b91be60-2c1b-4f7c-8522-2f5ef4d7a7c2");
 
-  @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  private static final AccountPostgresIntegrationFixture postgres =
+      new AccountPostgresIntegrationFixture();
+
+  @BeforeAll
+  static void startPostgres() {
+    postgres.start();
+  }
+
+  @AfterAll
+  static void stopPostgres() {
+    postgres.stop();
+  }
 
   @Test
   void migrationRetainsV1AndStoresExactV2ScopeAndPendingIntentWithoutMembershipOrEvent() {
-    DriverManagerDataSource dataSource = new DriverManagerDataSource();
-    dataSource.setDriverClassName(postgres.getDriverClassName());
-    dataSource.setUrl(postgres.getJdbcUrl());
-    dataSource.setUsername(postgres.getUsername());
-    dataSource.setPassword(postgres.getPassword());
-    Flyway.configure().dataSource(dataSource).locations("classpath:db/migration").load().migrate();
+    String schema = "canonical_join_scope_" + UUID.randomUUID().toString().replace("-", "");
+    DriverManagerDataSource dataSource = postgres.dataSource(schema);
+    Flyway.configure()
+        .dataSource(dataSource)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .placeholders(Map.of("serviceSchema", schema))
+        .locations("classpath:db/migration")
+        .load()
+        .migrate();
 
     DSLContext setupDsl = DSL.using(dataSource, SQLDialect.POSTGRES);
     DSLContext transactionDsl =

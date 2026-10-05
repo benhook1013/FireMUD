@@ -3,6 +3,7 @@ package net.firedevops.firemud.accountservice.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.nio.file.Path;
 import java.sql.SQLException;
@@ -19,7 +20,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import net.firedevops.firemud.accountservice.config.PlatformAuthRateLimitProperties;
 import net.firedevops.firemud.accountservice.dto.AccountAuditDigest;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
 import net.firedevops.firemud.accountservice.dto.RealmAccessGrantRequest;
@@ -31,8 +31,6 @@ import net.firedevops.firemud.accountservice.entity.AccountRealmAccessGrant;
 import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
 import net.firedevops.firemud.accountservice.entity.Subscription;
 import net.firedevops.firemud.accountservice.service.ExpiredConnectScopeCleanupJob;
-import net.firedevops.firemud.accountservice.service.PlatformAuthBucketStore;
-import net.firedevops.firemud.accountservice.service.impl.AccountPlatformAuthAbuseLimiter;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.FlywayException;
@@ -40,6 +38,7 @@ import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -53,28 +52,25 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
-@Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class AccountRepositoryIntegrationTest {
   private static final UUID REALM_ID = UUID.fromString("4c4b57d8-e3a2-48fe-9977-e7df0fdce901");
   private static final String MIGRATION_LOCATION =
       "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize();
-  private static final String MIGRATION_PROOF_SCHEMA = "account_migration_proof";
+  private static final String MIGRATION_PROOF_SCHEMA = schemaName("account_migration_proof");
   private static final String COLLISION_MIGRATION_PROOF_SCHEMA =
-      "account_migration_collision_proof";
+      schemaName("account_migration_collision_proof");
   private static final String PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA =
-      "account_profile_identity_migration_proof";
+      schemaName("account_profile_identity_migration_proof");
   private static final String GLOBAL_REGISTRATION_MIGRATION_PROOF_SCHEMA =
-      "account_global_registration_migration_proof";
-  private static final String ACCOUNT_UUID_MIGRATION_PROOF_SCHEMA = "account_uuid_migration_proof";
+      schemaName("account_global_registration_migration_proof");
+  private static final String ACCOUNT_UUID_MIGRATION_PROOF_SCHEMA =
+      schemaName("account_uuid_migration_proof");
 
-  @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  private final AccountPostgresIntegrationFixture postgres =
+      new AccountPostgresIntegrationFixture();
 
   private DriverManagerDataSource rootDataSource;
   private DriverManagerDataSource dataSource;
@@ -83,22 +79,20 @@ class AccountRepositoryIntegrationTest {
 
   @BeforeAll
   void setUpDataSource() {
-    rootDataSource = new DriverManagerDataSource();
-    rootDataSource.setDriverClassName(postgres.getDriverClassName());
-    rootDataSource.setUrl(postgres.getJdbcUrl());
-    rootDataSource.setUsername(postgres.getUsername());
-    rootDataSource.setPassword(postgres.getPassword());
+    postgres.start();
+    rootDataSource = postgres.dataSource();
+  }
+
+  @AfterAll
+  void stopPostgres() {
+    postgres.stop();
   }
 
   @BeforeEach
   void createIsolatedMainSchema() {
     String schema = "account_repository_test_" + UUID.randomUUID().toString().replace("-", "");
     new JdbcTemplate(rootDataSource).execute("CREATE SCHEMA " + schema);
-    dataSource = new DriverManagerDataSource();
-    dataSource.setDriverClassName(postgres.getDriverClassName());
-    dataSource.setUrl(postgres.getJdbcUrl() + "?currentSchema=" + schema);
-    dataSource.setUsername(postgres.getUsername());
-    dataSource.setPassword(postgres.getPassword());
+    dataSource = postgres.dataSource(schema);
     Flyway.configure()
         .dataSource(dataSource)
         .locations(MIGRATION_LOCATION)
@@ -609,8 +603,7 @@ class AccountRepositoryIntegrationTest {
             null,
             null,
             null,
-            transactionManager,
-            testAbuseLimiter());
+            transactionManager);
     Account account = new Account();
     account.setId(accountId);
     AccountRealmAccessGrant grant = new AccountRealmAccessGrant();
@@ -676,25 +669,6 @@ class AccountRepositoryIntegrationTest {
     return Objects.requireNonNull(
         new TransactionTemplate(new DataSourceTransactionManager(dataSource))
             .execute(status -> repository.save(account)));
-  }
-
-  private AccountPlatformAuthAbuseLimiter testAbuseLimiter() {
-    PlatformAuthRateLimitProperties properties = new PlatformAuthRateLimitProperties();
-    properties.setHmacKeyId("integration-test");
-    properties.setHmacKeyBase64(java.util.Base64.getEncoder().encodeToString(new byte[32]));
-    PlatformAuthBucketStore store =
-        new PlatformAuthBucketStore() {
-          @Override
-          public long increment(String key, String fingerprint, Duration ttl, long cap) {
-            return 1L;
-          }
-
-          @Override
-          public long count(String key, String fingerprint) {
-            return 0L;
-          }
-        };
-    return new AccountPlatformAuthAbuseLimiter(properties, store);
   }
 
   @Test
@@ -1732,5 +1706,9 @@ class AccountRepositoryIntegrationTest {
 
   private String jsonRow(String query, Object... bindings) {
     return Objects.requireNonNull(dsl.fetchOne(query, bindings)).get(0, String.class);
+  }
+
+  private static String schemaName(String prefix) {
+    return prefix + "_" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
   }
 }

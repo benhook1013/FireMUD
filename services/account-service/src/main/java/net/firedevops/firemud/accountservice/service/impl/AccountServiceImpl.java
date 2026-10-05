@@ -1364,7 +1364,7 @@ public class AccountServiceImpl implements AccountService {
   @Transactional
   @Timed(value = "account.realm_access_grant_revoke")
   public void revokeRealmAccess(Long accountId, Long tenantId, String worldSlug, String realmSlug) {
-    accountRealmAccessGrantRepository.deleteByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
+    accountRealmAccessGrantRepository.revokeByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
         accountId, tenantId, worldSlug, realmSlug);
   }
 

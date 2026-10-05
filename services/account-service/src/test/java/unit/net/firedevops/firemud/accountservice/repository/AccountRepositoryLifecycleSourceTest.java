@@ -2,11 +2,11 @@ package unit.net.firedevops.firemud.accountservice.repository;
 
 import static net.firedevops.firemud.accountservice.jooq.Tables.ACCOUNTS;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
+import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.entity.Account;
@@ -16,7 +16,6 @@ import net.firedevops.firemud.accountservice.entity.AccountLoginAuthModes;
 import net.firedevops.firemud.accountservice.jooq.tables.records.AccountsRecord;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
-import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -37,24 +36,30 @@ class AccountRepositoryLifecycleSourceTest {
     Account account = account();
     AccountsRecord before = persisted(AccountLifecycleState.ACTIVE);
     AccountsRecord updated = persisted(AccountLifecycleState.SECURITY_LOCKED);
-
-    when(dsl.selectFrom(ACCOUNTS).where(any(Condition.class)).forUpdate().fetchOne())
-        .thenReturn(before);
-    when(dsl.update(ACCOUNTS)
+    var selectForUpdate =
+        dsl.selectFrom(ACCOUNTS).where(ACCOUNTS.ID.eq(ACCOUNT_NUMERIC_ID)).forUpdate();
+    var updateBeforeLifecycle =
+        dsl.update(ACCOUNTS)
             .set(ACCOUNTS.USERNAME, USERNAME)
             .set(ACCOUNTS.EMAIL, EMAIL)
             .set(ACCOUNTS.PASSWORD_HASH, PASSWORD_HASH)
             .set(ACCOUNTS.ROLE, "player")
             .set(ACCOUNTS.EMAIL_VERIFIED, false)
-            .set(ACCOUNTS.LOGIN_AUTH_MODES, AccountLoginAuthModes.DEFAULT_SERIALIZED)
+            .set(ACCOUNTS.LOGIN_AUTH_MODES, AccountLoginAuthModes.DEFAULT_SERIALIZED);
+    var updateReturning =
+        updateBeforeLifecycle
             .set(ACCOUNTS.LIFECYCLE_STATE, AccountLifecycleState.SECURITY_LOCKED.storageValue())
-            .where(any(Condition.class))
-            .and(any(Condition.class))
-            .and(any(Condition.class))
-            .and(any(Condition.class))
-            .returning()
-            .fetchOne())
-        .thenReturn(updated);
+            .where(ACCOUNTS.ID.eq(ACCOUNT_NUMERIC_ID))
+            .and(ACCOUNTS.ACCOUNT_UUID.eq(ACCOUNT_UUID))
+            .and(
+                ACCOUNTS.ACCOUNT_UUID_PROVENANCE.eq(
+                    AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT.name()))
+            .and(ACCOUNTS.ACCOUNT_UUID_SOURCE_NUMERIC_ID.eq(ACCOUNT_NUMERIC_ID))
+            .returning();
+
+    doReturn(before).when(selectForUpdate).fetchOne();
+    doReturn(updated).when(updateReturning).fetchOne();
+    clearInvocations(updateBeforeLifecycle);
 
     repository.save(account);
 
@@ -63,7 +68,7 @@ class AccountRepositoryLifecycleSourceTest {
     verify(sourceEvidence).recordAccountUpdate(evidence.capture());
     assertThat(evidence.getValue().before().lifecycleState()).isEqualTo("ACTIVE");
     assertThat(evidence.getValue().after().lifecycleState()).isEqualTo("SECURITY_LOCKED");
-    verify(dsl.update(ACCOUNTS))
+    verify(updateBeforeLifecycle)
         .set(ACCOUNTS.LIFECYCLE_STATE, AccountLifecycleState.SECURITY_LOCKED.storageValue());
   }
 

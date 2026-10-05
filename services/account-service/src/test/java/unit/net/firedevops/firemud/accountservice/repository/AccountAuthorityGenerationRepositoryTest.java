@@ -2,8 +2,8 @@ package net.firedevops.firemud.accountservice.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -98,12 +98,31 @@ class AccountAuthorityGenerationRepositoryTest {
     UUID accountId = UUID.fromString("11111111-1111-4111-8111-111111111111");
     UUID otherAccountId = UUID.fromString("22222222-2222-4222-8222-222222222222");
     IssuanceFence fence = new IssuanceFence(accountId, 1L, 1L);
-    ScopeState state = new ScopeState(AuthorityScope.account(accountId), 1L, 1L, fence);
+    ScopeState state =
+        new ScopeState(
+            AuthorityScope.membership(
+                accountId, UUID.fromString("33333333-3333-4333-8333-333333333333")),
+            1L,
+            1L,
+            fence);
 
     assertThatThrownBy(() -> repository.advance(state, new IssuanceFence(otherAccountId, 1L, 1L)))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> repository.advance(state, null))
         .isInstanceOf(IllegalArgumentException.class);
+
+    verifyNoInteractions(dsl);
+  }
+
+  @Test
+  void directAccountAdvanceRequiresAtomicSourceEventBeforeDatabaseAccess() {
+    UUID accountId = UUID.fromString("11111111-1111-4111-8111-111111111111");
+    IssuanceFence fence = new IssuanceFence(accountId, 1L, 1L);
+    ScopeState accountState = new ScopeState(AuthorityScope.account(accountId), 1L, 1L, fence);
+
+    assertThatThrownBy(() -> repository.advance(accountState, fence))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("atomic source event");
 
     verifyNoInteractions(dsl);
   }
@@ -168,12 +187,11 @@ class AccountAuthorityGenerationRepositoryTest {
     doAnswer(
             invocation -> {
               firstSql.set(invocation.getArgument(0, String.class));
-              Object[] bindings = invocation.getArgument(1, Object[].class);
-              firstBinding.set(bindings[0]);
+              firstBinding.set(invocation.getArgument(1));
               throw stopAtFirstRead;
             })
         .when(dsl)
-        .fetchOne(anyString(), any(Object[].class));
+        .fetchOne(anyString(), eq(accountId));
 
     assertThatThrownBy(
             () ->
@@ -182,7 +200,7 @@ class AccountAuthorityGenerationRepositoryTest {
         .isSameAs(stopAtFirstRead);
     assertThat(firstSql.get()).contains("FROM accounts").contains("FOR SHARE");
     assertThat(firstBinding.get()).isEqualTo(accountId);
-    verify(dsl, times(1)).fetchOne(anyString(), any(Object[].class));
+    verify(dsl, times(1)).fetchOne(anyString(), eq(accountId));
   }
 
   private void assertMandatory(java.lang.reflect.Method method) {

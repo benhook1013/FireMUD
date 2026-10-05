@@ -33,21 +33,29 @@ import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
-@Testcontainers(disabledWithoutDocker = true)
 class AccountFirstJoinAuthorityStorageIntegrationTest {
   private static final String SCHEMA_PREFIX = "first_join_authority_storage_proof";
 
-  @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  private static final AccountPostgresIntegrationFixture postgres =
+      new AccountPostgresIntegrationFixture();
+
+  @BeforeAll
+  static void startPostgres() {
+    postgres.start();
+  }
+
+  @AfterAll
+  static void stopPostgres() {
+    postgres.stop();
+  }
 
   @Test
   void appendsContiguousPerStreamAndReplaysOnlyExactRequestEvidence() {
@@ -698,12 +706,9 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
   }
 
   private TestContext newTestContext(boolean latest) {
-    String schema = SCHEMA_PREFIX + "_" + UUID.randomUUID().toString().replace("-", "");
-    DriverManagerDataSource dataSource = new DriverManagerDataSource();
-    String separator = postgres.getJdbcUrl().contains("?") ? "&" : "?";
-    dataSource.setUrl(postgres.getJdbcUrl() + separator + "currentSchema=" + schema);
-    dataSource.setUsername(postgres.getUsername());
-    dataSource.setPassword(postgres.getPassword());
+    String schema =
+        SCHEMA_PREFIX + "_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+    DriverManagerDataSource dataSource = postgres.dataSource(schema);
     var configuration =
         Flyway.configure()
             .dataSource(dataSource)

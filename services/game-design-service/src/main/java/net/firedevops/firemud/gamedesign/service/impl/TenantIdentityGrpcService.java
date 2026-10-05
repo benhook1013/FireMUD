@@ -19,7 +19,7 @@ import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.TransientDataAccessException;
 import org.springframework.grpc.server.service.GrpcService;
 
-/** Account-only readback of one exact, persisted fresh Game Design tenant creation operation. */
+/** Read-only same-namespace Account handoff for exact, persisted fresh tenant evidence. */
 @GrpcService
 public class TenantIdentityGrpcService
     extends TenantIdentityServiceGrpc.TenantIdentityServiceImplBase {
@@ -45,8 +45,8 @@ public class TenantIdentityGrpcService
       return;
     }
 
-    String expectedRequestDigest = request.getExpectedRequestDigest();
     UUID creationRequestId = parseCanonicalNonNilUuid(request.getCreationRequestId());
+    String expectedRequestDigest = request.getExpectedRequestDigest();
     if (creationRequestId == null
         || !GameTenantCreationDigest.isDigest(expectedRequestDigest)
         || !request.getUnknownFields().asMap().isEmpty()) {

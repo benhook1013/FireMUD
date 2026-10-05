@@ -151,4 +151,3 @@ CREATE CONSTRAINT TRIGGER game_tenant_creation_operation_must_complete
     DEFERRABLE INITIALLY DEFERRED
     FOR EACH ROW EXECUTE FUNCTION require_completed_game_tenant_creation_operation();
 -- [jooq ignore stop]
-

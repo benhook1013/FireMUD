@@ -8,11 +8,11 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import com.google.protobuf.UnknownFieldSet;
@@ -89,8 +89,7 @@ class GameDesignFreshTenantIdentityClientTest {
               assertThat(request.getCreationRequestId()).isEqualTo(REQUEST_ID.toString());
               assertThat(request.getExpectedRequestDigest()).isEqualTo(REQUEST_DIGEST);
             });
-    verify(stub, never()).resolveLegacyGameSessionTenantAssociation(any());
-    verify(stub, never()).resolveRuntimeTenantIdentity(any());
+    verifyNoMoreInteractions(stub);
   }
 
   @Test

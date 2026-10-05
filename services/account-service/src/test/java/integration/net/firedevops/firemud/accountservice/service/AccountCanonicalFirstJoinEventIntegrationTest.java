@@ -3,6 +3,7 @@ package integration.net.firedevops.firemud.accountservice.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.UUID;
@@ -33,23 +34,31 @@ import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 /** PostgreSQL proof fixture for the unwired canonical first-JOIN event/first-pair composition. */
-@Testcontainers(disabledWithoutDocker = true)
 class AccountCanonicalFirstJoinEventIntegrationTest {
   private static final String TEST_NAMESPACE = "canonical-join-event-proof";
   private static final String ACCOUNT_ISSUER = "firemud-account-service";
 
-  @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  private static final AccountPostgresIntegrationFixture postgres =
+      new AccountPostgresIntegrationFixture();
+
+  @BeforeAll
+  static void startPostgres() {
+    postgres.start();
+  }
+
+  @AfterAll
+  static void stopPostgres() {
+    postgres.stop();
+  }
 
   @Test
   void commitsExactEventAndPairAndReplaysOnlyTheSameCallerOperation() {
@@ -233,11 +242,7 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
 
   private static TestContext newTestContext() {
     String schema = "canonical_join_event_" + UUID.randomUUID().toString().replace("-", "");
-    DriverManagerDataSource dataSource = new DriverManagerDataSource();
-    String separator = postgres.getJdbcUrl().contains("?") ? "&" : "?";
-    dataSource.setUrl(postgres.getJdbcUrl() + separator + "currentSchema=" + schema);
-    dataSource.setUsername(postgres.getUsername());
-    dataSource.setPassword(postgres.getPassword());
+    DriverManagerDataSource dataSource = postgres.dataSource(schema);
     Flyway.configure()
         .dataSource(dataSource)
         .schemas(schema)

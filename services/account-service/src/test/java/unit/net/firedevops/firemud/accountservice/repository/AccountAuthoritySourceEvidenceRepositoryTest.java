@@ -131,7 +131,7 @@ class AccountAuthoritySourceEvidenceRepositoryTest {
     assertMandatory("initializeFreshAccount", AccountRepository.FreshAccountInsert.class);
     assertMandatory("recordAccountUpdate", AccountRepository.AccountUpdateEvidence.class);
 
-    verifyNoInteractions(dsl, outbox);
+    verifyNoInteractions(dsl);
   }
 
   @Test

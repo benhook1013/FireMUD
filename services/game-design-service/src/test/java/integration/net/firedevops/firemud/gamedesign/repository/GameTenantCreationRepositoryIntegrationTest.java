@@ -14,16 +14,14 @@ import org.jooq.SQLDialect;
 import org.jooq.Table;
 import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
-@Testcontainers(disabledWithoutDocker = true)
 class GameTenantCreationRepositoryIntegrationTest {
   private static final Table<?> GAME = DSL.table(DSL.name("game"));
   private static final Table<?> OPERATIONS = DSL.table(DSL.name("game_tenant_creation_operations"));
@@ -33,8 +31,18 @@ class GameTenantCreationRepositoryIntegrationTest {
   private static final String SOURCE_KEY = "new-game-tenant-01";
   private static final UUID REQUEST_ID = UUID.fromString("11111111-1111-4111-8111-111111111111");
 
-  @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  private static final GameDesignPostgresIntegrationFixture postgres =
+      new GameDesignPostgresIntegrationFixture();
+
+  @BeforeAll
+  static void startPostgres() {
+    postgres.start();
+  }
+
+  @AfterAll
+  static void stopPostgres() {
+    postgres.stop();
+  }
 
   @Test
   void exactRetryReturnsCommittedReceiptWithoutSecondGameWrite() {
@@ -93,10 +101,7 @@ class GameTenantCreationRepositoryIntegrationTest {
 
   private Fixture fixture() {
     String schema = "game_design_creation_" + UUID.randomUUID().toString().replace("-", "");
-    DriverManagerDataSource dataSource = new DriverManagerDataSource();
-    dataSource.setUrl(postgres.getJdbcUrl());
-    dataSource.setUsername(postgres.getUsername());
-    dataSource.setPassword(postgres.getPassword());
+    DriverManagerDataSource dataSource = postgres.dataSource();
     dataSource.setSchema(schema);
     Flyway.configure()
         .dataSource(dataSource)
