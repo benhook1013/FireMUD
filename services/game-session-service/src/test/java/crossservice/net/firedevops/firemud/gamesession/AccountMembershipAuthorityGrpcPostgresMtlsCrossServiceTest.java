@@ -17,6 +17,10 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
@@ -30,6 +34,7 @@ import net.firedevops.firemud.accountservice.client.EntityManagementClient;
 import net.firedevops.firemud.accountservice.client.GameSessionClient;
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
 import net.firedevops.firemud.accountservice.dto.AccountLogoutRequestDigest;
+import net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2;
 import net.firedevops.firemud.accountservice.dto.DirectTextCallerContext;
 import net.firedevops.firemud.accountservice.dto.DirectTextJoinScope;
 import net.firedevops.firemud.accountservice.dto.DirectTextJoinTarget;
@@ -38,16 +43,30 @@ import net.firedevops.firemud.accountservice.dto.JoinPublicProductionResult;
 import net.firedevops.firemud.accountservice.dto.MembershipTransitionReceipt;
 import net.firedevops.firemud.accountservice.dto.RuntimeMembershipSnapshotDto;
 import net.firedevops.firemud.accountservice.entity.Account;
+import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
+import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.AuthorityScope;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.ScopeState;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
+import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
+import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.CanonicalJoinOperationEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository;
+import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.PairAuthority;
+import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.TenantProvenanceKind;
+import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance;
+import net.firedevops.firemud.accountservice.repository.AccountMembershipTransitionReceiptRepository;
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository;
 import net.firedevops.firemud.accountservice.repository.ApprovedLegacyTenantAssociationRepository;
+import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepository;
 import net.firedevops.firemud.accountservice.repository.LegacyTenantSourceEvidence;
 import net.firedevops.firemud.accountservice.service.AccountAuthoritySourceEventReadback;
+import net.firedevops.firemud.accountservice.service.AccountCanonicalJoinReconciliationService;
 import net.firedevops.firemud.accountservice.service.AccountIssuerAuthorityEventProducer;
 import net.firedevops.firemud.accountservice.service.AccountLogoutAllAuthorityEventProducer;
 import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer;
@@ -62,6 +81,8 @@ import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyAccountTenantAssociationResponse;
 import net.firedevops.firemud.gamesession.client.AccountMembershipAuthorityClient;
 import net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer;
@@ -113,6 +134,8 @@ class AccountMembershipAuthorityGrpcPostgresMtlsCrossServiceTest {
   private static final long CATALOG_REVISION = 31L;
   private static final long POINTER_VERSION = 13L;
   private static final String AUTHORITY_STREAM_PREFIX = "account:auth-authority:v1:";
+  private static final DateTimeFormatter RFC3339 = DateTimeFormatter.ISO_INSTANT;
+  private static final int CANONICAL_JOIN_MAX_ATTEMPTS = 12;
 
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
@@ -136,6 +159,15 @@ class AccountMembershipAuthorityGrpcPostgresMtlsCrossServiceTest {
   @Autowired private AccountMembershipLifecycleService membershipLifecycleService;
   @Autowired private AccountLogoutAllOperationRepository logoutAllOperationRepository;
   @Autowired private AccountPasswordResetOperationRepository passwordResetOperationRepository;
+  @Autowired private AccountAuditOutboxRepository auditOutboxRepository;
+  @Autowired private AccountConnectScopeRepository connectScopeRepository;
+  @Autowired private AccountJoinOperationRepository joinOperationRepository;
+  @Autowired private AccountMembershipPairAuthorityRepository membershipPairAuthorityRepository;
+  @Autowired private AccountMembershipTransitionReceiptRepository transitionReceiptRepository;
+  @Autowired private AccountTenantMembershipRepository tenantMembershipRepository;
+  @Autowired private AccountTenantMembershipRoleSnapshotRepository roleSnapshotRepository;
+  @Autowired private FreshTenantIdentityAssociationRepository freshTenantAssociations;
+  @Autowired private AccountCanonicalJoinReconciliationService canonicalJoinReconciliationService;
   @Autowired private ApprovedLegacyTenantAssociationRepository tenantAssociationRepository;
   @Autowired private LegacyTenantSourceEvidence legacyTenantSourceEvidence;
   @Autowired private PlatformTransactionManager transactionManager;
@@ -148,6 +180,102 @@ class AccountMembershipAuthorityGrpcPostgresMtlsCrossServiceTest {
   @TempDir private Path tempDir;
 
   private final Map<String, Path> copiedCertificates = new HashMap<>();
+
+  @Test
+  void committedFreshUuidCanonicalJoinSnapshotRoundTripsThroughGameSessionClientOverPostgresMtls()
+      throws Exception {
+    // This composes Account's committed V2 JOIN owner readback with the actual Game Session
+    // consumer over the physical socket. Caller/policy evidence is synthetic: this proves neither
+    // upstream caller/policy authentication, registry authorization, nor gameplay admission, and
+    // it does not register or enable the runtime RPC.
+    FreshCanonicalJoinFixture fixture = committedFreshCanonicalJoinFixture();
+    CanonicalJoinOwnerState before = readCanonicalJoinOwnerState(fixture);
+    RuntimeMembershipSnapshotDto expected = before.snapshot();
+    assertThat(before.operation().status()).isEqualTo("COMMITTED");
+    assertThat(before.operation().outcome()).isEqualTo("JOINED");
+    assertThat(before.operation().requestId()).isEqualTo(fixture.requestId());
+    assertThat(before.operation().scopeEvidence().accountUuid()).isEqualTo(fixture.accountUuid());
+    assertThat(before.operation().scopeEvidence().tenantUuid()).isEqualTo(fixture.tenantUuid());
+    assertThat(before.operation().scopeEvidence().realmId()).isEqualTo(fixture.scope().realmId());
+    assertThat(before.operation().scopeEvidence().catalogRevision())
+        .isEqualTo(fixture.scope().catalogRevision());
+    assertThat(before.operation().scopeEvidence().pointerVersion())
+        .isEqualTo(fixture.scope().pointerVersion());
+    assertThat(before.operation().scopeEvidence().tenantProvenance())
+        .isEqualTo(fixture.provenance());
+    assertThat(before.freshTenantSource()).isEqualTo(fixture.creationEvidence());
+    assertThat(before.freshTenantSource().canonicalTenantId()).isEqualTo(fixture.tenantUuid());
+    assertThat(before.pairAuthority().provenance()).isEqualTo(fixture.provenance());
+    assertThat(expected.membershipExists()).isTrue();
+    assertThat(expected.gameplayAdmissionAllowed()).isTrue();
+    assertThat(expected.membershipBaseline().membershipLifecycleState()).isEqualTo("ACTIVE");
+    assertThat(expected.membershipBaseline().membershipVersion())
+        .isEqualTo(Map.of(fixture.tenantUuid().toString(), "2"));
+    assertThat(expected.membershipBaseline().membershipAuthorityGeneration()).isEqualTo("1");
+    assertThat(expected.roles()).containsExactly("player");
+    assertThat(expected.authorityTuple().tenantAuthorityGeneration())
+        .isEqualTo(Map.of(fixture.tenantUuid().toString(), "1"));
+    assertThat(expected.authorityTuple().membershipAuthorityGeneration())
+        .isEqualTo(Map.of(fixture.tenantUuid().toString(), "1"));
+    assertThat(expected.outboxCheckpoints()).hasSize(4);
+    assertThat(expected.outboxCheckpoints())
+        .anySatisfy(
+            checkpoint -> {
+              assertThat(checkpoint.outboxStreamKey())
+                  .isEqualTo(membershipStreamKey(fixture.accountUuid(), fixture.tenantUuid()));
+              assertThat(checkpoint.outboxSequence()).isEqualTo("1");
+            });
+
+    Server server = startServer();
+    try (AccountMembershipAuthorityClient client = newClient(server.getPort(), "game-session")) {
+      client.init();
+
+      PlayerExecutionContext originalContext = freshPlayerContext(fixture, fixture.requestId());
+      GetTenantMembershipForRuntimeResponse originalResponse =
+          client.getTenantMembershipForRuntime(originalContext);
+      assertResponseMatchesSnapshot(originalResponse, originalContext, expected);
+      assertFreshCanonicalJoinMembershipEvent(originalResponse, fixture, expected);
+      RuntimeMembershipSnapshotDto repeatedSnapshot = readRuntimeMembershipSnapshot(fixture);
+      assertSameCurrentMembershipSnapshot(expected, repeatedSnapshot);
+      GetTenantMembershipForRuntimeResponse repeatedResponse =
+          client.getTenantMembershipForRuntime(originalContext);
+      assertResponseMatchesSnapshot(repeatedResponse, originalContext, repeatedSnapshot);
+      assertThat(stableCarrier(repeatedResponse)).isEqualTo(stableCarrier(originalResponse));
+
+      // A distinct caller request ID is not allowed to inherit the first response's correlation.
+      PlayerExecutionContext changedRequestContext =
+          originalContext.toBuilder().setRequestId(UUID.randomUUID().toString()).build();
+      GetTenantMembershipForRuntimeResponse changedRequestResponse =
+          client.getTenantMembershipForRuntime(changedRequestContext);
+      assertResponseMatchesSnapshot(
+          changedRequestResponse, changedRequestContext, repeatedSnapshot);
+      assertThat(changedRequestResponse.getRequestId())
+          .isEqualTo(changedRequestContext.getRequestId())
+          .isNotEqualTo(originalContext.getRequestId());
+      assertThat(stableCarrier(changedRequestResponse)).isEqualTo(stableCarrier(originalResponse));
+      assertFreshCanonicalJoinMembershipEvent(changedRequestResponse, fixture, repeatedSnapshot);
+
+      // The Account snapshot is selected by the exact canonical Account/tenant pair. An unknown
+      // fresh tenant cannot be treated as this JOIN or cause an absence baseline to be created.
+      UUID changedTenantUuid = UUID.randomUUID();
+      PlayerExecutionContext changedTargetContext =
+          originalContext.toBuilder()
+              .setTenantId(changedTenantUuid.toString())
+              .setRequestId(UUID.randomUUID().toString())
+              .build();
+      assertRemoteFailure(
+          () -> client.getTenantMembershipForRuntime(changedTargetContext),
+          Status.Code.FAILED_PRECONDITION);
+      assertThat(countMembershipPairRows(fixture.accountUuid(), changedTenantUuid)).isZero();
+      assertThat(countMembershipGenerationRows(fixture.accountUuid(), changedTenantUuid)).isZero();
+      assertThat(countCanonicalMembershipRows(fixture.accountId(), changedTenantUuid)).isZero();
+      assertThat(countStreamEvents(membershipStreamKey(fixture.accountUuid(), changedTenantUuid)))
+          .isZero();
+      assertCanonicalJoinOwnerEvidenceUnchanged(fixture, before);
+    } finally {
+      stop(server);
+    }
+  }
 
   @Test
   void realMembershipSnapshotAndSequenceZeroBaselineCrossPostgresAndAuthenticatedSocket()
@@ -647,6 +775,211 @@ class AccountMembershipAuthorityGrpcPostgresMtlsCrossServiceTest {
     }
   }
 
+  private FreshCanonicalJoinFixture committedFreshCanonicalJoinFixture() {
+    FreshCanonicalJoinFixture fixture = freshCanonicalJoinFixture();
+    persistCanonicalJoinEvidence(fixture);
+    Instant diagnosticAt = Instant.now();
+    inTransactionWithoutResult(
+        () -> {
+          joinOperationRepository.recordCanonicalPolicyUnavailable(
+              fixture.requestId(), fixture.scope(), fixture.callerBinding(), "ENTITLEMENT_TIMEOUT");
+          joinOperationRepository.recordCanonicalReconciliationAttempt(
+              fixture.requestId(),
+              0,
+              CANONICAL_JOIN_MAX_ATTEMPTS,
+              diagnosticAt,
+              "CANONICAL_JOIN_READBACK_UNAVAILABLE",
+              diagnosticAt);
+        });
+    canonicalJoinReconciliationService.reconcileDueOperations(
+        Instant.parse(fixture.scope().connectScopeExpiresAt()).plus(Duration.ofDays(1)));
+    CanonicalJoinOperationEvidence operation =
+        new TransactionTemplate(transactionManager)
+            .execute(
+                status ->
+                    joinOperationRepository
+                        .findCanonicalEvidenceByRequestId(fixture.requestId())
+                        .orElseThrow());
+    assertThat(operation.status()).isEqualTo("COMMITTED");
+    assertThat(operation.outcome()).isEqualTo("JOINED");
+    return fixture;
+  }
+
+  private FreshCanonicalJoinFixture freshCanonicalJoinFixture() {
+    String suffix = UUID.randomUUID().toString();
+    String shortSuffix = suffix.replace("-", "").substring(0, 12);
+    long accountId =
+        Objects.requireNonNull(
+            dsl.resultQuery(
+                    "INSERT INTO accounts (username, email, password_hash) VALUES (?, ?, ?) RETURNING id",
+                    "fresh-mtls-" + shortSuffix,
+                    "fresh-membership-mtls-" + suffix + "@example.test",
+                    "synthetic-fixture-hash")
+                .fetchOne(0, Long.class));
+    UUID accountUuid =
+        Objects.requireNonNull(
+            dsl.resultQuery("SELECT account_uuid FROM accounts WHERE id = ?", accountId)
+                .fetchOne(0, UUID.class));
+    seedAccountAuthorityState(accountUuid);
+
+    UUID tenantUuid = UUID.randomUUID();
+    FreshTenantCreationEvidence creationEvidence = freshTenantCreationEvidence(tenantUuid);
+    VerifiedTenantProvenance provenance =
+        new VerifiedTenantProvenance(
+            null,
+            TenantProvenanceKind.FRESH_GAME_DESIGN,
+            creationEvidence.operationId(),
+            creationEvidence.evidenceDigest());
+    inTransactionWithoutResult(
+        () -> {
+          freshTenantAssociations.importVerified(creationEvidence);
+          authorityGenerationRepository.initializeTenantIfAbsent(tenantUuid);
+          authorityGenerationRepository.initializeIssuerIfAbsent(
+              AccountServiceImpl.ACCOUNT_JWT_ISSUER);
+          membershipAuthorityEventProducer.readFreshNeverJoinedMembershipSnapshot(
+              accountUuid, tenantUuid);
+        });
+
+    Instant evaluatedAt = Instant.now().minus(Duration.ofHours(1));
+    Instant expiresAt = Instant.now().minus(Duration.ofMinutes(30));
+    CanonicalJoinScopeV2 scope =
+        new CanonicalJoinScopeV2(
+            "fresh-mtls-join-" + UUID.randomUUID(),
+            accountUuid,
+            tenantUuid,
+            UUID.randomUUID(),
+            "fresh-tenant-" + shortSuffix,
+            "fresh-world-" + shortSuffix,
+            "production",
+            UUID.randomUUID(),
+            "SHARED",
+            UUID.randomUUID(),
+            3L,
+            2L,
+            RFC3339.format(evaluatedAt.atOffset(ZoneOffset.UTC)),
+            RFC3339.format(expiresAt.atOffset(ZoneOffset.UTC)));
+    String requestId = UUID.randomUUID().toString();
+    String callerBinding = "synthetic-caller-" + UUID.randomUUID();
+    inTransactionWithoutResult(
+        () -> {
+          connectScopeRepository.insertCanonical(accountId, scope, provenance);
+          joinOperationRepository.insertCanonicalIntent(requestId, scope, callerBinding);
+          joinOperationRepository.bindCanonicalPolicyEvidence(
+              requestId, scope, callerBinding, true, 11L);
+        });
+    return new FreshCanonicalJoinFixture(
+        accountId,
+        accountUuid,
+        tenantUuid,
+        provenance,
+        creationEvidence,
+        scope,
+        requestId,
+        callerBinding);
+  }
+
+  private FreshTenantCreationEvidence freshTenantCreationEvidence(UUID tenantUuid) {
+    UUID creationRequestId = UUID.randomUUID();
+    UUID operationId = UUID.randomUUID();
+    String sourceTenantKey = "f-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+    String requestDigest =
+        GameTenantCreationDigest.requestDigest(
+            NAMESPACE, creationRequestId, sourceTenantKey, "Fresh membership mTLS fixture", null);
+    long sourceGameRowId = positiveRandomLong();
+    String provenanceKind = "NEW_GAME_ROW";
+    return new FreshTenantCreationEvidence(
+        1,
+        NAMESPACE,
+        creationRequestId,
+        operationId,
+        requestDigest,
+        tenantUuid,
+        sourceGameRowId,
+        sourceTenantKey,
+        provenanceKind,
+        GameTenantCreationDigest.evidenceDigest(
+            NAMESPACE,
+            creationRequestId,
+            operationId,
+            requestDigest,
+            tenantUuid,
+            sourceGameRowId,
+            sourceTenantKey,
+            provenanceKind));
+  }
+
+  private void inTransactionWithoutResult(Runnable callback) {
+    new TransactionTemplate(transactionManager).executeWithoutResult(status -> callback.run());
+  }
+
+  private void persistCanonicalJoinEvidence(FreshCanonicalJoinFixture fixture) {
+    inTransactionWithoutResult(
+        () -> {
+          Account account =
+              accountRepository.findByAccountUuid(fixture.accountUuid()).orElseThrow();
+          AccountTenantMembership membership = new AccountTenantMembership();
+          membership.setAccount(account);
+          membership.setTenantId(fixture.provenance().legacyTenantId());
+          membership.setTenantUuid(fixture.tenantUuid());
+          membership.setTenantProvenanceKind(fixture.provenance().kind().name());
+          membership.setTenantSourceOperationId(fixture.provenance().sourceOperationId());
+          membership.setTenantProvenanceDigest(fixture.provenance().digest());
+          membership.setGameplayAdmissionAllowed(true);
+          membership.setLifecycleState("ACTIVE");
+          membership.setMembershipVersion(2L);
+          membership.setMembershipAuthorityGeneration(1L);
+          membership.setAuthorityProvenance("EXPLICIT_JOIN");
+          tenantMembershipRepository.saveCanonical(
+              membership, fixture.accountUuid(), fixture.tenantUuid(), fixture.provenance());
+          roleSnapshotRepository.replaceCanonical(
+              membership,
+              fixture.accountUuid(),
+              fixture.tenantUuid(),
+              fixture.provenance(),
+              2L,
+              List.of("player"));
+          membershipAuthorityEventProducer.publishCanonicalFirstJoinMembershipChange(
+              fixture.scope(), fixture.requestId(), fixture.callerBinding());
+          transitionReceiptRepository.appendCanonicalTransition(
+              fixture.accountUuid(),
+              fixture.tenantUuid(),
+              "MEMBERSHIP_JOINED",
+              fixture.requestId());
+          String auditPayload =
+              AccountAuditOutboxRepository.canonicalJoinPayload(
+                  fixture.accountUuid(),
+                  fixture.tenantUuid(),
+                  fixture.scope().worldSlug(),
+                  fixture.scope().realmSlug(),
+                  Map.of(fixture.tenantUuid().toString(), "2"),
+                  fixture.requestId());
+          auditOutboxRepository.appendCanonicalTenant(
+              canonicalJoinAuditEventId(fixture.requestId()),
+              fixture.tenantUuid().toString(),
+              "ACCOUNT_JOINED_PUBLIC_PRODUCTION",
+              auditPayload);
+        });
+  }
+
+  private PlayerExecutionContext freshPlayerContext(
+      FreshCanonicalJoinFixture fixture, String requestId) {
+    return PlayerExecutionContext.newBuilder()
+        .setAccountId(fixture.accountUuid().toString())
+        .setTenantId(fixture.tenantUuid().toString())
+        .setRealmId(fixture.scope().realmId().toString())
+        .setPlayableStateNamespaceId(fixture.scope().playableStateNamespaceId().toString())
+        .setPlayableStateScope(fixture.scope().playableStateScope())
+        .setGameInstanceId(fixture.scope().gameInstanceId().toString())
+        .setSessionId("9001")
+        .setRequestId(requestId)
+        .build();
+  }
+
+  private static UUID canonicalJoinAuditEventId(String requestId) {
+    return UUID.nameUUIDFromBytes(
+        ("account-join-audit/v1:" + requestId).getBytes(StandardCharsets.UTF_8));
+  }
+
   private JoinFixture fixture() {
     String suffix = UUID.randomUUID().toString();
     String shortSuffix = suffix.replace("-", "").substring(0, 12);
@@ -755,6 +1088,129 @@ class AccountMembershipAuthorityGrpcPostgresMtlsCrossServiceTest {
             status ->
                 membershipAuthorityEventProducer.readRuntimeMembershipSnapshot(
                     fixture.accountUuid(), fixture.tenantUuid()));
+  }
+
+  private RuntimeMembershipSnapshotDto readRuntimeMembershipSnapshot(
+      FreshCanonicalJoinFixture fixture) {
+    return new TransactionTemplate(transactionManager)
+        .execute(
+            status ->
+                membershipAuthorityEventProducer.readRuntimeMembershipSnapshot(
+                    fixture.accountUuid(), fixture.tenantUuid()));
+  }
+
+  private CanonicalJoinOwnerState readCanonicalJoinOwnerState(FreshCanonicalJoinFixture fixture) {
+    UUID accountUuid = fixture.accountUuid();
+    UUID tenantUuid = fixture.tenantUuid();
+    return new CanonicalJoinOwnerState(
+        readRuntimeMembershipSnapshot(fixture),
+        new TransactionTemplate(transactionManager)
+            .execute(
+                status ->
+                    joinOperationRepository
+                        .findCanonicalEvidenceByRequestId(fixture.requestId())
+                        .orElseThrow()),
+        new TransactionTemplate(transactionManager)
+            .execute(
+                status ->
+                    membershipPairAuthorityRepository
+                        .readForUpdate(accountUuid, tenantUuid)
+                        .orElseThrow()),
+        new TransactionTemplate(transactionManager)
+            .execute(status -> freshTenantAssociations.read(tenantUuid).orElseThrow()),
+        canonicalJoinEvidenceCounts(fixture),
+        readAuthorityState(AuthorityScope.issuer(AccountServiceImpl.ACCOUNT_JWT_ISSUER)),
+        readAuthorityState(AuthorityScope.account(accountUuid)),
+        readAuthorityState(AuthorityScope.tenant(tenantUuid)),
+        readAuthorityState(AuthorityScope.membership(accountUuid, tenantUuid)),
+        accountIssuanceFence(accountUuid));
+  }
+
+  private void assertCanonicalJoinOwnerEvidenceUnchanged(
+      FreshCanonicalJoinFixture fixture, CanonicalJoinOwnerState before) {
+    CanonicalJoinOwnerState after = readCanonicalJoinOwnerState(fixture);
+    assertSameCurrentMembershipSnapshot(before.snapshot(), after.snapshot());
+    assertThat(after.operation()).isEqualTo(before.operation());
+    assertThat(after.pairAuthority()).isEqualTo(before.pairAuthority());
+    assertThat(after.freshTenantSource()).isEqualTo(before.freshTenantSource());
+    assertThat(after.evidenceCounts()).isEqualTo(before.evidenceCounts());
+    assertThat(after.issuerAuthority()).isEqualTo(before.issuerAuthority());
+    assertThat(after.accountAuthority()).isEqualTo(before.accountAuthority());
+    assertThat(after.tenantAuthority()).isEqualTo(before.tenantAuthority());
+    assertThat(after.membershipAuthority()).isEqualTo(before.membershipAuthority());
+    assertThat(after.issuanceFence()).isEqualTo(before.issuanceFence());
+  }
+
+  private CanonicalJoinEvidenceCounts canonicalJoinEvidenceCounts(
+      FreshCanonicalJoinFixture fixture) {
+    return new CanonicalJoinEvidenceCounts(
+        countCanonicalMembershipRows(fixture.accountId(), fixture.tenantUuid()),
+        countStreamEvents(membershipStreamKey(fixture.accountUuid(), fixture.tenantUuid())),
+        Objects.requireNonNull(
+            dsl.resultQuery(
+                    "SELECT COUNT(*) FROM account_membership_transition_receipts "
+                        + "WHERE account_uuid = ? AND tenant_uuid = ? AND receipt_version = 2",
+                    fixture.accountUuid(),
+                    fixture.tenantUuid())
+                .fetchOne(0, Long.class)),
+        Objects.requireNonNull(
+            dsl.resultQuery(
+                    "SELECT COUNT(*) FROM account_audit_outbox WHERE audit_event_id = ?",
+                    canonicalJoinAuditEventId(fixture.requestId()))
+                .fetchOne(0, Long.class)));
+  }
+
+  private long countCanonicalMembershipRows(long accountId, UUID tenantUuid) {
+    return Objects.requireNonNull(
+        dsl.resultQuery(
+                "SELECT COUNT(*) FROM account_tenant_membership "
+                    + "WHERE account_id = ? AND tenant_uuid = ?",
+                accountId,
+                tenantUuid)
+            .fetchOne(0, Long.class));
+  }
+
+  private void assertFreshCanonicalJoinMembershipEvent(
+      GetTenantMembershipForRuntimeResponse response,
+      FreshCanonicalJoinFixture fixture,
+      RuntimeMembershipSnapshotDto snapshot) {
+    var event = snapshot.sourceEvent();
+    assertThat(event).isNotNull();
+    assertThat(event.accountId()).isEqualTo(fixture.accountUuid().toString());
+    assertThat(event.tenantId()).isEqualTo(fixture.tenantUuid().toString());
+    assertThat(event.requestId()).isEqualTo(fixture.requestId());
+    assertThat(event.outboxStreamKey())
+        .isEqualTo(membershipStreamKey(fixture.accountUuid(), fixture.tenantUuid()));
+    assertThat(event.outboxSequence()).isEqualTo("1");
+    assertThat(event.membershipLifecycleState()).isEqualTo("ACTIVE");
+    assertThat(event.gameplayAdmissionAllowed()).isTrue();
+    assertThat(event.membershipVersion()).isEqualTo(Map.of(fixture.tenantUuid().toString(), "2"));
+    assertThat(event.membershipAuthorityGeneration()).isEqualTo("1");
+    assertThat(event.authorityTuple()).isEqualTo(snapshot.authorityTuple());
+    assertThat(event.issuanceFence()).isEqualTo("1");
+
+    var membershipEvidence =
+        response.getOutboxSourceEvidenceList().stream()
+            .filter(source -> event.outboxStreamKey().equals(source.getOutboxStreamKey()))
+            .toList();
+    assertThat(membershipEvidence).hasSize(1);
+    assertThat(membershipEvidence.getFirst().getOutboxSequence()).isEqualTo(event.outboxSequence());
+    assertThat(membershipEvidence.getFirst().getEventId()).isEqualTo(event.eventId());
+    assertThat(membershipEvidence.getFirst().getEventDigest()).isEqualTo(event.eventDigest());
+    assertThat(
+            membershipEvidence.getFirst().getCanonicalEventJson().getBytes(StandardCharsets.UTF_8))
+        .containsExactly(event.canonicalJsonUtf8());
+
+    var persistedEvent =
+        Objects.requireNonNull(
+            dsl.resultQuery(
+                    "SELECT request_id, event_id, event_digest FROM account_authority_outbox_events "
+                        + "WHERE outbox_stream_key = ? AND outbox_sequence = 1",
+                    event.outboxStreamKey())
+                .fetchOne());
+    assertThat(persistedEvent.get("request_id", String.class)).isEqualTo(fixture.requestId());
+    assertThat(persistedEvent.get("event_id", String.class)).isEqualTo(event.eventId());
+    assertThat(persistedEvent.get("event_digest", String.class)).isEqualTo(event.eventDigest());
   }
 
   private JoinFixture reactivationFixture(JoinFixture existing) {
@@ -1430,6 +1886,31 @@ class AccountMembershipAuthorityGrpcPostgresMtlsCrossServiceTest {
       String requestId,
       DirectTextCallerContext caller,
       DirectTextJoinScope scope) {}
+
+  private record FreshCanonicalJoinFixture(
+      long accountId,
+      UUID accountUuid,
+      UUID tenantUuid,
+      VerifiedTenantProvenance provenance,
+      FreshTenantCreationEvidence creationEvidence,
+      CanonicalJoinScopeV2 scope,
+      String requestId,
+      String callerBinding) {}
+
+  private record CanonicalJoinOwnerState(
+      RuntimeMembershipSnapshotDto snapshot,
+      CanonicalJoinOperationEvidence operation,
+      PairAuthority pairAuthority,
+      FreshTenantCreationEvidence freshTenantSource,
+      CanonicalJoinEvidenceCounts evidenceCounts,
+      ScopeState issuerAuthority,
+      ScopeState accountAuthority,
+      ScopeState tenantAuthority,
+      ScopeState membershipAuthority,
+      long issuanceFence) {}
+
+  private record CanonicalJoinEvidenceCounts(
+      long memberships, long events, long receipts, long audits) {}
 
   private record DenialReadback(
       ScopeState issuerState,

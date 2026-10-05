@@ -1600,6 +1600,7 @@ jobs:
             --require-suite crossservice.net.firedevops.firemud.gamesession.AccountMembershipAuthorityGrpcPostgresMtlsCrossServiceTest \
             --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountMembershipAuthorityGrpcPostgresMtlsCrossServiceTest#realMembershipSnapshotAndSequenceZeroBaselineCrossPostgresAndAuthenticatedSocket()' \
             --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountMembershipAuthorityGrpcPostgresMtlsCrossServiceTest#retainedInactiveLeftAndReactivationSnapshotsCrossPostgresAndAuthenticatedSocket()' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountMembershipAuthorityGrpcPostgresMtlsCrossServiceTest#committedFreshUuidCanonicalJoinSnapshotRoundTripsThroughGameSessionClientOverPostgresMtls()' \
             game-session-service
 
       - name: Upload Account membership PostgreSQL readback socket mTLS proof results
@@ -1791,6 +1792,8 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountCanonicalJoinReconciliationIntegrationTest#pendingCanonicalJoinCannotAuthorizePositiveReadbackOrCauseMutation()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountCanonicalJoinReconciliationIntegrationTest#freshUuidReadRejectsContradictoryReceiptEventRolesPairAndAuditWithoutMutation()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountCanonicalJoinReconciliationIntegrationTest#existingOnlyFreshUuidReadRejectsWrongAccountAndTenantSources()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCanonicalJoinReconciliationIntegrationTest#committedFreshUuidJoinRoundTripsExactSnapshotOverPhysicalMtls()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCanonicalJoinReconciliationIntegrationTest#physicalMembershipTransportRejectsWrongPeersBeforeProducerAccess()' \
             account-service
 
       - name: Upload Account canonical JOIN scope and intent PostgreSQL proof results
