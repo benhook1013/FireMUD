@@ -12,6 +12,7 @@ import org.jooq.Field;
 import org.jooq.Record;
 import org.jooq.Table;
 import org.jooq.impl.DSL;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Propagation;
@@ -102,9 +103,18 @@ public class GameAuthoredWorldSourceRepository {
       DSL.field(DSL.name("version_state_epoch"), Long.class);
   private static final UUID NIL_UUID = new UUID(0L, 0L);
   private final DSLContext dsl;
+  private final GameAuthoredWorldSourceDeliveryRepository deliveryRepository;
 
-  public GameAuthoredWorldSourceRepository(DSLContext dsl) {
+  @Autowired
+  public GameAuthoredWorldSourceRepository(
+      DSLContext dsl, GameAuthoredWorldSourceDeliveryRepository deliveryRepository) {
     this.dsl = dsl;
+    this.deliveryRepository = deliveryRepository;
+  }
+
+  /** Retains the direct owner-test construction path while sharing its owner DSL context. */
+  public GameAuthoredWorldSourceRepository(DSLContext dsl) {
+    this(dsl, new GameAuthoredWorldSourceDeliveryRepository(dsl));
   }
 
   /**
@@ -151,6 +161,10 @@ public class GameAuthoredWorldSourceRepository {
       }
       requireReceiptSource(receipt, source);
       requireTenantBinding(receipt);
+      if (NEW_GAME_ROW.equals(receipt.provenanceKind())) {
+        // A missing pre-V41 delivery claim stays missing; exact source retry does not backfill it.
+        deliveryRepository.validateExistingIfPresent(receipt);
+      }
       return receipt;
     }
 
@@ -209,6 +223,9 @@ public class GameAuthoredWorldSourceRepository {
     AuthoredWorldSourceEvidence receipt = toEvidence(persisted);
     requireReceiptSource(receipt, source);
     requireTenantBinding(receipt);
+    if (NEW_GAME_ROW.equals(receipt.provenanceKind())) {
+      deliveryRepository.enqueueFresh(receipt);
+    }
     return receipt;
   }
 

@@ -12,6 +12,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamedesign.GameDesignServiceApplication;
 import net.firedevops.firemud.gamedesign.dto.ResolvedLaunchDescriptorDto;
@@ -635,16 +636,14 @@ class LaunchDescriptorServiceIntegrationTest {
     assertThat(persistedGame).isNotNull();
     String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 12);
     AuthoredWorldSourceEvidence source =
-        isolatedTransaction.execute(
-            status ->
-                new GameAuthoredWorldSourceRepository(isolatedDsl)
-                    .register(
-                        NAMESPACE,
-                        UUID.randomUUID(),
-                        persistedGame.getCanonicalTenantId(),
-                        "tenant-" + suffix,
-                        "world-" + suffix,
-                        "Retained World 🐉"));
+        seedPreV41AuthoredWorldSource(
+            isolatedDsl,
+            isolatedTransaction,
+            persistedGame,
+            UUID.randomUUID(),
+            "tenant-" + suffix,
+            "world-" + suffix,
+            "Retained World 🐉");
     assertThat(source).isNotNull();
 
     Long versionId =
@@ -1044,6 +1043,89 @@ class LaunchDescriptorServiceIntegrationTest {
     dataSource.setPassword(postgres.getPassword());
     dataSource.setSchema(schema);
     return dataSource;
+  }
+
+  /** Seeds the immutable source/binding shape written before V41 added automatic delivery. */
+  private AuthoredWorldSourceEvidence seedPreV41AuthoredWorldSource(
+      DSLContext isolatedDsl,
+      TransactionTemplate isolatedTransaction,
+      Game sourceGame,
+      UUID registrationRequestId,
+      String tenantSlug,
+      String worldSlug,
+      String worldDisplayName) {
+    UUID operationId = UUID.randomUUID();
+    String requestDigest =
+        AuthoredWorldSourceDigest.requestDigest(
+            NAMESPACE,
+            registrationRequestId,
+            sourceGame.getCanonicalTenantId(),
+            tenantSlug,
+            worldSlug,
+            worldDisplayName);
+    String evidenceDigest =
+        AuthoredWorldSourceDigest.evidenceDigest(
+            NAMESPACE,
+            registrationRequestId,
+            operationId,
+            requestDigest,
+            sourceGame.getCanonicalTenantId(),
+            tenantSlug,
+            worldSlug,
+            worldDisplayName,
+            sourceGame.getId(),
+            sourceGame.getTenantId(),
+            "NEW_GAME_ROW");
+    AuthoredWorldSourceEvidence source =
+        new AuthoredWorldSourceEvidence(
+            1,
+            NAMESPACE,
+            registrationRequestId,
+            operationId,
+            requestDigest,
+            sourceGame.getCanonicalTenantId(),
+            tenantSlug,
+            worldSlug,
+            worldDisplayName,
+            sourceGame.getId(),
+            sourceGame.getTenantId(),
+            "NEW_GAME_ROW",
+            evidenceDigest);
+
+    isolatedTransaction.execute(
+        status -> {
+          isolatedDsl.execute(
+              "INSERT INTO game_design_tenant_slug_binding "
+                  + "(target_namespace, canonical_tenant_id, tenant_slug, source_game_row_id, "
+                  + "source_game_tenant_key, provenance_kind) VALUES (?, ?, ?, ?, ?, ?)",
+              source.targetNamespace(),
+              source.canonicalTenantId(),
+              source.tenantSlug(),
+              source.sourceGameRowId(),
+              source.sourceGameTenantKey(),
+              source.provenanceKind());
+          isolatedDsl.execute(
+              "INSERT INTO game_design_authored_world_source_operations "
+                  + "(operation_id, schema_version, target_namespace, registration_request_id, "
+                  + "request_digest, canonical_tenant_id, tenant_slug, world_slug, "
+                  + "world_display_name, source_game_row_id, source_game_tenant_key, "
+                  + "provenance_kind, evidence_digest) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              source.operationId(),
+              source.schemaVersion(),
+              source.targetNamespace(),
+              source.registrationRequestId(),
+              source.requestDigest(),
+              source.canonicalTenantId(),
+              source.tenantSlug(),
+              source.worldSlug(),
+              source.worldDisplayName(),
+              source.sourceGameRowId(),
+              source.sourceGameTenantKey(),
+              source.provenanceKind(),
+              source.evidenceDigest());
+          return null;
+        });
+    return source;
   }
 
   private void migrate(DriverManagerDataSource dataSource, String schema, MigrationVersion target) {

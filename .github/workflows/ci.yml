@@ -1114,6 +1114,40 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Run Game Design authored-source delivery PostgreSQL and physical mTLS proof
+        if: ${{ !cancelled() && matrix.module == 'game-design-service' }}
+        run: |
+          ./gradlew :game-design-service:integrationTest \
+            --tests integration.net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceDeliveryIntegrationTest \
+            --tests integration.net.firedevops.firemud.gamedesign.service.GameAuthoredWorldSourceDeliveryMtlsIntegrationTest \
+            -PfullCheck --no-build-cache --no-configuration-cache
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceDeliveryIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceDeliveryIntegrationTest#freshRegistrationQueuesOneStableWorldRequestAndExactSourceRetryReusesIt()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceDeliveryIntegrationTest#sourceAndDeliveryIntentRollBackTogether()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceDeliveryIntegrationTest#concurrentExactDeliveriesReturnOneDurableAckAndChangedReceiptIsDenied()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceDeliveryIntegrationTest#databaseRejectsDeliverySourceRebindingAndReceiptMutation()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceDeliveryIntegrationTest#committedAckWithLostLocalCommitAcknowledgementRecoversFromDurableRead()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceDeliveryIntegrationTest#retainedSourceAndGameRowsRemainUnchangedAcrossV41WithoutDeliveryAssociation()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceDeliveryIntegrationTest#historicalFreshSourceRetryDoesNotBackfillMissingV41DeliveryClaim()' \
+            --require-suite integration.net.firedevops.firemud.gamedesign.service.GameAuthoredWorldSourceDeliveryMtlsIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.service.GameAuthoredWorldSourceDeliveryMtlsIntegrationTest#deliversPersistedFreshSourceAndCompletedRestartRetryReturnsOriginalReceipt()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.service.GameAuthoredWorldSourceDeliveryMtlsIntegrationTest#lostWorldResponseLeavesPendingIntentAndExactRetryRecoversCommittedOwnerReceipt()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.service.GameAuthoredWorldSourceDeliveryMtlsIntegrationTest#wrongAuthenticatedWorldCallerCannotCreateOwnerRowsOrAcknowledgeDelivery()' \
+            game-design-service
+
+      - name: Capture Game Design authored-source delivery PostgreSQL and physical mTLS raw XML
+        if: ${{ always() && matrix.module == 'game-design-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: game-design-authored-source-delivery-proof-${{ github.sha }}
+          path: |
+            services/game-design-service/build/test-results/integrationTest/TEST-*GameAuthoredWorldSourceDeliveryIntegrationTest.xml
+            services/game-design-service/build/test-results/integrationTest/TEST-*GameAuthoredWorldSourceDeliveryMtlsIntegrationTest.xml
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Run Game Design authored-source read socket mTLS proof
         if: ${{ !cancelled() && matrix.module == 'game-design-service' }}
         run: |
