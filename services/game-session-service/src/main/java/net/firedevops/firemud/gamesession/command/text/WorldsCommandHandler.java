@@ -75,7 +75,7 @@ public class WorldsCommandHandler {
     GameplayWorldCatalog.DiscoverySnapshot snapshot = worldCatalog.readDiscoverySnapshot();
     connectScopeSessionStore.replaceWorldSnapshot(
         sessionId,
-        maybeCaller.map(SessionContext::accountId).orElse(0L),
+        maybeCaller.map(SessionContext::accountId).orElse(null),
         snapshot.catalogFingerprint(),
         snapshot.ordinalTargets(),
         clock.instant());
@@ -95,7 +95,7 @@ public class WorldsCommandHandler {
       String transportSessionId, SessionContext sessionContext, String worldSelector) {
     Objects.requireNonNull(sessionContext, "sessionContext must not be null");
     OptionalLong parsedSessionId = parseTransportSessionId(transportSessionId);
-    if (sessionContext.accountId() <= 0 || parsedSessionId.isEmpty()) {
+    if (!sessionContext.hasAccountIdentity() || parsedSessionId.isEmpty()) {
       return RealmBrowseResult.failure("LOGIN_REQUIRED");
     }
     if (parsedSessionId.getAsLong() != sessionContext.sessionId()) {
@@ -488,7 +488,7 @@ public class WorldsCommandHandler {
     if (parsedSessionId.isEmpty() || parsedSessionId.getAsLong() != sessionContext.sessionId()) {
       return JoinMembershipResult.failure("CONNECT_SCOPE_MISMATCH");
     }
-    if (sessionContext.accountId() <= 0 || sessionContext.sessionId() <= 0) {
+    if (!sessionContext.hasAccountIdentity() || sessionContext.sessionId() <= 0) {
       return JoinMembershipResult.failure("LOGIN_REQUIRED");
     }
     if (accountClient == null || connectScopeSessionStore == null) {
@@ -629,7 +629,7 @@ public class WorldsCommandHandler {
   private PlayerExecutionContext playerContext(
       SessionContext caller, GameplayWorldCatalog.RealmView realm, String requestId) {
     return PlayerExecutionContext.newBuilder()
-        .setAccountId(Long.toString(caller.accountId()))
+        .setAccountId(caller.accountId())
         .setSessionId(Long.toString(caller.sessionId()))
         .setTenantId(Long.toString(realm.tenantId()))
         .setRealmId(realm.realmId().toString())
@@ -709,7 +709,7 @@ public class WorldsCommandHandler {
       String realmSelector) {
     Objects.requireNonNull(sessionContext, "sessionContext must not be null");
     OptionalLong parsedSessionId = parseTransportSessionId(transportSessionId);
-    if (sessionContext.accountId() <= 0 || parsedSessionId.isEmpty()) {
+    if (!sessionContext.hasAccountIdentity() || parsedSessionId.isEmpty()) {
       return CharacterBrowseResult.failure("LOGIN_REQUIRED");
     }
     if (parsedSessionId.getAsLong() != sessionContext.sessionId()) {

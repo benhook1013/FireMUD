@@ -132,7 +132,12 @@ public final class GameplayWebSocketDriver implements AutoCloseable {
       String jwtSecret,
       Map<String, Object> connectClaims) {
     return connectFirstPartyWeb(
-        uri, waitTimeout, transportSessionId, jwtSecret, "123", connectClaims);
+        uri,
+        waitTimeout,
+        transportSessionId,
+        jwtSecret,
+        "f2ed193b-12c1-4c96-bcad-c162229af440",
+        connectClaims);
   }
 
   public static GameplayWebSocketDriver connectFirstPartyWeb(

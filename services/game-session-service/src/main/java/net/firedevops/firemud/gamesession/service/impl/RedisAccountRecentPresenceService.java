@@ -6,6 +6,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.function.LongSupplier;
 import net.firedevops.firemud.gamesession.config.PresenceProperties;
+import net.firedevops.firemud.gamesession.service.AccountIds;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceState;
@@ -21,7 +22,7 @@ import org.springframework.stereotype.Service;
 
 @Service
 public final class RedisAccountRecentPresenceService implements AccountRecentPresenceService {
-  private static final String RECENT_PRESENCE_KEY_TEMPLATE = "accountrecentpresence:%d:%d";
+  private static final String RECENT_PRESENCE_KEY_TEMPLATE = "accountrecentpresence:%d:%s";
 
   private final RedisTemplate<String, Object> redisTemplate;
   private final SessionRoutingNormalizationService sessionRoutingNormalizationService;
@@ -58,7 +59,7 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
 
   @Override
   public void recordConnected(SessionContext context) {
-    if (context == null || context.tenantId() <= 0 || context.accountId() <= 0) {
+    if (context == null || context.tenantId() <= 0 || !context.hasAccountIdentity()) {
       return;
     }
     GameplayPresence presence =
@@ -99,12 +100,12 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
   }
 
   @Override
-  public Map<Long, AccountRecentPresenceState> findByAccountIds(
-      long tenantId, Collection<Long> accountIds) {
+  public Map<String, AccountRecentPresenceState> findByAccountIds(
+      long tenantId, Collection<String> accountIds) {
     ValueOperations<String, Object> valueOps = redisTemplate.opsForValue();
-    LinkedHashMap<Long, AccountRecentPresenceState> results = new LinkedHashMap<>();
-    for (Long accountId : accountIds) {
-      if (accountId == null || accountId <= 0 || valueOps == null) {
+    LinkedHashMap<String, AccountRecentPresenceState> results = new LinkedHashMap<>();
+    for (String accountId : accountIds) {
+      if (!AccountIds.isCanonicalNonNilUuid(accountId) || valueOps == null) {
         continue;
       }
       AccountRecentPresenceState state =
@@ -138,7 +139,7 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
   }
 
   private RoutingSnapshot routingSnapshot(SessionContext context, GameplayPresence presence) {
-    if (context == null || context.tenantId() <= 0 || context.accountId() <= 0) {
+    if (context == null || context.tenantId() <= 0 || !context.hasAccountIdentity()) {
       return null;
     }
     GameplayPresence effectivePresence =
@@ -180,13 +181,13 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
     return null;
   }
 
-  private String key(long tenantId, long accountId) {
+  private String key(long tenantId, String accountId) {
     return String.format(RECENT_PRESENCE_KEY_TEMPLATE, tenantId, accountId);
   }
 
   private record RoutingSnapshot(
       long tenantId,
-      long accountId,
+      String accountId,
       Long gameInstanceId,
       String playableStateScope,
       String worldSlug,

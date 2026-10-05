@@ -782,7 +782,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
             new SessionContext(
                 existing.sessionId(),
                 existing.tenantId(),
-                0L,
+                null,
                 null,
                 0L,
                 null,
@@ -829,7 +829,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
         new SessionContext(
             incomingShell.sessionId(),
             incomingShell.tenantId(),
-            0L,
+            null,
             null,
             0L,
             null,
@@ -847,7 +847,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   }
 
   private boolean hasAuthenticatedOrGameplayBinding(SessionContext context) {
-    return context.accountId() > 0
+    return context.hasAccountIdentity()
         || context.characterId() > 0
         || context.gameInstanceId() > 0
         || StringUtils.hasText(context.roomInstanceId())
@@ -868,7 +868,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     return new SessionContext(
         sessionId,
         tenantId,
-        0L,
+        null,
         null,
         0L,
         null,

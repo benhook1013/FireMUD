@@ -498,6 +498,89 @@ grep -Fq "name: \${{ github.event_name == 'pull_request' && github.event.action 
 
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
+
+# The Smoke consumer must outlive its producer and still terminate fail closed.
+smoke_clock_fixture="$tmp_dir/smoke-clock.js"
+python3 - "$ROOT_DIR" "$smoke_clock_fixture" <<'PY'
+from pathlib import Path
+import re
+import sys
+import yaml
+
+root = Path(sys.argv[1])
+smoke = yaml.load((root / ".github/workflows/smoke.yml").read_text(), Loader=yaml.BaseLoader)
+producer = yaml.load((root / ".github/workflows/runtime-images.yml").read_text(), Loader=yaml.BaseLoader)
+job = smoke["jobs"]["smoke-gate"]
+script = next(step["with"]["script"] for step in job["steps"] if step.get("name") == "Track full-stack smoke result from Build Runtime Images")
+producer_minutes = int(re.search(r"const producerTimeoutMinutes = ([0-9]+);", script)[1])
+overhead_minutes = int(re.search(r"const prerequisiteAndQueueAllowanceMinutes = ([0-9]+);", script)[1])
+if producer_minutes != int(producer["jobs"]["pr-local-smoke"]["timeout-minutes"]):
+    raise SystemExit("Smoke polling producer budget must match the actual full-stack producer timeout")
+if overhead_minutes != 45 or int(job["timeout-minutes"]) < producer_minutes + overhead_minutes + 5:
+    raise SystemExit("Smoke polling must retain bounded scheduling overhead and five-minute job margin")
+if "const timeoutMs = (producerTimeoutMinutes + prerequisiteAndQueueAllowanceMinutes) * 60 * 1000;" not in script:
+    raise SystemExit("Smoke polling deadline must use the checked producer and overhead authorities")
+Path(sys.argv[2]).write_text(script)
+PY
+
+node - "$smoke_clock_fixture" <<'NODE'
+const assert = require("node:assert/strict");
+const script = require("node:fs").readFileSync(process.argv[2], "utf8");
+const head = "a".repeat(40), base = "b".repeat(40), merge = "c".repeat(40);
+const title = `Build Runtime Images secure-pr-artifact pr-42 base-${base} head-${head} merge-${merge} mode-required`;
+const context = { repo: { owner: "example", repo: "firemud" }, sha: merge,
+  payload: { pull_request: { number: 42, head: { sha: head }, base: { ref: "develop", sha: base }, created_at: "2026-09-01T00:00:00Z" } } };
+const execute = new Function("github", "context", "core", "Date", "setTimeout", `return (async () => {\n${script}\n})()`);
+async function scenario(outcome, completedAtMinutes) {
+  let now = 1000;
+  const start = now;
+  const failures = [];
+  const listRuns = async () => {}, listJobs = async () => {};
+  const github = { rest: {
+    pulls: { get: async () => ({ data: { state: "open", head: { sha: head }, base: { ref: "develop", sha: base }, merge_commit_sha: merge } }) },
+    repos: { getCommit: async () => ({ data: { sha: merge, parents: [{ sha: base }, { sha: head }] } }) },
+    actions: { listWorkflowRuns: listRuns, listJobsForWorkflowRun: listJobs },
+  }, paginate: async (method, input) => {
+    assert.equal(method, listJobs);
+    assert.equal(input.run_id, 42);
+    return [{ name: "PR Full-Stack Smoke", status: "completed", conclusion: "success",
+      steps: [{ name: "Run credential-free full-stack smoke", status: "completed", conclusion: "success" }] }];
+  } };
+  github.paginate.iterator = async function* (method, input) {
+    assert.equal(method, listRuns);
+    assert.equal(input.workflow_id, "runtime-images.yml");
+    if (input.event === "repository_dispatch") { yield { data: [] }; return; }
+    assert.equal(input.head_sha, head);
+    const complete = now - start >= completedAtMinutes * 60 * 1000;
+    yield { data: [{ id: 42, event: "pull_request", head_sha: head, display_title: title, pull_requests: [],
+      status: complete ? "completed" : "in_progress", conclusion: complete ? outcome : null }] };
+  };
+  const core = { info: () => {}, warning: () => {}, setFailed: message => failures.push(message) };
+  const clock = { now: () => now, parse: Date.parse };
+  const sleep = (callback, duration) => { now += duration; queueMicrotask(callback); };
+  await execute(github, context, core, clock, sleep);
+  return { failures, minutes: (now - start) / 60000 };
+}
+(async () => {
+  const success = await scenario("success", 30);
+  assert.deepEqual(success.failures, [], "exact producer success after 25 minutes must be admitted");
+  assert.equal(success.minutes, 30);
+  const failed = await scenario("failure", 30);
+  assert.equal(failed.failures.length, 1);
+  assert.match(failed.failures[0], /did not complete successfully/);
+  assert.equal(failed.minutes, 30, "terminal failure must stop polling promptly");
+  const cancelled = await scenario("cancelled", 0);
+  assert.equal(cancelled.failures.length, 1);
+  assert.match(cancelled.failures[0], /cancelled/i);
+  assert.ok(cancelled.minutes <= 5.25, "cancelled source without an exact replacement remains bounded");
+  const deadline = await scenario("success", Infinity);
+  assert.equal(deadline.failures.length, 1);
+  assert.match(deadline.failures[0], /Timed out waiting for the exact/);
+  assert.equal(deadline.minutes, 90, "active producers cannot escape the total deadline");
+  console.log("Smoke clock contract passed: late success, prompt failure, bounded cancellation and deadline");
+})().catch(error => { console.error(error); process.exitCode = 1; });
+NODE
+
 cat >"$tmp_dir/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail

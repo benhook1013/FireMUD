@@ -37,11 +37,15 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 class FriendsCommandHandlerTest {
+  private static final String CALLER_ACCOUNT_ID = "d0c68a37-5126-42d2-9506-8df13e97699e";
+  private static final String FRIEND_ACCOUNT_ID = "550e8400-e29b-41d4-a716-446655440000";
+  private static final String SECOND_FRIEND_ACCOUNT_ID = "6ba7b810-9dad-41d1-80b4-00c04fd430c8";
+
   private static final SessionContext GAMEPLAY_CONTEXT =
       new SessionContext(
           7L,
           1L,
-          41L,
+          "d0c68a37-5126-42d2-9506-8df13e97699e",
           "demo@example.com",
           99L,
           "Emberline",
@@ -70,16 +74,16 @@ class FriendsCommandHandlerTest {
     ScriptEventPublisher scriptEventPublisher = Mockito.mock(ScriptEventPublisher.class);
     FriendsCommandHandler handler =
         newHandler(socialGroupsClient, entityManagementClient, scriptEventPublisher);
-    when(socialGroupsClient.listFriends(1L, 41L))
+    when(socialGroupsClient.listFriends(1L, CALLER_ACCOUNT_ID))
         .thenReturn(
             ListFriendsResponse.newBuilder()
                 .addFriends(
                     FriendRosterEntry.newBuilder()
-                        .setFriendAccountId("77")
+                        .setFriendAccountId(FRIEND_ACCOUNT_ID)
                         .setStatus("active")
                         .setPresence(
                             FriendPresenceEntry.newBuilder()
-                                .setFriendAccountId("77")
+                                .setFriendAccountId(FRIEND_ACCOUNT_ID)
                                 .setOnline(true)
                                 .setCharacterId("99")
                                 .setCharacterName("Sora")
@@ -119,7 +123,7 @@ class FriendsCommandHandlerTest {
         .satisfies(
             entry -> {
               assertThat(entry.friendLinkId()).isNull();
-              assertThat(entry.friendAccountId()).isEqualTo(77L);
+              assertThat(entry.friendAccountId()).isEqualTo(FRIEND_ACCOUNT_ID);
               assertThat(entry.status()).isEqualTo("active");
               assertThat(entry.linkedAtEpochMs()).isNull();
               assertThat(entry.displayName()).isEqualTo("Sora");
@@ -136,7 +140,7 @@ class FriendsCommandHandlerTest {
             new TextPlayerOutputRenderer(
                     new net.firedevops.firemud.gamesession.config.PresentationProperties())
                 .render(result.outputs().getFirst()))
-        .contains("Sora [acct #77] - online (idle)")
+        .contains("Sora [acct #" + FRIEND_ACCOUNT_ID + "] - online (idle)")
         .doesNotContain(
             "private-playtest",
             "Private Playtest World",
@@ -162,16 +166,16 @@ class FriendsCommandHandlerTest {
     FriendsCommandHandler handler =
         newHandler(
             socialGroupsClient, entityManagementClient, Mockito.mock(ScriptEventPublisher.class));
-    when(socialGroupsClient.listFriends(1L, 41L))
+    when(socialGroupsClient.listFriends(1L, CALLER_ACCOUNT_ID))
         .thenReturn(
             ListFriendsResponse.newBuilder()
                 .addFriends(
                     FriendRosterEntry.newBuilder()
-                        .setFriendAccountId("77")
+                        .setFriendAccountId(FRIEND_ACCOUNT_ID)
                         .setStatus("active")
                         .setPresence(
                             FriendPresenceEntry.newBuilder()
-                                .setFriendAccountId("77")
+                                .setFriendAccountId(FRIEND_ACCOUNT_ID)
                                 .setOnline(false)
                                 .setLastSeenAtMs(
                                     Instant.parse("2026-04-11T06:15:30Z").toEpochMilli())
@@ -199,7 +203,7 @@ class FriendsCommandHandlerTest {
             entry -> {
               assertThat(entry.friendLinkId()).isNull();
               assertThat(entry.status()).isEqualTo("active");
-              assertThat(entry.displayName()).isEqualTo("Friend #77");
+              assertThat(entry.displayName()).isEqualTo("Friend #" + FRIEND_ACCOUNT_ID + "");
               assertThat(entry.lastSeenAtEpochMs())
                   .isEqualTo(Instant.parse("2026-04-11T06:15:30Z").toEpochMilli());
             });
@@ -218,15 +222,15 @@ class FriendsCommandHandlerTest {
     FriendsCommandHandler handler =
         newHandler(
             socialGroupsClient, entityManagementClient, Mockito.mock(ScriptEventPublisher.class));
-    when(socialGroupsClient.listFriends(1L, 41L))
+    when(socialGroupsClient.listFriends(1L, CALLER_ACCOUNT_ID))
         .thenReturn(
             ListFriendsResponse.newBuilder()
                 .addFriends(
                     FriendRosterEntry.newBuilder()
-                        .setFriendAccountId("77")
+                        .setFriendAccountId(FRIEND_ACCOUNT_ID)
                         .setPresence(
                             FriendPresenceEntry.newBuilder()
-                                .setFriendAccountId("77")
+                                .setFriendAccountId(FRIEND_ACCOUNT_ID)
                                 .setOnline(false)
                                 .setLastSeenAtMs(
                                     Instant.parse("2026-04-11T06:15:30Z").toEpochMilli())
@@ -286,13 +290,15 @@ class FriendsCommandHandlerTest {
     ScriptEventPublisher scriptEventPublisher = Mockito.mock(ScriptEventPublisher.class);
     FriendsCommandHandler handler =
         newHandler(socialGroupsClient, entityManagementClient, scriptEventPublisher);
-    when(socialGroupsClient.addFriend(1L, 41L, 77L))
+    when(socialGroupsClient.addFriend(1L, CALLER_ACCOUNT_ID, FRIEND_ACCOUNT_ID))
         .thenReturn(AddFriendResponse.newBuilder().setSuccess(true).build());
 
     TextCommandInterpretationResult result =
         handler.handle(
             new TextCommand(
-                TextCommandType.FRIENDS, java.util.List.of("ADD", "77"), "friends add 77"),
+                TextCommandType.FRIENDS,
+                java.util.List.of("ADD", FRIEND_ACCOUNT_ID),
+                "friends add " + FRIEND_ACCOUNT_ID),
             GAMEPLAY_CONTEXT);
 
     assertThat(result.commandResult().accepted()).isTrue();
@@ -300,12 +306,12 @@ class FriendsCommandHandlerTest {
         .singleElement()
         .satisfies(
             output -> {
-              assertThat(output.text()).isEqualTo("Friend #77 added.");
+              assertThat(output.text()).isEqualTo("Friend #" + FRIEND_ACCOUNT_ID + " added.");
               assertThat(output.payload()).isInstanceOf(FriendMutationResultOutput.class);
               FriendMutationResultOutput mutation = (FriendMutationResultOutput) output.payload();
               assertThat(mutation.action()).isEqualTo("ADD");
-              assertThat(mutation.friendAccountId()).isEqualTo(77L);
-              assertThat(mutation.displayName()).isEqualTo("Friend #77");
+              assertThat(mutation.friendAccountId()).isEqualTo(FRIEND_ACCOUNT_ID);
+              assertThat(mutation.displayName()).isEqualTo("Friend #" + FRIEND_ACCOUNT_ID + "");
               assertThat(mutation.characterName()).isNull();
               assertThat(mutation.ordinal()).isNull();
             });
@@ -315,7 +321,8 @@ class FriendsCommandHandlerTest {
             Mockito.argThat(
                 gameplayCommand ->
                     "FRIENDS".equals(gameplayCommand.getCommandName())
-                        && "friends add 77".equals(gameplayCommand.getCommandText())));
+                        && ("friends add " + FRIEND_ACCOUNT_ID)
+                            .equals(gameplayCommand.getCommandText())));
   }
 
   @Test
@@ -325,7 +332,8 @@ class FriendsCommandHandlerTest {
     FriendsCommandHandler handler =
         newHandler(
             socialGroupsClient, entityManagementClient, Mockito.mock(ScriptEventPublisher.class));
-    when(socialGroupsClient.listFriends(1L, 41L, FriendRosterFilter.FRIEND_ROSTER_FILTER_ONLINE))
+    when(socialGroupsClient.listFriends(
+            1L, CALLER_ACCOUNT_ID, FriendRosterFilter.FRIEND_ROSTER_FILTER_ONLINE))
         .thenReturn(
             ListFriendsResponse.newBuilder()
                 .setFilter(FriendRosterFilter.FRIEND_ROSTER_FILTER_ONLINE)
@@ -334,10 +342,10 @@ class FriendsCommandHandlerTest {
                 .addFriends(
                     FriendRosterEntry.newBuilder()
                         .setOrdinal(1)
-                        .setFriendAccountId("77")
+                        .setFriendAccountId(FRIEND_ACCOUNT_ID)
                         .setPresence(
                             FriendPresenceEntry.newBuilder()
-                                .setFriendAccountId("77")
+                                .setFriendAccountId(FRIEND_ACCOUNT_ID)
                                 .setOnline(true)
                                 .setCharacterName("Sora")
                                 .setVisibilityPolicy(
@@ -364,9 +372,9 @@ class FriendsCommandHandlerTest {
                     new net.firedevops.firemud.gamesession.config.PresentationProperties())
                 .render(result.outputs().getFirst()))
         .contains("Friends ONLINE:\n")
-        .contains("1) Sora [acct #77] - online");
+        .contains("1) Sora [acct #" + FRIEND_ACCOUNT_ID + "] - online");
     Mockito.verify(socialGroupsClient)
-        .listFriends(1L, 41L, FriendRosterFilter.FRIEND_ROSTER_FILTER_ONLINE);
+        .listFriends(1L, CALLER_ACCOUNT_ID, FriendRosterFilter.FRIEND_ROSTER_FILTER_ONLINE);
   }
 
   @Test
@@ -376,7 +384,8 @@ class FriendsCommandHandlerTest {
     FriendsCommandHandler handler =
         newHandler(
             socialGroupsClient, entityManagementClient, Mockito.mock(ScriptEventPublisher.class));
-    when(socialGroupsClient.listFriends(1L, 41L, FriendRosterFilter.FRIEND_ROSTER_FILTER_ONLINE))
+    when(socialGroupsClient.listFriends(
+            1L, CALLER_ACCOUNT_ID, FriendRosterFilter.FRIEND_ROSTER_FILTER_ONLINE))
         .thenReturn(
             ListFriendsResponse.newBuilder()
                 .setFilter(FriendRosterFilter.FRIEND_ROSTER_FILTER_ONLINE)
@@ -402,7 +411,7 @@ class FriendsCommandHandlerTest {
         .contains("Friends ONLINE: no matching friends.")
         .doesNotContain("[0/2]", "[0/0]");
     Mockito.verify(socialGroupsClient)
-        .listFriends(1L, 41L, FriendRosterFilter.FRIEND_ROSTER_FILTER_ONLINE);
+        .listFriends(1L, CALLER_ACCOUNT_ID, FriendRosterFilter.FRIEND_ROSTER_FILTER_ONLINE);
   }
 
   @Test
@@ -444,19 +453,19 @@ class FriendsCommandHandlerTest {
     FriendsCommandHandler handler =
         newHandler(
             socialGroupsClient, entityManagementClient, Mockito.mock(ScriptEventPublisher.class));
-    when(socialGroupsClient.listFriends(1L, 41L))
+    when(socialGroupsClient.listFriends(1L, CALLER_ACCOUNT_ID))
         .thenReturn(
             ListFriendsResponse.newBuilder()
                 .addFriends(
                     FriendRosterEntry.newBuilder()
                         .setOrdinal(4)
                         .setFriendLinkId("12")
-                        .setFriendAccountId("77")
+                        .setFriendAccountId(FRIEND_ACCOUNT_ID)
                         .setStatus("active")
                         .setCreatedAtMs(1_744_336_000_000L)
                         .setPresence(
                             FriendPresenceEntry.newBuilder()
-                                .setFriendAccountId("77")
+                                .setFriendAccountId(FRIEND_ACCOUNT_ID)
                                 .setOnline(true)
                                 .setCharacterId("99")
                                 .setCharacterName("Sora")
@@ -491,10 +500,10 @@ class FriendsCommandHandlerTest {
         ((FriendPresenceViewOutput) result.outputs().getFirst().payload()).friends().getFirst();
     assertThat(entry.ordinal()).isEqualTo(4);
     assertThat(entry.friendLinkId()).isEqualTo(12L);
-    assertThat(entry.friendAccountId()).isEqualTo(77L);
+    assertThat(entry.friendAccountId()).isEqualTo(FRIEND_ACCOUNT_ID);
     assertThat(entry.status()).isEqualTo("active");
     assertThat(entry.linkedAtEpochMs()).isEqualTo(1_744_336_000_000L);
-    assertThat(entry.displayName()).isEqualTo("Friend #77");
+    assertThat(entry.displayName()).isEqualTo("Friend #" + FRIEND_ACCOUNT_ID + "");
     assertThat(entry.online()).isNull();
     assertThat(entry.worldSlug()).isNull();
     assertThat(entry.worldDisplayName()).isNull();
@@ -510,7 +519,7 @@ class FriendsCommandHandlerTest {
             new TextPlayerOutputRenderer(
                     new net.firedevops.firemud.gamesession.config.PresentationProperties())
                 .render(result.outputs().getFirst()))
-        .contains("Friend #77")
+        .contains("Friend #" + FRIEND_ACCOUNT_ID + "")
         .contains("presence unavailable")
         .doesNotContain("Sora")
         .doesNotContain("Demo World")
@@ -524,7 +533,8 @@ class FriendsCommandHandlerTest {
     FriendsCommandHandler handler =
         newHandler(
             socialGroupsClient, entityManagementClient, Mockito.mock(ScriptEventPublisher.class));
-    when(socialGroupsClient.listFriends(1L, 41L, FriendRosterFilter.FRIEND_ROSTER_FILTER_RECENT))
+    when(socialGroupsClient.listFriends(
+            1L, CALLER_ACCOUNT_ID, FriendRosterFilter.FRIEND_ROSTER_FILTER_RECENT))
         .thenReturn(
             ListFriendsResponse.newBuilder()
                 .setFilter(FriendRosterFilter.FRIEND_ROSTER_FILTER_RECENT)
@@ -533,10 +543,10 @@ class FriendsCommandHandlerTest {
                 .addFriends(
                     FriendRosterEntry.newBuilder()
                         .setOrdinal(1)
-                        .setFriendAccountId("77")
+                        .setFriendAccountId(FRIEND_ACCOUNT_ID)
                         .setPresence(
                             FriendPresenceEntry.newBuilder()
-                                .setFriendAccountId("77")
+                                .setFriendAccountId(FRIEND_ACCOUNT_ID)
                                 .setOnline(false)
                                 .setLastSeenAtMs(
                                     Instant.parse("2026-04-11T06:15:30Z").toEpochMilli())
@@ -558,7 +568,7 @@ class FriendsCommandHandlerTest {
     assertThat(view.totalCount()).isEqualTo(2);
     assertThat(view.friends())
         .singleElement()
-        .satisfies(entry -> assertThat(entry.friendAccountId()).isEqualTo(77L));
+        .satisfies(entry -> assertThat(entry.friendAccountId()).isEqualTo(FRIEND_ACCOUNT_ID));
   }
 
   @Test
@@ -568,7 +578,7 @@ class FriendsCommandHandlerTest {
     FriendsCommandHandler handler =
         newHandler(
             socialGroupsClient, entityManagementClient, Mockito.mock(ScriptEventPublisher.class));
-    when(socialGroupsClient.getFriendRosterSummary(1L, 41L))
+    when(socialGroupsClient.getFriendRosterSummary(1L, CALLER_ACCOUNT_ID))
         .thenReturn(
             GetFriendRosterSummaryResponse.newBuilder()
                 .setSummary(
@@ -613,7 +623,7 @@ class FriendsCommandHandlerTest {
         .doesNotContain("Recent offline:")
         .doesNotContain("Visibility")
         .doesNotContain("Scope");
-    Mockito.verify(socialGroupsClient).getFriendRosterSummary(1L, 41L);
+    Mockito.verify(socialGroupsClient).getFriendRosterSummary(1L, CALLER_ACCOUNT_ID);
   }
 
   @Test
@@ -629,8 +639,12 @@ class FriendsCommandHandlerTest {
             Mockito.eq("Sora")))
         .thenReturn(
             Optional.of(
-                Character.newBuilder().setId("99").setAccountId("77").setName("Sora").build()));
-    when(socialGroupsClient.addFriend(1L, 41L, 77L))
+                Character.newBuilder()
+                    .setId("99")
+                    .setAccountId(FRIEND_ACCOUNT_ID)
+                    .setName("Sora")
+                    .build()));
+    when(socialGroupsClient.addFriend(1L, CALLER_ACCOUNT_ID, FRIEND_ACCOUNT_ID))
         .thenReturn(AddFriendResponse.newBuilder().setSuccess(true).build());
 
     TextCommandInterpretationResult result =
@@ -644,15 +658,15 @@ class FriendsCommandHandlerTest {
         .singleElement()
         .satisfies(
             output -> {
-              assertThat(output.text()).isEqualTo("Sora [acct #77] added.");
+              assertThat(output.text()).isEqualTo("Sora [acct #" + FRIEND_ACCOUNT_ID + "] added.");
               assertThat(output.payload()).isInstanceOf(FriendMutationResultOutput.class);
               FriendMutationResultOutput mutation = (FriendMutationResultOutput) output.payload();
               assertThat(mutation.action()).isEqualTo("ADD");
-              assertThat(mutation.friendAccountId()).isEqualTo(77L);
+              assertThat(mutation.friendAccountId()).isEqualTo(FRIEND_ACCOUNT_ID);
               assertThat(mutation.displayName()).isEqualTo("Sora");
               assertThat(mutation.characterName()).isEqualTo("Sora");
             });
-    Mockito.verify(socialGroupsClient).addFriend(1L, 41L, 77L);
+    Mockito.verify(socialGroupsClient).addFriend(1L, CALLER_ACCOUNT_ID, FRIEND_ACCOUNT_ID);
   }
 
   @Test
@@ -662,13 +676,15 @@ class FriendsCommandHandlerTest {
     FriendsCommandHandler handler =
         newHandler(
             socialGroupsClient, entityManagementClient, Mockito.mock(ScriptEventPublisher.class));
-    when(socialGroupsClient.removeFriend(1L, 41L, 77L))
+    when(socialGroupsClient.removeFriend(1L, CALLER_ACCOUNT_ID, FRIEND_ACCOUNT_ID))
         .thenReturn(RemoveFriendResponse.newBuilder().setSuccess(true).build());
 
     TextCommandInterpretationResult result =
         handler.handle(
             new TextCommand(
-                TextCommandType.FRIENDS, java.util.List.of("REMOVE", "77"), "FRIENDS REMOVE 77"),
+                TextCommandType.FRIENDS,
+                java.util.List.of("REMOVE", FRIEND_ACCOUNT_ID),
+                "FRIENDS REMOVE " + FRIEND_ACCOUNT_ID),
             GAMEPLAY_CONTEXT);
 
     assertThat(result.commandResult().accepted()).isTrue();
@@ -676,12 +692,12 @@ class FriendsCommandHandlerTest {
         .singleElement()
         .satisfies(
             output -> {
-              assertThat(output.text()).isEqualTo("Friend #77 removed.");
+              assertThat(output.text()).isEqualTo("Friend #" + FRIEND_ACCOUNT_ID + " removed.");
               assertThat(output.payload()).isInstanceOf(FriendMutationResultOutput.class);
               FriendMutationResultOutput mutation = (FriendMutationResultOutput) output.payload();
               assertThat(mutation.action()).isEqualTo("REMOVE");
-              assertThat(mutation.friendAccountId()).isEqualTo(77L);
-              assertThat(mutation.displayName()).isEqualTo("Friend #77");
+              assertThat(mutation.friendAccountId()).isEqualTo(FRIEND_ACCOUNT_ID);
+              assertThat(mutation.displayName()).isEqualTo("Friend #" + FRIEND_ACCOUNT_ID + "");
               assertThat(mutation.characterName()).isNull();
               assertThat(mutation.ordinal()).isNull();
             });
@@ -700,8 +716,12 @@ class FriendsCommandHandlerTest {
             Mockito.eq("Sora")))
         .thenReturn(
             Optional.of(
-                Character.newBuilder().setId("99").setAccountId("77").setName("Sora").build()));
-    when(socialGroupsClient.removeFriend(1L, 41L, 77L))
+                Character.newBuilder()
+                    .setId("99")
+                    .setAccountId(FRIEND_ACCOUNT_ID)
+                    .setName("Sora")
+                    .build()));
+    when(socialGroupsClient.removeFriend(1L, CALLER_ACCOUNT_ID, FRIEND_ACCOUNT_ID))
         .thenReturn(RemoveFriendResponse.newBuilder().setSuccess(true).build());
 
     TextCommandInterpretationResult result =
@@ -717,15 +737,16 @@ class FriendsCommandHandlerTest {
         .singleElement()
         .satisfies(
             output -> {
-              assertThat(output.text()).isEqualTo("Sora [acct #77] removed.");
+              assertThat(output.text())
+                  .isEqualTo("Sora [acct #" + FRIEND_ACCOUNT_ID + "] removed.");
               assertThat(output.payload()).isInstanceOf(FriendMutationResultOutput.class);
               FriendMutationResultOutput mutation = (FriendMutationResultOutput) output.payload();
               assertThat(mutation.action()).isEqualTo("REMOVE");
-              assertThat(mutation.friendAccountId()).isEqualTo(77L);
+              assertThat(mutation.friendAccountId()).isEqualTo(FRIEND_ACCOUNT_ID);
               assertThat(mutation.displayName()).isEqualTo("Sora");
               assertThat(mutation.characterName()).isEqualTo("Sora");
             });
-    Mockito.verify(socialGroupsClient).removeFriend(1L, 41L, 77L);
+    Mockito.verify(socialGroupsClient).removeFriend(1L, CALLER_ACCOUNT_ID, FRIEND_ACCOUNT_ID);
   }
 
   @Test
@@ -735,17 +756,17 @@ class FriendsCommandHandlerTest {
     FriendsCommandHandler handler =
         newHandler(
             socialGroupsClient, entityManagementClient, Mockito.mock(ScriptEventPublisher.class));
-    when(socialGroupsClient.removeFriendByOrdinal(1L, 41L, 1))
+    when(socialGroupsClient.removeFriendByOrdinal(1L, CALLER_ACCOUNT_ID, 1))
         .thenReturn(
             RemoveFriendByOrdinalResponse.newBuilder()
                 .setSuccess(true)
                 .setRemovedFriend(
                     FriendRosterEntry.newBuilder()
                         .setOrdinal(1)
-                        .setFriendAccountId("77")
+                        .setFriendAccountId(FRIEND_ACCOUNT_ID)
                         .setPresence(
                             FriendPresenceEntry.newBuilder()
-                                .setFriendAccountId("77")
+                                .setFriendAccountId(FRIEND_ACCOUNT_ID)
                                 .setCharacterName("Sora")
                                 .setVisibilityPolicy(
                                     FriendPresenceVisibilityPolicy
@@ -765,16 +786,17 @@ class FriendsCommandHandlerTest {
         .singleElement()
         .satisfies(
             output -> {
-              assertThat(output.text()).isEqualTo("Sora [acct #77] removed.");
+              assertThat(output.text())
+                  .isEqualTo("Sora [acct #" + FRIEND_ACCOUNT_ID + "] removed.");
               assertThat(output.payload()).isInstanceOf(FriendMutationResultOutput.class);
               FriendMutationResultOutput mutation = (FriendMutationResultOutput) output.payload();
               assertThat(mutation.action()).isEqualTo("REMOVE");
-              assertThat(mutation.friendAccountId()).isEqualTo(77L);
+              assertThat(mutation.friendAccountId()).isEqualTo(FRIEND_ACCOUNT_ID);
               assertThat(mutation.displayName()).isEqualTo("Sora");
               assertThat(mutation.characterName()).isEqualTo("Sora");
               assertThat(mutation.ordinal()).isEqualTo(1);
             });
-    Mockito.verify(socialGroupsClient).removeFriendByOrdinal(1L, 41L, 1);
+    Mockito.verify(socialGroupsClient).removeFriendByOrdinal(1L, CALLER_ACCOUNT_ID, 1);
   }
 
   @Test
@@ -784,7 +806,7 @@ class FriendsCommandHandlerTest {
     FriendsCommandHandler handler =
         newHandler(
             socialGroupsClient, entityManagementClient, Mockito.mock(ScriptEventPublisher.class));
-    when(socialGroupsClient.removeFriendByOrdinal(1L, 41L, 1))
+    when(socialGroupsClient.removeFriendByOrdinal(1L, CALLER_ACCOUNT_ID, 1))
         .thenReturn(
             RemoveFriendByOrdinalResponse.newBuilder()
                 .setSuccess(true)
@@ -818,18 +840,18 @@ class FriendsCommandHandlerTest {
     FriendsCommandHandler handler =
         newHandler(
             socialGroupsClient, entityManagementClient, Mockito.mock(ScriptEventPublisher.class));
-    when(socialGroupsClient.getFriend(1L, 41L, 77L))
+    when(socialGroupsClient.getFriend(1L, CALLER_ACCOUNT_ID, FRIEND_ACCOUNT_ID))
         .thenReturn(
             GetFriendResponse.newBuilder()
                 .setFriend(
                     FriendRosterEntry.newBuilder()
                         .setFriendLinkId("11")
-                        .setFriendAccountId("77")
+                        .setFriendAccountId(FRIEND_ACCOUNT_ID)
                         .setStatus("active")
                         .setCreatedAtMs(Instant.parse("2026-04-10T01:02:03Z").toEpochMilli())
                         .setPresence(
                             FriendPresenceEntry.newBuilder()
-                                .setFriendAccountId("77")
+                                .setFriendAccountId(FRIEND_ACCOUNT_ID)
                                 .setOnline(true)
                                 .setCharacterName("Sora")
                                 .setWorldSlug("private-playtest")
@@ -852,7 +874,9 @@ class FriendsCommandHandlerTest {
     TextCommandInterpretationResult result =
         handler.handle(
             new TextCommand(
-                TextCommandType.FRIENDS, java.util.List.of("SHOW", "77"), "FRIENDS SHOW 77"),
+                TextCommandType.FRIENDS,
+                java.util.List.of("SHOW", FRIEND_ACCOUNT_ID),
+                "FRIENDS SHOW " + FRIEND_ACCOUNT_ID),
             GAMEPLAY_CONTEXT);
 
     assertThat(result.commandResult().accepted()).isTrue();
@@ -861,7 +885,7 @@ class FriendsCommandHandlerTest {
         .extracting(PlayerOutput::payload)
         .isInstanceOf(FriendDetailViewOutput.class);
     FriendDetailViewOutput detail = (FriendDetailViewOutput) result.outputs().getFirst().payload();
-    assertThat(detail.friend().friendAccountId()).isEqualTo(77L);
+    assertThat(detail.friend().friendAccountId()).isEqualTo(FRIEND_ACCOUNT_ID);
     assertThat(detail.friend().friendLinkId()).isEqualTo(11L);
     assertThat(detail.friend().characterName()).isEqualTo("Sora");
     assertThat(detail.friend().online()).isTrue();
@@ -876,7 +900,7 @@ class FriendsCommandHandlerTest {
             new TextPlayerOutputRenderer(
                     new net.firedevops.firemud.gamesession.config.PresentationProperties())
                 .render(result.outputs().getFirst()))
-        .contains("Friend Sora [acct #77]")
+        .contains("Friend Sora [acct #" + FRIEND_ACCOUNT_ID + "]")
         .contains("Presence: online (idle)")
         .contains("Character: Sora")
         .doesNotContain(
@@ -895,16 +919,16 @@ class FriendsCommandHandlerTest {
     FriendsCommandHandler handler =
         newHandler(
             socialGroupsClient, entityManagementClient, Mockito.mock(ScriptEventPublisher.class));
-    when(socialGroupsClient.getFriendByOrdinal(1L, 41L, 1))
+    when(socialGroupsClient.getFriendByOrdinal(1L, CALLER_ACCOUNT_ID, 1))
         .thenReturn(
             GetFriendByOrdinalResponse.newBuilder()
                 .setFriend(
                     FriendRosterEntry.newBuilder()
                         .setOrdinal(1)
-                        .setFriendAccountId("77")
+                        .setFriendAccountId(FRIEND_ACCOUNT_ID)
                         .setPresence(
                             FriendPresenceEntry.newBuilder()
-                                .setFriendAccountId("77")
+                                .setFriendAccountId(FRIEND_ACCOUNT_ID)
                                 .setOnline(true)
                                 .setCharacterName("Sora")
                                 .setWorldDisplayName("Demo World")
@@ -924,7 +948,7 @@ class FriendsCommandHandlerTest {
     assertThat(result.commandResult().accepted()).isTrue();
     FriendDetailViewOutput detail = (FriendDetailViewOutput) result.outputs().getFirst().payload();
     assertThat(detail.friend().ordinal()).isEqualTo(1);
-    assertThat(detail.friend().displayName()).isEqualTo("Friend #77");
+    assertThat(detail.friend().displayName()).isEqualTo("Friend #" + FRIEND_ACCOUNT_ID + "");
     assertThat(detail.friend().online()).isNull();
     assertThat(detail.friend().characterName()).isNull();
     assertThat(detail.friend().worldDisplayName()).isNull();
@@ -936,7 +960,7 @@ class FriendsCommandHandlerTest {
         .contains("Presence: presence unavailable")
         .contains("Roster entry: #1")
         .doesNotContain("Sora", "Demo World", "online", "idle");
-    Mockito.verify(socialGroupsClient).getFriendByOrdinal(1L, 41L, 1);
+    Mockito.verify(socialGroupsClient).getFriendByOrdinal(1L, CALLER_ACCOUNT_ID, 1);
   }
 
   @Test
@@ -950,7 +974,9 @@ class FriendsCommandHandlerTest {
     TextCommandInterpretationResult result =
         handler.handle(
             new TextCommand(
-                TextCommandType.FRIENDS, java.util.List.of("ADD", "41"), "FRIENDS ADD 41"),
+                TextCommandType.FRIENDS,
+                java.util.List.of("ADD", CALLER_ACCOUNT_ID),
+                "FRIENDS ADD " + CALLER_ACCOUNT_ID),
             GAMEPLAY_CONTEXT);
 
     assertThat(result.commandResult().accepted()).isFalse();
@@ -990,7 +1016,7 @@ class FriendsCommandHandlerTest {
     FriendsCommandHandler handler =
         newHandler(
             socialGroupsClient, entityManagementClient, Mockito.mock(ScriptEventPublisher.class));
-    when(socialGroupsClient.removeFriendByOrdinal(1L, 41L, 1))
+    when(socialGroupsClient.removeFriendByOrdinal(1L, CALLER_ACCOUNT_ID, 1))
         .thenReturn(
             RemoveFriendByOrdinalResponse.newBuilder()
                 .setSuccess(false)
@@ -1080,16 +1106,18 @@ class FriendsCommandHandlerTest {
     FriendsCommandHandler handler =
         newHandler(
             socialGroupsClient, entityManagementClient, Mockito.mock(ScriptEventPublisher.class));
-    when(socialGroupsClient.listFriends(1L, 41L))
+    when(socialGroupsClient.listFriends(1L, CALLER_ACCOUNT_ID))
         .thenReturn(
             ListFriendsResponse.newBuilder()
                 .addFriends(
                     FriendRosterEntry.newBuilder()
                         .setFriendLinkId("abc")
-                        .setFriendAccountId("77")
+                        .setFriendAccountId(FRIEND_ACCOUNT_ID)
                         .setStatus("active")
                         .setPresence(
-                            FriendPresenceEntry.newBuilder().setFriendAccountId("77").build())
+                            FriendPresenceEntry.newBuilder()
+                                .setFriendAccountId(FRIEND_ACCOUNT_ID)
+                                .build())
                         .build())
                 .build());
 
@@ -1113,7 +1141,7 @@ class FriendsCommandHandlerTest {
     FriendsCommandHandler handler =
         newHandler(
             socialGroupsClient, entityManagementClient, Mockito.mock(ScriptEventPublisher.class));
-    when(socialGroupsClient.listFriends(1L, 41L))
+    when(socialGroupsClient.listFriends(1L, CALLER_ACCOUNT_ID))
         .thenReturn(
             ListFriendsResponse.newBuilder()
                 .addFriends(
@@ -1142,7 +1170,7 @@ class FriendsCommandHandlerTest {
     FriendsCommandHandler handler =
         newHandler(
             socialGroupsClient, entityManagementClient, Mockito.mock(ScriptEventPublisher.class));
-    when(socialGroupsClient.getFriendPresencePolicy(1L, 41L))
+    when(socialGroupsClient.getFriendPresencePolicy(1L, CALLER_ACCOUNT_ID))
         .thenReturn(
             GetFriendPresencePolicyResponse.newBuilder()
                 .setCurrentPolicy(
@@ -1178,7 +1206,7 @@ class FriendsCommandHandlerTest {
                 .render(result.outputs().getFirst()))
         .contains("Friend presence visibility: FRIENDS_ONLY")
         .contains("Use FRIENDS VISIBILITY <PUBLIC|FRIENDS_ONLY|PRIVATE>.");
-    Mockito.verify(socialGroupsClient).getFriendPresencePolicy(1L, 41L);
+    Mockito.verify(socialGroupsClient).getFriendPresencePolicy(1L, CALLER_ACCOUNT_ID);
   }
 
   @Test
@@ -1188,7 +1216,7 @@ class FriendsCommandHandlerTest {
     FriendsCommandHandler handler =
         newHandler(
             socialGroupsClient, entityManagementClient, Mockito.mock(ScriptEventPublisher.class));
-    when(socialGroupsClient.getFriendPresencePolicy(1L, 41L))
+    when(socialGroupsClient.getFriendPresencePolicy(1L, CALLER_ACCOUNT_ID))
         .thenReturn(
             GetFriendPresencePolicyResponse.newBuilder()
                 .setError(
@@ -1221,7 +1249,7 @@ class FriendsCommandHandlerTest {
         newHandler(socialGroupsClient, entityManagementClient, scriptEventPublisher);
     when(socialGroupsClient.updateFriendPresencePolicy(
             1L,
-            41L,
+            CALLER_ACCOUNT_ID,
             net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy
                 .FRIEND_PRESENCE_VISIBILITY_POLICY_PRIVATE))
         .thenReturn(
@@ -1258,7 +1286,7 @@ class FriendsCommandHandlerTest {
     Mockito.verify(socialGroupsClient)
         .updateFriendPresencePolicy(
             1L,
-            41L,
+            CALLER_ACCOUNT_ID,
             net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy
                 .FRIEND_PRESENCE_VISIBILITY_POLICY_PRIVATE);
     Mockito.verify(scriptEventPublisher)
@@ -1276,7 +1304,7 @@ class FriendsCommandHandlerTest {
             socialGroupsClient, entityManagementClient, Mockito.mock(ScriptEventPublisher.class));
     when(socialGroupsClient.updateFriendPresencePolicy(
             1L,
-            41L,
+            CALLER_ACCOUNT_ID,
             net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy
                 .FRIEND_PRESENCE_VISIBILITY_POLICY_PRIVATE))
         .thenReturn(
@@ -1329,7 +1357,7 @@ class FriendsCommandHandlerTest {
         .isEqualTo("ERROR INVALID_ARGUMENT FRIENDS VISIBILITY <PUBLIC|FRIENDS_ONLY|PRIVATE>");
     assertThat(result.outputs().getFirst().text()).doesNotContain("HIDDEN_STAFF");
     Mockito.verify(socialGroupsClient, Mockito.never())
-        .updateFriendPresencePolicy(Mockito.anyLong(), Mockito.anyLong(), Mockito.any());
+        .updateFriendPresencePolicy(Mockito.anyLong(), Mockito.anyString(), Mockito.any());
   }
 
   @Test

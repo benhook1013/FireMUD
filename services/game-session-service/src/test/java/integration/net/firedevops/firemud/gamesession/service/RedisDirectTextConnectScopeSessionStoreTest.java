@@ -28,7 +28,7 @@ import tools.jackson.databind.ObjectMapper;
 @SuppressWarnings("resource")
 class RedisDirectTextConnectScopeSessionStoreTest {
   private static final long SESSION_ID = 4401L;
-  private static final long ACCOUNT_ID = 7L;
+  private static final String ACCOUNT_UUID = "7c74170e-7755-4d3a-8f12-3d2839b835de";
   private static final String REDIS_KEY = "gamesession:lobby:4401";
 
   @Container
@@ -69,7 +69,7 @@ class RedisDirectTextConnectScopeSessionStoreTest {
             1, "demo-world", 22L, 13L, "target-fingerprint-v13");
 
     firstInstance.replaceWorldSnapshot(
-        SESSION_ID, 0L, "catalog-fingerprint-v13", List.of(target), now);
+        SESSION_ID, null, "catalog-fingerprint-v13", List.of(target), now);
     firstInstance.replaceRealmSnapshot(
         caller,
         "1",
@@ -201,7 +201,7 @@ class RedisDirectTextConnectScopeSessionStoreTest {
                     "sessionId",
                     SESSION_ID,
                     "accountId",
-                    ACCOUNT_ID,
+                    ACCOUNT_UUID,
                     "worldsExpiresAtEpochMs",
                     expiresAt,
                     "catalogFingerprint",
@@ -262,8 +262,7 @@ class RedisDirectTextConnectScopeSessionStoreTest {
             selected -> {
               assertThat(selected.scope().connectScopeId())
                   .isEqualTo("account-connect-scope-legacy");
-              assertThat(selected.scope().playerContext().getAccountId())
-                  .isEqualTo(Long.toString(ACCOUNT_ID));
+              assertThat(selected.scope().playerContext().getAccountId()).isEqualTo(ACCOUNT_UUID);
               assertThat(selected.scope().playerContext().getSessionId())
                   .isEqualTo(Long.toString(SESSION_ID));
               assertThat(selected.scope().playerContext().getTenantId()).isEqualTo("22");
@@ -277,7 +276,7 @@ class RedisDirectTextConnectScopeSessionStoreTest {
   }
 
   private static SessionContext session() {
-    return new SessionContext(SESSION_ID, 22L, ACCOUNT_ID, 7001L, 9L, "R-1", "unused-test-jwt");
+    return new SessionContext(SESSION_ID, 22L, ACCOUNT_UUID, 7001L, 9L, "R-1", "unused-test-jwt");
   }
 
   private static PlayerExecutionContext playerContext(SessionContext caller) {
@@ -286,7 +285,7 @@ class RedisDirectTextConnectScopeSessionStoreTest {
 
   private static PlayerExecutionContext playerContext(SessionContext caller, long tenantId) {
     return PlayerExecutionContext.newBuilder()
-        .setAccountId(Long.toString(caller.accountId()))
+        .setAccountId(caller.accountId())
         .setSessionId(Long.toString(caller.sessionId()))
         .setTenantId(Long.toString(tenantId))
         .setRealmId("4c4b57d8-e3a2-48fe-9977-e7df0fdce901")

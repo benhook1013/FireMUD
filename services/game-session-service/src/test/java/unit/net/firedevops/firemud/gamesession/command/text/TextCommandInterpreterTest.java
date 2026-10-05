@@ -90,6 +90,7 @@ import org.mockito.Mockito;
 
 @SuppressWarnings("unchecked")
 class TextCommandInterpreterTest {
+  private static final String ACCOUNT_ID = "f2ed193b-12c1-4c96-bcad-c162229af440";
   private static final String OWNER_ACCOUNT_UUID = "123e4567-e89b-12d3-a456-426614174000";
   private static final String PLAY_DEMO_PRODUCTION = "PLAY demo production";
   private final CommandService commandService = Mockito.mock(CommandService.class);
@@ -165,7 +166,7 @@ class TextCommandInterpreterTest {
         .thenReturn(
             AuthenticateResponse.newBuilder()
                 .setAuthToken("auth-token")
-                .setAccountId("123")
+                .setAccountId(ACCOUNT_ID)
                 .build());
     when(accountClient.issueDirectTextConnectScope(Mockito.any(), Mockito.any()))
         .thenReturn(
@@ -182,7 +183,7 @@ class TextCommandInterpreterTest {
             invocation -> {
               var response =
                   net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures.active(
-                          123L, 22L, "1")
+                          ACCOUNT_ID, 22L, "1")
                       .toBuilder()
                       .setEvaluatedAt(Instant.now().toString())
                       .build();
@@ -196,7 +197,7 @@ class TextCommandInterpreterTest {
             Mockito.anyString(),
             Mockito.anyString()))
         .thenReturn(GetRealmAccessGrantForRuntimeResponse.newBuilder().setGranted(true).build());
-    when(moderationPolicyClient.evaluateGameplayAdmission(Mockito.anyLong(), Mockito.anyLong()))
+    when(moderationPolicyClient.evaluateGameplayAdmission(Mockito.anyLong(), Mockito.anyString()))
         .thenReturn(
             net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyResponse.newBuilder()
                 .setAllowed(true)
@@ -419,15 +420,15 @@ class TextCommandInterpreterTest {
             lookCacheService,
             new TextPlayerOutputRenderer(new PresentationProperties()));
     when(entityManagementClient.listCharactersByAccount(
-            "22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
+            "22", ACCOUNT_ID, "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
         .thenReturn(
             net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse.newBuilder()
                 .addCharacters(
                     net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
                         .setId("7001")
                         .setTenantId("22")
-                        .setAccountId("123")
-                        .setName("demo")
+                        .setAccountId(ACCOUNT_ID)
+                        .setName("Emberline")
                         .setLevel(12)
                         .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                         .build())
@@ -539,7 +540,7 @@ class TextCommandInterpreterTest {
         new SessionContext(
             1L,
             22L,
-            123L,
+            ACCOUNT_ID,
             "demo@example.com",
             7001L,
             "Emberline",
@@ -632,7 +633,7 @@ class TextCommandInterpreterTest {
 
     assertTrue(interpretation.commandResult().accepted());
     assertEquals(
-        "OK WHO\nGods [0]: \nPlayers [1]: demo\n\n" + "demo> ",
+        "OK WHO\nGods [0]: \nPlayers [1]: Emberline\n\n" + "Emberline> ",
         renderedResponse("WHO", interpretation));
     assertFalse(interpretation.meaningfulGameplayActivity());
   }
@@ -659,7 +660,7 @@ class TextCommandInterpreterTest {
         List.of(PlayerOutputKind.VIEW, PlayerOutputKind.PROMPT),
         interpretation.outputs().stream().map(PlayerOutput::kind).toList());
     assertEquals(
-        "OK INVENTORY\n" + "Inventory:\n" + "- Torch x2 (A small torch)\n\n" + "demo> ",
+        "OK INVENTORY\n" + "Inventory:\n" + "- Torch x2 (A small torch)\n\n" + "Emberline> ",
         renderedResponse("INVENTORY", interpretation));
     assertTrue(interpretation.meaningfulGameplayActivity());
   }
@@ -686,7 +687,7 @@ class TextCommandInterpreterTest {
         List.of(PlayerOutputKind.VIEW, PlayerOutputKind.PROMPT),
         interpretation.outputs().stream().map(PlayerOutput::kind).toList());
     assertEquals(
-        "OK EQUIPMENT\n" + "Equipment:\n" + "- HEAD: Torch (A small torch)\n\n" + "demo> ",
+        "OK EQUIPMENT\n" + "Equipment:\n" + "- HEAD: Torch (A small torch)\n\n" + "Emberline> ",
         renderedResponse("EQ", interpretation));
   }
 
@@ -738,7 +739,7 @@ class TextCommandInterpreterTest {
     assertEquals(
         List.of(PlayerOutputKind.PROMPT),
         interpretation.outputs().stream().map(PlayerOutput::kind).toList());
-    assertEquals("demo> ", renderedResponse("WEAR Torch", interpretation));
+    assertEquals("Emberline> ", renderedResponse("WEAR Torch", interpretation));
     verify(commandService).enqueue("1", "WEAR Torch", false);
     verify(gameLogicClient, never())
         .wearEquipment(Mockito.any(SessionContext.class), Mockito.anyString(), Mockito.anyString());
@@ -756,7 +757,7 @@ class TextCommandInterpreterTest {
     assertEquals(
         List.of(PlayerOutputKind.PROMPT),
         interpretation.outputs().stream().map(PlayerOutput::kind).toList());
-    assertEquals("demo> ", renderedResponse("REMOVE Torch", interpretation));
+    assertEquals("Emberline> ", renderedResponse("REMOVE Torch", interpretation));
     verify(commandService).enqueue("1", "REMOVE Torch", false);
     verify(gameLogicClient, never())
         .removeEquipment(Mockito.any(SessionContext.class), Mockito.anyString());
@@ -773,7 +774,7 @@ class TextCommandInterpreterTest {
     assertEquals(
         List.of(PlayerOutputKind.PROMPT),
         interpretation.outputs().stream().map(PlayerOutput::kind).toList());
-    assertEquals("demo> ", renderedResponse("GET Torch", interpretation));
+    assertEquals("Emberline> ", renderedResponse("GET Torch", interpretation));
     verify(commandService).enqueue("1", "GET Torch", false);
     verify(gameLogicClient, never())
         .pickupItemFromRoom(
@@ -798,7 +799,7 @@ class TextCommandInterpreterTest {
     assertEquals(
         List.of(PlayerOutputKind.PROMPT),
         interpretation.outputs().stream().map(PlayerOutput::kind).toList());
-    assertEquals("demo> ", renderedResponse("DROP Torch", interpretation));
+    assertEquals("Emberline> ", renderedResponse("DROP Torch", interpretation));
     verify(commandService).enqueue("1", "DROP Torch", false);
     verify(gameLogicClient, never())
         .dropItemToRoom(
@@ -823,7 +824,7 @@ class TextCommandInterpreterTest {
     assertEquals(
         List.of(PlayerOutputKind.PROMPT),
         interpretation.outputs().stream().map(PlayerOutput::kind).toList());
-    assertEquals("demo> ", renderedResponse("PUT Ration INTO Torch", interpretation));
+    assertEquals("Emberline> ", renderedResponse("PUT Ration INTO Torch", interpretation));
     verify(commandService).enqueue("1", "PUT Ration INTO Torch", false);
     verify(gameLogicClient, never())
         .putItemIntoContainer(
@@ -847,7 +848,7 @@ class TextCommandInterpreterTest {
     assertEquals(
         List.of(PlayerOutputKind.PROMPT),
         interpretation.outputs().stream().map(PlayerOutput::kind).toList());
-    assertEquals("demo> ", renderedResponse("TAKE Ration FROM Torch", interpretation));
+    assertEquals("Emberline> ", renderedResponse("TAKE Ration FROM Torch", interpretation));
     verify(commandService).enqueue("1", "TAKE Ration FROM Torch", false);
     verify(gameLogicClient, never())
         .takeItemFromContainer(
@@ -862,7 +863,7 @@ class TextCommandInterpreterTest {
   @Test
   void bootstrapContextWithoutAuthenticatedAccountStillRequiresLogin() {
     ((InMemorySessionContextService) sessionContextService)
-        .save(new SessionContext(55L, 22L, 0L, null, 0L, null, 77L, null, null));
+        .save(new SessionContext(55L, 22L, null, null, 0L, null, 77L, null, null));
 
     TextCommandInterpretationResult interpretation = interpreter.interpret("55", "LOOK", false);
 
@@ -899,7 +900,9 @@ class TextCommandInterpreterTest {
   @Test
   void gameplayWithRoomOnlyPartialShellStillReturnsPlayRequired() {
     ((InMemorySessionContextService) sessionContextService)
-        .save(new SessionContext(56L, 22L, 123L, "demo@example.com", 0L, null, 0L, "R-7", null));
+        .save(
+            new SessionContext(
+                56L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "R-7", null));
 
     TextCommandInterpretationResult interpretation = interpreter.interpret("56", "LOOK", false);
 
@@ -935,7 +938,7 @@ class TextCommandInterpreterTest {
     LookViewOutput payload = (LookViewOutput) look.outputs().get(0).payload();
     assertEquals("Login Hall", payload.roomName());
     assertTrue(payload.includeLongDescription());
-    assertEquals("demo> ", look.outputs().get(1).text());
+    assertEquals("Emberline> ", look.outputs().get(1).text());
   }
 
   @Test
@@ -952,7 +955,7 @@ class TextCommandInterpreterTest {
     LookViewOutput payload = (LookViewOutput) quickLook.outputs().get(0).payload();
     assertEquals("Login Hall", payload.roomName());
     assertFalse(payload.includeLongDescription());
-    assertEquals("demo> ", quickLook.outputs().get(1).text());
+    assertEquals("Emberline> ", quickLook.outputs().get(1).text());
   }
 
   @Test
@@ -1026,7 +1029,7 @@ class TextCommandInterpreterTest {
     assertTrue(login.commandResult().accepted());
     assertTrue(play.commandResult().accepted());
     assertEquals(
-        "OK PLAY Entered world: demo as demo\ndemo> ",
+        "OK PLAY Entered world: demo as Emberline\nEmberline> ",
         renderedResponse(PLAY_DEMO_PRODUCTION, play));
     assertTrue(look.commandResult().accepted());
     assertEquals(
@@ -1072,7 +1075,7 @@ class TextCommandInterpreterTest {
     assertTrue(interpretation.commandResult().accepted());
     assertEquals(1, interpretation.outputs().size());
     assertEquals(PlayerOutputKind.PROMPT, interpretation.outputs().get(0).kind());
-    assertEquals("demo> ", interpretation.outputs().get(0).text());
+    assertEquals("Emberline> ", interpretation.outputs().get(0).text());
     verify(commandService).enqueue("1", "MOVE north", false);
   }
 
@@ -1151,7 +1154,7 @@ class TextCommandInterpreterTest {
     return new SessionContext(
         sessionId,
         22L,
-        0L,
+        null,
         null,
         0L,
         null,

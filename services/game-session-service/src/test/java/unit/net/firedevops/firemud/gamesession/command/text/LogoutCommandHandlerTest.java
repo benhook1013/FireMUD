@@ -13,38 +13,37 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 class LogoutCommandHandlerTest {
+  private static final String ACCOUNT_UUID = "f2ed193b-12c1-4c96-bcad-c162229af440";
   private final SessionContextService sessionContextService =
       Mockito.mock(SessionContextService.class);
   private final LogoutCommandHandler handler = new LogoutCommandHandler(sessionContextService);
 
   @Test
-  void authenticatedSharedRuntimeLogoutFailsRetryablyWithoutMutatingContext() {
-    SessionContext context = context(41L, 123L, 1L, "SHARED");
-    when(sessionContextService.findBySessionId(41L)).thenReturn(Optional.of(context));
-
-    LogoutCommandHandlingResult result = handler.handle("41", logoutCommand());
-
-    assertUnavailable(result);
-    verify(sessionContextService).findBySessionId(41L);
-    verifyNoMoreInteractions(sessionContextService);
-  }
-
-  @Test
-  void authenticatedIsolatedRuntimeLogoutFailsRetryablyWithoutMutatingContext() {
-    SessionContext context = context(41L, 123L, 7L, "ISOLATED");
-    when(sessionContextService.findBySessionId(41L)).thenReturn(Optional.of(context));
-
-    LogoutCommandHandlingResult result = handler.handle("41", logoutCommand());
-
-    assertUnavailable(result);
-    verify(sessionContextService).findBySessionId(41L);
-    verifyNoMoreInteractions(sessionContextService);
-  }
-
-  @Test
-  void unauthenticatedContextStillReturnsNotLoggedInWithoutMutation() {
+  void authenticatedSharedRuntimeLogoutFailsWithoutMutatingContext() {
     when(sessionContextService.findBySessionId(41L))
-        .thenReturn(Optional.of(context(41L, 0L, 1L, "SHARED")));
+        .thenReturn(Optional.of(context(41L, ACCOUNT_UUID, 1L, "SHARED")));
+
+    assertUnavailable(handler.handle("41", logoutCommand()));
+
+    verify(sessionContextService).findBySessionId(41L);
+    verifyNoMoreInteractions(sessionContextService);
+  }
+
+  @Test
+  void authenticatedIsolatedRuntimeLogoutFailsWithoutMutatingContext() {
+    when(sessionContextService.findBySessionId(41L))
+        .thenReturn(Optional.of(context(41L, ACCOUNT_UUID, 7L, "ISOLATED")));
+
+    assertUnavailable(handler.handle("41", logoutCommand()));
+
+    verify(sessionContextService).findBySessionId(41L);
+    verifyNoMoreInteractions(sessionContextService);
+  }
+
+  @Test
+  void loggedOutContextRemainsNotLoggedInWithoutMutation() {
+    when(sessionContextService.findBySessionId(41L))
+        .thenReturn(Optional.of(context(41L, null, 1L, "SHARED")));
 
     LogoutCommandHandlingResult result = handler.handle("41", logoutCommand());
 
@@ -63,19 +62,20 @@ class LogoutCommandHandlerTest {
   }
 
   @Test
-  void missingSessionStillReturnsNotLoggedIn() {
+  void missingSessionRemainsNotLoggedIn() {
     when(sessionContextService.findBySessionId(41L)).thenReturn(Optional.empty());
 
     LogoutCommandHandlingResult result = handler.handle("41", logoutCommand());
 
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("NOT_LOGGED_IN");
+    assertThat(result.commandResult().errorMessage()).isEqualTo("You are not logged in.");
     verify(sessionContextService).findBySessionId(41L);
     verifyNoMoreInteractions(sessionContextService);
   }
 
   @Test
-  void invalidSessionIdReturnsNotLoggedInWithoutLookingUpOrMutatingContext() {
+  void invalidSessionIdDoesNotLookUpOrMutateContext() {
     LogoutCommandHandlingResult result = handler.handle("not-a-session", logoutCommand());
 
     assertThat(result.commandResult().accepted()).isFalse();
@@ -84,13 +84,12 @@ class LogoutCommandHandlerTest {
   }
 
   @Test
-  void unavailableSessionAuthorityReturnsRetryableFailure() {
+  void unavailableSessionAuthorityReturnsRetryableFailureWithoutMutation() {
     when(sessionContextService.findBySessionId(41L))
         .thenThrow(new IllegalStateException("session store unavailable"));
 
-    LogoutCommandHandlingResult result = handler.handle("41", logoutCommand());
+    assertUnavailable(handler.handle("41", logoutCommand()));
 
-    assertUnavailable(result);
     verify(sessionContextService).findBySessionId(41L);
     verifyNoMoreInteractions(sessionContextService);
   }
@@ -116,7 +115,7 @@ class LogoutCommandHandlerTest {
   }
 
   private static SessionContext context(
-      long sessionId, long accountId, long gameInstanceId, String scope) {
+      long sessionId, String accountId, long gameInstanceId, String scope) {
     return new SessionContext(
         sessionId,
         22L,

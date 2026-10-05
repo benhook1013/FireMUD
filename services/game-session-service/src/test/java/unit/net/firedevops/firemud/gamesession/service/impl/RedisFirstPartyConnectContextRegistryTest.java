@@ -22,6 +22,8 @@ import org.springframework.data.redis.core.ValueOperations;
 
 @SuppressWarnings("unchecked")
 class RedisFirstPartyConnectContextRegistryTest {
+  private static final String ACCOUNT_ID = "f2ed193b-12c1-4c96-bcad-c162229af440";
+
   private final ConcurrentMap<String, Object> store = new ConcurrentHashMap<>();
   private final RedisTemplate<String, Object> redisTemplate = mock(RedisTemplate.class);
   private final ValueOperations<String, Object> valueOperations = mock(ValueOperations.class);
@@ -56,7 +58,16 @@ class RedisFirstPartyConnectContextRegistryTest {
   void registerStoresContextWithShortTtl() {
     FirstPartyConnectContext context =
         new FirstPartyConnectContext(
-            77L, 22L, "demo", "production", 41L, 17L, "scope-1", "jti-1", "req-1", "gateway-1");
+            ACCOUNT_ID,
+            22L,
+            "demo",
+            "production",
+            41L,
+            17L,
+            "scope-1",
+            "jti-1",
+            "req-1",
+            "gateway-1");
 
     registry.register(91L, context);
 
@@ -73,7 +84,16 @@ class RedisFirstPartyConnectContextRegistryTest {
   void unregisterRemovesStoredContext() {
     FirstPartyConnectContext context =
         new FirstPartyConnectContext(
-            77L, 22L, "demo", "production", 41L, 17L, "scope-1", "jti-1", "req-1", "gateway-1");
+            ACCOUNT_ID,
+            22L,
+            "demo",
+            "production",
+            41L,
+            17L,
+            "scope-1",
+            "jti-1",
+            "req-1",
+            "gateway-1");
     registry.register(91L, context);
 
     registry.unregister(91L);

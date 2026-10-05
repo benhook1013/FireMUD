@@ -15,6 +15,7 @@ import net.firedevops.firemud.gamesession.presentation.FriendPresencePolicyViewO
 import net.firedevops.firemud.gamesession.presentation.FriendPresenceViewOutput;
 import net.firedevops.firemud.gamesession.presentation.FriendRosterSummaryViewOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
+import net.firedevops.firemud.gamesession.service.AccountIds;
 import net.firedevops.firemud.gamesession.service.PositiveLongParsing;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -152,7 +153,7 @@ public class FriendsCommandHandler {
 
   private TextCommandInterpretationResult handleAdd(
       SessionContext context, ResolvedFriendTarget target, String rawCommandText) {
-    if (target.friendAccountId() == context.accountId()) {
+    if (Objects.equals(target.friendAccountId(), context.accountId())) {
       return friendTargetError(
           "FRIEND_SELF_LINK_FORBIDDEN", "Cannot add or remove your own account as a friend");
     }
@@ -176,7 +177,7 @@ public class FriendsCommandHandler {
 
   private TextCommandInterpretationResult handleRemove(
       SessionContext context, ResolvedFriendTarget target, String rawCommandText) {
-    if (target.friendAccountId() == context.accountId()) {
+    if (Objects.equals(target.friendAccountId(), context.accountId())) {
       return friendTargetError(
           "FRIEND_SELF_LINK_FORBIDDEN", "Cannot add or remove your own account as a friend");
     }
@@ -432,7 +433,7 @@ public class FriendsCommandHandler {
 
   private FriendPresenceViewOutput.Entry toEntry(int ordinal, FriendRosterEntry entry) {
     FriendPresenceEntry presence = entry.getPresence();
-    long friendAccountId = requireFriendAccountId(entry.getFriendAccountId());
+    String friendAccountId = requireFriendAccountId(entry.getFriendAccountId());
     if (!isPlayerDisclosablePolicy(presence.getVisibilityPolicy())) {
       return redactedEntry(ordinal, entry, friendAccountId, "Friend #" + friendAccountId);
     }
@@ -459,7 +460,7 @@ public class FriendsCommandHandler {
   }
 
   private FriendPresenceViewOutput.Entry redactedEntry(
-      int ordinal, FriendRosterEntry entry, long friendAccountId, String displayName) {
+      int ordinal, FriendRosterEntry entry, String friendAccountId, String displayName) {
     return new FriendPresenceViewOutput.Entry(
         ordinal,
         parseOptionalLong(entry.getFriendLinkId()),
@@ -499,14 +500,16 @@ public class FriendsCommandHandler {
     };
   }
 
-  private long requireFriendAccountId(String value) {
+  private String requireFriendAccountId(String value) {
     if (!StringUtils.hasText(value)) {
       throw new IllegalStateException(
           "Malformed friend roster friendAccountId: friendAccountId is required");
     }
     try {
-      return PositiveLongParsing.requireOptionalText(value, "friendAccountId")
-          .orElseThrow(() -> new IllegalArgumentException("friendAccountId is required"));
+      if (!AccountIds.isCanonicalNonNilUuid(value)) {
+        throw new IllegalArgumentException("friendAccountId must be a canonical non-nil UUID");
+      }
+      return value;
     } catch (IllegalArgumentException ex) {
       throw new IllegalStateException(
           "Malformed friend roster friendAccountId: " + ex.getMessage(), ex);
@@ -588,13 +591,13 @@ public class FriendsCommandHandler {
   }
 
   private ResolvedFriendTarget resolveTarget(SessionContext context, FriendAction action) {
-    Long accountId = tryParseAccountId(action.targetToken());
+    String accountId = tryParseAccountId(action.targetToken());
     if (accountId != null) {
       return new ResolvedFriendTarget(accountId, null, null);
     }
     if (!StringUtils.hasText(action.targetToken())) {
       return new ResolvedFriendTarget(
-          0L,
+          null,
           null,
           invalidUsage("FRIENDS " + action.keyword() + " <friendAccountId|characterName>"));
     }
@@ -603,17 +606,16 @@ public class FriendsCommandHandler {
             context, resolvePlayableStateScope(context), action.targetToken().trim());
     if (character.isEmpty() || !StringUtils.hasText(character.get().getAccountId())) {
       return new ResolvedFriendTarget(
-          0L,
+          null,
           null,
           friendTargetError("FRIEND_TARGET_NOT_FOUND", notFoundMessage(action.targetToken())));
     }
-    PositiveLongParsing.ParsedPositiveLong parsedAccountId =
-        PositiveLongParsing.parseOptionalText(character.get().getAccountId(), "friendAccountId");
-    if (!parsedAccountId.valid()) {
+    String resolvedAccountId = character.get().getAccountId();
+    if (!AccountIds.isCanonicalNonNilUuid(resolvedAccountId)) {
       return new ResolvedFriendTarget(
-          0L, null, malformedResolvedTargetError(action, character.get().getAccountId()));
+          null, null, malformedResolvedTargetError(action, resolvedAccountId));
     }
-    return new ResolvedFriendTarget(parsedAccountId.value(), character.get().getName(), null);
+    return new ResolvedFriendTarget(resolvedAccountId, character.get().getName(), null);
   }
 
   private TextCommandInterpretationResult malformedResolvedTargetError(
@@ -693,10 +695,8 @@ public class FriendsCommandHandler {
     };
   }
 
-  private Long tryParseAccountId(String value) {
-    return PositiveLongParsing.parseOptionalText(value, "friendAccountId")
-        .optionalValue()
-        .orElse(null);
+  private String tryParseAccountId(String value) {
+    return AccountIds.isCanonicalNonNilUuid(value) ? value : null;
   }
 
   private boolean isOrdinalToken(String value) {
@@ -854,5 +854,5 @@ public class FriendsCommandHandler {
       String invalidUsage) {}
 
   private record ResolvedFriendTarget(
-      long friendAccountId, String characterName, TextCommandInterpretationResult errorResult) {}
+      String friendAccountId, String characterName, TextCommandInterpretationResult errorResult) {}
 }

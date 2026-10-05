@@ -25,7 +25,17 @@ class AfkCommandHandlerTest {
   void afkOnSetsExplicitAfkOnPresence() {
     SessionContext context =
         new SessionContext(
-            7L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1021", null, "en-NZ", 1L);
+            7L,
+            22L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
+            "demo@example.com",
+            123L,
+            "demo",
+            1L,
+            "R-1021",
+            null,
+            "en-NZ",
+            1L);
     when(sessionAuthenticationService.resolveSessionContext("7")).thenReturn(Optional.of(context));
 
     AfkCommandHandlingResult result =
@@ -40,7 +50,17 @@ class AfkCommandHandlerTest {
   void afkOffClearsExplicitAfkOnPresence() {
     SessionContext context =
         new SessionContext(
-            7L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1021", null, "en-NZ", 1L);
+            7L,
+            22L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
+            "demo@example.com",
+            123L,
+            "demo",
+            1L,
+            "R-1021",
+            null,
+            "en-NZ",
+            1L);
     when(sessionAuthenticationService.resolveSessionContext("7")).thenReturn(Optional.of(context));
 
     AfkCommandHandlingResult result =
@@ -72,7 +92,17 @@ class AfkCommandHandlerTest {
   void afkRejectsPartialGameplayIdentityShellFromResolvedSession() {
     SessionContext context =
         new SessionContext(
-            7L, 22L, 123L, "demo@example.com", 0L, null, 1L, "R-1021", null, "en-NZ", 1L);
+            7L,
+            22L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
+            "demo@example.com",
+            0L,
+            null,
+            1L,
+            "R-1021",
+            null,
+            "en-NZ",
+            1L);
     when(sessionAuthenticationService.resolveSessionContext("7")).thenReturn(Optional.of(context));
 
     AfkCommandHandlingResult result =
@@ -87,7 +117,17 @@ class AfkCommandHandlerTest {
   void directAfkRejectsPartialGameplayIdentityShell() {
     SessionContext context =
         new SessionContext(
-            7L, 22L, 123L, "demo@example.com", 0L, null, 1L, "R-1021", null, "en-NZ", 1L);
+            7L,
+            22L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
+            "demo@example.com",
+            0L,
+            null,
+            1L,
+            "R-1021",
+            null,
+            "en-NZ",
+            1L);
 
     AfkCommandHandlingResult result =
         handler.handle(

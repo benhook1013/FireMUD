@@ -2,25 +2,36 @@ package net.firedevops.firemud.gamesession.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
 
 class SessionContextTest {
+  private static final String ACCOUNT_ID = "5d7e83b0-e8c4-4edb-b3b7-5d99d4bbad9d";
 
   @Test
   void preservesLegacyAndSyntheticRuntimeRoomIdsVerbatim() {
     SessionContext legacyNumeric =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 41L, "1", "jwt");
+        new SessionContext(
+            1L, 22L, ACCOUNT_ID, "demo@example.com", 7001L, "Emberline", 41L, "1", "jwt");
     SessionContext legacyPrefixed =
         new SessionContext(
-            1L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 41L, "room-1", "jwt");
+            1L, 22L, ACCOUNT_ID, "demo@example.com", 7001L, "Emberline", 41L, "room-1", "jwt");
     SessionContext legacyUppercasePrefixed =
         new SessionContext(
-            1L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 41L, "ROOM-1", "jwt");
+            1L, 22L, ACCOUNT_ID, "demo@example.com", 7001L, "Emberline", 41L, "ROOM-1", "jwt");
     SessionContext syntheticProbe =
         new SessionContext(
-            1L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 41L, "readiness-room-1", "jwt");
+            1L,
+            22L,
+            ACCOUNT_ID,
+            "demo@example.com",
+            7001L,
+            "Emberline",
+            41L,
+            "readiness-room-1",
+            "jwt");
 
     assertEquals("1", legacyNumeric.roomInstanceId());
     assertEquals("room-1", legacyPrefixed.roomInstanceId());
@@ -34,7 +45,7 @@ class SessionContextTest {
         new SessionContext(
             1L,
             22L,
-            123L,
+            ACCOUNT_ID,
             "first-party:123",
             0L,
             null,
@@ -60,7 +71,7 @@ class SessionContextTest {
         new SessionContext(
             1L,
             22L,
-            123L,
+            ACCOUNT_ID,
             "demo@example.com",
             7001L,
             "Emberline",
@@ -85,7 +96,7 @@ class SessionContextTest {
         new SessionContext(
             1L,
             22L,
-            123L,
+            ACCOUNT_ID,
             "first-party:123",
             0L,
             null,
@@ -106,12 +117,12 @@ class SessionContextTest {
   }
 
   @Test
-  void hasPartialPersistedFirstPartyConnectContextRequiresPositiveAccountIdentity() {
+  void hasPartialPersistedFirstPartyConnectContextRequiresCanonicalAccountIdentity() {
     SessionContext context =
         new SessionContext(
             1L,
             22L,
-            0L,
+            null,
             "first-party:123",
             0L,
             null,
@@ -135,11 +146,12 @@ class SessionContextTest {
   void hasGameplayRegionBindingRequiresGameInstanceCharacterAndRoom() {
     SessionContext complete =
         new SessionContext(
-            1L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 41L, "R-1", "jwt");
+            1L, 22L, ACCOUNT_ID, "demo@example.com", 7001L, "Emberline", 41L, "R-1", "jwt");
     SessionContext missingRoom =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 41L, null, "jwt");
+        new SessionContext(
+            1L, 22L, ACCOUNT_ID, "demo@example.com", 7001L, "Emberline", 41L, null, "jwt");
     SessionContext missingCharacter =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 41L, "R-1", "jwt");
+        new SessionContext(1L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 41L, "R-1", "jwt");
 
     assertTrue(complete.hasGameplayRegionBinding());
     assertFalse(missingRoom.hasGameplayRegionBinding());
@@ -149,13 +161,14 @@ class SessionContextTest {
   @Test
   void hasGameplayBindingTreatsPartialGameplayShellsAsBound() {
     SessionContext gameOnly =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 41L, null, "jwt");
+        new SessionContext(1L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 41L, null, "jwt");
     SessionContext characterOnly =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 0L, null, "jwt");
+        new SessionContext(
+            1L, 22L, ACCOUNT_ID, "demo@example.com", 7001L, "Emberline", 0L, null, "jwt");
     SessionContext roomOnly =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "R-1", "jwt");
+        new SessionContext(1L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "R-1", "jwt");
     SessionContext blank =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, null, "jwt");
+        new SessionContext(1L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, null, "jwt");
 
     assertTrue(gameOnly.hasGameplayBinding());
     assertTrue(characterOnly.hasGameplayBinding());
@@ -167,14 +180,32 @@ class SessionContextTest {
   void hasGameplayIdentityRequiresPositiveGameInstanceAndCharacter() {
     SessionContext complete =
         new SessionContext(
-            1L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 41L, "R-1", "jwt");
+            1L, 22L, ACCOUNT_ID, "demo@example.com", 7001L, "Emberline", 41L, "R-1", "jwt");
     SessionContext missingGameInstance =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 0L, "R-1", "jwt");
+        new SessionContext(
+            1L, 22L, ACCOUNT_ID, "demo@example.com", 7001L, "Emberline", 0L, "R-1", "jwt");
     SessionContext missingCharacter =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 41L, "R-1", "jwt");
+        new SessionContext(1L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 41L, "R-1", "jwt");
 
     assertTrue(complete.hasGameplayIdentity());
     assertFalse(missingGameInstance.hasGameplayIdentity());
     assertFalse(missingCharacter.hasGameplayIdentity());
+  }
+
+  @Test
+  void accountIdentityMustBeCanonicalNonNilUuidOrAbsent() {
+    SessionContext unauthenticated = new SessionContext(1L, 22L, null, null, 0L, null, 0L, null);
+
+    assertFalse(unauthenticated.hasAccountIdentity());
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> new SessionContext(1L, 22L, "123", null, 0L, null, 0L, null));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            new SessionContext(
+                1L, 22L, "00000000-0000-0000-0000-000000000000", null, 0L, null, 0L, null));
+    assertTrue(
+        new SessionContext(1L, 22L, ACCOUNT_ID, null, 0L, null, 0L, null).hasAccountIdentity());
   }
 }

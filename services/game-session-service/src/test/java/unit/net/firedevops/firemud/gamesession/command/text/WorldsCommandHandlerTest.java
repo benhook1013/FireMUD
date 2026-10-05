@@ -34,6 +34,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 class WorldsCommandHandlerTest {
+  private static final String ACCOUNT_ID = "f2ed193b-12c1-4c96-bcad-c162229af440";
   private static final UUID ADMISSION_REALM_ID =
       UUID.fromString("00000000-0000-0000-0000-000000000001");
   private static final UUID ADMISSION_NAMESPACE_ID =
@@ -631,7 +632,7 @@ class WorldsCommandHandlerTest {
     WorldsCommandHandler localHandler =
         authenticatedHandler(gameplayCatalogProperties, accountClient);
     SessionContext session =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt");
+        new SessionContext(1L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "jwt");
     assertThat(localHandler.browseRealms(session, "demo"))
         .isInstanceOfSatisfying(
             WorldsCommandHandler.RealmBrowseResult.Success.class,
@@ -678,7 +679,7 @@ class WorldsCommandHandlerTest {
     WorldsCommandHandler localHandler =
         authenticatedHandler(gameplayCatalogProperties, accountClient);
     SessionContext session =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt");
+        new SessionContext(1L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "jwt");
     WorldsCommandHandler.CharacterBrowseResult result =
         localHandler.browseCharacters(session, "demo", "production");
 
@@ -702,7 +703,7 @@ class WorldsCommandHandlerTest {
 
     WorldsCommandHandler.CharacterBrowseResult result =
         localHandler.browseCharacters(
-            new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt"),
+            new SessionContext(1L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "jwt"),
             "demo",
             "production");
 
@@ -802,7 +803,7 @@ class WorldsCommandHandlerTest {
     AccountClient accountClient = Mockito.mock(AccountClient.class);
     Mockito.when(
             accountClient.getTenantMembershipForRuntime(Mockito.any(PlayerExecutionContext.class)))
-        .thenReturn(RuntimeMembershipTestFixtures.missing(123L, 22L));
+        .thenReturn(RuntimeMembershipTestFixtures.missing(ACCOUNT_ID, 22L));
     Mockito.when(
             accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(publicEntitlement(false));
@@ -823,7 +824,7 @@ class WorldsCommandHandlerTest {
     AccountClient accountClient = Mockito.mock(AccountClient.class);
     Mockito.when(
             accountClient.getTenantMembershipForRuntime(Mockito.any(PlayerExecutionContext.class)))
-        .thenReturn(RuntimeMembershipTestFixtures.missing(123L, 22L));
+        .thenReturn(RuntimeMembershipTestFixtures.missing(ACCOUNT_ID, 22L));
     Mockito.when(
             accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
@@ -2174,11 +2175,11 @@ class WorldsCommandHandlerTest {
   }
 
   private SessionContext authenticatedSession() {
-    return new SessionContext(7L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt");
+    return new SessionContext(7L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "jwt");
   }
 
   private GetTenantMembershipForRuntimeResponse activeMembership() {
-    return RuntimeMembershipTestFixtures.active(123L, 22L, "1");
+    return RuntimeMembershipTestFixtures.active(ACCOUNT_ID, 22L, "1");
   }
 
   private GetTenantMembershipForRuntimeResponse publicMembership(
@@ -2188,7 +2189,7 @@ class WorldsCommandHandlerTest {
       long membershipAuthorityGeneration,
       String lifecycleState) {
     return RuntimeMembershipTestFixtures.incomplete(
-            123L,
+            ACCOUNT_ID,
             22L,
             membershipExists,
             lifecycleState,
@@ -2214,7 +2215,7 @@ class WorldsCommandHandlerTest {
   private GetRealmAccessGrantForRuntimeResponse grant(
       String worldSlug, String realmSlug, boolean granted) {
     return GetRealmAccessGrantForRuntimeResponse.newBuilder()
-        .setAccountId("123")
+        .setAccountId(ACCOUNT_ID)
         .setTenantId("22")
         .setWorldSlug(worldSlug)
         .setRealmSlug(realmSlug)
@@ -2349,7 +2350,15 @@ class WorldsCommandHandlerTest {
 
     WorldsCommandHandler.CharacterBrowseResult result =
         localHandler.browseCharacters(
-            new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt"),
+            new SessionContext(
+                1L,
+                22L,
+                "f2ed193b-12c1-4c96-bcad-c162229af440",
+                "demo@example.com",
+                0L,
+                null,
+                0L,
+                "jwt"),
             "private-world",
             null);
 
@@ -2396,7 +2405,7 @@ class WorldsCommandHandlerTest {
             Mockito.mock(AccountClient.class),
             DirectTextConnectScopeSessionStore.inMemoryForTest());
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt");
+        new SessionContext(1L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "jwt");
 
     assertThat(localHandler.browseCharacters(context, "mixed-world", "secret"))
         .isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.InvalidRealm.class);
@@ -2459,7 +2468,15 @@ class WorldsCommandHandlerTest {
 
     WorldsCommandHandler.CharacterBrowseResult result =
         handler.browseCharacters(
-            new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt"),
+            new SessionContext(
+                1L,
+                22L,
+                "f2ed193b-12c1-4c96-bcad-c162229af440",
+                "demo@example.com",
+                0L,
+                null,
+                0L,
+                "jwt"),
             "demo",
             "production");
 

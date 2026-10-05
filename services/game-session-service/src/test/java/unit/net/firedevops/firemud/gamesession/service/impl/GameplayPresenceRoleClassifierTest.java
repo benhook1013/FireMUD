@@ -7,7 +7,7 @@ import org.junit.jupiter.api.Test;
 
 class GameplayPresenceRoleClassifierTest {
   @Test
-  void classifyRoleReturnsPlayerUntilFreshGameplayGrantEvidenceIsModeled() {
+  void classifyRoleRemainsPlayerUntilFreshGameplayGrantEvidenceIsModeled() {
     assertEquals(GameplayPresenceRole.PLAYER, GameplayPresenceRoleClassifier.classifyRole());
   }
 }

@@ -1545,8 +1545,8 @@ public final class GameSessionCommandControlPlaneService {
             .setLastAttemptAtMs(toEpochMillis(command.getLastAttemptAt()))
             .setAttemptCount(command.getAttemptCount())
             .setPlayableStateScope(toPlayableStateScopeStatus(command.getPlayableStateScope()));
-    if (command.getAccountId() != null) {
-      builder.setAccountId(command.getAccountId().toString());
+    if (command.getAccountUuid() != null) {
+      builder.setAccountId(command.getAccountUuid().toString());
     }
     if (command.getCharacterId() != null) {
       builder.setCharacterId(command.getCharacterId().toString());

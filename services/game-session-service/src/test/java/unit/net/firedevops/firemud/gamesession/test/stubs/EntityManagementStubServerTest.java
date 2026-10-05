@@ -14,6 +14,11 @@ import net.firedevops.firemud.gamesession.test.ChatTestFixtures;
 import org.junit.jupiter.api.Test;
 
 class EntityManagementStubServerTest {
+  private static final String FIRST_LOAD_ACTOR_ACCOUNT_UUID =
+      "a9fb0a44-93f0-4db2-9cf5-4de573beefb0";
+  private static final String SECOND_LOAD_ACTOR_ACCOUNT_UUID =
+      "dbbf7ca8-a01f-4f8f-8d82-669e7a083ae7";
+  private static final String UNKNOWN_ACCOUNT_UUID = "eb8ad310-10e3-4c07-8aa5-bdcb50a78fb3";
 
   @Test
   void listsOnlyThePersistedSharedCharacterForTheRequestedTenantAndAccount() throws Exception {
@@ -26,9 +31,9 @@ class EntityManagementStubServerTest {
 
         for (FixtureCharacter fixture :
             List.of(
-                new FixtureCharacter("7", "Emberline"),
-                new FixtureCharacter("8", "Sora"),
-                new FixtureCharacter("9", "Nyx"))) {
+                new FixtureCharacter(ChatTestFixtures.ACCOUNT_UUID_EMBERLINE, "Emberline"),
+                new FixtureCharacter(ChatTestFixtures.ACCOUNT_UUID_SORA, "Sora"),
+                new FixtureCharacter(ChatTestFixtures.ACCOUNT_UUID_NYX, "Nyx"))) {
           ListCharactersByAccountResponse response =
               listCharacters(
                   stub, "1", fixture.accountId(), PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
@@ -48,14 +53,14 @@ class EntityManagementStubServerTest {
         Character.newBuilder()
             .setId("101")
             .setTenantId("1")
-            .setAccountId("101")
+            .setAccountId(FIRST_LOAD_ACTOR_ACCOUNT_UUID)
             .setName("player-1")
             .build();
     Character secondPlayer =
         Character.newBuilder()
             .setId("102")
             .setTenantId("1")
-            .setAccountId("102")
+            .setAccountId(SECOND_LOAD_ACTOR_ACCOUNT_UUID)
             .setName("player-2")
             .build();
 
@@ -68,15 +73,27 @@ class EntityManagementStubServerTest {
             EntityManagementServiceGrpc.newBlockingStub(channel);
 
         assertThat(
-                listCharacters(stub, "1", "101", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                listCharacters(
+                        stub,
+                        "1",
+                        FIRST_LOAD_ACTOR_ACCOUNT_UUID,
+                        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                     .getCharactersList())
             .containsExactly(sharedCharacter(firstPlayer));
         assertThat(
-                listCharacters(stub, "1", "102", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                listCharacters(
+                        stub,
+                        "1",
+                        SECOND_LOAD_ACTOR_ACCOUNT_UUID,
+                        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                     .getCharactersList())
             .containsExactly(sharedCharacter(secondPlayer));
         assertThat(
-                listCharacters(stub, "2", "101", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                listCharacters(
+                        stub,
+                        "2",
+                        FIRST_LOAD_ACTOR_ACCOUNT_UUID,
+                        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                     .getCharactersList())
             .isEmpty();
       } finally {
@@ -86,7 +103,7 @@ class EntityManagementStubServerTest {
   }
 
   @Test
-  void unknownOrMismatchedTenantAndAccountReturnNoCharacters() throws Exception {
+  void unknownAccountAndCrossTenantRequestsReturnNoCharacters() throws Exception {
     try (EntityManagementStubServer server = new EntityManagementStubServer(0)) {
       ManagedChannel channel =
           ManagedChannelBuilder.forTarget(server.endpoint()).usePlaintext().build();
@@ -95,11 +112,19 @@ class EntityManagementStubServerTest {
             EntityManagementServiceGrpc.newBlockingStub(channel);
 
         assertThat(
-                listCharacters(stub, "2", "7", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                listCharacters(
+                        stub,
+                        "2",
+                        ChatTestFixtures.ACCOUNT_UUID_EMBERLINE,
+                        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                     .getCharactersList())
             .isEmpty();
         assertThat(
-                listCharacters(stub, "1", "999", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                listCharacters(
+                        stub,
+                        "1",
+                        UNKNOWN_ACCOUNT_UUID,
+                        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                     .getCharactersList())
             .isEmpty();
       } finally {
@@ -118,11 +143,19 @@ class EntityManagementStubServerTest {
             EntityManagementServiceGrpc.newBlockingStub(channel);
 
         assertThat(
-                listCharacters(stub, "1", "7", PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED)
+                listCharacters(
+                        stub,
+                        "1",
+                        ChatTestFixtures.ACCOUNT_UUID_EMBERLINE,
+                        PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED)
                     .getCharactersList())
             .isEmpty();
         assertThat(
-                listCharacters(stub, "1", "7", PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED)
+                listCharacters(
+                        stub,
+                        "1",
+                        ChatTestFixtures.ACCOUNT_UUID_EMBERLINE,
+                        PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED)
                     .getCharactersList())
             .isEmpty();
       } finally {

@@ -216,7 +216,7 @@ public final class CrossServiceAppHarness {
       ModerationPolicyClient client = org.mockito.Mockito.mock(ModerationPolicyClient.class);
       org.mockito.Mockito.when(
               client.evaluateGameplayAdmission(
-                  org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong()))
+                  org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyString()))
           .thenReturn(
               net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyResponse.newBuilder()
                   .setAllowed(true)

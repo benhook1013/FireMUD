@@ -43,6 +43,10 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.web.socket.WebSocketSession;
 
 class WebSocketOutputProjectorTest {
+  private static final String SORA_ACCOUNT_ID = "5f7624ca-8aee-4d34-9cd8-3ba3a1815f30";
+  private static final String EMBERLINE_ACCOUNT_ID = "c91fb96e-5ad8-4e4e-a12d-2838640093b2";
+  private static final String NYX_ACCOUNT_ID = "3a16e242-3467-4d98-906f-71d47b888b5e";
+  private static final String REDACTED_FRIEND_ACCOUNT_ID = "6ba7b810-9dad-41d1-80b4-00c04fd430c8";
 
   private final PresentationProperties presentation = new PresentationProperties();
   private final ObjectMapper objectMapper = new ObjectMapper();
@@ -234,7 +238,15 @@ class WebSocketOutputProjectorTest {
                 GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR, "first_party_web"));
     SessionContext context =
         new SessionContext(
-            7L, 22L, 41L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+            7L,
+            22L,
+            "d0c68a37-5126-42d2-9506-8df13e97699e",
+            "emberline@example.com",
+            7001L,
+            "Emberline",
+            9L,
+            "R-1",
+            "jwt");
     AdmittedTextCommandRegistryResolver admittedResolver =
         mock(AdmittedTextCommandRegistryResolver.class);
     when(admittedResolver.resolveMetadata(context, "wave", "wave"))
@@ -332,7 +344,7 @@ class WebSocketOutputProjectorTest {
                 new FriendPresenceViewOutput.Entry(
                     1,
                     77L,
-                    41L,
+                    SORA_ACCOUNT_ID,
                     "ONLINE",
                     null,
                     "Sora",
@@ -495,7 +507,7 @@ class WebSocketOutputProjectorTest {
                     new FriendPresenceViewOutput.Entry(
                         1,
                         11L,
-                        3L,
+                        SORA_ACCOUNT_ID,
                         "active",
                         1_744_336_000_000L,
                         "Sora",
@@ -536,8 +548,8 @@ class WebSocketOutputProjectorTest {
                 .path("friends")
                 .get(0)
                 .path("friendAccountId")
-                .asLong())
-        .isEqualTo(3L);
+                .asText())
+        .isEqualTo(SORA_ACCOUNT_ID);
     assertThat(
             json.path("outputs")
                 .get(0)
@@ -630,7 +642,7 @@ class WebSocketOutputProjectorTest {
                         new FriendPresenceViewOutput.Entry(
                             1,
                             11L,
-                            3L,
+                            EMBERLINE_ACCOUNT_ID,
                             "active",
                             null,
                             "Public Friend",
@@ -648,7 +660,7 @@ class WebSocketOutputProjectorTest {
                         new FriendPresenceViewOutput.Entry(
                             2,
                             12L,
-                            4L,
+                            NYX_ACCOUNT_ID,
                             "active",
                             null,
                             "Friends-only Friend",
@@ -695,7 +707,7 @@ class WebSocketOutputProjectorTest {
                             new FriendPresenceViewOutput.Entry(
                                 1,
                                 11L,
-                                3L,
+                                SORA_ACCOUNT_ID,
                                 "active",
                                 1_744_336_000_000L,
                                 "Sora",
@@ -716,7 +728,7 @@ class WebSocketOutputProjectorTest {
                         new FriendPresenceViewOutput.Entry(
                             1,
                             11L,
-                            3L,
+                            SORA_ACCOUNT_ID,
                             "active",
                             1_744_336_000_000L,
                             "Sora",
@@ -744,8 +756,8 @@ class WebSocketOutputProjectorTest {
                 .path("payload")
                 .path("friend")
                 .path("friendAccountId")
-                .asLong())
-        .isEqualTo(3L);
+                .asText())
+        .isEqualTo(SORA_ACCOUNT_ID);
     assertThat(
             json.path("outputs")
                 .get(0)
@@ -776,10 +788,10 @@ class WebSocketOutputProjectorTest {
         new FriendPresenceViewOutput.Entry(
             4,
             12L,
-            77L,
+            REDACTED_FRIEND_ACCOUNT_ID,
             "active",
             1_744_336_000_000L,
-            "Friend #77",
+            "Friend #" + REDACTED_FRIEND_ACCOUNT_ID,
             null,
             null,
             null,
@@ -800,10 +812,11 @@ class WebSocketOutputProjectorTest {
 
     JsonNode friend =
         objectMapper.readTree(payload).path("outputs").get(0).path("payload").path("friend");
-    assertThat(friend.path("friendAccountId").asLong()).isEqualTo(77L);
+    assertThat(friend.path("friendAccountId").asText()).isEqualTo(REDACTED_FRIEND_ACCOUNT_ID);
     assertThat(friend.path("friendLinkId").asLong()).isEqualTo(12L);
     assertThat(friend.path("status").asText()).isEqualTo("active");
-    assertThat(friend.path("displayName").asText()).isEqualTo("Friend #77");
+    assertThat(friend.path("displayName").asText())
+        .isEqualTo("Friend #" + REDACTED_FRIEND_ACCOUNT_ID);
     assertThat(friend.has("online")).isFalse();
     assertThat(friend.has("worldSlug")).isFalse();
     assertThat(friend.has("characterName")).isFalse();
@@ -888,7 +901,7 @@ class WebSocketOutputProjectorTest {
                 GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR, "first_party_web"));
 
     FriendMutationResultOutput payloadView =
-        new FriendMutationResultOutput("REMOVE", 77L, "Sora", "Sora", 1);
+        new FriendMutationResultOutput("REMOVE", SORA_ACCOUNT_ID, "Sora", "Sora", 1);
 
     String payload =
         projector.projectCommandResponse(
@@ -906,8 +919,8 @@ class WebSocketOutputProjectorTest {
         .isEqualTo("friend_mutation_result");
     assertThat(json.path("outputs").get(0).path("payload").path("action").asText())
         .isEqualTo("REMOVE");
-    assertThat(json.path("outputs").get(0).path("payload").path("friendAccountId").asLong())
-        .isEqualTo(77L);
+    assertThat(json.path("outputs").get(0).path("payload").path("friendAccountId").asText())
+        .isEqualTo(SORA_ACCOUNT_ID);
     assertThat(json.path("outputs").get(0).path("payload").path("displayName").asText())
         .isEqualTo("Sora");
     assertThat(json.path("outputs").get(0).path("payload").path("ordinal").asInt()).isEqualTo(1);

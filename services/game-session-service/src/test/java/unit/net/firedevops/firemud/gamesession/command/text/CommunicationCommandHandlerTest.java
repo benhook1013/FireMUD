@@ -43,7 +43,7 @@ class CommunicationCommandHandlerTest {
       new SessionContext(
           1L,
           22L,
-          123L,
+          "f2ed193b-12c1-4c96-bcad-c162229af440",
           "emberline@example.com",
           911L,
           "Emberline",
@@ -144,7 +144,7 @@ class CommunicationCommandHandlerTest {
                 Character.newBuilder()
                     .setId("300")
                     .setTenantId("22")
-                    .setAccountId("700")
+                    .setAccountId("b96201c6-8894-49ea-8f60-3f0b4ee72f5d")
                     .setName("Sora")
                     .build()));
     when(sessionAuthenticationService.resolveByGameplayName(22L, 1L, "Sora"))
@@ -164,7 +164,17 @@ class CommunicationCommandHandlerTest {
   void tellFailsClosedWhenTargetGameplayBindingNormalizesAway() {
     SessionContext normalizedTarget =
         new SessionContext(
-            77L, 22L, 700L, "sora@example.com", 0L, null, 0L, null, "jwt", "en-NZ", 1L);
+            77L,
+            22L,
+            "b96201c6-8894-49ea-8f60-3f0b4ee72f5d",
+            "sora@example.com",
+            0L,
+            null,
+            0L,
+            null,
+            "jwt",
+            "en-NZ",
+            1L);
     when(entityManagementClient.findCharacterByName(
             sessionContext, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, "Sora"))
         .thenReturn(
@@ -172,7 +182,7 @@ class CommunicationCommandHandlerTest {
                 Character.newBuilder()
                     .setId("300")
                     .setTenantId("22")
-                    .setAccountId("700")
+                    .setAccountId("b96201c6-8894-49ea-8f60-3f0b4ee72f5d")
                     .setName("Sora")
                     .build()));
     when(sessionAuthenticationService.resolveByGameplayName(22L, 1L, "Sora"))

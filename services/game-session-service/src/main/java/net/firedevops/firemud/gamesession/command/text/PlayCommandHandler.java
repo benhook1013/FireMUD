@@ -27,6 +27,7 @@ import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
+import net.firedevops.firemud.gamesession.service.AccountIds;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.DirectTextConnectScopeSessionStore;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
@@ -672,19 +673,19 @@ public class PlayCommandHandler {
     ListCharactersByAccountResponse response =
         entityManagementClient.listCharactersByAccount(
             Long.toString(selectedRealm.tenantId()),
-            Long.toString(context.accountId()),
+            context.accountId(),
             Long.toString(selectedRealm.gameInstanceId()),
             playableStateScope);
     if (response == null || response.hasError()) {
       throw new IllegalStateException("Character roster unavailable for selected gameplay target");
     }
-
     List<Character> roster = response.getCharactersList();
     Set<Long> characterIds = new HashSet<>();
     for (Character character : roster) {
       long characterId = requireResolvedCharacterId(character.getId());
       if (!Long.toString(selectedRealm.tenantId()).equals(character.getTenantId())
-          || !Long.toString(context.accountId()).equals(character.getAccountId())
+          || !context.accountId().equals(character.getAccountId())
+          || !AccountIds.isCanonicalNonNilUuid(character.getAccountId())
           || character.getPlayableStateScope() != playableStateScope
           || !StringUtils.hasText(character.getName())
           || !characterIds.add(characterId)) {
@@ -829,7 +830,7 @@ public class PlayCommandHandler {
     // Only an already-bound character in the selected live runtime can identify denial cleanup;
     // a caller's textual selector is not actor identity or Account authority.
     long currentCharacterId =
-        context.accountId() > 0L
+        context.hasAccountIdentity()
                 && context.tenantId() == selectedRealm.tenantId()
                 && context.gameInstanceId() == selectedRealm.gameInstanceId()
                 && context.characterId() > 0L
@@ -965,7 +966,7 @@ public class PlayCommandHandler {
     if (!isPublicProductionRealm(selectedRealm)) {
       GetRealmAccessGrantForRuntimeResponse grantResponse =
           accountClient.getRealmAccessGrantForRuntime(
-              Long.toString(context.accountId()),
+              context.accountId(),
               Long.toString(selectedRealm.tenantId()),
               selectedWorld.slug(),
               selectedRealm.slug(),
@@ -1034,7 +1035,8 @@ public class PlayCommandHandler {
     if (!response.getAuthorityTuple().getUnknownFields().asMap().isEmpty()) {
       return false;
     }
-    if (!isCanonicalUuid(response.getAccountId()) || !isCanonicalUuid(response.getTenantId())) {
+    if (!AccountIds.isCanonicalNonNilUuid(response.getAccountId())
+        || !isCanonicalUuid(response.getTenantId())) {
       return false;
     }
     if (!response
@@ -1263,7 +1265,7 @@ public class PlayCommandHandler {
       long characterId,
       String requestId) {
     return PlayerExecutionContext.newBuilder()
-        .setAccountId(Long.toString(caller.accountId()))
+        .setAccountId(caller.accountId())
         .setTenantId(Long.toString(target.tenantId()))
         .setRealmId(Objects.toString(target.realmId(), ""))
         .setPlayableStateNamespaceId(Objects.toString(target.playableStateNamespaceId(), ""))
@@ -1537,9 +1539,9 @@ public class PlayCommandHandler {
         || !StringUtils.hasText(response.getAccountId())
         || !StringUtils.hasText(response.getTenantId())
         || !StringUtils.hasText(response.getEvaluatedAt())
-        || !isCanonicalUuid(response.getAccountId())
+        || !AccountIds.isCanonicalNonNilUuid(response.getAccountId())
         || !isCanonicalUuid(response.getTenantId())
-        || !response.getRequestAccountId().equals(Long.toString(context.accountId()))
+        || !response.getRequestAccountId().equals(context.accountId())
         || !response.getRequestTenantId().equals(Long.toString(selectedRealm.tenantId()))
         || !response.getRequestId().equals(requestId)) {
       return false;
@@ -1856,7 +1858,7 @@ public class PlayCommandHandler {
             && context.gameInstanceId() == requestedGameInstanceId;
     boolean sameGameplayIdentity =
         sameRuntimeTarget
-            && context.accountId() > 0L
+            && context.hasAccountIdentity()
             && context.characterId() > 0L
             && requestedCharacterId > 0
             && context.characterId() == requestedCharacterId;

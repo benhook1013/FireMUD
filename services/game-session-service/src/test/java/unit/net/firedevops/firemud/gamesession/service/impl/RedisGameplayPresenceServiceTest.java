@@ -1,6 +1,8 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.verify;
@@ -16,14 +18,19 @@ import net.firedevops.firemud.gamesession.service.GameplayPresenceRole;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mockito;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.SetOperations;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.data.redis.serializer.SerializationException;
 
 @SuppressWarnings("unchecked")
 class RedisGameplayPresenceServiceTest {
   private static final Duration TTL = Duration.ofMillis(1000L);
+  private static final String ACCOUNT_PLAYER = "6b56d98a-f6cd-4e39-9db9-111b9f8c6aa1";
+  private static final String ACCOUNT_GOD = "4f41b943-39b1-4b0f-80f6-fc9229df0712";
 
   private final RedisTemplate<String, Object> redisTemplate = Mockito.mock(RedisTemplate.class);
   private final ValueOperations<String, Object> valueOperations =
@@ -42,7 +49,8 @@ class RedisGameplayPresenceServiceTest {
   @Test
   void registerConnectedStoresPresenceAndIndexesByGameInstance() {
     SessionContext context =
-        new SessionContext(1L, 22L, 102L, "player@example.com", 202L, "Ben", 7L, "R-1", null);
+        new SessionContext(
+            1L, 22L, ACCOUNT_PLAYER, "player@example.com", 202L, "Ben", 7L, "R-1", null);
 
     service.registerConnected(context);
 
@@ -57,16 +65,17 @@ class RedisGameplayPresenceServiceTest {
                             .equals("Ben")),
             org.mockito.Mockito.eq(TTL));
     verify(setOperations).add("gameplaypresence:22:7:sessions", "1");
-    verify(setOperations).add("gameplaypresence:22:account:102:sessions", "1");
+    verify(setOperations).add("gameplaypresence:22:account:" + ACCOUNT_PLAYER + ":sessions", "1");
     verify(redisTemplate).expire("gameplaypresence:22:7:sessions", TTL);
-    verify(redisTemplate).expire("gameplaypresence:22:account:102:sessions", TTL);
+    verify(redisTemplate)
+        .expire("gameplaypresence:22:account:" + ACCOUNT_PLAYER + ":sessions", TTL);
   }
 
   @Test
   void registerConnectedClassifiesInvalidJwtAsPlayer() {
     SessionContext context =
         new SessionContext(
-            1L, 22L, 102L, "player@example.com", 202L, "Ben", 7L, "R-1", "not-a-jwt");
+            1L, 22L, ACCOUNT_PLAYER, "player@example.com", 202L, "Ben", 7L, "R-1", "not-a-jwt");
 
     service.registerConnected(context);
 
@@ -86,17 +95,12 @@ class RedisGameplayPresenceServiceTest {
   void registerConnectedDoesNotElevateTenantRoleClaimsWithoutGrantEvidence() {
     String tenantAdminJwt =
         jwtUtil.generateToken(
-            "102",
-            Map.of(
-                "accountId",
-                "102",
-                "scopedRoles",
-                Map.of("22", List.of("tenantAdmin", "moderator", "god"))));
-    SessionContext context =
+            ACCOUNT_GOD,
+            Map.of("accountId", ACCOUNT_GOD, "scopedRoles", Map.of("22", List.of("god"))));
+    SessionContext godContext =
         new SessionContext(
-            1L, 22L, 102L, "player@example.com", 202L, "Ben", 7L, "R-1", tenantAdminJwt);
-
-    service.registerConnected(context);
+            1L, 22L, ACCOUNT_GOD, "god@example.com", 101L, "Aster", 7L, "R-1", tenantAdminJwt);
+    service.registerConnected(godContext);
 
     verify(valueOperations)
         .set(
@@ -124,7 +128,7 @@ class RedisGameplayPresenceServiceTest {
                 "demo",
                 "production",
                 17L,
-                1L,
+                ACCOUNT_GOD,
                 101L,
                 "Aster",
                 GameplayPresenceRole.GOD,
@@ -163,7 +167,7 @@ class RedisGameplayPresenceServiceTest {
                 7L,
                 "demo",
                 "production",
-                1L,
+                ACCOUNT_GOD,
                 101L,
                 "Aster",
                 GameplayPresenceRole.PLAYER,
@@ -179,6 +183,35 @@ class RedisGameplayPresenceServiceTest {
     verify(setOperations).remove("gameplaypresence:22:7:sessions", "not-a-session");
   }
 
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void listConnectedByGameInstancePreservesIndexForUnreadablePresence(
+      boolean serializationFailure) {
+    String indexKey = "gameplaypresence:22:7:sessions";
+    when(setOperations.members(indexKey)).thenReturn(new LinkedHashSet<>(List.of("5")));
+    when(valueOperations.get("gameplaypresence:session:5"))
+        .thenThrow(unreadablePresenceFailure(serializationFailure));
+
+    var result = service.listConnectedByGameInstance(22L, 7L);
+
+    assertEquals(List.of(), result);
+    verify(setOperations, Mockito.never()).remove(indexKey, "5");
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void listConnectedByAccountIdsPreservesIndexForUnreadablePresence(boolean serializationFailure) {
+    String indexKey = "gameplaypresence:22:account:" + ACCOUNT_PLAYER + ":sessions";
+    when(setOperations.members(indexKey)).thenReturn(new LinkedHashSet<>(List.of("5")));
+    when(valueOperations.get("gameplaypresence:session:5"))
+        .thenThrow(unreadablePresenceFailure(serializationFailure));
+
+    var result = service.listConnectedByAccountIds(22L, List.of(ACCOUNT_PLAYER));
+
+    assertEquals(Map.of(), result);
+    verify(setOperations, Mockito.never()).remove(indexKey, "5");
+  }
+
   @Test
   void removeBySessionIdRemovesValueAndSetMembership() {
     when(valueOperations.get("gameplaypresence:session:3"))
@@ -189,7 +222,7 @@ class RedisGameplayPresenceServiceTest {
                 7L,
                 "demo",
                 "production",
-                102L,
+                ACCOUNT_PLAYER,
                 202L,
                 "Ben",
                 GameplayPresenceRole.PLAYER,
@@ -202,7 +235,54 @@ class RedisGameplayPresenceServiceTest {
 
     verify(redisTemplate).delete("gameplaypresence:session:3");
     verify(setOperations).remove("gameplaypresence:22:7:sessions", "3");
-    verify(setOperations).remove("gameplaypresence:22:account:102:sessions", "3");
+    verify(setOperations)
+        .remove("gameplaypresence:22:account:" + ACCOUNT_PLAYER + ":sessions", "3");
+  }
+
+  @Test
+  void removeBySessionIdPreservesUnreadableRetainedPresence() {
+    String key = "gameplaypresence:session:5";
+    when(valueOperations.get(key)).thenThrow(new SerializationException("legacy record"));
+
+    assertThrows(SerializationException.class, () -> service.removeBySessionId(5L));
+
+    verifyNoPresenceMutations(key);
+  }
+
+  @Test
+  void removeBySessionIdPreservesWrongTypeRetainedPresence() {
+    String key = "gameplaypresence:session:5";
+    when(valueOperations.get(key)).thenReturn(42L);
+
+    assertThrows(ClassCastException.class, () -> service.removeBySessionId(5L));
+
+    verifyNoPresenceMutations(key);
+  }
+
+  @Test
+  void registerConnectedDoesNotOverwriteUnreadableRetainedPresence() {
+    String key = "gameplaypresence:session:1";
+    when(valueOperations.get(key)).thenThrow(new SerializationException("legacy record"));
+    SessionContext context =
+        new SessionContext(
+            1L, 22L, ACCOUNT_PLAYER, "player@example.com", 202L, "Ben", 7L, "R-1", null);
+
+    assertThrows(SerializationException.class, () -> service.registerConnected(context));
+
+    verifyNoPresenceMutations(key);
+  }
+
+  @Test
+  void registerConnectedDoesNotOverwriteWrongTypeRetainedPresence() {
+    String key = "gameplaypresence:session:1";
+    when(valueOperations.get(key)).thenReturn(42L);
+    SessionContext context =
+        new SessionContext(
+            1L, 22L, ACCOUNT_PLAYER, "player@example.com", 202L, "Ben", 7L, "R-1", null);
+
+    assertThrows(ClassCastException.class, () -> service.registerConnected(context));
+
+    verifyNoPresenceMutations(key);
   }
 
   @Test
@@ -217,7 +297,7 @@ class RedisGameplayPresenceServiceTest {
                 "demo",
                 "production",
                 17L,
-                102L,
+                ACCOUNT_PLAYER,
                 202L,
                 "Ben",
                 GameplayPresenceRole.ADMIN,
@@ -244,6 +324,32 @@ class RedisGameplayPresenceServiceTest {
   }
 
   @Test
+  void unreadableLegacyPresenceFailsClosedWithoutDeletingRetainedValue() {
+    String key = "gameplaypresence:session:5";
+    when(valueOperations.get(key)).thenThrow(new SerializationException("legacy record"));
+
+    var presence = service.findConnectedBySessionId(5L);
+
+    assertFalse(presence.isPresent());
+    Mockito.verify(redisTemplate, Mockito.never()).delete(key);
+  }
+
+  private void verifyNoPresenceMutations(String presenceKey) {
+    verify(redisTemplate, Mockito.never()).delete(presenceKey);
+    verify(redisTemplate, Mockito.never()).expire(Mockito.anyString(), Mockito.any(Duration.class));
+    verify(valueOperations, Mockito.never())
+        .set(Mockito.anyString(), Mockito.any(), Mockito.any(Duration.class));
+    verify(setOperations, Mockito.never()).add(Mockito.anyString(), Mockito.any());
+    verify(setOperations, Mockito.never()).remove(Mockito.anyString(), Mockito.any());
+  }
+
+  private static RuntimeException unreadablePresenceFailure(boolean serializationFailure) {
+    return serializationFailure
+        ? new SerializationException("legacy record")
+        : new ClassCastException("legacy record");
+  }
+
+  @Test
   void recordCommandActivityRefreshesPresenceAndMeaningfulTimestampOnlyWhenRequested() {
     AtomicLong now = new AtomicLong(100L);
     service = new RedisGameplayPresenceService(redisTemplate, TTL.toMillis(), now::get);
@@ -255,7 +361,7 @@ class RedisGameplayPresenceServiceTest {
                 7L,
                 "demo",
                 "production",
-                102L,
+                ACCOUNT_PLAYER,
                 202L,
                 "Ben",
                 GameplayPresenceRole.ADMIN,
@@ -286,7 +392,8 @@ class RedisGameplayPresenceServiceTest {
                             == GameplayPresenceRole.PLAYER),
             org.mockito.Mockito.eq(TTL));
     verify(redisTemplate).expire("gameplaypresence:22:7:sessions", TTL);
-    verify(redisTemplate).expire("gameplaypresence:22:account:102:sessions", TTL);
+    verify(redisTemplate)
+        .expire("gameplaypresence:22:account:" + ACCOUNT_PLAYER + ":sessions", TTL);
   }
 
   @Test
@@ -301,7 +408,7 @@ class RedisGameplayPresenceServiceTest {
                 7L,
                 "demo",
                 "production",
-                102L,
+                ACCOUNT_PLAYER,
                 202L,
                 "Ben",
                 GameplayPresenceRole.MODERATOR,
@@ -335,12 +442,13 @@ class RedisGameplayPresenceServiceTest {
                             == GameplayPresenceRole.PLAYER),
             org.mockito.Mockito.eq(TTL));
     verify(redisTemplate).expire("gameplaypresence:22:7:sessions", TTL);
-    verify(redisTemplate).expire("gameplaypresence:22:account:102:sessions", TTL);
+    verify(redisTemplate)
+        .expire("gameplaypresence:22:account:" + ACCOUNT_PLAYER + ":sessions", TTL);
   }
 
   @Test
   void listConnectedByAccountIdsUsesAccountIndexAndReturnsAllMatches() {
-    when(setOperations.members("gameplaypresence:22:account:102:sessions"))
+    when(setOperations.members("gameplaypresence:22:account:" + ACCOUNT_PLAYER + ":sessions"))
         .thenReturn(new LinkedHashSet<>(List.of("3", "4")));
     when(valueOperations.get("gameplaypresence:session:3"))
         .thenReturn(
@@ -352,7 +460,7 @@ class RedisGameplayPresenceServiceTest {
                 "demo",
                 "production",
                 17L,
-                102L,
+                ACCOUNT_PLAYER,
                 202L,
                 "Ben",
                 GameplayPresenceRole.ADMIN,
@@ -370,7 +478,7 @@ class RedisGameplayPresenceServiceTest {
                 "demo",
                 "production",
                 17L,
-                102L,
+                ACCOUNT_PLAYER,
                 202L,
                 "Ben",
                 GameplayPresenceRole.GOD,
@@ -379,15 +487,15 @@ class RedisGameplayPresenceServiceTest {
                 110L,
                 120L));
 
-    var result = service.listConnectedByAccountIds(22L, List.of(102L));
+    var result = service.listConnectedByAccountIds(22L, List.of(ACCOUNT_PLAYER));
 
     assertEquals(1, result.size());
-    assertEquals(2, result.get(102L).size());
+    assertEquals(2, result.get(ACCOUNT_PLAYER).size());
+    assertEquals(4L, result.get(ACCOUNT_PLAYER).get(0).sessionId());
+    assertEquals(3L, result.get(ACCOUNT_PLAYER).get(1).sessionId());
     assertTrue(
-        result.get(102L).stream()
+        result.get(ACCOUNT_PLAYER).stream()
             .allMatch(presence -> presence.role() == GameplayPresenceRole.PLAYER));
-    assertEquals(4L, result.get(102L).get(0).sessionId());
-    assertEquals(3L, result.get(102L).get(1).sessionId());
     Mockito.verify(valueOperations, Mockito.never())
         .set(Mockito.anyString(), Mockito.any(), Mockito.any(Duration.class));
     Mockito.verify(redisTemplate, Mockito.never())
@@ -396,7 +504,7 @@ class RedisGameplayPresenceServiceTest {
 
   @Test
   void listConnectedByAccountIdsPrunesMalformedSessionIndexEntry() {
-    when(setOperations.members("gameplaypresence:22:account:102:sessions"))
+    when(setOperations.members("gameplaypresence:22:account:" + ACCOUNT_PLAYER + ":sessions"))
         .thenReturn(new LinkedHashSet<>(List.of("bad-session", "4")));
     when(valueOperations.get("gameplaypresence:session:4"))
         .thenReturn(
@@ -408,7 +516,7 @@ class RedisGameplayPresenceServiceTest {
                 "demo",
                 "production",
                 17L,
-                102L,
+                ACCOUNT_PLAYER,
                 202L,
                 "Ben",
                 GameplayPresenceRole.PLAYER,
@@ -417,11 +525,12 @@ class RedisGameplayPresenceServiceTest {
                 110L,
                 120L));
 
-    var result = service.listConnectedByAccountIds(22L, List.of(102L));
+    var result = service.listConnectedByAccountIds(22L, List.of(ACCOUNT_PLAYER));
 
     assertEquals(1, result.size());
-    assertEquals(1, result.get(102L).size());
-    assertEquals(4L, result.get(102L).get(0).sessionId());
-    verify(setOperations).remove("gameplaypresence:22:account:102:sessions", "bad-session");
+    assertEquals(1, result.get(ACCOUNT_PLAYER).size());
+    assertEquals(4L, result.get(ACCOUNT_PLAYER).get(0).sessionId());
+    verify(setOperations)
+        .remove("gameplaypresence:22:account:" + ACCOUNT_PLAYER + ":sessions", "bad-session");
   }
 }

@@ -262,7 +262,7 @@ const context = {
   payload: {
     workflow_run: {
       event: "pull_request",
-      name: `CodeQL Analysis pr-42 base-${baseSha} head-${headSha}`,
+      name: "CodeQL Analysis",
       path: ".github/workflows/codeql.yml",
       head_sha: headSha,
       head_branch: "feature",
@@ -273,7 +273,7 @@ const context = {
 };
 const core = { info: () => {} };
 const run = new Function("github", "context", "core", `return (async () => {\n${script}\n})()`);
-run(github, context, core).then(() => {
+run(github, context, core).then(async () => {
   if (calls.paginate.length !== 4) throw new Error(`expected four paginated calls, got ${calls.paginate.length}`);
   if (!calls.paginate.every(({ input }) => input.per_page === 100)) throw new Error("all API listings must request page size 100");
   if (calls.updated.length !== 1 || calls.updated[0].comment_id !== 2) throw new Error("oldest bot summary was not updated");
@@ -281,6 +281,12 @@ run(github, context, core).then(() => {
   if (calls.created.length !== 0) throw new Error("existing bot summary should be updated");
   if (!calls.updated[0].body.includes("❌ Static analysis checks failed")) throw new Error("new failure was masked by the older success");
   if (!calls.updated[0].body.includes("CodeQL gate: `failure`")) throw new Error("latest CodeQL gate result was not selected");
+  context.payload.workflow_run.name = "Forged workflow name";
+  await run(github, context, core);
+  if (calls.paginate.length !== 4 || calls.updated.length !== 1 || calls.deleted.length !== 1) {
+    throw new Error("unrelated source names must not query runs or alter comments");
+  }
+  context.payload.workflow_run.name = "CodeQL Analysis";
   currentHeadSha = "d".repeat(40);
   return run(github, context, core).then(() => {
     if (calls.paginate.length !== 4 || calls.updated.length !== 1 || calls.deleted.length !== 1) {
@@ -316,6 +322,7 @@ run(github, context, core).then(() => {
           calls.deleted.length = 0;
           calls.updated.length = 0;
           calls.created.length = 0;
+          context.payload.workflow_run.name = `CodeQL Analysis pr-42 base-${baseSha} head-${headSha}`;
           deleteStatus = 404;
           return run(github, context, core).then(() => {
             if (calls.deleted.length !== 1 || calls.deleted[0] !== 3) {

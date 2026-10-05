@@ -32,7 +32,7 @@ public final class LogoutCommandHandler {
           SessionIdParsing.parse(sessionId)
               .optionalValue()
               .flatMap(sessionContextService::findBySessionId)
-              .filter(context -> context.accountId() > 0L);
+              .filter(SessionContext::hasAccountIdentity);
     } catch (RuntimeException ex) {
       return unavailable();
     }

@@ -234,9 +234,15 @@ public final class GameSessionGrpcService
     return ownerAccountId;
   }
 
-  private List<Long> parseAccountIds(List<String> accountIds) {
+  private List<String> parseAccountIds(List<String> accountIds) {
     return accountIds.stream()
-        .map(accountId -> ControlPlaneRequestParser.parsePositiveLong(accountId, "accountId"))
+        .map(
+            accountId -> {
+              if (!AccountIds.isCanonicalNonNilUuid(accountId)) {
+                throw new IllegalArgumentException("accountId must be a canonical non-nil UUID");
+              }
+              return accountId;
+            })
         .toList();
   }
 
@@ -439,20 +445,18 @@ public final class GameSessionGrpcService
     try {
       long tenantId =
           ControlPlaneRequestParser.parsePositiveLong(request.getTenantId(), "tenantId");
-      long viewerAccountId =
-          ControlPlaneRequestParser.parsePositiveLong(
-              request.getViewerAccountId(), "viewerAccountId");
-      requireNumericAccountPresenceAccess(tenantId);
+      String viewerAccountId = parseCanonicalAccountId(request.getViewerAccountId());
+      requireTenantOrCurrentAccountAccess(tenantId, viewerAccountId);
       if (request.getAccountIdsCount() > 100) {
         throw new IllegalArgumentException("accountIds must contain at most 100 entries");
       }
-      List<Long> accountIds = parseAccountIds(request.getAccountIdsList());
+      List<String> accountIds = parseAccountIds(request.getAccountIdsList());
       QueryAccountPresenceResponse.Builder builder = QueryAccountPresenceResponse.newBuilder();
       for (var snapshot :
           accountPresenceQueryService.queryAccountPresence(tenantId, viewerAccountId, accountIds)) {
         AccountPresenceEntry.Builder entry =
             AccountPresenceEntry.newBuilder()
-                .setAccountId(Long.toString(snapshot.accountId()))
+                .setAccountId(snapshot.accountId())
                 .setOnline(snapshot.online());
         if (snapshot.gameInstanceId() != null) {
           entry.setGameInstanceId(Long.toString(snapshot.gameInstanceId()));
@@ -862,11 +866,21 @@ public final class GameSessionGrpcService
     throw new AuthorizationException("Tenant access required");
   }
 
-  private void requireNumericAccountPresenceAccess(long tenantId) {
+  private String parseCanonicalAccountId(String accountId) {
+    if (!AccountIds.isCanonicalNonNilUuid(accountId)) {
+      throw new IllegalArgumentException("accountId must be a canonical non-nil UUID");
+    }
+    return accountId;
+  }
+
+  private void requireTenantOrCurrentAccountAccess(long tenantId, String accountId) {
     if (SessionContext.hasTenantAccess(tenantId)) {
       return;
     }
-    throw new AuthorizationException("Numeric account self-service is unavailable");
+    if (SessionContext.isCurrentAccount(accountId)) {
+      return;
+    }
+    throw new AuthorizationException("Account access required");
   }
 
   private void requireInstanceAccess(long sessionId) {

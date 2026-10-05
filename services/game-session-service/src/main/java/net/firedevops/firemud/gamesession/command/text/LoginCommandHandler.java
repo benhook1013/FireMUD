@@ -15,6 +15,7 @@ import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.service.AccountIds;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextResolution;
@@ -22,7 +23,6 @@ import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthor
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
-import net.firedevops.firemud.gamesession.service.PositiveLongParsing;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
@@ -140,8 +140,8 @@ public final class LoginCommandHandler {
       return failure(errorCode, publicErrorMessage(error, errorCode));
     }
 
-    Long authenticatedAccountId = parseAccountId(authResponse.getAccountId());
-    if (authenticatedAccountId == null || authenticatedAccountId <= 0) {
+    String authenticatedAccountId = parseAccountId(authResponse.getAccountId());
+    if (authenticatedAccountId == null) {
       clearFailedLoginSessionState(
           numericSessionId, instance.getTenantId(), bootstrapGameInstanceId, null, null, 0L);
       return invalidAccountFailure();
@@ -165,10 +165,10 @@ public final class LoginCommandHandler {
                 Map.of("loginName", canonicalLoginName))));
   }
 
-  private void invalidateStaleFirstPartyConnectContext(long sessionId, long accountId) {
+  private void invalidateStaleFirstPartyConnectContext(long sessionId, String accountId) {
     firstPartyConnectContextRegistry
         .find(sessionId)
-        .filter(connectContext -> connectContext.accountId() != accountId)
+        .filter(connectContext -> !Objects.equals(connectContext.accountId(), accountId))
         .ifPresent(ignored -> firstPartyConnectContextRegistry.unregister(sessionId));
   }
 
@@ -233,8 +233,8 @@ public final class LoginCommandHandler {
 
     var verifiedContext = maybeContext.get();
     if (existingSession != null
-        && existingSession.accountId() > 0
-        && existingSession.accountId() != verifiedContext.accountId()) {
+        && existingSession.hasAccountIdentity()
+        && !Objects.equals(existingSession.accountId(), verifiedContext.accountId())) {
       firstPartyConnectContextRegistry.unregister(numericSessionId);
       return failure("CONNECT_CONTEXT_INVALID", "Connect context invalid");
     }
@@ -275,8 +275,8 @@ public final class LoginCommandHandler {
     }
 
     if (existingSession != null
-        && existingSession.accountId() > 0L
-        && (existingSession.accountId() != verifiedContext.accountId()
+        && existingSession.hasAccountIdentity()
+        && (!Objects.equals(existingSession.accountId(), verifiedContext.accountId())
             || existingSession.tenantId() != verifiedContext.tenantId())) {
       clearPreviousSessionForVerifiedContext(numericSessionId, existingSession, verifiedContext);
     }
@@ -292,7 +292,7 @@ public final class LoginCommandHandler {
         new SessionContext(
             sessionId,
             verifiedContext.tenantId(),
-            0L,
+            null,
             null,
             0L,
             null,
@@ -312,7 +312,7 @@ public final class LoginCommandHandler {
   private void persistSessionContext(
       long sessionId,
       long tenantId,
-      long accountId,
+      String accountId,
       String loginName,
       String jwt,
       long bootstrapGameInstanceId,
@@ -329,7 +329,10 @@ public final class LoginCommandHandler {
         projectedExisting != null && projectedExisting.tenantId() == tenantId
             ? projectedExisting
             : null;
-    boolean sameAuthenticatedAccount = existing != null && existing.accountId() == accountId;
+    boolean sameAuthenticatedAccount =
+        existing != null
+            && existing.hasAccountIdentity()
+            && Objects.equals(existing.accountId(), accountId);
     Optional<SessionContext> reusableBootstrapShell =
         sameAuthenticatedAccount
             ? Optional.empty()
@@ -387,7 +390,9 @@ public final class LoginCommandHandler {
                     existing.playableStateScope(),
                     existing.connectScopeId(),
                     existing.connectRequestId());
-    if (projectedExisting != null && projectedExisting.accountId() != accountId) {
+    if (projectedExisting != null
+        && projectedExisting.hasAccountIdentity()
+        && !Objects.equals(projectedExisting.accountId(), accountId)) {
       gameplayPresenceLifecycleService.clearGameplayBinding(
           projectedExisting, "LOGIN_ACCOUNT_CHANGED");
     } else if (projectedExisting != null && projectedExisting.tenantId() != tenantId) {
@@ -405,12 +410,12 @@ public final class LoginCommandHandler {
   private Optional<SessionContext> reusableBootstrapShell(
       SessionContext existing,
       long tenantId,
-      long accountId,
+      String accountId,
       long bootstrapGameInstanceId,
       net.firedevops.firemud.gamesession.service.FirstPartyConnectContext verifiedConnectContext,
       String verifiedPlayableStateScope) {
     if (existing == null
-        || existing.accountId() != 0L
+        || existing.hasAccountIdentity()
         || existing.tenantId() != tenantId
         || existing.bootstrapGameInstanceId() != bootstrapGameInstanceId
         || existing.hasGameplayBinding()
@@ -426,7 +431,7 @@ public final class LoginCommandHandler {
 
     boolean verifiedIdentityAndTargetMatch =
         verifiedConnectContext.hasCompleteRoutingScope()
-            && verifiedConnectContext.accountId() == accountId
+            && Objects.equals(verifiedConnectContext.accountId(), accountId)
             && verifiedConnectContext.tenantId() == tenantId
             && verifiedConnectContext.gameInstanceId() == bootstrapGameInstanceId
             && Objects.equals(existing.playableStateScope(), verifiedPlayableStateScope)
@@ -446,7 +451,7 @@ public final class LoginCommandHandler {
   private SessionContext authenticatedBootstrapContext(
       long sessionId,
       long tenantId,
-      long accountId,
+      String accountId,
       String loginName,
       String jwt,
       SessionContext bootstrapShell,
@@ -584,7 +589,7 @@ public final class LoginCommandHandler {
         new SessionContext(
             sessionId,
             tenantId,
-            0L,
+            null,
             null,
             0L,
             null,
@@ -644,13 +649,8 @@ public final class LoginCommandHandler {
     return SessionIdParsing.parse(sessionIdText);
   }
 
-  private Long parseAccountId(String accountIdText) {
-    PositiveLongParsing.ParsedPositiveLong parsed =
-        PositiveLongParsing.parseOptionalText(accountIdText, "accountId");
-    if (!parsed.valid()) {
-      return null;
-    }
-    return parsed.value();
+  private String parseAccountId(String accountIdText) {
+    return AccountIds.isCanonicalNonNilUuid(accountIdText) ? accountIdText : null;
   }
 
   private LoginCommandHandlingResult invalidSessionFailure(String message) {

@@ -13,7 +13,7 @@ public record FriendPresenceViewOutput(String filter, int totalCount, List<Entry
   public record Entry(
       int ordinal,
       Long friendLinkId,
-      long friendAccountId,
+      String friendAccountId,
       String status,
       Long linkedAtEpochMs,
       String displayName,

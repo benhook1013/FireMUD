@@ -24,6 +24,7 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 
 class RedisAccountRecentPresenceServiceTest {
+  private static final String ACCOUNT_ID = "a8e3cf57-7d4e-44bd-8f4e-77c7fa18df10";
 
   @Test
   void recordDisconnectPersistsRoutingBundleFromLivePresence() {
@@ -43,7 +44,7 @@ class RedisAccountRecentPresenceServiceTest {
         new SessionContext(
             41L,
             22L,
-            123L,
+            ACCOUNT_ID,
             "demo@example.com",
             7001L,
             "Emberline",
@@ -65,7 +66,7 @@ class RedisAccountRecentPresenceServiceTest {
             "demo",
             "production",
             17L,
-            123L,
+            ACCOUNT_ID,
             7001L,
             "Emberline",
             GameplayPresenceRole.PLAYER,
@@ -90,12 +91,15 @@ class RedisAccountRecentPresenceServiceTest {
 
     ArgumentCaptor<Object> stateCaptor = ArgumentCaptor.forClass(Object.class);
     verify(valueOperations)
-        .set(eq("accountrecentpresence:22:123"), stateCaptor.capture(), eq(Duration.ofMinutes(5)));
+        .set(
+            eq("accountrecentpresence:22:" + ACCOUNT_ID),
+            stateCaptor.capture(),
+            eq(Duration.ofMinutes(5)));
 
     AccountRecentPresenceState state =
         assertInstanceOf(AccountRecentPresenceState.class, stateCaptor.getValue());
     assertEquals(22L, state.tenantId());
-    assertEquals(123L, state.accountId());
+    assertEquals(ACCOUNT_ID, state.accountId());
     assertEquals(101L, state.gameInstanceId());
     assertEquals("demo", state.worldSlug());
     assertEquals("production", state.realmSlug());
@@ -122,7 +126,7 @@ class RedisAccountRecentPresenceServiceTest {
         new SessionContext(
             41L,
             22L,
-            123L,
+            ACCOUNT_ID,
             "demo@example.com",
             0L,
             null,
@@ -144,7 +148,7 @@ class RedisAccountRecentPresenceServiceTest {
             "demo",
             "production",
             17L,
-            123L,
+            ACCOUNT_ID,
             7001L,
             "Emberline",
             GameplayPresenceRole.PLAYER,
@@ -170,7 +174,10 @@ class RedisAccountRecentPresenceServiceTest {
 
     ArgumentCaptor<Object> stateCaptor = ArgumentCaptor.forClass(Object.class);
     verify(valueOperations)
-        .set(eq("accountrecentpresence:22:123"), stateCaptor.capture(), eq(Duration.ofMinutes(5)));
+        .set(
+            eq("accountrecentpresence:22:" + ACCOUNT_ID),
+            stateCaptor.capture(),
+            eq(Duration.ofMinutes(5)));
 
     AccountRecentPresenceState state =
         assertInstanceOf(AccountRecentPresenceState.class, stateCaptor.getValue());
@@ -198,7 +205,7 @@ class RedisAccountRecentPresenceServiceTest {
         new SessionContext(
             41L,
             22L,
-            123L,
+            ACCOUNT_ID,
             "demo@example.com",
             0L,
             null,
@@ -220,7 +227,7 @@ class RedisAccountRecentPresenceServiceTest {
             "demo",
             "production",
             17L,
-            123L,
+            ACCOUNT_ID,
             7001L,
             "Emberline",
             GameplayPresenceRole.PLAYER,
@@ -246,7 +253,10 @@ class RedisAccountRecentPresenceServiceTest {
 
     ArgumentCaptor<Object> stateCaptor = ArgumentCaptor.forClass(Object.class);
     verify(valueOperations)
-        .set(eq("accountrecentpresence:22:123"), stateCaptor.capture(), eq(Duration.ofMinutes(5)));
+        .set(
+            eq("accountrecentpresence:22:" + ACCOUNT_ID),
+            stateCaptor.capture(),
+            eq(Duration.ofMinutes(5)));
 
     AccountRecentPresenceState state =
         assertInstanceOf(AccountRecentPresenceState.class, stateCaptor.getValue());
@@ -274,7 +284,7 @@ class RedisAccountRecentPresenceServiceTest {
         new SessionContext(
             41L,
             22L,
-            123L,
+            ACCOUNT_ID,
             "demo@example.com",
             7001L,
             "Emberline",
@@ -296,7 +306,7 @@ class RedisAccountRecentPresenceServiceTest {
             "demo",
             null,
             17L,
-            123L,
+            ACCOUNT_ID,
             7001L,
             "Emberline",
             GameplayPresenceRole.PLAYER,
@@ -322,7 +332,10 @@ class RedisAccountRecentPresenceServiceTest {
 
     ArgumentCaptor<Object> stateCaptor = ArgumentCaptor.forClass(Object.class);
     verify(valueOperations)
-        .set(eq("accountrecentpresence:22:123"), stateCaptor.capture(), eq(Duration.ofMinutes(5)));
+        .set(
+            eq("accountrecentpresence:22:" + ACCOUNT_ID),
+            stateCaptor.capture(),
+            eq(Duration.ofMinutes(5)));
 
     AccountRecentPresenceState state =
         assertInstanceOf(AccountRecentPresenceState.class, stateCaptor.getValue());

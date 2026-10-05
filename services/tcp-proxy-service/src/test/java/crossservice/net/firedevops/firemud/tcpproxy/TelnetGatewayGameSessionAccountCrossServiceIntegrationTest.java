@@ -66,11 +66,15 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   private static final String CROSS_SERVICE_TEST_JWT_SECRET =
       "stub-secret-key-for-tests-1234567890";
   private static final long TENANT_ID = 1L;
-  private static final long ACCOUNT_ID = 7L;
+  private static final String ACCOUNT_UUID = ChatTestFixtures.ACCOUNT_UUID_EMBERLINE;
+  private static final long MANAGEMENT_OWNER_SELECTOR = 7L;
+  private static final long EMBERLINE_CHARACTER_ID =
+      Long.parseLong(ChatTestFixtures.PLAYER_EMBERLINE);
   private static final String SORA_EMAIL = "sora@example.com";
-  private static final long SORA_ACCOUNT_ID = Long.parseLong(ChatTestFixtures.PLAYER_SORA);
+  private static final String SORA_ACCOUNT_UUID = ChatTestFixtures.ACCOUNT_UUID_SORA;
+  private static final long SORA_CHARACTER_ID = Long.parseLong(ChatTestFixtures.PLAYER_SORA);
   private static final String NYX_EMAIL = "nyx@example.com";
-  private static final long NYX_ACCOUNT_ID = Long.parseLong(ChatTestFixtures.PLAYER_NYX);
+  private static final String NYX_ACCOUNT_UUID = ChatTestFixtures.ACCOUNT_UUID_NYX;
   private static final long DEMO_WORLD_INSTANCE_ID = 1L;
   private static final String READY_LOOK_TEXT = "Candle-lit Antechamber";
 
@@ -127,7 +131,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   @BeforeEach
   void clearSharedRuntimeState() throws Exception {
     ensureTestServicesStarted();
-    STACK.freshGameplayBaseline(TENANT_ID, DEFAULT_GAME_INSTANCE_ID, ACCOUNT_ID, 7L, ACCOUNT_ID);
+    STACK.freshGameplayBaseline(
+        TENANT_ID, DEFAULT_GAME_INSTANCE_ID, MANAGEMENT_OWNER_SELECTOR, 7L, EMBERLINE_CHARACTER_ID);
   }
 
   @Test
@@ -523,7 +528,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     SessionContextService sessionContextService = gameSession().bean(SessionContextService.class);
     long activeGameplaySessionId =
         sessionContextService
-            .findByGameplayIdentity(TENANT_ID, DEMO_WORLD_INSTANCE_ID, ACCOUNT_ID)
+            .findByGameplayIdentity(TENANT_ID, DEMO_WORLD_INSTANCE_ID, EMBERLINE_CHARACTER_ID)
             .orElseThrow(() -> new IllegalStateException("Expected active gameplay binding"))
             .sessionId();
     sessionContextService.deleteBySessionId(TENANT_ID, activeGameplaySessionId);
@@ -726,9 +731,9 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     GatewayHolder gateway = null;
     try {
       stack =
-          GameplayCrossServiceStack.defaultDemoBuilder(POSTGRES, REDIS, ACCOUNT_ID)
-              .mapAccountId(SORA_EMAIL, SORA_ACCOUNT_ID)
-              .mapAccountId(NYX_EMAIL, NYX_ACCOUNT_ID)
+          GameplayCrossServiceStack.defaultDemoBuilder(POSTGRES, REDIS, ACCOUNT_UUID)
+              .mapAccountUuid(SORA_EMAIL, SORA_ACCOUNT_UUID)
+              .mapAccountUuid(NYX_EMAIL, NYX_ACCOUNT_UUID)
               .withSocialEnabled(true)
               .withGameLogicProps(
                   Map.of(
@@ -749,7 +754,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
                   GatewayBackedGameSessionTestOverrides.class, NestedReadinessOverrides.class)
               .start();
       long defaultGameInstanceId =
-          stack.freshGameplayBaseline(TENANT_ID, 1L, ACCOUNT_ID, 7L, ACCOUNT_ID);
+          stack.freshGameplayBaseline(
+              TENANT_ID, 1L, MANAGEMENT_OWNER_SELECTOR, 7L, EMBERLINE_CHARACTER_ID);
       awaitGameSessionReadiness(stack.gameSessionPort());
       gateway = startGateway(stack.gameSessionPort());
 
@@ -797,9 +803,9 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     STACK.seedLiveSession(
         90210L,
         TENANT_ID,
-        Long.parseLong(ChatTestFixtures.PLAYER_SORA),
+        SORA_ACCOUNT_UUID,
         "sora@example.com",
-        Long.parseLong(ChatTestFixtures.PLAYER_SORA),
+        SORA_CHARACTER_ID,
         "Sora",
         DEMO_WORLD_INSTANCE_ID,
         LookTestFixtures.ROOM_ID,

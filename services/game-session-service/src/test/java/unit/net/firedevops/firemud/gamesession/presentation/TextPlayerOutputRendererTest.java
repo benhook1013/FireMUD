@@ -15,6 +15,8 @@ import org.junit.jupiter.api.Test;
 
 class TextPlayerOutputRendererTest {
   private static final String STRIDE_COMMAND_ID = "stride";
+  private static final String SORA_ACCOUNT_ID = "5f7624ca-8aee-4d34-9cd8-3ba3a1815f30";
+  private static final String OTHER_FRIEND_ACCOUNT_ID = "f2ed193b-12c1-4c96-bcad-c162229af440";
 
   @Test
   void characterRosterExplainsCurrentNameOnlySelection() {
@@ -1146,7 +1148,7 @@ class TextPlayerOutputRendererTest {
                     new FriendPresenceViewOutput.Entry(
                         1,
                         77L,
-                        41L,
+                        SORA_ACCOUNT_ID,
                         "ONLINE",
                         null,
                         "Sora",
@@ -1171,7 +1173,9 @@ class TextPlayerOutputRendererTest {
     assertThat(rendered)
         .isEqualTo(
             "OK FRIENDS\n"
-                + "Friend Sora [acct #41]\n"
+                + "Friend Sora [acct #"
+                + SORA_ACCOUNT_ID
+                + "]\n"
                 + "Link: #77\n"
                 + "Status: online\n"
                 + "Presence: online in Demo World / Ember Realm (active)\n"
@@ -1202,11 +1206,26 @@ class TextPlayerOutputRendererTest {
                     2,
                     List.of(
                         new FriendPresenceViewOutput.Entry(
-                            1, null, 77L, "active", null, "Sora", true, null, null, null, null,
-                            null, null, null, null, null, "PUBLIC")))));
+                            1,
+                            null,
+                            OTHER_FRIEND_ACCOUNT_ID,
+                            "active",
+                            null,
+                            "Sora",
+                            true,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            "PUBLIC")))));
 
     assertThat(rendered)
-        .contains("Friends ONLINE:\n", "1) Sora [acct #77] - online")
+        .contains("Friends ONLINE:\n", "1) Sora [acct #" + OTHER_FRIEND_ACCOUNT_ID + "] - online")
         .doesNotContain("[1/2]", "[0/2]");
   }
 
@@ -1248,7 +1267,7 @@ class TextPlayerOutputRendererTest {
                         new FriendPresenceViewOutput.Entry(
                             1,
                             null,
-                            77L,
+                            SORA_ACCOUNT_ID,
                             "active",
                             null,
                             "Sora",

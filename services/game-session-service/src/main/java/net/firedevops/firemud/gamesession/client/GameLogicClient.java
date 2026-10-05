@@ -160,7 +160,7 @@ public class GameLogicClient
     String tenantId = Long.toString(context.tenantId());
     String sessionId = Long.toString(context.sessionId());
     String characterId = Long.toString(context.characterId());
-    String accountId = Long.toString(context.accountId());
+    String accountId = context.accountId();
     String gameInstanceId = Long.toString(context.gameInstanceId());
     SendCommunicationRequest request =
         SendCommunicationRequest.newBuilder()
@@ -346,7 +346,7 @@ public class GameLogicClient
       SessionContext context, String itemReference, int quantity, String effectId) {
     String tenantId = Long.toString(context.tenantId());
     String sessionId = Long.toString(context.sessionId());
-    String accountId = Long.toString(context.accountId());
+    String accountId = context.accountId();
     String characterId = Long.toString(context.characterId());
     String gameInstanceId = Long.toString(context.gameInstanceId());
     String roomInstanceId =
@@ -449,7 +449,7 @@ public class GameLogicClient
       SessionContext context, String itemReference, int quantity, String effectId) {
     String tenantId = Long.toString(context.tenantId());
     String sessionId = Long.toString(context.sessionId());
-    String accountId = Long.toString(context.accountId());
+    String accountId = context.accountId();
     String characterId = Long.toString(context.characterId());
     String gameInstanceId = Long.toString(context.gameInstanceId());
     String roomInstanceId =
@@ -720,7 +720,7 @@ public class GameLogicClient
     return gameplaySessionAttestationService.issueGameplaySessionAttestation(
         Long.toString(context.tenantId()),
         Long.toString(context.sessionId()),
-        Long.toString(context.accountId()),
+        context.accountId(),
         Long.toString(context.characterId()),
         Long.toString(context.gameInstanceId()),
         canonicalRoomId,

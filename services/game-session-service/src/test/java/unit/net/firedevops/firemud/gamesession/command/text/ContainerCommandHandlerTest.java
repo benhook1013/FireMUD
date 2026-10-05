@@ -26,7 +26,15 @@ class ContainerCommandHandlerTest {
   private final ContainerCommandHandler handler = new ContainerCommandHandler(gameLogicClient);
   private final SessionContext context =
       new SessionContext(
-          1L, 22L, 123L, "emberline@example.com", 911L, "Emberline", 77L, "R-7", "jwt-token");
+          1L,
+          22L,
+          "f2ed193b-12c1-4c96-bcad-c162229af440",
+          "emberline@example.com",
+          911L,
+          "Emberline",
+          77L,
+          "R-7",
+          "jwt-token");
 
   @Test
   void containerViewReturnsStructuredContents() {

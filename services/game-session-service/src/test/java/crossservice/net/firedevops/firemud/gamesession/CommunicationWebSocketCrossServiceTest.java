@@ -29,9 +29,14 @@ import org.testcontainers.utility.DockerImageName;
 class CommunicationWebSocketCrossServiceTest {
   private static final Duration COMMAND_WAIT = Duration.ofSeconds(45);
   private static final long TENANT_ID = 1L;
-  private static final long ACCOUNT_ID = Long.parseLong(ChatTestFixtures.PLAYER_EMBERLINE);
-  private static final long SORA_ACCOUNT_ID = Long.parseLong(ChatTestFixtures.PLAYER_SORA);
-  private static final long NYX_ACCOUNT_ID = Long.parseLong(ChatTestFixtures.PLAYER_NYX);
+  private static final String ACCOUNT_UUID = ChatTestFixtures.ACCOUNT_UUID_EMBERLINE;
+  private static final String SORA_ACCOUNT_UUID = ChatTestFixtures.ACCOUNT_UUID_SORA;
+  private static final String NYX_ACCOUNT_UUID = ChatTestFixtures.ACCOUNT_UUID_NYX;
+  private static final long EMBERLINE_CHARACTER_ID =
+      Long.parseLong(ChatTestFixtures.PLAYER_EMBERLINE);
+  private static final long SORA_CHARACTER_ID = Long.parseLong(ChatTestFixtures.PLAYER_SORA);
+  private static final long NYX_CHARACTER_ID = Long.parseLong(ChatTestFixtures.PLAYER_NYX);
+  private static final long MANAGEMENT_OWNER_SELECTOR = EMBERLINE_CHARACTER_ID;
   private static final long DEMO_WORLD_INSTANCE_ID = 1L;
   private static final String READY_LOOK_TEXT = "Candle-lit Antechamber";
   private static final String SORA_EMAIL = "sora@example.com";
@@ -76,7 +81,7 @@ class CommunicationWebSocketCrossServiceTest {
         .hasValueSatisfying(
             request -> {
               assertThat(request.getTenantId()).isEqualTo(Long.toString(TENANT_ID));
-              assertThat(request.getAccountId()).isEqualTo(Long.toString(ACCOUNT_ID));
+              assertThat(request.getAccountId()).isEqualTo(ACCOUNT_UUID);
               assertThat(request.getGameInstanceId())
                   .isEqualTo(Long.toString(DEMO_WORLD_INSTANCE_ID));
               assertThat(request.getPlayableStateScope())
@@ -225,12 +230,13 @@ class CommunicationWebSocketCrossServiceTest {
 
     List<String> responses =
         runCommunicationSequence(
-            sessionId, "FRIENDS", "Sora [acct #" + SORA_ACCOUNT_ID + "] - online (idle)");
+            sessionId, "FRIENDS", "Sora [acct #" + SORA_ACCOUNT_UUID + "] - online (idle)");
 
     assertThat(responses).hasSizeGreaterThanOrEqualTo(3);
     assertThat(responses)
         .anyMatch(
-            response -> response.contains("Sora [acct #" + SORA_ACCOUNT_ID + "] - online (idle)"));
+            response ->
+                response.contains("Sora [acct #" + SORA_ACCOUNT_UUID + "] - online (idle)"));
     assertThat(responses)
         .noneMatch(
             response ->
@@ -241,7 +247,7 @@ class CommunicationWebSocketCrossServiceTest {
                     || response.contains("shared")
                     || response.contains("Pointer version"));
     GameplaySocialAssertions.assertListFriendsRequest(
-        socialStub().lastFriendsRequest(), Long.toString(TENANT_ID), Long.toString(ACCOUNT_ID));
+        socialStub().lastFriendsRequest(), Long.toString(TENANT_ID), ACCOUNT_UUID);
   }
 
   @Test
@@ -253,18 +259,18 @@ class CommunicationWebSocketCrossServiceTest {
         runCommunicationSequence(
             sessionId,
             "FRIENDS ONLINE",
-            "Friends ONLINE:\n" + "1) Sora [acct #" + SORA_ACCOUNT_ID + "] - online (idle)");
+            "Friends ONLINE:\n" + "1) Sora [acct #" + SORA_ACCOUNT_UUID + "] - online (idle)");
 
     assertThat(responses)
         .anyMatch(
             response ->
                 response.contains("Friends ONLINE:\n")
                     && response.contains(
-                        "1) Sora [acct #" + SORA_ACCOUNT_ID + "] - online (idle)"));
+                        "1) Sora [acct #" + SORA_ACCOUNT_UUID + "] - online (idle)"));
     GameplaySocialAssertions.assertListFriendsRequest(
         socialStub().lastFriendsRequest(),
         Long.toString(TENANT_ID),
-        Long.toString(ACCOUNT_ID),
+        ACCOUNT_UUID,
         net.firedevops.firemud.socialgroups.v1.FriendRosterFilter.FRIEND_ROSTER_FILTER_ONLINE);
   }
 
@@ -299,11 +305,12 @@ class CommunicationWebSocketCrossServiceTest {
     sessionId = prepareGameInstance();
     List<String> responses =
         runCommunicationSequence(
-            sessionId, "FRIENDS", "Sora [acct #" + SORA_ACCOUNT_ID + "] - online (idle)");
+            sessionId, "FRIENDS", "Sora [acct #" + SORA_ACCOUNT_UUID + "] - online (idle)");
 
     assertThat(responses)
         .anyMatch(
-            response -> response.contains("Sora [acct #" + SORA_ACCOUNT_ID + "] - online (idle)"));
+            response ->
+                response.contains("Sora [acct #" + SORA_ACCOUNT_UUID + "] - online (idle)"));
   }
 
   @Test
@@ -311,7 +318,7 @@ class CommunicationWebSocketCrossServiceTest {
     ensureTestServicesStarted();
     FriendPresenceEntry missingPolicyPresence =
         FriendPresenceEntry.newBuilder()
-            .setFriendAccountId(Long.toString(SORA_ACCOUNT_ID))
+            .setFriendAccountId(SORA_ACCOUNT_UUID)
             .setOnline(true)
             .setCharacterId(ChatTestFixtures.PLAYER_SORA)
             .setCharacterName("Sora")
@@ -347,22 +354,22 @@ class CommunicationWebSocketCrossServiceTest {
 
     try (GameplayWebSocketDriver client =
         openReadySessionClient(sessionId, "friends-mutate-conn")) {
-      client.send("FRIENDS ADD 77");
-      client.awaitContains("Friend #77 added.");
-      client.send("FRIENDS REMOVE 77");
-      client.awaitContains("Friend #77 removed.");
+      client.send("FRIENDS ADD " + SORA_ACCOUNT_UUID);
+      client.awaitContains("Friend #" + SORA_ACCOUNT_UUID + " added.");
+      client.send("FRIENDS REMOVE " + SORA_ACCOUNT_UUID);
+      client.awaitContains("Friend #" + SORA_ACCOUNT_UUID + " removed.");
     }
 
     GameplaySocialAssertions.assertAddFriendRequest(
         socialStub().lastAddFriendRequest(),
         Long.toString(TENANT_ID),
-        Long.toString(ACCOUNT_ID),
-        "77");
+        ACCOUNT_UUID,
+        SORA_ACCOUNT_UUID);
     GameplaySocialAssertions.assertRemoveFriendRequest(
         socialStub().lastRemoveFriendRequest(),
         Long.toString(TENANT_ID),
-        Long.toString(ACCOUNT_ID),
-        "77");
+        ACCOUNT_UUID,
+        SORA_ACCOUNT_UUID);
   }
 
   @Test
@@ -373,21 +380,21 @@ class CommunicationWebSocketCrossServiceTest {
     try (GameplayWebSocketDriver client =
         openReadySessionClient(sessionId, "friends-mutate-name-conn")) {
       client.send("FRIENDS ADD Sora");
-      client.awaitContains("Sora [acct #" + SORA_ACCOUNT_ID + "] added.");
+      client.awaitContains("Sora [acct #" + SORA_ACCOUNT_UUID + "] added.");
       client.send("FRIENDS REMOVE Sora");
-      client.awaitContains("Sora [acct #" + SORA_ACCOUNT_ID + "] removed.");
+      client.awaitContains("Sora [acct #" + SORA_ACCOUNT_UUID + "] removed.");
     }
 
     GameplaySocialAssertions.assertAddFriendRequest(
         socialStub().lastAddFriendRequest(),
         Long.toString(TENANT_ID),
-        Long.toString(ACCOUNT_ID),
-        Long.toString(SORA_ACCOUNT_ID));
+        ACCOUNT_UUID,
+        SORA_ACCOUNT_UUID);
     GameplaySocialAssertions.assertRemoveFriendRequest(
         socialStub().lastRemoveFriendRequest(),
         Long.toString(TENANT_ID),
-        Long.toString(ACCOUNT_ID),
-        Long.toString(SORA_ACCOUNT_ID));
+        ACCOUNT_UUID,
+        SORA_ACCOUNT_UUID);
   }
 
   @Test
@@ -398,14 +405,11 @@ class CommunicationWebSocketCrossServiceTest {
     try (GameplayWebSocketDriver client =
         openReadySessionClient(sessionId, "friends-remove-ordinal-conn")) {
       client.send("FRIENDS REMOVE #1");
-      client.awaitContains("Sora [acct #" + SORA_ACCOUNT_ID + "] removed.");
+      client.awaitContains("Sora [acct #" + SORA_ACCOUNT_UUID + "] removed.");
     }
 
     GameplaySocialAssertions.assertRemoveFriendByOrdinalRequest(
-        socialStub().lastRemoveFriendByOrdinalRequest(),
-        Long.toString(TENANT_ID),
-        Long.toString(ACCOUNT_ID),
-        1);
+        socialStub().lastRemoveFriendByOrdinalRequest(), Long.toString(TENANT_ID), ACCOUNT_UUID, 1);
   }
 
   @Test
@@ -417,7 +421,7 @@ class CommunicationWebSocketCrossServiceTest {
         openReadySessionClient(sessionId, "friends-show-detail-conn")) {
       int baseline = client.responses().size();
       client.send("FRIENDS SHOW #1");
-      client.awaitContains("Friend Sora [acct #" + SORA_ACCOUNT_ID + "]");
+      client.awaitContains("Friend Sora [acct #" + SORA_ACCOUNT_UUID + "]");
       client.awaitContains("Presence: online (idle)");
       client.awaitContains("Roster entry: #1");
       assertThat(client.responses().subList(baseline, client.responses().size()))
@@ -432,10 +436,7 @@ class CommunicationWebSocketCrossServiceTest {
     }
 
     GameplaySocialAssertions.assertGetFriendByOrdinalRequest(
-        socialStub().lastGetFriendByOrdinalRequest(),
-        Long.toString(TENANT_ID),
-        Long.toString(ACCOUNT_ID),
-        1);
+        socialStub().lastGetFriendByOrdinalRequest(), Long.toString(TENANT_ID), ACCOUNT_UUID, 1);
   }
 
   @Test
@@ -456,7 +457,7 @@ class CommunicationWebSocketCrossServiceTest {
     }
 
     GameplaySocialAssertions.assertFriendRosterSummaryRequest(
-        socialStub().lastSummaryRequest(), Long.toString(TENANT_ID), Long.toString(ACCOUNT_ID));
+        socialStub().lastSummaryRequest(), Long.toString(TENANT_ID), ACCOUNT_UUID);
   }
 
   @Test
@@ -474,13 +475,11 @@ class CommunicationWebSocketCrossServiceTest {
     }
 
     GameplaySocialAssertions.assertGetVisibilityRequest(
-        socialStub().lastGetVisibilityRequest(),
-        Long.toString(TENANT_ID),
-        Long.toString(ACCOUNT_ID));
+        socialStub().lastGetVisibilityRequest(), Long.toString(TENANT_ID), ACCOUNT_UUID);
     GameplaySocialAssertions.assertUpdateVisibilityRequest(
         socialStub().lastUpdateVisibilityRequest(),
         Long.toString(TENANT_ID),
-        Long.toString(ACCOUNT_ID),
+        ACCOUNT_UUID,
         FriendPresenceVisibilityPolicy.FRIEND_PRESENCE_VISIBILITY_POLICY_PRIVATE);
   }
 
@@ -493,7 +492,7 @@ class CommunicationWebSocketCrossServiceTest {
     java.util.Map<String, Object> connectClaims =
         java.util.Map.of(
             "accountId",
-            Long.toString(ACCOUNT_ID),
+            ACCOUNT_UUID,
             "tenantId",
             Long.toString(TENANT_ID),
             "worldSlug",
@@ -519,7 +518,7 @@ class CommunicationWebSocketCrossServiceTest {
             COMMAND_WAIT,
             Long.toString(sessionId),
             "stub-secret-key-for-tests-1234567890",
-            Long.toString(ACCOUNT_ID),
+            ACCOUNT_UUID,
             connectClaims)) {
       int baseline = client.responses().size();
       client.send("LOGIN");
@@ -544,7 +543,13 @@ class CommunicationWebSocketCrossServiceTest {
             gameSession()
                 .bean(net.firedevops.firemud.gamesession.service.SessionContextService.class)
                 .findByTenantAndSessionId(TENANT_ID, sessionId))
-        .satisfies(saved -> saved.ifPresent(context -> assertThat(context.accountId()).isZero()));
+        .satisfies(
+            saved ->
+                saved.ifPresent(
+                    context -> {
+                      assertThat(context.accountId()).isNull();
+                      assertThat(context.hasAccountIdentity()).isFalse();
+                    }));
     assertThat(entityStub().lastListCharactersByAccountRequest())
         .isEqualTo(previousCharacterLookup);
   }
@@ -728,16 +733,16 @@ class CommunicationWebSocketCrossServiceTest {
   private static synchronized void ensureTestServicesStarted() throws Exception {
     if (STACK == null) {
       STACK =
-          GameplayCrossServiceStack.defaultDemoBuilder(POSTGRES, REDIS, ACCOUNT_ID)
-              .mapAccountId("sora@example.com", SORA_ACCOUNT_ID)
-              .mapAccountId("nyx@example.com", NYX_ACCOUNT_ID)
+          GameplayCrossServiceStack.defaultDemoBuilder(POSTGRES, REDIS, ACCOUNT_UUID)
+              .mapAccountUuid("sora@example.com", SORA_ACCOUNT_UUID)
+              .mapAccountUuid("nyx@example.com", NYX_ACCOUNT_UUID)
               .withInitialRoomEntities(ChatTestFixtures.sampleEntities())
               .withSocialEnabled(true)
               .withInitialFriendPresenceResponse(
                   net.firedevops.firemud.socialgroups.v1.ListFriendPresenceResponse.newBuilder()
                       .addPresences(
                           FriendPresenceEntry.newBuilder()
-                              .setFriendAccountId(Long.toString(SORA_ACCOUNT_ID))
+                              .setFriendAccountId(SORA_ACCOUNT_UUID)
                               .setOnline(true)
                               .setCharacterId(ChatTestFixtures.PLAYER_SORA)
                               .setCharacterName("Sora")
@@ -766,14 +771,14 @@ class CommunicationWebSocketCrossServiceTest {
         STACK.freshGameplayBaseline(
             TENANT_ID,
             DEMO_WORLD_INSTANCE_ID,
-            ACCOUNT_ID,
+            MANAGEMENT_OWNER_SELECTOR,
             7L,
-            ACCOUNT_ID,
-            Long.parseLong(ChatTestFixtures.PLAYER_SORA),
-            Long.parseLong(ChatTestFixtures.PLAYER_NYX));
+            EMBERLINE_CHARACTER_ID,
+            SORA_CHARACTER_ID,
+            NYX_CHARACTER_ID);
     entityStub().resetCharacterRosterState();
-    STACK.accountStub().mapAccountId(SORA_EMAIL, Long.parseLong(ChatTestFixtures.PLAYER_SORA));
-    STACK.accountStub().mapAccountId(NYX_EMAIL, Long.parseLong(ChatTestFixtures.PLAYER_NYX));
+    STACK.accountStub().mapAccountUuid(SORA_EMAIL, SORA_ACCOUNT_UUID);
+    STACK.accountStub().mapAccountUuid(NYX_EMAIL, NYX_ACCOUNT_UUID);
     return sessionId;
   }
 
@@ -791,9 +796,9 @@ class CommunicationWebSocketCrossServiceTest {
     STACK.seedLiveSession(
         90210L,
         TENANT_ID,
-        Long.parseLong(ChatTestFixtures.PLAYER_SORA),
+        ChatTestFixtures.characterByName("Sora").getAccountId(),
         "sora@example.com",
-        Long.parseLong(ChatTestFixtures.PLAYER_SORA),
+        SORA_CHARACTER_ID,
         "Sora",
         DEMO_WORLD_INSTANCE_ID,
         ChatTestFixtures.ROOM_ID,

@@ -203,7 +203,7 @@ public final class EntityManagementClient
     return gameplaySessionAttestationService.issueGameplaySessionAttestation(
         Long.toString(context.tenantId()),
         Long.toString(context.sessionId()),
-        Long.toString(context.accountId()),
+        context.accountId(),
         Long.toString(context.characterId()),
         gameInstanceId,
         canonicalRoomId,

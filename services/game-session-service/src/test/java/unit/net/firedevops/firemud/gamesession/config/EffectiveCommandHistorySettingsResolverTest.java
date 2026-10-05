@@ -42,7 +42,15 @@ class EffectiveCommandHistorySettingsResolverTest {
         resolved =
             resolver.resolvedCommandHistory(
                 new SessionContext(
-                    1L, 22L, 123L, "demo@example.com", 911L, "Ember", 7L, "R-1", null));
+                    1L,
+                    22L,
+                    "f2ed193b-12c1-4c96-bcad-c162229af440",
+                    "demo@example.com",
+                    911L,
+                    "Ember",
+                    7L,
+                    "R-1",
+                    null));
 
     assertThat(resolved.effective()).isEqualTo(new FiremudCommandHistoryProperties(20));
     assertThat(resolved.sources())

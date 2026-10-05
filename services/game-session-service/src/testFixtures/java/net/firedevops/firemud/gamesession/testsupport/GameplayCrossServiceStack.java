@@ -64,7 +64,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
   private final net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse
       baselineRoomEntities;
   private final ListFriendPresenceResponse baselineFriendPresenceResponse;
-  private final Map<Long, String> syntheticManagementOwnerUuids = new HashMap<>();
+  private final Map<Long, String> syntheticManagementOwnerUuidsBySelector = new HashMap<>();
   private CrossServiceAppHarness.GameLogicHolder gameLogic;
   private final CrossServiceAppHarness.GameSessionHolder gameSession;
   private final boolean useDefaultDemoCatalogFixture;
@@ -97,7 +97,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
   }
 
   public static Builder defaultDemoBuilder(
-      PostgreSQLContainer<?> postgres, GenericContainer<?> redis, long defaultAccountId) {
+      PostgreSQLContainer<?> postgres, GenericContainer<?> redis, String defaultAccountUuid) {
     Builder builder =
         builder()
             .withPostgres(
@@ -107,7 +107,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
                 postgres.getUsername(),
                 postgres.getPassword())
             .withRedis(redis.getHost(), redis.getMappedPort(6379))
-            .withDefaultAccountId(defaultAccountId);
+            .withDefaultAccountUuid(defaultAccountUuid);
     builder.useDefaultDemoCatalogFixture = true;
     return builder;
   }
@@ -190,6 +190,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
         socialStub.setFriendPresenceResponse(baselineFriendPresenceResponse);
       }
     }
+    entityStub.resetSyntheticAccountCharacters();
   }
 
   public void clearScreenBuffers(long tenantId, long gameInstanceId, long... characterIds) {
@@ -202,7 +203,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
   public long freshGameplayBaseline(
       long tenantId,
       long gameplayInstanceId,
-      long ownerAccountId,
+      long managementOwnerSelector,
       long gameTemplateId,
       long... characterIds) {
     resetScenarioState();
@@ -222,7 +223,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
             jdbc, tenantId, GameInstanceTestFixtures.TEST_OWNER_ACCOUNT_UUID, gameTemplateId);
     seedRuntimeOwnership(tenantId, gameInstanceId);
     if (useDefaultDemoCatalogFixture) {
-      bindDefaultDemoPointer(tenantId, gameInstanceId, ownerAccountId, gameTemplateId);
+      bindDefaultDemoPointer(tenantId, gameInstanceId, managementOwnerSelector, gameTemplateId);
     }
     return gameInstanceId;
   }
@@ -855,7 +856,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
   public void seedLiveSession(
       long sessionId,
       long tenantId,
-      long accountId,
+      String accountId,
       String loginName,
       long characterId,
       String characterName,
@@ -878,7 +879,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
   public void seedLiveSession(
       long sessionId,
       long tenantId,
-      long accountId,
+      String accountId,
       String loginName,
       long characterId,
       String characterName,
@@ -909,7 +910,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
   }
 
   public long insertRunningGameInstance(
-      long tenantId, long accountId, long gameTemplateId, boolean clearExisting) {
+      long tenantId, long managementOwnerSelector, long gameTemplateId, boolean clearExisting) {
     JdbcTemplate jdbc = jdbc();
     if (clearExisting) {
       clearRedis();
@@ -920,8 +921,8 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
         GameInstanceTestFixtures.insertRunningGameInstance(
             jdbc,
             tenantId,
-            syntheticManagementOwnerUuids.computeIfAbsent(
-                accountId, ignored -> UUID.randomUUID().toString()),
+            syntheticManagementOwnerUuidsBySelector.computeIfAbsent(
+                managementOwnerSelector, ignored -> UUID.randomUUID().toString()),
             gameTemplateId);
     seedRuntimeOwnership(tenantId, gameInstanceId);
     return gameInstanceId;
@@ -975,12 +976,12 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
     private String postgresPassword;
     private String redisHost;
     private int redisPort;
-    private long defaultAccountId = 7L;
+    private String defaultAccountUuid = "a7e0feac-60ab-4fd1-9002-0ad38d585db0";
     private String defaultRoomId = LookTestFixtures.ROOM_ID;
     private net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse initialRoomEntities;
     private ListFriendPresenceResponse initialFriendPresenceResponse;
     private boolean includeSocial;
-    private final Map<String, Long> accountMappings = new LinkedHashMap<>();
+    private final Map<String, String> accountUuidMappings = new LinkedHashMap<>();
     private final Map<String, Object> gameLogicProps = new LinkedHashMap<>();
     private final Map<String, Object> gameSessionProps = new LinkedHashMap<>();
     private Class<?>[] gameLogicConfigs = new Class<?>[0];
@@ -1005,13 +1006,13 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
       return this;
     }
 
-    public Builder withDefaultAccountId(long accountId) {
-      this.defaultAccountId = accountId;
+    public Builder withDefaultAccountUuid(String accountUuid) {
+      this.defaultAccountUuid = accountUuid;
       return this;
     }
 
-    public Builder mapAccountId(String email, long accountId) {
-      this.accountMappings.put(email, accountId);
+    public Builder mapAccountUuid(String email, String accountUuid) {
+      this.accountUuidMappings.put(email, accountUuid);
       return this;
     }
 
@@ -1059,8 +1060,8 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
     public GameplayCrossServiceStack start() throws IOException {
       requireConfigured();
       AccountRuntimeStubServer accountStub = new AccountRuntimeStubServer(0);
-      accountStub.setDefaultAccountId(defaultAccountId);
-      accountMappings.forEach(accountStub::mapAccountId);
+      accountStub.setDefaultAccountUuid(defaultAccountUuid);
+      accountUuidMappings.forEach(accountStub::mapAccountUuid);
 
       GameDesignStubServer gameDesignStub = new GameDesignStubServer(0);
       WorldManagementStubServer worldStub = new WorldManagementStubServer(0);

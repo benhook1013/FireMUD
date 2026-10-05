@@ -66,10 +66,29 @@ class CommunicationRecipientDeliveryServiceTest {
   @Test
   void deliverDropsStaleRecipientResolvedByGameplayIdentity() {
     SessionContext actor =
-        new SessionContext(41L, 22L, 123L, "demo@example.com", 123L, "Emberline", 1L, "R-1", "jwt");
+        new SessionContext(
+            41L,
+            22L,
+            "11111111-1111-4111-8111-111111111111",
+            "demo@example.com",
+            123L,
+            "Emberline",
+            1L,
+            "R-1",
+            "jwt");
     SessionContext clearedRecipient =
         new SessionContext(
-            42L, 22L, 456L, "friend@example.com", 0L, null, 0L, null, "jwt", "en-NZ", 1L);
+            42L,
+            22L,
+            "8a1b4907-cc5f-43c8-842f-cb4c9316117d",
+            "friend@example.com",
+            0L,
+            null,
+            0L,
+            null,
+            "jwt",
+            "en-NZ",
+            1L);
     CommunicationRecipientView view =
         CommunicationRecipientView.newBuilder()
             .setRole(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET)
@@ -95,10 +114,29 @@ class CommunicationRecipientDeliveryServiceTest {
   @Test
   void deliverDropsStaleRecipientResolvedByGameplayName() {
     SessionContext actor =
-        new SessionContext(41L, 22L, 123L, "demo@example.com", 123L, "Emberline", 1L, "R-1", "jwt");
+        new SessionContext(
+            41L,
+            22L,
+            "11111111-1111-4111-8111-111111111111",
+            "demo@example.com",
+            123L,
+            "Emberline",
+            1L,
+            "R-1",
+            "jwt");
     SessionContext clearedRecipient =
         new SessionContext(
-            42L, 22L, 456L, "friend@example.com", 0L, null, 0L, null, "jwt", "en-NZ", 1L);
+            42L,
+            22L,
+            "8a1b4907-cc5f-43c8-842f-cb4c9316117d",
+            "friend@example.com",
+            0L,
+            null,
+            0L,
+            null,
+            "jwt",
+            "en-NZ",
+            1L);
     CommunicationRecipientView view =
         CommunicationRecipientView.newBuilder()
             .setRole(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET)
@@ -124,7 +162,16 @@ class CommunicationRecipientDeliveryServiceTest {
   @Test
   void deliverDoesNotFallbackToNameWhenRecipientIdIsMalformed() {
     SessionContext actor =
-        new SessionContext(41L, 22L, 123L, "demo@example.com", 123L, "Emberline", 1L, "R-1", "jwt");
+        new SessionContext(
+            41L,
+            22L,
+            "11111111-1111-4111-8111-111111111111",
+            "demo@example.com",
+            123L,
+            "Emberline",
+            1L,
+            "R-1",
+            "jwt");
     CommunicationRecipientView view =
         CommunicationRecipientView.newBuilder()
             .setRole(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET)
@@ -150,7 +197,16 @@ class CommunicationRecipientDeliveryServiceTest {
   @Test
   void deliverDoesNotFallbackToNameWhenRecipientIdIsNonPositive() {
     SessionContext actor =
-        new SessionContext(41L, 22L, 123L, "demo@example.com", 123L, "Emberline", 1L, "R-1", "jwt");
+        new SessionContext(
+            41L,
+            22L,
+            "11111111-1111-4111-8111-111111111111",
+            "demo@example.com",
+            123L,
+            "Emberline",
+            1L,
+            "R-1",
+            "jwt");
     CommunicationRecipientView view =
         CommunicationRecipientView.newBuilder()
             .setRole(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET)
@@ -174,7 +230,16 @@ class CommunicationRecipientDeliveryServiceTest {
   @Test
   void deliverDoesNotFallbackToNameWhenStructuredRecipientIdDoesNotResolve() {
     SessionContext actor =
-        new SessionContext(41L, 22L, 123L, "demo@example.com", 123L, "Emberline", 1L, "R-1", "jwt");
+        new SessionContext(
+            41L,
+            22L,
+            "11111111-1111-4111-8111-111111111111",
+            "demo@example.com",
+            123L,
+            "Emberline",
+            1L,
+            "R-1",
+            "jwt");
     CommunicationRecipientView view =
         CommunicationRecipientView.newBuilder()
             .setRole(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET)
@@ -203,10 +268,29 @@ class CommunicationRecipientDeliveryServiceTest {
   @SuppressWarnings("unchecked")
   void deliverBuffersStructuredReplayEntryForRecipientCommunication() {
     SessionContext actor =
-        new SessionContext(41L, 22L, 123L, "demo@example.com", 123L, "Emberline", 1L, "R-1", "jwt");
+        new SessionContext(
+            41L,
+            22L,
+            "11111111-1111-4111-8111-111111111111",
+            "demo@example.com",
+            123L,
+            "Emberline",
+            1L,
+            "R-1",
+            "jwt");
     SessionContext recipient =
         new SessionContext(
-            42L, 22L, 456L, "friend@example.com", 456L, "Sora", 1L, "R-2", "jwt", "en-NZ", 1L);
+            42L,
+            22L,
+            "8a1b4907-cc5f-43c8-842f-cb4c9316117d",
+            "friend@example.com",
+            456L,
+            "Sora",
+            1L,
+            "R-2",
+            "jwt",
+            "en-NZ",
+            1L);
     CommunicationRecipientView view =
         CommunicationRecipientView.newBuilder()
             .setRole(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET)
@@ -252,10 +336,29 @@ class CommunicationRecipientDeliveryServiceTest {
   @Test
   void deliverDoesNotBufferNonReplayableRecipientOutput() {
     SessionContext actor =
-        new SessionContext(41L, 22L, 123L, "demo@example.com", 123L, "Emberline", 1L, "R-1", "jwt");
+        new SessionContext(
+            41L,
+            22L,
+            "11111111-1111-4111-8111-111111111111",
+            "demo@example.com",
+            123L,
+            "Emberline",
+            1L,
+            "R-1",
+            "jwt");
     SessionContext recipient =
         new SessionContext(
-            42L, 22L, 456L, "friend@example.com", 456L, "Sora", 1L, "R-2", "jwt", "en-NZ", 1L);
+            42L,
+            22L,
+            "8a1b4907-cc5f-43c8-842f-cb4c9316117d",
+            "friend@example.com",
+            456L,
+            "Sora",
+            1L,
+            "R-2",
+            "jwt",
+            "en-NZ",
+            1L);
     CommunicationRecipientView view =
         CommunicationRecipientView.newBuilder()
             .setRole(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET)
