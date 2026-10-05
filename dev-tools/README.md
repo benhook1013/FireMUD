@@ -30,7 +30,7 @@ The `pr-review`, `report-worktree-pr-topology.sh`, and `maintenance/cloc-report.
 
 ## FireController
 
-[`fire-controller`](fire_controller/README.md) is the reusable project-configured entrance for independent SQLite jobs and delegated review commands. Project-specific WSL wrappers select reviewed checkouts and explicit contexts; the existing `pr-review` entrance remains during rollout. Local job pages use the narrow private status adapter and never enter public publish artifacts.
+[`fire-controller`](fire_controller/README.md) is the reusable project-configured entrance for independent SQLite jobs and delegated review commands. Project-specific WSL wrappers select reviewed checkouts and explicit contexts; the existing `pr-review` entrance remains during rollout. The separately maintained private status site reads FireController's public job and workstream projections and serves private detail routes locally. Its source and privacy proof are owned by [the native site handoff](fire_controller/integration/README.md); private links and details stay out of static public artifacts.
 
 ## Folder map
 

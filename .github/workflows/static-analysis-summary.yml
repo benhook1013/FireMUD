@@ -3,7 +3,7 @@ name: Static Analysis Summary
 on:
   workflow_run:
     workflows:
-      - License Checks
+      - License Gate
       - CodeQL Analysis
     types:
       - completed
@@ -59,7 +59,7 @@ jobs:
             const sourceWorkflowPath = context.payload.workflow_run.path;
             const sourceWorkflowName = ({
               ".github/workflows/codeql.yml": "CodeQL Analysis",
-              ".github/workflows/license-scan.yml": "License Checks",
+              ".github/workflows/license-scan.yml": "License Gate",
             })[sourceWorkflowPath];
             const expectedSourceTitle = `${sourceWorkflowName} pr-${issueNumber} base-${baseSha} head-${headSha}`;
             if (
@@ -130,7 +130,7 @@ jobs:
             };
 
             const workflowRunFor = async (workflowId) => {
-              const workflowName = workflowId === "codeql.yml" ? "CodeQL Analysis" : "License Checks";
+              const workflowName = workflowId === "codeql.yml" ? "CodeQL Analysis" : "License Gate";
               const expectedTitle = `${workflowName} pr-${issueNumber} base-${baseSha} head-${headSha}`;
               const workflowRuns = await github.paginate(github.rest.actions.listWorkflowRuns, {
                 ...context.repo,
