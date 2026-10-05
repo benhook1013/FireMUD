@@ -28,6 +28,7 @@ import net.firedevops.firemud.gamedesign.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamedesign.client.EntityManagementClient;
 import net.firedevops.firemud.gamedesign.client.GameLogicClient;
 import net.firedevops.firemud.gamedesign.client.WorldManagementClient;
+import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection.PublishIntent;
 import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PluginVersionStatusEventDto;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
@@ -136,18 +137,6 @@ class VersionServiceImplTest {
             pluginBundleStorageService,
             publishCommandService,
             Optional.empty());
-  }
-
-  @Test
-  void publishVersionWithoutDurableWorkflowDoesNotMutate() {
-    IllegalStateException thrown =
-        assertThrows(
-            IllegalStateException.class,
-            () -> service.publishVersion("tenant-1", "notes", PUBLISH_REQUEST_ID));
-
-    assertTrue(thrown.getMessage().startsWith("PUBLISH_WORKFLOW_UNAVAILABLE"));
-    verify(publishCommandService, org.mockito.Mockito.never())
-        .publishFullVersion(any(), any(), any(), any());
   }
 
   @Test
@@ -1094,42 +1083,35 @@ class VersionServiceImplTest {
   }
 
   @Test
-  void publishVersionPropagatesTypedPublishGateFailures() {
-    when(temporalPublishOrchestrator.publishFullVersion("tenant-1", "notes", PUBLISH_REQUEST_ID))
-        .thenThrow(
-            new PublishGateFailureException(
-                PublishGateFailureCode.RECORDED_CONTENT_DIGEST_MISMATCH,
-                "recorded digest mismatch"));
+  void publishVersionDeniesWithoutCurrentAccountAndOwnerEvidenceBeforeTemporalOrSideEffects() {
+    PublishIntent intent =
+        new PublishIntent(
+            UUID.fromString("11111111-1111-4111-8111-111111111111"),
+            UUID.fromString("22222222-2222-4222-8222-222222222222"),
+            PUBLISH_REQUEST_ID,
+            "9",
+            "notes",
+            UUID.fromString("33333333-3333-4333-8333-333333333333"),
+            UUID.fromString("44444444-4444-4444-8444-444444444444"),
+            "sha256:" + "a".repeat(64));
 
-    PublishGateFailureException thrown =
-        org.junit.jupiter.api.Assertions.assertThrows(
-            PublishGateFailureException.class,
-            () -> serviceWithTemporal().publishVersion("tenant-1", "notes", PUBLISH_REQUEST_ID));
+    IllegalStateException thrown =
+        assertThrows(
+            IllegalStateException.class, () -> serviceWithTemporal().publishVersion(intent));
 
-    assertEquals(PublishGateFailureCode.RECORDED_CONTENT_DIGEST_MISMATCH, thrown.failureCode());
-  }
-
-  @Test
-  void publishVersionDeletesExportedAssetsWhenAttestationWriteFails() {
-    when(temporalPublishOrchestrator.publishFullVersion("tenant-1", "notes", PUBLISH_REQUEST_ID))
-        .thenReturn(
-            new VersionDto(
-                10L,
-                "tenant-1",
-                8,
-                VersionLifecycleState.PUBLISHED,
-                2L,
-                null,
-                null,
-                false,
-                "notes",
-                LocalDateTime.now(),
-                LocalDateTime.now()));
-
-    VersionDto dto = serviceWithTemporal().publishVersion("tenant-1", "notes", PUBLISH_REQUEST_ID);
-
-    assertEquals(10L, dto.id());
-    verify(temporalPublishOrchestrator).publishFullVersion("tenant-1", "notes", PUBLISH_REQUEST_ID);
+    assertTrue(thrown.getMessage().startsWith("PUBLICATION_AUTHORIZATION_UNAVAILABLE"));
+    org.mockito.Mockito.verifyNoInteractions(
+        temporalPublishOrchestrator,
+        publishCommandService,
+        publishAttemptService,
+        publishGateService,
+        assetExportService,
+        controlPlaneDigestService,
+        versionAssetArtifactService,
+        publishedReleaseBundleService,
+        recordedParticipantDigestService,
+        versionRepository,
+        gameRepository);
   }
 
   private VersionServiceImpl serviceWithTemporal() {

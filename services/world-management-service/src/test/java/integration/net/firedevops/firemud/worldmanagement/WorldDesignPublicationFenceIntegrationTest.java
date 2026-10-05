@@ -262,11 +262,14 @@ class WorldDesignPublicationFenceIntegrationTest {
     WorldAuthoredVersionIdentityReceipt firstIdentity = identity(first, GAME_DESIGN_VERSION_A);
     long secondGameDesignVersionId = firstIdentity.localVersionKey();
     WorldAuthoredSourceIntakeReceipt second =
-        intake(canonicalTenantId, "brighter-coast", tenantSlug, 8_102L);
+        intake(canonicalTenantId, "brighter-coast", tenantSlug, 8_101L);
     WorldAuthoredVersionIdentityReceipt secondIdentity =
         identity(second, secondGameDesignVersionId);
     assertThat(secondGameDesignVersionId).isEqualTo(firstIdentity.localVersionKey());
     assertThat(secondIdentity.localVersionKey()).isNotEqualTo(secondGameDesignVersionId);
+    assertThatThrownBy(() -> intake(canonicalTenantId, "contradictory-world", tenantSlug, 8_103L))
+        .isInstanceOf(WorldAuthoredSourceIntakeRepository.RegistrationConflictException.class)
+        .hasMessageContaining("Canonical tenant source or stable tenant selector conflicts");
 
     WorldDesignPublicationFenceEvidence firstRequest =
         evidence(first, "shared-publication-request", GAME_DESIGN_VERSION_A, 5L);

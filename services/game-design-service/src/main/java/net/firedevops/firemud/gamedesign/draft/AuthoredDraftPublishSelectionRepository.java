@@ -54,6 +54,13 @@ public class AuthoredDraftPublishSelectionRepository {
     requireWritableReadCommittedTransaction();
     Objects.requireNonNull(intent, "intent");
 
+    Optional<SelectionSnapshot> prior =
+        readByPublishRequest(intent.canonicalTenantId(), intent.publishRequestId());
+    if (prior.isPresent()) {
+      requireExactIntent(intent, prior.get().selection().intent());
+      return prior.get();
+    }
+
     LockedVersion version =
         coordinator.lockVersionTarget(intent.canonicalTenantId(), intent.canonicalVersionId());
     SelectionSnapshot existing = findByTarget(version.target(), false);
@@ -82,7 +89,7 @@ public class AuthoredDraftPublishSelectionRepository {
     } catch (DataAccessException exception) {
       if (isUniqueConstraintViolation(exception)) {
         throw new DraftCommitIdentityConflictException(
-            "An authored Draft publication selection already reserves this Version", exception);
+            "An authored Draft publication operation already reserves an exact Version", exception);
       }
       throw exception;
     }
@@ -97,6 +104,22 @@ public class AuthoredDraftPublishSelectionRepository {
           "An authored Draft publish request was reused with changed exact binding data");
     }
     return persisted;
+  }
+
+  /** Reads the immutable selection only when all canonical target and request fields match. */
+  public Optional<SelectionSnapshot> readByPublishRequest(
+      UUID canonicalTenantId, String publishRequestId) {
+    requireNonNil(canonicalTenantId, "canonicalTenantId");
+    net.firedevops.firemud.common.publication.PublicationDigestRequestBinding
+        .validatePublicationIdentity(canonicalTenantId.toString(), publishRequestId);
+    Record row =
+        dsl.fetchOne(
+            "SELECT * FROM "
+                + SELECTION_TABLE
+                + " WHERE canonical_tenant_id = ? AND publish_request_id = ?",
+            canonicalTenantId,
+            publishRequestId);
+    return row == null ? Optional.empty() : Optional.of(toSnapshot(row));
   }
 
   /** Reads the immutable selection only when all canonical target and request fields match. */

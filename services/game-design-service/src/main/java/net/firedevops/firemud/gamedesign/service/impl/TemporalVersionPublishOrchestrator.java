@@ -7,6 +7,7 @@ import io.temporal.client.WorkflowStub;
 import java.time.Duration;
 import net.firedevops.firemud.common.temporal.FiremudWorkflowIds;
 import net.firedevops.firemud.common.temporal.TemporalTaskQueueResolver;
+import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection.PublishIntent;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.model.PublishGateFailureCode;
 import net.firedevops.firemud.gamedesign.service.PublishAttemptPendingReconciliationException;
@@ -36,10 +37,9 @@ public class TemporalVersionPublishOrchestrator {
     this.commandService = commandService;
   }
 
-  public VersionDto publishFullVersion(String tenantId, String notes, String publishRequestId) {
-    String workflowId = workflowId(tenantId, publishRequestId);
-    PublishWorkflowRequest request =
-        new PublishWorkflowRequest(tenantId, notes, publishRequestId, workflowId);
+  public VersionDto publishFullVersion(PublishIntent intent) {
+    PublishWorkflowRequest request = commandService.reserveSelection(intent);
+    String workflowId = request.publishWorkflowId();
     TemporalVersionPublishWorkflow workflow = newWorkflowStub(workflowId);
     try {
       WorkflowStub.fromTyped(workflow).start(request);
@@ -48,7 +48,7 @@ public class TemporalVersionPublishOrchestrator {
     }
     PublishWorkflowSnapshot snapshot = waitForSnapshot(workflow, workflowId);
     if (snapshot.isSucceeded()) {
-      return commandService.publishFullVersion(tenantId, notes, publishRequestId, workflowId);
+      return commandService.publishFullVersion(request);
     }
     throw failureForSnapshot(snapshot);
   }

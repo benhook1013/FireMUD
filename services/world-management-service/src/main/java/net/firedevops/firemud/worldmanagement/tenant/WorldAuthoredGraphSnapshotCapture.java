@@ -36,7 +36,6 @@ import tools.jackson.databind.ObjectMapper;
  * publication eligibility or proof that World applied a complete synchronized owner commit.
  */
 public class WorldAuthoredGraphSnapshotCapture {
-  private static final int GRAPH_SCHEMA_VERSION = 1;
   private static final int WORLD_DIGEST_SCHEMA_VERSION = 2;
 
   private static final Table<?> REGION = table("region");
@@ -141,8 +140,8 @@ public class WorldAuthoredGraphSnapshotCapture {
     }
 
     String revisionEvidenceJson = captureOwnerRevisionEvidence(request, provenance);
-    Graph graph = readAndValidateGraph(provenance);
-    byte[] graphBytes = encodeGraph(graph);
+    WorldAuthoredGraph graph = readAndValidateGraph(provenance);
+    byte[] graphBytes = graph.encode(objectMapper);
     WorldDraftDesignDigest currentDigest =
         draftDigestService.getDraftDesignDigest(
             Long.toString(provenance.localTenantKey()),
@@ -236,7 +235,7 @@ public class WorldAuthoredGraphSnapshotCapture {
     return writeJson(evidence);
   }
 
-  private Graph readAndValidateGraph(OwnerProvenance provenance) {
+  private WorldAuthoredGraph readAndValidateGraph(OwnerProvenance provenance) {
     long tenantKey = provenance.localTenantKey();
     long versionKey = provenance.localVersionKey();
     List<Record> regionRows = fetch(REGION, tenantKey, versionKey);
@@ -427,7 +426,7 @@ public class WorldAuthoredGraphSnapshotCapture {
       item.put("respawnDelaySeconds", delay);
       bindings.add(item);
     }
-    return new Graph(regions, zones, rooms, exits, rules, bindings);
+    return new WorldAuthoredGraph(regions, zones, rooms, exits, rules, bindings);
   }
 
   private List<Record> fetch(Table<?> table, long tenantKey, long versionKey) {
@@ -467,18 +466,6 @@ public class WorldAuthoredGraphSnapshotCapture {
     } catch (NumberFormatException exception) {
       throw incomplete("generation_rule", rowId, label + " is unsupported");
     }
-  }
-
-  private byte[] encodeGraph(Graph graph) {
-    LinkedHashMap<String, Object> root = new LinkedHashMap<>();
-    root.put("snapshotSchemaVersion", GRAPH_SCHEMA_VERSION);
-    root.put("regions", graph.regions());
-    root.put("zones", graph.zones());
-    root.put("rooms", graph.rooms());
-    root.put("roomExits", graph.roomExits());
-    root.put("generationRules", graph.generationRules());
-    root.put("worldEntitySpawnBindings", graph.spawnBindings());
-    return writeJsonBytes(root);
   }
 
   private String encodeTuples(List<OwnedAffectedTuple> tuples) {
@@ -613,12 +600,4 @@ public class WorldAuthoredGraphSnapshotCapture {
       throw new IllegalStateException("SHA-256 unavailable", exception);
     }
   }
-
-  private record Graph(
-      List<LinkedHashMap<String, Object>> regions,
-      List<LinkedHashMap<String, Object>> zones,
-      List<LinkedHashMap<String, Object>> rooms,
-      List<LinkedHashMap<String, Object>> roomExits,
-      List<LinkedHashMap<String, Object>> generationRules,
-      List<LinkedHashMap<String, Object>> spawnBindings) {}
 }

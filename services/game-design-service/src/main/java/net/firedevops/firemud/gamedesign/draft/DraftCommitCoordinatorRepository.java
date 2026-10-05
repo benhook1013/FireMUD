@@ -225,7 +225,7 @@ public class DraftCommitCoordinatorRepository {
         dsl.execute(
             "UPDATE "
                 + OWNER_RESULT_TABLE
-                + " SET status = 'IN_PROGRESS', updated_at = ? "
+                + " SET status = 'IN_PROGRESS', updated_at = CAST(? AS timestamptz) "
                 + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? "
                 + "AND request_id = ? AND owner = ? AND status = 'NOT_ATTEMPTED'",
             now(),
@@ -278,7 +278,7 @@ public class DraftCommitCoordinatorRepository {
             "UPDATE "
                 + OWNER_RESULT_TABLE
                 + " SET status = ?, result_commit_id = ?, result_binding_digest = ?, "
-                + "result_identity = ?, result_bytes = ?, applied_units_json = ?, updated_at = ? "
+                + "result_identity = ?, result_bytes = ?, applied_units_json = ?, updated_at = CAST(? AS timestamptz) "
                 + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? "
                 + "AND request_id = ? AND owner = ? AND status = ?",
             outcome.status().name(),
@@ -714,7 +714,7 @@ public class DraftCommitCoordinatorRepository {
         dsl.execute(
             "UPDATE "
                 + COMMIT_TABLE
-                + " SET workflow_state = ?, updated_at = ? "
+                + " SET workflow_state = ?, updated_at = CAST(? AS timestamptz) "
                 + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? AND request_id = ? "
                 + "AND workflow_state <> ?",
             state.name(),

@@ -2148,6 +2148,10 @@ jobs:
             --require-case 'net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepositoryIntegrationTest#reusesExistingAuthoredVersionAndExactReplayIgnoresLaterServerState()' \
             --require-case 'net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepositoryIntegrationTest#rejectsPublishedScriptOnlyUnmappedPartialStaleAndMismatchedTargets()' \
             --require-case 'net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepositoryIntegrationTest#failedReservationTransactionLeavesNoSelection()' \
+            --require-case 'net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepositoryIntegrationTest#samePublicationRequestCannotSelectAnotherVersionInTheSameTenant()' \
+            --require-case 'net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepositoryIntegrationTest#concurrentPublicationRequestClaimsAcrossVersionsRetainOnlyOneSelection()' \
+            --require-case 'net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepositoryIntegrationTest#v44PreservesExactSelectionsRetainedAtV43()' \
+            --require-case 'net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepositoryIntegrationTest#v44RejectsConflictingRetainedRequestAcrossVersionsWithoutDiscardingEitherHistory()' \
             --require-case 'net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepositoryIntegrationTest#versionRowLockSerializesSelectionAgainstApplicationSlotClaim()' \
             game-design-service
 

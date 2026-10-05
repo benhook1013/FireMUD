@@ -36,6 +36,7 @@ import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.FlywayException;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -64,6 +65,182 @@ class AuthoredDraftPublishSelectionRepositoryIntegrationTest {
   @BeforeAll
   static void setUpSchema() {
     fixture = createFixture();
+  }
+
+  @Test
+  void v44PreservesExactSelectionsRetainedAtV43() {
+    Fixture retained = createFixture("43");
+    VersionFixture first = retained.newVersion(Long.parseLong(LARGE_EPOCH));
+    VersionFixture second = retained.newFullVersionInTenant(first);
+    VersionFixture otherTenant = retained.newVersion(1L);
+    DraftCommitBinding firstCommit = binding(first.target(), UUID.randomUUID(), UUID.randomUUID());
+    DraftCommitBinding secondCommit =
+        binding(second.target(), UUID.randomUUID(), UUID.randomUUID());
+    DraftCommitBinding otherCommit =
+        binding(otherTenant.target(), UUID.randomUUID(), UUID.randomUUID());
+    retained.synchronize(firstCommit);
+    retained.synchronize(secondCommit);
+    retained.synchronize(otherCommit);
+    PublishIntent firstIntent = intent(first, firstCommit, "retained notes \"quoted\"\n世界");
+    PublishIntent secondIntent = intent(second, secondCommit, "second retained selection");
+    PublishIntent otherIntent =
+        sameRequestIntent(otherTenant, otherCommit, firstIntent.publishRequestId());
+    SelectionSnapshot firstSelection = reserve(retained, firstIntent);
+    SelectionSnapshot secondSelection = reserve(retained, secondIntent);
+    SelectionSnapshot otherSelection = reserve(retained, otherIntent);
+    List<Map<String, Object>> before = retainedSelectionRows(retained);
+    assertThat(before).hasSize(3);
+
+    migrate(retained.dataSource(), retained.schema(), "44");
+
+    assertThat(retainedSelectionRows(retained)).isEqualTo(before);
+    assertRetainedSelection(retained, firstSelection);
+    assertRetainedSelection(retained, secondSelection);
+    assertRetainedSelection(retained, otherSelection);
+    assertThat(reserve(retained, firstIntent)).isEqualTo(firstSelection);
+    assertThat(reserve(retained, secondIntent)).isEqualTo(secondSelection);
+    assertThat(reserve(retained, otherIntent)).isEqualTo(otherSelection);
+    assertThat(retainedSelectionRows(retained)).isEqualTo(before);
+    assertThat(
+            retained
+                .dsl()
+                .fetchCount(DSL.table(DSL.name(FLYWAY_TABLE)), DSL.field("version").eq("44")))
+        .isEqualTo(1);
+  }
+
+  @Test
+  void v44RejectsConflictingRetainedRequestAcrossVersionsWithoutDiscardingEitherHistory() {
+    Fixture retained = createFixture("43");
+    VersionFixture first = retained.newVersion(1L);
+    VersionFixture second = retained.newFullVersionInTenant(first);
+    DraftCommitBinding firstCommit = binding(first.target(), UUID.randomUUID(), UUID.randomUUID());
+    DraftCommitBinding secondCommit =
+        binding(second.target(), UUID.randomUUID(), UUID.randomUUID());
+    retained.synchronize(firstCommit);
+    retained.synchronize(secondCommit);
+    PublishIntent firstIntent = intent(first, firstCommit, "first retained history");
+    PublishIntent secondIntent =
+        sameRequestIntent(second, secondCommit, firstIntent.publishRequestId());
+    SelectionSnapshot firstSelection = reserve(retained, firstIntent);
+    // V43 permitted this exact tenant/request reuse across Versions. The current repository
+    // prevents it, so insert the historically valid second selection under V43's real triggers.
+    insertPreV44Selection(retained, second, secondIntent);
+    SelectionSnapshot secondSelection =
+        retained
+            .selections()
+            .read(
+                secondIntent.canonicalTenantId(),
+                secondIntent.canonicalVersionId(),
+                secondIntent.publishRequestId())
+            .orElseThrow();
+    List<Map<String, Object>> before = retainedSelectionRows(retained);
+    assertThat(before).hasSize(2);
+
+    assertThatThrownBy(() -> migrate(retained.dataSource(), retained.schema(), "44"))
+        .isInstanceOf(FlywayException.class)
+        .hasMessageContaining("uq_gd_authored_draft_publish_operation");
+
+    assertThat(retainedSelectionRows(retained)).isEqualTo(before);
+    assertRetainedTargetSelection(retained, firstSelection);
+    assertRetainedTargetSelection(retained, secondSelection);
+    assertThat(
+            retained
+                .dsl()
+                .fetchCount(DSL.table(DSL.name(FLYWAY_TABLE)), DSL.field("version").eq("44")))
+        .isZero();
+    assertThat(
+            retained
+                .dsl()
+                .fetchCount(DSL.table(DSL.name(FLYWAY_TABLE)), DSL.field("version").eq("43")))
+        .isEqualTo(1);
+  }
+
+  private static SelectionSnapshot reserve(Fixture retained, PublishIntent intent) {
+    return Objects.requireNonNull(
+        retained.ownerTransaction().execute(status -> retained.selections().reserve(intent)));
+  }
+
+  private static List<Map<String, Object>> retainedSelectionRows(Fixture retained) {
+    return retained
+        .dsl()
+        .fetch(
+            "SELECT * FROM game_design_authored_draft_publish_selection "
+                + "ORDER BY canonical_tenant_id, canonical_version_id")
+        .intoMaps();
+  }
+
+  private static void assertRetainedSelection(Fixture retained, SelectionSnapshot expected) {
+    assertRetainedTargetSelection(retained, expected);
+    PublishIntent intent = expected.selection().intent();
+    assertThat(
+            retained
+                .selections()
+                .readByPublishRequest(intent.canonicalTenantId(), intent.publishRequestId()))
+        .contains(expected);
+  }
+
+  private static void assertRetainedTargetSelection(Fixture retained, SelectionSnapshot expected) {
+    PublishIntent intent = expected.selection().intent();
+    SelectionSnapshot actual =
+        retained
+            .selections()
+            .read(
+                intent.canonicalTenantId(), intent.canonicalVersionId(), intent.publishRequestId())
+            .orElseThrow();
+    assertThat(actual).isEqualTo(expected);
+    assertThat(actual.selection().canonicalBytes())
+        .containsExactly(expected.selection().canonicalBytes());
+    assertThat(actual.selection().digest()).isEqualTo(expected.selection().digest());
+    assertThat(actual.createdAt()).isEqualTo(expected.createdAt());
+  }
+
+  private static void insertPreV44Selection(
+      Fixture retained, VersionFixture version, PublishIntent intent) {
+    retained
+        .ownerTransaction()
+        .executeWithoutResult(
+            status -> {
+              retained
+                  .coordinator()
+                  .lockVersionTarget(intent.canonicalTenantId(), intent.canonicalVersionId());
+              AuthoredDraftPublishSelection selection =
+                  AuthoredDraftPublishSelection.capture(
+                      intent,
+                      version.target(),
+                      retained
+                          .coordinator()
+                          .requireSynchronizedPublicationEvidence(
+                              version.target(),
+                              intent.selectedCommitRequestId(),
+                              intent.selectedCommitId(),
+                              intent.selectedCommitDigest()));
+              TargetProof target = selection.target();
+              assertThat(
+                      retained
+                          .dsl()
+                          .execute(
+                              "INSERT INTO game_design_authored_draft_publish_selection "
+                                  + "(canonical_tenant_id, canonical_version_id, game_design_version_row_id, "
+                                  + "game_design_version_tenant_key, source_game_row_id, source_game_tenant_key, "
+                                  + "source_provenance_kind, publish_request_id, version_state_epoch, "
+                                  + "selected_commit_request_id, selected_commit_id, selected_commit_digest, "
+                                  + "selection_digest, selection_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                              target.canonicalTenantId(),
+                              target.canonicalVersionId(),
+                              target.gameDesignVersionRowId(),
+                              target.gameDesignVersionTenantKey(),
+                              target.sourceGameRowId(),
+                              target.sourceGameTenantKey(),
+                              target.sourceProvenanceKind(),
+                              intent.publishRequestId(),
+                              Long.parseLong(intent.expectedVersionStateEpoch()),
+                              intent.selectedCommitRequestId(),
+                              intent.selectedCommitId(),
+                              intent.selectedCommitDigest(),
+                              selection.digest(),
+                              selection.canonicalJson()))
+                  .isEqualTo(1);
+            });
   }
 
   @Test
@@ -219,6 +396,98 @@ class AuthoredDraftPublishSelectionRepositoryIntegrationTest {
                     version.target().canonicalVersionId(),
                     intent.publishRequestId()))
         .isEmpty();
+  }
+
+  @Test
+  void samePublicationRequestCannotSelectAnotherVersionInTheSameTenant() {
+    VersionFixture first = fixture.newVersion(1L);
+    VersionFixture second = fixture.newFullVersionInTenant(first);
+    DraftCommitBinding firstCommit = binding(first.target(), UUID.randomUUID(), UUID.randomUUID());
+    DraftCommitBinding secondCommit =
+        binding(second.target(), UUID.randomUUID(), UUID.randomUUID());
+    fixture.synchronize(firstCommit);
+    fixture.synchronize(secondCommit);
+    PublishIntent original = intent(first, firstCommit, "selected notes");
+    PublishIntent changed = sameRequestIntent(second, secondCommit, original.publishRequestId());
+    SelectionSnapshot retained = inTransaction(() -> fixture.selections().reserve(original));
+
+    assertThatThrownBy(() -> inTransaction(() -> fixture.selections().reserve(changed)))
+        .isInstanceOf(DraftCommitCoordinatorRepository.DraftCommitIdentityConflictException.class);
+    assertThat(
+            fixture
+                .selections()
+                .readByPublishRequest(original.canonicalTenantId(), original.publishRequestId()))
+        .contains(retained);
+    assertThat(
+            fixture
+                .selections()
+                .read(
+                    changed.canonicalTenantId(),
+                    changed.canonicalVersionId(),
+                    changed.publishRequestId()))
+        .isEmpty();
+  }
+
+  @Test
+  void concurrentPublicationRequestClaimsAcrossVersionsRetainOnlyOneSelection() throws Exception {
+    VersionFixture first = fixture.newVersion(1L);
+    VersionFixture second = fixture.newFullVersionInTenant(first);
+    DraftCommitBinding firstCommit = binding(first.target(), UUID.randomUUID(), UUID.randomUUID());
+    DraftCommitBinding secondCommit =
+        binding(second.target(), UUID.randomUUID(), UUID.randomUUID());
+    fixture.synchronize(firstCommit);
+    fixture.synchronize(secondCommit);
+    String requestId = "racing-publication-" + UUID.randomUUID();
+    PublishIntent firstIntent = sameRequestIntent(first, firstCommit, requestId);
+    PublishIntent secondIntent = sameRequestIntent(second, secondCommit, requestId);
+    CountDownLatch ready = new CountDownLatch(2);
+    CountDownLatch start = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      Future<Boolean> firstClaim =
+          executor.submit(() -> claimRacingIntent(firstIntent, ready, start));
+      Future<Boolean> secondClaim =
+          executor.submit(() -> claimRacingIntent(secondIntent, ready, start));
+      await(ready);
+      start.countDown();
+      assertThat(firstClaim.get(20, TimeUnit.SECONDS))
+          .isNotEqualTo(secondClaim.get(20, TimeUnit.SECONDS));
+      SelectionSnapshot retained =
+          fixture
+              .selections()
+              .readByPublishRequest(firstIntent.canonicalTenantId(), requestId)
+              .orElseThrow();
+      assertThat(retained.selection().intent()).isIn(firstIntent, secondIntent);
+      assertThat(inTransaction(() -> fixture.selections().reserve(retained.selection().intent())))
+          .isEqualTo(retained);
+    } finally {
+      executor.shutdownNow();
+    }
+  }
+
+  private static boolean claimRacingIntent(
+      PublishIntent intent, CountDownLatch ready, CountDownLatch start) {
+    ready.countDown();
+    await(start);
+    try {
+      inTransaction(() -> fixture.selections().reserve(intent));
+      return true;
+    } catch (DraftCommitCoordinatorRepository.DraftCommitIdentityConflictException expected) {
+      return false;
+    }
+  }
+
+  private static PublishIntent sameRequestIntent(
+      VersionFixture version, DraftCommitBinding commit, String requestId) {
+    return new PublishIntent(
+        version.target().canonicalTenantId(),
+        version.target().canonicalVersionId(),
+        requestId,
+        version.stateEpoch(),
+        "selected notes",
+        commit.requestId(),
+        commit.commitId(),
+        commit.digest());
   }
 
   @Test
@@ -469,21 +738,17 @@ class AuthoredDraftPublishSelectionRepositoryIntegrationTest {
   }
 
   private static Fixture createFixture() {
+    return createFixture(null);
+  }
+
+  private static Fixture createFixture(String migrationTarget) {
     String schema = "gd_draft_select_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
     dataSource.setUrl(POSTGRES.getJdbcUrl());
     dataSource.setUsername(POSTGRES.getUsername());
     dataSource.setPassword(POSTGRES.getPassword());
     dataSource.setSchema(schema);
-    Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .table(FLYWAY_TABLE)
-        .placeholders(Map.of("serviceSchema", schema))
-        .locations("classpath:db/migration")
-        .load()
-        .migrate();
+    migrate(dataSource, schema, migrationTarget);
     DSLContext dsl =
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
     TransactionTemplate transaction =
@@ -494,7 +759,24 @@ class AuthoredDraftPublishSelectionRepositoryIntegrationTest {
     DraftCommitCoordinatorRepository coordinator = new DraftCommitCoordinatorRepository(dsl);
     AuthoredDraftPublishSelectionRepository selections =
         new AuthoredDraftPublishSelectionRepository(dsl, coordinator);
-    return new Fixture(dsl, transaction, games, versions, coordinator, selections);
+    return new Fixture(
+        schema, dataSource, dsl, transaction, games, versions, coordinator, selections);
+  }
+
+  private static void migrate(
+      DriverManagerDataSource dataSource, String schema, String migrationTarget) {
+    var configuration =
+        Flyway.configure()
+            .dataSource(dataSource)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .table(FLYWAY_TABLE)
+            .placeholders(Map.of("serviceSchema", schema))
+            .locations("classpath:db/migration");
+    if (migrationTarget != null) {
+      configuration.target(migrationTarget);
+    }
+    configuration.load().migrate();
   }
 
   private static <T> T inTransaction(Supplier<T> work) {
@@ -528,6 +810,8 @@ class AuthoredDraftPublishSelectionRepositoryIntegrationTest {
   private record VersionFixture(TargetProof target, long rowId, String stateEpoch) {}
 
   private record Fixture(
+      String schema,
+      DriverManagerDataSource dataSource,
       DSLContext dsl,
       TransactionTemplate ownerTransaction,
       GameRepository games,
@@ -565,6 +849,17 @@ class AuthoredDraftPublishSelectionRepositoryIntegrationTest {
       Version savedVersion =
           Objects.requireNonNull(ownerTransaction.execute(status -> versions.save(version)));
       return new VersionFixture(target(savedVersion), savedVersion.getId(), "1");
+    }
+
+    VersionFixture newFullVersionInTenant(VersionFixture base) {
+      Version version = new Version();
+      version.setTenantId(base.target().gameDesignVersionTenantKey());
+      version.setVersionNumber(2);
+      version.setVersionState(VersionLifecycleState.DRAFT);
+      version.setVersionStateEpoch(1L);
+      Version saved =
+          Objects.requireNonNull(ownerTransaction.execute(status -> versions.save(version)));
+      return new VersionFixture(target(saved), saved.getId(), "1");
     }
 
     void synchronize(DraftCommitBinding binding) {

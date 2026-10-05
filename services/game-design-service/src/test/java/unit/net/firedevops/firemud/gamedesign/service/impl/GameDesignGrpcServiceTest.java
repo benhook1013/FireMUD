@@ -16,6 +16,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
+import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection.PublishIntent;
 import net.firedevops.firemud.gamedesign.dto.AppliedWorldDesignMutationDto;
 import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PluginVersionStatusEventDto;
@@ -401,107 +402,196 @@ class GameDesignGrpcServiceTest {
   }
 
   @Test
-  void publishVersionRequiresPublishRequestId() {
+  void publishVersionWithoutAuthenticatedActorIsDeniedBeforeServiceCall() {
+    AtomicReference<PublishVersionResponse> ref = new AtomicReference<>();
+
+    service.publishVersion(publishRequest("publish-request-1").build(), observerFor(ref));
+
+    assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
+    Mockito.verifyNoInteractions(versionService);
+  }
+
+  @Test
+  void publishVersionRequiresStableRequestIdBeforeServiceCall() {
     AtomicReference<PublishVersionResponse> ref = new AtomicReference<>();
 
     try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
       service.publishVersion(
-          PublishVersionRequest.newBuilder().setTenantId("tenant-1").setNotes("notes").build(),
+          publishRequest("publish-request-1").setPublishRequestId("").build(), observerFor(ref));
+    }
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    Mockito.verifyNoInteractions(versionService);
+  }
+
+  @Test
+  void publishVersionRejectsMalformedCanonicalSelectionBeforeServiceCall() {
+    AtomicReference<PublishVersionResponse> ref = new AtomicReference<>();
+
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishVersion(
+          publishRequest("publish-request-1").setSelectedCommitId("not-a-uuid").build(),
           observerFor(ref));
     }
 
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    Mockito.verifyNoInteractions(versionService);
   }
 
   @Test
-  void publishVersionMapsKnownPublishAttemptStateFailures() throws Exception {
-    Mockito.when(versionService.publishVersion("tenant-1", "notes", "publish-request-1"))
-        .thenThrow(
-            new IllegalStateException(
-                "PUBLISH_ATTEMPT_SCOPE_MISMATCH: referenced version evidence does not match"));
-    AtomicReference<PublishVersionResponse> ref = new AtomicReference<>();
+  void publishVersionRejectsMalformedOrNonPositiveExpectedStateEpochBeforeServiceCall() {
+    for (String epoch : List.of("0", "not-an-epoch")) {
+      AtomicReference<PublishVersionResponse> ref = new AtomicReference<>();
 
-    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
-      service.publishVersion(
-          PublishVersionRequest.newBuilder()
-              .setTenantId("tenant-1")
-              .setNotes("notes")
-              .setPublishRequestId("publish-request-1")
-              .build(),
-          observerFor(ref));
+      try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+        service.publishVersion(
+            publishRequest("publish-request-1").setExpectedVersionStateEpoch(epoch).build(),
+            observerFor(ref));
+      }
+
+      assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
     }
 
-    assertEquals("PUBLISH_ATTEMPT_SCOPE_MISMATCH", ref.get().getError().getCode());
+    Mockito.verifyNoInteractions(versionService);
+  }
+
+  @Test
+  void publishVersionMapsOwnerAuthorizationUnavailableWithoutTreatingItAsSuccess()
+      throws Exception {
+    Mockito.when(versionService.publishVersion(Mockito.any(PublishIntent.class)))
+        .thenThrow(
+            new IllegalStateException(
+                "PUBLICATION_AUTHORIZATION_UNAVAILABLE: current Account owner proof is absent"));
+    AtomicReference<PublishVersionResponse> ref = new AtomicReference<>();
+
+    // This bypasses only the outer transport role guard so the service error mapping is tested.
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishVersion(publishRequest("publish-request-1").build(), observerFor(ref));
+    }
+
+    assertEquals("PUBLICATION_AUTHORIZATION_UNAVAILABLE", ref.get().getError().getCode());
+  }
+
+  @Test
+  void publishVersionMapsKnownAttemptIdentityFailure() throws Exception {
+    Mockito.when(versionService.publishVersion(Mockito.any(PublishIntent.class)))
+        .thenThrow(
+            new IllegalArgumentException("PUBLISH_ATTEMPT_IDENTITY_CONFLICT: request changed"));
+    AtomicReference<PublishVersionResponse> ref = new AtomicReference<>();
+
+    // Transport fixture only; this is not an authorized publication fixture.
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishVersion(publishRequest("publish-request-1").build(), observerFor(ref));
+    }
+
+    assertEquals("PUBLISH_ATTEMPT_IDENTITY_CONFLICT", ref.get().getError().getCode());
   }
 
   @Test
   void publishVersionMapsUnavailableWorkflowWithoutHidingItAsInternal() throws Exception {
-    Mockito.when(versionService.publishVersion("tenant-1", "notes", "publish-request-1"))
+    Mockito.when(versionService.publishVersion(Mockito.any(PublishIntent.class)))
         .thenThrow(
             new IllegalStateException("PUBLISH_WORKFLOW_UNAVAILABLE: Temporal is unavailable"));
     AtomicReference<PublishVersionResponse> ref = new AtomicReference<>();
 
+    // Transport fixture only; it does not exercise or authorize the public owner boundary.
     try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
-      service.publishVersion(
-          PublishVersionRequest.newBuilder()
-              .setTenantId("tenant-1")
-              .setNotes("notes")
-              .setPublishRequestId("publish-request-1")
-              .build(),
-          observerFor(ref));
+      service.publishVersion(publishRequest("publish-request-1").build(), observerFor(ref));
     }
 
     assertEquals("PUBLISH_WORKFLOW_UNAVAILABLE", ref.get().getError().getCode());
   }
 
   @Test
-  void publishVersionMapsTemporalKnownGateFailureCode() throws Exception {
-    PublishGateFailureException gateFailure =
-        (PublishGateFailureException)
-            TemporalVersionPublishOrchestrator.failureForSnapshot(
-                new PublishWorkflowSnapshot(
-                    0L,
-                    0,
-                    "publish:tenant-1:publish-request:publish-request-1",
-                    "FAILED",
-                    PublishGateFailureCode.PARTICIPANT_SET_MISMATCH.name(),
-                    "participant set mismatch"));
-    Mockito.when(versionService.publishVersion("tenant-1", "notes", "publish-request-1"))
-        .thenThrow(gateFailure);
+  void publishVersionMapsKnownAttemptStateFailure() throws Exception {
+    Mockito.when(versionService.publishVersion(Mockito.any(PublishIntent.class)))
+        .thenThrow(new IllegalStateException("PUBLISH_ATTEMPT_INCONSISTENT: state differs"));
+    AtomicReference<PublishVersionResponse> ref = new AtomicReference<>();
+
+    // Transport fixture only; this does not supply owner authorization or selected proof.
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishVersion(publishRequest("publish-request-1").build(), observerFor(ref));
+    }
+
+    assertEquals("PUBLISH_ATTEMPT_INCONSISTENT", ref.get().getError().getCode());
+  }
+
+  @Test
+  void publishVersionMapsKnownAttemptScopeFailure() throws Exception {
+    Mockito.when(versionService.publishVersion(Mockito.any(PublishIntent.class)))
+        .thenThrow(
+            new IllegalStateException(
+                "PUBLISH_ATTEMPT_SCOPE_MISMATCH: referenced Version differs"));
     AtomicReference<PublishVersionResponse> ref = new AtomicReference<>();
 
     try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
-      service.publishVersion(
-          PublishVersionRequest.newBuilder()
-              .setTenantId("tenant-1")
-              .setNotes("notes")
-              .setPublishRequestId("publish-request-1")
-              .build(),
-          observerFor(ref));
+      service.publishVersion(publishRequest("publish-request-1").build(), observerFor(ref));
+    }
+
+    assertEquals("PUBLISH_ATTEMPT_SCOPE_MISMATCH", ref.get().getError().getCode());
+  }
+
+  @Test
+  void publishVersionMapsTypedGateFailure() throws Exception {
+    Mockito.when(versionService.publishVersion(Mockito.any(PublishIntent.class)))
+        .thenThrow(
+            new PublishGateFailureException(
+                PublishGateFailureCode.PARTICIPANT_SET_MISMATCH, "participant set mismatch"));
+    AtomicReference<PublishVersionResponse> ref = new AtomicReference<>();
+
+    // Transport fixture only; gate mapping does not establish current owner authorization.
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishVersion(publishRequest("publish-request-1").build(), observerFor(ref));
     }
 
     assertEquals("PARTICIPANT_SET_MISMATCH", ref.get().getError().getCode());
   }
 
   @Test
-  void publishVersionMapsKnownIllegalArgumentPublishAttemptCode() throws Exception {
-    Mockito.when(versionService.publishVersion("tenant-1", "notes", "publish-request-1"))
+  void publishVersionMapsPendingReconciliationToStableCode() throws Exception {
+    Mockito.when(versionService.publishVersion(Mockito.any(PublishIntent.class)))
         .thenThrow(
-            new IllegalArgumentException(
-                "PUBLISH_ATTEMPT_IDENTITY_CONFLICT: publish workflow does not match request"));
+            new VersionPublishCommandServiceImpl.PendingReconciliationException(
+                "selected release readback is incomplete"));
+    AtomicReference<PublishVersionResponse> ref = new AtomicReference<>();
+
+    // Transport fixture only; a real public caller remains denied before this service path.
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishVersion(publishRequest("publish-request-1").build(), observerFor(ref));
+    }
+
+    assertEquals("PUBLISH_ATTEMPT_PENDING_RECONCILIATION_REQUIRED", ref.get().getError().getCode());
+  }
+
+  @Test
+  void publishVersionMapsTypedPendingReconciliationToStableApplicationError() throws Exception {
+    Mockito.when(versionService.publishVersion(Mockito.any(PublishIntent.class)))
+        .thenThrow(new PublishAttemptPendingReconciliationException());
+    AtomicReference<PublishVersionResponse> ref = new AtomicReference<>();
+
+    // Transport fixture only; a real public caller still requires current Account and owner proof.
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishVersion(publishRequest("publish-request-1").build(), observerFor(ref));
+    }
+
+    assertEquals(
+        PublishAttemptPendingReconciliationException.ERROR_CODE, ref.get().getError().getCode());
+    assertEquals(
+        PublishAttemptPendingReconciliationException.SAFE_MESSAGE,
+        ref.get().getError().getMessage());
+  }
+
+  @Test
+  void publishVersionMapsUnknownIllegalStateToInternal() throws Exception {
+    Mockito.when(versionService.publishVersion(Mockito.any(PublishIntent.class)))
+        .thenThrow(new IllegalStateException("unexpected internal failure"));
     AtomicReference<PublishVersionResponse> ref = new AtomicReference<>();
 
     try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
-      service.publishVersion(
-          PublishVersionRequest.newBuilder()
-              .setTenantId("tenant-1")
-              .setNotes("notes")
-              .setPublishRequestId("publish-request-1")
-              .build(),
-          observerFor(ref));
+      service.publishVersion(publishRequest("publish-request-1").build(), observerFor(ref));
     }
 
-    assertEquals("PUBLISH_ATTEMPT_IDENTITY_CONFLICT", ref.get().getError().getCode());
+    assertEquals("INTERNAL", ref.get().getError().getCode());
   }
 
   @Test
@@ -623,25 +713,6 @@ class GameDesignGrpcServiceTest {
   }
 
   @Test
-  void publishVersionKeepsUnknownIllegalStateFailuresInternal() throws Exception {
-    Mockito.when(versionService.publishVersion("tenant-1", "notes", "publish-request-1"))
-        .thenThrow(new IllegalStateException("unexpected internal state"));
-    AtomicReference<PublishVersionResponse> ref = new AtomicReference<>();
-
-    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
-      service.publishVersion(
-          PublishVersionRequest.newBuilder()
-              .setTenantId("tenant-1")
-              .setNotes("notes")
-              .setPublishRequestId("publish-request-1")
-              .build(),
-          observerFor(ref));
-    }
-
-    assertEquals("INTERNAL", ref.get().getError().getCode());
-  }
-
-  @Test
   void publishScriptPatchVersionKeepsUnknownIllegalStateFailuresInternal() throws Exception {
     Mockito.when(
             versionService.publishScriptPatchVersion(
@@ -688,29 +759,6 @@ class GameDesignGrpcServiceTest {
 
     assertEquals("LEGACY_REQUEST_IDENTITY_UNAVAILABLE", ref.get().getError().getCode());
     assertEquals("stored identity cannot be replayed", ref.get().getError().getMessage());
-  }
-
-  @Test
-  void publishVersionMapsPendingReconciliationToStableApplicationError() throws Exception {
-    Mockito.when(versionService.publishVersion("tenant-1", "notes", "request-1"))
-        .thenThrow(new PublishAttemptPendingReconciliationException());
-    AtomicReference<PublishVersionResponse> ref = new AtomicReference<>();
-
-    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
-      service.publishVersion(
-          PublishVersionRequest.newBuilder()
-              .setTenantId("tenant-1")
-              .setNotes("notes")
-              .setPublishRequestId("request-1")
-              .build(),
-          observerFor(ref));
-    }
-
-    assertEquals(
-        PublishAttemptPendingReconciliationException.ERROR_CODE, ref.get().getError().getCode());
-    assertEquals(
-        PublishAttemptPendingReconciliationException.SAFE_MESSAGE,
-        ref.get().getError().getMessage());
   }
 
   @Test
@@ -1727,6 +1775,31 @@ class GameDesignGrpcServiceTest {
         LOGO_DIGEST,
         "image/png",
         1);
+  }
+
+  private PublishIntent publishIntent(String requestId) {
+    return new PublishIntent(
+        UUID.fromString("11111111-1111-4111-8111-111111111111"),
+        UUID.fromString("22222222-2222-4222-8222-222222222222"),
+        requestId,
+        "9",
+        "notes",
+        UUID.fromString("33333333-3333-4333-8333-333333333333"),
+        UUID.fromString("44444444-4444-4444-8444-444444444444"),
+        "sha256:" + "a".repeat(64));
+  }
+
+  private PublishVersionRequest.Builder publishRequest(String requestId) {
+    PublishIntent intent = publishIntent(requestId);
+    return PublishVersionRequest.newBuilder()
+        .setTenantId(intent.canonicalTenantId().toString())
+        .setVersionId(intent.canonicalVersionId().toString())
+        .setNotes(intent.notes())
+        .setPublishRequestId(intent.publishRequestId())
+        .setExpectedVersionStateEpoch(intent.expectedVersionStateEpoch())
+        .setSelectedCommitRequestId(intent.selectedCommitRequestId().toString())
+        .setSelectedCommitId(intent.selectedCommitId().toString())
+        .setSelectedCommitDigest(intent.selectedCommitDigest());
   }
 
   private static <T> StreamObserver<T> observerFor(AtomicReference<T> ref) {
