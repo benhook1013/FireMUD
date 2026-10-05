@@ -17,6 +17,7 @@ import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.service.AccountIds;
 import net.firedevops.firemud.gamesession.service.AccountPresenceQueryService;
 import net.firedevops.firemud.gamesession.service.FeatureFlagService;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
@@ -74,6 +75,8 @@ import org.springframework.grpc.server.service.GrpcService;
 public final class GameSessionGrpcService
     extends GameSessionServiceGrpc.GameSessionServiceImplBase {
   private static final Logger LOG = LoggerFactory.getLogger(GameSessionGrpcService.class);
+  private static final String SESSION_REPLACEMENT_UNAVAILABLE_MESSAGE =
+      "Replacing an active session is not supported";
   private final PingService pingService;
   private final GameInstanceService gameInstanceService;
   private final FeatureFlagService featureFlagService;
@@ -140,7 +143,7 @@ public final class GameSessionGrpcService
       String clientIp = request.getClientIp();
       long tenantId =
           ControlPlaneRequestParser.parsePositiveLong(request.getTenantId(), "tenantId");
-      long ownerAccountId = parseOwnerAccountId(request.getOwnerAccountId());
+      String ownerAccountId = parseOwnerAccountUuid(request.getOwnerAccountId());
       long gameTemplateId =
           ControlPlaneRequestParser.parsePositiveLong(
               request.getGameTemplateId(), "gameTemplateId");
@@ -149,10 +152,22 @@ public final class GameSessionGrpcService
           gameInstanceRepository
               .findFirstByTenantIdAndOwnerAccountIdAndStatus(tenantId, ownerAccountId, "RUNNING")
               .orElse(null);
+      if (existingRunningSession != null) {
+        StartSessionResponse response =
+            StartSessionResponse.newBuilder()
+                .setError(
+                    GrpcAppErrors.error(
+                        meterRegistry,
+                        "SESSION_REPLACEMENT_UNAVAILABLE",
+                        SESSION_REPLACEMENT_UNAVAILABLE_MESSAGE))
+                .build();
+        responseObserver.onNext(response);
+        responseObserver.onCompleted();
+        return;
+      }
       if (clientIp != null
           && !clientIp.isBlank()
-          && !ipConnectionLimiter.canAccept(
-              clientIp, existingRunningSession != null ? existingRunningSession.getId() : null)) {
+          && !ipConnectionLimiter.canAccept(clientIp, null)) {
         StartSessionResponse response =
             StartSessionResponse.newBuilder()
                 .setError(
@@ -167,13 +182,8 @@ public final class GameSessionGrpcService
           new StartSessionRequest(
               tenantId, gameTemplateId, request.getControlPlaneRequestId(), ownerAccountId);
       GameInstanceDto instance = gameInstanceService.startSession(dto, false);
-      boolean transferredRegistration = false;
       if (clientIp != null && !clientIp.isBlank()) {
-        transferredRegistration =
-            existingRunningSession != null
-                && ipConnectionLimiter.transferRegistration(
-                    clientIp, existingRunningSession.getId(), instance.id());
-        if (!transferredRegistration && !ipConnectionLimiter.tryRegister(clientIp, instance.id())) {
+        if (!ipConnectionLimiter.tryRegister(clientIp, instance.id())) {
           gameInstanceService.stopSession(instance.id());
           StartSessionResponse response =
               StartSessionResponse.newBuilder()
@@ -184,20 +194,6 @@ public final class GameSessionGrpcService
           responseObserver.onNext(response);
           responseObserver.onCompleted();
           return;
-        }
-      }
-      if (existingRunningSession != null) {
-        if (!transferredRegistration) {
-          ipConnectionLimiter.release(existingRunningSession.getId());
-        }
-        try {
-          gameInstanceService.stopSession(existingRunningSession.getId());
-        } catch (IllegalStateException ex) {
-          LOG.warn(
-              "Replacement session {} admitted, but teardown of previous session {} failed",
-              instance.id(),
-              existingRunningSession.getId(),
-              ex);
         }
       }
       StartSessionResponse response =
@@ -231,8 +227,11 @@ public final class GameSessionGrpcService
     }
   }
 
-  private long parseOwnerAccountId(String ownerAccountIdText) {
-    return ControlPlaneRequestParser.parsePositiveLong(ownerAccountIdText, "ownerAccountId");
+  private String parseOwnerAccountUuid(String ownerAccountId) {
+    if (!AccountIds.isCanonicalNonNilUuid(ownerAccountId)) {
+      throw new IllegalArgumentException("ownerAccountId must be a canonical non-nil UUID");
+    }
+    return ownerAccountId;
   }
 
   private List<Long> parseAccountIds(List<String> accountIds) {
@@ -241,7 +240,7 @@ public final class GameSessionGrpcService
         .toList();
   }
 
-  private void requireTenantAndOwnerAccess(long tenantId, long ownerAccountId) {
+  private void requireTenantAndOwnerAccess(long tenantId, String ownerAccountId) {
     requireTenantAccess(tenantId);
     if (isCurrentAccount(ownerAccountId)) {
       return;
@@ -440,7 +439,9 @@ public final class GameSessionGrpcService
     try {
       long tenantId =
           ControlPlaneRequestParser.parsePositiveLong(request.getTenantId(), "tenantId");
-      long viewerAccountId = parseOwnerAccountId(request.getViewerAccountId());
+      long viewerAccountId =
+          ControlPlaneRequestParser.parsePositiveLong(
+              request.getViewerAccountId(), "viewerAccountId");
       requireTenantOrCurrentAccountAccess(tenantId, viewerAccountId);
       if (request.getAccountIdsCount() > 100) {
         throw new IllegalArgumentException("accountIds must contain at most 100 entries");
@@ -888,6 +889,13 @@ public final class GameSessionGrpcService
 
   private boolean isCurrentAccount(GameInstance instance) {
     return isCurrentAccount(instance.getOwnerAccountId());
+  }
+
+  private boolean isCurrentAccount(String ownerAccountId) {
+    String currentAccountId = SessionContext.getAccountId();
+    return AccountIds.isCanonicalNonNilUuid(ownerAccountId)
+        && AccountIds.isCanonicalNonNilUuid(currentAccountId)
+        && ownerAccountId.equals(currentAccountId);
   }
 
   private boolean isCurrentAccount(long ownerAccountId) {

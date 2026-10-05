@@ -119,6 +119,8 @@ import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionOperations;
 
 class GameSessionControlPlaneGrpcServiceTest {
+  private static final String OWNER_ACCOUNT_UUID = "123e4567-e89b-12d3-a456-426614174000";
+
   private static AutomationScriptingControlPlaneClient automationScriptingControlPlaneClient() {
     AutomationScriptingControlPlaneClient client =
         Mockito.mock(AutomationScriptingControlPlaneClient.class);
@@ -230,7 +232,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     instance.setScriptPatchPinnedBy("old-user");
     instance.setScriptPatchPinnedReason("old-reason");
     instance.setScriptPatchPinnedControlPlaneRequestId("req-0");
-    instance.setOwnerAccountId(99L);
+    instance.setOwnerAccountId(OWNER_ACCOUNT_UUID);
     instance.setStatus("RUNNING");
     Mockito.when(repository.findById(7L)).thenReturn(Optional.of(instance));
     GameDesignClient gameDesign = gameDesignClient();
@@ -396,7 +398,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     instance.setScriptPatchPinnedAt(Instant.parse("2026-04-22T00:00:00Z"));
     instance.setScriptPatchPinnedBy("operator-1");
     instance.setScriptPatchPinnedControlPlaneRequestId("req-99");
-    instance.setOwnerAccountId(99L);
+    instance.setOwnerAccountId(OWNER_ACCOUNT_UUID);
     instance.setStatus("RUNNING");
     Mockito.when(repository.findById(7L)).thenReturn(Optional.of(instance));
 
@@ -440,7 +442,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     instance.setScriptPatchPinnedAt(Instant.parse("2026-04-22T00:00:00Z"));
     instance.setScriptPatchPinnedBy("operator-1");
     instance.setScriptPatchPinnedControlPlaneRequestId("req-99");
-    instance.setOwnerAccountId(99L);
+    instance.setOwnerAccountId(OWNER_ACCOUNT_UUID);
     instance.setStatus("RUNNING");
     Mockito.when(repository.findById(7L)).thenReturn(Optional.of(instance));
 

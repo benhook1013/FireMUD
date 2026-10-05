@@ -48,9 +48,13 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 
 class GameInstanceServiceImplTest {
+  private static final String OWNER_ACCOUNT_UUID = "123e4567-e89b-12d3-a456-426614174000";
+  private static final String OTHER_OWNER_ACCOUNT_UUID = "123e4567-e89b-12d3-a456-426614174001";
+
   private GameInstanceRepository repository;
   private GameInstanceMapper mapper;
   private SessionStateService stateService;
@@ -78,7 +82,7 @@ class GameInstanceServiceImplTest {
                     12L,
                     13L,
                     "generation-1",
-                    42L,
+                    OWNER_ACCOUNT_UUID,
                     "RUNNING"));
 
     assertEquals(
@@ -117,12 +121,13 @@ class GameInstanceServiceImplTest {
 
   @Test
   void startSessionSavesState() {
-    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-1", 42L);
+    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-1", OWNER_ACCOUNT_UUID);
 
     GameInstanceDto dto = service.startSession(request);
 
     assertEquals("RUNNING", dto.status());
-    verify(repository, never()).findFirstByTenantIdAndOwnerAccountIdAndStatus(1L, 42L, "RUNNING");
+    verify(repository, never())
+        .findFirstByTenantIdAndOwnerAccountIdAndStatus(1L, OWNER_ACCOUNT_UUID, "RUNNING");
     ArgumentCaptor<GameInstanceDto> states = ArgumentCaptor.forClass(GameInstanceDto.class);
     verify(stateService, times(2)).saveState(states.capture());
     assertEquals("STARTING", states.getAllValues().get(0).status());
@@ -131,8 +136,123 @@ class GameInstanceServiceImplTest {
   }
 
   @Test
+  void startSessionRejectsNonCanonicalOwnerBeforeDependenciesOrMutation() {
+    for (String invalidOwner :
+        List.of(
+            "42", "00000000-0000-0000-0000-000000000000", "123E4567-E89B-12D3-A456-426614174000")) {
+      assertThrows(
+          IllegalArgumentException.class,
+          () ->
+              service.startSession(
+                  new StartSessionRequest(1L, 3L, "cp-invalid-owner", invalidOwner), true));
+    }
+
+    verify(gameDesignClient, never()).resolveLaunchDescriptor(anyLong(), anyLong(), anyString());
+    verify(repository, never()).save(any(GameInstance.class));
+    assertEquals(0, store.size());
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void startSessionRejectsUnresolvedLegacyOwnerBeforeMutation(boolean replaceExistingFirst) {
+    persistLegacyOwner(7L, 1L, "v1", "RUNNING", 9_007_199_254_740_993L);
+
+    LifecycleOutcomeException error =
+        assertThrows(
+            LifecycleOutcomeException.class,
+            () ->
+                service.startSession(
+                    new StartSessionRequest(1L, 3L, "cp-legacy-owner", OWNER_ACCOUNT_UUID),
+                    replaceExistingFirst));
+
+    assertEquals("OWNER_ACCOUNT_IDENTITY_UNAVAILABLE", error.code());
+    assertEquals(
+        "cannot start a session while tenant owner identity evidence is active or uncertain",
+        error.detailMessage());
+    assertEquals("RUNNING", store.get(7L).getStatus());
+    assertEquals(9_007_199_254_740_993L, store.get(7L).getLegacyOwnerAccountId());
+    assertEquals(1, store.size());
+    verify(repository).findUnresolvedActiveOwnerRowsByTenantIdForUpdate(1L);
+    verify(repository, never()).save(any(GameInstance.class));
+    verify(repository, never())
+        .findFirstByTenantIdAndOwnerAccountIdAndStatus(1L, OWNER_ACCOUNT_UUID, "RUNNING");
+    verifyNoInteractions(stateService);
+    verifyNoInteractions(worldManagementClient);
+  }
+
+  @Test
+  void startSessionRejectsEveryUncertainLegacyOwnerStatus() {
+    String[] uncertainStatuses = {"STARTING", "STOPPING", "UNRECOGNIZED", null};
+    long id = 20L;
+    for (String status : uncertainStatuses) {
+      persistLegacyOwner(id, 1L, "v1", status, 100L + id);
+
+      LifecycleOutcomeException error =
+          assertThrows(
+              LifecycleOutcomeException.class,
+              () ->
+                  service.startSession(
+                      new StartSessionRequest(1L, 3L, "cp-uncertain-owner", OWNER_ACCOUNT_UUID)));
+
+      assertEquals("OWNER_ACCOUNT_IDENTITY_UNAVAILABLE", error.code());
+      assertEquals(status, store.get(id).getStatus());
+      assertEquals(100L + id, store.get(id).getLegacyOwnerAccountId());
+      store.remove(id);
+      id++;
+    }
+
+    verify(repository, times(uncertainStatuses.length))
+        .findUnresolvedActiveOwnerRowsByTenantIdForUpdate(1L);
+    verify(repository, never()).save(any(GameInstance.class));
+    verifyNoInteractions(stateService);
+    verifyNoInteractions(worldManagementClient);
+  }
+
+  @Test
+  void startSessionAllowsTenantWithOnlyStoppedLegacyOwnerEvidence() {
+    persistLegacyOwner(7L, 1L, "v1", "STOPPED", 9_007_199_254_740_993L);
+
+    GameInstanceDto dto =
+        service.startSession(
+            new StartSessionRequest(1L, 3L, "cp-stopped-legacy-owner", OWNER_ACCOUNT_UUID));
+
+    assertEquals("RUNNING", dto.status());
+    assertEquals("STOPPED", store.get(7L).getStatus());
+    assertEquals(9_007_199_254_740_993L, store.get(7L).getLegacyOwnerAccountId());
+    assertEquals("RUNNING", store.get(dto.id()).getStatus());
+  }
+
+  @Test
+  void restartSessionRejectsMissingOrNonCanonicalOwnerBeforeMutation() {
+    String[] unresolvedOwnerIds = {
+      null, "42", "00000000-0000-0000-0000-000000000000", "123E4567-E89B-12D3-A456-426614174000"
+    };
+    long id = 20L;
+    for (String ownerAccountId : unresolvedOwnerIds) {
+      GameInstance instance = persistLegacyOwner(id, 1L, "v1", "STOPPED", 200L + id);
+      instance.setOwnerAccountId(ownerAccountId);
+      store.put(id, copyOf(instance));
+      long sessionId = id;
+
+      LifecycleOutcomeException error =
+          assertThrows(LifecycleOutcomeException.class, () -> service.restartSession(sessionId));
+
+      assertEquals("OWNER_ACCOUNT_IDENTITY_UNAVAILABLE", error.code());
+      assertEquals("STOPPED", store.get(sessionId).getStatus());
+      assertEquals(ownerAccountId, store.get(sessionId).getOwnerAccountId());
+      assertEquals(200L + sessionId, store.get(sessionId).getLegacyOwnerAccountId());
+      id++;
+    }
+
+    verify(repository, never()).save(any(GameInstance.class));
+    verifyNoInteractions(stateService);
+    verifyNoInteractions(worldManagementClient);
+  }
+
+  @Test
   void runOwnedInitialLaunchExactRetryReturnsSameActiveTargetWithoutReplayingActivation() {
-    StartSessionRequest request = new StartSessionRequest(1L, 3L, "run-owned-1", 42L);
+    StartSessionRequest request =
+        new StartSessionRequest(1L, 3L, "run-owned-1", OWNER_ACCOUNT_UUID);
     configureRunOwnedWorld(request);
 
     var first = service.startRunOwnedInitialLaunch(request);
@@ -147,7 +267,7 @@ class GameInstanceServiceImplTest {
     assertEquals(1L, store.get(10L).getRunOwnedStartPreparingEpoch());
     assertEquals(2L, store.get(10L).getRunOwnedStartActiveEpoch());
     assertEquals(
-        "edb9ae538f4a9c8e74053c2a7f6d0bc251353b64afc367defab5b5369785e708",
+        "b906f1e8c611679a00a2fa30ae11438bc5ce540b18995a9efbd607e6891cc720",
         store.get(10L).getRunOwnedStartRequestDigest());
     ArgumentCaptor<GameInstanceDto> repairedState = ArgumentCaptor.forClass(GameInstanceDto.class);
     verify(stateService).saveState(repairedState.capture());
@@ -158,7 +278,8 @@ class GameInstanceServiceImplTest {
 
   @Test
   void runOwnedRunningRetryRejectsContradictoryPreparingWorldWithoutRuntimeMutation() {
-    StartSessionRequest request = new StartSessionRequest(1L, 3L, "run-owned-preparing", 42L);
+    StartSessionRequest request =
+        new StartSessionRequest(1L, 3L, "run-owned-preparing", OWNER_ACCOUNT_UUID);
     AtomicReference<WorldInstanceLifecycleSnapshot> worldState = configureRunOwnedWorld(request);
     service.startRunOwnedInitialLaunch(request);
     clearInvocations(stateService, worldManagementClient);
@@ -185,7 +306,8 @@ class GameInstanceServiceImplTest {
 
   @Test
   void runOwnedInitialLaunchRetryReconcilesAmbiguousPrepareOnTheSameInstance() {
-    StartSessionRequest request = new StartSessionRequest(1L, 3L, "run-owned-prepare-timeout", 42L);
+    StartSessionRequest request =
+        new StartSessionRequest(1L, 3L, "run-owned-prepare-timeout", OWNER_ACCOUNT_UUID);
     AtomicReference<WorldInstanceLifecycleSnapshot> worldState = configureRunOwnedWorld(request);
     AtomicInteger prepareCalls = new AtomicInteger();
     when(worldManagementClient.prepareWorldInstance(
@@ -253,7 +375,8 @@ class GameInstanceServiceImplTest {
 
   @Test
   void runOwnedInitialLaunchRetryReconcilesAmbiguousActivationOnTheSameInstance() {
-    StartSessionRequest request = new StartSessionRequest(1L, 3L, "run-owned-timeout", 42L);
+    StartSessionRequest request =
+        new StartSessionRequest(1L, 3L, "run-owned-timeout", OWNER_ACCOUNT_UUID);
     AtomicReference<WorldInstanceLifecycleSnapshot> worldState = configureRunOwnedWorld(request);
     doThrow(new IllegalStateException("activation response timed out"))
         .when(worldManagementClient)
@@ -283,7 +406,8 @@ class GameInstanceServiceImplTest {
 
   @Test
   void runOwnedInitialLaunchRequestIdConflictsOnChangedOwnerOrTemplate() {
-    StartSessionRequest request = new StartSessionRequest(1L, 3L, "run-owned-conflict", 42L);
+    StartSessionRequest request =
+        new StartSessionRequest(1L, 3L, "run-owned-conflict", OWNER_ACCOUNT_UUID);
     configureRunOwnedWorld(request);
     service.startRunOwnedInitialLaunch(request);
 
@@ -291,12 +415,12 @@ class GameInstanceServiceImplTest {
         IllegalStateException.class,
         () ->
             service.startRunOwnedInitialLaunch(
-                new StartSessionRequest(1L, 3L, "run-owned-conflict", 43L)));
+                new StartSessionRequest(1L, 3L, "run-owned-conflict", OTHER_OWNER_ACCOUNT_UUID)));
     assertThrows(
         IllegalStateException.class,
         () ->
             service.startRunOwnedInitialLaunch(
-                new StartSessionRequest(1L, 4L, "run-owned-conflict", 42L)));
+                new StartSessionRequest(1L, 4L, "run-owned-conflict", OWNER_ACCOUNT_UUID)));
 
     assertEquals(1, store.size());
     assertEquals(10L, store.get(10L).getId());
@@ -319,7 +443,8 @@ class GameInstanceServiceImplTest {
 
   @Test
   void runOwnedInitialLaunchRejectsWorldDescriptorMismatchAndRetainsIdentity() {
-    StartSessionRequest request = new StartSessionRequest(1L, 3L, "run-owned-mismatch", 42L);
+    StartSessionRequest request =
+        new StartSessionRequest(1L, 3L, "run-owned-mismatch", OWNER_ACCOUNT_UUID);
     AtomicReference<WorldInstanceLifecycleSnapshot> worldState = configureRunOwnedWorld(request);
     doAnswer(
             invocation ->
@@ -348,7 +473,8 @@ class GameInstanceServiceImplTest {
 
   @Test
   void runOwnedInitialLaunchRetainsTerminalIdentityAfterPreActivationFailure() {
-    StartSessionRequest request = new StartSessionRequest(1L, 3L, "run-owned-failed", 42L);
+    StartSessionRequest request =
+        new StartSessionRequest(1L, 3L, "run-owned-failed", OWNER_ACCOUNT_UUID);
     AtomicReference<WorldInstanceLifecycleSnapshot> worldState = configureRunOwnedWorld(request);
     worldState.set(
         runOwnedWorldSnapshot(
@@ -365,6 +491,49 @@ class GameInstanceServiceImplTest {
     assertEquals("STARTING", store.get(10L).getStatus());
     verify(worldManagementClient, never())
         .activatePreparedWorldInstance(anyLong(), anyLong(), anyLong());
+  }
+
+  @Test
+  void runOwnedInitialLaunchRejectsNonCanonicalOwnerBeforeDependenciesOrMutation() {
+    for (String invalidOwner :
+        List.of(
+            "42", "00000000-0000-0000-0000-000000000000", "123E4567-E89B-12D3-A456-426614174000")) {
+      assertThrows(
+          IllegalArgumentException.class,
+          () ->
+              service.startRunOwnedInitialLaunch(
+                  new StartSessionRequest(1L, 3L, "run-owned-invalid-owner", invalidOwner)));
+    }
+
+    verify(gameDesignClient, never()).resolveLaunchDescriptor(anyLong(), anyLong(), anyString());
+    verify(repository, never()).lockRunOwnedStartIdentity(anyLong(), anyString());
+    verify(repository, never()).save(any(GameInstance.class));
+    assertEquals(0, store.size());
+    verifyNoInteractions(stateService);
+    verifyNoInteractions(worldManagementClient);
+  }
+
+  @Test
+  void runOwnedInitialLaunchRejectsUnresolvedLegacyOwnerBeforeCreatingCandidate() {
+    StartSessionRequest request =
+        new StartSessionRequest(1L, 3L, "run-owned-legacy-owner", OWNER_ACCOUNT_UUID);
+    configureRunOwnedWorld(request);
+    persistLegacyOwner(7L, 1L, "v1", "RUNNING", 9_007_199_254_740_993L);
+
+    LifecycleOutcomeException error =
+        assertThrows(
+            LifecycleOutcomeException.class, () -> service.startRunOwnedInitialLaunch(request));
+
+    assertEquals("OWNER_ACCOUNT_IDENTITY_UNAVAILABLE", error.code());
+    assertEquals(
+        "cannot start a session while tenant owner identity evidence is active or uncertain",
+        error.detailMessage());
+    assertEquals(1, store.size());
+    assertEquals(9_007_199_254_740_993L, store.get(7L).getLegacyOwnerAccountId());
+    verify(repository).findUnresolvedActiveOwnerRowsByTenantIdForUpdate(1L);
+    verify(repository, never()).save(any(GameInstance.class));
+    verifyNoInteractions(stateService);
+    verifyNoInteractions(worldManagementClient);
   }
 
   @Test
@@ -389,7 +558,8 @@ class GameInstanceServiceImplTest {
         .when(gameDesignClient)
         .resolveLaunchDescriptor(any(Long.class), any(Long.class), any());
 
-    GameInstanceDto dto = service.startSession(new StartSessionRequest(1L, 3L, "cp-pinned", 42L));
+    GameInstanceDto dto =
+        service.startSession(new StartSessionRequest(1L, 3L, "cp-pinned", OWNER_ACCOUNT_UUID));
 
     assertNull(dto.scriptPatchVersion());
     assertNull(dto.scriptPinEpoch());
@@ -431,7 +601,8 @@ class GameInstanceServiceImplTest {
             failingMeterRegistry,
             immediateTransactionOperations());
 
-    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-metric-failure", 42L);
+    StartSessionRequest request =
+        new StartSessionRequest(1L, 3L, "cp-metric-failure", OWNER_ACCOUNT_UUID);
 
     GameInstanceDto dto = service.startSession(request);
 
@@ -442,7 +613,8 @@ class GameInstanceServiceImplTest {
 
   @Test
   void startSessionQuarantinesOwnerWhenWorldActivationFails() {
-    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-activation-failure", 42L);
+    StartSessionRequest request =
+        new StartSessionRequest(1L, 3L, "cp-activation-failure", OWNER_ACCOUNT_UUID);
     when(worldManagementClient.activatePreparedWorldInstance(anyLong(), anyLong(), anyLong()))
         .thenReturn(
             net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceResponse
@@ -468,7 +640,8 @@ class GameInstanceServiceImplTest {
 
   @Test
   void startSessionQuarantinesOwnerAfterAmbiguousWorldActivationResponse() {
-    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-activation-timeout", 42L);
+    StartSessionRequest request =
+        new StartSessionRequest(1L, 3L, "cp-activation-timeout", OWNER_ACCOUNT_UUID);
     when(worldManagementClient.activatePreparedWorldInstance(anyLong(), anyLong(), anyLong()))
         .thenThrow(new IllegalStateException("activation response timed out"));
 
@@ -484,7 +657,8 @@ class GameInstanceServiceImplTest {
 
   @Test
   void startSessionQuarantinesOwnerWhenRuntimeStateSaveFailsAfterActivation() {
-    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-runtime-save-failure", 42L);
+    StartSessionRequest request =
+        new StartSessionRequest(1L, 3L, "cp-runtime-save-failure", OWNER_ACCOUNT_UUID);
     AtomicInteger saveCount = new AtomicInteger();
     doAnswer(
             invocation -> {
@@ -513,7 +687,8 @@ class GameInstanceServiceImplTest {
 
   @Test
   void startSessionQuarantinesOwnerWhenLocalFinalizationFailsAfterActivation() {
-    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-finalization-failure", 42L);
+    StartSessionRequest request =
+        new StartSessionRequest(1L, 3L, "cp-finalization-failure", OWNER_ACCOUNT_UUID);
     doThrow(new IllegalStateException("local finalization failed"))
         .when(mapper)
         .toDto(any(GameInstance.class));
@@ -535,7 +710,7 @@ class GameInstanceServiceImplTest {
 
   @Test
   void startSessionFailsWhenWorldPreparationFails() {
-    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-6", 42L);
+    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-6", OWNER_ACCOUNT_UUID);
     when(worldManagementClient.prepareWorldInstance(
             anyLong(),
             anyLong(),
@@ -569,7 +744,8 @@ class GameInstanceServiceImplTest {
 
   @Test
   void startSessionUsesPreparationAuthorityErrorWhenPreparationTransportFails() {
-    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-preparation-timeout", 42L);
+    StartSessionRequest request =
+        new StartSessionRequest(1L, 3L, "cp-preparation-timeout", OWNER_ACCOUNT_UUID);
     when(worldManagementClient.prepareWorldInstance(
             anyLong(),
             anyLong(),
@@ -598,7 +774,8 @@ class GameInstanceServiceImplTest {
 
   @Test
   void startSessionPreservesStartFailureWhenPreparedWorldCleanupTransportFails() {
-    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-fail-prepared", 42L);
+    StartSessionRequest request =
+        new StartSessionRequest(1L, 3L, "cp-fail-prepared", OWNER_ACCOUNT_UUID);
     doThrow(new IllegalStateException("state save failed")).when(stateService).saveState(any());
     when(worldManagementClient.failPreparedWorldInstance(anyLong(), anyLong(), anyLong(), any()))
         .thenThrow(new IllegalStateException("fail-prepared response timed out"));
@@ -614,7 +791,8 @@ class GameInstanceServiceImplTest {
 
   @Test
   void startSessionFailsClosedWhenWorldPreparationResponseIsNull() {
-    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-null-world", 42L);
+    StartSessionRequest request =
+        new StartSessionRequest(1L, 3L, "cp-null-world", OWNER_ACCOUNT_UUID);
     when(worldManagementClient.prepareWorldInstance(
             anyLong(),
             anyLong(),
@@ -639,7 +817,8 @@ class GameInstanceServiceImplTest {
 
   @Test
   void startSessionFailsClosedWhenWorldPreparationOmitsSnapshotAndError() {
-    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-empty-world", 42L);
+    StartSessionRequest request =
+        new StartSessionRequest(1L, 3L, "cp-empty-world", OWNER_ACCOUNT_UUID);
     when(worldManagementClient.prepareWorldInstance(
             anyLong(),
             anyLong(),
@@ -667,7 +846,8 @@ class GameInstanceServiceImplTest {
 
   @Test
   void startSessionFailsClosedWhenWorldPreparationScopeDoesNotMatch() {
-    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-mismatched-world", 42L);
+    StartSessionRequest request =
+        new StartSessionRequest(1L, 3L, "cp-mismatched-world", OWNER_ACCOUNT_UUID);
     when(worldManagementClient.prepareWorldInstance(
             anyLong(),
             anyLong(),
@@ -694,7 +874,8 @@ class GameInstanceServiceImplTest {
 
   @Test
   void startSessionFailsClosedWhenWorldPreparationEpochIsNotPositive() {
-    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-zero-world-epoch", 42L);
+    StartSessionRequest request =
+        new StartSessionRequest(1L, 3L, "cp-zero-world-epoch", OWNER_ACCOUNT_UUID);
     when(worldManagementClient.prepareWorldInstance(
             anyLong(),
             anyLong(),
@@ -724,7 +905,8 @@ class GameInstanceServiceImplTest {
   })
   void startSessionPrefixesMalformedWorldIdentifiersAndRetainsCause(
       String tenantId, String gameInstanceId, String fieldName) {
-    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-malformed-world-id", 42L);
+    StartSessionRequest request =
+        new StartSessionRequest(1L, 3L, "cp-malformed-world-id", OWNER_ACCOUNT_UUID);
     when(worldManagementClient.prepareWorldInstance(
             anyLong(),
             anyLong(),
@@ -751,7 +933,8 @@ class GameInstanceServiceImplTest {
 
   @Test
   void startSessionFailsClosedWhenWorldPreparationStatusIsAlreadyActive() {
-    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-active-world", 42L);
+    StartSessionRequest request =
+        new StartSessionRequest(1L, 3L, "cp-active-world", OWNER_ACCOUNT_UUID);
     doReturn(
             net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceResponse.newBuilder()
                 .setWorldInstance(
@@ -801,9 +984,10 @@ class GameInstanceServiceImplTest {
   void startSessionWithReplacementRejectsKnownNonActiveWorldLifecycle(
       WorldInstanceLifecycleStatus status) {
     StartSessionRequest request =
-        new StartSessionRequest(2L, 3L, "cp-known-non-active-" + status.name(), 42L);
-    GameInstance existing = persistExisting(7L, 2L, "v1", null, 42L, "RUNNING");
-    when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING"))
+        new StartSessionRequest(2L, 3L, "cp-known-non-active-" + status.name(), OWNER_ACCOUNT_UUID);
+    GameInstance existing = persistExisting(7L, 2L, "v1", null, OWNER_ACCOUNT_UUID, "RUNNING");
+    when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(
+            2L, OWNER_ACCOUNT_UUID, "RUNNING"))
         .thenReturn(Optional.of(existing));
     when(worldManagementClient.getWorldInstanceLifecycle(2L, 7L))
         .thenReturn(worldLifecycleSnapshot("2", "7", 3L, status));
@@ -819,7 +1003,8 @@ class GameInstanceServiceImplTest {
 
   @Test
   void startSessionFailsClosedWhenWorldActivationOmitsSnapshotAndError() {
-    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-empty-activation", 42L);
+    StartSessionRequest request =
+        new StartSessionRequest(1L, 3L, "cp-empty-activation", OWNER_ACCOUNT_UUID);
     when(worldManagementClient.activatePreparedWorldInstance(anyLong(), anyLong(), anyLong()))
         .thenReturn(
             net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceResponse
@@ -834,7 +1019,7 @@ class GameInstanceServiceImplTest {
 
   @Test
   void stopSessionFailsClosedWhenWorldTerminationOmitsSnapshotAndError() {
-    persistExisting(10L, 1L, "v1", null, 42L, "RUNNING");
+    persistExisting(10L, 1L, "v1", null, OWNER_ACCOUNT_UUID, "RUNNING");
     when(worldManagementClient.terminateWorldInstance(
             anyLong(), anyLong(), anyLong(), any(), any()))
         .thenReturn(
@@ -850,14 +1035,16 @@ class GameInstanceServiceImplTest {
 
   @Test
   void startSessionStopsExistingRunningSessionOnlyWithinTenantAndOwner() {
-    StartSessionRequest request = new StartSessionRequest(2L, 3L, "cp-2", 42L);
-    GameInstance existing = persistExisting(7L, 2L, "v1", null, 42L, "RUNNING");
-    when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING"))
+    StartSessionRequest request = new StartSessionRequest(2L, 3L, "cp-2", OWNER_ACCOUNT_UUID);
+    GameInstance existing = persistExisting(7L, 2L, "v1", null, OWNER_ACCOUNT_UUID, "RUNNING");
+    when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(
+            2L, OWNER_ACCOUNT_UUID, "RUNNING"))
         .thenReturn(Optional.of(existing));
 
     GameInstanceDto dto = service.startSession(request, true);
 
-    verify(repository).findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING");
+    verify(repository)
+        .findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, OWNER_ACCOUNT_UUID, "RUNNING");
     verify(stateService, times(2)).saveState(any(GameInstanceDto.class));
     verify(stateService).deleteState(2L, 7L);
     verify(worldManagementClient).getWorldInstanceLifecycle(2L, 7L);
@@ -878,17 +1065,18 @@ class GameInstanceServiceImplTest {
 
   @Test
   void startSessionWithoutReplacementLeavesExistingSessionRunning() {
-    StartSessionRequest request = new StartSessionRequest(2L, 3L, "cp-3", 42L);
+    StartSessionRequest request = new StartSessionRequest(2L, 3L, "cp-3", OWNER_ACCOUNT_UUID);
 
     service.startSession(request, false);
 
-    verify(repository, never()).findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING");
+    verify(repository, never())
+        .findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, OWNER_ACCOUNT_UUID, "RUNNING");
     verify(stateService, times(2)).saveState(any(GameInstanceDto.class));
   }
 
   @Test
   void stopSessionDeletesState() {
-    persistExisting(10L, 1L, "v1", null, 42L, "RUNNING");
+    persistExisting(10L, 1L, "v1", null, OWNER_ACCOUNT_UUID, "RUNNING");
 
     GameInstanceDto dto = service.stopSession(10L);
 
@@ -903,7 +1091,7 @@ class GameInstanceServiceImplTest {
 
   @Test
   void stopSessionFinalizesLocallyWhenWorldIsAlreadyTerminated() {
-    persistExisting(10L, 1L, "v1", null, 42L, "RUNNING");
+    persistExisting(10L, 1L, "v1", null, OWNER_ACCOUNT_UUID, "RUNNING");
     when(worldManagementClient.getWorldInstanceLifecycle(1L, 10L))
         .thenReturn(
             worldLifecycleSnapshot(
@@ -923,7 +1111,7 @@ class GameInstanceServiceImplTest {
 
   @Test
   void stopSessionMapsTerminationInProgressResponseToLifecycleOutcome() {
-    persistExisting(10L, 1L, "v1", null, 42L, "RUNNING");
+    persistExisting(10L, 1L, "v1", null, OWNER_ACCOUNT_UUID, "RUNNING");
     when(worldManagementClient.terminateWorldInstance(
             anyLong(), anyLong(), anyLong(), any(), any()))
         .thenReturn(
@@ -949,7 +1137,7 @@ class GameInstanceServiceImplTest {
 
   @Test
   void stopSessionKeepsSessionStoppedWhenFinalizationFailsAfterWorldTermination() {
-    persistExisting(10L, 1L, "v1", null, 42L, "RUNNING");
+    persistExisting(10L, 1L, "v1", null, OWNER_ACCOUNT_UUID, "RUNNING");
     AtomicInteger mapperCalls = new AtomicInteger();
     doAnswer(
             invocation -> {
@@ -971,7 +1159,7 @@ class GameInstanceServiceImplTest {
 
   @Test
   void startSessionFailsFastWhenStateSaveFails() {
-    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-4", 42L);
+    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-4", OWNER_ACCOUNT_UUID);
     doThrow(new IllegalStateException("redis down")).when(stateService).saveState(any());
 
     assertThrows(IllegalStateException.class, () -> service.startSession(request));
@@ -983,10 +1171,12 @@ class GameInstanceServiceImplTest {
 
   @Test
   void startSessionWithReplacementRestoresExistingRunningStateWhenNewStateSaveFails() {
-    StartSessionRequest request = new StartSessionRequest(2L, 3L, "cp-5", 42L);
+    StartSessionRequest request = new StartSessionRequest(2L, 3L, "cp-5", OWNER_ACCOUNT_UUID);
     GameInstance existing =
-        persistExisting(7L, 2L, "v1", "patch-1", 42L, "RUNNING", 100L, 3L, "pin-request-1");
-    when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING"))
+        persistExisting(
+            7L, 2L, "v1", "patch-1", OWNER_ACCOUNT_UUID, "RUNNING", 100L, 3L, "pin-request-1");
+    when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(
+            2L, OWNER_ACCOUNT_UUID, "RUNNING"))
         .thenReturn(Optional.of(existing));
     AtomicInteger saveCount = new AtomicInteger();
     doAnswer(
@@ -1019,9 +1209,10 @@ class GameInstanceServiceImplTest {
 
   @Test
   void startSessionWithReplacementLeavesExistingSessionStoppingWhenTerminationFails() {
-    StartSessionRequest request = new StartSessionRequest(2L, 3L, "cp-5", 42L);
-    GameInstance existing = persistExisting(7L, 2L, "v1", null, 42L, "RUNNING");
-    when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING"))
+    StartSessionRequest request = new StartSessionRequest(2L, 3L, "cp-5", OWNER_ACCOUNT_UUID);
+    GameInstance existing = persistExisting(7L, 2L, "v1", null, OWNER_ACCOUNT_UUID, "RUNNING");
+    when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(
+            2L, OWNER_ACCOUNT_UUID, "RUNNING"))
         .thenReturn(Optional.of(existing));
     when(worldManagementClient.terminateWorldInstance(
             anyLong(), anyLong(), anyLong(), any(), any()))
@@ -1047,9 +1238,11 @@ class GameInstanceServiceImplTest {
 
   @Test
   void startSessionWithReplacementFinalizesAlreadyTerminatedExistingSession() {
-    StartSessionRequest request = new StartSessionRequest(2L, 3L, "cp-terminated-replacement", 42L);
-    GameInstance existing = persistExisting(7L, 2L, "v1", null, 42L, "RUNNING");
-    when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING"))
+    StartSessionRequest request =
+        new StartSessionRequest(2L, 3L, "cp-terminated-replacement", OWNER_ACCOUNT_UUID);
+    GameInstance existing = persistExisting(7L, 2L, "v1", null, OWNER_ACCOUNT_UUID, "RUNNING");
+    when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(
+            2L, OWNER_ACCOUNT_UUID, "RUNNING"))
         .thenReturn(Optional.of(existing));
     when(worldManagementClient.getWorldInstanceLifecycle(2L, 7L))
         .thenReturn(
@@ -1070,9 +1263,10 @@ class GameInstanceServiceImplTest {
   @Test
   void startSessionWithReplacementDoesNotRestoreAlreadyTerminatedExistingSessionOnFailure() {
     StartSessionRequest request =
-        new StartSessionRequest(2L, 3L, "cp-terminated-replacement-failure", 42L);
-    GameInstance existing = persistExisting(7L, 2L, "v1", null, 42L, "RUNNING");
-    when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING"))
+        new StartSessionRequest(2L, 3L, "cp-terminated-replacement-failure", OWNER_ACCOUNT_UUID);
+    GameInstance existing = persistExisting(7L, 2L, "v1", null, OWNER_ACCOUNT_UUID, "RUNNING");
+    when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(
+            2L, OWNER_ACCOUNT_UUID, "RUNNING"))
         .thenReturn(Optional.of(existing));
     when(worldManagementClient.getWorldInstanceLifecycle(2L, 7L))
         .thenReturn(
@@ -1102,9 +1296,10 @@ class GameInstanceServiceImplTest {
   @Test
   void startSessionWithReplacementLeavesExistingSessionStoppingWhenTerminationIsInProgress() {
     StartSessionRequest request =
-        new StartSessionRequest(2L, 3L, "cp-terminating-replacement", 42L);
-    GameInstance existing = persistExisting(7L, 2L, "v1", null, 42L, "RUNNING");
-    when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING"))
+        new StartSessionRequest(2L, 3L, "cp-terminating-replacement", OWNER_ACCOUNT_UUID);
+    GameInstance existing = persistExisting(7L, 2L, "v1", null, OWNER_ACCOUNT_UUID, "RUNNING");
+    when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(
+            2L, OWNER_ACCOUNT_UUID, "RUNNING"))
         .thenReturn(Optional.of(existing));
     when(worldManagementClient.getWorldInstanceLifecycle(2L, 7L))
         .thenReturn(
@@ -1131,9 +1326,10 @@ class GameInstanceServiceImplTest {
   @Test
   void startSessionWithReplacementRestoresExistingStateWhenWorldLifecyclePreflightFails() {
     StartSessionRequest request =
-        new StartSessionRequest(2L, 3L, "cp-world-preflight-failure", 42L);
-    GameInstance existing = persistExisting(7L, 2L, "v1", null, 42L, "RUNNING");
-    when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING"))
+        new StartSessionRequest(2L, 3L, "cp-world-preflight-failure", OWNER_ACCOUNT_UUID);
+    GameInstance existing = persistExisting(7L, 2L, "v1", null, OWNER_ACCOUNT_UUID, "RUNNING");
+    when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(
+            2L, OWNER_ACCOUNT_UUID, "RUNNING"))
         .thenReturn(Optional.of(existing));
     when(worldManagementClient.getWorldInstanceLifecycle(2L, 7L))
         .thenReturn(
@@ -1166,8 +1362,9 @@ class GameInstanceServiceImplTest {
 
   @Test
   void startSessionDoesNotResurrectReplacedSessionWhenActivationFails() {
-    StartSessionRequest request = new StartSessionRequest(2L, 3L, "cp-activation-failure", 42L);
-    persistExisting(7L, 2L, "v1", null, 42L, "RUNNING");
+    StartSessionRequest request =
+        new StartSessionRequest(2L, 3L, "cp-activation-failure", OWNER_ACCOUNT_UUID);
+    persistExisting(7L, 2L, "v1", null, OWNER_ACCOUNT_UUID, "RUNNING");
     when(worldManagementClient.activatePreparedWorldInstance(anyLong(), anyLong(), anyLong()))
         .thenReturn(
             net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceResponse
@@ -1192,20 +1389,27 @@ class GameInstanceServiceImplTest {
 
   @Test
   void stopSessionFailsFastWhenStateDeleteFails() {
-    persistExisting(10L, 1L, "v1", null, 42L, "RUNNING");
+    GameInstance retained = persistExisting(10L, 1L, "v1", null, OWNER_ACCOUNT_UUID, "RUNNING");
+    retained.setOwnerAccountId(null);
+    retained.setLegacyOwnerAccountId(42L);
+    store.put(10L, copyOf(retained));
     doThrow(new IllegalStateException("redis down")).when(stateService).deleteState(1L, 10L);
 
     assertThrows(IllegalStateException.class, () -> service.stopSession(10L));
 
     verify(stateService).deleteState(1L, 10L);
     verify(worldManagementClient, never()).getWorldInstanceLifecycle(anyLong(), anyLong());
-    verify(stateService).saveState(any(GameInstanceDto.class));
+    ArgumentCaptor<GameInstanceDto> restoredState = ArgumentCaptor.forClass(GameInstanceDto.class);
+    verify(stateService).saveState(restoredState.capture());
+    assertNull(restoredState.getValue().ownerAccountId());
     assertEquals("RUNNING", store.get(10L).getStatus());
+    assertNull(store.get(10L).getOwnerAccountId());
+    assertEquals(42L, store.get(10L).getLegacyOwnerAccountId());
   }
 
   @Test
   void stopSessionLeavesStoppingStateWhenWorldTerminationFailsAfterRequest() {
-    persistExisting(10L, 1L, "v1", null, 42L, "RUNNING");
+    persistExisting(10L, 1L, "v1", null, OWNER_ACCOUNT_UUID, "RUNNING");
     when(worldManagementClient.terminateWorldInstance(
             anyLong(), anyLong(), anyLong(), any(), any()))
         .thenReturn(
@@ -1226,7 +1430,7 @@ class GameInstanceServiceImplTest {
 
   @Test
   void stopSessionRestoresExistingStateWhenWorldLifecyclePreflightFails() {
-    persistExisting(10L, 1L, "v1", null, 42L, "RUNNING");
+    persistExisting(10L, 1L, "v1", null, OWNER_ACCOUNT_UUID, "RUNNING");
     when(worldManagementClient.getWorldInstanceLifecycle(1L, 10L))
         .thenReturn(
             net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleResponse.newBuilder()
@@ -1251,8 +1455,33 @@ class GameInstanceServiceImplTest {
   }
 
   @Test
+  void stopSessionCompensationPreservesUnmappedNumericOwnerEvidence() {
+    persistLegacyOwner(10L, 1L, "v1", "RUNNING", 9_007_199_254_740_993L);
+    when(worldManagementClient.getWorldInstanceLifecycle(1L, 10L))
+        .thenReturn(
+            GetWorldInstanceLifecycleResponse.newBuilder()
+                .setError(
+                    net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                        .setCode("WORLD_LIFECYCLE_UNAVAILABLE")
+                        .setMessage("lifecycle read failed")
+                        .build())
+                .build());
+
+    assertThrows(IllegalStateException.class, () -> service.stopSession(10L));
+
+    assertEquals("RUNNING", store.get(10L).getStatus());
+    assertNull(store.get(10L).getOwnerAccountId());
+    assertEquals(9_007_199_254_740_993L, store.get(10L).getLegacyOwnerAccountId());
+    verify(stateService).deleteState(1L, 10L);
+    verify(stateService)
+        .saveState(argThat(state -> state.id() == 10L && "RUNNING".equals(state.status())));
+    verify(worldManagementClient, never())
+        .terminateWorldInstance(anyLong(), anyLong(), anyLong(), anyString(), anyString());
+  }
+
+  @Test
   void stopSessionUsesLifecycleAuthorityConstantWhenLifecycleReadTransportFails() {
-    persistExisting(10L, 1L, "v1", null, 42L, "RUNNING");
+    persistExisting(10L, 1L, "v1", null, OWNER_ACCOUNT_UUID, "RUNNING");
     when(worldManagementClient.getWorldInstanceLifecycle(1L, 10L))
         .thenThrow(new IllegalStateException("lifecycle read timed out"));
 
@@ -1266,7 +1495,7 @@ class GameInstanceServiceImplTest {
 
   @Test
   void stopSessionLeavesStoppingStateWhenWorldTerminationIsInProgress() {
-    persistExisting(10L, 1L, "v1", null, 42L, "RUNNING");
+    persistExisting(10L, 1L, "v1", null, OWNER_ACCOUNT_UUID, "RUNNING");
     when(worldManagementClient.getWorldInstanceLifecycle(1L, 10L))
         .thenReturn(
             net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleResponse.newBuilder()
@@ -1303,7 +1532,7 @@ class GameInstanceServiceImplTest {
         "WORLD_INSTANCE_LIFECYCLE_STATUS_FAILED_PRE_ACTIVATION"
       })
   void stopSessionRejectsKnownNonActiveWorldLifecycle(WorldInstanceLifecycleStatus status) {
-    persistExisting(10L, 1L, "v1", null, 42L, "RUNNING");
+    persistExisting(10L, 1L, "v1", null, OWNER_ACCOUNT_UUID, "RUNNING");
     when(worldManagementClient.getWorldInstanceLifecycle(1L, 10L))
         .thenReturn(worldLifecycleSnapshot("1", "10", 3L, status));
 
@@ -1355,12 +1584,25 @@ class GameInstanceServiceImplTest {
                   ? Optional.of(copyOf(stored))
                   : Optional.empty();
             });
-    when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(
-            any(Long.class), any(Long.class), any()))
+    when(repository.findUnresolvedActiveOwnerRowsByTenantIdForUpdate(anyLong()))
         .thenAnswer(
             invocation -> {
               Long tenantId = invocation.getArgument(0);
-              Long ownerAccountId = invocation.getArgument(1);
+              return store.values().stream()
+                  .filter(instance -> tenantId.equals(instance.getTenantId()))
+                  .filter(instance -> instance.getOwnerAccountId() == null)
+                  .filter(
+                      instance ->
+                          instance.getStatus() == null || !"STOPPED".equals(instance.getStatus()))
+                  .map(GameInstanceServiceImplTest::copyOf)
+                  .toList();
+            });
+    when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(
+            any(Long.class), anyString(), any()))
+        .thenAnswer(
+            invocation -> {
+              Long tenantId = invocation.getArgument(0);
+              String ownerAccountId = invocation.getArgument(1);
               String status = invocation.getArgument(2);
               return store.values().stream()
                   .filter(instance -> tenantId.equals(instance.getTenantId()))
@@ -1470,7 +1712,7 @@ class GameInstanceServiceImplTest {
 
   @Test
   void startSessionFailsWhenPublishedAssetProofDoesNotMatchReleaseBundle() {
-    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-proof", 42L);
+    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-proof", OWNER_ACCOUNT_UUID);
     when(gameDesignClient.getVersionAssetArtifactState(any(Long.class), any(Long.class)))
         .thenReturn(
             GetVersionAssetArtifactStateResponse.newBuilder()
@@ -1498,7 +1740,8 @@ class GameInstanceServiceImplTest {
 
   @Test
   void startSessionRejectsNonPositiveLaunchDescriptorTenantIdBeforeWorldPreparation() {
-    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-launch-tenant", 42L);
+    StartSessionRequest request =
+        new StartSessionRequest(1L, 3L, "cp-launch-tenant", OWNER_ACCOUNT_UUID);
     doReturn(
             ResolveLaunchDescriptorResponse.newBuilder()
                 .setLaunchDescriptor(
@@ -1542,7 +1785,7 @@ class GameInstanceServiceImplTest {
 
   @Test
   void startSessionFailsWhenReleaseBundleSchemaIsUnsupported() {
-    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-schema", 42L);
+    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-schema", OWNER_ACCOUNT_UUID);
     when(gameDesignClient.getPublishedReleaseBundle(any(Long.class), any(Long.class)))
         .thenReturn(
             GetPublishedReleaseBundleResponse.newBuilder()
@@ -1567,7 +1810,7 @@ class GameInstanceServiceImplTest {
 
   @Test
   void startSessionRejectsMalformedPreparedWorldInstanceGameInstanceIdBeforeActivation() {
-    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-prep-id", 42L);
+    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-prep-id", OWNER_ACCOUNT_UUID);
     doReturn(
             net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceResponse.newBuilder()
                 .setWorldInstance(
@@ -1610,7 +1853,8 @@ class GameInstanceServiceImplTest {
   @Test
   void persistExistingPreservesScriptPinOwnerRequestIdInCopiedTuple() {
     GameInstance existing =
-        persistExisting(7L, 2L, "v1", "patch-1", 42L, "RUNNING", 100L, 3L, "pin-request-1");
+        persistExisting(
+            7L, 2L, "v1", "patch-1", OWNER_ACCOUNT_UUID, "RUNNING", 100L, 3L, "pin-request-1");
 
     assertEquals(100L, existing.getScriptPatchBaseVersionId());
     assertEquals(3L, existing.getScriptPinEpoch());
@@ -1848,7 +2092,7 @@ class GameInstanceServiceImplTest {
       Long tenantId,
       String runtimeVersion,
       String scriptPatchVersion,
-      Long ownerAccountId,
+      String ownerAccountId,
       String status) {
     return persistExisting(
         id, tenantId, runtimeVersion, scriptPatchVersion, ownerAccountId, status, null, null);
@@ -1859,7 +2103,7 @@ class GameInstanceServiceImplTest {
       Long tenantId,
       String runtimeVersion,
       String scriptPatchVersion,
-      Long ownerAccountId,
+      String ownerAccountId,
       String status,
       Long scriptPinEpoch,
       String scriptPatchPinnedControlPlaneRequestId) {
@@ -1875,12 +2119,24 @@ class GameInstanceServiceImplTest {
         scriptPatchPinnedControlPlaneRequestId);
   }
 
+  private GameInstance persistLegacyOwner(
+      Long id, Long tenantId, String runtimeVersion, String status, Long legacyOwnerAccountId) {
+    GameInstance instance = new GameInstance();
+    instance.setId(id);
+    instance.setTenantId(tenantId);
+    instance.setRuntimeVersion(runtimeVersion);
+    instance.setStatus(status);
+    instance.setLegacyOwnerAccountId(legacyOwnerAccountId);
+    store.put(id, copyOf(instance));
+    return copyOf(instance);
+  }
+
   private GameInstance persistExisting(
       Long id,
       Long tenantId,
       String runtimeVersion,
       String scriptPatchVersion,
-      Long ownerAccountId,
+      String ownerAccountId,
       String status,
       Long scriptPatchBaseVersionId,
       Long scriptPinEpoch,
@@ -1918,6 +2174,7 @@ class GameInstanceServiceImplTest {
     copy.setGenerationConfigRevision(instance.getGenerationConfigRevision());
     copy.setRemapSetId(instance.getRemapSetId());
     copy.setOwnerAccountId(instance.getOwnerAccountId());
+    copy.setLegacyOwnerAccountId(instance.getLegacyOwnerAccountId());
     copy.setStatus(instance.getStatus());
     copy.setRowVersion(instance.getRowVersion());
     copy.setRunOwnedStartRequestId(instance.getRunOwnedStartRequestId());

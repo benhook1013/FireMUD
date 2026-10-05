@@ -55,6 +55,8 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
   private static final String PROJECT_NAME = "firemud-smoke-compose-smoke-2939";
   private static final String CAPABILITY_PATH = "fixture/capability.json";
   private static final String OPERATION_ID = "d2db8478-9c56-42ab-99c2-9fbead6841ba";
+  // Synthetic unit-fixture value only; it does not prove Account-service issuance or mapping.
+  private static final String TEST_OWNER_ACCOUNT_ID = "123e4567-e89b-12d3-a456-426614174000";
   private static final UUID REALM_ID = UUID.fromString("23d39978-9d44-4e1a-8659-998ff9239b01");
   private static final UUID NAMESPACE_ID = UUID.fromString("ed1b4d88-81f8-4404-af7c-9a5dc91d3043");
   private static final UUID HOLD_ID = UUID.fromString("5fdd38a3-09e3-46bb-b11a-e2ff2a096211");
@@ -481,7 +483,7 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
             OPERATION_ID,
             7L,
             17L,
-            27L,
+            TEST_OWNER_ACCOUNT_ID,
             "demo",
             "Demo World",
             "production",
@@ -510,7 +512,7 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
             3L,
             "config-1",
             null,
-            27L,
+            new String(TEST_OWNER_ACCOUNT_ID.toCharArray()),
             "RUNNING");
     when(gameInstanceService.startRunOwnedInitialLaunch(any()))
         .thenReturn(new RunOwnedInitialLaunchResult(target, 4L));

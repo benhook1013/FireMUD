@@ -8,6 +8,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -63,6 +64,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
   private final net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse
       baselineRoomEntities;
   private final ListFriendPresenceResponse baselineFriendPresenceResponse;
+  private final Map<Long, String> syntheticManagementOwnerUuids = new HashMap<>();
   private CrossServiceAppHarness.GameLogicHolder gameLogic;
   private final CrossServiceAppHarness.GameSessionHolder gameSession;
   private final boolean useDefaultDemoCatalogFixture;
@@ -217,7 +219,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
     }
     long gameInstanceId =
         GameInstanceTestFixtures.insertRunningGameInstance(
-            jdbc, tenantId, ownerAccountId, gameTemplateId);
+            jdbc, tenantId, GameInstanceTestFixtures.TEST_OWNER_ACCOUNT_UUID, gameTemplateId);
     seedRuntimeOwnership(tenantId, gameInstanceId);
     if (useDefaultDemoCatalogFixture) {
       bindDefaultDemoPointer(tenantId, gameInstanceId, ownerAccountId, gameTemplateId);
@@ -916,7 +918,11 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
     }
     long gameInstanceId =
         GameInstanceTestFixtures.insertRunningGameInstance(
-            jdbc, tenantId, accountId, gameTemplateId);
+            jdbc,
+            tenantId,
+            syntheticManagementOwnerUuids.computeIfAbsent(
+                accountId, ignored -> UUID.randomUUID().toString()),
+            gameTemplateId);
     seedRuntimeOwnership(tenantId, gameInstanceId);
     return gameInstanceId;
   }

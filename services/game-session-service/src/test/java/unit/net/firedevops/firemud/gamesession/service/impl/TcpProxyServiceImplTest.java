@@ -25,6 +25,8 @@ import org.springframework.boot.test.system.OutputCaptureExtension;
 
 @ExtendWith(OutputCaptureExtension.class)
 class TcpProxyServiceImplTest {
+  private static final String OWNER_ACCOUNT_UUID = "123e4567-e89b-12d3-a456-426614174000";
+
   @Test
   void notifyDisconnectWithUnprovedBindingLeavesLifecycleStateUnchanged() {
     GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
@@ -489,7 +491,7 @@ class TcpProxyServiceImplTest {
     entity.setScriptPatchVersion("patch");
     entity.setScriptPinEpoch(3L);
     entity.setScriptPatchPinnedControlPlaneRequestId("pin-request-3");
-    entity.setOwnerAccountId(99L);
+    entity.setOwnerAccountId(OWNER_ACCOUNT_UUID);
     entity.setStatus("RUNNING");
     return entity;
   }

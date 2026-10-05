@@ -33,6 +33,8 @@ class RunOwnedInitialLaunchPostgresIntegrationTest {
   private static final long TENANT_ID = 41L;
   private static final String REQUEST_ID = "run-owned-pg-race";
   private static final String REQUEST_DIGEST = "c".repeat(64);
+  private static final String OWNER_ACCOUNT_UUID = "123e4567-e89b-12d3-a456-426614174000";
+  private static final String SECOND_OWNER_ACCOUNT_UUID = "723c126e-4159-493b-ad15-36a67d673031";
 
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
@@ -91,8 +93,8 @@ class RunOwnedInitialLaunchPostgresIntegrationTest {
                     .isTrue();
               });
 
-      GameInstance savedOrdinaryOne = repository.save(ordinaryInstance(1001L));
-      GameInstance savedOrdinaryTwo = repository.save(ordinaryInstance(1002L));
+      GameInstance savedOrdinaryOne = repository.save(ordinaryInstance(OWNER_ACCOUNT_UUID));
+      GameInstance savedOrdinaryTwo = repository.save(ordinaryInstance(SECOND_OWNER_ACCOUNT_UUID));
       assertThat(savedOrdinaryOne.getRunOwnedStartRequestId()).isNull();
       assertThat(savedOrdinaryTwo.getRunOwnedStartRequestId()).isNull();
       assertThat(
@@ -189,7 +191,7 @@ class RunOwnedInitialLaunchPostgresIntegrationTest {
     instance.setReleaseBundleId(20L);
     instance.setVersionStateEpoch(13L);
     instance.setGenerationConfigRevision("genrev-1");
-    instance.setOwnerAccountId(1001L);
+    instance.setOwnerAccountId(OWNER_ACCOUNT_UUID);
     instance.setStatus("STARTING");
     instance.setRunOwnedStartRequestId(REQUEST_ID);
     instance.setRunOwnedStartRequestDigest(REQUEST_DIGEST);
@@ -197,7 +199,7 @@ class RunOwnedInitialLaunchPostgresIntegrationTest {
     return instance;
   }
 
-  private static GameInstance ordinaryInstance(long ownerAccountId) {
+  private static GameInstance ordinaryInstance(String ownerAccountId) {
     GameInstance instance = new GameInstance();
     instance.setTenantId(TENANT_ID);
     instance.setRuntimeVersion("ordinary-runtime");

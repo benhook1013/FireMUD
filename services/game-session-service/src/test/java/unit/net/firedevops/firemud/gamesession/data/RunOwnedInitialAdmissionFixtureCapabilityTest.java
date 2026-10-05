@@ -20,6 +20,8 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
   private static final String RUN_ID = "compose-smoke-2939";
   private static final String PROJECT_NAME = "firemud-smoke-compose-smoke-2939";
   private static final String OPERATION_ID = "d2db8478-9c56-42ab-99c2-9fbead6841ba";
+  // Synthetic unit-fixture value only; it does not prove Account-service issuance or mapping.
+  private static final String TEST_OWNER_ACCOUNT_ID = "123e4567-e89b-12d3-a456-426614174000";
   private static final String LEAF_SHA = "a".repeat(64);
   private static final String CA_SHA = "b".repeat(64);
 
@@ -37,7 +39,7 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
     assertThat(capability.operationId()).isEqualTo(OPERATION_ID);
     assertThat(capability.tenantId()).isEqualTo(7L);
     assertThat(capability.gameTemplateId()).isEqualTo(17L);
-    assertThat(capability.ownerAccountId()).isEqualTo(27L);
+    assertThat(capability.ownerAccountId()).isEqualTo(TEST_OWNER_ACCOUNT_ID);
     assertThat(capability.worldSlug()).isEqualTo("demo");
     assertThat(capability.realmSlug()).isEqualTo("production");
     assertThat(capability.visible()).isTrue();
@@ -53,6 +55,19 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
     assertInvalid(validJson().replace("\"schema\":", "\"schema\":\"wrong\",\"schema\":"));
     assertInvalid(validJson().replace(RUN_ID, "different-run"));
     assertInvalid(validJson().replace(OPERATION_ID, "not-a-uuid"));
+    assertInvalid(
+        validJson()
+            .replace(
+                "\"ownerAccountId\": \"" + TEST_OWNER_ACCOUNT_ID + "\"", "\"ownerAccountId\": 27"));
+    assertInvalid(
+        validJson()
+            .replace(
+                "\"ownerAccountId\": \"" + TEST_OWNER_ACCOUNT_ID + "\"",
+                "\"ownerAccountId\": \"27\""));
+    assertInvalid(
+        validJson().replace(TEST_OWNER_ACCOUNT_ID, "00000000-0000-0000-0000-000000000000"));
+    assertInvalid(
+        validJson().replace(TEST_OWNER_ACCOUNT_ID, "123E4567-E89B-12D3-A456-426614174000"));
     assertInvalid(
         validJson().replace("\"operationId\": \"" + OPERATION_ID + "\"", "\"operationId\": null"));
     assertInvalid(validJson().replace("\"tenantId\": 7", "\"tenantId\": \"7\""));
@@ -131,7 +146,7 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
           "operationId": "%s",%n\
           "tenantId": 7,%n\
           "gameTemplateId": 17,%n\
-          "ownerAccountId": 27,%n\
+          "ownerAccountId": "%s",%n\
           "worldSlug": "demo",%n\
           "worldDisplayName": "Demo World",%n\
           "realmSlug": "production",%n\
@@ -151,6 +166,7 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
             RUN_ID,
             PROJECT_NAME,
             OPERATION_ID,
+            TEST_OWNER_ACCOUNT_ID,
             LEAF_SHA,
             RunOwnedInitialAdmissionFixtureCapability.GAME_SESSION_URI_SAN,
             CA_SHA);

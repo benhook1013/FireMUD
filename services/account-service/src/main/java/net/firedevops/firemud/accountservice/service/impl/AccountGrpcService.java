@@ -859,6 +859,13 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (IllegalStateException ex) {
+      GetProfileResponse response =
+          GetProfileResponse.newBuilder()
+              .setError(appError("GetProfile", "INTERNAL", "Profile source validation failed"))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     }
   }
 
@@ -937,9 +944,10 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       String bio = node.path("bio").asText(null);
       String presenceVisibilityPolicy = node.path("presenceVisibilityPolicy").asText(null);
       accountService.updateProfile(
+          accountId,
           new net.firedevops.firemud.accountservice.dto.UpdateProfileRequest(
               tenantId,
-              accountId,
+              accountUuid.toString(),
               displayName,
               bio,
               ProfilePresenceVisibilityPolicy.valueOf(
@@ -962,6 +970,14 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
           UpdateProfileResponse.newBuilder()
               .setSuccess(false)
               .setError(appError("UpdateProfile", "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalStateException ex) {
+      UpdateProfileResponse response =
+          UpdateProfileResponse.newBuilder()
+              .setSuccess(false)
+              .setError(appError("UpdateProfile", "INTERNAL", "Profile source validation failed"))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();

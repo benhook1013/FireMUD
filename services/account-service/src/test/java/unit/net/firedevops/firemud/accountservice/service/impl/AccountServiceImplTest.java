@@ -7011,21 +7011,61 @@ class AccountServiceImplTest {
   void getProfileReturnsDto() {
     Account account = new Account();
     account.setId(2L);
+    setPersistedAuthenticationIdentity(account);
     Profile profile = new Profile();
     profile.setAccount(account);
     profile.setTenantId(1L);
     profile.setDisplayName("demo");
     profile.setPresenceVisibilityPolicy(ProfilePresenceVisibilityPolicy.FRIENDS_ONLY);
+    when(accountRepository.findById(2L)).thenReturn(Optional.of(account));
     when(accountTenantMembershipRepository.existsByAccountIdAndTenantId(2L, 1L)).thenReturn(true);
     when(profileRepository.findByAccountIdAndTenantId(2L, 1L)).thenReturn(Optional.of(profile));
-    when(profileMapper.toDto(profile))
+    when(profileMapper.toDto(profile, account.getAccountUuid().toString()))
         .thenReturn(
             new net.firedevops.firemud.accountservice.dto.ProfileDto(
-                1L, 1L, 2L, "demo", null, ProfilePresenceVisibilityPolicy.FRIENDS_ONLY));
+                1L,
+                1L,
+                account.getAccountUuid().toString(),
+                "demo",
+                null,
+                ProfilePresenceVisibilityPolicy.FRIENDS_ONLY));
 
     var dto = service.getProfile(1L, 2L);
 
     assertEquals("demo", dto.displayName());
+    assertEquals(account.getAccountUuid().toString(), dto.accountId());
+  }
+
+  @Test
+  void profileReadsRejectContradictoryExactAccountLookupBeforeReadingProfiles() {
+    Account contradictoryAccount = new Account();
+    contradictoryAccount.setId(3L);
+    setPersistedAuthenticationIdentity(contradictoryAccount);
+    when(accountRepository.findById(2L)).thenReturn(Optional.of(contradictoryAccount));
+
+    assertThrows(IllegalStateException.class, () -> service.getProfile(1L, 2L));
+    assertThrows(IllegalStateException.class, () -> service.exportAccountData(2L));
+
+    verifyNoInteractions(accountTenantMembershipRepository, profileRepository, profileMapper);
+  }
+
+  @Test
+  void getProfileRejectsForeignAccountRelationBeforeMapping() {
+    Account account = new Account();
+    account.setId(2L);
+    setPersistedAuthenticationIdentity(account);
+    Account foreignAccount = new Account();
+    foreignAccount.setId(3L);
+    Profile profile = new Profile();
+    profile.setAccount(foreignAccount);
+    profile.setTenantId(1L);
+    when(accountRepository.findById(2L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.existsByAccountIdAndTenantId(2L, 1L)).thenReturn(true);
+    when(profileRepository.findByAccountIdAndTenantId(2L, 1L)).thenReturn(Optional.of(profile));
+
+    assertThrows(IllegalStateException.class, () -> service.getProfile(1L, 2L));
+
+    verifyNoInteractions(profileMapper);
   }
 
   @Test
@@ -7046,31 +7086,72 @@ class AccountServiceImplTest {
 
   @Test
   void updateProfileStoresChanges() {
+    Account account = new Account();
+    account.setId(2L);
+    setPersistedAuthenticationIdentity(account);
     Profile profile = new Profile();
-    profile.setAccount(new Account());
+    profile.setAccount(account);
     profile.setTenantId(1L);
     profile.setPresenceVisibilityPolicy(ProfilePresenceVisibilityPolicy.FRIENDS_ONLY);
+    when(accountRepository.findById(2L)).thenReturn(Optional.of(account));
     when(accountTenantMembershipRepository.existsByAccountIdAndTenantId(2L, 1L)).thenReturn(true);
     when(profileRepository.findByAccountIdAndTenantId(2L, 1L)).thenReturn(Optional.of(profile));
     when(profileRepository.save(profile)).thenReturn(profile);
-    when(profileMapper.toDto(profile))
+    when(profileMapper.toDto(profile, account.getAccountUuid().toString()))
         .thenReturn(
             new net.firedevops.firemud.accountservice.dto.ProfileDto(
-                1L, 1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE));
+                1L,
+                1L,
+                account.getAccountUuid().toString(),
+                "demo",
+                "bio",
+                ProfilePresenceVisibilityPolicy.PRIVATE));
 
     var dto =
         service.updateProfile(
+            2L,
             new net.firedevops.firemud.accountservice.dto.UpdateProfileRequest(
-                1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE));
+                1L,
+                account.getAccountUuid().toString(),
+                "demo",
+                "bio",
+                ProfilePresenceVisibilityPolicy.PRIVATE));
 
     assertEquals("demo", dto.displayName());
+    assertEquals(account.getAccountUuid().toString(), dto.accountId());
     assertEquals(ProfilePresenceVisibilityPolicy.PRIVATE, profile.getPresenceVisibilityPolicy());
     org.mockito.Mockito.verify(notificationService).sendNotification(1L, 2L, "Profile updated");
   }
 
   @Test
+  void updateProfileRejectsMismatchedSourceUuidBeforeMembershipOrProfileAccess() {
+    Account account = new Account();
+    account.setId(2L);
+    setPersistedAuthenticationIdentity(account);
+    when(accountRepository.findById(2L)).thenReturn(Optional.of(account));
+    var request =
+        new net.firedevops.firemud.accountservice.dto.UpdateProfileRequest(
+            1L,
+            UUID.randomUUID().toString(),
+            "demo",
+            "bio",
+            ProfilePresenceVisibilityPolicy.PRIVATE);
+
+    assertEquals(
+        "Profile account identity does not match its source",
+        assertThrows(IllegalArgumentException.class, () -> service.updateProfile(2L, request))
+            .getMessage());
+
+    verifyNoInteractions(accountTenantMembershipRepository, profileRepository, notificationService);
+  }
+
+  @Test
   void profileReadAndUpdateFailClosedWithoutCurrentTenantMembership() {
     when(accountTenantMembershipRepository.existsByAccountIdAndTenantId(2L, 1L)).thenReturn(false);
+    Account account = new Account();
+    account.setId(2L);
+    setPersistedAuthenticationIdentity(account);
+    when(accountRepository.findById(2L)).thenReturn(Optional.of(account));
 
     assertEquals(
         "Profile not found",
@@ -7082,8 +7163,13 @@ class AccountServiceImplTest {
                 IllegalArgumentException.class,
                 () ->
                     service.updateProfile(
+                        2L,
                         new net.firedevops.firemud.accountservice.dto.UpdateProfileRequest(
-                            1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE)))
+                            1L,
+                            account.getAccountUuid().toString(),
+                            "demo",
+                            "bio",
+                            ProfilePresenceVisibilityPolicy.PRIVATE)))
             .getMessage());
 
     verifyNoInteractions(profileRepository, profileMapper, notificationService);
@@ -7091,12 +7177,20 @@ class AccountServiceImplTest {
 
   @Test
   void updateProfileRejectsReservedHiddenStaffPolicyBeforePersistence() {
+    Account account = new Account();
+    account.setId(2L);
+    setPersistedAuthenticationIdentity(account);
+    when(accountRepository.findById(2L)).thenReturn(Optional.of(account));
     var request =
         new net.firedevops.firemud.accountservice.dto.UpdateProfileRequest(
-            1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.HIDDEN_STAFF);
+            1L,
+            account.getAccountUuid().toString(),
+            "demo",
+            "bio",
+            ProfilePresenceVisibilityPolicy.HIDDEN_STAFF);
 
     IllegalArgumentException exception =
-        assertThrows(IllegalArgumentException.class, () -> service.updateProfile(request));
+        assertThrows(IllegalArgumentException.class, () -> service.updateProfile(2L, request));
 
     assertEquals(
         "Profile presence visibility policy HIDDEN_STAFF is reserved", exception.getMessage());
@@ -7115,19 +7209,49 @@ class AccountServiceImplTest {
     Profile tenantTwo = profile(account, 2L, "two");
     when(accountRepository.findById(2L)).thenReturn(Optional.of(account));
     when(profileRepository.findByAccountId(2L)).thenReturn(java.util.List.of(tenantOne, tenantTwo));
-    when(profileMapper.toDto(tenantOne))
+    when(profileMapper.toDto(tenantOne, accountUuid.toString()))
         .thenReturn(
             new net.firedevops.firemud.accountservice.dto.ProfileDto(
-                10L, 1L, 2L, "one", null, ProfilePresenceVisibilityPolicy.FRIENDS_ONLY));
-    when(profileMapper.toDto(tenantTwo))
+                10L,
+                1L,
+                accountUuid.toString(),
+                "one",
+                null,
+                ProfilePresenceVisibilityPolicy.FRIENDS_ONLY));
+    when(profileMapper.toDto(tenantTwo, accountUuid.toString()))
         .thenReturn(
             new net.firedevops.firemud.accountservice.dto.ProfileDto(
-                20L, 2L, 2L, "two", null, ProfilePresenceVisibilityPolicy.FRIENDS_ONLY));
+                20L,
+                2L,
+                accountUuid.toString(),
+                "two",
+                null,
+                ProfilePresenceVisibilityPolicy.FRIENDS_ONLY));
 
     var export = service.exportAccountData(2L);
 
     assertEquals(accountUuid.toString(), export.account().id());
     assertEquals(2, export.profiles().size());
+    assertTrue(
+        export.profiles().stream().allMatch(p -> accountUuid.toString().equals(p.accountId())));
+  }
+
+  @Test
+  void exportAccountDataRejectsProfileFromAnotherAccountBeforeMapping() {
+    Account account = new Account();
+    account.setId(2L);
+    setPersistedAuthenticationIdentity(account);
+    Account foreignAccount = new Account();
+    foreignAccount.setId(3L);
+    Profile foreignProfile = new Profile();
+    foreignProfile.setAccount(foreignAccount);
+    foreignProfile.setTenantId(1L);
+    when(accountRepository.findById(2L)).thenReturn(Optional.of(account));
+    when(profileRepository.findByAccountId(2L)).thenReturn(java.util.List.of(foreignProfile));
+
+    assertThrows(IllegalStateException.class, () -> service.exportAccountData(2L));
+
+    verifyNoInteractions(profileMapper);
   }
 
   @Test

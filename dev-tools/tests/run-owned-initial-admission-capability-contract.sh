@@ -5,6 +5,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/firemud-run-owned-admission-contract.XXXXXX")"
 trap 'rm -rf -- "$TEST_ROOT"' EXIT
 chmod 700 "$TEST_ROOT"
+# This owner value proves only the synthetic run-owned fixture shape; it does not
+# claim Account authentication or derive provenance from a retained numeric ID.
+SYNTHETIC_FIXTURE_OWNER_ACCOUNT_UUID="123e4567-e89b-12d3-a456-426614174000"
 
 docker() {
   case "$1 $2" in
@@ -37,7 +40,7 @@ expect_failure() {
 }
 
 load_operation_id() {
-  python3 - "$1" <<'PY'
+  python3 - "$1" "$SYNTHETIC_FIXTURE_OWNER_ACCOUNT_UUID" <<'PY'
 import json
 import pathlib
 import sys
@@ -54,7 +57,8 @@ assert set(value) == expected_fields, set(value)
 assert value["schema"] == "firemud.run-owned-initial-admission-fixture.v1"
 assert value["tenantId"] == 1
 assert value["gameTemplateId"] == 1
-assert value["ownerAccountId"] == 1
+assert type(value["ownerAccountId"]) is str
+assert value["ownerAccountId"] == sys.argv[2]
 assert value["worldSlug"] == "demo"
 assert value["worldDisplayName"] == "Demo World"
 assert value["realmSlug"] == "production"
@@ -176,6 +180,24 @@ PY
 chmod 444 "$TEST_ROOT/replaced-capability.json"
 mv -- "$TEST_ROOT/replaced-capability.json" "$base_capability"
 expect_failure replaced_capability reject_replaced_capability
+mv -- "$capability_backup" "$base_capability"
+[[ "$(load_operation_id "$base_capability")" == "$base_operation_id" ]]
+
+capability_backup="$TEST_ROOT/capability-before-numeric-owner.json"
+cp -p -- "$base_capability" "$capability_backup"
+python3 - "$TEST_ROOT/numeric-owner-capability.json" "$base_capability" <<'PY'
+import json
+import pathlib
+import sys
+
+source = pathlib.Path(sys.argv[2])
+value = json.loads(source.read_text(encoding="utf-8"))
+value["ownerAccountId"] = 1
+pathlib.Path(sys.argv[1]).write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+PY
+chmod 444 "$TEST_ROOT/numeric-owner-capability.json"
+mv -- "$TEST_ROOT/numeric-owner-capability.json" "$base_capability"
+expect_failure numeric_owner_account_id reject_replaced_capability
 mv -- "$capability_backup" "$base_capability"
 [[ "$(load_operation_id "$base_capability")" == "$base_operation_id" ]]
 

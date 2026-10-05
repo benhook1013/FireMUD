@@ -30,6 +30,7 @@ import java.util.UUID;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.gamesession.service.AccountIds;
 import org.springframework.core.io.ClassPathResource;
 import tools.jackson.core.JacksonException;
 import tools.jackson.core.StreamReadFeature;
@@ -44,7 +45,7 @@ record RunOwnedInitialAdmissionFixtureCapability(
     String operationId,
     long tenantId,
     long gameTemplateId,
-    long ownerAccountId,
+    String ownerAccountId,
     String worldSlug,
     String worldDisplayName,
     String realmSlug,
@@ -141,7 +142,7 @@ record RunOwnedInitialAdmissionFixtureCapability(
     String operationId = requiredText(root, "operationId");
     long tenantId = requiredPositiveLong(root, "tenantId");
     long gameTemplateId = requiredPositiveLong(root, "gameTemplateId");
-    long ownerAccountId = requiredPositiveLong(root, "ownerAccountId");
+    String ownerAccountId = requiredText(root, "ownerAccountId");
     String worldSlug = requiredText(root, "worldSlug");
     String worldDisplayName = requiredText(root, "worldDisplayName");
     String realmSlug = requiredText(root, "realmSlug");
@@ -161,6 +162,7 @@ record RunOwnedInitialAdmissionFixtureCapability(
         || !SAFE_ID.matcher(runId).matches()
         || !SAFE_ID.matcher(composeProjectName).matches()
         || !isCanonicalUuid(operationId)
+        || !AccountIds.isCanonicalNonNilUuid(ownerAccountId)
         || !WORLD_SLUG.equals(worldSlug)
         || !WORLD_DISPLAY_NAME.equals(worldDisplayName)
         || !REALM_SLUG.equals(realmSlug)

@@ -20,8 +20,9 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.core.env.MapPropertySource;
 
 class CrossServiceAppHarnessTest {
+  private static final String OWNER_ACCOUNT_UUID = "123e4567-e89b-12d3-a456-426614174000";
   private static final StartSessionRequest REQUEST =
-      new StartSessionRequest(41L, 810L, "cross-service-fixture", 1001L);
+      new StartSessionRequest(41L, 810L, "cross-service-fixture", OWNER_ACCOUNT_UUID);
 
   @Test
   void databaseDisabledOrMissingReplacesTheRealServiceWithTheStub() {

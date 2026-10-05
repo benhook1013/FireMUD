@@ -77,12 +77,14 @@ public interface AccountService {
   /** Resolves a proved canonical Account UUID to its private Account-local storage key. */
   Long resolveAccountStorageId(UUID accountUuid);
 
+  /** Reads a tenant profile with an Account-local storage selector after owner-side UUID proof. */
   ProfileDto getProfile(Long tenantId, Long accountId);
 
   java.util.Map<Long, ProfilePresenceVisibilityPolicy> listPresenceVisibilityPolicies(
       Long tenantId, java.util.List<Long> accountIds);
 
-  ProfileDto updateProfile(UpdateProfileRequest request);
+  /** Updates a profile using an Account-local selector and the request's canonical Account UUID. */
+  ProfileDto updateProfile(Long accountStorageId, UpdateProfileRequest request);
 
   AccountLoginAuthModesDto getLoginAuthModes(Long accountId);
 

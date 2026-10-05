@@ -3,11 +3,15 @@ package unit.net.firedevops.firemud.gamesession.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantSnapshot;
 import org.junit.jupiter.api.Test;
@@ -16,10 +20,12 @@ class GameSessionRetainedTenantSnapshotTest {
   private static final ObjectMapper JSON = new ObjectMapper();
   private static final String NAMESPACE = "retained-snapshot-test";
   private static final String TENANT_ID = "7";
+  private static final String SNAPSHOT_DIGEST_DOMAIN =
+      "game-session/retained-tenant-identity-snapshot/v2";
   private static final String SNAPSHOT_DIGEST =
-      "sha256:66c92bb8e82371c03d24d9cfaa14c7e7c033b8a4a53d081bc05214cf501e22a1";
+      "sha256:7aa718259dd0dbf7395f62691013c3fdd2fa0f9d21e9280090ae8bc8ddb7c757";
   private static final String CHANGED_SNAPSHOT_DIGEST =
-      "sha256:5652fc676448cc7dc8e45453f2577915d6ded0a0f1b00bbf1ee84b59673b27e6";
+      "sha256:ef6e4dd638dfd2892fe219fc84489f7c3a97a312c0a19831878e723627bebb94";
   private static final String IRRELEVANT_DIGEST = "sha256:" + "0".repeat(64);
 
   @Test
@@ -51,6 +57,87 @@ class GameSessionRetainedTenantSnapshotTest {
                     NAMESPACE, TENANT_ID, snapshot.canonicalJson(), IRRELEVANT_DIGEST))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("digest");
+  }
+
+  @Test
+  void retainsRawAndCanonicalOwnerSlotsIndependentlyAndBindsBothToTheDigest() {
+    ObjectNode projection = envelopeWithInstances("runtime");
+    ArrayNode instances = projection.withArray("instances");
+    ObjectNode mixedOwner = (ObjectNode) instances.get(0);
+    mixedOwner.put("owner_account_uuid", "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
+    ObjectNode canonicalOnlyOwner = (ObjectNode) instances.get(1);
+    canonicalOnlyOwner.putNull("owner_account_id");
+    canonicalOnlyOwner.put("owner_account_uuid", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    instances.add(instance("20", "legacy-owner", "20"));
+
+    GameSessionRetainedTenantSnapshot snapshot = snapshot(projection);
+    JsonNode rows;
+    try {
+      rows = JSON.readTree(snapshot.canonicalJson()).get("instances");
+    } catch (IOException exception) {
+      throw new AssertionError("Unable to read canonical snapshot test vector", exception);
+    }
+    assertThat(rows.get(0).get("owner_account_id").textValue()).isEqualTo("9");
+    assertThat(rows.get(0).get("owner_account_uuid").textValue())
+        .isEqualTo("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
+    assertThat(rows.get(1).get("owner_account_id").isNull()).isTrue();
+    assertThat(rows.get(1).get("owner_account_uuid").textValue())
+        .isEqualTo("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    assertThat(rows.get(2).get("owner_account_id").textValue()).isEqualTo("9");
+    assertThat(rows.get(2).get("owner_account_uuid").isNull()).isTrue();
+
+    ObjectNode changedOwner = projection.deepCopy();
+    ((ObjectNode) changedOwner.withArray("instances").get(0))
+        .put("owner_account_uuid", "ffffffff-ffff-4fff-8fff-ffffffffffff");
+    GameSessionRetainedTenantSnapshot changedSnapshot = snapshot(changedOwner);
+    assertThat(changedSnapshot.evidenceDigest()).isNotEqualTo(snapshot.evidenceDigest());
+  }
+
+  @Test
+  void rejectsMissingMalformedNilAndLegacyVersionOwnerEvidence() {
+    ObjectNode missingSlot = envelopeWithInstances("runtime");
+    ((ObjectNode) missingSlot.withArray("instances").get(0)).remove("owner_account_uuid");
+    assertThatThrownBy(() -> revalidate(missingSlot))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("missing or undeclared fields");
+
+    ObjectNode bothMissing = envelopeWithInstances("runtime");
+    ObjectNode ownerless = (ObjectNode) bothMissing.withArray("instances").get(0);
+    ownerless.putNull("owner_account_id");
+    assertThatThrownBy(() -> revalidate(bothMissing))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("raw or canonical owner account identity");
+
+    ObjectNode malformedUuid = envelopeWithInstances("runtime");
+    ((ObjectNode) malformedUuid.withArray("instances").get(0))
+        .put("owner_account_uuid", "EEEEEEEE-EEEE-4EEE-8EEE-EEEEEEEEEEEE");
+    assertThatThrownBy(() -> revalidate(malformedUuid))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("lowercase canonical UUID");
+
+    ObjectNode nilUuid = envelopeWithInstances("runtime");
+    ((ObjectNode) nilUuid.withArray("instances").get(0))
+        .put("owner_account_uuid", "00000000-0000-0000-0000-000000000000");
+    assertThatThrownBy(() -> revalidate(nilUuid))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("nil UUID");
+
+    ObjectNode malformedRawId = envelopeWithInstances("runtime");
+    ObjectNode rawIdRow = (ObjectNode) malformedRawId.withArray("instances").get(0);
+    rawIdRow.put("owner_account_id", "09");
+    rawIdRow.put("owner_account_uuid", "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
+    assertThatThrownBy(() -> revalidate(malformedRawId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("canonical decimal");
+
+    ObjectNode oldSchema = envelopeWithInstances("runtime");
+    oldSchema.put("schemaVersion", 1);
+    for (JsonNode row : oldSchema.withArray("instances")) {
+      ((ObjectNode) row).remove("owner_account_uuid");
+    }
+    assertThatThrownBy(() -> revalidate(oldSchema))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("schemaVersion must be integer 2");
   }
 
   @Test
@@ -150,7 +237,7 @@ class GameSessionRetainedTenantSnapshotTest {
   private static ObjectNode envelope() {
     ObjectNode envelope = JSON.createObjectNode();
     envelope.put("targetNamespace", NAMESPACE);
-    envelope.put("schemaVersion", 1);
+    envelope.put("schemaVersion", 2);
     envelope.put("legacyGameSessionTenantId", TENANT_ID);
     envelope.set("instances", JSON.createArrayNode());
     envelope.set("pointers", JSON.createArrayNode());
@@ -168,6 +255,7 @@ class GameSessionRetainedTenantSnapshotTest {
     instance.put("runtime_version", runtimeVersion);
     instance.putNull("script_patch_version");
     instance.put("owner_account_id", "9");
+    instance.putNull("owner_account_uuid");
     instance.put("status", "STOPPED");
     instance.put("row_version", rowVersion);
     instance.putNull("game_template_id");
@@ -209,5 +297,29 @@ class GameSessionRetainedTenantSnapshotTest {
     } catch (IOException exception) {
       throw new AssertionError("Unable to build canonical snapshot test vector", exception);
     }
+  }
+
+  private static GameSessionRetainedTenantSnapshot snapshot(ObjectNode projection) {
+    String canonicalJson = canonicalJson(projection);
+    return GameSessionRetainedTenantSnapshot.fromCanonicalJson(
+        NAMESPACE, TENANT_ID, canonicalJson, expectedDigest(canonicalJson));
+  }
+
+  private static String expectedDigest(String canonicalJson) {
+    try {
+      MessageDigest hash = MessageDigest.getInstance("SHA-256");
+      updateFrame(hash, SNAPSHOT_DIGEST_DOMAIN);
+      updateFrame(hash, canonicalJson);
+      return "sha256:" + HexFormat.of().formatHex(hash.digest());
+    } catch (NoSuchAlgorithmException exception) {
+      throw new AssertionError("SHA-256 unavailable for snapshot test vector", exception);
+    }
+  }
+
+  private static void updateFrame(MessageDigest hash, String value) {
+    byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
+    hash.update(Integer.toString(bytes.length).getBytes(StandardCharsets.US_ASCII));
+    hash.update((byte) ':');
+    hash.update(bytes);
   }
 }

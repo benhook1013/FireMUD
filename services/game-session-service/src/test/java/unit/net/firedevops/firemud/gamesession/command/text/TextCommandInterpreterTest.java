@@ -90,8 +90,8 @@ import org.mockito.Mockito;
 
 @SuppressWarnings("unchecked")
 class TextCommandInterpreterTest {
+  private static final String OWNER_ACCOUNT_UUID = "123e4567-e89b-12d3-a456-426614174000";
   private static final String PLAY_DEMO_PRODUCTION = "PLAY demo production";
-
   private final CommandService commandService = Mockito.mock(CommandService.class);
   private final GameLogicClient gameLogicClient = Mockito.mock(GameLogicClient.class);
   private final EntityManagementClient entityManagementClient =
@@ -354,7 +354,7 @@ class TextCommandInterpreterTest {
               GameInstance instance = new GameInstance();
               instance.setId(sessionId);
               instance.setTenantId(22L);
-              instance.setOwnerAccountId(123L);
+              instance.setOwnerAccountId(OWNER_ACCOUNT_UUID);
               return Optional.of(instance);
             });
 
