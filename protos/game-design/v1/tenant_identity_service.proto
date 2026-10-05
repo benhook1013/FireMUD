@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package gamedesign.v1;
+
+option java_package = "net.firedevops.firemud.gamedesign.v1";
+option java_multiple_files = true;
+
+// Read-only Account handoff for exact owner-created tenant evidence.
+service TenantIdentityService {
+  rpc ResolveFreshTenantCreation(ResolveFreshTenantCreationRequest)
+      returns (ResolveFreshTenantCreationResponse);
+}
+
+message ResolveFreshTenantCreationRequest {
+  string creation_request_id = 1;
+  string expected_request_digest = 2;
+}
+
+message ResolveFreshTenantCreationResponse {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string creation_request_id = 3;
+  string operation_id = 4;
+  string request_digest = 5;
+  string canonical_tenant_id = 6;
+  int64 source_game_row_id = 7;
+  string source_game_tenant_key = 8;
+  string provenance_kind = 9;
+  string evidence_digest = 10;
+}
