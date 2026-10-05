@@ -1315,7 +1315,7 @@ public class AccountServiceImpl implements AccountService {
                     tenantId,
                     worldSlug,
                     realmSlug,
-                    true,
+                    grant.isGranted(),
                     grant.getGrantVersion(),
                     evaluatedAt.toString()))
         .orElseGet(
@@ -1342,10 +1342,12 @@ public class AccountServiceImpl implements AccountService {
                   created.setWorldSlug(request.worldSlug());
                   created.setRealmSlug(request.realmSlug());
                   created.setGrantVersion(0L);
+                  created.setGranted(true);
                   created.setCreatedAt(now);
                   return created;
                 });
     grant.setGrantVersion(grant.getGrantVersion() + 1L);
+    grant.setGranted(true);
     grant.setGrantedBy(request.grantedBy());
     grant.setGrantReason(request.grantReason());
     grant.setUpdatedAt(now);

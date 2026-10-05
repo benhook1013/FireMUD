@@ -56,8 +56,7 @@ class FreshTenantIdentityEnrollmentServiceTest {
     FreshTenantIdentityEnrollmentService service =
         new FreshTenantIdentityEnrollmentService(client, associations, generations, transaction);
 
-    boolean transactionWasActive =
-        TransactionSynchronizationManager.isActualTransactionActive();
+    boolean transactionWasActive = TransactionSynchronizationManager.isActualTransactionActive();
     TransactionSynchronizationManager.setActualTransactionActive(true);
     try {
       assertThatThrownBy(() -> service.enroll(REQUEST_ID, REQUEST_DIGEST))

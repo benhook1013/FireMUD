@@ -238,12 +238,12 @@ class AccountCanonicalJoinScopePersistenceIntegrationTest {
         .containsEntry("game_instance_id", null)
         .containsEntry("playable_state_namespace_id", null);
     assertThat(
-            setupDsl
-                .fetchOne(
-                    "SELECT tenant_id, game_instance_id, playable_state_namespace_id, status, "
-                        + "entitlement_authority_availability, request_digest "
-                        + "FROM account_join_operations WHERE request_id = ?",
-                    requestId)
+            Objects.requireNonNull(
+                    setupDsl.fetchOne(
+                        "SELECT tenant_id, game_instance_id, playable_state_namespace_id, status, "
+                            + "entitlement_authority_availability, request_digest "
+                            + "FROM account_join_operations WHERE request_id = ?",
+                        requestId))
                 .intoMap())
         .containsEntry("tenant_id", null)
         .containsEntry("game_instance_id", null)
@@ -251,13 +251,15 @@ class AccountCanonicalJoinScopePersistenceIntegrationTest {
         .containsEntry("status", "PENDING")
         .containsEntry("entitlement_authority_availability", "AVAILABLE");
     assertThat(
-            setupDsl
-                .fetchOne(
-                    "SELECT COUNT(*) FROM account_tenant_membership WHERE account_id = ?",
-                    privateAccountId)
+            Objects.requireNonNull(
+                    setupDsl.fetchOne(
+                        "SELECT COUNT(*) FROM account_tenant_membership WHERE account_id = ?",
+                        privateAccountId))
                 .get(0, Long.class))
         .isZero();
-    assertThat(setupDsl.fetchOne("SELECT COUNT(*) FROM account_audit_outbox").get(0, Long.class))
+    assertThat(
+            Objects.requireNonNull(setupDsl.fetchOne("SELECT COUNT(*) FROM account_audit_outbox"))
+                .get(0, Long.class))
         .isZero();
   }
 

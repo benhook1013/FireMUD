@@ -11,6 +11,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.Base64;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.client.OwnerApprovedAccountTenantAssociation;
 import org.flywaydb.core.Flyway;
@@ -84,10 +85,11 @@ class ApprovedLegacyTenantAssociationIntegrationTest {
                 evidence.operationId()))
         .isNotNull();
     assertThat(
-            dsl.fetchOne(
-                    "SELECT COUNT(*) FROM information_schema.columns "
-                        + "WHERE table_name = 'account_approved_legacy_tenant_associations' "
-                        + "AND column_name IN ('account_evidence_digest', 'manifest_digest')")
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT COUNT(*) FROM information_schema.columns "
+                            + "WHERE table_name = 'account_approved_legacy_tenant_associations' "
+                            + "AND column_name IN ('account_evidence_digest', 'manifest_digest')"))
                 .get(0, Long.class))
         .isZero();
 
@@ -145,7 +147,8 @@ class ApprovedLegacyTenantAssociationIntegrationTest {
                 duplicateEvidence.operationId()))
         .isNull();
 
-    assertThatThrownBy(() -> dsl.execute("TRUNCATE account_approved_legacy_tenant_associations"))
+    assertThatThrownBy(
+            () -> dsl.execute("TRUNCATE account_approved_legacy_tenant_associations CASCADE"))
         .hasMessageContaining("immutable");
     assertThatThrownBy(
             () ->
@@ -237,11 +240,12 @@ class ApprovedLegacyTenantAssociationIntegrationTest {
   }
 
   private long insertAccount(String username) {
-    return dsl.fetchOne(
-            "INSERT INTO accounts (username, email, password_hash) VALUES (?, ?, ?) RETURNING id",
-            username,
-            username + "@example.test",
-            "test-hash")
+    return Objects.requireNonNull(
+            dsl.fetchOne(
+                "INSERT INTO accounts (username, email, password_hash) VALUES (?, ?, ?) RETURNING id",
+                username,
+                username + "@example.test",
+                "test-hash"))
         .get(0, Long.class);
   }
 
@@ -318,7 +322,7 @@ class ApprovedLegacyTenantAssociationIntegrationTest {
         "INSERT INTO account_approved_legacy_tenant_associations "
             + "(legacy_tenant_id, canonical_tenant_id, source_legacy_game_tenant_id, "
             + "source_game_row_id, operation_id, target_namespace, source_captured_at) "
-            + "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            + "VALUES (?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP WITH TIME ZONE))",
         evidence.legacyAccountTenantId(),
         evidence.canonicalTenantId(),
         evidence.sourceLegacyGameTenantId(),
@@ -341,7 +345,7 @@ class ApprovedLegacyTenantAssociationIntegrationTest {
             + "(operation_id, account_evidence_digest, manifest_digest, signer_key_id, "
             + "approved_by, approval_reference, signed_at, manifest_signature, "
             + "operation_entry_count, manifest_schema_version) "
-            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            + "VALUES (?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP WITH TIME ZONE), ?, ?, ?)",
         evidence.operationId(),
         evidence.accountEvidenceDigest(),
         evidence.manifestDigest(),

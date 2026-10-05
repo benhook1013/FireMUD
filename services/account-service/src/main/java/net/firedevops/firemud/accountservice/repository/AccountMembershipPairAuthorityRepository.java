@@ -33,6 +33,10 @@ public class AccountMembershipPairAuthorityRepository {
   private static final Pattern SHA256_DIGEST = Pattern.compile("^sha256:[0-9a-f]{64}$");
   private final DSLContext dsl;
 
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification =
+          "Preserve the injected DSLContext precondition; Spring must proxy this non-final repository.")
   public AccountMembershipPairAuthorityRepository(DSLContext dsl) {
     this.dsl = Objects.requireNonNull(dsl);
   }

@@ -3,8 +3,8 @@ package net.firedevops.firemud.accountservice.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
-import java.nio.file.Path;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.time.Instant;
@@ -12,6 +12,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -33,6 +34,7 @@ import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -46,28 +48,27 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
-@Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class AccountRepositoryIntegrationTest {
   private static final UUID REALM_ID = UUID.fromString("4c4b57d8-e3a2-48fe-9977-e7df0fdce901");
-  private static final String MIGRATION_LOCATION =
-      "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize();
-  private static final String MIGRATION_PROOF_SCHEMA = "account_migration_proof";
+  private static final String MIGRATION_LOCATION = "classpath:db/migration";
+  private static final String SCHEMA_SUFFIX =
+      UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+  private static final String TEST_SCHEMA = "account_repository_" + SCHEMA_SUFFIX;
+  private static final String MIGRATION_PROOF_SCHEMA = "account_migration_proof_" + SCHEMA_SUFFIX;
   private static final String COLLISION_MIGRATION_PROOF_SCHEMA =
-      "account_migration_collision_proof";
+      "account_migration_collision_proof_" + SCHEMA_SUFFIX;
   private static final String PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA =
-      "account_profile_identity_migration_proof";
+      "account_profile_identity_migration_proof_" + SCHEMA_SUFFIX;
   private static final String GLOBAL_REGISTRATION_MIGRATION_PROOF_SCHEMA =
-      "account_global_registration_migration_proof";
-  private static final String ACCOUNT_UUID_MIGRATION_PROOF_SCHEMA = "account_uuid_migration_proof";
+      "account_global_registration_migration_proof_" + SCHEMA_SUFFIX;
+  private static final String ACCOUNT_UUID_MIGRATION_PROOF_SCHEMA =
+      "account_uuid_migration_proof_" + SCHEMA_SUFFIX;
 
-  @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  private static final AccountPostgresIntegrationFixture postgres =
+      new AccountPostgresIntegrationFixture();
 
   private DriverManagerDataSource dataSource;
   private DSLContext dsl;
@@ -75,21 +76,30 @@ class AccountRepositoryIntegrationTest {
 
   @BeforeAll
   void setUpRepository() {
-    dataSource = new DriverManagerDataSource();
-    dataSource.setDriverClassName(postgres.getDriverClassName());
-    dataSource.setUrl(postgres.getJdbcUrl());
-    dataSource.setUsername(postgres.getUsername());
-    dataSource.setPassword(postgres.getPassword());
+    postgres.start();
+    dataSource = postgres.dataSource(TEST_SCHEMA);
 
-    Flyway.configure().dataSource(dataSource).locations(MIGRATION_LOCATION).load().migrate();
+    Flyway.configure()
+        .dataSource(dataSource)
+        .schemas(TEST_SCHEMA)
+        .defaultSchema(TEST_SCHEMA)
+        .placeholders(Map.of("serviceSchema", TEST_SCHEMA))
+        .locations(MIGRATION_LOCATION)
+        .load()
+        .migrate();
 
     dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
     repository = new AccountRepository(dsl);
   }
 
+  @AfterAll
+  void stopPostgres() {
+    postgres.stop();
+  }
+
   @BeforeEach
   void cleanTables() {
-    dsl.execute("TRUNCATE TABLE account_audit_outbox");
+    dsl.execute("TRUNCATE TABLE account_audit_outbox CASCADE");
     dsl.execute("TRUNCATE TABLE accounts RESTART IDENTITY CASCADE");
   }
 
@@ -100,10 +110,16 @@ class AccountRepositoryIntegrationTest {
         new TransactionTemplate(new DataSourceTransactionManager(dataSource));
     DSLContext transactionAwareDsl =
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+    AccountRepository accounts = new AccountRepository(transactionAwareDsl);
+    FreshTenantIdentityAssociationRepository freshTenants =
+        new FreshTenantIdentityAssociationRepository(transactionAwareDsl, "prod");
+    AccountMembershipPairAuthorityRepository pairAuthority =
+        new AccountMembershipPairAuthorityRepository(transactionAwareDsl);
     AccountJoinOperationRepository joinOperations =
         new AccountJoinOperationRepository(transactionAwareDsl);
     AccountTenantMembershipRepository memberships =
-        new AccountTenantMembershipRepository(transactionAwareDsl);
+        new AccountTenantMembershipRepository(
+            transactionAwareDsl, accounts, freshTenants, pairAuthority);
     AccountAuditOutboxRepository outbox = new AccountAuditOutboxRepository(transactionAwareDsl);
     AccountConnectScopeRepository scopes = new AccountConnectScopeRepository(transactionAwareDsl);
     long accountId =
@@ -402,8 +418,8 @@ class AccountRepositoryIntegrationTest {
           transactionJdbc.update(
               "INSERT INTO account_audit_outbox "
                   + "(audit_event_id, scope, producer_service, event_type, occurred_at, "
-                  + "schema_version, payload_digest_version, payload_digest, payload, delivery_status) "
-                  + "VALUES (?, 'platform', 'account-service', 'ACCOUNT_REGISTERED', ?, 1, 1, ?, '{}', 'PENDING')",
+                  + "tenant_identity_version, schema_version, payload_digest_version, payload_digest, payload, delivery_status) "
+                  + "VALUES (?, 'platform', 'account-service', 'ACCOUNT_REGISTERED', ?, 1, 1, 1, ?, '{}', 'PENDING')",
               defaultedEventId,
               LocalDateTime.ofInstant(beforeDefaultInsert, ZoneOffset.UTC),
               AccountAuditDigest.ofPayload("{}"));
@@ -540,7 +556,12 @@ class AccountRepositoryIntegrationTest {
     JdbcTemplate jdbc = new JdbcTemplate(dataSource);
     AccountConnectScopeRepository scopes = new AccountConnectScopeRepository(dsl);
     AccountJoinOperationRepository joinOperations = new AccountJoinOperationRepository(dsl);
-    AccountTenantMembershipRepository memberships = new AccountTenantMembershipRepository(dsl);
+    FreshTenantIdentityAssociationRepository freshTenants =
+        new FreshTenantIdentityAssociationRepository(dsl, "prod");
+    AccountMembershipPairAuthorityRepository pairAuthority =
+        new AccountMembershipPairAuthorityRepository(dsl);
+    AccountTenantMembershipRepository memberships =
+        new AccountTenantMembershipRepository(dsl, repository, freshTenants, pairAuthority);
     long accountId =
         Objects.requireNonNull(
             jdbc.queryForObject(
@@ -858,6 +879,35 @@ class AccountRepositoryIntegrationTest {
         .isEqualTo(accountUuid);
   }
 
+  @Test
+  void rejectedHardDeleteRetainsAccountRowAndSourceIdentityEvidence() {
+    Account saved =
+        repository.save(
+            account(
+                "retained-delete", "retained-delete@example.com", AccountLifecycleState.ACTIVE));
+    UUID accountUuid = saved.getAccountUuid();
+
+    assertThatThrownBy(() -> repository.delete(saved))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage(
+            "Account hard deletion is unavailable until the pending-deletion retention workflow exists");
+
+    var retained =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT account_uuid, account_uuid_provenance, account_uuid_source_numeric_id "
+                    + "FROM accounts WHERE id = ?",
+                saved.getId()));
+    assertThat(retained.get("account_uuid", UUID.class)).isEqualTo(accountUuid);
+    assertThat(retained.get("account_uuid_provenance", String.class))
+        .isEqualTo(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT.name());
+    assertThat(retained.get("account_uuid_source_numeric_id", Long.class)).isEqualTo(saved.getId());
+    assertThat(
+            dsl.resultQuery("SELECT COUNT(*) FROM accounts WHERE id = ?", saved.getId())
+                .fetchOne(0, Long.class))
+        .isEqualTo(1L);
+  }
+
   @ParameterizedTest
   @NullSource
   @ValueSource(strings = {"", "   "})
@@ -874,6 +924,7 @@ class AccountRepositoryIntegrationTest {
         .locations(MIGRATION_LOCATION)
         .schemas(MIGRATION_PROOF_SCHEMA)
         .defaultSchema(MIGRATION_PROOF_SCHEMA)
+        .placeholders(Map.of("serviceSchema", MIGRATION_PROOF_SCHEMA))
         .target("21")
         .load()
         .migrate();
@@ -889,6 +940,7 @@ class AccountRepositoryIntegrationTest {
         .locations(MIGRATION_LOCATION)
         .schemas(MIGRATION_PROOF_SCHEMA)
         .defaultSchema(MIGRATION_PROOF_SCHEMA)
+        .placeholders(Map.of("serviceSchema", MIGRATION_PROOF_SCHEMA))
         .load()
         .migrate();
 
@@ -915,6 +967,7 @@ class AccountRepositoryIntegrationTest {
         .locations(MIGRATION_LOCATION)
         .schemas(COLLISION_MIGRATION_PROOF_SCHEMA)
         .defaultSchema(COLLISION_MIGRATION_PROOF_SCHEMA)
+        .placeholders(Map.of("serviceSchema", COLLISION_MIGRATION_PROOF_SCHEMA))
         .target("21")
         .load()
         .migrate();
@@ -937,6 +990,7 @@ class AccountRepositoryIntegrationTest {
                     .locations(MIGRATION_LOCATION)
                     .schemas(COLLISION_MIGRATION_PROOF_SCHEMA)
                     .defaultSchema(COLLISION_MIGRATION_PROOF_SCHEMA)
+                    .placeholders(Map.of("serviceSchema", COLLISION_MIGRATION_PROOF_SCHEMA))
                     .load()
                     .migrate())
         .isInstanceOf(FlywayException.class)
@@ -1001,6 +1055,7 @@ class AccountRepositoryIntegrationTest {
         .locations(MIGRATION_LOCATION)
         .schemas(PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA)
         .defaultSchema(PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA)
+        .placeholders(Map.of("serviceSchema", PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA))
         .target("24")
         .load()
         .migrate();
@@ -1037,6 +1092,7 @@ class AccountRepositoryIntegrationTest {
                     .locations(MIGRATION_LOCATION)
                     .schemas(PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA)
                     .defaultSchema(PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA)
+                    .placeholders(Map.of("serviceSchema", PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA))
                     .load()
                     .migrate())
         .isInstanceOf(FlywayException.class)
@@ -1061,6 +1117,7 @@ class AccountRepositoryIntegrationTest {
         .locations(MIGRATION_LOCATION)
         .schemas(schema)
         .defaultSchema(schema)
+        .placeholders(Map.of("serviceSchema", schema))
         .target("25")
         .load()
         .migrate();
@@ -1091,6 +1148,7 @@ class AccountRepositoryIntegrationTest {
         .locations(MIGRATION_LOCATION)
         .schemas(schema)
         .defaultSchema(schema)
+        .placeholders(Map.of("serviceSchema", schema))
         .load()
         .migrate();
 
@@ -1159,6 +1217,7 @@ class AccountRepositoryIntegrationTest {
         .locations(MIGRATION_LOCATION)
         .schemas(schema)
         .defaultSchema(schema)
+        .placeholders(Map.of("serviceSchema", schema))
         .target("28")
         .load()
         .migrate();
@@ -1366,12 +1425,31 @@ class AccountRepositoryIntegrationTest {
         .locations(MIGRATION_LOCATION)
         .schemas(schema)
         .defaultSchema(schema)
+        .placeholders(Map.of("serviceSchema", schema))
         .load()
         .migrate();
 
     String accountProjection =
         "(to_jsonb(a) - 'account_uuid' - 'account_uuid_provenance' "
             + "- 'account_uuid_source_numeric_id')::text";
+    String membershipProjection =
+        "(to_jsonb(m) - 'tenant_uuid' - 'tenant_provenance_kind' "
+            + "- 'tenant_source_operation_id' - 'tenant_provenance_digest')::text";
+    String joinOperationProjection =
+        "(to_jsonb(j) - 'operation_representation_version' - 'scope_digest_version' "
+            + "- 'target_class' - 'account_uuid' - 'tenant_uuid' - 'tenant_slug' "
+            + "- 'playable_state_namespace_uuid' - 'game_instance_uuid' "
+            + "- 'membership_authority_outbox_stream_key' - 'membership_authority_outbox_sequence' "
+            + "- 'membership_authority_event_id' - 'membership_authority_event_digest' "
+            + "- 'join_audit_event_id' - 'join_audit_payload_digest' "
+            + "- 'join_audit_occurred_at')::text";
+    String connectScopeProjection =
+        "(to_jsonb(s) - 'scope_digest_version' - 'account_uuid' - 'tenant_uuid' "
+            + "- 'tenant_slug' - 'playable_state_namespace_uuid' - 'game_instance_uuid' "
+            + "- 'tenant_provenance_kind' - 'tenant_provenance_legacy_tenant_id' "
+            + "- 'tenant_source_operation_id' - 'tenant_provenance_digest')::text";
+    String auditOutboxProjection =
+        "(to_jsonb(o) - 'tenant_identity_version' - 'tenant_uuid')::text";
     assertThat(
             jsonRow(
                 "SELECT " + accountProjection + " FROM " + schema + ".accounts a WHERE id = ?",
@@ -1389,39 +1467,193 @@ class AccountRepositoryIntegrationTest {
         .isEqualTo(profileBefore);
     assertThat(
             jsonRow(
-                "SELECT to_jsonb(m)::text FROM "
+                "SELECT "
+                    + membershipProjection
+                    + " FROM "
                     + schema
                     + ".account_tenant_membership m WHERE account_id = ?",
                 firstAccountId))
         .isEqualTo(membershipBefore);
     assertThat(
             jsonRow(
-                "SELECT to_jsonb(m)::text FROM "
+                "SELECT "
+                    + membershipProjection
+                    + " FROM "
                     + schema
                     + ".account_tenant_membership m WHERE account_id = ?",
                 secondAccountId))
         .isEqualTo(explicitMembershipBefore);
     assertThat(
             jsonRow(
-                "SELECT to_jsonb(j)::text FROM "
+                "SELECT "
+                    + joinOperationProjection
+                    + " FROM "
                     + schema
                     + ".account_join_operations j WHERE request_id = ?",
                 pendingJoinRequestId))
         .isEqualTo(pendingJoinBefore);
     assertThat(
             jsonRow(
-                "SELECT to_jsonb(s)::text FROM "
+                "SELECT "
+                    + connectScopeProjection
+                    + " FROM "
                     + schema
                     + ".account_connect_scope_records s WHERE scope_token_hash = ?",
                 scopeTokenHash))
         .isEqualTo(retainedConnectScopeBefore);
     assertThat(
             jsonRow(
-                "SELECT to_jsonb(o)::text FROM "
+                "SELECT "
+                    + auditOutboxProjection
+                    + " FROM "
                     + schema
                     + ".account_audit_outbox o WHERE audit_event_id = ?",
                 auditEventId))
         .isEqualTo(outboxBefore);
+
+    for (long accountId : List.of(firstAccountId, secondAccountId)) {
+      var retainedMembershipIdentity =
+          Objects.requireNonNull(
+              dsl.fetchOne(
+                  "SELECT tenant_uuid, tenant_provenance_kind, tenant_source_operation_id, "
+                      + "tenant_provenance_digest FROM "
+                      + schema
+                      + ".account_tenant_membership WHERE account_id = ?",
+                  accountId));
+      assertThat(retainedMembershipIdentity.get("tenant_uuid", UUID.class)).isNull();
+      assertThat(retainedMembershipIdentity.get("tenant_provenance_kind", String.class))
+          .isEqualTo("UNBRIDGED_RETAINED");
+      assertThat(retainedMembershipIdentity.get("tenant_source_operation_id", UUID.class)).isNull();
+      assertThat(retainedMembershipIdentity.get("tenant_provenance_digest", String.class)).isNull();
+    }
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT lifecycle_state FROM "
+                        + schema
+                        + ".account_tenant_membership WHERE account_id = ?",
+                    firstAccountId)
+                .fetchOne(0, String.class))
+        .isEqualTo("LEGACY_UNVERIFIED");
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT gameplay_admission_allowed FROM "
+                        + schema
+                        + ".account_tenant_membership WHERE account_id = ?",
+                    firstAccountId)
+                .fetchOne(0, Boolean.class))
+        .isFalse();
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT authority_provenance FROM "
+                        + schema
+                        + ".account_tenant_membership WHERE account_id = ?",
+                    firstAccountId)
+                .fetchOne(0, String.class))
+        .isEqualTo("LEGACY_UNVERIFIED");
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT lifecycle_state FROM "
+                        + schema
+                        + ".account_tenant_membership WHERE account_id = ?",
+                    secondAccountId)
+                .fetchOne(0, String.class))
+        .isEqualTo("ACTIVE");
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT gameplay_admission_allowed FROM "
+                        + schema
+                        + ".account_tenant_membership WHERE account_id = ?",
+                    secondAccountId)
+                .fetchOne(0, Boolean.class))
+        .isTrue();
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT authority_provenance FROM "
+                        + schema
+                        + ".account_tenant_membership WHERE account_id = ?",
+                    secondAccountId)
+                .fetchOne(0, String.class))
+        .isEqualTo("EXPLICIT_JOIN");
+
+    var retainedJoinRepresentation =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT operation_representation_version, scope_digest_version, target_class, "
+                    + "account_uuid, tenant_uuid, tenant_slug, playable_state_namespace_uuid, "
+                    + "game_instance_uuid, membership_authority_outbox_stream_key, "
+                    + "membership_authority_outbox_sequence, membership_authority_event_id, "
+                    + "membership_authority_event_digest, join_audit_event_id, "
+                    + "join_audit_payload_digest, join_audit_occurred_at FROM "
+                    + schema
+                    + ".account_join_operations WHERE request_id = ?",
+                pendingJoinRequestId));
+    assertThat(retainedJoinRepresentation.get("operation_representation_version", Integer.class))
+        .isEqualTo(1);
+    assertThat(retainedJoinRepresentation.get("scope_digest_version", Integer.class)).isEqualTo(1);
+    assertThat(retainedJoinRepresentation.get("target_class", String.class)).isNull();
+    assertThat(retainedJoinRepresentation.get("account_uuid", UUID.class)).isNull();
+    assertThat(retainedJoinRepresentation.get("tenant_uuid", UUID.class)).isNull();
+    assertThat(retainedJoinRepresentation.get("tenant_slug", String.class)).isNull();
+    assertThat(retainedJoinRepresentation.get("playable_state_namespace_uuid", UUID.class))
+        .isNull();
+    assertThat(retainedJoinRepresentation.get("game_instance_uuid", UUID.class)).isNull();
+    assertThat(
+            retainedJoinRepresentation.get("membership_authority_outbox_stream_key", String.class))
+        .isNull();
+    assertThat(retainedJoinRepresentation.get("membership_authority_outbox_sequence", Long.class))
+        .isNull();
+    assertThat(retainedJoinRepresentation.get("membership_authority_event_id", String.class))
+        .isNull();
+    assertThat(retainedJoinRepresentation.get("membership_authority_event_digest", String.class))
+        .isNull();
+    assertThat(retainedJoinRepresentation.get("join_audit_event_id", UUID.class)).isNull();
+    assertThat(retainedJoinRepresentation.get("join_audit_payload_digest", String.class)).isNull();
+    assertThat(retainedJoinRepresentation.get("join_audit_occurred_at", LocalDateTime.class))
+        .isNull();
+
+    var retainedScopeIdentity =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT scope_digest_version, account_uuid, tenant_uuid, tenant_slug, "
+                    + "playable_state_namespace_uuid, game_instance_uuid, "
+                    + "tenant_provenance_kind, tenant_provenance_legacy_tenant_id, "
+                    + "tenant_source_operation_id, tenant_provenance_digest FROM "
+                    + schema
+                    + ".account_connect_scope_records WHERE scope_token_hash = ?",
+                scopeTokenHash));
+    assertThat(retainedScopeIdentity.get("scope_digest_version", Integer.class)).isEqualTo(1);
+    assertThat(retainedScopeIdentity.get("account_uuid", UUID.class)).isNull();
+    assertThat(retainedScopeIdentity.get("tenant_uuid", UUID.class)).isNull();
+    assertThat(retainedScopeIdentity.get("tenant_slug", String.class)).isNull();
+    assertThat(retainedScopeIdentity.get("playable_state_namespace_uuid", UUID.class)).isNull();
+    assertThat(retainedScopeIdentity.get("game_instance_uuid", UUID.class)).isNull();
+    assertThat(retainedScopeIdentity.get("tenant_provenance_kind", String.class)).isNull();
+    assertThat(retainedScopeIdentity.get("tenant_provenance_legacy_tenant_id", Long.class))
+        .isNull();
+    assertThat(retainedScopeIdentity.get("tenant_source_operation_id", UUID.class)).isNull();
+    assertThat(retainedScopeIdentity.get("tenant_provenance_digest", String.class)).isNull();
+
+    var retainedAuditIdentity =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT tenant_identity_version, tenant_uuid FROM "
+                    + schema
+                    + ".account_audit_outbox WHERE audit_event_id = ?",
+                auditEventId));
+    assertThat(retainedAuditIdentity.get("tenant_identity_version", Integer.class)).isEqualTo(1);
+    assertThat(retainedAuditIdentity.get("tenant_uuid", UUID.class)).isNull();
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT COUNT(*) FROM "
+                        + schema
+                        + ".account_tenant_membership_role_snapshots WHERE membership_id IN "
+                        + "(SELECT id FROM "
+                        + schema
+                        + ".account_tenant_membership WHERE account_id IN (?, ?))",
+                    firstAccountId,
+                    secondAccountId)
+                .fetchOne(0, Long.class))
+        .isZero();
 
     UUID firstUuid =
         Objects.requireNonNull(

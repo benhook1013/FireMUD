@@ -24,6 +24,10 @@ public class FreshTenantIdentityAssociationRepository {
   private final DSLContext dsl;
   private final String workloadNamespace;
 
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification =
+          "Preserve the injected DSLContext precondition; Spring must proxy this non-final repository.")
   public FreshTenantIdentityAssociationRepository(
       DSLContext dsl, @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace) {
     this.dsl = Objects.requireNonNull(dsl);

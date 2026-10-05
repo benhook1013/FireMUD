@@ -462,5 +462,4 @@ public class AccountAuthorityGenerationRepository {
       Objects.requireNonNull(issuanceFence, "Account issuance fence is required");
     }
   }
-
 }

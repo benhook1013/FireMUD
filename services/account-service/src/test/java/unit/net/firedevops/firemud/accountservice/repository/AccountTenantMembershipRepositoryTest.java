@@ -199,9 +199,12 @@ class AccountTenantMembershipRepositoryTest {
     order.verify(dsl).fetchOne(contains("FROM account_tenant_membership"), any(Object[].class));
     order.verify(pairs).readForUpdate(ACCOUNT_UUID, TENANT_UUID);
     order.verify(pairs).enrollAbsence(ACCOUNT_UUID, TENANT_UUID, freshProvenance());
-    order
-        .verify(dsl)
-        .resultQuery(contains("INSERT INTO account_tenant_membership"), any(Object[].class));
+    ResultQuery<?> verificationReturn =
+        order
+            .verify(dsl)
+            .resultQuery(contains("INSERT INTO account_tenant_membership"), any(Object[].class));
+    // Mockito verification checks the invocation without executing or returning the stubbed query.
+    assertThat(verificationReturn).isNull();
     order.verify(dsl).fetchOne(contains("FROM account_tenant_membership"), any(Object[].class));
     order.verify(pairs).readForUpdate(ACCOUNT_UUID, TENANT_UUID);
   }

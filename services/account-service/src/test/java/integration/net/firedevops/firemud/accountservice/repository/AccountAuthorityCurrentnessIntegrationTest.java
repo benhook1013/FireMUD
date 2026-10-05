@@ -9,6 +9,8 @@ import java.util.UUID;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountRealmAccessGrant;
 import net.firedevops.firemud.accountservice.entity.Subscription;
+import net.firedevops.firemud.accountservice.repository.AccountRealmAccessGrantRepository;
+import net.firedevops.firemud.accountservice.repository.SubscriptionRepository;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -126,8 +128,9 @@ class AccountAuthorityCurrentnessIntegrationTest {
                 Long.class,
                 revoked.getId()))
         .isEqualTo(1L);
-    assertThat(grants.existsByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
-            accountId, tenantId, "world", "private"))
+    assertThat(
+            grants.existsByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
+                accountId, tenantId, "world", "private"))
         .isFalse();
   }
 }

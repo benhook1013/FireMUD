@@ -7,7 +7,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -33,21 +35,42 @@ import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
-import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
-@Testcontainers(disabledWithoutDocker = true)
 class AccountFirstJoinAuthorityStorageIntegrationTest {
   private static final String SCHEMA_PREFIX = "first_join_authority_storage_proof";
+  private static final AccountPostgresIntegrationFixture postgres =
+      new AccountPostgresIntegrationFixture();
+  private final Set<String> schemas = ConcurrentHashMap.newKeySet();
 
-  @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  @BeforeAll
+  static void startPostgres() {
+    postgres.start();
+  }
+
+  @AfterAll
+  static void stopPostgres() {
+    postgres.stop();
+  }
+
+  @AfterEach
+  void dropRunOwnedSchemas() {
+    JdbcTemplate jdbc = new JdbcTemplate(postgres.dataSource());
+    for (String schema : schemas) {
+      if (!schema.startsWith(SCHEMA_PREFIX + "_") || !schema.matches("[a-z][a-z0-9_]{0,62}")) {
+        throw new IllegalStateException("Refusing to clean an unowned PostgreSQL schema");
+      }
+      jdbc.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
+    }
+    schemas.clear();
+  }
 
   @Test
   void appendsContiguousPerStreamAndReplaysOnlyExactRequestEvidence() {
@@ -705,12 +728,10 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
   }
 
   private TestContext newTestContextAt(String targetVersion) {
-    String schema = SCHEMA_PREFIX + "_" + UUID.randomUUID().toString().replace("-", "");
-    DriverManagerDataSource dataSource = new DriverManagerDataSource();
-    String separator = postgres.getJdbcUrl().contains("?") ? "&" : "?";
-    dataSource.setUrl(postgres.getJdbcUrl() + separator + "currentSchema=" + schema);
-    dataSource.setUsername(postgres.getUsername());
-    dataSource.setPassword(postgres.getPassword());
+    String schema =
+        SCHEMA_PREFIX + "_" + UUID.randomUUID().toString().replace("-", "").substring(0, 24);
+    schemas.add(schema);
+    var dataSource = postgres.dataSource(schema);
     var configuration =
         Flyway.configure()
             .dataSource(dataSource)
@@ -719,8 +740,7 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
             .placeholders(Map.of("serviceSchema", schema))
             .locations("classpath:db/migration");
     if (targetVersion != null) {
-      configuration.target(
-          org.flywaydb.core.api.MigrationVersion.fromVersion(targetVersion));
+      configuration.target(org.flywaydb.core.api.MigrationVersion.fromVersion(targetVersion));
     }
     configuration.load().migrate();
 
@@ -753,7 +773,7 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
     UUID requestId = UUID.randomUUID();
     UUID operationId = UUID.randomUUID();
     String requestDigest = "sha256:" + "a".repeat(64);
-    String sourceTenantKey = "first-join-" + UUID.randomUUID().toString().replace("-", "");
+    String sourceTenantKey = "fj-" + UUID.randomUUID().toString().replace("-", "");
     String evidenceDigest =
         GameTenantCreationDigest.evidenceDigest(
             "prod",
