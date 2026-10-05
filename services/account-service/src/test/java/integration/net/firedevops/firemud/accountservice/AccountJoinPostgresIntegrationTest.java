@@ -91,6 +91,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.test.util.AopTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -1768,12 +1769,14 @@ class AccountJoinPostgresIntegrationTest {
             2L,
             2L);
 
+    AccountMembershipAuthorityEventProducer producerTarget =
+        AopTestUtils.getUltimateTargetObject(membershipAuthorityEventProducer);
     doAnswer(
             invocation -> {
               invocation.callRealMethod();
               throw new IllegalStateException("injected failure after role event append");
             })
-        .when(membershipAuthorityEventProducer)
+        .when(producerTarget)
         .appendTenantRoleEvent(
             any(Request.class),
             any(AccountTenantMembership.class),
@@ -1808,12 +1811,14 @@ class AccountJoinPostgresIntegrationTest {
             2L,
             2L);
 
+    AccountAuditOutboxRepository auditOutboxTarget =
+        AopTestUtils.getUltimateTargetObject(auditOutboxRepository);
     doAnswer(
             invocation -> {
               invocation.callRealMethod();
               throw new IllegalStateException("injected failure after role audit append");
             })
-        .when(auditOutboxRepository)
+        .when(auditOutboxTarget)
         .appendCanonicalTenant(any(UUID.class), anyString(), anyString(), anyString());
 
     assertThatThrownBy(() -> tenantRoleMutationService.mutate(request))
@@ -1844,6 +1849,8 @@ class AccountJoinPostgresIntegrationTest {
             2L);
     AtomicInteger readbackCalls = new AtomicInteger();
 
+    AccountMembershipAuthorityEventProducer producerTarget =
+        AopTestUtils.getUltimateTargetObject(membershipAuthorityEventProducer);
     doAnswer(
             invocation -> {
               PositiveMembershipSnapshot result =
@@ -1853,7 +1860,7 @@ class AccountJoinPostgresIntegrationTest {
               }
               return result;
             })
-        .when(membershipAuthorityEventProducer)
+        .when(producerTarget)
         .readCurrentPairBoundPositiveMembershipSnapshot(anyLong(), anyLong());
 
     assertThatThrownBy(() -> tenantRoleMutationService.mutate(request))
@@ -1934,7 +1941,8 @@ class AccountJoinPostgresIntegrationTest {
                         2L,
                         2L)))
         .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("does not match its latest V1 provisional receipt");
+        .hasMessageContaining(
+            "Current Account membership is not a positive active explicit membership");
     assertThat(membershipAuthorityReadEvidenceSnapshot(fixture)).isEqualTo(sourceBefore);
     assertThat(countAuditOutboxRows(fixture)).isEqualTo(auditCountBefore);
     assertTenantRoleOperationAbsent(requestId);
@@ -2103,24 +2111,26 @@ class AccountJoinPostgresIntegrationTest {
     assertThat(membershipAuthorityReadEvidenceSnapshot(absent)).isEqualTo(absentBeforeRead);
 
     JoinFixture missingReceipt = fixture("active");
-    dsl.execute(
-        "INSERT INTO account_tenant_membership "
-            + "(account_id, tenant_id, gameplay_admission_allowed, lifecycle_state, "
-            + "membership_version, membership_authority_generation, authority_provenance) "
-            + "VALUES (?, ?, TRUE, 'ACTIVE', 1, 1, 'EXPLICIT_JOIN')",
-        missingReceipt.accountId(),
-        missingReceipt.tenantId());
-    long retainedMembershipId = seedPlayerRoleSnapshot(missingReceipt);
+    long retainedMembershipId =
+        new TransactionTemplate(transactionManager)
+            .execute(
+                status ->
+                    seedSyntheticRetainedActiveMembership(
+                        missingReceipt, List.of("player"), false));
     Map<String, Object> retainedMembership = membershipSnapshot(missingReceipt);
+    Map<String, Object> sourceBeforeRead = membershipAuthorityReadEvidenceSnapshot(missingReceipt);
+    long authorityEventCountBefore = countAuthorityMembershipEvents(missingReceipt);
 
     assertThat(retainedMembershipId).isPositive();
+    assertThat(authorityEventCountBefore).isEqualTo(1L);
     assertThat(countMembershipTransitionReceipts(missingReceipt)).isZero();
     assertThatThrownBy(() -> readPositiveMembershipSnapshot(missingReceipt))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("Account membership exists without a provisional transition receipt");
     assertThat(membershipSnapshot(missingReceipt)).isEqualTo(retainedMembership);
+    assertThat(membershipAuthorityReadEvidenceSnapshot(missingReceipt)).isEqualTo(sourceBeforeRead);
     assertThat(countMembershipTransitionReceipts(missingReceipt)).isZero();
-    assertThat(countAuthorityMembershipEvents(missingReceipt)).isZero();
+    assertThat(countAuthorityMembershipEvents(missingReceipt)).isEqualTo(authorityEventCountBefore);
   }
 
   @Test
@@ -3108,6 +3118,11 @@ class AccountJoinPostgresIntegrationTest {
   }
 
   private void seedSyntheticRetainedActiveMembership(JoinFixture fixture, List<String> roles) {
+    seedSyntheticRetainedActiveMembership(fixture, roles, true);
+  }
+
+  private long seedSyntheticRetainedActiveMembership(
+      JoinFixture fixture, List<String> roles, boolean includeTransitionReceipt) {
     Account account =
         accountRepository.findByAccountUuidForUpdate(fixture.accountUuid()).orElseThrow();
     ApprovedAssociation association = tenantIdentityResolver.resolve(fixture.tenantUuid());
@@ -3142,10 +3157,12 @@ class AccountJoinPostgresIntegrationTest {
             persisted, fixture.accountUuid(), fixture.tenantUuid(), provenance, 2L, roles);
 
     String historicalRequestId = "synthetic-retained-membership-join-" + UUID.randomUUID();
-    MembershipTransitionReceipt receipt =
-        membershipTransitionReceiptRepository.appendTransition(
-            persisted, "MEMBERSHIP_JOINED", historicalRequestId);
-    assertThat(receipt.requestId()).isEqualTo(historicalRequestId);
+    if (includeTransitionReceipt) {
+      MembershipTransitionReceipt receipt =
+          membershipTransitionReceiptRepository.appendTransition(
+              persisted, "MEMBERSHIP_JOINED", historicalRequestId);
+      assertThat(receipt.requestId()).isEqualTo(historicalRequestId);
+    }
 
     var authority =
         authorityGenerationRepository.readCompositeSnapshot(
@@ -3207,6 +3224,7 @@ class AccountJoinPostgresIntegrationTest {
         provenance,
         new ProvenPositiveCheckpoint(
             2L, 1L, 1L, appended.eventId(), appended.eventDigest(), false));
+    return persisted.getId();
   }
 
   private void assertCurrentRoleMutationState(
