@@ -146,7 +146,6 @@ BEGIN
                     AND claim.source_provenance_kind = fresh.provenance_kind
                     AND claim.source_evidence_digest = fresh.evidence_digest
                     AND claim.source_account_legacy_tenant_id IS NULL
-                    AND claim.source_manifest_digest IS NULL
               )
         ) INTO tenant_source_matches;
     END IF;

@@ -335,8 +335,11 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
     Account account = account("lock-order-" + UUID.randomUUID());
     transaction.executeWithoutResult(status -> accounts.save(account));
 
+    CountDownLatch participantsReady = new CountDownLatch(2);
+    CountDownLatch startLockPhase = new CountDownLatch(1);
     CountDownLatch accountRowLocked = new CountDownLatch(1);
     CountDownLatch releaseWriter = new CountDownLatch(1);
+    CompletableFuture<Integer> writerBackendPid = new CompletableFuture<>();
     CompletableFuture<Integer> snapshotBackendPid = new CompletableFuture<>();
     ExecutorService executor = Executors.newFixedThreadPool(2);
     Future<?> writer =
@@ -344,6 +347,11 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
             () ->
                 transaction.executeWithoutResult(
                     status -> {
+                      writerBackendPid.complete(
+                          Objects.requireNonNull(dsl.fetchOne("SELECT pg_backend_pid()"))
+                              .get(0, Integer.class));
+                      participantsReady.countDown();
+                      await(startLockPhase, "Account lock-order phase was not started");
                       dsl.fetchOne(
                           "SELECT account_uuid FROM accounts WHERE account_uuid = ? FOR UPDATE",
                           account.getAccountUuid());
@@ -356,58 +364,92 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
                     }));
     Future<AccountAuthoritySourceEvidenceRepository.IssuerAccountSourceSnapshot> snapshot =
         executor.submit(
-            () -> {
-              await(accountRowLocked, "Account writer did not acquire its row lock");
-              return transaction.execute(
-                  status -> {
-                    snapshotBackendPid.complete(
-                        Objects.requireNonNull(dsl.fetchOne("SELECT pg_backend_pid()"))
-                            .get(0, Integer.class));
-                    return sources.readCurrentIssuerAccountSources(
-                        ISSUER, account.getAccountUuid());
-                  });
-            });
+            () ->
+                transaction.execute(
+                    status -> {
+                      snapshotBackendPid.complete(
+                          Objects.requireNonNull(dsl.fetchOne("SELECT pg_backend_pid()"))
+                              .get(0, Integer.class));
+                      participantsReady.countDown();
+                      await(startLockPhase, "Account lock-order phase was not started");
+                      await(accountRowLocked, "Account writer did not acquire its row lock");
+                      return sources.readCurrentIssuerAccountSources(
+                          ISSUER, account.getAccountUuid());
+                    }));
 
     try {
-      assertThat(accountRowLocked.await(5, TimeUnit.SECONDS)).isTrue();
+      assertThat(participantsReady.await(30, TimeUnit.SECONDS)).isTrue();
+      Integer writerPid = writerBackendPid.get(5, TimeUnit.SECONDS);
       Integer readerPid = snapshotBackendPid.get(5, TimeUnit.SECONDS);
-      awaitLockWait(dsl, readerPid);
+      startLockPhase.countDown();
+      assertThat(accountRowLocked.await(30, TimeUnit.SECONDS)).isTrue();
+      awaitLockWait(dsl, readerPid, writerPid);
       releaseWriter.countDown();
-      writer.get(10, TimeUnit.SECONDS);
-      var readback = snapshot.get(10, TimeUnit.SECONDS);
+      writer.get(45, TimeUnit.SECONDS);
+      var readback = snapshot.get(45, TimeUnit.SECONDS);
       assertThat(readback.account().generation()).isEqualTo(2L);
+      assertThat(readback.account().sourceVersion()).isEqualTo(2L);
       assertThat(readback.account().issuanceFence().value()).isEqualTo(2L);
+      assertThat(readback.account().issuanceFence().sourceVersion()).isEqualTo(2L);
       assertThat(readback.account().checkpoint().sequence()).isEqualTo(1L);
+      AccountAuthorityOutboxRepository.Event committedEvent =
+          transaction.execute(
+              status ->
+                  outbox
+                      .findEvent(readback.account().checkpoint().outboxStreamKey(), 1L)
+                      .orElseThrow());
+      assertThat(committedEvent.eventId())
+          .isEqualTo(readback.account().checkpoint().sourceEventId().orElseThrow());
+      assertThat(committedEvent.eventDigest())
+          .isEqualTo(readback.account().checkpoint().sourceEventDigest().orElseThrow());
+      AccountEvent event =
+          (AccountEvent)
+              AccountAuthoritySourceEventV1Codec.verify(
+                  new String(committedEvent.payload(), StandardCharsets.UTF_8));
+      assertThat(event.accountId()).isEqualTo(account.getAccountUuid().toString());
+      assertThat(event.outboxSequence()).isEqualTo("1");
+      assertThat(event.accountAuthorityGeneration()).isEqualTo("2");
+      assertThat(event.sourceVersion()).isEqualTo("2");
+      assertThat(event.issuanceFence()).isEqualTo("2");
+      assertThat(event.mutationKinds()).containsExactly("PASSWORD_RESET");
     } finally {
+      startLockPhase.countDown();
       releaseWriter.countDown();
       executor.shutdown();
-      if (!executor.awaitTermination(10, TimeUnit.SECONDS)) {
+      if (!executor.awaitTermination(15, TimeUnit.SECONDS)) {
         executor.shutdownNow();
-        assertThat(executor.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
       }
     }
   }
 
   private static void await(CountDownLatch latch, String failureMessage) {
     try {
-      if (!latch.await(5, TimeUnit.SECONDS)) throw new IllegalStateException(failureMessage);
+      if (!latch.await(30, TimeUnit.SECONDS)) throw new IllegalStateException(failureMessage);
     } catch (InterruptedException interrupted) {
       Thread.currentThread().interrupt();
       throw new IllegalStateException(failureMessage, interrupted);
     }
   }
 
-  private static void awaitLockWait(DSLContext dsl, Integer backendPid)
+  private static void awaitLockWait(DSLContext dsl, Integer readerPid, Integer writerPid)
       throws InterruptedException {
-    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
     while (System.nanoTime() < deadline) {
       var activity =
-          dsl.fetchOne("SELECT wait_event_type FROM pg_stat_activity WHERE pid = ?", backendPid);
+          dsl.fetchOne(
+              "SELECT wait_event_type, ? = ANY(pg_blocking_pids(pid)) AS blocked_by_writer "
+                  + "FROM pg_stat_activity WHERE pid = ?",
+              writerPid,
+              readerPid);
       String waitEventType = activity == null ? null : activity.get(0, String.class);
-      if ("Lock".equals(waitEventType)) return;
-      Thread.sleep(10L);
+      Boolean blockedByWriter =
+          activity == null ? null : activity.get("blocked_by_writer", Boolean.class);
+      if ("Lock".equals(waitEventType) && Boolean.TRUE.equals(blockedByWriter)) return;
+      Thread.sleep(25L);
     }
-    throw new AssertionError("Authority snapshot never waited on the already locked Account row");
+    throw new AssertionError(
+        "Authority snapshot did not wait on the Account writer backend " + writerPid);
   }
 
   private TestContext newTestContext() {

@@ -400,7 +400,8 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
   private static FreshTenantCreationEvidence freshTenantEvidence(UUID tenantUuid) {
     UUID requestId = UUID.randomUUID();
     UUID operationId = UUID.randomUUID();
-    String sourceTenantKey = "fresh-" + UUID.randomUUID().toString().replace("-", "");
+    String sourceTenantKey =
+        "fresh-" + UUID.randomUUID().toString().replace("-", "").substring(0, 30);
     String requestDigest =
         GameTenantCreationDigest.requestDigest(
             TEST_NAMESPACE, requestId, sourceTenantKey, "Canonical JOIN event test", null);
