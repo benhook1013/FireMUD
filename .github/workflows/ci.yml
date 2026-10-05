@@ -2600,7 +2600,7 @@ jobs:
       contents: read
       pull-requests: write
     needs: [buf-check, docker-lint, shellcheck, python-script-validation, dev-tool-contract-checks, dev-tools-readme-contract, yaml-lint, metrics-cardinality-check, flyway-migration-sanity-checks, grpc-transport-config-sanity-checks, workflow-lint, helm-lint, helm-render-validation, helm-transaction-proof, docs-check, frontend-checks, build-and-test, validation-gate]
-    if: ${{ always() && github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
