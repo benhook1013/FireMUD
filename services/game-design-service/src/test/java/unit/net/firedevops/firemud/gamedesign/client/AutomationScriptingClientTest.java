@@ -1,7 +1,7 @@
 package net.firedevops.firemud.gamedesign.client;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -14,6 +14,7 @@ import net.firedevops.firemud.automationscripting.v1.AutomationScriptingServiceG
 import net.firedevops.firemud.automationscripting.v1.GetDraftDesignDigestRequest;
 import net.firedevops.firemud.automationscripting.v1.GetDraftDesignDigestResponse;
 import net.firedevops.firemud.automationscripting.v1.NotifyScriptVersionUpdateRequest;
+import net.firedevops.firemud.automationscripting.v1.NotifyScriptVersionUpdateResponse;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
@@ -94,6 +95,39 @@ class AutomationScriptingClientTest {
   }
 
   @Test
+  void notificationWithoutAcceptedReadinessFailsClosed() throws Exception {
+    ServiceEndpointsProperties endpoints = new ServiceEndpointsProperties();
+    CommonGrpcClientProperties grpc = new CommonGrpcClientProperties();
+    grpc.setPlaintext(true);
+    AutomationScriptingServiceGrpc.AutomationScriptingServiceBlockingStub stub =
+        mock(AutomationScriptingServiceGrpc.AutomationScriptingServiceBlockingStub.class);
+    when(stub.notifyScriptVersionUpdate(any(NotifyScriptVersionUpdateRequest.class)))
+        .thenReturn(NotifyScriptVersionUpdateResponse.newBuilder().setSuccess(false).build());
+    TestAutomationScriptingClient client =
+        new TestAutomationScriptingClient(
+            endpoints,
+            grpc,
+            mock(GrpcChannelFactory.class),
+            BlockingGrpcStubCustomizer.noop(),
+            stub);
+    client.initialize();
+
+    assertThatThrownBy(
+            () ->
+                client.notifyScriptVersionUpdate(
+                    "tenant-1", 7L, "patch-7", java.util.List.of("script-a")))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("SCRIPT_PATCH_NOTIFICATION_REJECTED");
+    var requestCaptor = org.mockito.ArgumentCaptor.forClass(NotifyScriptVersionUpdateRequest.class);
+    verify(stub).notifyScriptVersionUpdate(requestCaptor.capture());
+    NotifyScriptVersionUpdateRequest request = requestCaptor.getValue();
+    assertThat(request.getTenantId()).isEqualTo("tenant-1");
+    assertThat(request.getBaseVersionId()).isEqualTo(7L);
+    assertThat(request.getScriptPatchVersion()).isEqualTo("patch-7");
+    assertThat(request.getAffectedScriptsList()).containsExactly("script-a");
+  }
+
+  @Test
   void fullDigestReadRejectsLegacyResponseWithoutTypedScope() throws Exception {
     ServiceEndpointsProperties endpoints = new ServiceEndpointsProperties();
     CommonGrpcClientProperties grpc = new CommonGrpcClientProperties();
@@ -164,6 +198,8 @@ class AutomationScriptingClientTest {
     grpc.setPlaintext(true);
     AutomationScriptingServiceGrpc.AutomationScriptingServiceBlockingStub stub =
         mock(AutomationScriptingServiceGrpc.AutomationScriptingServiceBlockingStub.class);
+    when(stub.notifyScriptVersionUpdate(any(NotifyScriptVersionUpdateRequest.class)))
+        .thenReturn(NotifyScriptVersionUpdateResponse.newBuilder().setSuccess(true).build());
     TestAutomationScriptingClient client =
         new TestAutomationScriptingClient(
             endpoints,
@@ -202,12 +238,16 @@ class AutomationScriptingClientTest {
     client.initialize();
 
     for (Long baseVersionId : java.util.Arrays.asList(null, 0L, -1L)) {
-      assertThatIllegalArgumentException()
-          .isThrownBy(
+      assertThatThrownBy(
               () ->
                   client.notifyScriptVersionUpdate(
-                      "tenant-1", baseVersionId, "patch-7", java.util.List.of()));
+                      "tenant-1", baseVersionId, "patch-7", java.util.List.of("script-a")))
+          .isInstanceOf(AutomationScriptingClient.PreDispatchValidationException.class);
     }
+    assertThatThrownBy(
+            () -> client.notifyScriptVersionUpdate("tenant-1", 7L, "patch-7", java.util.List.of()))
+        .isInstanceOf(AutomationScriptingClient.PreDispatchValidationException.class)
+        .hasMessageContaining("affectedScripts");
 
     verify(stub, never()).notifyScriptVersionUpdate(any(NotifyScriptVersionUpdateRequest.class));
   }

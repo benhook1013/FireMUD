@@ -196,6 +196,11 @@ Entry format:
   - Current status: the launching Gameplay agent retained the live CLI wait. Whether cross-agent process handles are supported in other execution environments is unverified.
   - Reconsideration trigger: revisit if a future harness requires cross-platform handle portability or a canonical watcher fix is verified.
 
+- `2026-10-03`: Anchor repetitive fixture edits to the owning test method
+  - Context: a row-lock reconciliation fix first matched two identical repository stubs in activation/failure tests instead of the intended terminal-retry tests, producing four test failures.
+  - Expected pattern: include the test-method context when patching repeated fixture statements, inspect the exact changed methods before validation, and retain failed runs as non-completion evidence.
+  - Outcome: the unrelated fixture changes were corrected in place; the final diff changes only the two terminal-retry lookup stubs, and the complete affected proof passes without changing production behavior or weakening assertions.
+
 - `2026-10-03`: A merge preview needs positive conflict evidence, not a marker-only filter
   - Context: a read-only parent-forwarding inventory used this checkout's older three-argument `git merge-tree` and searched only for standard conflict markers.
   - Observation: the inventory incorrectly called the merge clean; the actual isolated no-commit merge reported six documentation conflicts. The preview's `changed in both` records and command outcome had not been inspected.
@@ -207,3 +212,8 @@ Entry format:
   - Observation: an active watcher does not guarantee prompt adjudication. Its reassuring handoff wording cannot replace checking the attributable result and raw findings.
   - Expected pattern: consume terminal review evidence, adjudicate it, and publish the canonical checkpoint before returning to integration work. Keep CI repair independent rather than postponing completed review reporting.
   - Outcome: review `5398994837` was recorded as 5 found / 4 accepted / 1 routed before implementing its accepted batch; the inherited Account observation has a canonical target route.
+
+- `2026-10-04`: Inspect and finalize complete CLI evidence before publishing counts
+  - Context: on 2026-10-03, a 0/0 public checkpoint was briefly posted before the complete CLI capture was inspected. The terminal capture showed 1 found / 1 accepted; source finalization first refused the undecided finding, and linked checkpoint `5969229965` was corrected.
+  - Expected pattern: inspect the complete terminal raw capture, adjudicate every finding, and confirm successful source finalization before building public counts. If finalization refuses, resolve the disposition and correct the linked checkpoint before reporting the result.
+  - Outcome: the source decision and finalization were recorded with no dry-review credit.

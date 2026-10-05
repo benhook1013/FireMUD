@@ -79,6 +79,20 @@ class ScriptPatchVersionCommandServiceTest {
   }
 
   @Test
+  void notifyUpdateRejectsEmptyScriptListWithoutCreatingReadiness() {
+    assertThatThrownBy(() -> service.notifyUpdate("1", 1L, "v1-script.1", List.of()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("zero_handler_manifest_unverifiable");
+
+    verifyNoInteractions(
+        repository,
+        scheduleDefinitionService,
+        scheduleInstanceService,
+        scriptEventIngressService,
+        readinessProjectionService);
+  }
+
+  @Test
   void notifyUpdateUsesCanonicalScriptSetAndRefreshesSchedules() {
     ScriptDefinition barkeep = definition("npc-barkeep");
     ScriptDefinition guard = definition("npc-guard");
@@ -139,18 +153,6 @@ class ScriptPatchVersionCommandServiceTest {
         .hasMessage("script_patch_base_version_mismatch");
 
     verifyNoInteractions(
-        scheduleDefinitionService,
-        scheduleInstanceService,
-        scriptEventIngressService,
-        readinessProjectionService);
-  }
-
-  @Test
-  void emptyAffectedManifestDoesNotMaterializeReadiness() {
-    assertThat(service.notifyUpdate("1", 1L, "v1-script.1", List.of())).isFalse();
-
-    verifyNoInteractions(
-        repository,
         scheduleDefinitionService,
         scheduleInstanceService,
         scriptEventIngressService,

@@ -3,11 +3,13 @@ package net.firedevops.firemud.gamedesign.service.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.TemplateRemapSetDto;
 import net.firedevops.firemud.gamedesign.entity.LaunchDescriptor;
@@ -56,7 +58,7 @@ class LaunchDescriptorServiceImplTest {
     when(template.getId()).thenReturn(9L);
     when(template.getTenantId()).thenReturn("tenant-1");
     when(template.getDefaultVersionId()).thenReturn(7L);
-    when(template.getDefaultScriptPatchVersion()).thenReturn("patch-1");
+    when(template.getDefaultScriptPatchVersion()).thenReturn(null);
     when(template.getDefaultRuntimeFlagsJson()).thenReturn("{}");
     when(template.getTemplateReferencePhase()).thenReturn(TemplateReferencePhase.ENFORCED);
     when(gameTemplateRepository.findLaunchConfigByTenantIdAndId("tenant-1", 9L))
@@ -102,6 +104,153 @@ class LaunchDescriptorServiceImplTest {
   }
 
   @Test
+  void selectedPatchWithoutExactPublicationAndReadinessEvidenceCannotResolve() {
+    GameTemplateLaunchConfigView template =
+        org.mockito.Mockito.mock(GameTemplateLaunchConfigView.class);
+    when(template.getDefaultVersionId()).thenReturn(7L);
+    when(template.getDefaultScriptPatchVersion()).thenReturn("patch-1");
+    when(template.getTemplateReferencePhase()).thenReturn(TemplateReferencePhase.ENFORCED);
+    when(gameTemplateRepository.findLaunchConfigByTenantIdAndId("tenant-1", 9L))
+        .thenReturn(Optional.of(template));
+    Version version = new Version();
+    version.setId(7L);
+    version.setTenantId("tenant-1");
+    version.setVersionState(VersionLifecycleState.PUBLISHED);
+    when(versionRepository.findById(7L)).thenReturn(Optional.of(version));
+
+    IllegalArgumentException thrown =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.resolveLaunchDescriptor(
+                    "tenant-1", 9L, "cp-patch", null, null, null, null));
+
+    assertEquals(
+        "SCRIPT_PATCH_NOT_READY: exact published-for-base and Automation READY evidence is unavailable",
+        thrown.getMessage());
+    verify(launchDescriptorRepository, org.mockito.Mockito.never())
+        .save(any(LaunchDescriptor.class));
+  }
+
+  @Test
+  void replayOfRetainedDescriptorCannotReturnUnverifiedPatch() {
+    GameTemplateLaunchConfigView template =
+        org.mockito.Mockito.mock(GameTemplateLaunchConfigView.class);
+    when(template.getDefaultVersionId()).thenReturn(7L);
+    when(template.getTemplateReferencePhase()).thenReturn(TemplateReferencePhase.ENFORCED);
+    when(gameTemplateRepository.findLaunchConfigByTenantIdAndId("tenant-1", 9L))
+        .thenReturn(Optional.of(template));
+    when(launchDescriptorRepository.findByTenantIdAndGameTemplateIdAndControlPlaneRequestId(
+            "tenant-1", 9L, "cp-replay"))
+        .thenReturn(Optional.empty());
+    Version version = new Version();
+    version.setId(7L);
+    version.setTenantId("tenant-1");
+    version.setVersionState(VersionLifecycleState.PUBLISHED);
+    when(versionRepository.findById(7L)).thenReturn(Optional.of(version));
+    when(publishedReleaseBundleService.getPublishedReleaseBundle("tenant-1", 7L))
+        .thenReturn(
+            new PublishedReleaseBundleDto(
+                11L,
+                "tenant-1",
+                7L,
+                8,
+                "v1",
+                "workflow-1",
+                "hash-1",
+                List.of("manifest.json"),
+                List.of(),
+                "genrev-1",
+                false,
+                null,
+                LocalDateTime.now()));
+    java.util.concurrent.atomic.AtomicReference<LaunchDescriptor> saved =
+        new java.util.concurrent.atomic.AtomicReference<>();
+    when(launchDescriptorRepository.save(any(LaunchDescriptor.class)))
+        .thenAnswer(
+            invocation -> {
+              LaunchDescriptor descriptor = invocation.getArgument(0);
+              saved.set(descriptor);
+              return descriptor;
+            });
+    service.resolveLaunchDescriptor("tenant-1", 9L, "cp-replay", null, null, null, null);
+    saved.get().setScriptPatchVersion("patch-1");
+    when(launchDescriptorRepository.findByTenantIdAndGameTemplateIdAndControlPlaneRequestId(
+            "tenant-1", 9L, "cp-replay"))
+        .thenReturn(Optional.of(saved.get()));
+
+    IllegalArgumentException thrown =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.resolveLaunchDescriptor(
+                    "tenant-1", 9L, "cp-replay", null, null, null, null));
+    assertEquals(
+        "SCRIPT_PATCH_NOT_READY: exact published-for-base and Automation READY evidence is unavailable",
+        thrown.getMessage());
+  }
+
+  @Test
+  void replayReturnsRetainedDescriptorAfterTemplateDefaultChanges() {
+    GameTemplateLaunchConfigView template =
+        org.mockito.Mockito.mock(GameTemplateLaunchConfigView.class);
+    when(template.getDefaultVersionId()).thenReturn(7L);
+    when(template.getDefaultScriptPatchVersion()).thenReturn(null);
+    when(template.getDefaultRuntimeFlagsJson()).thenReturn("{}");
+    when(template.getTemplateReferencePhase()).thenReturn(TemplateReferencePhase.ENFORCED);
+    when(gameTemplateRepository.findLaunchConfigByTenantIdAndId("tenant-1", 9L))
+        .thenReturn(Optional.of(template));
+    when(launchDescriptorRepository.findByTenantIdAndGameTemplateIdAndControlPlaneRequestId(
+            "tenant-1", 9L, "cp-template-default-change"))
+        .thenReturn(Optional.empty());
+    Version version = new Version();
+    version.setId(7L);
+    version.setTenantId("tenant-1");
+    version.setVersionState(VersionLifecycleState.PUBLISHED);
+    version.setVersionStateEpoch(17L);
+    when(versionRepository.findById(7L)).thenReturn(Optional.of(version));
+    when(publishedReleaseBundleService.getPublishedReleaseBundle("tenant-1", 7L))
+        .thenReturn(
+            new PublishedReleaseBundleDto(
+                11L,
+                "tenant-1",
+                7L,
+                8,
+                "v1",
+                "workflow-1",
+                "hash-1",
+                List.of("manifest.json"),
+                List.of(),
+                "genrev-1",
+                false,
+                null,
+                LocalDateTime.now()));
+    AtomicReference<LaunchDescriptor> saved = new AtomicReference<>();
+    when(launchDescriptorRepository.save(any(LaunchDescriptor.class)))
+        .thenAnswer(
+            invocation -> {
+              LaunchDescriptor descriptor = invocation.getArgument(0);
+              saved.set(descriptor);
+              return descriptor;
+            });
+
+    var first =
+        service.resolveLaunchDescriptor(
+            "tenant-1", 9L, "cp-template-default-change", null, null, null, null);
+
+    when(template.getDefaultScriptPatchVersion()).thenReturn("patch-1");
+    when(launchDescriptorRepository.findByTenantIdAndGameTemplateIdAndControlPlaneRequestId(
+            "tenant-1", 9L, "cp-template-default-change"))
+        .thenReturn(Optional.of(saved.get()));
+
+    var replay =
+        service.resolveLaunchDescriptor(
+            "tenant-1", 9L, "cp-template-default-change", null, null, null, null);
+
+    assertEquals(first, replay);
+  }
+
+  @Test
   void resolveLaunchDescriptorRejectsConflictingRequestReuse() {
     LaunchDescriptor existing = new LaunchDescriptor();
     existing.setRequestHash("other-hash");
@@ -125,7 +274,7 @@ class LaunchDescriptorServiceImplTest {
     when(template.getId()).thenReturn(9L);
     when(template.getTenantId()).thenReturn("tenant-1");
     when(template.getDefaultVersionId()).thenReturn(7L);
-    when(template.getDefaultScriptPatchVersion()).thenReturn("patch-1");
+    when(template.getDefaultScriptPatchVersion()).thenReturn(null);
     when(template.getDefaultRuntimeFlagsJson()).thenReturn("{}");
     when(template.getTemplateReferencePhase()).thenReturn(TemplateReferencePhase.ENFORCED);
     when(gameTemplateRepository.findLaunchConfigByTenantIdAndId("tenant-1", 9L))

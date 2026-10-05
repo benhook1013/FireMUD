@@ -1,6 +1,7 @@
 package net.firedevops.firemud.entitymanagement.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -25,15 +26,30 @@ class EntityMutationEffectReplayServiceTest {
       new EntityMutationEffectReplayService(repository, meterRegistry);
 
   @Test
-  void executeWithoutEffectIdBypassesReplayLedger() {
-    PickupItemFromRoomResponse expected = pickupResponse("Torch");
+  void executeRejectsMissingOrBlankEffectIdBeforeMutation() {
+    AtomicBoolean mutationCalled = new AtomicBoolean(false);
+    Supplier<PickupItemFromRoomResponse> mutation =
+        () -> {
+          mutationCalled.set(true);
+          return pickupResponse("Torch");
+        };
 
-    PickupItemFromRoomResponse response =
-        service.execute(
-            1L, null, "PickupItemFromRoom", () -> expected, PickupItemFromRoomResponse::parseFrom);
+    for (String effectId : new String[] {null, "", " \t "}) {
+      assertThatThrownBy(
+              () ->
+                  service.execute(
+                      1L,
+                      effectId,
+                      "PickupItemFromRoom",
+                      mutation,
+                      PickupItemFromRoomResponse::parseFrom))
+          .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+          .hasMessageContaining("Effect id is required");
+    }
 
-    assertThat(response).isSameAs(expected);
+    assertThat(mutationCalled).isFalse();
     verify(repository, never()).findByTenantIdAndEffectId(Mockito.anyLong(), Mockito.anyString());
+    verify(repository, never()).saveAndFlush(Mockito.any(EntityMutationEffect.class));
   }
 
   @Test

@@ -2042,6 +2042,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
           "PUBLISH_ATTEMPT_INCONSISTENT",
           "PUBLISH_ATTEMPT_PENDING_RECONCILIATION_REQUIRED",
           "PUBLISH_ATTEMPT_SCOPE_MISMATCH",
+          "PUBLISH_WORKFLOW_UNAVAILABLE",
           "PUBLISH_SCRIPT_PATCH_IDENTITY_CONFLICT" ->
           candidate;
       default -> null;
