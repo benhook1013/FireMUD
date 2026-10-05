@@ -29,6 +29,15 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.Outcome;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.Owner;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.OwnerReadback;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.SourceEvidence;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.SourceKind;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.Ordering;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.SourceChange;
 import net.firedevops.firemud.accountservice.client.EntityManagementClient;
 import net.firedevops.firemud.accountservice.client.GameSessionClient;
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
@@ -77,6 +86,10 @@ import net.firedevops.firemud.accountservice.service.exception.AuthenticationExc
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.MembershipEvent;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyAccountTenantAssociationResponse;
 import net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer;
 import net.firedevops.firemud.gamesession.v1.GameplayRealm;
@@ -141,6 +154,7 @@ class AccountJoinPostgresIntegrationTest {
   @MockitoSpyBean private AccountMembershipAuthorityEventProducer membershipAuthorityEventProducer;
   @Autowired private AccountMembershipLifecycleService membershipLifecycleService;
   @Autowired private AccountTenantRoleMutationService tenantRoleMutationService;
+  @Autowired private AccountTenantRoleOperationRepository tenantRoleOperationRepository;
   @MockitoSpyBean private AccountAuthorityOutboxRepository authorityOutboxRepository;
   @MockitoSpyBean private AccountAuditOutboxRepository auditOutboxRepository;
   @Autowired private PlatformTransactionManager transactionManager;
@@ -1980,6 +1994,458 @@ class AccountJoinPostgresIntegrationTest {
     assertThat(membershipAuthorityReadEvidenceSnapshot(fixture)).isEqualTo(sourceBefore);
     assertThat(countAuditOutboxRows(fixture)).isEqualTo(auditCountBefore);
     assertTenantRoleOperationAbsent(requestId);
+  }
+
+  @Test
+  void tenantRoleSourceWaitsForBothCommittedOwnersAndRecoversOriginalPendingCapture() {
+    TenantRoleFixture fixture = syntheticRetainedAdminFixture();
+    Request request = roleRequest(fixture, Action.GRANT_DESIGNER, 2L);
+    DraftAuthorizationFenceBinding binding =
+        syntheticVerifiedRoleFence(fixture.target(), SourceKind.MEMBERSHIP);
+    reserveRoleFence(binding, true);
+    Map<String, Object> before = membershipAuthorityReadEvidenceSnapshot(fixture.target());
+    long audits = countAuditOutboxRows(fixture.admin());
+
+    OperationEvidence pending = tenantRoleMutationService.mutate(request);
+    assertPendingRoleIntent(pending);
+    assertThat(membershipAuthorityReadEvidenceSnapshot(fixture.target())).isEqualTo(before);
+    assertThat(countAuditOutboxRows(fixture.admin())).isEqualTo(audits);
+    SourceChange captured = originalRoleSourceChange(request);
+    assertThat(captured.mutation()).containsExactly(request.payload());
+    assertThat(captured.sources()).hasSize(1);
+    assertThat(captured.sources().getFirst().sourceVersion()).isEqualTo("1");
+    assertThat(captured.sources().getFirst().evidence())
+        .containsExactly(
+            readExistingPairBoundPositiveMembershipSnapshot(fixture.target())
+                .authorityEvent()
+                .canonicalJsonUtf8());
+
+    syntheticVerifiedOwnerReadback(binding, Owner.WORLD, Outcome.COMMITTED);
+    assertPendingRoleIntent(restartedRoleMutation(request));
+    assertThat(originalRoleSourceChange(request).canonicalBytes())
+        .containsExactly(captured.canonicalBytes());
+    assertThat(membershipAuthorityReadEvidenceSnapshot(fixture.target())).isEqualTo(before);
+    assertThat(countAuditOutboxRows(fixture.admin())).isEqualTo(audits);
+
+    syntheticVerifiedOwnerReadback(binding, Owner.GAME_DESIGN, Outcome.COMMITTED);
+    OperationEvidence committed = restartedRoleMutation(request);
+    assertThat(committed.pending()).isFalse();
+    assertThat(committed.status()).isEqualTo("COMMITTED");
+    assertCurrentRoleMutationState(
+        fixture.target(), 3L, 1L, 2L, 1L, List.of("designer", "player"), false);
+    assertExactTenantRoleOperation(committed, tenantRoleMutationService.mutate(request));
+    assertThat(originalRoleSourceChange(request).canonicalBytes())
+        .containsExactly(captured.canonicalBytes());
+    assertThat(
+            new TransactionTemplate(transactionManager)
+                .<String>execute(
+                    status ->
+                        new DraftAuthorizationFenceRepository(dsl)
+                            .readSourceChange(captured)
+                            .status()))
+        .isEqualTo("SOURCE_COMMITTED");
+  }
+
+  @Test
+  void tenantRoleRevocationWinsOrderButWaitsForBothFencedAbortReadbacks() {
+    TenantRoleFixture fixture = syntheticRetainedAdminFixture();
+    assertThat(
+            tenantRoleMutationService
+                .mutate(roleRequest(fixture, Action.GRANT_DESIGNER, 2L))
+                .status())
+        .isEqualTo("COMMITTED");
+    Request request = roleRequest(fixture, Action.REVOKE_DESIGNER, 3L);
+    DraftAuthorizationFenceBinding binding =
+        syntheticVerifiedRoleFence(fixture.target(), SourceKind.MEMBERSHIP);
+    reserveRoleFence(binding, false);
+    Map<String, Object> before = membershipAuthorityReadEvidenceSnapshot(fixture.target());
+    assertPendingRoleIntent(tenantRoleMutationService.mutate(request));
+    SourceChange captured = originalRoleSourceChange(request);
+    assertThat(captured.sources().stream().map(SourceEvidence::key).toList())
+        .containsExactly(
+            "ACCOUNT:" + fixture.target().accountUuid(),
+            "MEMBERSHIP:" + fixture.target().accountUuid() + "/" + fixture.target().tenantUuid());
+    SourceEvidence account = captured.sources().getFirst();
+    assertThat(account.sourceVersion()).isEqualTo("1");
+    assertThat(account.checkpointSequence()).isEqualTo("0");
+    assertThat(new String(account.evidence(), StandardCharsets.UTF_8))
+        .contains(
+            "\"sourceVersion\":\"1\"",
+            "\"issuanceFence\":\"1\"",
+            "\"issuanceFenceSourceVersion\":\"1\"");
+    assertThat(
+            new TransactionTemplate(transactionManager)
+                .<Ordering>execute(
+                    status -> new DraftAuthorizationFenceRepository(dsl).read(binding).ordering()))
+        .isEqualTo(Ordering.REVOKE_ORDER);
+    assertThatThrownBy(
+            () ->
+                new TransactionTemplate(transactionManager)
+                    .execute(
+                        status ->
+                            new DraftAuthorizationFenceRepository(dsl).claimCommitOrder(binding)))
+        .isInstanceOf(IllegalStateException.class);
+    syntheticVerifiedOwnerReadback(binding, Owner.WORLD, Outcome.DEFINITIVELY_ABORTED);
+    assertPendingRoleIntent(restartedRoleMutation(request));
+    assertThat(membershipAuthorityReadEvidenceSnapshot(fixture.target())).isEqualTo(before);
+    syntheticVerifiedOwnerReadback(binding, Owner.GAME_DESIGN, Outcome.DEFINITIVELY_ABORTED);
+    assertThat(restartedRoleMutation(request).status()).isEqualTo("COMMITTED");
+    assertCurrentRoleMutationState(fixture.target(), 4L, 2L, 3L, 2L, List.of("player"), true);
+    assertThat(originalRoleSourceChange(request).canonicalBytes())
+        .containsExactly(captured.canonicalBytes());
+  }
+
+  @Test
+  void tenantRoleTransferParticipatesInBothMembershipsAndAccountIssuanceScope() {
+    TenantRoleFixture fixture = syntheticRetainedAdminFixture();
+    Request request = roleRequest(fixture, Action.TRANSFER_TENANT_ADMIN, 2L);
+    DraftAuthorizationFenceBinding actor =
+        syntheticVerifiedRoleFence(fixture.admin(), SourceKind.MEMBERSHIP);
+    DraftAuthorizationFenceBinding target =
+        syntheticVerifiedRoleFence(fixture.target(), SourceKind.MEMBERSHIP);
+    DraftAuthorizationFenceBinding issuance =
+        syntheticVerifiedRoleFence(fixture.admin(), SourceKind.ACCOUNT);
+    for (DraftAuthorizationFenceBinding binding : List.of(actor, target, issuance)) {
+      reserveRoleFence(binding, true);
+    }
+    assertPendingRoleIntent(tenantRoleMutationService.mutate(request));
+    SourceChange original = originalRoleSourceChange(request);
+    assertThat(original.sources().stream().map(SourceEvidence::key).toList())
+        .containsExactlyInAnyOrder(
+            "MEMBERSHIP:" + fixture.admin().accountUuid() + "/" + fixture.admin().tenantUuid(),
+            "MEMBERSHIP:" + fixture.target().accountUuid() + "/" + fixture.target().tenantUuid(),
+            "ACCOUNT:" + fixture.admin().accountUuid());
+    for (DraftAuthorizationFenceBinding binding : List.of(actor, target)) {
+      syntheticVerifiedOwnerReadback(binding, Owner.WORLD, Outcome.COMMITTED);
+      syntheticVerifiedOwnerReadback(binding, Owner.GAME_DESIGN, Outcome.DEFINITIVELY_ABORTED);
+      assertPendingRoleIntent(tenantRoleMutationService.mutate(request));
+    }
+    syntheticVerifiedOwnerReadback(issuance, Owner.WORLD, Outcome.COMMITTED);
+    assertPendingRoleIntent(tenantRoleMutationService.mutate(request));
+    assertThat(committedRoles(fixture.admin())).contains("tenantAdmin");
+    assertThat(committedRoles(fixture.target())).doesNotContain("tenantAdmin");
+    syntheticVerifiedOwnerReadback(issuance, Owner.GAME_DESIGN, Outcome.COMMITTED);
+    OperationEvidence transfer = tenantRoleMutationService.mutate(request);
+    assertThat(transfer.status()).isEqualTo("COMMITTED");
+    assertThat(transfer.members()).hasSize(2);
+    assertCurrentRoleMutationState(fixture.admin(), 3L, 2L, 2L, 2L, List.of("player"), true);
+    assertCurrentRoleMutationState(
+        fixture.target(), 3L, 1L, 2L, 1L, List.of("player", "tenantAdmin"), false);
+  }
+
+  @Test
+  void tenantRolePendingRetryRejectsChangedIdentityAndNeverRecapturesLaterSource() {
+    TenantRoleFixture fixture = syntheticRetainedAdminFixture();
+    Request request = roleRequest(fixture, Action.GRANT_DESIGNER, 2L);
+    DraftAuthorizationFenceBinding binding =
+        syntheticVerifiedRoleFence(fixture.target(), SourceKind.MEMBERSHIP);
+    reserveRoleFence(binding, true);
+    assertPendingRoleIntent(tenantRoleMutationService.mutate(request));
+    SourceChange original = originalRoleSourceChange(request);
+    for (Request changed :
+        List.of(
+            new Request(
+                request.requestId(),
+                request.actorAccountUuid(),
+                UUID.randomUUID(),
+                request.targetAccountUuid(),
+                request.action(),
+                2L,
+                2L),
+            new Request(
+                request.requestId(),
+                request.actorAccountUuid(),
+                request.tenantUuid(),
+                request.actorAccountUuid(),
+                request.action(),
+                2L,
+                2L),
+            new Request(
+                request.requestId(),
+                request.targetAccountUuid(),
+                request.tenantUuid(),
+                request.targetAccountUuid(),
+                request.action(),
+                2L,
+                2L),
+            new Request(
+                request.requestId(),
+                request.actorAccountUuid(),
+                request.tenantUuid(),
+                request.targetAccountUuid(),
+                request.action(),
+                3L,
+                2L),
+            new Request(
+                request.requestId(),
+                request.actorAccountUuid(),
+                request.tenantUuid(),
+                request.targetAccountUuid(),
+                Action.REVOKE_DESIGNER,
+                2L,
+                2L))) {
+      assertThatThrownBy(() -> tenantRoleMutationService.mutate(changed))
+          .isInstanceOf(AccountTenantRoleOperationRepository.OperationConflictException.class);
+      assertThat(originalRoleSourceChange(request).canonicalBytes())
+          .containsExactly(original.canonicalBytes());
+    }
+    syntheticVerifiedOwnerReadback(binding, Owner.WORLD, Outcome.COMMITTED);
+    syntheticVerifiedOwnerReadback(binding, Owner.GAME_DESIGN, Outcome.COMMITTED);
+    // A distinct source writer cannot capture the same source while the original intent waits.
+    Request competing = roleRequest(fixture, Action.GRANT_DESIGNER, 2L);
+    Map<String, Object> beforeCompeting = membershipAuthorityReadEvidenceSnapshot(fixture.target());
+    long auditsBeforeCompeting = countAuditOutboxRows(fixture.admin());
+    assertThatThrownBy(() -> tenantRoleMutationService.mutate(competing))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Another authority source change is already pending");
+    assertTenantRoleOperationAbsent(competing.requestId());
+    assertThat(membershipAuthorityReadEvidenceSnapshot(fixture.target()))
+        .isEqualTo(beforeCompeting);
+    assertThat(countAuditOutboxRows(fixture.admin())).isEqualTo(auditsBeforeCompeting);
+    assertPendingRoleIntent(
+        new TransactionTemplate(transactionManager)
+            .execute(
+                status ->
+                    tenantRoleOperationRepository
+                        .findForUpdate(request.requestId())
+                        .orElseThrow()));
+    assertThat(originalRoleSourceChange(request).canonicalBytes())
+        .containsExactly(original.canonicalBytes());
+    assertThat(
+            new TransactionTemplate(transactionManager)
+                .<String>execute(
+                    status ->
+                        new DraftAuthorizationFenceRepository(dsl)
+                            .readSourceChange(original)
+                            .status()))
+        .isEqualTo("WAITING");
+
+    OperationEvidence committed = restartedRoleMutation(request);
+    assertThat(committed.pending()).isFalse();
+    assertThat(committed.status()).isEqualTo("COMMITTED");
+    assertCurrentRoleMutationState(
+        fixture.target(), 3L, 1L, 2L, 1L, List.of("designer", "player"), false);
+    assertThat(originalRoleSourceChange(request).canonicalBytes())
+        .containsExactly(original.canonicalBytes());
+    assertThat(
+            new TransactionTemplate(transactionManager)
+                .<String>execute(
+                    status ->
+                        new DraftAuthorizationFenceRepository(dsl)
+                            .readSourceChange(original)
+                            .status()))
+        .isEqualTo("SOURCE_COMMITTED");
+
+    // A later distinct role operation uses the newly committed source version.
+    Request later = roleRequest(fixture, Action.REVOKE_DESIGNER, 3L);
+    OperationEvidence laterCommitted = tenantRoleMutationService.mutate(later);
+    assertThat(laterCommitted.status()).isEqualTo("COMMITTED");
+    assertCurrentRoleMutationState(fixture.target(), 4L, 2L, 3L, 2L, List.of("player"), true);
+    Map<String, Object> afterLaterCommit =
+        membershipAuthorityReadEvidenceSnapshot(fixture.target());
+    assertExactTenantRoleOperation(committed, restartedRoleMutation(request));
+    assertThat(membershipAuthorityReadEvidenceSnapshot(fixture.target()))
+        .isEqualTo(afterLaterCommit);
+    assertThat(originalRoleSourceChange(request).canonicalBytes())
+        .containsExactly(original.canonicalBytes());
+    assertThat(
+            new TransactionTemplate(transactionManager)
+                .<String>execute(
+                    status ->
+                        new DraftAuthorizationFenceRepository(dsl)
+                            .readSourceChange(original)
+                            .status()))
+        .isEqualTo("SOURCE_COMMITTED");
+  }
+
+  private Request roleRequest(TenantRoleFixture fixture, Action action, long targetVersion) {
+    return new Request(
+        UUID.randomUUID(),
+        fixture.admin().accountUuid(),
+        fixture.admin().tenantUuid(),
+        fixture.target().accountUuid(),
+        action,
+        2L,
+        targetVersion);
+  }
+
+  private void assertPendingRoleIntent(OperationEvidence pending) {
+    assertThat(pending.pending()).isTrue();
+    assertThat(pending.status()).isEqualTo("IN_PROGRESS");
+    assertThat(pending.members()).isEmpty();
+    assertThat(pending.audit()).isNull();
+    assertThat(pending.resultPayload()).isNull();
+    assertThat(pending.resultDigest()).isNull();
+  }
+
+  private SourceChange originalRoleSourceChange(Request request) {
+    return Objects.requireNonNull(
+        new TransactionTemplate(transactionManager)
+            .execute(
+                status ->
+                    tenantRoleOperationRepository
+                        .findSourceChangeForUpdate(request)
+                        .orElseThrow()));
+  }
+
+  private OperationEvidence restartedRoleMutation(Request request) {
+    // Recreate the actual source writer: recovery depends on its database vector, not object
+    // memory.
+    return Objects.requireNonNull(
+        new TransactionTemplate(transactionManager)
+            .execute(
+                status ->
+                    new AccountTenantRoleMutationService(
+                            accountRepository,
+                            tenantIdentityResolver,
+                            authorityGenerationRepository,
+                            membershipRepository,
+                            roleSnapshotRepository,
+                            pairAuthorityRepository,
+                            tenantRoleOperationRepository,
+                            auditOutboxRepository,
+                            membershipAuthorityEventProducer,
+                            dsl)
+                        .mutate(request)));
+  }
+
+  /**
+   * Synthetic verified Draft-capture prerequisites only. Membership/source counters come from the
+   * real Account snapshot, but fixture target/actor verification and owner authentication are
+   * stipulated; these cases prove the actual role writer's ordering, not an authenticated producer.
+   */
+  private DraftAuthorizationFenceBinding syntheticVerifiedRoleFence(
+      JoinFixture fixture, SourceKind kind) {
+    return Objects.requireNonNull(
+        new TransactionTemplate(transactionManager)
+            .execute(
+                status -> {
+                  PositiveMembershipSnapshot snapshot =
+                      membershipAuthorityEventProducer
+                          .readCurrentPairBoundPositiveMembershipSnapshot(
+                              fixture.accountId(), fixture.tenantId());
+                  var authority =
+                      authorityGenerationRepository.readCompositeSnapshot(
+                          AccountServiceImpl.ACCOUNT_JWT_ISSUER,
+                          fixture.accountUuid(),
+                          List.of(fixture.tenantUuid()),
+                          List.of(fixture.tenantUuid()));
+                  SourceEvidence source;
+                  if (kind == SourceKind.MEMBERSHIP) {
+                    var membership = authority.memberships().getFirst();
+                    var event = snapshot.authorityEvent();
+                    source =
+                        new SourceEvidence(
+                            kind,
+                            fixture.accountUuid() + "/" + fixture.tenantUuid(),
+                            Long.toString(membership.generation()),
+                            Long.toString(membership.sourceVersion()),
+                            event.outboxStreamKey(),
+                            event.outboxSequence(),
+                            event.canonicalJsonUtf8());
+                  } else {
+                    String stream =
+                        MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX
+                            + "account/"
+                            + fixture.accountUuid();
+                    var checkpoint =
+                        snapshot.outboxCheckpoints().stream()
+                            .filter(candidate -> stream.equals(candidate.outboxStreamKey()))
+                            .findFirst()
+                            .orElseThrow();
+                    source =
+                        new SourceEvidence(
+                            kind,
+                            fixture.accountUuid().toString(),
+                            Long.toString(authority.account().generation()),
+                            Long.toString(authority.account().sourceVersion()),
+                            stream,
+                            checkpoint.outboxSequence(),
+                            ("synthetic-verified-issuance-scope:"
+                                    + authority.issuanceFence().value()
+                                    + ":"
+                                    + authority.issuanceFence().sourceVersion())
+                                .getBytes(StandardCharsets.UTF_8));
+                  }
+                  UUID version = UUID.randomUUID();
+                  DraftCommitBinding complete =
+                      DraftCommitBinding.create(
+                          new TargetProof(
+                              fixture.tenantUuid(),
+                              version,
+                              fixture.tenantId(),
+                              "synthetic-role-tenant",
+                              2L,
+                              "synthetic-role-tenant",
+                              "NEW_GAME_ROW"),
+                          UUID.randomUUID(),
+                          UUID.randomUUID(),
+                          "synthetic-role-base",
+                          List.of(
+                              new RevisionPayload(
+                                  "0",
+                                  UUID.randomUUID(),
+                                  DraftCommitBinding.Owner.WORLD_MANAGEMENT,
+                                  "synthetic-role-input")),
+                          List.of(
+                              new AffectedUnit(
+                                  DraftCommitBinding.Owner.WORLD_MANAGEMENT,
+                                  "region",
+                                  "role-region",
+                                  "aggregate",
+                                  "role-region",
+                                  "0")));
+                  return new DraftAuthorizationFenceBinding(
+                      UUID.randomUUID(),
+                      complete.requestId(),
+                      complete.commitId(),
+                      UUID.randomUUID(),
+                      fixture.accountUuid(),
+                      fixture.tenantUuid(),
+                      version,
+                      complete.baseCommitId(),
+                      "0",
+                      complete.canonicalBytes(),
+                      complete.canonicalBytes(),
+                      complete.digest(),
+                      List.of(source));
+                }));
+  }
+
+  private void reserveRoleFence(DraftAuthorizationFenceBinding binding, boolean commitOrder) {
+    new TransactionTemplate(transactionManager)
+        .execute(
+            status -> {
+              var repository = new DraftAuthorizationFenceRepository(dsl);
+              repository.reserve(binding);
+              if (commitOrder) {
+                repository.claimCommitOrder(binding);
+              }
+              return null;
+            });
+  }
+
+  /** Fixture stipulates exact authenticated owner verification; it is not network proof. */
+  private void syntheticVerifiedOwnerReadback(
+      DraftAuthorizationFenceBinding binding, Owner owner, Outcome outcome) {
+    new TransactionTemplate(transactionManager)
+        .execute(
+            status -> {
+              new DraftAuthorizationFenceRepository(dsl)
+                  .recordOwnerReadback(
+                      binding,
+                      new OwnerReadback(
+                          owner,
+                          outcome,
+                          binding.operationId(),
+                          binding.commitId(),
+                          binding.fenceId(),
+                          binding.inputDigest(),
+                          binding.canonicalBytes(),
+                          ("synthetic-verified-owner:" + owner + ":" + outcome)
+                              .getBytes(StandardCharsets.UTF_8)));
+              return null;
+            });
   }
 
   @Test

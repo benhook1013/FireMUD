@@ -7,6 +7,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.SourceKind;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.SourceChange;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.AuthorityScope;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.ScopeState;
@@ -44,6 +46,7 @@ public final class AccountIssuerAuthorityEventProducer {
   private final AccountAuthorityOutboxRepository outboxRepository;
   private final DSLContext dsl;
   private final TransactionTemplate ownerTransaction;
+  private final IssuerTenantDraftSourceChangeRepository draftSourceChanges;
 
   public AccountIssuerAuthorityEventProducer(
       String exactIssuerId,
@@ -66,6 +69,7 @@ public final class AccountIssuerAuthorityEventProducer {
         Objects.requireNonNull(outboxRepository, "authority outbox repository is required");
     this.dsl = Objects.requireNonNull(dsl, "transaction-aware DSLContext is required");
     Objects.requireNonNull(transactionManager, "Account transaction manager is required");
+    this.draftSourceChanges = new IssuerTenantDraftSourceChangeRepository(dsl);
 
     this.ownerTransaction = new TransactionTemplate(transactionManager);
     this.ownerTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
@@ -94,7 +98,7 @@ public final class AccountIssuerAuthorityEventProducer {
     }
     requireNoAmbientTransaction();
 
-    IssuerGenerationAuthorityEvent transactionResult =
+    AdvanceResult transactionResult =
         ownerTransaction.execute(
             status ->
                 advanceInOwnerTransaction(
@@ -102,10 +106,23 @@ public final class AccountIssuerAuthorityEventProducer {
     if (transactionResult == null) {
       throw new IllegalStateException("Issuer authority advance transaction returned no event");
     }
+    if (transactionResult.pendingChange() != null) {
+      ownerTransaction.executeWithoutResult(
+          status ->
+              draftSourceChanges.verifyWaiting(
+                  SourceKind.ISSUER,
+                  exactIssuerId,
+                  requestId,
+                  expectedIssuerAuthGeneration,
+                  expectedSourceVersion,
+                  transactionResult.pendingChange()));
+      throw new IssuerTenantDraftSourceChangeRepository.PendingSourceChangeException(
+          transactionResult.pendingChange().changeId());
+    }
 
     IssuerGenerationAuthorityEvent committedResult =
         readCommittedOperation(requestId, expectedIssuerAuthGeneration, expectedSourceVersion);
-    if (!sameEvent(transactionResult, committedResult)) {
+    if (!sameEvent(transactionResult.event(), committedResult)) {
       throw new IllegalStateException(
           "Post-commit issuer event readback differs from its transaction result");
     }
@@ -176,7 +193,7 @@ public final class AccountIssuerAuthorityEventProducer {
     return readCommittedEventInTransaction(outboxSequence);
   }
 
-  private IssuerGenerationAuthorityEvent advanceInOwnerTransaction(
+  private AdvanceResult advanceInOwnerTransaction(
       UUID requestId, long expectedGeneration, long expectedSourceVersion) {
     ScopeState current = readLockedIssuerState();
 
@@ -188,8 +205,18 @@ public final class AccountIssuerAuthorityEventProducer {
           verifyStoredEvent(prior.get(), requestId, expectedGeneration, expectedSourceVersion);
       LatestEvidence currentHistory = requireCurrentHistoryMatches(current);
       requireHistoricalEventIsRetained(prior.get(), current, currentHistory);
-      return historical;
+      draftSourceChanges.verifyCommittedIfPresent(
+          SourceKind.ISSUER,
+          exactIssuerId,
+          requestId,
+          expectedGeneration,
+          expectedSourceVersion,
+          prior.get());
+      return new AdvanceResult(historical, null);
     }
+
+    draftSourceChanges.verifyPendingRequest(
+        SourceKind.ISSUER, exactIssuerId, requestId, expectedGeneration, expectedSourceVersion);
 
     if (current.generation() != expectedGeneration
         || current.sourceVersion() != expectedSourceVersion) {
@@ -200,6 +227,24 @@ public final class AccountIssuerAuthorityEventProducer {
     long nextSourceVersion = incrementExact(expectedSourceVersion, "issuer source version");
     LatestEvidence priorHistory = requireCurrentHistoryMatches(current);
     long nextSequence = incrementExact(priorHistory.sequence(), "issuer outbox sequence");
+    SourceChange sourceChange =
+        draftSourceChanges.participate(
+            SourceKind.ISSUER,
+            exactIssuerId,
+            requestId,
+            expectedGeneration,
+            expectedSourceVersion,
+            IssuerTenantDraftSourceChangeRepository.capture(
+                SourceKind.ISSUER,
+                exactIssuerId,
+                current.generation(),
+                current.sourceVersion(),
+                outboxStreamKey,
+                priorHistory.sequence(),
+                priorHistory.outboxEvent()));
+    if (!draftSourceChanges.permitted(sourceChange)) {
+      return new AdvanceResult(null, sourceChange);
+    }
     String requestText = requestId.toString();
     String eventId = EVENT_ID_PREFIX + requestText;
 
@@ -255,7 +300,16 @@ public final class AccountIssuerAuthorityEventProducer {
       throw new IllegalStateException(
           "Issuer authority source and outbox readback differ from the advance");
     }
-    return appendedEvent;
+    draftSourceChanges.complete(
+        SourceKind.ISSUER, exactIssuerId, requestId, sourceChange, appended);
+    draftSourceChanges.verifyCommittedIfPresent(
+        SourceKind.ISSUER,
+        exactIssuerId,
+        requestId,
+        expectedGeneration,
+        expectedSourceVersion,
+        appended);
+    return new AdvanceResult(appendedEvent, null);
   }
 
   private IssuerGenerationAuthorityEvent readCommittedOperation(
@@ -277,6 +331,13 @@ public final class AccountIssuerAuthorityEventProducer {
                       committed, requestId, expectedGeneration, expectedSourceVersion);
               LatestEvidence currentHistory = requireCurrentHistoryMatches(current);
               requireHistoricalEventIsRetained(committed, current, currentHistory);
+              draftSourceChanges.verifyCommittedIfPresent(
+                  SourceKind.ISSUER,
+                  exactIssuerId,
+                  requestId,
+                  expectedGeneration,
+                  expectedSourceVersion,
+                  committed);
               if (committed.outboxSequence() > currentHistory.sequence()) {
                 throw new IllegalStateException(
                     "Post-commit issuer event is ahead of its checkpoint");
@@ -348,6 +409,8 @@ public final class AccountIssuerAuthorityEventProducer {
     }
     return state;
   }
+
+  private record AdvanceResult(IssuerGenerationAuthorityEvent event, SourceChange pendingChange) {}
 
   /**
    * Validates the exact V33 checkpoint and latest event while the source row is locked. Sequence

@@ -15,32 +15,46 @@ class WorldDesignPublicationFenceEvidenceTest {
       UUID.fromString("33333333-3333-4333-8333-333333333333");
   private static final UUID SOURCE_OPERATION_ID =
       UUID.fromString("44444444-4444-4444-8444-444444444444");
+  private static final UUID CANONICAL_VERSION_ID =
+      UUID.fromString("55555555-5555-4555-8555-555555555555");
+  private static final UUID VERSION_IDENTITY_OPERATION_ID =
+      UUID.fromString("66666666-6666-4666-8666-666666666666");
+  private static final String INTAKE_REQUEST_DIGEST = "sha256:" + "1".repeat(64);
   private static final String SOURCE_EVIDENCE_DIGEST = "sha256:" + "a".repeat(64);
+  private static final String INTAKE_RECEIPT_DIGEST = "sha256:" + "2".repeat(64);
   private static final String FULL_REQUEST_DIGEST = "f".repeat(64);
   private static final String CONTENT_DIGEST = "b".repeat(64);
+  private static final long GAME_DESIGN_VERSION_ID = 9_000_000_042L;
 
   @Test
   void bindsFullVersionToTheCanonicalPublicationDigestRequestGrammar() {
     PublicationDigestRequestBinding binding =
-        PublicationDigestRequestBinding.full(TENANT_ID.toString(), "42", "request-7");
+        PublicationDigestRequestBinding.full(
+            TENANT_ID.toString(), Long.toString(GAME_DESIGN_VERSION_ID), "request-7");
     WorldDesignPublicationFenceEvidence evidence =
         evidence("request-7", FULL_REQUEST_DIGEST, binding.derivedWorkflowIdentity());
 
     assertThat(evidence.publicationBinding()).usingRecursiveComparison().isEqualTo(binding);
     assertThat(evidence.publicationBinding().scopeKindValue()).isEqualTo("FULL_VERSION");
-    assertThat(evidence.publicationBinding().versionId()).isEqualTo("42");
+    assertThat(evidence.publicationBinding().versionId())
+        .isEqualTo(Long.toString(GAME_DESIGN_VERSION_ID));
     assertThat(evidence.publicationBinding().baseVersionId()).isEmpty();
     assertThat(evidence.publicationBinding().scriptPatchVersion()).isEmpty();
     assertThat(evidence.requestDigest()).isEqualTo(FULL_REQUEST_DIGEST);
     assertThat(evidence.requestDigest()).isNotEqualTo(binding.requestDigest());
     assertThat(evidence.publishWorkflowId())
         .isEqualTo("publish:" + TENANT_ID + ":publish-request:request-7");
+    assertThat(evidence.gameDesignVersionId()).isEqualTo(GAME_DESIGN_VERSION_ID);
+    assertThat(evidence.canonicalVersionId()).isEqualTo(CANONICAL_VERSION_ID);
+    assertThat(evidence.versionIdentityOperationId()).isEqualTo(VERSION_IDENTITY_OPERATION_ID);
+    assertThat(evidence.ownerBinding().intakeRequestDigest()).isEqualTo(INTAKE_REQUEST_DIGEST);
   }
 
   @Test
   void rejectsChangedOrOmittedRequestAndWorkflowBindings() {
     PublicationDigestRequestBinding binding =
-        PublicationDigestRequestBinding.full(TENANT_ID.toString(), "42", "request-7");
+        PublicationDigestRequestBinding.full(
+            TENANT_ID.toString(), Long.toString(GAME_DESIGN_VERSION_ID), "request-7");
 
     assertThatIllegalArgumentException()
         .isThrownBy(() -> evidence("request-7", binding.requestDigest(), "publish:wrong"));
@@ -64,26 +78,15 @@ class WorldDesignPublicationFenceEvidenceTest {
                 new WorldDesignPublicationFenceEvidence(
                     "FireMUD",
                     TENANT_ID,
+                    CANONICAL_VERSION_ID,
+                    VERSION_IDENTITY_OPERATION_ID,
                     42,
                     INTAKE_REQUEST_ID,
                     INTAKE_OPERATION_ID,
+                    INTAKE_REQUEST_DIGEST,
                     SOURCE_OPERATION_ID,
                     SOURCE_EVIDENCE_DIGEST,
-                    "request-7",
-                    validDigest(),
-                    9,
-                    validWorkflow()));
-    assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                new WorldDesignPublicationFenceEvidence(
-                    "firemud",
-                    new UUID(0L, 0L),
-                    42,
-                    INTAKE_REQUEST_ID,
-                    INTAKE_OPERATION_ID,
-                    SOURCE_OPERATION_ID,
-                    SOURCE_EVIDENCE_DIGEST,
+                    INTAKE_RECEIPT_DIGEST,
                     "request-7",
                     validDigest(),
                     9,
@@ -94,11 +97,72 @@ class WorldDesignPublicationFenceEvidenceTest {
                 new WorldDesignPublicationFenceEvidence(
                     "firemud",
                     TENANT_ID,
+                    CANONICAL_VERSION_ID,
+                    VERSION_IDENTITY_OPERATION_ID,
+                    GAME_DESIGN_VERSION_ID,
+                    INTAKE_REQUEST_ID,
+                    INTAKE_OPERATION_ID,
+                    INTAKE_REQUEST_DIGEST,
+                    SOURCE_OPERATION_ID,
+                    SOURCE_EVIDENCE_DIGEST,
+                    INTAKE_RECEIPT_DIGEST.substring("sha256:".length()),
+                    "request-7",
+                    validDigest(),
+                    9,
+                    validWorkflow()));
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                new WorldDesignPublicationFenceEvidence(
+                    "firemud",
+                    new UUID(0L, 0L),
+                    CANONICAL_VERSION_ID,
+                    VERSION_IDENTITY_OPERATION_ID,
                     42,
                     INTAKE_REQUEST_ID,
                     INTAKE_OPERATION_ID,
+                    INTAKE_REQUEST_DIGEST,
+                    SOURCE_OPERATION_ID,
+                    SOURCE_EVIDENCE_DIGEST,
+                    INTAKE_RECEIPT_DIGEST,
+                    "request-7",
+                    validDigest(),
+                    9,
+                    validWorkflow()));
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                new WorldDesignPublicationFenceEvidence(
+                    "firemud",
+                    TENANT_ID,
+                    CANONICAL_VERSION_ID,
+                    VERSION_IDENTITY_OPERATION_ID,
+                    42,
+                    INTAKE_REQUEST_ID,
+                    INTAKE_OPERATION_ID,
+                    INTAKE_REQUEST_DIGEST,
                     SOURCE_OPERATION_ID,
                     "a".repeat(64),
+                    INTAKE_RECEIPT_DIGEST,
+                    "request-7",
+                    validDigest(),
+                    9,
+                    validWorkflow()));
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                new WorldDesignPublicationFenceEvidence(
+                    "firemud",
+                    TENANT_ID,
+                    CANONICAL_VERSION_ID,
+                    VERSION_IDENTITY_OPERATION_ID,
+                    GAME_DESIGN_VERSION_ID,
+                    INTAKE_REQUEST_ID,
+                    INTAKE_OPERATION_ID,
+                    INTAKE_REQUEST_DIGEST.substring("sha256:".length()),
+                    SOURCE_OPERATION_ID,
+                    SOURCE_EVIDENCE_DIGEST,
+                    INTAKE_RECEIPT_DIGEST,
                     "request-7",
                     validDigest(),
                     9,
@@ -133,7 +197,7 @@ class WorldDesignPublicationFenceEvidenceTest {
 
   private static WorldDesignPublicationFenceEvidence evidence(
       String requestId, String digest, String workflowId) {
-    return evidence(requestId, digest, workflowId, 42, 9L);
+    return evidence(requestId, digest, workflowId, GAME_DESIGN_VERSION_ID, 9L);
   }
 
   private static WorldDesignPublicationFenceEvidence evidence(
@@ -141,11 +205,15 @@ class WorldDesignPublicationFenceEvidenceTest {
     return new WorldDesignPublicationFenceEvidence(
         "firemud",
         TENANT_ID,
+        CANONICAL_VERSION_ID,
+        VERSION_IDENTITY_OPERATION_ID,
         versionId,
         INTAKE_REQUEST_ID,
         INTAKE_OPERATION_ID,
+        INTAKE_REQUEST_DIGEST,
         SOURCE_OPERATION_ID,
         SOURCE_EVIDENCE_DIGEST,
+        INTAKE_RECEIPT_DIGEST,
         requestId,
         digest,
         epoch,
@@ -157,7 +225,8 @@ class WorldDesignPublicationFenceEvidenceTest {
   }
 
   private static String validWorkflow() {
-    return PublicationDigestRequestBinding.full(TENANT_ID.toString(), "42", "request-7")
+    return PublicationDigestRequestBinding.full(
+            TENANT_ID.toString(), Long.toString(GAME_DESIGN_VERSION_ID), "request-7")
         .derivedWorkflowIdentity();
   }
 }

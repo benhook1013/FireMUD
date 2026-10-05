@@ -7,6 +7,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.SourceKind;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.SourceChange;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.AuthorityScope;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.ScopeState;
@@ -42,6 +44,7 @@ public final class AccountTenantAuthorityEventProducer {
   private final AccountAuthorityOutboxRepository outboxRepository;
   private final DSLContext dsl;
   private final TransactionTemplate ownerTransaction;
+  private final IssuerTenantDraftSourceChangeRepository draftSourceChanges;
 
   public AccountTenantAuthorityEventProducer(
       AccountAuthorityGenerationRepository generationRepository,
@@ -54,6 +57,7 @@ public final class AccountTenantAuthorityEventProducer {
         Objects.requireNonNull(outboxRepository, "authority outbox repository is required");
     this.dsl = Objects.requireNonNull(dsl, "transaction-aware DSLContext is required");
     Objects.requireNonNull(transactionManager, "Account transaction manager is required");
+    this.draftSourceChanges = new IssuerTenantDraftSourceChangeRepository(dsl);
 
     this.ownerTransaction = new TransactionTemplate(transactionManager);
     this.ownerTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
@@ -78,7 +82,7 @@ public final class AccountTenantAuthorityEventProducer {
     }
     requireNoAmbientTransaction();
 
-    TenantGenerationAuthorityEvent transactionResult =
+    AdvanceResult transactionResult =
         ownerTransaction.execute(
             status ->
                 advanceInOwnerTransaction(
@@ -86,10 +90,23 @@ public final class AccountTenantAuthorityEventProducer {
     if (transactionResult == null) {
       throw new IllegalStateException("Tenant authority advance transaction returned no event");
     }
+    if (transactionResult.pendingChange() != null) {
+      ownerTransaction.executeWithoutResult(
+          status ->
+              draftSourceChanges.verifyWaiting(
+                  SourceKind.TENANT,
+                  scope.tenantId().toString(),
+                  requestId,
+                  expectedGeneration,
+                  expectedSourceVersion,
+                  transactionResult.pendingChange()));
+      throw new IssuerTenantDraftSourceChangeRepository.PendingSourceChangeException(
+          transactionResult.pendingChange().changeId());
+    }
 
     TenantGenerationAuthorityEvent committedResult =
         readCommittedOperation(scope, requestId, expectedGeneration, expectedSourceVersion);
-    if (!sameEvent(transactionResult, committedResult)) {
+    if (!sameEvent(transactionResult.event(), committedResult)) {
       throw new IllegalStateException(
           "Post-commit tenant event readback differs from its transaction result");
     }
@@ -131,7 +148,7 @@ public final class AccountTenantAuthorityEventProducer {
     return readback;
   }
 
-  private TenantGenerationAuthorityEvent advanceInOwnerTransaction(
+  private AdvanceResult advanceInOwnerTransaction(
       AuthorityScope scope, UUID requestId, long expectedGeneration, long expectedSourceVersion) {
     ScopeState current = readLockedTenantState(scope);
     String streamKey = streamKey(scope);
@@ -145,8 +162,22 @@ public final class AccountTenantAuthorityEventProducer {
               prior.get(), scope, requestId, expectedGeneration, expectedSourceVersion);
       LatestEvidence currentHistory = requireCurrentHistoryMatches(scope, current);
       requireHistoricalEventIsRetained(prior.get(), scope, current, currentHistory);
-      return historical;
+      draftSourceChanges.verifyCommittedIfPresent(
+          SourceKind.TENANT,
+          scope.tenantId().toString(),
+          requestId,
+          expectedGeneration,
+          expectedSourceVersion,
+          prior.get());
+      return new AdvanceResult(historical, null);
     }
+
+    draftSourceChanges.verifyPendingRequest(
+        SourceKind.TENANT,
+        scope.tenantId().toString(),
+        requestId,
+        expectedGeneration,
+        expectedSourceVersion);
 
     if (current.generation() != expectedGeneration
         || current.sourceVersion() != expectedSourceVersion) {
@@ -157,6 +188,24 @@ public final class AccountTenantAuthorityEventProducer {
     long nextSourceVersion = incrementExact(expectedSourceVersion, "tenant source version");
     LatestEvidence priorHistory = requireCurrentHistoryMatches(scope, current);
     long nextSequence = incrementExact(priorHistory.sequence(), "tenant outbox sequence");
+    SourceChange sourceChange =
+        draftSourceChanges.participate(
+            SourceKind.TENANT,
+            scope.tenantId().toString(),
+            requestId,
+            expectedGeneration,
+            expectedSourceVersion,
+            IssuerTenantDraftSourceChangeRepository.capture(
+                SourceKind.TENANT,
+                scope.tenantId().toString(),
+                current.generation(),
+                current.sourceVersion(),
+                streamKey,
+                priorHistory.sequence(),
+                priorHistory.outboxEvent()));
+    if (!draftSourceChanges.permitted(sourceChange)) {
+      return new AdvanceResult(null, sourceChange);
+    }
     String requestText = requestId.toString();
     String eventId = EVENT_ID_PREFIX + requestText;
 
@@ -213,7 +262,16 @@ public final class AccountTenantAuthorityEventProducer {
       throw new IllegalStateException(
           "Tenant authority source and outbox readback differ from the advance");
     }
-    return appendedEvent;
+    draftSourceChanges.complete(
+        SourceKind.TENANT, scope.tenantId().toString(), requestId, sourceChange, appended);
+    draftSourceChanges.verifyCommittedIfPresent(
+        SourceKind.TENANT,
+        scope.tenantId().toString(),
+        requestId,
+        expectedGeneration,
+        expectedSourceVersion,
+        appended);
+    return new AdvanceResult(appendedEvent, null);
   }
 
   private TenantGenerationAuthorityEvent readCommittedOperation(
@@ -236,6 +294,13 @@ public final class AccountTenantAuthorityEventProducer {
                       committed, scope, requestId, expectedGeneration, expectedSourceVersion);
               LatestEvidence currentHistory = requireCurrentHistoryMatches(scope, current);
               requireHistoricalEventIsRetained(committed, scope, current, currentHistory);
+              draftSourceChanges.verifyCommittedIfPresent(
+                  SourceKind.TENANT,
+                  scope.tenantId().toString(),
+                  requestId,
+                  expectedGeneration,
+                  expectedSourceVersion,
+                  committed);
               if (committed.outboxSequence() > currentHistory.sequence()) {
                 throw new IllegalStateException(
                     "Post-commit tenant event is ahead of its checkpoint");
@@ -309,6 +374,8 @@ public final class AccountTenantAuthorityEventProducer {
     }
     return state;
   }
+
+  private record AdvanceResult(TenantGenerationAuthorityEvent event, SourceChange pendingChange) {}
 
   /**
    * Validates the exact stream checkpoint and latest event while the tenant source row is locked.

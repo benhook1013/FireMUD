@@ -205,7 +205,7 @@ Rules:
   - `digest-gate participant`: supplies digest attestation used to block/allow publish but does not necessarily execute a workflow step.
   For full publishes, Game Logic is digest-gate only unless/until it owns explicit publish-time finalize steps.
 - A service outside the matrix for the current publish type may be validated separately, but must not block digest gating for that publish type.
-- `PublishVersionRequest` must carry a stable `publish_request_id`; the Game Design Temporal `publish` workflow uses that caller-visible request identity as its durable business key, so retries must reuse the same request id instead of minting a fresh client UUID on each attempt.
+- `PublishVersionRequest` binds the exact existing-Draft selection defined by the [Game Design API contract](./api-contracts.md#draft-commit-and-proposal-semantics-target-state). The Temporal `publish` workflow derives its business identity from the canonical tenant and stable caller-visible `publish_request_id`; retries preserve the original selection rather than minting a new request or substituting a later synchronized commit. Private storage selectors remain local implementation details.
 - Orchestrator routing is strict by publish type/scope:
   - Full publish requests (`scope.versionId`) call only participants in the full-publish matrix.
   - Script-only publish requests (`scope.scriptPatchVersion`) call only script-patch participants.

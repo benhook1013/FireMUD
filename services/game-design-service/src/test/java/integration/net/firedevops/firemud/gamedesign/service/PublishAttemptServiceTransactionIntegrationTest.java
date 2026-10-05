@@ -2,14 +2,29 @@ package net.firedevops.firemud.gamedesign.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.assertj.core.api.Assertions.catchThrowable;
 
+import java.lang.reflect.Constructor;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.temporal.FiremudWorkflowIds;
 import net.firedevops.firemud.gamedesign.GameDesignServiceApplication;
+import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection;
+import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection.PublishIntent;
+import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepository;
+import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepository.SelectionSnapshot;
+import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository.PublicationEvidence;
+import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository.VisibilityFence;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.Game;
@@ -19,6 +34,7 @@ import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.entity.VersionAssetArtifact;
 import net.firedevops.firemud.gamedesign.entity.VersionTemplateRemapSet;
+import net.firedevops.firemud.gamedesign.mapper.VersionMapper;
 import net.firedevops.firemud.gamedesign.model.PublishAttemptStatus;
 import net.firedevops.firemud.gamedesign.model.PublishParticipantKey;
 import net.firedevops.firemud.gamedesign.model.PublishType;
@@ -47,6 +63,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -89,10 +106,12 @@ class PublishAttemptServiceTransactionIntegrationTest {
   @Autowired private PublishedReleaseBundleRepository publishedReleaseBundleRepository;
   @Autowired private VersionAssetArtifactRepository versionAssetArtifactRepository;
   @Autowired private VersionRepository versionRepository;
+  @Autowired private VersionMapper versionMapper;
   @Autowired private VersionAssetExportCandidateService versionAssetExportCandidateService;
   @Autowired private VersionAssetPublicationService versionAssetPublicationService;
   @Autowired private VersionTemplateRemapSetRepository templateRemapSetRepository;
   @Autowired private DSLContext dsl;
+  @MockitoBean private AuthoredDraftPublishSelectionRepository authoredSelectionRepository;
   @MockitoBean private AssetExportService assetExportService;
   @MockitoBean private PublishGateService publishGateService;
   @MockitoSpyBean private RecordedParticipantDigestService recordedParticipantDigestService;
@@ -344,18 +363,12 @@ class PublishAttemptServiceTransactionIntegrationTest {
 
   @Test
   void reconciledFullVersionPublicationCommitsAttemptVersionAndReleaseBundleTogether() {
-    String tenantId = "9002";
-    String publishRequestId = "successful-reconcile-request";
-    String publishWorkflowId =
-        FiremudWorkflowIds.workflowId(
-            TemporalVersionPublishWorkflow.WORKFLOW_FAMILY,
-            tenantId,
-            "publish-request",
-            publishRequestId);
-    Game game = new Game();
-    game.setTenantId(tenantId);
-    game.setName("successful-transaction-proof-game");
-    gameRepository.save(game);
+    SelectedDraftFixture fixture =
+        createSelectedDraftFixture(
+            "successful-transaction-proof-game", 1, "successful transaction proof");
+    String tenantId = fixture.tenantId();
+    String publishRequestId = fixture.publishRequestId();
+    String publishWorkflowId = fixture.publishWorkflowId();
 
     Mockito.when(
             publishGateService.collectFullVersionParticipantDigests(
@@ -369,7 +382,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
                   new PublishParticipantDigestDto(
                       "GAME_DESIGN_CONTROL_PLANE",
                       String.valueOf(version.id()),
-                      "version:" + version.id(),
+                      fixture.selection().selectedCommit().commitId().toString(),
                       "transaction-proof-design-digest",
                       1,
                       null,
@@ -386,41 +399,43 @@ class PublishAttemptServiceTransactionIntegrationTest {
                   new ExportedAssetManifest(FINALIZATION_MANIFEST_HASH, 1, List.of(), List.of()));
             });
 
-    VersionDto publishedVersion =
-        versionPublishCommandService.publishFullVersion(
-            tenantId, "successful transaction proof", publishRequestId, publishWorkflowId);
+    Object publication = invokeSelectedPublicationMechanics(fixture);
+    assertThat((Boolean) ReflectionTestUtils.invokeMethod(publication, "isSucceeded")).isTrue();
+    assertThat((Long) ReflectionTestUtils.invokeMethod(publication, "versionId"))
+        .isEqualTo(fixture.version().getId());
 
     PublishAttempt attempt =
         publishAttemptRepository.findByPublishWorkflowId(publishWorkflowId).orElseThrow();
     Version storedVersion =
-        versionRepository.findByTenantIdAndId(tenantId, publishedVersion.id()).orElseThrow();
+        versionRepository.findByTenantIdAndId(tenantId, fixture.version().getId()).orElseThrow();
     PublishedReleaseBundle bundle =
         publishedReleaseBundleRepository
-            .findByTenantIdAndVersionId(tenantId, publishedVersion.id())
+            .findByTenantIdAndVersionId(tenantId, fixture.version().getId())
             .orElseThrow();
     VersionAssetArtifact artifact =
         versionAssetArtifactRepository
-            .findByTenantIdAndVersionId(tenantId, publishedVersion.id())
+            .findByTenantIdAndVersionId(tenantId, fixture.version().getId())
             .orElseThrow();
 
     assertThat(attempt.getStatus()).isEqualTo(PublishAttemptStatus.SUCCEEDED);
-    assertThat(attempt.getVersionId()).isEqualTo(publishedVersion.id());
+    assertThat(attempt.getVersionId()).isEqualTo(fixture.version().getId());
+    assertThat(attempt.getRequestDigest()).isEqualTo(fixture.selection().digest());
     assertThat(storedVersion.getVersionState()).isEqualTo(VersionLifecycleState.PUBLISHED);
     assertThat(bundle.getPublishWorkflowId()).isEqualTo(publishWorkflowId);
     assertThat(bundle.getManifestHash()).isEqualTo(FINALIZATION_MANIFEST_HASH);
     assertThat(bundle.getPublishedReleaseBundleRef()).isNotBlank();
     assertThat(bundle.getPublishedReleaseBundleRef())
         .isNotEqualTo(
-            "release-bundle:" + tenantId + ":" + publishedVersion.id() + ":" + bundle.getId());
+            "release-bundle:" + tenantId + ":" + fixture.version().getId() + ":" + bundle.getId());
     PublishedReleaseBundle durableBundle =
         publishedReleaseBundleRepository
-            .findByTenantIdAndVersionId(tenantId, publishedVersion.id())
+            .findByTenantIdAndVersionId(tenantId, fixture.version().getId())
             .orElseThrow();
     assertThat(durableBundle.getPublishedReleaseBundleRef())
         .isEqualTo(bundle.getPublishedReleaseBundleRef());
     PublishedReleaseBundle changedReference =
         publishedReleaseBundleRepository
-            .findByTenantIdAndVersionId(tenantId, publishedVersion.id())
+            .findByTenantIdAndVersionId(tenantId, fixture.version().getId())
             .orElseThrow();
     changedReference.setPublishedReleaseBundleRef("replacement-opaque-release-reference");
     assertThatThrownBy(() -> publishedReleaseBundleRepository.save(changedReference))
@@ -428,7 +443,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
         .hasMessageContaining("Published release bundle is immutable");
     PublishedReleaseBundle changedTuple =
         publishedReleaseBundleRepository
-            .findByTenantIdAndVersionId(tenantId, publishedVersion.id())
+            .findByTenantIdAndVersionId(tenantId, fixture.version().getId())
             .orElseThrow();
     changedTuple.setManifestHash("changed-manifest");
     assertThatThrownBy(() -> publishedReleaseBundleRepository.save(changedTuple))
@@ -444,23 +459,23 @@ class PublishAttemptServiceTransactionIntegrationTest {
         .hasStackTraceContaining("published release bundle attestation is immutable");
     assertThat(
             publishedReleaseBundleRepository
-                .findByTenantIdAndVersionId(tenantId, publishedVersion.id())
+                .findByTenantIdAndVersionId(tenantId, fixture.version().getId())
                 .orElseThrow()
                 .getPublishedReleaseBundleRef())
         .isEqualTo(bundle.getPublishedReleaseBundleRef());
     assertThat(
             publishedReleaseBundleRepository
-                .findByTenantIdAndVersionId(tenantId, publishedVersion.id())
+                .findByTenantIdAndVersionId(tenantId, fixture.version().getId())
                 .orElseThrow()
                 .getManifestHash())
         .isEqualTo(FINALIZATION_MANIFEST_HASH);
     String generationConfigRevision = bundle.getGenerationConfigRevision();
     assertThat(generationConfigRevision.length()).isGreaterThan(128);
-    versionPublishCommandService.publishFullVersion(
-        tenantId, "successful transaction proof", publishRequestId, publishWorkflowId);
+    Object replay = invokeSelectedPublicationReplay(fixture);
+    assertThat((Boolean) ReflectionTestUtils.invokeMethod(replay, "isSucceeded")).isTrue();
     assertThat(
             publishedReleaseBundleRepository
-                .findByTenantIdAndVersionId(tenantId, publishedVersion.id())
+                .findByTenantIdAndVersionId(tenantId, fixture.version().getId())
                 .orElseThrow()
                 .getGenerationConfigRevision())
         .isEqualTo(generationConfigRevision);
@@ -470,18 +485,11 @@ class PublishAttemptServiceTransactionIntegrationTest {
 
   @Test
   void finalizationFailureAfterExportRetainsCandidateReferencedByApprovedRemapSet() {
-    String tenantId = "9003";
-    String publishRequestId = "failed-remap-request";
-    String publishWorkflowId =
-        FiremudWorkflowIds.workflowId(
-            TemporalVersionPublishWorkflow.WORKFLOW_FAMILY,
-            tenantId,
-            "publish-request",
-            publishRequestId);
     Game game = new Game();
-    game.setTenantId(tenantId);
+    game.setTenantId(UUID.randomUUID().toString());
     game.setName("failed-remap-proof-game");
-    gameRepository.save(game);
+    Game savedGame = gameRepository.save(game);
+    String tenantId = savedGame.getTenantId();
 
     Version sourceVersion = new Version();
     sourceVersion.setTenantId(tenantId);
@@ -491,6 +499,9 @@ class PublishAttemptServiceTransactionIntegrationTest {
     sourceVersion.setNotes("remap source");
     sourceVersion = versionRepository.save(sourceVersion);
     long sourceVersionId = sourceVersion.getId();
+    SelectedDraftFixture fixture = createSelectedDraftFixture(savedGame, 2, "failed remap proof");
+    String publishRequestId = fixture.publishRequestId();
+    String publishWorkflowId = fixture.publishWorkflowId();
     AtomicReference<Long> candidateVersionId = new AtomicReference<>();
     AtomicReference<Integer> candidateVersionNumber = new AtomicReference<>();
     AtomicReference<Integer> exportedVersionNumber = new AtomicReference<>();
@@ -515,7 +526,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
                   new PublishParticipantDigestDto(
                       "GAME_DESIGN_CONTROL_PLANE",
                       String.valueOf(candidate.id()),
-                      "version:" + candidate.id(),
+                      fixture.selection().selectedCommit().commitId().toString(),
                       "failed-remap-design-digest",
                       1,
                       null,
@@ -578,13 +589,11 @@ class PublishAttemptServiceTransactionIntegrationTest {
             Mockito.eq(publishWorkflowId),
             Mockito.eq(exportedManifest.manifestHash()));
 
-    Throwable publishFailure =
-        catchThrowable(
-            () ->
-                versionPublishCommandService.publishFullVersion(
-                    tenantId, "failed remap proof", publishRequestId, publishWorkflowId));
-
-    assertThat(publishFailure).isInstanceOf(RuntimeException.class);
+    Object failedPublication = invokeSelectedPublicationMechanics(fixture);
+    assertThat((Boolean) ReflectionTestUtils.invokeMethod(failedPublication, "isSucceeded"))
+        .isFalse();
+    assertThat((String) ReflectionTestUtils.invokeMethod(failedPublication, "failureMessage"))
+        .isEqualTo(longFailureMessage);
     PublishAttempt attempt =
         publishAttemptRepository.findByPublishWorkflowId(publishWorkflowId).orElseThrow();
     String failureContext =
@@ -607,9 +616,9 @@ class PublishAttemptServiceTransactionIntegrationTest {
             + ", exportCallbackFailureFrame="
             + firstStackFrame(exportCallbackFailure.get())
             + ", failure="
-            + publishFailure.getClass().getName()
+            + failedPublication.getClass().getName()
             + ": "
-            + publishFailure.getMessage()
+            + ReflectionTestUtils.invokeMethod(failedPublication, "failureMessage")
             + ")";
     assertThat(exportCompleted.get()).as(failureContext).isTrue();
     assertThat(finalizationFailureInjected.get()).as(failureContext).isTrue();
@@ -647,16 +656,14 @@ class PublishAttemptServiceTransactionIntegrationTest {
     assertThat(retainedRemapSet.getSourceVersionId()).isEqualTo(sourceVersionId);
     assertThat(retainedRemapSet.getTargetVersionId()).isEqualTo(candidateVersionId.get());
 
-    assertThatThrownBy(
-            () ->
-                versionPublishCommandService.publishFullVersion(
-                    tenantId, "failed remap proof", publishRequestId, publishWorkflowId))
+    assertThatThrownBy(() -> invokeSelectedPublicationCommand(fixture))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage(longFailureMessage);
     PublishAttempt replayedAttempt =
         publishAttemptRepository.findByPublishWorkflowId(publishWorkflowId).orElseThrow();
     assertThat(replayedAttempt).isEqualTo(attempt);
     assertThat(replayedAttempt.getStatus()).isEqualTo(PublishAttemptStatus.FAILED);
+    assertThat(replayedAttempt.getRequestDigest()).isEqualTo(fixture.selection().digest());
     assertThat(replayedAttempt.getVersionId()).isEqualTo(candidateVersionId.get());
     assertThat(replayedAttempt.getVersionNumber()).isEqualTo(candidateVersionNumber.get());
     assertThat(replayedAttempt.getFailureCode()).isEqualTo(attempt.getFailureCode());
@@ -672,6 +679,153 @@ class PublishAttemptServiceTransactionIntegrationTest {
     Mockito.verify(assetExportService, Mockito.times(1))
         .exportAssets(Mockito.eq(tenantId), Mockito.anyInt());
   }
+
+  private SelectedDraftFixture createSelectedDraftFixture(
+      String gameName, int versionNumber, String notes) {
+    Game game = new Game();
+    game.setTenantId(UUID.randomUUID().toString());
+    game.setName(gameName);
+    return createSelectedDraftFixture(gameRepository.save(game), versionNumber, notes);
+  }
+
+  /**
+   * Stipulates synthetic exact selection evidence for the internal transaction-mechanics fixture.
+   * The repository and current-owner publication-carrier boundary are intentionally not proved.
+   */
+  private SelectedDraftFixture createSelectedDraftFixture(
+      Game game, int versionNumber, String notes) {
+    Version version = new Version();
+    version.setTenantId(game.getTenantId());
+    version.setVersionNumber(versionNumber);
+    version.setVersionState(VersionLifecycleState.DRAFT);
+    version.setVersionStateEpoch(1L);
+    version.setNotes(notes);
+    Version savedVersion = versionRepository.save(version);
+
+    TargetProof target =
+        new TargetProof(
+            game.getCanonicalTenantId(),
+            savedVersion.getCanonicalVersionId(),
+            savedVersion.getId(),
+            savedVersion.getTenantId(),
+            game.getId(),
+            game.getTenantId(),
+            "NEW_GAME_ROW");
+    String publishRequestId = UUID.randomUUID().toString();
+    UUID selectedCommitRequestId = UUID.randomUUID();
+    UUID selectedCommitId = UUID.randomUUID();
+    List<RevisionPayload> revisions =
+        java.util.stream.IntStream.range(0, Owner.values().length)
+            .mapToObj(
+                index ->
+                    new RevisionPayload(
+                        Integer.toString(index),
+                        UUID.randomUUID(),
+                        Owner.values()[index],
+                        "{\"fixture\":\"transaction-proof\"}"))
+            .toList();
+    List<AffectedUnit> affectedUnits =
+        java.util.Arrays.stream(Owner.values())
+            .map(
+                owner ->
+                    new AffectedUnit(
+                        owner,
+                        "VERSION",
+                        savedVersion.getCanonicalVersionId().toString(),
+                        "VERSION",
+                        savedVersion.getCanonicalVersionId().toString(),
+                        "1"))
+            .toList();
+    DraftCommitBinding selectedCommit =
+        DraftCommitBinding.create(
+            target,
+            selectedCommitRequestId,
+            selectedCommitId,
+            UUID.randomUUID().toString(),
+            revisions,
+            affectedUnits);
+    PublishIntent intent =
+        new PublishIntent(
+            game.getCanonicalTenantId(),
+            savedVersion.getCanonicalVersionId(),
+            publishRequestId,
+            savedVersion.getVersionStateEpoch().toString(),
+            notes,
+            selectedCommitRequestId,
+            selectedCommitId,
+            selectedCommit.digest());
+    VisibilityFence visibilityFence =
+        new VisibilityFence(
+            target,
+            selectedCommitRequestId,
+            selectedCommitId,
+            selectedCommit.digest(),
+            "[]",
+            OffsetDateTime.now(ZoneOffset.UTC));
+    AuthoredDraftPublishSelection selection =
+        AuthoredDraftPublishSelection.capture(
+            intent, target, new PublicationEvidence(selectedCommit, visibilityFence));
+    Mockito.when(
+            authoredSelectionRepository.readByPublishRequest(
+                game.getCanonicalTenantId(), publishRequestId))
+        .thenReturn(
+            Optional.of(new SelectionSnapshot(selection, OffsetDateTime.now(ZoneOffset.UTC))));
+
+    String workflowId =
+        FiremudWorkflowIds.workflowId(
+            TemporalVersionPublishWorkflow.WORKFLOW_FAMILY,
+            game.getCanonicalTenantId().toString(),
+            "publish-request",
+            publishRequestId);
+    publishAttemptService.createFullVersionAttempt(
+        versionMapper.toDto(savedVersion), workflowId, selection.digest());
+    return new SelectedDraftFixture(
+        game.getTenantId(), notes, publishRequestId, workflowId, savedVersion, selection);
+  }
+
+  private Object invokeSelectedPublicationMechanics(SelectedDraftFixture fixture) {
+    return ReflectionTestUtils.invokeMethod(
+        versionPublishCommandService,
+        "reconcileSelectedPublicationMechanics",
+        workflowRequest(fixture));
+  }
+
+  private Object invokeSelectedPublicationReplay(SelectedDraftFixture fixture) {
+    return ReflectionTestUtils.invokeMethod(
+        versionPublishCommandService, "reconcileFullVersionPublish", workflowRequest(fixture));
+  }
+
+  private Object invokeSelectedPublicationCommand(SelectedDraftFixture fixture) {
+    return ReflectionTestUtils.invokeMethod(
+        versionPublishCommandService, "publishFullVersion", workflowRequest(fixture));
+  }
+
+  private Object workflowRequest(SelectedDraftFixture fixture) {
+    try {
+      Class<?> requestType =
+          Class.forName("net.firedevops.firemud.gamedesign.service.impl.PublishWorkflowRequest");
+      Constructor<?> constructor =
+          requestType.getDeclaredConstructor(
+              String.class, String.class, String.class, String.class, PublishIntent.class);
+      constructor.setAccessible(true);
+      return constructor.newInstance(
+          fixture.tenantId(),
+          fixture.notes(),
+          fixture.publishRequestId(),
+          fixture.publishWorkflowId(),
+          fixture.selection().intent());
+    } catch (ReflectiveOperationException exception) {
+      throw new AssertionError("Internal publication request type is unavailable", exception);
+    }
+  }
+
+  private record SelectedDraftFixture(
+      String tenantId,
+      String notes,
+      String publishRequestId,
+      String publishWorkflowId,
+      Version version,
+      AuthoredDraftPublishSelection selection) {}
 
   private static String firstStackFrame(Throwable failure) {
     if (failure == null || failure.getStackTrace().length == 0) {

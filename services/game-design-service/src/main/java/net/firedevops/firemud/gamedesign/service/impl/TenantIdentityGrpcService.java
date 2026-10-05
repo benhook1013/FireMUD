@@ -7,6 +7,7 @@ import java.util.Base64;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
@@ -205,19 +206,20 @@ public class TenantIdentityGrpcService
   public void resolveFreshTenantCreation(
       ResolveFreshTenantCreationRequest request,
       StreamObserver<ResolveFreshTenantCreationResponse> responseObserver) {
-    if (!isAccountPeer()) {
+    if (SessionContext.hasAuthenticatedCallerContext() || !isAccountPeer()) {
       responseObserver.onError(
           Status.PERMISSION_DENIED
-              .withDescription("Verified Account workload identity is required")
+              .withDescription(
+                  "Verified Account workload identity without caller context is required")
               .asRuntimeException());
       return;
     }
 
     String expectedRequestDigest = request.getExpectedRequestDigest();
-    if (!isSha256Digest(expectedRequestDigest)) {
+    if (!isSha256Digest(expectedRequestDigest) || !request.getUnknownFields().asMap().isEmpty()) {
       responseObserver.onError(
           Status.INVALID_ARGUMENT
-              .withDescription("Canonical expected request digest is required")
+              .withDescription("Canonical closed fresh tenant creation request is required")
               .asRuntimeException());
       return;
     }

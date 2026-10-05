@@ -17,6 +17,7 @@ import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.settings.GameDesignSettingsProtoMapper;
+import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection.PublishIntent;
 import net.firedevops.firemud.gamedesign.dto.CompleteLaunchBindingDto;
 import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
 import net.firedevops.firemud.gamedesign.dto.HelpTopicDto;
@@ -226,7 +227,16 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       }
       VersionDto version =
           versionService.publishVersion(
-              request.getTenantId(), request.getNotes(), request.getPublishRequestId());
+              new PublishIntent(
+                  canonicalPublicationUuid(request.getTenantId(), "tenant_id"),
+                  canonicalPublicationUuid(request.getVersionId(), "version_id"),
+                  request.getPublishRequestId(),
+                  request.getExpectedVersionStateEpoch(),
+                  request.getNotes(),
+                  canonicalPublicationUuid(
+                      request.getSelectedCommitRequestId(), "selected_commit_request_id"),
+                  canonicalPublicationUuid(request.getSelectedCommitId(), "selected_commit_id"),
+                  request.getSelectedCommitDigest()));
       builder.setVersionId(version.id());
     } catch (AdminAuthorizationException ex) {
       builder.setError(
@@ -251,6 +261,10 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               meterRegistry, logger, "PublishVersion", ex.errorCode(), ex.getMessage()));
     } catch (IllegalStateException ex) {
       String errorCode = publishAttemptErrorCode(ex);
+      if (ex.getMessage() != null
+          && ex.getMessage().startsWith("PUBLICATION_AUTHORIZATION_UNAVAILABLE:")) {
+        errorCode = "PUBLICATION_AUTHORIZATION_UNAVAILABLE";
+      }
       builder.setError(
           errorCode == null
               ? GrpcAppErrors.internal(meterRegistry, logger, "PublishVersion", ex)
@@ -2372,6 +2386,14 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       return;
     }
     AdminRoleGuard.requireAdminRole();
+  }
+
+  private static UUID canonicalPublicationUuid(String value, String field) {
+    UUID parsed = UUID.fromString(value);
+    if (!parsed.toString().equals(value) || parsed.equals(new UUID(0L, 0L))) {
+      throw new IllegalArgumentException(field + " must be a canonical non-nil UUID");
+    }
+    return parsed;
   }
 
   private void requireHelpTopicReadAccess() {

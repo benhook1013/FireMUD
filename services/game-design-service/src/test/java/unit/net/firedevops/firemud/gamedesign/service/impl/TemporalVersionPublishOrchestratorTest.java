@@ -9,7 +9,16 @@ import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import org.junit.jupiter.api.Test;
 
 class TemporalVersionPublishOrchestratorTest {
-  private static final String WORKFLOW_ID = "publish:tenant-1:publish-request:request-1";
+  private static final String WORKFLOW_ID =
+      "publish:11111111-1111-4111-8111-111111111111:publish-request:request-1";
+
+  @Test
+  void workflowIdentityUsesCanonicalTenantAndStableRequest() {
+    assertEquals(
+        WORKFLOW_ID,
+        TemporalVersionPublishOrchestrator.workflowId(
+            "11111111-1111-4111-8111-111111111111", "request-1"));
+  }
 
   @Test
   void timeoutPreservesPendingReconciliationCodeFromLastSnapshot() {

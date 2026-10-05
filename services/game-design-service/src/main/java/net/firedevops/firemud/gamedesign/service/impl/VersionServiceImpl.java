@@ -12,6 +12,7 @@ import java.util.UUID;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.gamedesign.client.AutomationScriptingClient;
+import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection.PublishIntent;
 import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PluginVersionStatusEventDto;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
@@ -120,15 +121,12 @@ public class VersionServiceImpl implements VersionService {
 
   @Override
   @Timed(value = "gamedesign.version.publish")
-  public VersionDto publishVersion(String tenantId, String notes, String publishRequestId) {
-    logger.info("Publishing version for tenant {}", tenantId);
-    PublicationDigestRequestBinding.validatePublicationIdentity(tenantId, publishRequestId);
-    TemporalVersionPublishOrchestrator orchestrator =
-        temporalPublishOrchestrator.orElseThrow(
-            () ->
-                new IllegalStateException(
-                    "PUBLISH_WORKFLOW_UNAVAILABLE: durable publication workflow is required"));
-    return orchestrator.publishFullVersion(tenantId, notes, publishRequestId);
+  public VersionDto publishVersion(PublishIntent intent) {
+    Objects.requireNonNull(intent, "intent");
+    // Account's authenticated actor/role/party/terms producer and complete authenticated owner
+    // freeze/materialization are unavailable. Selection storage is not commit authorization.
+    throw new IllegalStateException(
+        "PUBLICATION_AUTHORIZATION_UNAVAILABLE: exact current Account authorization and owner freeze are required");
   }
 
   @Override

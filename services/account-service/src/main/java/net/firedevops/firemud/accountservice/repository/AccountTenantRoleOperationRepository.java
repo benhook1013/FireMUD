@@ -10,6 +10,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.SourceChange;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -37,7 +38,7 @@ public class AccountTenantRoleOperationRepository {
     this.dsl = Objects.requireNonNull(dsl, "DSLContext is required");
   }
 
-  /** Claims a request in the caller's write transaction, or returns its exact committed result. */
+  /** Claims a request, or returns its exact committed result or durable pending intent. */
   @Transactional(propagation = Propagation.MANDATORY)
   public Claim claim(Request request) {
     requireWriteOwnerTransaction();
@@ -79,10 +80,65 @@ public class AccountTenantRoleOperationRepository {
       throw new OperationConflictException(
           "Tenant-role request ID was reused with changed immutable input");
     }
-    if (!"COMMITTED".equals(existing.status())) {
-      throw new IllegalStateException("Incomplete tenant-role request is not replayable");
+    if (!"COMMITTED".equals(existing.status()) && findSourceChangeForUpdate(request).isEmpty()) {
+      throw new IllegalStateException(
+          "Incomplete tenant-role request has no original source intent");
     }
     return new Claim(false, Optional.of(existing));
+  }
+
+  /** Binds the original V57 vector to the request before its WAITING transaction may commit. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public void captureSourceChange(Request request, SourceChange change) {
+    requireWriteOwnerTransaction();
+    requireSourceRequest(request, change);
+    int updated =
+        dsl.execute(
+            "UPDATE "
+                + OPERATIONS
+                + " SET source_change_binding = ? "
+                + "WHERE request_id = ? AND status = 'IN_PROGRESS' "
+                + "AND request_payload = ? AND source_change_binding IS NULL",
+            change.canonicalBytes(),
+            request.requestId(),
+            request.payload());
+    if (updated != 1
+        || !Arrays.equals(
+            findSourceChangeForUpdate(request).orElseThrow().canonicalBytes(),
+            change.canonicalBytes())) {
+      throw new IllegalStateException("Tenant-role original source capture differs");
+    }
+  }
+
+  /** Returns the immutable original capture, including after process or response loss. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public Optional<SourceChange> findSourceChangeForUpdate(Request request) {
+    requireWriteOwnerTransaction();
+    Record row =
+        dsl.fetchOne(
+            "SELECT request_payload, source_change_binding FROM "
+                + OPERATIONS
+                + " WHERE request_id = ? FOR UPDATE",
+            request.requestId());
+    if (row == null
+        || !Arrays.equals(row.get("request_payload", byte[].class), request.payload())) {
+      throw new OperationConflictException("Tenant-role source request binding differs");
+    }
+    byte[] stored = row.get("source_change_binding", byte[].class);
+    if (stored == null) {
+      return Optional.empty();
+    }
+    SourceChange change = SourceChange.fromStored(stored);
+    requireSourceRequest(request, change);
+    return Optional.of(change);
+  }
+
+  private static void requireSourceRequest(Request request, SourceChange change) {
+    if (!request.requestId().equals(change.changeId())
+        || !Arrays.equals(request.payload(), change.mutation())) {
+      throw new OperationConflictException(
+          "Tenant-role original source intent differs from request");
+    }
   }
 
   /** Completes a claimed request only after all mutation, event, and audit writes read back. */
@@ -641,6 +697,11 @@ public class AccountTenantRoleOperationRepository {
     @Override
     public byte[] resultPayload() {
       return resultPayload == null ? null : resultPayload.clone();
+    }
+
+    /** Pending is a retained intent only; it carries no event, result, or authorization. */
+    public boolean pending() {
+      return "IN_PROGRESS".equals(status);
     }
   }
 

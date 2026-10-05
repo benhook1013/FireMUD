@@ -11,11 +11,15 @@ import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding
 public record WorldDesignPublicationFenceEvidence(
     String targetNamespace,
     UUID canonicalTenantId,
-    long versionId,
+    UUID canonicalVersionId,
+    UUID versionIdentityOperationId,
+    long gameDesignVersionId,
     UUID intakeRequestId,
     UUID intakeOperationId,
+    String intakeRequestDigest,
     UUID sourceOperationId,
     String sourceEvidenceDigest,
+    String intakeReceiptDigest,
     String publicationRequestId,
     String requestDigest,
     long versionStateEpoch,
@@ -33,15 +37,19 @@ public record WorldDesignPublicationFenceEvidence(
     new OwnerBinding(
         targetNamespace,
         canonicalTenantId,
-        versionId,
+        canonicalVersionId,
+        versionIdentityOperationId,
+        gameDesignVersionId,
         intakeRequestId,
         intakeOperationId,
+        intakeRequestDigest,
         sourceOperationId,
-        sourceEvidenceDigest);
+        sourceEvidenceDigest,
+        intakeReceiptDigest);
     requirePositive(versionStateEpoch, "versionStateEpoch");
     PublicationDigestRequestBinding binding =
         PublicationDigestRequestBinding.full(
-            canonicalTenantId.toString(), Long.toString(versionId), publicationRequestId);
+            canonicalTenantId.toString(), Long.toString(gameDesignVersionId), publicationRequestId);
     if (requestDigest == null || !REQUEST_DIGEST.matcher(requestDigest).matches()) {
       throw new IllegalArgumentException("requestDigest must be 64 lowercase hexadecimal digits");
     }
@@ -56,11 +64,15 @@ public record WorldDesignPublicationFenceEvidence(
     return new OwnerBinding(
         targetNamespace,
         canonicalTenantId,
-        versionId,
+        canonicalVersionId,
+        versionIdentityOperationId,
+        gameDesignVersionId,
         intakeRequestId,
         intakeOperationId,
+        intakeRequestDigest,
         sourceOperationId,
-        sourceEvidenceDigest);
+        sourceEvidenceDigest,
+        intakeReceiptDigest);
   }
 
   /**
@@ -70,24 +82,29 @@ public record WorldDesignPublicationFenceEvidence(
   public record OwnerBinding(
       String targetNamespace,
       UUID canonicalTenantId,
-      long versionId,
+      UUID canonicalVersionId,
+      UUID versionIdentityOperationId,
+      long gameDesignVersionId,
       UUID intakeRequestId,
       UUID intakeOperationId,
+      String intakeRequestDigest,
       UUID sourceOperationId,
-      String sourceEvidenceDigest) {
+      String sourceEvidenceDigest,
+      String intakeReceiptDigest) {
     public OwnerBinding {
       if (targetNamespace == null || !GrpcPeerIdentity.isValidNamespace(targetNamespace)) {
         throw new IllegalArgumentException("targetNamespace must be one canonical DNS label");
       }
       requireNonNil(canonicalTenantId, "canonicalTenantId");
-      requirePositive(versionId, "versionId");
+      requireNonNil(canonicalVersionId, "canonicalVersionId");
+      requireNonNil(versionIdentityOperationId, "versionIdentityOperationId");
+      requirePositive(gameDesignVersionId, "gameDesignVersionId");
       requireNonNil(intakeRequestId, "intakeRequestId");
       requireNonNil(intakeOperationId, "intakeOperationId");
+      requireDigest(intakeRequestDigest, "intakeRequestDigest");
       requireNonNil(sourceOperationId, "sourceOperationId");
-      if (sourceEvidenceDigest == null || !SOURCE_DIGEST.matcher(sourceEvidenceDigest).matches()) {
-        throw new IllegalArgumentException(
-            "sourceEvidenceDigest must be a canonical prefixed SHA-256 digest");
-      }
+      requireDigest(sourceEvidenceDigest, "sourceEvidenceDigest");
+      requireDigest(intakeReceiptDigest, "intakeReceiptDigest");
     }
   }
 
@@ -97,7 +114,7 @@ public record WorldDesignPublicationFenceEvidence(
    */
   public PublicationDigestRequestBinding publicationBinding() {
     return PublicationDigestRequestBinding.full(
-        canonicalTenantId.toString(), Long.toString(versionId), publicationRequestId);
+        canonicalTenantId.toString(), Long.toString(gameDesignVersionId), publicationRequestId);
   }
 
   /** Owner-local complete digest checkpoint captured only after the shared version lock is held. */
@@ -155,6 +172,12 @@ public record WorldDesignPublicationFenceEvidence(
   private static void requireNonNil(UUID value, String label) {
     if (value == null || NIL_UUID.equals(value)) {
       throw new IllegalArgumentException(label + " must be a non-nil UUID");
+    }
+  }
+
+  private static void requireDigest(String value, String label) {
+    if (value == null || !SOURCE_DIGEST.matcher(value).matches()) {
+      throw new IllegalArgumentException(label + " must be a canonical prefixed SHA-256 digest");
     }
   }
 }

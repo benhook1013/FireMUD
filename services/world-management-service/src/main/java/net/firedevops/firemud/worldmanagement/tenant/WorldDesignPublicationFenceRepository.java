@@ -34,6 +34,8 @@ public class WorldDesignPublicationFenceRepository {
   private static final Table<?> OWNER = DSL.table(DSL.name("world_design_publication_fence_owner"));
   private static final Table<?> ATTEMPT =
       DSL.table(DSL.name("world_design_publication_fence_attempt"));
+  private static final Table<?> VERSION_IDENTITY =
+      DSL.table(DSL.name("world_authored_version_identity"));
   private static final Field<String> TARGET_NAMESPACE =
       DSL.field(DSL.name("target_namespace"), String.class);
   private static final Field<UUID> CANONICAL_TENANT_ID =
@@ -41,6 +43,30 @@ public class WorldDesignPublicationFenceRepository {
   private static final Field<Long> LOCAL_TENANT_KEY =
       DSL.field(DSL.name("local_tenant_key"), Long.class);
   private static final Field<Long> VERSION_ID = DSL.field(DSL.name("version_id"), Long.class);
+  private static final Field<UUID> VERSION_OPERATION_ID =
+      DSL.field(DSL.name("operation_id"), UUID.class);
+  private static final Field<UUID> VERSION_CANONICAL_VERSION_ID =
+      DSL.field(DSL.name("canonical_version_id"), UUID.class);
+  private static final Field<Long> VERSION_GAME_DESIGN_VERSION_ID =
+      DSL.field(DSL.name("game_design_version_id"), Long.class);
+  private static final Field<Long> VERSION_LOCAL_VERSION_KEY =
+      DSL.field(DSL.name("local_version_key"), Long.class);
+  private static final Field<String> VERSION_WORLD_SLUG =
+      DSL.field(DSL.name("world_slug"), String.class);
+  private static final Field<UUID> VERSION_INTAKE_OPERATION_ID =
+      DSL.field(DSL.name("intake_operation_id"), UUID.class);
+  private static final Field<UUID> VERSION_INTAKE_REQUEST_ID =
+      DSL.field(DSL.name("intake_request_id"), UUID.class);
+  private static final Field<Long> VERSION_LOCAL_TENANT_KEY =
+      DSL.field(DSL.name("local_tenant_key"), Long.class);
+  private static final Field<String> VERSION_INTAKE_REQUEST_DIGEST =
+      DSL.field(DSL.name("intake_request_digest"), String.class);
+  private static final Field<UUID> VERSION_SOURCE_OPERATION_ID =
+      DSL.field(DSL.name("source_operation_id"), UUID.class);
+  private static final Field<String> VERSION_SOURCE_EVIDENCE_DIGEST =
+      DSL.field(DSL.name("source_evidence_digest"), String.class);
+  private static final Field<String> VERSION_INTAKE_RECEIPT_DIGEST =
+      DSL.field(DSL.name("intake_receipt_digest"), String.class);
   private static final Field<UUID> INTAKE_OPERATION_ID =
       DSL.field(DSL.name("intake_operation_id"), UUID.class);
   private static final Field<UUID> INTAKE_REQUEST_ID =
@@ -72,6 +98,16 @@ public class WorldDesignPublicationFenceRepository {
       DSL.field(DSL.name("content_digest"), String.class);
   private static final Field<Integer> DIGEST_SCHEMA_VERSION =
       DSL.field(DSL.name("digest_schema_version"), Integer.class);
+  private static final Field<Short> OWNER_BINDING_SCHEMA_VERSION =
+      DSL.field(DSL.name("owner_binding_schema_version"), Short.class);
+  private static final Field<UUID> CANONICAL_VERSION_ID =
+      DSL.field(DSL.name("canonical_version_id"), UUID.class);
+  private static final Field<UUID> VERSION_IDENTITY_OPERATION_ID =
+      DSL.field(DSL.name("version_identity_operation_id"), UUID.class);
+  private static final Field<Long> GAME_DESIGN_VERSION_ID =
+      DSL.field(DSL.name("game_design_version_id"), Long.class);
+  private static final Field<String> INTAKE_REQUEST_DIGEST =
+      DSL.field(DSL.name("intake_request_digest"), String.class);
 
   private final DSLContext dsl;
   private final WorldAuthoredSourceIntakeRepository intakeRepository;
@@ -93,16 +129,30 @@ public class WorldDesignPublicationFenceRepository {
    */
   @Transactional(propagation = Propagation.MANDATORY)
   public void lockOpen(OwnerBinding binding) {
+    lockOpenAndResolve(binding);
+  }
+
+  /** Exact retained source and private keys, available only after the OPEN owner lock is held. */
+  record OpenOwner(
+      OwnerBinding binding, WorldAuthoredSourceIntakeReceipt receipt, long localVersionKey) {
+    long localTenantKey() {
+      return receipt.localTenantKey();
+    }
+  }
+
+  @Transactional(propagation = Propagation.MANDATORY)
+  OpenOwner lockOpenAndResolve(OwnerBinding binding) {
     requireWritableReadCommittedOwnerTransaction();
-    ResolvedIntake intake = resolveCommittedIntake(binding);
-    Record owner = createAndLockOwner(binding, intake);
-    requireMatchingOwnerBinding(owner, binding, intake);
+    ResolvedVersion resolvedVersion = resolveVersion(binding);
+    Record owner = createAndLockOwner(resolvedVersion);
+    requireMatchingOwnerBinding(owner, resolvedVersion);
     if (!OPEN.equals(owner.get(OWNER_FREEZE_PHASE, String.class))) {
       throw new ConflictException("World version is not open for an ordinary Draft mutation");
     }
     if (owner.get(CURRENT_PUBLICATION_FENCE, UUID.class) != null) {
       throw new ConflictException("Open World version unexpectedly retains a publication fence");
     }
+    return new OpenOwner(binding, resolvedVersion.receipt(), resolvedVersion.localVersionKey());
   }
 
   /**
@@ -119,9 +169,10 @@ public class WorldDesignPublicationFenceRepository {
     requireWritableReadCommittedOwnerTransaction();
     Objects.requireNonNull(checkpointSupplier, "checkpointSupplier");
     OwnerBinding binding = evidence.ownerBinding();
-    ResolvedIntake intake = resolveCommittedIntake(binding);
-    Record owner = createAndLockOwner(binding, intake);
-    requireMatchingOwnerBinding(owner, binding, intake);
+    ResolvedVersion resolvedVersion = resolveVersion(binding);
+    rejectLegacyAttempt(evidence, resolvedVersion.localVersionKey());
+    Record owner = createAndLockOwner(resolvedVersion);
+    requireMatchingOwnerBinding(owner, resolvedVersion);
 
     String phase = owner.get(OWNER_FREEZE_PHASE, String.class);
     UUID currentFence = owner.get(CURRENT_PUBLICATION_FENCE, UUID.class);
@@ -140,7 +191,7 @@ public class WorldDesignPublicationFenceRepository {
       throw new ConflictException(
           "World version cannot start a publication freeze in its current phase");
     }
-    if (findAttemptByRequest(evidence) != null) {
+    if (findAttemptByRequest(evidence, resolvedVersion.localVersionKey()) != null) {
       throw new ConflictException("World publication request already has an immutable attempt");
     }
 
@@ -148,7 +199,7 @@ public class WorldDesignPublicationFenceRepository {
         Objects.requireNonNull(
             checkpointSupplier.get(), "checkpointSupplier returned no complete World checkpoint");
     UUID publicationFence = newNonNilUuid();
-    int inserted = insertAttempt(evidence, intake, publicationFence, checkpoint);
+    int inserted = insertAttempt(evidence, resolvedVersion, publicationFence, checkpoint);
     if (inserted != 1) {
       throw new ConflictException("World publication attempt was not inserted");
     }
@@ -161,7 +212,7 @@ public class WorldDesignPublicationFenceRepository {
                 TARGET_NAMESPACE
                     .eq(evidence.targetNamespace())
                     .and(CANONICAL_TENANT_ID.eq(evidence.canonicalTenantId()))
-                    .and(VERSION_ID.eq(evidence.versionId()))
+                    .and(VERSION_ID.eq(resolvedVersion.localVersionKey()))
                     .and(OWNER_FREEZE_PHASE.eq(OPEN))
                     .and(CURRENT_PUBLICATION_FENCE.isNull()))
             .execute();
@@ -180,8 +231,9 @@ public class WorldDesignPublicationFenceRepository {
     if (TransactionSynchronizationManager.isActualTransactionActive()) {
       throw new IllegalStateException("World publication attempt read requires a committed read");
     }
-    resolveCommittedIntake(evidence.ownerBinding());
-    FrozenAttempt stored = findAttemptByRequest(evidence);
+    ResolvedVersion resolvedVersion = resolveVersion(evidence.ownerBinding());
+    rejectLegacyAttempt(evidence, resolvedVersion.localVersionKey());
+    FrozenAttempt stored = findAttemptByRequest(evidence, resolvedVersion.localVersionKey());
     if (stored == null) {
       return Optional.empty();
     }
@@ -189,7 +241,7 @@ public class WorldDesignPublicationFenceRepository {
     return Optional.of(stored);
   }
 
-  private ResolvedIntake resolveCommittedIntake(OwnerBinding binding) {
+  private ResolvedVersion resolveVersion(OwnerBinding binding) {
     Objects.requireNonNull(binding, "binding");
     WorldAuthoredSourceIntakeReceipt receipt =
         intakeRepository
@@ -198,25 +250,81 @@ public class WorldDesignPublicationFenceRepository {
                 () ->
                     new MissingIntakeException(
                         "World publication fence requires an already committed authored-source intake"));
+    requireExactIntake(binding, receipt);
+
+    Record identity =
+        dsl.selectFrom(VERSION_IDENTITY)
+            .where(VERSION_OPERATION_ID.eq(binding.versionIdentityOperationId()))
+            .forShare()
+            .fetchOne();
+    if (identity == null) {
+      throw new MissingVersionIdentityException(
+          "World publication fence requires an exact retained V27 authored-Version identity");
+    }
+    requireExactVersionIdentity(identity, binding, receipt);
+    Long localVersionKey = identity.get(VERSION_LOCAL_VERSION_KEY, Long.class);
+    if (localVersionKey == null || localVersionKey <= 0L) {
+      throw new ConflictException("World Version identity has no valid private local Version key");
+    }
+    return new ResolvedVersion(binding, receipt, localVersionKey);
+  }
+
+  private void requireExactIntake(OwnerBinding binding, WorldAuthoredSourceIntakeReceipt receipt) {
     if (!binding.targetNamespace().equals(receipt.targetNamespace())
         || !binding.canonicalTenantId().equals(receipt.canonicalTenantId())
         || !binding.intakeRequestId().equals(receipt.intakeRequestId())
         || !binding.intakeOperationId().equals(receipt.operationId())
+        || !binding.intakeRequestDigest().equals(receipt.requestDigest())
         || !binding.sourceOperationId().equals(receipt.sourceOperationId())
-        || !binding.sourceEvidenceDigest().equals(receipt.sourceEvidenceDigest())) {
+        || !binding.sourceEvidenceDigest().equals(receipt.sourceEvidenceDigest())
+        || !binding.intakeReceiptDigest().equals(receipt.receiptDigest())) {
       throw new ConflictException(
           "World publication request differs from the complete committed authored-source intake");
     }
-    return new ResolvedIntake(receipt);
   }
 
-  private Record createAndLockOwner(OwnerBinding binding, ResolvedIntake intake) {
-    WorldAuthoredSourceIntakeReceipt receipt = intake.receipt();
+  private void requireExactVersionIdentity(
+      Record identity, OwnerBinding binding, WorldAuthoredSourceIntakeReceipt receipt) {
+    if (!Objects.equals(
+            identity.get(VERSION_OPERATION_ID, UUID.class), binding.versionIdentityOperationId())
+        || !Objects.equals(identity.get(TARGET_NAMESPACE, String.class), binding.targetNamespace())
+        || !Objects.equals(
+            identity.get(CANONICAL_TENANT_ID, UUID.class), binding.canonicalTenantId())
+        || !Objects.equals(
+            identity.get(VERSION_CANONICAL_VERSION_ID, UUID.class), binding.canonicalVersionId())
+        || !Objects.equals(
+            identity.get(VERSION_GAME_DESIGN_VERSION_ID, Long.class), binding.gameDesignVersionId())
+        || !Objects.equals(identity.get(VERSION_WORLD_SLUG, String.class), receipt.worldSlug())
+        || !Objects.equals(
+            identity.get(VERSION_INTAKE_OPERATION_ID, UUID.class), binding.intakeOperationId())
+        || !Objects.equals(
+            identity.get(VERSION_INTAKE_REQUEST_ID, UUID.class), binding.intakeRequestId())
+        || !Objects.equals(
+            identity.get(VERSION_LOCAL_TENANT_KEY, Long.class), receipt.localTenantKey())
+        || !Objects.equals(
+            identity.get(VERSION_INTAKE_REQUEST_DIGEST, String.class),
+            binding.intakeRequestDigest())
+        || !Objects.equals(
+            identity.get(VERSION_SOURCE_OPERATION_ID, UUID.class), binding.sourceOperationId())
+        || !Objects.equals(
+            identity.get(VERSION_SOURCE_EVIDENCE_DIGEST, String.class),
+            binding.sourceEvidenceDigest())
+        || !Objects.equals(
+            identity.get(VERSION_INTAKE_RECEIPT_DIGEST, String.class),
+            binding.intakeReceiptDigest())) {
+      throw new ConflictException(
+          "World publication request differs from the exact V27 Version and intake binding");
+    }
+  }
+
+  private Record createAndLockOwner(ResolvedVersion resolvedVersion) {
+    OwnerBinding binding = resolvedVersion.binding();
+    WorldAuthoredSourceIntakeReceipt receipt = resolvedVersion.receipt();
     dsl.insertInto(OWNER)
         .set(TARGET_NAMESPACE, binding.targetNamespace())
         .set(CANONICAL_TENANT_ID, binding.canonicalTenantId())
         .set(LOCAL_TENANT_KEY, receipt.localTenantKey())
-        .set(VERSION_ID, binding.versionId())
+        .set(VERSION_ID, resolvedVersion.localVersionKey())
         .set(OWNER_FREEZE_PHASE, OPEN)
         .onConflictDoNothing()
         .execute();
@@ -227,7 +335,7 @@ public class WorldDesignPublicationFenceRepository {
                 TARGET_NAMESPACE
                     .eq(binding.targetNamespace())
                     .and(CANONICAL_TENANT_ID.eq(binding.canonicalTenantId()))
-                    .and(VERSION_ID.eq(binding.versionId())))
+                    .and(VERSION_ID.eq(resolvedVersion.localVersionKey())))
             .forUpdate()
             .fetchOne();
     if (owner == null) {
@@ -236,13 +344,13 @@ public class WorldDesignPublicationFenceRepository {
     return owner;
   }
 
-  private void requireMatchingOwnerBinding(
-      Record owner, OwnerBinding binding, ResolvedIntake intake) {
-    WorldAuthoredSourceIntakeReceipt receipt = intake.receipt();
+  private void requireMatchingOwnerBinding(Record owner, ResolvedVersion resolvedVersion) {
+    OwnerBinding binding = resolvedVersion.binding();
+    WorldAuthoredSourceIntakeReceipt receipt = resolvedVersion.receipt();
     if (!Objects.equals(owner.get(TARGET_NAMESPACE, String.class), binding.targetNamespace())
         || !Objects.equals(owner.get(CANONICAL_TENANT_ID, UUID.class), binding.canonicalTenantId())
         || !Objects.equals(owner.get(LOCAL_TENANT_KEY, Long.class), receipt.localTenantKey())
-        || !Objects.equals(owner.get(VERSION_ID, Long.class), binding.versionId())) {
+        || !Objects.equals(owner.get(VERSION_ID, Long.class), resolvedVersion.localVersionKey())) {
       throw new ConflictException(
           "World version owner row is bound to a different canonical tenant association");
     }
@@ -250,18 +358,24 @@ public class WorldDesignPublicationFenceRepository {
 
   private int insertAttempt(
       WorldDesignPublicationFenceEvidence evidence,
-      ResolvedIntake intake,
+      ResolvedVersion resolvedVersion,
       UUID publicationFence,
       Checkpoint checkpoint) {
-    WorldAuthoredSourceIntakeReceipt receipt = intake.receipt();
+    OwnerBinding binding = resolvedVersion.binding();
+    WorldAuthoredSourceIntakeReceipt receipt = resolvedVersion.receipt();
     return dsl.insertInto(ATTEMPT)
         .set(PUBLICATION_FENCE, publicationFence)
-        .set(TARGET_NAMESPACE, evidence.targetNamespace())
-        .set(CANONICAL_TENANT_ID, evidence.canonicalTenantId())
+        .set(TARGET_NAMESPACE, binding.targetNamespace())
+        .set(CANONICAL_TENANT_ID, binding.canonicalTenantId())
         .set(LOCAL_TENANT_KEY, receipt.localTenantKey())
-        .set(VERSION_ID, evidence.versionId())
+        .set(VERSION_ID, resolvedVersion.localVersionKey())
+        .set(OWNER_BINDING_SCHEMA_VERSION, (short) 1)
+        .set(CANONICAL_VERSION_ID, binding.canonicalVersionId())
+        .set(VERSION_IDENTITY_OPERATION_ID, binding.versionIdentityOperationId())
+        .set(GAME_DESIGN_VERSION_ID, binding.gameDesignVersionId())
         .set(INTAKE_OPERATION_ID, receipt.operationId())
         .set(INTAKE_REQUEST_ID, receipt.intakeRequestId())
+        .set(INTAKE_REQUEST_DIGEST, receipt.requestDigest())
         .set(SOURCE_OPERATION_ID, receipt.sourceOperationId())
         .set(SOURCE_EVIDENCE_DIGEST, receipt.sourceEvidenceDigest())
         .set(INTAKE_RECEIPT_DIGEST, receipt.receiptDigest())
@@ -281,29 +395,58 @@ public class WorldDesignPublicationFenceRepository {
     return record == null ? null : toFrozenAttempt(record);
   }
 
-  private FrozenAttempt findAttemptByRequest(WorldDesignPublicationFenceEvidence evidence) {
+  private FrozenAttempt findAttemptByRequest(
+      WorldDesignPublicationFenceEvidence evidence, long localVersionKey) {
     Record record =
         dsl.selectFrom(ATTEMPT)
             .where(
                 TARGET_NAMESPACE
                     .eq(evidence.targetNamespace())
                     .and(CANONICAL_TENANT_ID.eq(evidence.canonicalTenantId()))
-                    .and(VERSION_ID.eq(evidence.versionId()))
+                    .and(VERSION_ID.eq(localVersionKey))
                     .and(PUBLICATION_REQUEST_ID.eq(evidence.publicationRequestId())))
             .fetchOne();
     return record == null ? null : toFrozenAttempt(record);
   }
 
+  private void rejectLegacyAttempt(
+      WorldDesignPublicationFenceEvidence evidence, long localVersionKey) {
+    Record legacyCandidate =
+        dsl.selectFrom(ATTEMPT)
+            .where(
+                TARGET_NAMESPACE
+                    .eq(evidence.targetNamespace())
+                    .and(CANONICAL_TENANT_ID.eq(evidence.canonicalTenantId()))
+                    .and(VERSION_ID.eq(localVersionKey))
+                    .and(PUBLICATION_REQUEST_ID.eq(evidence.publicationRequestId())))
+            .fetchOne();
+    if (legacyCandidate != null
+        && !Short.valueOf((short) 1)
+            .equals(legacyCandidate.get(OWNER_BINDING_SCHEMA_VERSION, Short.class))) {
+      throw new ConflictException(
+          "Legacy schema-0 World publication attempts are unqualified and cannot be promoted");
+    }
+  }
+
   private FrozenAttempt toFrozenAttempt(Record record) {
+    Short ownerBindingSchemaVersion = record.get(OWNER_BINDING_SCHEMA_VERSION, Short.class);
+    if (!Short.valueOf((short) 1).equals(ownerBindingSchemaVersion)) {
+      throw new ConflictException(
+          "Legacy schema-0 World publication attempts are unqualified and cannot be promoted");
+    }
     WorldDesignPublicationFenceEvidence request =
         new WorldDesignPublicationFenceEvidence(
             record.get(TARGET_NAMESPACE),
             record.get(CANONICAL_TENANT_ID),
-            record.get(VERSION_ID),
+            record.get(CANONICAL_VERSION_ID),
+            record.get(VERSION_IDENTITY_OPERATION_ID),
+            record.get(GAME_DESIGN_VERSION_ID),
             record.get(INTAKE_REQUEST_ID),
             record.get(INTAKE_OPERATION_ID),
+            record.get(INTAKE_REQUEST_DIGEST),
             record.get(SOURCE_OPERATION_ID),
             record.get(SOURCE_EVIDENCE_DIGEST),
+            record.get(INTAKE_RECEIPT_DIGEST),
             record.get(PUBLICATION_REQUEST_ID),
             record.get(REQUEST_DIGEST),
             record.get(VERSION_STATE_EPOCH),
@@ -358,10 +501,11 @@ public class WorldDesignPublicationFenceRepository {
     return value;
   }
 
-  private record ResolvedIntake(WorldAuthoredSourceIntakeReceipt receipt) {}
+  private record ResolvedVersion(
+      OwnerBinding binding, WorldAuthoredSourceIntakeReceipt receipt, long localVersionKey) {}
 
   /** Exact input conflicts fail closed without changing either owner or attempt history. */
-  public static final class ConflictException extends IllegalStateException {
+  public static class ConflictException extends IllegalStateException {
     public ConflictException(String message) {
       super(message);
     }
@@ -370,6 +514,13 @@ public class WorldDesignPublicationFenceRepository {
   /** No owner state may be created for a missing or not-yet-committed authored-source intake. */
   public static final class MissingIntakeException extends IllegalStateException {
     public MissingIntakeException(String message) {
+      super(message);
+    }
+  }
+
+  /** No owner state may be created for a missing V27 source-qualified Version identity. */
+  public static final class MissingVersionIdentityException extends ConflictException {
+    public MissingVersionIdentityException(String message) {
       super(message);
     }
   }

@@ -17,9 +17,12 @@ import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import java.sql.SQLException;
 import java.util.Base64;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
@@ -444,6 +447,32 @@ class TenantIdentityGrpcServiceTest {
   }
 
   @Test
+  void freshCreationReadRejectsUnknownFieldsAndAuthenticatedCallerContextBeforeOwnerRead() {
+    ResolveFreshTenantCreationRequest request =
+        ResolveFreshTenantCreationRequest.newBuilder()
+            .setCreationRequestId(FRESH_CREATION_REQUEST_ID.toString())
+            .setExpectedRequestDigest(FRESH_REQUEST_DIGEST)
+            .setUnknownFields(
+                UnknownFieldSet.newBuilder()
+                    .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
+                    .build())
+            .build();
+
+    FreshCreationObserver unknownFields = freshCreationCall(request, ACCOUNT_PEER, false);
+    FreshCreationObserver authenticatedContext =
+        freshCreationCall(
+            request.toBuilder().setUnknownFields(UnknownFieldSet.getDefaultInstance()).build(),
+            ACCOUNT_PEER,
+            true);
+
+    assertEquals(Status.Code.INVALID_ARGUMENT, freshCreationStatus(unknownFields));
+    assertEquals(Status.Code.PERMISSION_DENIED, freshCreationStatus(authenticatedContext));
+    assertNull(unknownFields.value);
+    assertNull(authenticatedContext.value);
+    verifyNoInteractions(creationRepository);
+  }
+
+  @Test
   void freshCreationReadReturnsNotFoundOnlyForExactAbsentRequest() {
     UUID requestId = UUID.fromString("11111111-1111-4111-8111-111111111111");
     String digest = "sha256:" + "c".repeat(64);
@@ -834,6 +863,17 @@ class TenantIdentityGrpcServiceTest {
 
   private FreshCreationObserver freshCreationCall(
       String creationRequestId, String expectedRequestDigest, String peerUri) {
+    return freshCreationCall(
+        ResolveFreshTenantCreationRequest.newBuilder()
+            .setCreationRequestId(creationRequestId)
+            .setExpectedRequestDigest(expectedRequestDigest)
+            .build(),
+        peerUri,
+        false);
+  }
+
+  private FreshCreationObserver freshCreationCall(
+      ResolveFreshTenantCreationRequest request, String peerUri, boolean authenticatedContext) {
     FreshCreationObserver observer = new FreshCreationObserver();
     Context context = Context.current();
     if (peerUri != null) {
@@ -841,14 +881,16 @@ class TenantIdentityGrpcServiceTest {
           context.withValue(
               GrpcPeerIdentity.CONTEXT_KEY, GrpcPeerIdentity.parseUri(peerUri).orElseThrow());
     }
-    context.run(
-        () ->
-            service.resolveFreshTenantCreation(
-                ResolveFreshTenantCreationRequest.newBuilder()
-                    .setCreationRequestId(creationRequestId)
-                    .setExpectedRequestDigest(expectedRequestDigest)
-                    .build(),
-                observer));
+    if (authenticatedContext) {
+      SessionContext.setContext(FRESH_CANONICAL_TENANT_ID.toString(), List.of(), Map.of());
+    }
+    try {
+      context.run(() -> service.resolveFreshTenantCreation(request, observer));
+    } finally {
+      if (authenticatedContext) {
+        SessionContext.clear();
+      }
+    }
     return observer;
   }
 
