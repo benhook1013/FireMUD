@@ -2151,6 +2151,7 @@ jobs:
             --require-case 'net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepositoryIntegrationTest#samePublicationRequestCannotSelectAnotherVersionInTheSameTenant()' \
             --require-case 'net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepositoryIntegrationTest#concurrentPublicationRequestClaimsAcrossVersionsRetainOnlyOneSelection()' \
             --require-case 'net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepositoryIntegrationTest#v44PreservesExactSelectionsRetainedAtV43()' \
+            --require-case 'net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepositoryIntegrationTest#v45PreservesRetainedAttemptDigestsAndStoresExactSelectionDigest()' \
             --require-case 'net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepositoryIntegrationTest#v44RejectsConflictingRetainedRequestAcrossVersionsWithoutDiscardingEitherHistory()' \
             --require-case 'net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepositoryIntegrationTest#versionRowLockSerializesSelectionAgainstApplicationSlotClaim()' \
             game-design-service
@@ -2166,6 +2167,10 @@ jobs:
             --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredGraphSnapshotPostgresIntegrationTest#wrongTenantVersionParentEdgeDeniesCaptureBeforeSnapshotRetention()' \
             --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredGraphSnapshotPostgresIntegrationTest#schemaOneAttemptCannotOmitExactIntakeRequestDigestOrMutateOwnerHistory()' \
             --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredGraphSnapshotPostgresIntegrationTest#canonicalAuthoredRowsStillRejectLegacyWritesAfterSyntheticFixtureSetup()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredGraphSnapshotPostgresIntegrationTest#sourceQualifiedOpenStagingReadsAllSixFamiliesWithoutChangingDatabaseContent()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredGraphSnapshotPostgresIntegrationTest#sourceQualifiedStagingRejectsChangedIntakeEvidenceBeforeOwnerCreation()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredGraphSnapshotPostgresIntegrationTest#sourceQualifiedStagingRejectsFrozenOwnerBeforeReadingAnInvalidPriorGraph()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredGraphSnapshotPostgresIntegrationTest#sourceQualifiedStagingRejectsCrossVersionParentAndLateInvalidRevisionWithoutAnyApply()' \
             --require-case 'net.firedevops.firemud.worldmanagement.WorldDesignPublicationFenceIntegrationTest#rollbackAndCommittedExactReadbackRetainOneImmutableAttempt()' \
             --require-case 'net.firedevops.firemud.worldmanagement.WorldDesignPublicationFenceIntegrationTest#schemaZeroAttemptAtResolvedLocalKeyCannotBePromotedByNumericCoincidence()' \
             --require-case 'net.firedevops.firemud.worldmanagement.WorldDesignPublicationFenceIntegrationTest#sameGameDesignSelectorUsesDistinctWorldLocalVersionRowsAcrossIntakes()' \
@@ -2206,7 +2211,13 @@ jobs:
             --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#tenantRoleMutationRejectsNonExplicitMembershipWithoutChangingAnyAccountSource()' \
             --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#invalidatingTenantRoleMutationDeniesFenceOverflowWithoutChangingAnyAccountSource()' \
             --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#concurrentOpposingTenantAdminTransfersLeaveOneCurrentAdministrator()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#tenantRoleSourceWaitsForBothCommittedOwnersAndRecoversOriginalPendingCapture()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#tenantRoleRevocationWinsOrderButWaitsForBothFencedAbortReadbacks()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#tenantRoleTransferParticipatesInBothMembershipsAndAccountIssuanceScope()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#tenantRolePendingRetryRejectsChangedIdentityAndNeverRecapturesLaterSource()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountTenantRoleOperationRepositoryPostgresIntegrationTest#immutableJournalRetriesOriginalBytesAfterLaterRoleOperationAndRejectsChangedIntent()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountTenantRoleOperationRepositoryPostgresIntegrationTest#forwardPendingMigrationPreservesExistingV56CommittedResultExactly()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountTenantRoleOperationRepositoryPostgresIntegrationTest#onlyExactLinkedWaitingIntentMayPersistAndItsCaptureCannotBeChanged()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountTenantRoleOperationRepositoryPostgresIntegrationTest#operationJournalAndMemberEvidenceRollBackTogether()' \
             account-service
 

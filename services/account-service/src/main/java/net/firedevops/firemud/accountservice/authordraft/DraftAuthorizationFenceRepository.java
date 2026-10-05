@@ -130,6 +130,37 @@ public final class DraftAuthorizationFenceRepository {
       DraftAuthorizationFenceBinding.frame(out, mutation);
       return out.toByteArray();
     }
+
+    /**
+     * Exact recovery of the original vector; callers must never replace it with a fresh capture.
+     */
+    public static SourceChange fromStored(byte[] stored) {
+      var reader = new DraftAuthorizationFenceBinding.FrameReader(stored);
+      reader.expect("account-draft-source-change/v1");
+      String id = reader.text();
+      DraftAuthorizationFenceBinding.canonicalUuid(id);
+      String count = reader.text();
+      DraftAuthorizationFenceBinding.decimal(count, false);
+      final int size;
+      try {
+        size = Integer.parseInt(count);
+      } catch (NumberFormatException invalid) {
+        throw new IllegalArgumentException("Stored source count is out of range", invalid);
+      }
+      if (size > reader.remaining() / Integer.BYTES) {
+        throw new IllegalArgumentException("Incomplete stored source vector");
+      }
+      java.util.ArrayList<SourceEvidence> sources = new java.util.ArrayList<>();
+      for (int i = 0; i < size; i++) {
+        sources.add(SourceEvidence.fromStored(reader.bytes()));
+      }
+      SourceChange change = new SourceChange(UUID.fromString(id), sources, reader.bytes());
+      reader.requireEnd();
+      if (!Arrays.equals(stored, change.canonicalBytes())) {
+        throw new IllegalArgumentException("Noncanonical stored source change");
+      }
+      return change;
+    }
   }
 
   /**

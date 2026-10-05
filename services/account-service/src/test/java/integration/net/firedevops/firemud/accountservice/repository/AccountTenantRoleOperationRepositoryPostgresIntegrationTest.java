@@ -10,6 +10,10 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import javax.sql.DataSource;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.SourceEvidence;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.SourceKind;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.SourceChange;
 import net.firedevops.firemud.accountservice.dto.AccountAuditDigest;
 import net.firedevops.firemud.accountservice.repository.AccountTenantRoleMutationDigest.MemberResult;
 import net.firedevops.firemud.accountservice.repository.AccountTenantRoleOperationRepository;
@@ -136,6 +140,126 @@ class AccountTenantRoleOperationRepositoryPostgresIntegrationTest {
   }
 
   @Test
+  void forwardPendingMigrationPreservesExistingV56CommittedResultExactly() {
+    TestContext context = newTestContext("56");
+    UUID actor = insertAccount(context.setupDsl());
+    UUID target = insertAccount(context.setupDsl());
+    Request request =
+        request(UUID.randomUUID(), actor, UUID.randomUUID(), target, Action.GRANT_DESIGNER, 4L, 7L);
+    OperationEvidence original =
+        inTransaction(
+            context.transaction(),
+            () -> {
+              context.repository().claim(request);
+              return context
+                  .repository()
+                  .complete(
+                      request,
+                      audit(UUID.randomUUID(), "{\"v56\":true}"),
+                      List.of(
+                          member(
+                              request, target, 8L, 1L, 1L, List.of("designer", "player"), false)));
+            });
+    String schema =
+        context.setupDsl().resultQuery("SELECT current_schema()").fetchOne(0, String.class);
+    Flyway.configure()
+        .dataSource(context.dataSource())
+        .schemas(schema)
+        .defaultSchema(schema)
+        .placeholders(Map.of("serviceSchema", schema))
+        .locations("classpath:db/migration")
+        .load()
+        .migrate();
+    OperationEvidence replay =
+        inTransaction(
+            context.transaction(),
+            () -> context.repository().claim(request).replay().orElseThrow());
+    assertExactOperation(original, replay);
+    assertThat(
+            this.<java.util.Optional<SourceChange>>inTransaction(
+                context.transaction(),
+                () -> context.repository().findSourceChangeForUpdate(request)))
+        .isEmpty();
+  }
+
+  @Test
+  void onlyExactLinkedWaitingIntentMayPersistAndItsCaptureCannotBeChanged() {
+    TestContext context = newTestContext();
+    UUID actor = insertAccount(context.setupDsl());
+    UUID target = insertAccount(context.setupDsl());
+    Request request =
+        request(UUID.randomUUID(), actor, UUID.randomUUID(), target, Action.GRANT_DESIGNER, 4L, 7L);
+    assertThatThrownBy(
+            () -> inTransaction(context.transaction(), () -> context.repository().claim(request)))
+        .isInstanceOf(org.springframework.transaction.TransactionException.class);
+    // Synthetic verified source prerequisites: storage/recovery proof, not authenticated capture.
+    SourceChange original =
+        new SourceChange(
+            request.requestId(),
+            List.of(
+                new SourceEvidence(
+                    SourceKind.MEMBERSHIP,
+                    target + "/" + request.tenantUuid(),
+                    "1",
+                    "922337203685477580812345",
+                    "synthetic-membership-stream",
+                    "0",
+                    new byte[] {1})),
+            request.payload());
+    var fences =
+        new DraftAuthorizationFenceRepository(
+            DSL.using(
+                new TransactionAwareDataSourceProxy(context.dataSource()), SQLDialect.POSTGRES));
+    inTransaction(
+        context.transaction(),
+        () -> {
+          context.repository().claim(request);
+          fences.requestSourceChange(original);
+          context.repository().captureSourceChange(request, original);
+          return null;
+        });
+    OperationEvidence pending =
+        inTransaction(
+            context.transaction(),
+            () -> context.repository().claim(request).replay().orElseThrow());
+    assertThat(pending.pending()).isTrue();
+    assertThat(pending.members()).isEmpty();
+    assertThat(pending.audit()).isNull();
+    assertThat(
+            this.<byte[]>inTransaction(
+                context.transaction(),
+                () ->
+                    context
+                        .repository()
+                        .findSourceChangeForUpdate(request)
+                        .orElseThrow()
+                        .canonicalBytes()))
+        .containsExactly(original.canonicalBytes());
+    assertThatThrownBy(
+            () ->
+                context
+                    .setupDsl()
+                    .execute(
+                        "UPDATE account_tenant_role_operations SET source_change_binding = ? WHERE request_id = ?",
+                        new byte[] {2},
+                        request.requestId()))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class);
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    context.transaction(),
+                    () -> {
+                      fences.markSourceCommitted(original);
+                      return null;
+                    }))
+        .isInstanceOf(org.springframework.transaction.TransactionException.class);
+    assertThat(
+            this.<String>inTransaction(
+                context.transaction(), () -> fences.readSourceChange(original).status()))
+        .isEqualTo("WAITING");
+  }
+
+  @Test
   void operationJournalAndMemberEvidenceRollBackTogether() {
     TestContext context = newTestContext();
     UUID actor = insertAccount(context.setupDsl());
@@ -189,20 +313,27 @@ class AccountTenantRoleOperationRepositoryPostgresIntegrationTest {
   }
 
   private TestContext newTestContext() {
+    return newTestContext(null);
+  }
+
+  private TestContext newTestContext(String targetVersion) {
     String schema = SCHEMA_PREFIX + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
     dataSource.setUrl(postgres.getJdbcUrl());
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
     dataSource.setSchema(schema);
-    Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .placeholders(Map.of("serviceSchema", schema))
-        .locations("classpath:db/migration")
-        .load()
-        .migrate();
+    var migration =
+        Flyway.configure()
+            .dataSource(dataSource)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .placeholders(Map.of("serviceSchema", schema))
+            .locations("classpath:db/migration");
+    if (targetVersion != null) {
+      migration.target(targetVersion);
+    }
+    migration.load().migrate();
     DSLContext setupDsl = DSL.using(dataSource, SQLDialect.POSTGRES);
     DSLContext transactionDsl =
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);

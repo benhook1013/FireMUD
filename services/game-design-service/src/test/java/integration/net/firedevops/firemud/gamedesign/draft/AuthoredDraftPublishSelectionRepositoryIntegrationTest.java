@@ -68,6 +68,73 @@ class AuthoredDraftPublishSelectionRepositoryIntegrationTest {
   }
 
   @Test
+  void v45PreservesRetainedAttemptDigestsAndStoresExactSelectionDigest() {
+    Fixture retained = createFixture("44");
+    VersionFixture version = retained.newVersion(1L);
+    for (int index = 0; index < 3; index++) {
+      retained
+          .dsl()
+          .execute(
+              "INSERT INTO publish_attempt "
+                  + "(tenant_id, publish_workflow_id, publish_type, status, version_id, "
+                  + "version_number, request_digest) VALUES (?, ?, ?, ?, ?, ?, ?)",
+              version.target().gameDesignVersionTenantKey(),
+              "retained-attempt-" + index,
+              index == 2 ? "SCRIPT_PATCH" : "FULL_VERSION",
+              index == 0 ? "PENDING" : index == 1 ? "SUCCEEDED" : "FAILED",
+              version.rowId(),
+              1,
+              index == 2 ? null : "a".repeat(64));
+    }
+    List<Map<String, Object>> before =
+        retained.dsl().fetch("SELECT * FROM publish_attempt ORDER BY id").intoMaps();
+    assertThat(before).hasSize(3);
+
+    migrate(retained.dataSource(), retained.schema(), "45");
+
+    assertThat(retained.dsl().fetch("SELECT * FROM publish_attempt ORDER BY id").intoMaps())
+        .isEqualTo(before);
+    assertThat(
+            retained
+                .dsl()
+                .fetchValue(
+                    "SELECT character_maximum_length FROM information_schema.columns "
+                        + "WHERE table_schema = ? AND table_name = 'publish_attempt' "
+                        + "AND column_name = 'request_digest'",
+                    retained.schema()))
+        .isEqualTo(71);
+    DraftCommitBinding commit = binding(version.target(), UUID.randomUUID(), UUID.randomUUID());
+    retained.synchronize(commit);
+    SelectionSnapshot selected = reserve(retained, intent(version, commit, "exact selection"));
+    String workflowId = "selected-attempt-" + UUID.randomUUID();
+    retained
+        .dsl()
+        .execute(
+            "INSERT INTO publish_attempt "
+                + "(tenant_id, publish_workflow_id, publish_type, status, version_id, "
+                + "version_number, request_digest) VALUES (?, ?, 'FULL_VERSION', 'PENDING', ?, 1, ?)",
+            version.target().gameDesignVersionTenantKey(),
+            workflowId,
+            version.rowId(),
+            selected.selection().digest());
+    assertThat(
+            retained
+                .dsl()
+                .fetchValue(
+                    "SELECT request_digest FROM publish_attempt WHERE publish_workflow_id = ?",
+                    workflowId))
+        .isEqualTo(selected.selection().digest());
+    assertThat(
+            retained
+                .dsl()
+                .fetch(
+                    "SELECT * FROM publish_attempt WHERE publish_workflow_id <> ? ORDER BY id",
+                    workflowId)
+                .intoMaps())
+        .isEqualTo(before);
+  }
+
+  @Test
   void v44PreservesExactSelectionsRetainedAtV43() {
     Fixture retained = createFixture("43");
     VersionFixture first = retained.newVersion(Long.parseLong(LARGE_EPOCH));

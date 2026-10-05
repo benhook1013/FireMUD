@@ -3,6 +3,7 @@ package net.firedevops.firemud.accountservice.service;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -11,6 +12,10 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.SourceEvidence;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.SourceKind;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.SourceChange;
 import net.firedevops.firemud.accountservice.dto.AccountAuditEnvelope;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
@@ -39,6 +44,8 @@ import net.firedevops.firemud.accountservice.repository.ApprovedLegacyTenantAsso
 import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer.PositiveMembershipSnapshot;
 import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer.TenantRoleEventEvidence;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
+import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
+import org.jooq.DSLContext;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -65,6 +72,7 @@ public class AccountTenantRoleMutationService {
   private final AccountTenantRoleOperationRepository operationRepository;
   private final AccountAuditOutboxRepository auditOutboxRepository;
   private final AccountMembershipAuthorityEventProducer eventProducer;
+  private final DraftAuthorizationFenceRepository draftFenceRepository;
 
   @SuppressFBWarnings(
       value = "CT_CONSTRUCTOR_THROW",
@@ -80,7 +88,8 @@ public class AccountTenantRoleMutationService {
       AccountMembershipPairAuthorityRepository pairAuthorityRepository,
       AccountTenantRoleOperationRepository operationRepository,
       AccountAuditOutboxRepository auditOutboxRepository,
-      AccountMembershipAuthorityEventProducer eventProducer) {
+      AccountMembershipAuthorityEventProducer eventProducer,
+      DSLContext dsl) {
     this.accountRepository = Objects.requireNonNull(accountRepository);
     this.tenantIdentityResolver = Objects.requireNonNull(tenantIdentityResolver);
     this.authorityGenerationRepository = Objects.requireNonNull(authorityGenerationRepository);
@@ -90,11 +99,13 @@ public class AccountTenantRoleMutationService {
     this.operationRepository = Objects.requireNonNull(operationRepository);
     this.auditOutboxRepository = Objects.requireNonNull(auditOutboxRepository);
     this.eventProducer = Objects.requireNonNull(eventProducer);
+    this.draftFenceRepository = new DraftAuthorizationFenceRepository(dsl);
   }
 
   /**
-   * Applies one role-source mutation inside a single Account write transaction. No transport or
-   * authenticated actor proof is accepted here; public Account/runtime ingress remains denied.
+   * Applies one role-source mutation, or commits only its original pending source intent when Draft
+   * participants have not settled. A pending result has no member, audit or authorization evidence.
+   * No transport or authenticated actor proof is accepted here; public ingress remains denied.
    */
   @Transactional
   public OperationEvidence mutate(Request request) {
@@ -117,9 +128,13 @@ public class AccountTenantRoleMutationService {
     AccountTenantRoleOperationRepository.Claim claim = operationRepository.claim(request);
     if (!claim.claimed()) {
       OperationEvidence replay = claim.replay().orElseThrow();
-      verifyExactReplay(replay);
-      return replay;
+      if (!replay.pending()) {
+        verifyExactReplay(replay);
+        return replay;
+      }
     }
+    SourceChange originalChange =
+        operationRepository.findSourceChangeForUpdate(request).orElse(null);
 
     // The tenant generation row is the shared-source serialization point for same-tenant writes.
     for (UUID accountUuid : orderedAccountUuids) {
@@ -164,7 +179,7 @@ public class AccountTenantRoleMutationService {
             .sorted(Comparator.comparing(change -> change.accountUuid().toString()))
             .toList();
 
-    List<AccountTenantRoleMutationDigest.MemberResult> memberResults = new ArrayList<>();
+    List<PreparedChange> preparedChanges = new ArrayList<>();
     for (RoleChange change : orderedChanges) {
       AccountTenantMembership membership =
           membershipRepository
@@ -213,6 +228,40 @@ public class AccountTenantRoleMutationService {
       }
       if (change.invalidated()) {
         increment(authority.issuanceFence().value(), "issuance fence");
+        increment(authority.issuanceFence().sourceVersion(), "issuance fence source version");
+        increment(memberState.generation(), "membership authority generation");
+        increment(memberState.sourceVersion(), "membership authority source version");
+      }
+      increment(membership.getMembershipVersion(), "membership version");
+      preparedChanges.add(new PreparedChange(change, membership, pair, authority));
+    }
+
+    // Actual Account source rows remain locked through capture, ordering and any source commit.
+    // An exact pending retry revalidates against, but never replaces, its original stored vector.
+    SourceChange currentChange = sourceChange(request, preparedChanges);
+    SourceChange sourceChange = originalChange == null ? currentChange : originalChange;
+    if (!Arrays.equals(sourceChange.canonicalBytes(), currentChange.canonicalBytes())) {
+      throw new AccountTenantRoleOperationRepository.OperationConflictException(
+          "Tenant-role current source differs from its original pending capture");
+    }
+    boolean settled = draftFenceRepository.requestSourceChange(sourceChange);
+    if (originalChange == null) {
+      operationRepository.captureSourceChange(request, sourceChange);
+    }
+    if (!settled || !draftFenceRepository.sourceMutationPermitted(sourceChange)) {
+      // Returning normally is essential: V57's WAITING revocation and the immutable role request
+      // must survive a retry/process loss rather than rolling back with a thrown denial.
+      return operationRepository.findForUpdate(request.requestId()).orElseThrow();
+    }
+
+    List<AccountTenantRoleMutationDigest.MemberResult> memberResults = new ArrayList<>();
+    for (PreparedChange prepared : preparedChanges) {
+      RoleChange change = prepared.change();
+      AccountTenantMembership membership = prepared.membership();
+      PairAuthority pair = prepared.pair();
+      CompositeSnapshot authority = prepared.authority();
+      ScopeState memberState = authority.memberships().getFirst();
+      if (change.invalidated()) {
         memberState = authorityGenerationRepository.advance(memberState, authority.issuanceFence());
       }
 
@@ -270,6 +319,7 @@ public class AccountTenantRoleMutationService {
             auditEnvelope.occurredAt(),
             auditEnvelope.payloadDigest(),
             auditEnvelope.payload().getBytes(StandardCharsets.UTF_8));
+    draftFenceRepository.markSourceCommitted(sourceChange);
     OperationEvidence completed =
         operationRepository.complete(request, auditEvidence, memberResults);
 
@@ -304,6 +354,74 @@ public class AccountTenantRoleMutationService {
       }
     }
     return completed;
+  }
+
+  private SourceChange sourceChange(Request request, List<PreparedChange> preparedChanges) {
+    List<SourceEvidence> sources = new ArrayList<>();
+    for (PreparedChange prepared : preparedChanges) {
+      RoleChange change = prepared.change();
+      CompositeSnapshot authority = prepared.authority();
+      ScopeState membership = authority.memberships().getFirst();
+      var event = change.current().authorityEvent();
+      sources.add(
+          new SourceEvidence(
+              SourceKind.MEMBERSHIP,
+              change.accountUuid() + "/" + request.tenantUuid(),
+              Long.toString(membership.generation()),
+              Long.toString(membership.sourceVersion()),
+              event.outboxStreamKey(),
+              event.outboxSequence(),
+              event.canonicalJsonUtf8()));
+      if (change.invalidated()) {
+        // Membership invalidation also changes this Account's issuance fence. ACCOUNT participation
+        // therefore uses the actual independent Account source state and its actual checkpoint,
+        // with both issuance-fence counters bound separately in the evidence; no counter aliasing.
+        ScopeState account = authority.account();
+        String stream =
+            MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX + "account/" + change.accountUuid();
+        var checkpoint =
+            change.current().outboxCheckpoints().stream()
+                .filter(candidate -> stream.equals(candidate.outboxStreamKey()))
+                .findFirst()
+                .orElseThrow(
+                    () -> new IllegalStateException("Account source checkpoint is absent"));
+        var sourceEvent =
+            change.current().outboxSourceEvidence().stream()
+                .filter(candidate -> stream.equals(candidate.outboxStreamKey()))
+                .findFirst();
+        if ("0".equals(checkpoint.outboxSequence()) == sourceEvent.isPresent()
+            || (sourceEvent.isPresent()
+                && !checkpoint
+                    .outboxSequence()
+                    .equals(sourceEvent.orElseThrow().outboxSequence()))) {
+          throw new IllegalStateException("Account source event and checkpoint differ");
+        }
+        byte[] evidence =
+            AUDIT_JSON
+                .writeValueAsString(
+                    new AccountFenceCapture(
+                        "account-tenant-role-issuance-source/v1",
+                        change.accountUuid().toString(),
+                        Long.toString(account.generation()),
+                        Long.toString(account.sourceVersion()),
+                        Long.toString(authority.issuanceFence().value()),
+                        Long.toString(authority.issuanceFence().sourceVersion()),
+                        stream,
+                        checkpoint.outboxSequence(),
+                        sourceEvent.map(candidate -> candidate.canonicalEventJson()).orElse(null)))
+                .getBytes(StandardCharsets.UTF_8);
+        sources.add(
+            new SourceEvidence(
+                SourceKind.ACCOUNT,
+                change.accountUuid().toString(),
+                Long.toString(account.generation()),
+                Long.toString(account.sourceVersion()),
+                stream,
+                checkpoint.outboxSequence(),
+                evidence));
+      }
+    }
+    return new SourceChange(request.requestId(), sources, request.payload());
   }
 
   private Map<UUID, RoleChange> roleChanges(
@@ -384,6 +502,15 @@ public class AccountTenantRoleMutationService {
     if (!"COMMITTED".equals(operation.status()) || operation.audit() == null) {
       throw new IllegalStateException("Tenant-role exact retry lacks committed immutable evidence");
     }
+    operationRepository
+        .findSourceChangeForUpdate(operation.request())
+        .ifPresent(
+            change -> {
+              if (!"SOURCE_COMMITTED"
+                  .equals(draftFenceRepository.readSourceChange(change).status())) {
+                throw new IllegalStateException("Tenant-role committed source readback differs");
+              }
+            });
     AuditEvidence audit = operation.audit();
     auditOutboxRepository
         .findCanonicalTenantRoleEnvelopeForUpdate(
@@ -501,6 +628,23 @@ public class AccountTenantRoleMutationService {
       PositiveMembershipSnapshot current,
       List<String> roles,
       boolean invalidated) {}
+
+  private record PreparedChange(
+      RoleChange change,
+      AccountTenantMembership membership,
+      PairAuthority pair,
+      CompositeSnapshot authority) {}
+
+  private record AccountFenceCapture(
+      String schema,
+      String accountId,
+      String generation,
+      String sourceVersion,
+      String issuanceFence,
+      String issuanceFenceSourceVersion,
+      String checkpointStream,
+      String checkpointSequence,
+      String canonicalEventJson) {}
 
   private record AuditPayload(
       String schema,

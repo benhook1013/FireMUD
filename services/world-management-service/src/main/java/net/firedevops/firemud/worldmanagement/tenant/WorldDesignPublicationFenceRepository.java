@@ -129,6 +129,19 @@ public class WorldDesignPublicationFenceRepository {
    */
   @Transactional(propagation = Propagation.MANDATORY)
   public void lockOpen(OwnerBinding binding) {
+    lockOpenAndResolve(binding);
+  }
+
+  /** Exact retained source and private keys, available only after the OPEN owner lock is held. */
+  record OpenOwner(
+      OwnerBinding binding, WorldAuthoredSourceIntakeReceipt receipt, long localVersionKey) {
+    long localTenantKey() {
+      return receipt.localTenantKey();
+    }
+  }
+
+  @Transactional(propagation = Propagation.MANDATORY)
+  OpenOwner lockOpenAndResolve(OwnerBinding binding) {
     requireWritableReadCommittedOwnerTransaction();
     ResolvedVersion resolvedVersion = resolveVersion(binding);
     Record owner = createAndLockOwner(resolvedVersion);
@@ -139,6 +152,7 @@ public class WorldDesignPublicationFenceRepository {
     if (owner.get(CURRENT_PUBLICATION_FENCE, UUID.class) != null) {
       throw new ConflictException("Open World version unexpectedly retains a publication fence");
     }
+    return new OpenOwner(binding, resolvedVersion.receipt(), resolvedVersion.localVersionKey());
   }
 
   /**

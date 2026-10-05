@@ -20,6 +20,48 @@ import org.junit.jupiter.api.Test;
 
 class DraftAuthorizationFenceBindingTest {
   @Test
+  void originalSourceChangeRoundTripsWithoutNarrowingIndependentCounters() {
+    SourceEvidence source =
+        new SourceEvidence(
+            SourceKind.MEMBERSHIP,
+            UUID.randomUUID() + "/" + UUID.randomUUID(),
+            "922337203685477580812345",
+            "922337203685477581812345",
+            "membership-stream",
+            "922337203685477583812345",
+            "unchanged-original-event".getBytes(StandardCharsets.UTF_8));
+    SourceChange original =
+        new SourceChange(UUID.randomUUID(), List.of(source), new byte[] {1, 2, 3});
+    SourceChange recovered = SourceChange.fromStored(original.canonicalBytes());
+    assertThat(recovered.canonicalBytes()).containsExactly(original.canonicalBytes());
+    assertThat(recovered.sources().getFirst().generation()).isEqualTo(source.generation());
+    assertThat(recovered.sources().getFirst().sourceVersion()).isEqualTo(source.sourceVersion());
+    assertThat(recovered.sources().getFirst().checkpointSequence())
+        .isEqualTo(source.checkpointSequence());
+    assertThat(recovered.mutation()).containsExactly(original.mutation());
+  }
+
+  @Test
+  void originalSourceChangeRejectsMalformedFramesAndNoncanonicalRecoveryBytes() {
+    SourceChange original = new SourceChange(UUID.randomUUID(), List.of(source()), new byte[] {1});
+    byte[] stored = original.canonicalBytes();
+    assertThatThrownBy(
+            () -> SourceChange.fromStored(java.util.Arrays.copyOf(stored, stored.length - 1)))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () -> SourceChange.fromStored(java.util.Arrays.copyOf(stored, stored.length + 1)))
+        .isInstanceOf(IllegalArgumentException.class);
+    byte[] negativeSize = stored.clone();
+    java.nio.ByteBuffer.wrap(negativeSize).putInt(-1);
+    assertThatThrownBy(() -> SourceChange.fromStored(negativeSize))
+        .isInstanceOf(IllegalArgumentException.class);
+    byte[] impossibleSize = stored.clone();
+    java.nio.ByteBuffer.wrap(impossibleSize).putInt(Integer.MAX_VALUE);
+    assertThatThrownBy(() -> SourceChange.fromStored(impossibleSize))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
   void copiedSourceListsAndEvidenceCannotRewriteBindingOrSourceChange() {
     byte[] evidence = new byte[] {1, 2};
     SourceEvidence source =

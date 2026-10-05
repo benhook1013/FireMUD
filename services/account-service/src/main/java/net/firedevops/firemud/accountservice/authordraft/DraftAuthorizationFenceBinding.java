@@ -3,6 +3,7 @@ package net.firedevops.firemud.accountservice.authordraft;
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -194,6 +195,84 @@ public record DraftAuthorizationFenceBinding(
       }
       frame(output, evidence);
       return output.toByteArray();
+    }
+
+    /** Decodes only the exact immutable framing written by this source owner. */
+    public static SourceEvidence fromStored(byte[] stored) {
+      FrameReader reader = new FrameReader(stored);
+      reader.expect("account-draft-source-evidence/v1");
+      SourceKind kind = SourceKind.valueOf(reader.text());
+      String scope = reader.text();
+      String generation = reader.optionalText();
+      String version = reader.text();
+      String stream = reader.optionalText();
+      String sequence = stream == null ? null : reader.text();
+      SourceEvidence source =
+          new SourceEvidence(kind, scope, generation, version, stream, sequence, reader.bytes());
+      reader.requireEnd();
+      if (!Arrays.equals(stored, source.canonicalBytes())) {
+        throw new IllegalArgumentException("Noncanonical stored source evidence");
+      }
+      return source;
+    }
+  }
+
+  /** Bounded exact frame decoding for persisted source evidence and source-change intent. */
+  static final class FrameReader {
+    private final ByteBuffer input;
+
+    FrameReader(byte[] stored) {
+      input = ByteBuffer.wrap(DraftAuthorizationFenceBinding.bytes(stored));
+    }
+
+    byte[] bytes() {
+      if (input.remaining() < Integer.BYTES) {
+        throw new IllegalArgumentException("Truncated immutable source frame");
+      }
+      int size = input.getInt();
+      if (size < 0 || size > input.remaining()) {
+        throw new IllegalArgumentException("Invalid immutable source frame size");
+      }
+      byte[] value = new byte[size];
+      input.get(value);
+      return value;
+    }
+
+    String text() {
+      byte[] value = bytes();
+      String text = new String(value, StandardCharsets.UTF_8);
+      DraftAuthorizationFenceBinding.text(text);
+      if (!Arrays.equals(value, text.getBytes(StandardCharsets.UTF_8))) {
+        throw new IllegalArgumentException("Invalid UTF-8 source frame");
+      }
+      return text;
+    }
+
+    String optionalText() {
+      String presence = text();
+      if ("ABSENT".equals(presence)) {
+        return null;
+      }
+      if (!"PRESENT".equals(presence)) {
+        throw new IllegalArgumentException("Invalid immutable source presence");
+      }
+      return text();
+    }
+
+    void expect(String expected) {
+      if (!expected.equals(text())) {
+        throw new IllegalArgumentException("Unsupported immutable source schema");
+      }
+    }
+
+    int remaining() {
+      return input.remaining();
+    }
+
+    void requireEnd() {
+      if (input.hasRemaining()) {
+        throw new IllegalArgumentException("Trailing immutable source frames");
+      }
     }
   }
 

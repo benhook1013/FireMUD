@@ -3,8 +3,11 @@ package net.firedevops.firemud.worldmanagement;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.util.JsonFormat;
 import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
@@ -13,11 +16,15 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateEvidence;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
+import net.firedevops.firemud.gamedesign.v1.WorldDesignMutationRevision;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
@@ -40,6 +47,13 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFence
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceEvidence.Checkpoint;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceEvidence.FrozenAttempt;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceRepository;
+import net.firedevops.firemud.worldmanagement.tenant.WorldDraftRegionCommitPlan;
+import net.firedevops.firemud.worldmanagement.tenant.WorldDraftRegionGraphStager.UnverifiedStagedContent;
+import net.firedevops.firemud.worldmanagement.tenant.WorldDraftRegionStagingService;
+import net.firedevops.firemud.worldmanagement.v1.RegionDesignMutation;
+import net.firedevops.firemud.worldmanagement.v1.WorldDesignAggregateType;
+import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationOperation;
+import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeType;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -367,18 +381,303 @@ class WorldAuthoredGraphSnapshotPostgresIntegrationTest {
         .isEqualTo(WorldAuthoredGraphSnapshot.OwnerCommitProofStatus.CAPTURED_UNVERIFIED);
   }
 
+  @Test
+  void sourceQualifiedOpenStagingReadsAllSixFamiliesWithoutChangingDatabaseContent() {
+    Fixture fixture = fixture(false, false);
+    WorldDraftRegionCommitPlan plan = stagingPlan(fixture, ownerBinding(fixture), false);
+    List<Long> before = syntheticRetentionRowCounts(fixture);
+    UnverifiedStagedContent staged =
+        ownerTransaction()
+            .execute(
+                status ->
+                    new WorldDraftRegionStagingService(dsl, publicationFenceRepository)
+                        .stage(plan));
+
+    assertThat(staged.binding()).isSameAs(plan.binding());
+    assertThat(staged.ownerBinding()).isSameAs(plan.ownerBinding());
+    assertThat(fixture.localVersionKey()).isNotEqualTo(fixture.gameDesignVersionId());
+    assertThat(fixture.intakeReceipt().localTenantKey())
+        .isNotEqualTo(fixture.intakeReceipt().source().sourceGameRowId());
+    assertThat(staged.graph().regions()).hasSize(2);
+    assertThat(staged.graph().regions().get(0)).containsEntry("name", "Staged region");
+    assertThat(staged.graph().regions().get(1)).containsEntry("name", "Untouched region");
+    assertThat(staged.graph().zones()).hasSize(1);
+    assertThat(staged.graph().rooms())
+        .singleElement()
+        .satisfies(room -> assertThat(room).containsEntry("description", null));
+    assertThat(staged.graph().roomExits()).hasSize(1);
+    assertThat(staged.graph().generationRules()).hasSize(1);
+    assertThat(staged.graph().spawnBindings())
+        .singleElement()
+        .satisfies(binding -> assertThat(binding).containsEntry("entityTemplateId", LARGE_VALUE));
+    assertThat(syntheticRetentionRowCounts(fixture)).isEqualTo(before);
+    assertThat(snapshotCount(fixture.request().publicationFence())).isZero();
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT owner_freeze_phase FROM world_design_publication_fence_owner "
+                            + "WHERE target_namespace = ? AND canonical_tenant_id = ? AND version_id = ?",
+                        NAMESPACE,
+                        fixture.request().canonicalTenantId(),
+                        fixture.localVersionKey()),
+                    "Staging must retain its exact OPEN owner row")
+                .get(0, String.class))
+        .isEqualTo("OPEN");
+
+    // Both components must retain identical field/order/null/number encoding. This synthetic
+    // snapshot fixture proves representation equality, not synchronized owner application.
+    WorldAuthoredGraphSnapshot original =
+        ownerTransaction()
+            .execute(status -> captureComponent().capture(freezeOpenFixture(fixture)));
+    String expected =
+        new String(original.graphBytes(), StandardCharsets.UTF_8)
+            .replace("\"name\":\"authored region\"", "\"name\":\"Staged region\"");
+    assertThat(new String(staged.graph().encode(objectMapper), StandardCharsets.UTF_8))
+        .isEqualTo(expected);
+  }
+
+  @Test
+  void sourceQualifiedStagingRejectsChangedIntakeEvidenceBeforeOwnerCreation() {
+    Fixture fixture = fixture(false, false);
+    WorldDesignPublicationFenceEvidence.OwnerBinding exact = ownerBinding(fixture);
+    WorldDesignPublicationFenceEvidence.OwnerBinding changed =
+        new WorldDesignPublicationFenceEvidence.OwnerBinding(
+            exact.targetNamespace(),
+            exact.canonicalTenantId(),
+            exact.canonicalVersionId(),
+            exact.versionIdentityOperationId(),
+            exact.gameDesignVersionId(),
+            exact.intakeRequestId(),
+            exact.intakeOperationId(),
+            exact.intakeRequestDigest(),
+            exact.sourceOperationId(),
+            "sha256:" + "f".repeat(64),
+            exact.intakeReceiptDigest());
+    WorldDraftRegionCommitPlan plan = stagingPlan(fixture, changed, false);
+    List<Long> before = syntheticRetentionRowCounts(fixture);
+
+    assertThatThrownBy(
+            () ->
+                ownerTransaction()
+                    .execute(
+                        status ->
+                            new WorldDraftRegionStagingService(dsl, publicationFenceRepository)
+                                .stage(plan)))
+        .isInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class);
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT count(*) FROM world_design_publication_fence_owner "
+                            + "WHERE target_namespace = ? AND canonical_tenant_id = ? AND version_id = ?",
+                        NAMESPACE,
+                        fixture.request().canonicalTenantId(),
+                        fixture.localVersionKey()),
+                    "PostgreSQL must return the owner row count")
+                .get(0, Long.class))
+        .isZero();
+    assertThat(syntheticRetentionRowCounts(fixture)).isEqualTo(before);
+  }
+
+  @Test
+  void sourceQualifiedStagingRejectsFrozenOwnerBeforeReadingAnInvalidPriorGraph() {
+    Fixture fixture = fixture(true);
+    WorldDraftRegionCommitPlan plan = stagingPlan(fixture, ownerBinding(fixture), false);
+    assertThatThrownBy(
+            () ->
+                ownerTransaction()
+                    .execute(
+                        status ->
+                            new WorldDraftRegionStagingService(dsl, publicationFenceRepository)
+                                .stage(plan)))
+        .isInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class)
+        .hasMessageContaining("not open");
+  }
+
+  @Test
+  void sourceQualifiedStagingRejectsCrossVersionParentAndLateInvalidRevisionWithoutAnyApply() {
+    Fixture invalidGraph = fixture(true, false);
+    WorldDraftRegionCommitPlan graphPlan =
+        stagingPlan(invalidGraph, ownerBinding(invalidGraph), false);
+    assertThatThrownBy(
+            () ->
+                ownerTransaction()
+                    .execute(
+                        status ->
+                            new WorldDraftRegionStagingService(dsl, publicationFenceRepository)
+                                .stage(graphPlan)))
+        .isInstanceOf(SnapshotConflictException.class)
+        .hasMessageContaining("zone parent");
+
+    Fixture fixture = fixture(false, false);
+    List<Long> before = syntheticRetentionRowCounts(fixture);
+    WorldDraftRegionCommitPlan lateInvalid = stagingPlan(fixture, ownerBinding(fixture), true);
+    assertThatThrownBy(
+            () ->
+                ownerTransaction()
+                    .execute(
+                        status ->
+                            new WorldDraftRegionStagingService(dsl, publicationFenceRepository)
+                                .stage(lateInvalid)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("does not exist");
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT name FROM region WHERE tenant_id = ? AND version_id = ? AND id = ?",
+                        fixture.intakeReceipt().localTenantKey(),
+                        fixture.localVersionKey(),
+                        Long.parseLong(
+                            fixture.request().suppliedOwnedAffectedTuples().get(0).aggregateId())),
+                    "Rejected staging must retain the original region row")
+                .get(0, String.class))
+        .isEqualTo("authored region");
+    assertThat(syntheticRetentionRowCounts(fixture)).isEqualTo(before);
+    assertThat(snapshotCount(fixture.request().publicationFence())).isZero();
+  }
+
+  private WorldDesignPublicationFenceEvidence.OwnerBinding ownerBinding(Fixture fixture) {
+    WorldAuthoredSourceIntakeReceipt intake = fixture.intakeReceipt();
+    return new WorldDesignPublicationFenceEvidence.OwnerBinding(
+        NAMESPACE,
+        intake.canonicalTenantId(),
+        fixture.request().canonicalVersionId(),
+        fixture.versionIdentityOperationId(),
+        fixture.gameDesignVersionId(),
+        intake.intakeRequestId(),
+        intake.operationId(),
+        intake.requestDigest(),
+        intake.sourceOperationId(),
+        intake.sourceEvidenceDigest(),
+        intake.receiptDigest());
+  }
+
+  private WorldDraftRegionCommitPlan stagingPlan(
+      Fixture fixture,
+      WorldDesignPublicationFenceEvidence.OwnerBinding owner,
+      boolean lateInvalid) {
+    UUID commitId = UUID.randomUUID();
+    List<DraftCommitBinding.RevisionPayload> revisions = new ArrayList<>();
+    List<AffectedUnit> units = new ArrayList<>();
+    String regionId = fixture.request().suppliedOwnedAffectedTuples().get(0).aggregateId();
+    List<String> ids =
+        lateInvalid ? List.of(regionId, Long.toString(Long.MAX_VALUE)) : List.of(regionId);
+    for (String id : ids) {
+      UUID revisionId = UUID.randomUUID();
+      WorldDesignMutationRevision mutation =
+          WorldDesignMutationRevision.newBuilder()
+              .setLogicalRevisionId(revisionId.toString())
+              .setCommitId(commitId.toString())
+              .setOperation(WorldDesignMutationOperation.WORLD_DESIGN_MUTATION_OPERATION_UPSERT)
+              .setAggregateType(WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION)
+              .setAggregateId(id)
+              .setExpectedDraftRevisionEpoch(1L)
+              .setScopeType(WorldDesignScopeType.WORLD_DESIGN_SCOPE_TYPE_REGION_SUBTREE)
+              .setScopeId(id)
+              .setExpectedDraftScopeRevisionEpoch(1L)
+              .setRegion(
+                  RegionDesignMutation.newBuilder()
+                      .setName("Staged region")
+                      .setGenerationSeed(LARGE_VALUE)
+                      .setSpacingMultiplier(1.0d))
+              .build();
+      try {
+        revisions.add(
+            new DraftCommitBinding.RevisionPayload(
+                Integer.toString(revisions.size()),
+                revisionId,
+                Owner.WORLD_MANAGEMENT,
+                JsonFormat.printer().print(mutation)));
+      } catch (InvalidProtocolBufferException exception) {
+        throw new IllegalStateException(exception);
+      }
+      units.add(new AffectedUnit(Owner.WORLD_MANAGEMENT, "REGION", id, "AGGREGATE", id, "1"));
+      units.add(new AffectedUnit(Owner.WORLD_MANAGEMENT, "REGION", id, "REGION_SUBTREE", id, "1"));
+    }
+    AuthoredWorldSourceEvidence source = fixture.intakeReceipt().source();
+    DraftCommitBinding binding =
+        DraftCommitBinding.create(
+            new DraftCommitBinding.TargetProof(
+                owner.canonicalTenantId(),
+                owner.canonicalVersionId(),
+                owner.gameDesignVersionId(),
+                source.tenantSlug(),
+                source.sourceGameRowId(),
+                source.sourceGameTenantKey(),
+                source.provenanceKind()),
+            UUID.randomUUID(),
+            commitId,
+            "synthetic-base",
+            revisions,
+            units);
+    return WorldDraftRegionCommitPlan.create(binding, owner);
+  }
+
+  private CaptureRequest freezeOpenFixture(Fixture fixture) {
+    CaptureRequest request = fixture.request();
+    WorldDesignPublicationFenceEvidence.OwnerBinding owner = ownerBinding(fixture);
+    WorldDesignPublicationFenceEvidence evidence =
+        new WorldDesignPublicationFenceEvidence(
+            owner.targetNamespace(),
+            owner.canonicalTenantId(),
+            owner.canonicalVersionId(),
+            owner.versionIdentityOperationId(),
+            owner.gameDesignVersionId(),
+            owner.intakeRequestId(),
+            owner.intakeOperationId(),
+            owner.intakeRequestDigest(),
+            owner.sourceOperationId(),
+            owner.sourceEvidenceDigest(),
+            owner.intakeReceiptDigest(),
+            request.publicationRequestId(),
+            request.requestDigest(),
+            request.versionStateEpoch(),
+            request.publishWorkflowId());
+    FrozenAttempt frozen =
+        publicationFenceRepository.claimFreeze(
+            evidence,
+            () ->
+                new Checkpoint(
+                    request.appliedCommitId(),
+                    request.contentDigest(),
+                    request.digestSchemaVersion()));
+    return new CaptureRequest(
+        request.targetNamespace(),
+        request.canonicalTenantId(),
+        request.canonicalVersionId(),
+        request.intakeRequestId(),
+        frozen.publicationFence(),
+        request.publicationRequestId(),
+        request.requestDigest(),
+        request.versionStateEpoch(),
+        request.publishWorkflowId(),
+        request.appliedCommitId(),
+        request.contentDigest(),
+        request.digestSchemaVersion(),
+        request.suppliedOwnedAffectedTuples());
+  }
+
   private Fixture fixture(boolean wrongRoomParent) {
+    return fixture(wrongRoomParent, true);
+  }
+
+  private Fixture fixture(boolean wrongRoomParent, boolean freeze) {
+    UUID canonicalTenantId = UUID.randomUUID();
+    String tenantSlug = "tenant-" + canonicalTenantId.toString().replace("-", "");
+    String worldSlug = "world-" + UUID.randomUUID().toString().replace("-", "");
+    // Synthetic authenticated-source prerequisite only. Persist the real intake in its own
+    // transaction, then read its committed result before any owner resolution or freeze.
+    AuthoredWorldSourceEvidence source =
+        source(canonicalTenantId, tenantSlug, worldSlug, positiveLong());
+    UUID intakeRequestId = UUID.randomUUID();
+    WorldAuthoredSourceIntakeReceipt accepted =
+        ownerTransaction()
+            .execute(status -> intakeRepository.acceptFresh(NAMESPACE, intakeRequestId, source));
+    WorldAuthoredSourceIntakeReceipt intake =
+        intakeRepository.read(NAMESPACE, intakeRequestId).orElseThrow();
+    assertThat(intake).isEqualTo(accepted);
     return ownerTransaction()
         .execute(
             status -> {
-              UUID canonicalTenantId = UUID.randomUUID();
-              String tenantSlug = "tenant-" + canonicalTenantId.toString().replace("-", "");
-              String worldSlug = "world-" + UUID.randomUUID().toString().replace("-", "");
-              AuthoredWorldSourceEvidence source =
-                  source(canonicalTenantId, tenantSlug, worldSlug, positiveLong());
-              UUID intakeRequestId = UUID.randomUUID();
-              WorldAuthoredSourceIntakeReceipt intake =
-                  intakeRepository.acceptFresh(NAMESPACE, intakeRequestId, source);
               long gameDesignVersionId = GAME_DESIGN_VERSION_ID;
               UUID canonicalVersion = UUID.randomUUID();
               UUID versionStateReadRequestId = UUID.randomUUID();
@@ -429,7 +728,7 @@ class WorldAuthoredGraphSnapshotPostgresIntegrationTest {
               // canonical World owner producer exists or is proved by this fixture.
               SyntheticRows syntheticRows =
                   seedSyntheticCanonicalRows(
-                      intake.localTenantKey(), localVersionKey, wrongParentZoneId);
+                      intake.localTenantKey(), localVersionKey, wrongParentZoneId, !freeze);
               assertGuardedSessionReplicationRole();
               WorldDraftDesignDigest digest =
                   draftDigestService.getDraftDesignDigest(
@@ -461,15 +760,18 @@ class WorldAuthoredGraphSnapshotPostgresIntegrationTest {
                       REQUEST_DIGEST,
                       versionStateEpoch,
                       publishWorkflowId);
-              FrozenAttempt frozen =
-                  publicationFenceRepository.claimFreeze(
-                      fenceRequest,
-                      () ->
-                          new Checkpoint(
-                              syntheticRows.commitId(),
-                              digest.contentDigest(),
-                              digest.digestSchemaVersion()));
-              UUID publicationFence = frozen.publicationFence();
+              UUID publicationFence =
+                  freeze
+                      ? publicationFenceRepository
+                          .claimFreeze(
+                              fenceRequest,
+                              () ->
+                                  new Checkpoint(
+                                      syntheticRows.commitId(),
+                                      digest.contentDigest(),
+                                      digest.digestSchemaVersion()))
+                          .publicationFence()
+                      : UUID.randomUUID();
               CaptureRequest request =
                   new CaptureRequest(
                       NAMESPACE,
@@ -513,7 +815,7 @@ class WorldAuthoredGraphSnapshotPostgresIntegrationTest {
   }
 
   private SyntheticRows seedSyntheticCanonicalRows(
-      long localTenantKey, long localVersionKey, Long wrongParentZoneId) {
+      long localTenantKey, long localVersionKey, Long wrongParentZoneId, boolean untouchedRegion) {
     String originalRole = currentSessionReplicationRole();
     assertThat(originalRole).isEqualTo("origin");
     Throwable seedFailure = null;
@@ -532,6 +834,14 @@ class WorldAuthoredGraphSnapshotPostgresIntegrationTest {
                       LARGE_VALUE)
                   .fetchOne(0, Long.class),
               "Region insert did not return its generated ID");
+      if (untouchedRegion) {
+        dsl.execute(
+            "INSERT INTO region (name, tenant_id, version_id, generation_seed) "
+                + "VALUES ('Untouched region', ?, ?, ?)",
+            localTenantKey,
+            localVersionKey,
+            Long.MIN_VALUE);
+      }
       long zoneId =
           Objects.requireNonNull(
               dsl.resultQuery(
