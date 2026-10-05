@@ -321,6 +321,10 @@ jobs:
         with:
           requirements: ${{ (needs.changes.outputs.lightweight_only == 'true' && needs.changes.outputs.design_docs_changed == 'true' && needs.changes.outputs.validation_python_changed != 'true') && 'yaml' || 'ci' }}
 
+      - name: 📦 Install bounded wire test dependencies
+        if: ${{ needs.changes.outputs.lightweight_only != 'true' }}
+        run: python3 -m pip install --disable-pip-version-check --require-hashes -r config/python/smoke-requirements.txt
+
       - name: 📦 Install cloc
         if: ${{ needs.changes.outputs.lightweight_only != 'true' }}
         env:
