@@ -57,7 +57,8 @@ class GameInstanceOwnerUuidMigrationIntegrationTest {
 
       String legacyRowAfterMigration =
           dsl.resultQuery(
-                  "SELECT (to_jsonb(game_instance) - 'owner_account_uuid')::text "
+                  "SELECT (to_jsonb(game_instance) - 'owner_account_uuid' "
+                      + "- 'game_instance_uuid')::text "
                       + "FROM game_instances AS game_instance WHERE id = 7001")
               .fetchOne(0, String.class);
       assertThat(legacyRowAfterMigration).isEqualTo(legacyRowBeforeMigration);

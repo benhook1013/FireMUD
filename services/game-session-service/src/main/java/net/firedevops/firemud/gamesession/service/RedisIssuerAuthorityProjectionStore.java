@@ -22,6 +22,7 @@ import java.util.Optional;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.redis.contracts.RedisInvocationContract;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor;
+import net.firedevops.firemud.gamesession.client.AccountIssuerAuthorityClient.ProjectionCaptureReceipt;
 import net.firedevops.firemud.gamesession.client.AccountIssuerAuthorityClient.SourceReadback;
 import net.firedevops.firemud.gamesession.service.IssuerAuthorityProjectionTransitions.Decision;
 import net.firedevops.firemud.gamesession.service.IssuerAuthorityProjectionTransitions.Mutation;
@@ -103,8 +104,9 @@ public final class RedisIssuerAuthorityProjectionStore implements AutoCloseable 
   }
 
   /**
-   * Applies one privately verified Account readback. This path performs one exact GET and at most
-   * one registered owner-script call; it never retries after a stale result.
+   * Applies one privately verified Account readback. This path performs an exact pre-read, at most
+   * one registered owner-script call, and an exact post-script readback after a positive script
+   * outcome; it never retries after a stale result.
    */
   public synchronized ApplyResult apply(SourceReadback readback, String appliedAt) {
     requireInitialized();
@@ -147,6 +149,79 @@ public final class RedisIssuerAuthorityProjectionStore implements AutoCloseable 
       }
     }
 
+    return executeDecision(key, observedJson, decision);
+  }
+
+  /**
+   * Installs one captured checkpoint only after validating its exact current Account readback. The
+   * capture path may bridge a locally missed event range but uses this store's same registered
+   * single-key script and exact persistent post-script readback.
+   */
+  public synchronized ApplyResult installCapture(
+      ProjectionCaptureReceipt capture, SourceReadback current, String appliedAt) {
+    requireInitialized();
+    if (capture == null || current == null) {
+      return quarantined("MALFORMED_CAPTURE_EVIDENCE", Optional.empty());
+    }
+    if (!expectedWorkloadNamespace.equals(current.targetNamespace())) {
+      return quarantined("ACCOUNT_NAMESPACE_MISMATCH", Optional.empty());
+    }
+
+    final String key;
+    try {
+      key = IssuerAuthorityProjectionRedisContract.keyForIssuer(capture.issuerId());
+    } catch (IllegalArgumentException malformed) {
+      return quarantined("MALFORMED_CAPTURE_EVIDENCE", Optional.empty());
+    }
+
+    StoredValue observed = readStoredValue(key);
+    if (observed.bytes() != null && observed.ttlMillis() != -1L) {
+      return quarantined("TTL_PRESENT", Optional.empty());
+    }
+
+    final String observedJson;
+    final Decision decision;
+    if (observed.bytes() == null) {
+      observedJson = null;
+      decision = IssuerAuthorityProjectionTransitions.reconcile(null, capture, current, appliedAt);
+    } else {
+      try {
+        observedJson = decodeUtf8(observed.bytes());
+        Map<String, Object> observedProjection = parseProjection(observedJson);
+        decision =
+            IssuerAuthorityProjectionTransitions.reconcile(
+                observedProjection, capture, current, appliedAt);
+      } catch (IOException | IllegalArgumentException malformed) {
+        return quarantined("MALFORMED_STORED_JSON", Optional.empty());
+      }
+    }
+    return executeDecision(key, observedJson, decision);
+  }
+
+  /** Validates a positive result snapshot against the capture and current Account evidence. */
+  boolean verifiesCaptureSnapshot(
+      ProjectionCaptureReceipt capture, SourceReadback current, ProjectionSnapshot snapshot) {
+    if (snapshot == null || capture == null || current == null) {
+      return false;
+    }
+    try {
+      if (!IssuerAuthorityProjectionRedisContract.keyForIssuer(capture.issuerId())
+          .equals(snapshot.key())) {
+        return false;
+      }
+      Map<String, Object> projection = parseProjection(snapshot.json());
+      Decision decision =
+          IssuerAuthorityProjectionTransitions.reconcile(
+              projection, capture, current, "capture-snapshot-validation");
+      return decision instanceof NoOp noOp
+          && noOp.reason()
+              == IssuerAuthorityProjectionTransitions.NoOpReason.CAPTURE_ALREADY_INSTALLED;
+    } catch (IOException | IllegalArgumentException malformed) {
+      return false;
+    }
+  }
+
+  private ApplyResult executeDecision(String key, String observedJson, Decision decision) {
     if (decision instanceof Quarantine quarantine) {
       return quarantined(quarantine.reason().name(), Optional.of(decision));
     }
@@ -156,11 +231,7 @@ public final class RedisIssuerAuthorityProjectionStore implements AutoCloseable 
       }
       String result = executeRegistered(key, "VERIFY", observedJson, "");
       if ("REPLAY".equals(result)) {
-        return new ApplyResult(
-            Outcome.NO_OP,
-            Optional.of(new ProjectionSnapshot(key, observedJson)),
-            Optional.empty(),
-            Optional.of(decision));
+        return exactReadback(key, observedJson, Outcome.NO_OP, decision);
       }
       return mutationOutcome(result, key, observedJson, decision);
     }
@@ -197,18 +268,10 @@ public final class RedisIssuerAuthorityProjectionStore implements AutoCloseable 
   private ApplyResult mutationOutcome(
       String result, String key, String candidateJson, Decision decision) {
     if ("APPLIED".equals(result)) {
-      return new ApplyResult(
-          Outcome.APPLIED,
-          Optional.of(new ProjectionSnapshot(key, candidateJson)),
-          Optional.empty(),
-          Optional.of(decision));
+      return exactReadback(key, candidateJson, Outcome.APPLIED, decision);
     }
     if ("REPLAY".equals(result)) {
-      return new ApplyResult(
-          Outcome.REPLAYED,
-          Optional.of(new ProjectionSnapshot(key, candidateJson)),
-          Optional.empty(),
-          Optional.of(decision));
+      return exactReadback(key, candidateJson, Outcome.REPLAYED, decision);
     }
     if ("STALE".equals(result)) {
       return new ApplyResult(
@@ -223,6 +286,32 @@ public final class RedisIssuerAuthorityProjectionStore implements AutoCloseable 
     return quarantined(
         "UNKNOWN_REGISTERED_SCRIPT_RESULT:" + Objects.toString(result, "null"),
         Optional.of(decision));
+  }
+
+  private ApplyResult exactReadback(
+      String key, String expectedJson, Outcome outcome, Decision decision) {
+    StoredValue readback = readStoredValue(key);
+    if (readback.bytes() == null) {
+      return quarantined("POST_SCRIPT_READBACK_MISSING", Optional.of(decision));
+    }
+    if (readback.ttlMillis() != -1L) {
+      return quarantined("TTL_PRESENT", Optional.of(decision));
+    }
+
+    byte[] expectedBytes = expectedJson.getBytes(StandardCharsets.UTF_8);
+    if (!MessageDigest.isEqual(expectedBytes, readback.bytes())) {
+      return quarantined("POST_SCRIPT_READBACK_MISMATCH", Optional.of(decision));
+    }
+
+    try {
+      return new ApplyResult(
+          outcome,
+          Optional.of(new ProjectionSnapshot(key, decodeUtf8(readback.bytes()))),
+          Optional.empty(),
+          Optional.of(decision));
+    } catch (CharacterCodingException malformedUtf8) {
+      return quarantined("POST_SCRIPT_READBACK_INVALID_UTF8", Optional.of(decision));
+    }
   }
 
   private String executeRegistered(

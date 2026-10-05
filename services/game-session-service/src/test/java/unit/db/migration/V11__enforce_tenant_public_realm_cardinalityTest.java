@@ -54,6 +54,7 @@ class V11__enforce_tenant_public_realm_cardinalityTest {
             "V10__run_owned_initial_launch_identity.sql",
             "V10.1__game_instance_owner_account_uuid.sql",
             "V11__enforce_tenant_public_realm_cardinality.sql",
+            "V11.1__game_instance_uuid_identity.sql",
             "V12__index_gameplay_admission_pointer_event_tenant_lookup.sql");
 
     String v7 = readMigration("V7__audit_gameplay_catalog_revision.sql");

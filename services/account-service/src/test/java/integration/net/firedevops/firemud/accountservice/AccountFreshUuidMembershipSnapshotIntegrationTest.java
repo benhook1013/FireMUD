@@ -32,6 +32,7 @@ import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAut
 import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepository;
 import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer;
 import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer.OutboxCheckpointEntry;
+import net.firedevops.firemud.accountservice.service.AccountMembershipSourceReader;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
@@ -182,6 +183,35 @@ class AccountFreshUuidMembershipSnapshotIntegrationTest {
     UUID tenantUuid = UUID.randomUUID();
     FreshTenantCreationEvidence evidence = importFreshTenantAssociation(tenantUuid);
     long originalIssuanceFence = issuanceFence(account.accountUuid());
+    Map<String, Object> originalIssuanceFenceRow = issuanceFenceRow(account.accountUuid());
+    long originalTenantGeneration = authorityGeneration("TENANT", null, tenantUuid);
+    Map<String, Object> originalAccountAuthorityRow =
+        authorityGenerationRow("ACCOUNT", account.accountUuid(), null).orElseThrow();
+    Map<String, Object> originalTenantAuthorityRow =
+        authorityGenerationRow("TENANT", null, tenantUuid).orElseThrow();
+
+    assertThatThrownBy(
+            () -> membershipSourceReader().readCurrent(account.accountUuid(), tenantUuid))
+        .isInstanceOf(IllegalStateException.class);
+    Optional<FreshTenantCreationEvidence> initialAssociationReadback =
+        new TransactionTemplate(transactionManager)
+            .execute(status -> freshAssociationRepository.read(tenantUuid));
+    assertThat(initialAssociationReadback).contains(evidence);
+    assertThat(countMembershipPairAuthorities(account.accountUuid(), tenantUuid)).isZero();
+    assertThat(countMembershipAuthorityGenerations(account.accountUuid(), tenantUuid)).isZero();
+    assertThat(countMembershipsForAccount(account.accountId())).isZero();
+    assertThat(countMembershipTransitionReceiptsForAccount(account.accountId())).isZero();
+    assertThat(countAuthorityEvents(membershipStreamKey(account.accountUuid(), tenantUuid)))
+        .isZero();
+    assertThat(countAuthorityStreams(membershipStreamKey(account.accountUuid(), tenantUuid)))
+        .isZero();
+    assertThat(authorityGeneration("TENANT", null, tenantUuid)).isEqualTo(originalTenantGeneration);
+    assertThat(authorityGenerationRow("ACCOUNT", account.accountUuid(), null))
+        .contains(originalAccountAuthorityRow);
+    assertThat(authorityGenerationRow("TENANT", null, tenantUuid))
+        .contains(originalTenantAuthorityRow);
+    assertThat(issuanceFence(account.accountUuid())).isEqualTo(originalIssuanceFence);
+    assertThat(issuanceFenceRow(account.accountUuid())).isEqualTo(originalIssuanceFenceRow);
 
     assertThatThrownBy(
             () ->
@@ -280,6 +310,56 @@ class AccountFreshUuidMembershipSnapshotIntegrationTest {
         .isZero();
     assertThat(issuanceFence(account.accountUuid())).isEqualTo(originalIssuanceFence);
 
+    Map<String, Object> enrolledPair =
+        membershipPairAuthorityRow(account.accountUuid(), tenantUuid);
+    long enrolledTenantGeneration = authorityGeneration("TENANT", null, tenantUuid);
+    Map<String, Object> enrolledTenantAuthorityRow =
+        authorityGenerationRow("TENANT", null, tenantUuid).orElseThrow();
+    long enrolledFence = issuanceFence(account.accountUuid());
+    Map<String, Object> enrolledFenceRow = issuanceFenceRow(account.accountUuid());
+    long membershipGeneration =
+        authorityGeneration("MEMBERSHIP", account.accountUuid(), tenantUuid);
+    Map<String, Object> enrolledMembershipAuthorityRow =
+        authorityGenerationRow("MEMBERSHIP", account.accountUuid(), tenantUuid).orElseThrow();
+    var existing = membershipSourceReader().readCurrent(account.accountUuid(), tenantUuid);
+    assertThat(existing.accountId()).isEqualTo(account.accountUuid());
+    assertThat(existing.tenantId()).isEqualTo(tenantUuid);
+    assertThat(existing.sourceState().scope())
+        .isEqualTo(
+            AccountAuthorityGenerationRepository.AuthorityScope.membership(
+                account.accountUuid(), tenantUuid));
+    assertThat(existing.sourceState().generation()).isEqualTo(1L);
+    assertThat(existing.sourceState().sourceVersion()).isEqualTo(1L);
+    assertThat(existing.sourceState().issuanceFence().accountId()).isEqualTo(account.accountUuid());
+    assertThat(existing.sourceState().issuanceFence().value()).isEqualTo(enrolledFence);
+    assertThat(existing.snapshot().accountUuid()).isEqualTo(account.accountUuid().toString());
+    assertThat(existing.snapshot().tenantUuid()).isEqualTo(tenantUuid.toString());
+    assertThat(existing.snapshot().membershipExists()).isFalse();
+    assertThat(existing.snapshot().gameplayAdmissionAllowed()).isFalse();
+    assertThat(existing.snapshot().membershipBaseline().membershipLifecycleState())
+        .isEqualTo("MISSING");
+    assertThat(existing.snapshot().membershipBaseline().membershipVersion())
+        .isEqualTo(Map.of(tenantUuid.toString(), "1"));
+    assertThat(existing.snapshot().sourceEvent()).isNull();
+    assertThat(existing.snapshot().outboxSourceEvidence()).isEmpty();
+    assertThat(membershipPairAuthorityRow(account.accountUuid(), tenantUuid))
+        .isEqualTo(enrolledPair);
+    assertThat(authorityGeneration("TENANT", null, tenantUuid)).isEqualTo(enrolledTenantGeneration);
+    assertThat(authorityGeneration("MEMBERSHIP", account.accountUuid(), tenantUuid))
+        .isEqualTo(membershipGeneration);
+    assertThat(authorityGenerationRow("TENANT", null, tenantUuid))
+        .contains(enrolledTenantAuthorityRow);
+    assertThat(authorityGenerationRow("MEMBERSHIP", account.accountUuid(), tenantUuid))
+        .contains(enrolledMembershipAuthorityRow);
+    assertThat(issuanceFence(account.accountUuid())).isEqualTo(enrolledFence);
+    assertThat(issuanceFenceRow(account.accountUuid())).isEqualTo(enrolledFenceRow);
+    assertThat(countMembershipsForAccount(account.accountId())).isZero();
+    assertThat(countMembershipTransitionReceiptsForAccount(account.accountId())).isZero();
+    assertThat(countAuthorityEvents(membershipStreamKey(account.accountUuid(), tenantUuid)))
+        .isZero();
+    assertThat(countAuthorityStreams(membershipStreamKey(account.accountUuid(), tenantUuid)))
+        .isZero();
+
     RuntimeMembershipSnapshotDto retry =
         readRuntimeMembershipSnapshot(account.accountUuid(), tenantUuid);
     assertThat(retry.requestAccountUuid()).isEqualTo(first.requestAccountUuid());
@@ -298,7 +378,13 @@ class AccountFreshUuidMembershipSnapshotIntegrationTest {
   void canonicalRuntimeReadRejectsUnmappedTenantUuidWithoutEnrollment() {
     AccountFixture account = accountFixture();
     UUID unmappedTenantUuid = UUID.randomUUID();
+    long originalIssuanceFence = issuanceFence(account.accountUuid());
+    Map<String, Object> originalIssuanceFenceRow = issuanceFenceRow(account.accountUuid());
 
+    assertThatThrownBy(
+            () -> membershipSourceReader().readCurrent(account.accountUuid(), unmappedTenantUuid))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("approved Account tenant association is absent");
     assertThatThrownBy(
             () -> readRuntimeMembershipSnapshot(account.accountUuid(), unmappedTenantUuid))
         .isInstanceOf(IllegalStateException.class)
@@ -306,8 +392,46 @@ class AccountFreshUuidMembershipSnapshotIntegrationTest {
     assertThat(countMembershipPairAuthorities(account.accountUuid(), unmappedTenantUuid)).isZero();
     assertThat(countMembershipAuthorityGenerations(account.accountUuid(), unmappedTenantUuid))
         .isZero();
+    assertThat(countAuthorityGenerations("TENANT", null, unmappedTenantUuid)).isZero();
     assertThat(countMembershipsForAccount(account.accountId())).isZero();
     assertThat(countMembershipTransitionReceiptsForAccount(account.accountId())).isZero();
+    assertThat(countAuthorityEvents(membershipStreamKey(account.accountUuid(), unmappedTenantUuid)))
+        .isZero();
+    assertThat(
+            countAuthorityStreams(membershipStreamKey(account.accountUuid(), unmappedTenantUuid)))
+        .isZero();
+    assertThat(issuanceFence(account.accountUuid())).isEqualTo(originalIssuanceFence);
+    assertThat(issuanceFenceRow(account.accountUuid())).isEqualTo(originalIssuanceFenceRow);
+  }
+
+  @Test
+  void membershipSourceReaderRejectsAmbientAccountTransaction() {
+    AccountFixture account = accountFixture();
+    UUID tenantUuid = UUID.randomUUID();
+    importFreshTenantAssociation(tenantUuid);
+    readFreshNeverJoinedMembershipSnapshot(account.accountUuid(), tenantUuid);
+    Map<String, Object> pairBefore = membershipPairAuthorityRow(account.accountUuid(), tenantUuid);
+    long fenceBefore = issuanceFence(account.accountUuid());
+    Map<String, Object> fenceRowBefore = issuanceFenceRow(account.accountUuid());
+
+    assertThatThrownBy(
+            () ->
+                new TransactionTemplate(transactionManager)
+                    .execute(
+                        status ->
+                            membershipSourceReader()
+                                .readCurrent(account.accountUuid(), tenantUuid)))
+        .isInstanceOf(IllegalStateException.class);
+
+    assertThat(membershipPairAuthorityRow(account.accountUuid(), tenantUuid)).isEqualTo(pairBefore);
+    assertThat(issuanceFence(account.accountUuid())).isEqualTo(fenceBefore);
+    assertThat(issuanceFenceRow(account.accountUuid())).isEqualTo(fenceRowBefore);
+    assertThat(countMembershipsForAccount(account.accountId())).isZero();
+    assertThat(countMembershipTransitionReceiptsForAccount(account.accountId())).isZero();
+    assertThat(countAuthorityEvents(membershipStreamKey(account.accountUuid(), tenantUuid)))
+        .isZero();
+    assertThat(countAuthorityStreams(membershipStreamKey(account.accountUuid(), tenantUuid)))
+        .isZero();
   }
 
   @Test
@@ -582,6 +706,11 @@ class AccountFreshUuidMembershipSnapshotIntegrationTest {
     return new AccountFixture(accountId, accountUuid);
   }
 
+  private AccountMembershipSourceReader membershipSourceReader() {
+    return new AccountMembershipSourceReader(
+        producer, authorityGenerationRepository, transactionManager);
+  }
+
   private FreshTenantCreationEvidence importFreshTenantAssociation(UUID canonicalTenantUuid) {
     UUID creationRequestId = UUID.randomUUID();
     UUID operationId = UUID.randomUUID();
@@ -688,6 +817,32 @@ class AccountFreshUuidMembershipSnapshotIntegrationTest {
             .fetchOne(0, Long.class));
   }
 
+  private Optional<Map<String, Object>> authorityGenerationRow(
+      String scopeKind, UUID accountUuid, UUID tenantUuid) {
+    var row =
+        dsl.resultQuery(
+                "SELECT xmin::text AS row_xmin, * FROM account_authority_generations "
+                    + "WHERE scope_kind = ? AND account_uuid IS NOT DISTINCT FROM ? "
+                    + "AND tenant_uuid IS NOT DISTINCT FROM ?",
+                scopeKind,
+                accountUuid,
+                tenantUuid)
+            .fetchOne();
+    return Optional.ofNullable(row).map(value -> value.intoMap());
+  }
+
+  private long countAuthorityGenerations(String scopeKind, UUID accountUuid, UUID tenantUuid) {
+    return Objects.requireNonNull(
+        dsl.resultQuery(
+                "SELECT COUNT(*) FROM account_authority_generations "
+                    + "WHERE scope_kind = ? AND account_uuid IS NOT DISTINCT FROM ? "
+                    + "AND tenant_uuid IS NOT DISTINCT FROM ?",
+                scopeKind,
+                accountUuid,
+                tenantUuid)
+            .fetchOne(0, Long.class));
+  }
+
   private long issuanceFence(UUID accountUuid) {
     return Objects.requireNonNull(
         dsl.resultQuery(
@@ -695,6 +850,17 @@ class AccountFreshUuidMembershipSnapshotIntegrationTest {
                     + "WHERE account_uuid = ?",
                 accountUuid)
             .fetchOne(0, Long.class));
+  }
+
+  private Map<String, Object> issuanceFenceRow(UUID accountUuid) {
+    var row =
+        dsl.resultQuery(
+                "SELECT xmin::text AS row_xmin, * FROM account_authority_issuance_fences "
+                    + "WHERE account_uuid = ?",
+                accountUuid)
+            .fetchOne();
+    assertThat(row).isNotNull();
+    return row.intoMap();
   }
 
   private long countMembershipsForAccount(long accountId) {

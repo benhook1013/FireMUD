@@ -39,6 +39,7 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerati
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository.PasswordResetReceipt;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.PasswordResetTokenRepository;
 import net.firedevops.firemud.accountservice.service.AccountAuthoritySourceEventReadback;
@@ -73,6 +74,7 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -280,6 +282,105 @@ class AccountGenerationProjectionPostgresRedisIntegrationTest {
     assertThat(adminTemplate.opsForValue().get(currentProjection.key()))
         .isEqualTo(currentProjection.json());
     assertThat(sqlState(fixture, seed)).isEqualTo(afterBothProducers);
+  }
+
+  @Test
+  void committedPasswordResetReceiptSurvivesCoordinationAuthFailureExactRetryAndProjection() {
+    Fixture fixture = newFixture();
+    Seed seed = seedAccount(fixture);
+    AccountAuthoritySourceReader reader = sourceReader(fixture);
+    String tokenHash = sha256Hex(seed.rawToken());
+
+    reset(fixture, seed.rawToken(), "committed-reset-password");
+    PasswordResetReceipt committedReceipt = passwordResetReceipt(fixture, tokenHash);
+    ScopeState committedAuthority = readAuthority(fixture, seed.accountUuid());
+    var committedEvent = event(fixture, seed.accountUuid(), committedReceipt.outboxSequence());
+    var committedCheckpoint =
+        transaction(
+            fixture.transaction(),
+            () ->
+                fixture.outbox().readCheckpoint(committedReceipt.outboxStreamKey()).orElseThrow());
+    SqlState committedSql = sqlState(fixture, seed);
+
+    assertThat(committedAuthority.generation()).isEqualTo(2L);
+    assertThat(committedAuthority.sourceVersion()).isEqualTo(2L);
+    assertThat(committedAuthority.issuanceFence().value()).isEqualTo(2L);
+    assertThat(committedAuthority.issuanceFence().sourceVersion()).isEqualTo(2L);
+    assertThat(committedEvent.outboxSequence()).isEqualTo(committedReceipt.outboxSequence());
+    assertThat(committedEvent.eventId()).isEqualTo(committedReceipt.eventId());
+    assertThat(committedEvent.eventDigest()).isEqualTo(committedReceipt.eventDigest());
+    assertThat(committedCheckpoint.outboxSequence()).isEqualTo(committedReceipt.outboxSequence());
+    assertThat(committedCheckpoint.sourceEventId()).isEqualTo(committedReceipt.eventId());
+    assertThat(committedCheckpoint.sourceEventDigest()).isEqualTo(committedReceipt.eventDigest());
+
+    RedisAccountGenerationProjectionStore deniedCoordinationStore =
+        new RedisAccountGenerationProjectionStore(
+            reader,
+            new CoordinationEndpoint(
+                redis.getHost(),
+                redis.getMappedPort(6379),
+                "account_coord_app",
+                "deliberately-invalid-test-credential"),
+            new CacheRateLimitEndpoint("cache.invalid.test", 6380));
+    stores.add(deniedCoordinationStore);
+    deniedCoordinationStore.init();
+
+    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+    assertThatThrownBy(() -> deniedCoordinationStore.refreshCurrent(seed.accountUuid()))
+        .satisfies(
+            failure ->
+                assertThat(exceptionMessageChain(failure))
+                    .contains("WRONGPASS", "invalid username-password pair"));
+    assertThat(adminTemplate.opsForValue().get(key(seed.accountUuid()))).isNull();
+    assertThat(sqlState(fixture, seed)).isEqualTo(committedSql);
+    assertThat(passwordResetReceipt(fixture, tokenHash)).isEqualTo(committedReceipt);
+    assertThat(readAuthority(fixture, seed.accountUuid())).isEqualTo(committedAuthority);
+    assertThat(event(fixture, seed.accountUuid(), committedReceipt.outboxSequence()))
+        .isEqualTo(committedEvent);
+    assertThat(
+            transaction(
+                fixture.transaction(),
+                () ->
+                    fixture
+                        .outbox()
+                        .readCheckpoint(committedReceipt.outboxStreamKey())
+                        .orElseThrow()))
+        .isEqualTo(committedCheckpoint);
+
+    reset(fixture, seed.rawToken(), "committed-reset-password");
+    assertThat(sqlState(fixture, seed)).isEqualTo(committedSql);
+    assertThat(passwordResetReceipt(fixture, tokenHash)).isEqualTo(committedReceipt);
+    assertThat(readAuthority(fixture, seed.accountUuid())).isEqualTo(committedAuthority);
+    assertThat(event(fixture, seed.accountUuid(), committedReceipt.outboxSequence()))
+        .isEqualTo(committedEvent);
+
+    RedisAccountGenerationProjectionStore availableStore = store(reader);
+    assertThatThrownBy(
+            () ->
+                transaction(
+                    fixture.transaction(), () -> availableStore.refreshCurrent(seed.accountUuid())))
+        .hasMessageContaining("without an ambient transaction");
+    assertThat(adminTemplate.opsForValue().get(key(seed.accountUuid()))).isNull();
+
+    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+    ApplyResult projection = availableStore.refreshCurrent(seed.accountUuid());
+    assertThat(projection.outcome()).isEqualTo(Outcome.APPLIED);
+    ProjectionSnapshot projected = projection.snapshot().orElseThrow();
+    JsonNode projectedJson = parse(projected.json());
+    assertThat(projected.key()).isEqualTo(key(seed.accountUuid()));
+    assertThat(projectedJson.path("accountId").asText()).isEqualTo(seed.accountUuid().toString());
+    assertThat(projectedJson.path("accountAuthorityGeneration").asText()).isEqualTo("2");
+    assertThat(projectedJson.path("sourceVersion").asText()).isEqualTo("2");
+    assertThat(projectedJson.path("outboxStreamKey").asText())
+        .isEqualTo(committedReceipt.outboxStreamKey());
+    assertThat(projectedJson.path("outboxSequence").asText())
+        .isEqualTo(Long.toString(committedReceipt.outboxSequence()));
+    assertThat(projectedJson.path("sourceEvent").asText())
+        .isEqualTo(new String(committedEvent.payload(), StandardCharsets.UTF_8));
+    assertThat(adminTemplate.opsForValue().get(projected.key())).isEqualTo(projected.json());
+    assertThat(adminTemplate.getExpire(projected.key(), TimeUnit.MILLISECONDS)).isEqualTo(-1L);
+    assertThat(sqlState(fixture, seed)).isEqualTo(committedSql);
+    assertThat(passwordResetReceipt(fixture, tokenHash)).isEqualTo(committedReceipt);
   }
 
   @Test
@@ -632,6 +733,12 @@ class AccountGenerationProjectionPostgresRedisIntegrationTest {
   private Account account(Fixture fixture, long accountId) {
     return transaction(
         fixture.transaction(), () -> fixture.accounts().findById(accountId).orElseThrow());
+  }
+
+  private PasswordResetReceipt passwordResetReceipt(Fixture fixture, String tokenHash) {
+    return transaction(
+        fixture.transaction(),
+        () -> fixture.resetOperations().findByTokenHash(tokenHash).orElseThrow());
   }
 
   private ScopeState readAuthority(Fixture fixture, UUID accountUuid) {

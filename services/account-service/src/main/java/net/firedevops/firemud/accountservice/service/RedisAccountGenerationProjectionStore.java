@@ -1,27 +1,16 @@
 package net.firedevops.firemud.accountservice.service;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
-import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.time.Duration;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.service.AccountAuthoritySourceReader.AccountSourceSnapshot;
 import net.firedevops.firemud.common.redis.contracts.RedisInvocationContract;
-import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor;
-import org.springframework.core.io.ClassPathResource;
-import org.springframework.data.redis.connection.RedisPassword;
-import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
-import org.springframework.data.redis.connection.ReturnType;
-import org.springframework.data.redis.connection.lettuce.LettuceClientConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
-import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
 /**
@@ -29,11 +18,6 @@ import org.springframework.data.redis.core.StringRedisTemplate;
  * projection.
  */
 public final class RedisAccountGenerationProjectionStore implements AutoCloseable {
-  private static final Duration COMMAND_TIMEOUT = Duration.ofSeconds(3);
-  private static final byte[] CAS_SCRIPT_BYTES = scriptBytes();
-  private static final String CAS_SCRIPT_SHA1 = scriptSha1(CAS_SCRIPT_BYTES);
-  private static final byte[] CAS_SCRIPT_SHA256 = scriptSha256(CAS_SCRIPT_BYTES);
-
   private final AccountAuthoritySourceReader sourceReader;
   private final CoordinationEndpoint coordinationEndpoint;
 
@@ -61,22 +45,16 @@ public final class RedisAccountGenerationProjectionStore implements AutoCloseabl
     if (connectionFactory != null) {
       return;
     }
-    verifyScriptDigest();
-
-    RedisStandaloneConfiguration redisConfiguration =
-        new RedisStandaloneConfiguration(coordinationEndpoint.host(), coordinationEndpoint.port());
-    redisConfiguration.setUsername(coordinationEndpoint.principal());
-    redisConfiguration.setPassword(RedisPassword.of(coordinationEndpoint.password()));
-    LettuceClientConfiguration clientConfiguration =
-        LettuceClientConfiguration.builder().commandTimeout(COMMAND_TIMEOUT).build();
-
-    LettuceConnectionFactory newConnectionFactory =
-        new LettuceConnectionFactory(redisConfiguration, clientConfiguration);
-    newConnectionFactory.afterPropertiesSet();
-    StringRedisTemplate newTemplate = new StringRedisTemplate(newConnectionFactory);
-    newTemplate.afterPropertiesSet();
-    connectionFactory = newConnectionFactory;
-    redisTemplate = newTemplate;
+    CurrentGenerationProjectionRedisSupport.verifyScriptDigest(
+        AccountGenerationProjectionRedisContract.descriptor());
+    CurrentGenerationProjectionRedisSupport.InitializedClient client =
+        CurrentGenerationProjectionRedisSupport.initialize(
+            coordinationEndpoint.host(),
+            coordinationEndpoint.port(),
+            coordinationEndpoint.principal(),
+            coordinationEndpoint.password());
+    connectionFactory = client.connectionFactory();
+    redisTemplate = client.template();
   }
 
   /**
@@ -95,7 +73,7 @@ public final class RedisAccountGenerationProjectionStore implements AutoCloseabl
     String candidateJson = candidate.toJson();
     byte[] candidateBytes = candidateJson.getBytes(StandardCharsets.UTF_8);
 
-    StoredValue observed = readStoredValue(key);
+    CurrentGenerationProjectionRedisSupport.StoredValue observed = readStoredValue(key);
     if (observed.bytes() != null && observed.ttlMillis() != -1L) {
       return quarantined("TTL_PRESENT", Optional.empty());
     }
@@ -153,7 +131,7 @@ public final class RedisAccountGenerationProjectionStore implements AutoCloseabl
               + Objects.toString(scriptResult, "null"));
     }
 
-    StoredValue readback = readStoredValue(key);
+    CurrentGenerationProjectionRedisSupport.StoredValue readback = readStoredValue(key);
     if (readback.bytes() == null) {
       return new ApplyResult(
           Outcome.STALE, Optional.empty(), Optional.of("REDIS_READBACK_MISSING"));
@@ -218,51 +196,18 @@ public final class RedisAccountGenerationProjectionStore implements AutoCloseabl
     RedisInvocationContract invocation =
         AccountGenerationProjectionRedisContract.prepareInvocation(
             key, expectedMode, expectedBytes, candidateBytes);
-    RedisScriptDescriptor descriptor = invocation.descriptor();
-    if (descriptor != AccountGenerationProjectionRedisContract.descriptor()
-        || !AccountGenerationProjectionRedisContract.SCRIPT_ID.equals(descriptor.scriptId())
-        || descriptor.role() != RedisScriptDescriptor.RedisRole.COORDINATION
-        || !AccountGenerationProjectionRedisContract.PRINCIPAL.equals(descriptor.principal())
-        || !AccountGenerationProjectionRedisContract.OWNER.equals(descriptor.owner())) {
-      throw new IllegalStateException(
-          "Account generation projection invocation is not its registered owner contract");
-    }
-    byte[] keyBytes = key.getBytes(StandardCharsets.UTF_8);
-    byte[] expectedModeBytes = expectedMode.getBytes(StandardCharsets.US_ASCII);
-    byte[] expectedBytesUtf8 = expectedBytes.getBytes(StandardCharsets.UTF_8);
-    byte[] candidateBytesUtf8 = candidateBytes.getBytes(StandardCharsets.UTF_8);
-    return redisTemplate.execute(
-        (RedisCallback<String>)
-            connection -> {
-              String loadedSha = connection.scriptingCommands().scriptLoad(CAS_SCRIPT_BYTES);
-              if (!CAS_SCRIPT_SHA1.equals(loadedSha)) {
-                throw new IllegalStateException(
-                    "Redis loaded a different Account generation projection script");
-              }
-              Object result =
-                  connection
-                      .scriptingCommands()
-                      .evalSha(
-                          loadedSha,
-                          ReturnType.VALUE,
-                          1,
-                          keyBytes,
-                          expectedModeBytes,
-                          expectedBytesUtf8,
-                          candidateBytesUtf8);
-              return decodeScriptResult(result);
-            });
+    return CurrentGenerationProjectionRedisSupport.executeRegistered(
+        redisTemplate,
+        invocation,
+        AccountGenerationProjectionRedisContract.descriptor(),
+        key,
+        expectedMode,
+        expectedBytes,
+        candidateBytes);
   }
 
-  private StoredValue readStoredValue(String key) {
-    byte[] keyBytes = key.getBytes(StandardCharsets.UTF_8);
-    return redisTemplate.execute(
-        (RedisCallback<StoredValue>)
-            connection -> {
-              byte[] value = connection.stringCommands().get(keyBytes);
-              long ttlMillis = value == null ? -2L : connection.keyCommands().pTtl(keyBytes);
-              return new StoredValue(value, ttlMillis);
-            });
+  private CurrentGenerationProjectionRedisSupport.StoredValue readStoredValue(String key) {
+    return CurrentGenerationProjectionRedisSupport.readStoredValue(redisTemplate, key);
   }
 
   private void requireInitialized() {
@@ -272,72 +217,8 @@ public final class RedisAccountGenerationProjectionStore implements AutoCloseabl
     }
   }
 
-  private static byte[] scriptBytes() {
-    try (var input =
-        new ClassPathResource(AccountGenerationProjectionRedisContract.RESOURCE_PATH)
-            .getInputStream()) {
-      return input.readAllBytes();
-    } catch (IOException exception) {
-      throw new ExceptionInInitializerError(exception);
-    }
-  }
-
-  private static String scriptSha1(byte[] scriptBytes) {
-    try {
-      return java.util.HexFormat.of()
-          .formatHex(MessageDigest.getInstance("SHA-1").digest(scriptBytes));
-    } catch (NoSuchAlgorithmException exception) {
-      throw new ExceptionInInitializerError(exception);
-    }
-  }
-
-  private static byte[] scriptSha256(byte[] scriptBytes) {
-    try {
-      return MessageDigest.getInstance("SHA-256").digest(scriptBytes);
-    } catch (NoSuchAlgorithmException exception) {
-      throw new ExceptionInInitializerError(exception);
-    }
-  }
-
-  private static void verifyScriptDigest() {
-    String actual = java.util.HexFormat.of().formatHex(CAS_SCRIPT_SHA256);
-    if (!AccountGenerationProjectionRedisContract.descriptor().sha256().equals(actual)) {
-      throw new IllegalStateException(
-          "Account generation projection Lua resource digest differs from its registration");
-    }
-  }
-
   private static String decodeUtf8(byte[] value) throws CharacterCodingException {
-    return StandardCharsets.UTF_8
-        .newDecoder()
-        .onMalformedInput(CodingErrorAction.REPORT)
-        .onUnmappableCharacter(CodingErrorAction.REPORT)
-        .decode(ByteBuffer.wrap(value))
-        .toString();
-  }
-
-  private static String decodeScriptResult(Object result) {
-    if (result instanceof byte[] bytes) {
-      try {
-        return StandardCharsets.US_ASCII
-            .newDecoder()
-            .onMalformedInput(CodingErrorAction.REPORT)
-            .onUnmappableCharacter(CodingErrorAction.REPORT)
-            .decode(ByteBuffer.wrap(bytes))
-            .toString();
-      } catch (CharacterCodingException malformed) {
-        throw new IllegalStateException(
-            "Registered Account projection script returned non-ASCII", malformed);
-      }
-    }
-    if (result instanceof String text) {
-      return text;
-    }
-    if (result == null) {
-      return null;
-    }
-    throw new IllegalStateException(
-        "Registered Account projection script returned an unsupported result type");
+    return CurrentGenerationProjectionRedisSupport.decodeUtf8(value);
   }
 
   private static void validateDistinctEndpoints(
@@ -370,8 +251,6 @@ public final class RedisAccountGenerationProjectionStore implements AutoCloseabl
   private static ApplyResult quarantined(String detail, Optional<ProjectionSnapshot> snapshot) {
     return new ApplyResult(Outcome.QUARANTINED, snapshot, Optional.of(detail));
   }
-
-  private record StoredValue(byte[] bytes, long ttlMillis) {}
 
   public enum Outcome {
     APPLIED,

@@ -613,24 +613,7 @@ public class AccountMembershipAuthorityEventProducer {
     if (currentMembership.isPresent()) {
       PositiveMembershipSnapshot positive =
           readCurrentPairBoundPositiveMembershipSnapshot(accountId, legacyTenantId);
-      return new RuntimeMembershipSnapshotDto(
-          positive.accountId(),
-          positive.tenantId(),
-          positive.accountId(),
-          positive.tenantId(),
-          positive.membershipExists(),
-          positive.gameplayAdmissionAllowed(),
-          new RuntimeMembershipSnapshotDto.MembershipBaseline(
-              positive.membershipLifecycleState(),
-              positive.membershipVersion(),
-              positive.membershipAuthorityGeneration()),
-          positive.roles(),
-          positive.authorityTuple(),
-          positive.issuanceFence(),
-          positive.evaluatedAt(),
-          positive.outboxCheckpoints(),
-          positive.outboxSourceEvidence(),
-          positive.authorityEvent());
+      return toRuntimeMembershipSnapshot(positive);
     }
 
     NeverJoinedMembershipSnapshot absent =
@@ -663,6 +646,27 @@ public class AccountMembershipAuthorityEventProducer {
   @Transactional(propagation = Propagation.MANDATORY)
   public RuntimeMembershipSnapshotDto readRuntimeMembershipSnapshot(
       UUID accountUuid, UUID tenantUuid) {
+    return readUuidRuntimeMembershipSnapshot(
+        accountUuid, tenantUuid, MembershipSnapshotReadMode.ENROLL_IF_NEEDED);
+  }
+
+  /**
+   * Reads current membership source evidence only when the exact Account/tenant pair is already
+   * enrolled. This is an owner-local projection source read, not authorization or RPC activation.
+   *
+   * <p>Unlike the runtime snapshot preparation path, this method never initializes a generation,
+   * enrolls a pair baseline, or changes membership authority. Missing or contradictory existing
+   * evidence fails closed.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public RuntimeMembershipSnapshotDto readExistingRuntimeMembershipSnapshot(
+      UUID accountUuid, UUID tenantUuid) {
+    return readUuidRuntimeMembershipSnapshot(
+        accountUuid, tenantUuid, MembershipSnapshotReadMode.EXISTING_ONLY);
+  }
+
+  private RuntimeMembershipSnapshotDto readUuidRuntimeMembershipSnapshot(
+      UUID accountUuid, UUID tenantUuid, MembershipSnapshotReadMode readMode) {
     requireActiveOwnerTransaction();
     requireCanonicalUuidInput(accountUuid, "Account UUID");
     requireCanonicalUuidInput(tenantUuid, "tenant UUID");
@@ -695,9 +699,33 @@ public class AccountMembershipAuthorityEventProducer {
     Optional<FreshTenantCreationEvidence> freshAssociation =
         freshTenantIdentityAssociationRepository.read(tenantUuid);
     if (freshAssociation.isPresent()) {
-      NeverJoinedMembershipSnapshot absent =
-          readFreshNeverJoinedMembershipSnapshot(accountUuid, tenantUuid);
-      return toRuntimeMembershipSnapshot(absent);
+      FreshTenantCreationEvidence evidence = freshAssociation.orElseThrow();
+      if (readMode == MembershipSnapshotReadMode.ENROLL_IF_NEEDED) {
+        NeverJoinedMembershipSnapshot absent =
+            readFreshNeverJoinedMembershipSnapshot(accountUuid, tenantUuid);
+        return toRuntimeMembershipSnapshot(absent);
+      }
+      if (!tenantUuid.equals(evidence.canonicalTenantId())) {
+        throw new IllegalStateException(
+            "Fresh Game Design tenant association differs from its canonical UUID scope");
+      }
+
+      RuntimeMembershipSnapshotDto existing =
+          readExistingFreshNeverJoinedMembershipSnapshot(accountUuid, tenantUuid, evidence);
+      verifyExistingRuntimeSnapshotIdentity(existing, accountUuid, tenantUuid);
+      requireUnchangedAccountIdentity(initialAccount, accountUuid);
+      FreshTenantCreationEvidence finalAssociation =
+          freshTenantIdentityAssociationRepository
+              .read(tenantUuid)
+              .orElseThrow(
+                  () ->
+                      new IllegalStateException(
+                          "Fresh Game Design tenant association disappeared during readback"));
+      if (!evidence.equals(finalAssociation)) {
+        throw new IllegalStateException(
+            "Fresh Game Design tenant association changed during membership readback");
+      }
+      return existing;
     }
 
     ApprovedAssociation retainedAssociation = tenantIdentityResolver.resolve(tenantUuid);
@@ -706,16 +734,141 @@ public class AccountMembershipAuthorityEventProducer {
       throw new IllegalStateException(
           "Retained tenant UUID has no exact private numeric association");
     }
+
+    if (readMode == MembershipSnapshotReadMode.ENROLL_IF_NEEDED) {
+      RuntimeMembershipSnapshotDto retained =
+          readRuntimeMembershipSnapshot(accountId, retainedAssociation.legacyTenantId());
+      if (!accountUuid.toString().equals(retained.accountUuid())
+          || !tenantUuid.toString().equals(retained.tenantUuid())
+          || !accountUuid.toString().equals(retained.requestAccountUuid())
+          || !tenantUuid.toString().equals(retained.requestTenantUuid())) {
+        throw new IllegalStateException(
+            "Retained numeric membership readback differs from its exact canonical UUID request");
+      }
+      return retained;
+    }
+
     RuntimeMembershipSnapshotDto retained =
-        readRuntimeMembershipSnapshot(accountId, retainedAssociation.legacyTenantId());
-    if (!accountUuid.toString().equals(retained.accountUuid())
-        || !tenantUuid.toString().equals(retained.tenantUuid())
-        || !accountUuid.toString().equals(retained.requestAccountUuid())
-        || !tenantUuid.toString().equals(retained.requestTenantUuid())) {
+        readExistingRetainedRuntimeMembershipSnapshot(
+            accountId, retainedAssociation.legacyTenantId());
+    verifyExistingRuntimeSnapshotIdentity(retained, accountUuid, tenantUuid);
+
+    Account finalAccount =
+        accountRepository
+            .findByAccountUuid(accountUuid)
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "Runtime snapshot Account row disappeared before readback"));
+    requirePersistedAccountIdentity(finalAccount, accountUuid);
+    if (!Objects.equals(initialAccount.getId(), finalAccount.getId())
+        || initialAccount.getAccountUuidProvenance() != finalAccount.getAccountUuidProvenance()
+        || !Objects.equals(
+            initialAccount.getAccountUuidSourceNumericId(),
+            finalAccount.getAccountUuidSourceNumericId())
+        || !retainedAssociation.equals(tenantIdentityResolver.resolve(tenantUuid))) {
       throw new IllegalStateException(
-          "Retained numeric membership readback differs from its exact canonical UUID request");
+          "Canonical Account or retained tenant identity changed during membership readback");
     }
     return retained;
+  }
+
+  private RuntimeMembershipSnapshotDto readExistingFreshNeverJoinedMembershipSnapshot(
+      UUID accountUuid, UUID tenantUuid, FreshTenantCreationEvidence evidence) {
+    VerifiedTenantProvenance provenance = freshTenantProvenance(evidence);
+
+    // Preserve the source reader's canonical upstream lock order before inspecting the existing
+    // pair. This path performs no initializer or enrollment call.
+    CompositeSnapshot upstream = lockUpstreamAuthorityScopes(accountUuid, tenantUuid);
+    readCurrentUpstreamSourceEvidence(accountUuid, tenantUuid, upstream);
+    pairAuthorityRepository
+        .readForUpdate(accountUuid, tenantUuid)
+        .orElseThrow(
+            () -> new IllegalStateException("Fresh Account membership pair baseline is absent"));
+
+    return toRuntimeMembershipSnapshot(
+        assembleNeverJoinedMembershipSnapshot(accountUuid, tenantUuid, provenance));
+  }
+
+  private RuntimeMembershipSnapshotDto readExistingRetainedRuntimeMembershipSnapshot(
+      long accountId, long legacyTenantId) {
+    Optional<JoinMembershipProof> currentMembership =
+        membershipRepository.findJoinProofForUpdate(accountId, legacyTenantId);
+    if (currentMembership.isEmpty()) {
+      return toRuntimeMembershipSnapshot(
+          readNeverJoinedMembershipSnapshot(accountId, legacyTenantId));
+    }
+
+    JoinMembershipProof membership = currentMembership.orElseThrow();
+    return switch (membership.lifecycleState()) {
+      case "ACTIVE" ->
+          toRuntimeMembershipSnapshot(
+              readCurrentPairBoundPositiveMembershipSnapshot(accountId, legacyTenantId));
+      case "INACTIVE" -> readCurrentPairBoundInactiveMembershipSnapshot(accountId, legacyTenantId);
+      default ->
+          throw new IllegalStateException(
+              "Current Account membership lifecycle is not a supported existing state");
+    };
+  }
+
+  private RuntimeMembershipSnapshotDto toRuntimeMembershipSnapshot(
+      PositiveMembershipSnapshot positive) {
+    return new RuntimeMembershipSnapshotDto(
+        positive.accountId(),
+        positive.tenantId(),
+        positive.accountId(),
+        positive.tenantId(),
+        positive.membershipExists(),
+        positive.gameplayAdmissionAllowed(),
+        new RuntimeMembershipSnapshotDto.MembershipBaseline(
+            positive.membershipLifecycleState(),
+            positive.membershipVersion(),
+            positive.membershipAuthorityGeneration()),
+        positive.roles(),
+        positive.authorityTuple(),
+        positive.issuanceFence(),
+        positive.evaluatedAt(),
+        positive.outboxCheckpoints(),
+        positive.outboxSourceEvidence(),
+        positive.authorityEvent());
+  }
+
+  private void verifyExistingRuntimeSnapshotIdentity(
+      RuntimeMembershipSnapshotDto snapshot, UUID accountUuid, UUID tenantUuid) {
+    if (!accountUuid.toString().equals(snapshot.accountUuid())
+        || !tenantUuid.toString().equals(snapshot.tenantUuid())
+        || !accountUuid.toString().equals(snapshot.requestAccountUuid())
+        || !tenantUuid.toString().equals(snapshot.requestTenantUuid())) {
+      throw new IllegalStateException(
+          "Account membership readback differs from its exact canonical UUID request");
+    }
+  }
+
+  private void requireUnchangedAccountIdentity(Account initialAccount, UUID accountUuid) {
+    Account finalAccount =
+        accountRepository
+            .findByAccountUuid(accountUuid)
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "Runtime snapshot Account row disappeared before readback"));
+    requirePersistedAccountIdentity(finalAccount, accountUuid);
+    if (!Objects.equals(initialAccount.getId(), finalAccount.getId())
+        || initialAccount.getAccountUuidProvenance() != finalAccount.getAccountUuidProvenance()
+        || !Objects.equals(
+            initialAccount.getAccountUuidSourceNumericId(),
+            finalAccount.getAccountUuidSourceNumericId())) {
+      throw new IllegalStateException(
+          "Canonical Account identity changed during membership readback");
+    }
+  }
+
+  private VerifiedTenantProvenance freshTenantProvenance(FreshTenantCreationEvidence evidence) {
+    return new VerifiedTenantProvenance(
+        null,
+        TenantProvenanceKind.FRESH_GAME_DESIGN,
+        evidence.operationId(),
+        evidence.evidenceDigest());
   }
 
   private RuntimeMembershipSnapshotDto toRuntimeMembershipSnapshot(
@@ -2552,6 +2705,11 @@ public class AccountMembershipAuthorityEventProducer {
       UUID accountUuid,
       UUID tenantUuid,
       ApprovedAssociation association) {}
+
+  private enum MembershipSnapshotReadMode {
+    ENROLL_IF_NEEDED,
+    EXISTING_ONLY
+  }
 
   private record CurrentSourceProof(
       OutboxCheckpointEntry checkpoint, Optional<OutboxSourceEvidence> sourceEvidence) {

@@ -4,7 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -24,6 +26,7 @@ import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
+import net.firedevops.firemud.gamesession.service.impl.TickScheduler;
 import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketDriver;
 import net.firedevops.firemud.gamesession.testsupport.InMemorySessionContextTestConfiguration;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
@@ -54,6 +57,7 @@ class GameSessionLoginIntegrationTest {
 
   @MockitoBean private AccountClient accountClient;
   @MockitoBean private GameInstanceRepository gameInstanceRepository;
+  @MockitoBean private TickScheduler tickScheduler;
   @MockitoBean private CommandService commandService;
 
   @MockitoBean
@@ -111,7 +115,7 @@ class GameSessionLoginIntegrationTest {
     instance.setId(1L);
     instance.setTenantId(42L);
     instance.setOwnerAccountId(OWNER_ACCOUNT_UUID);
-    when(gameInstanceRepository.findById(anyLong())).thenReturn(Optional.of(instance));
+    doReturn(Optional.of(instance)).when(gameInstanceRepository).findById(anyLong());
     when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(42L, 1L))
         .thenReturn(
             List.of(
@@ -146,5 +150,6 @@ class GameSessionLoginIntegrationTest {
     assertThat(sessionContextService.findByTenantAndSessionId(42L, 1L)).isPresent();
 
     verify(accountClient).authenticate(eq("demo@example.com"), eq("swordfish"));
+    verify(gameInstanceRepository, never()).findByStatus(anyString());
   }
 }
