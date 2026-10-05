@@ -20,6 +20,7 @@ import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 public record AuthoredWorldVersionStateEvidence(
     Request request,
     AuthoredWorldSourceEvidence sourceEvidence,
+    UUID canonicalVersionId,
     VersionLifecycleState versionState,
     long versionStateEpoch,
     String evidenceDigest) {
@@ -65,6 +66,7 @@ public record AuthoredWorldVersionStateEvidence(
   public AuthoredWorldVersionStateEvidence {
     Objects.requireNonNull(request, "request");
     Objects.requireNonNull(sourceEvidence, "sourceEvidence");
+    requireCanonicalVersionId(canonicalVersionId);
     requireLifecycleState(versionState);
     if (versionStateEpoch <= 0) {
       throw new IllegalArgumentException("versionStateEpoch must be positive");
@@ -84,7 +86,8 @@ public record AuthoredWorldVersionStateEvidence(
     if (evidenceDigest == null || !SHA256.matcher(evidenceDigest).matches()) {
       throw new IllegalArgumentException("evidenceDigest must be canonical SHA-256 text");
     }
-    if (!evidenceDigest.equals(evidenceDigest(request, versionState, versionStateEpoch))) {
+    if (!evidenceDigest.equals(
+        evidenceDigest(request, canonicalVersionId, versionState, versionStateEpoch))) {
       throw new IllegalArgumentException(
           "Version-state evidence digest does not match the exact current-state tuple");
     }
@@ -93,39 +96,51 @@ public record AuthoredWorldVersionStateEvidence(
   public static AuthoredWorldVersionStateEvidence create(
       Request request,
       AuthoredWorldSourceEvidence sourceEvidence,
+      UUID canonicalVersionId,
       VersionLifecycleState versionState,
       long versionStateEpoch) {
     Objects.requireNonNull(request, "request");
+    requireCanonicalVersionId(canonicalVersionId);
     requireLifecycleState(versionState);
     return new AuthoredWorldVersionStateEvidence(
         request,
         sourceEvidence,
+        canonicalVersionId,
         versionState,
         versionStateEpoch,
-        evidenceDigest(request, versionState, versionStateEpoch));
+        evidenceDigest(request, canonicalVersionId, versionState, versionStateEpoch));
   }
 
   /** Recomputes the complete outer binding after construction or wire decoding. */
   public void requireValid() {
-    if (!evidenceDigest.equals(evidenceDigest(request, versionState, versionStateEpoch))) {
+    if (!evidenceDigest.equals(
+        evidenceDigest(request, canonicalVersionId, versionState, versionStateEpoch))) {
       throw new IllegalArgumentException("Version-state evidence digest is invalid");
     }
   }
 
   public static String evidenceDigest(
-      Request request, VersionLifecycleState versionState, long versionStateEpoch) {
+      Request request,
+      UUID canonicalVersionId,
+      VersionLifecycleState versionState,
+      long versionStateEpoch) {
     Objects.requireNonNull(request, "request");
+    requireCanonicalVersionId(canonicalVersionId);
     requireLifecycleState(versionState);
     if (versionStateEpoch <= 0) {
       throw new IllegalArgumentException("versionStateEpoch must be positive");
     }
-    return sha256(evidencePreimage(request, versionState, versionStateEpoch));
+    return sha256(evidencePreimage(request, canonicalVersionId, versionState, versionStateEpoch));
   }
 
   /** Fixed-order UTF-8 length-framed preimage owned by the Game Design API contract. */
   public static byte[] evidencePreimage(
-      Request request, VersionLifecycleState versionState, long versionStateEpoch) {
+      Request request,
+      UUID canonicalVersionId,
+      VersionLifecycleState versionState,
+      long versionStateEpoch) {
     Objects.requireNonNull(request, "request");
+    requireCanonicalVersionId(canonicalVersionId);
     requireLifecycleState(versionState);
     if (versionStateEpoch <= 0) {
       throw new IllegalArgumentException("versionStateEpoch must be positive");
@@ -140,6 +155,7 @@ public record AuthoredWorldVersionStateEvidence(
         request.sourceOperationId().toString(),
         request.expectedSourceEvidenceDigest(),
         Long.toString(request.versionId()),
+        canonicalVersionId.toString(),
         lifecycleStateName(versionState),
         Long.toString(versionStateEpoch));
   }
@@ -190,6 +206,13 @@ public record AuthoredWorldVersionStateEvidence(
         || value == VersionLifecycleState.VERSION_LIFECYCLE_STATE_UNSPECIFIED
         || value == VersionLifecycleState.UNRECOGNIZED) {
       throw new IllegalArgumentException("A recognized version lifecycle state is required");
+    }
+  }
+
+  private static void requireCanonicalVersionId(UUID value) {
+    Objects.requireNonNull(value, "canonicalVersionId");
+    if (NIL_UUID.equals(value)) {
+      throw new IllegalArgumentException("canonicalVersionId must be a non-nil UUID");
     }
   }
 }

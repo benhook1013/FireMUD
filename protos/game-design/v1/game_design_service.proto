@@ -356,6 +356,7 @@ message AuthoredWorldVersionStateEvidence {
   VersionLifecycleState version_state = 10;
   int64 version_state_epoch = 11;
   string evidence_digest = 12;
+  string canonical_version_id = 13;
 }
 
 // Complete immutable registration receipt, without another RPC's transient read request ID.

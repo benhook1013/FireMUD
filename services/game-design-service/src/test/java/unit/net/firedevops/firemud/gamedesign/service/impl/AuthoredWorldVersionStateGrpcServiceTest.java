@@ -27,6 +27,7 @@ class AuthoredWorldVersionStateGrpcServiceTest {
   private static final UUID TENANT_ID = uuid("22222222-2222-4222-8222-222222222222");
   private static final UUID SOURCE_OPERATION_ID = uuid("33333333-3333-4333-8333-333333333333");
   private static final UUID REGISTRATION_REQUEST_ID = uuid("44444444-4444-4444-8444-444444444444");
+  private static final UUID CANONICAL_VERSION_ID = uuid("55555555-5555-4555-8555-555555555555");
 
   @Test
   void exactWorldPeerMayReadAndReceivesClosedEvidence() {
@@ -34,7 +35,11 @@ class AuthoredWorldVersionStateGrpcServiceTest {
     var request = request();
     var evidence =
         AuthoredWorldVersionStateEvidence.create(
-            request, sourceEvidence(), VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT, 7L);
+            request,
+            sourceEvidence(),
+            CANONICAL_VERSION_ID,
+            VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
+            7L);
     when(service.read(request)).thenReturn(evidence);
     var handler = new AuthoredWorldVersionStateGrpcService(service, NAMESPACE);
     TestObserver<GetAuthoredWorldVersionStateResponse> observer = new TestObserver<>();
@@ -47,6 +52,16 @@ class AuthoredWorldVersionStateGrpcServiceTest {
 
     assertThat(observer.error).isNull();
     assertThat(observer.completed).isTrue();
+    assertThat(observer.value.getEvidence().getCanonicalVersionId())
+        .isEqualTo(CANONICAL_VERSION_ID.toString());
+    assertThat(
+            observer
+                .value
+                .getEvidence()
+                .getDescriptorForType()
+                .findFieldByName("canonical_version_id")
+                .getNumber())
+        .isEqualTo(13);
     assertThat(AuthoredWorldVersionStateGrpcCodec.fromResponse(request, observer.value))
         .isEqualTo(evidence);
     verify(service).read(request);

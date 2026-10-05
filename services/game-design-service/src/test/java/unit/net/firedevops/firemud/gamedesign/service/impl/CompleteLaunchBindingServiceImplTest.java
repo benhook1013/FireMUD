@@ -112,7 +112,8 @@ class CompleteLaunchBindingServiceImplTest {
             VERSION_ID))
         .thenReturn(
             Optional.of(
-                new AuthoredWorldVersionStateSnapshot(source, VersionLifecycleState.RETIRED, 44L)));
+                new AuthoredWorldVersionStateSnapshot(
+                    source, CANONICAL_VERSION_ID, VersionLifecycleState.RETIRED, 44L)));
 
     var later =
         service.getCompleteLaunchBinding(
@@ -156,7 +157,7 @@ class CompleteLaunchBindingServiceImplTest {
         .thenReturn(
             Optional.of(
                 new AuthoredWorldVersionStateSnapshot(
-                    substituted, VersionLifecycleState.PUBLISHED, 17L)));
+                    substituted, CANONICAL_VERSION_ID, VersionLifecycleState.PUBLISHED, 17L)));
     assertDenied();
   }
 
@@ -332,7 +333,7 @@ class CompleteLaunchBindingServiceImplTest {
         .thenReturn(
             Optional.of(
                 new AuthoredWorldVersionStateSnapshot(
-                    source, VersionLifecycleState.PUBLISHED, 16L)));
+                    source, CANONICAL_VERSION_ID, VersionLifecycleState.PUBLISHED, 16L)));
     assertDenied();
 
     when(authoredWorldSourceRepository.readVersionStateSnapshot(
@@ -345,8 +346,30 @@ class CompleteLaunchBindingServiceImplTest {
             VERSION_ID))
         .thenReturn(
             Optional.of(
-                new AuthoredWorldVersionStateSnapshot(source, VersionLifecycleState.RETIRED, 23L)));
+                new AuthoredWorldVersionStateSnapshot(
+                    source, CANONICAL_VERSION_ID, VersionLifecycleState.RETIRED, 23L)));
     assertDenied();
+  }
+
+  @Test
+  void rejectsReleaseVersionUuidThatDiffersFromTheSameSourceSnapshot() {
+    UUID differentVersionId = UUID.fromString("b2345678-1234-4234-8234-123456789abc");
+    when(authoredWorldSourceRepository.readVersionStateSnapshot(
+            NAMESPACE,
+            READ_REQUEST_ID,
+            CANONICAL_TENANT_ID,
+            WORLD_SLUG,
+            SOURCE_OPERATION_ID,
+            source.evidenceDigest(),
+            VERSION_ID))
+        .thenReturn(
+            Optional.of(
+                new AuthoredWorldVersionStateSnapshot(
+                    source, differentVersionId, VersionLifecycleState.PUBLISHED, 23L)));
+
+    assertDenied();
+    verify(versionRepository, never())
+        .findByCanonicalTenantIdAndCanonicalVersionId(CANONICAL_TENANT_ID, CANONICAL_VERSION_ID);
   }
 
   @Test
@@ -695,7 +718,7 @@ class CompleteLaunchBindingServiceImplTest {
         .thenReturn(
             Optional.of(
                 new AuthoredWorldVersionStateSnapshot(
-                    source, VersionLifecycleState.PUBLISHED, 23L)));
+                    source, CANONICAL_VERSION_ID, VersionLifecycleState.PUBLISHED, 23L)));
     when(publishedReleaseBundleService.getPublishedReleaseBundle(PRIVATE_TENANT_KEY, VERSION_ID))
         .thenReturn(bundle);
     when(versionRepository.findByCanonicalTenantIdAndCanonicalVersionId(

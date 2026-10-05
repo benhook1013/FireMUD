@@ -80,6 +80,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 class WorldCompleteLaunchBindingIntegrationTest {
   private static final String NAMESPACE = "firemud";
   private static final UUID VERSION = UUID.fromString("88888888-8888-4888-8888-888888888888");
+  private static final UUID OTHER_CANONICAL_VERSION =
+      UUID.fromString("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
 
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
@@ -516,6 +518,7 @@ class WorldCompleteLaunchBindingIntegrationTest {
     String otherControlPlaneRequestId = controlRequest();
     UUID mixedReadId = UUID.randomUUID();
     UUID changedSelectorReadId = UUID.randomUUID();
+    UUID changedCanonicalVersionReadId = UUID.randomUUID();
     UUID unavailableReadId = UUID.randomUUID();
     UUID missingBindingReadId = UUID.randomUUID();
     AuthoredWorldVersionStateEvidence mixedEvidence =
@@ -532,8 +535,25 @@ class WorldCompleteLaunchBindingIntegrationTest {
             bindingEvidence.descriptor().versionId() + 1,
             VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED,
             bindingEvidence.descriptor().versionStateEpoch());
+    AuthoredWorldVersionStateEvidence expectedCanonicalVersionEvidence =
+        currentVersionState(
+            boundSource,
+            changedCanonicalVersionReadId,
+            bindingEvidence.descriptor().versionId(),
+            bindingEvidence.releaseAttestation().canonicalVersionId(),
+            VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED,
+            bindingEvidence.descriptor().versionStateEpoch());
+    AuthoredWorldVersionStateEvidence changedCanonicalVersionEvidence =
+        currentVersionState(
+            boundSource,
+            changedCanonicalVersionReadId,
+            bindingEvidence.descriptor().versionId(),
+            OTHER_CANONICAL_VERSION,
+            VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED,
+            bindingEvidence.descriptor().versionStateEpoch());
     mixedEvidence.requireValid();
     changedSelectorEvidence.requireValid();
+    changedCanonicalVersionEvidence.requireValid();
     when(versionStateClient.read(any()))
         .thenAnswer(
             invocation -> {
@@ -543,6 +563,9 @@ class WorldCompleteLaunchBindingIntegrationTest {
               }
               if (currentRequest.readRequestId().equals(changedSelectorReadId)) {
                 return changedSelectorEvidence;
+              }
+              if (currentRequest.readRequestId().equals(changedCanonicalVersionReadId)) {
+                return changedCanonicalVersionEvidence;
               }
               if (currentRequest.readRequestId().equals(unavailableReadId)) {
                 throw new IllegalStateException("Synthetic current-version source is unavailable");
@@ -579,6 +602,16 @@ class WorldCompleteLaunchBindingIntegrationTest {
     assertThat(changedSelectorEvidence.sourceEvidence()).isEqualTo(boundSource);
     assertThat(changedSelectorEvidence.request().versionId())
         .isNotEqualTo(bindingEvidence.descriptor().versionId());
+    assertThat(changedCanonicalVersionEvidence.request())
+        .isEqualTo(expectedCanonicalVersionEvidence.request());
+    assertThat(changedCanonicalVersionEvidence.sourceEvidence())
+        .isEqualTo(expectedCanonicalVersionEvidence.sourceEvidence());
+    assertThat(changedCanonicalVersionEvidence.versionState())
+        .isEqualTo(expectedCanonicalVersionEvidence.versionState());
+    assertThat(changedCanonicalVersionEvidence.versionStateEpoch())
+        .isEqualTo(expectedCanonicalVersionEvidence.versionStateEpoch());
+    assertThat(changedCanonicalVersionEvidence.canonicalVersionId())
+        .isNotEqualTo(bindingEvidence.releaseAttestation().canonicalVersionId());
 
     assertThatThrownBy(
             () ->
@@ -613,6 +646,38 @@ class WorldCompleteLaunchBindingIntegrationTest {
                 boundSourceReceipt.localTenantKey(),
                 bindingEvidence.descriptor().controlPlaneRequestId()))
         .isEqualTo(committedRowsBeforeRead);
+
+    assertThatThrownBy(
+            () ->
+                withGameSession(
+                    () ->
+                        service.readCurrentVersionState(
+                            bindingRequest, changedCanonicalVersionReadId)))
+        .isInstanceOf(WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException.class)
+        .hasMessageContaining("canonical version UUID differs");
+    assertThat(
+            worldOwnerRows(
+                boundSource.canonicalTenantId(),
+                boundSourceReceipt.operationId(),
+                boundSourceReceipt.localTenantKey(),
+                bindingEvidence.descriptor().controlPlaneRequestId()))
+        .isEqualTo(committedRowsBeforeRead);
+    assertThat(
+            worldOwnerRows(
+                otherSource.canonicalTenantId(),
+                otherSourceReceipt.operationId(),
+                otherSourceReceipt.localTenantKey(),
+                otherControlPlaneRequestId))
+        .isEqualTo(otherSourceRowsBeforeRead);
+    assertThat(
+            worldOwnerRows(
+                missingBindingSource.canonicalTenantId(),
+                missingBindingReceipt.operationId(),
+                missingBindingReceipt.localTenantKey(),
+                missingBindingRequest.expectedRequest().controlPlaneRequestId()))
+        .isEqualTo(missingBindingRowsBeforeRead);
+    assertThat(committed.evidence()).isEqualTo(bindingEvidence);
+    assertThat(committed.sourceIntakeReceipt()).isEqualTo(boundSourceReceipt);
 
     assertThatThrownBy(
             () ->
@@ -667,8 +732,19 @@ class WorldCompleteLaunchBindingIntegrationTest {
                 boundSourceReceipt.localTenantKey(),
                 bindingEvidence.descriptor().controlPlaneRequestId()))
         .isEqualTo(committedRowsBeforeRead);
+    WorldCompleteLaunchBindingReceipt retried = withGameSession(() -> service.bind(bindingRequest));
+    assertThat(retried).isEqualTo(committed);
+    assertThat(retried.evidence()).isEqualTo(bindingEvidence);
+    assertThat(retried.sourceIntakeReceipt()).isEqualTo(boundSourceReceipt);
+    assertThat(
+            worldOwnerRows(
+                boundSource.canonicalTenantId(),
+                boundSourceReceipt.operationId(),
+                boundSourceReceipt.localTenantKey(),
+                bindingEvidence.descriptor().controlPlaneRequestId()))
+        .isEqualTo(committedRowsBeforeRead);
     verify(descriptorClient).getComplete(any());
-    verify(versionStateClient, times(3)).read(any());
+    verify(versionStateClient, times(4)).read(any());
   }
 
   private WorldAuthoredSourceIntakeReceipt acceptSource(AuthoredWorldSourceEvidence source) {
@@ -888,14 +964,34 @@ class WorldCompleteLaunchBindingIntegrationTest {
       AuthoredWorldSourceEvidence source,
       VersionLifecycleState versionState,
       long versionStateEpoch) {
+    return currentVersionState(request, source, VERSION, versionState, versionStateEpoch);
+  }
+
+  private static AuthoredWorldVersionStateEvidence currentVersionState(
+      AuthoredWorldVersionStateEvidence.Request request,
+      AuthoredWorldSourceEvidence source,
+      UUID canonicalVersionId,
+      VersionLifecycleState versionState,
+      long versionStateEpoch) {
     return AuthoredWorldVersionStateEvidence.create(
-        request, source, versionState, versionStateEpoch);
+        request, source, canonicalVersionId, versionState, versionStateEpoch);
   }
 
   private static AuthoredWorldVersionStateEvidence currentVersionState(
       AuthoredWorldSourceEvidence source,
       UUID readRequestId,
       long versionId,
+      VersionLifecycleState versionState,
+      long versionStateEpoch) {
+    return currentVersionState(
+        source, readRequestId, versionId, VERSION, versionState, versionStateEpoch);
+  }
+
+  private static AuthoredWorldVersionStateEvidence currentVersionState(
+      AuthoredWorldSourceEvidence source,
+      UUID readRequestId,
+      long versionId,
+      UUID canonicalVersionId,
       VersionLifecycleState versionState,
       long versionStateEpoch) {
     AuthoredWorldVersionStateEvidence.Request request =
@@ -908,7 +1004,8 @@ class WorldCompleteLaunchBindingIntegrationTest {
             source.operationId(),
             source.evidenceDigest(),
             versionId);
-    return currentVersionState(request, source, versionState, versionStateEpoch);
+    return currentVersionState(
+        request, source, canonicalVersionId, versionState, versionStateEpoch);
   }
 
   private static AuthoredWorldReleaseAttestationEvidence.Participant participant(

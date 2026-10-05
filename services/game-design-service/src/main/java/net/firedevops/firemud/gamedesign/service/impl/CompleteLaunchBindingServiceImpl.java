@@ -125,7 +125,7 @@ public class CompleteLaunchBindingServiceImpl implements CompleteLaunchBindingSe
       throw deny(
           "RELEASE_BUNDLE_NOT_FOUND", "the descriptor's committed release is missing", missing);
     }
-    requireExactBundleBinding(bundle, source, descriptor);
+    requireExactBundleBinding(bundle, source, descriptor, sourceSnapshot.canonicalVersionId());
     Version canonicalVersion = requireCanonicalVersion(bundle, source, descriptor, sourceSnapshot);
     requireFullVersion(canonicalVersion, bundle);
 
@@ -232,7 +232,8 @@ public class CompleteLaunchBindingServiceImpl implements CompleteLaunchBindingSe
   private void requireExactBundleBinding(
       PublishedReleaseBundleDto bundle,
       AuthoredWorldSourceEvidence source,
-      AuthoredWorldLaunchDescriptorEvidence descriptor) {
+      AuthoredWorldLaunchDescriptorEvidence descriptor,
+      UUID snapshotCanonicalVersionId) {
     if (bundle == null
         || bundle.id() == null
         || bundle.id() <= 0
@@ -243,6 +244,9 @@ public class CompleteLaunchBindingServiceImpl implements CompleteLaunchBindingSe
         || bundle.canonicalVersionId() == null
         || NIL_UUID.equals(bundle.canonicalTenantId())
         || NIL_UUID.equals(bundle.canonicalVersionId())
+        || snapshotCanonicalVersionId == null
+        || NIL_UUID.equals(snapshotCanonicalVersionId)
+        || !Objects.equals(snapshotCanonicalVersionId, bundle.canonicalVersionId())
         || !"v1".equals(bundle.attestationSchemaVersion())
         || !Objects.equals(bundle.id(), descriptor.releaseBundleId())
         || !Objects.equals(bundle.versionId(), descriptor.versionId())
@@ -277,6 +281,7 @@ public class CompleteLaunchBindingServiceImpl implements CompleteLaunchBindingSe
         || !Objects.equals(version.getTenantId(), source.sourceGameTenantKey())
         || !Objects.equals(version.getCanonicalTenantId(), source.canonicalTenantId())
         || !Objects.equals(version.getCanonicalVersionId(), bundle.canonicalVersionId())
+        || !Objects.equals(version.getCanonicalVersionId(), sourceSnapshot.canonicalVersionId())
         || !Objects.equals(version.getIdentitySourceGameRowId(), source.sourceGameRowId())
         || !Objects.equals(version.getIdentitySourceGameTenantKey(), source.sourceGameTenantKey())
         || !Objects.equals(version.getIdentitySourceProvenanceKind(), source.provenanceKind())

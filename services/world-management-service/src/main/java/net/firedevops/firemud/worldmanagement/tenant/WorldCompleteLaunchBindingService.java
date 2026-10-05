@@ -192,6 +192,12 @@ public final class WorldCompleteLaunchBindingService {
       throw new WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException(
           "Game Design current-version evidence differs from the exact committed World source");
     }
+    UUID committedCanonicalVersionId =
+        committed.evidence().releaseAttestation().canonicalVersionId();
+    if (!committedCanonicalVersionId.equals(current.canonicalVersionId())) {
+      throw new WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException(
+          "Game Design current canonical version UUID differs from the committed release attestation");
+    }
     if (current.versionState() != VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED
         && current.versionState() != VersionLifecycleState.VERSION_LIFECYCLE_STATE_ACTIVE) {
       throw new WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException(

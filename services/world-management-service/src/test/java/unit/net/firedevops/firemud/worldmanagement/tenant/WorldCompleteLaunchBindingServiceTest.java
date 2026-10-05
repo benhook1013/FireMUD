@@ -49,6 +49,8 @@ class WorldCompleteLaunchBindingServiceTest {
   private static final UUID BINDING_OPERATION =
       UUID.fromString("77777777-7777-4777-8777-777777777777");
   private static final UUID VERSION = UUID.fromString("88888888-8888-4888-8888-888888888888");
+  private static final UUID OTHER_CANONICAL_VERSION =
+      UUID.fromString("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
   private static final UUID CURRENT_READ_ID =
       UUID.fromString("99999999-9999-4999-8999-999999999999");
   private static final UUID ADVANCED_READ_ID =
@@ -454,6 +456,44 @@ class WorldCompleteLaunchBindingServiceTest {
   }
 
   @Test
+  void rejectsCurrentEvidenceWithCanonicalVersionUuidDifferentFromReleaseAttestation() {
+    AuthoredWorldSourceEvidence source = source();
+    CompleteLaunchBindingEvidence binding = evidence(source);
+    stubCommittedBinding(source, binding);
+    UUID committedCanonicalVersionId = binding.releaseAttestation().canonicalVersionId();
+    AuthoredWorldVersionStateEvidence expected =
+        currentVersionState(
+            source,
+            committedCanonicalVersionId,
+            CURRENT_READ_ID,
+            binding.descriptor().versionId(),
+            VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED,
+            binding.descriptor().versionStateEpoch());
+    AuthoredWorldVersionStateEvidence substituted =
+        currentVersionState(
+            source,
+            OTHER_CANONICAL_VERSION,
+            CURRENT_READ_ID,
+            binding.descriptor().versionId(),
+            VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED,
+            binding.descriptor().versionStateEpoch());
+    assertThat(substituted.request()).isEqualTo(expected.request());
+    assertThat(substituted.sourceEvidence()).isEqualTo(expected.sourceEvidence());
+    assertThat(substituted.versionState()).isEqualTo(expected.versionState());
+    assertThat(substituted.versionStateEpoch()).isEqualTo(expected.versionStateEpoch());
+    assertThat(substituted.canonicalVersionId()).isNotEqualTo(committedCanonicalVersionId);
+    when(versionStateClient.read(any())).thenReturn(substituted);
+
+    assertThatThrownBy(
+            () ->
+                withGameSession(
+                    () -> service.readCurrentVersionState(request(binding), CURRENT_READ_ID)))
+        .isInstanceOf(WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException.class)
+        .hasMessageContaining("canonical version UUID differs");
+    verify(repository, never()).acceptFresh(any(), any(), any());
+  }
+
+  @Test
   void changedBindingRequestIsRejectedBeforeReadingCurrentOwnerEvidence() {
     AuthoredWorldSourceEvidence source = source();
     CompleteLaunchBindingEvidence binding = evidence(source);
@@ -583,6 +623,16 @@ class WorldCompleteLaunchBindingServiceTest {
       long versionId,
       VersionLifecycleState state,
       long epoch) {
+    return currentVersionState(source, VERSION, readId, versionId, state, epoch);
+  }
+
+  private static AuthoredWorldVersionStateEvidence currentVersionState(
+      AuthoredWorldSourceEvidence source,
+      UUID canonicalVersionId,
+      UUID readId,
+      long versionId,
+      VersionLifecycleState state,
+      long epoch) {
     AuthoredWorldVersionStateEvidence.Request request =
         new AuthoredWorldVersionStateEvidence.Request(
             1,
@@ -593,7 +643,8 @@ class WorldCompleteLaunchBindingServiceTest {
             source.operationId(),
             source.evidenceDigest(),
             versionId);
-    return AuthoredWorldVersionStateEvidence.create(request, source, state, epoch);
+    return AuthoredWorldVersionStateEvidence.create(
+        request, source, canonicalVersionId, state, epoch);
   }
 
   private static WorldCompleteLaunchBindingRepository.StoredBinding stored(

@@ -96,6 +96,8 @@ class AuthoredWorldVersionStateMtlsTest {
   private static final UUID TENANT_ID = UUID.fromString("33333333-3333-4333-8333-333333333333");
   private static final UUID READ_REQUEST_ID =
       UUID.fromString("44444444-4444-4444-8444-444444444444");
+  private static final UUID CANONICAL_VERSION_ID =
+      UUID.fromString("55555555-5555-4555-8555-555555555555");
   private static final AtomicLong CERTIFICATE_SERIAL = new AtomicLong(1L);
   private static final AuthoredWorldSourceEvidence SOURCE_EVIDENCE = sourceEvidence();
   private static final AuthoredWorldVersionStateEvidence.Request READ_REQUEST =
@@ -110,7 +112,11 @@ class AuthoredWorldVersionStateMtlsTest {
           17L);
   private static final AuthoredWorldVersionStateEvidence VERSION_STATE_EVIDENCE =
       AuthoredWorldVersionStateEvidence.create(
-          READ_REQUEST, SOURCE_EVIDENCE, VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT, 9L);
+          READ_REQUEST,
+          SOURCE_EVIDENCE,
+          CANONICAL_VERSION_ID,
+          VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
+          9L);
   private static TestPki pki;
 
   private AuthoredWorldVersionStateService versionStateService;

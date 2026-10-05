@@ -329,17 +329,22 @@ class CompleteLaunchBindingServiceIntegrationTest {
   private boolean isVersionStateSnapshotQuery(String sql) {
     String compact = sql.toLowerCase(Locale.ROOT).replace("\"", "").replaceAll("\\s+", "");
     return compact.contains(
-        "selectid,tenant_id,version_state,version_state_epoch" + "fromversionwhereid=?");
+        "selectid,tenant_id,canonical_version_id,canonical_tenant_id,"
+            + "identity_source_game_row_id,identity_source_game_tenant_key,"
+            + "identity_source_provenance_kind,version_state,version_state_epoch"
+            + "fromversionwhereid=?");
   }
 
   private Fixture fixture(String label, boolean completeEvidence) {
     String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 12);
-    String privateTenantKey = "complete-" + UUID.randomUUID().toString().replace("-", "");
+    String privateTenantKey = "gd-" + UUID.randomUUID().toString().replace("-", "");
+    assertThat(privateTenantKey).matches("gd-[0-9a-f]{32}").hasSize(35);
     Game game = new Game();
     game.setTenantId(privateTenantKey);
     game.setName("Complete binding source " + label + " " + suffix);
     game.setDescription("Fresh persisted Game provenance for complete-binding proof");
     Game persistedGame = gameRepository.save(game);
+    assertThat(privateTenantKey).isNotEqualTo(persistedGame.getCanonicalTenantId().toString());
 
     AuthoredWorldSourceEvidence source =
         new TransactionTemplate(transactionManager)

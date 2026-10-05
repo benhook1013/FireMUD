@@ -197,10 +197,12 @@ class AuthoredWorldVersionStateMtlsIntegrationTest {
         AuthoredWorldVersionStateEvidence.create(
             request,
             fixture.source(),
+            fixture.version().getCanonicalVersionId(),
             net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
                 .VERSION_LIFECYCLE_STATE_DRAFT,
             1L);
     assertThat(actual).isEqualTo(expected);
+    assertThat(actual.canonicalVersionId()).isEqualTo(fixture.version().getCanonicalVersionId());
     assertThat(actual.request()).isEqualTo(request);
     assertThat(actual.sourceEvidence()).isEqualTo(fixture.source());
     assertThat(actual.request().canonicalTenantId().toString())
@@ -280,6 +282,7 @@ class AuthoredWorldVersionStateMtlsIntegrationTest {
 
     assertThat(first.request()).isEqualTo(sameRequest);
     assertThat(first.sourceEvidence()).isEqualTo(fixture.source());
+    assertThat(first.canonicalVersionId()).isEqualTo(fixture.version().getCanonicalVersionId());
     assertThat(first.versionState())
         .isEqualTo(
             net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
@@ -287,6 +290,7 @@ class AuthoredWorldVersionStateMtlsIntegrationTest {
     assertThat(first.versionStateEpoch()).isEqualTo(1L);
     assertThat(current.request()).isEqualTo(sameRequest);
     assertThat(current.sourceEvidence()).isEqualTo(first.sourceEvidence());
+    assertThat(current.canonicalVersionId()).isEqualTo(first.canonicalVersionId());
     assertThat(current.versionState())
         .isEqualTo(
             net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
