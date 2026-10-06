@@ -23,7 +23,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Protocol
 
-from . import policy, stack
+from . import github, policy, stack
 from .cli_runner import (
     HOSTED_ACTIVE_RESPONSE_REASON,
     HOSTED_CLI_OVERLAP_HOLD_REASON,
@@ -5769,40 +5769,51 @@ class ReviewController:
         **kwargs: Any,
     ) -> Any:
         self._validate_force_options(force, reason)
-        selected = self._target(policy.Channel.HOSTED, expected_pr)
-        self._ensure_runnable(selected, force=force, require_force_for_warnings=True)
-        if self.hosted_adapter is None:
-            raise ControllerError("Hosted adapter is not configured")
-        for attempt in range(MAX_BASE_RESELECTIONS + 1):
-            if not self.isolated_fixture:
-                prepare_full_trigger(selected.pr, expected_pr)
+        with github.activate_hosted_preflight_budget() as budget:
             try:
-                return self.hosted_adapter(
-                    selected.target,
-                    expect_pr=expected_pr,
-                    force=force,
-                    reason=reason,
-                    admit=lambda reserve, selected=selected: self._admit_review(
-                        selected.pr, "hosted", reserve, selection_inputs=selected.selection_inputs
-                    ),
-                    **kwargs,
-                )
-            except _SelectionChanged:
-                if attempt == MAX_BASE_RESELECTIONS:
-                    raise
+                budget.set_phase("target_selection")
                 selected = self._target(policy.Channel.HOSTED, expected_pr)
+                budget.set_phase("runnable_check")
                 self._ensure_runnable(selected, force=force, require_force_for_warnings=True)
-            except StaleReviewTarget:
-                if not selected.target.default_base_front or attempt == MAX_BASE_RESELECTIONS:
-                    raise
-                selected = self._target(policy.Channel.HOSTED, selected.pr)
-                self._ensure_runnable(selected, force=force, require_force_for_warnings=True)
-            except HostedAdmissionBusy:
-                if attempt == MAX_BASE_RESELECTIONS:
-                    raise
-                time.sleep(min(HOSTED_ADMISSION_RETRY_BASE_SECONDS * (attempt + 1), HOSTED_ADMISSION_RETRY_MAX_SECONDS))
-                selected = self._target(policy.Channel.HOSTED, expected_pr)
-                self._ensure_runnable(selected, force=force, require_force_for_warnings=True)
+                if self.hosted_adapter is None:
+                    raise ControllerError("Hosted adapter is not configured")
+                for attempt in range(MAX_BASE_RESELECTIONS + 1):
+                    if not self.isolated_fixture:
+                        prepare_full_trigger(selected.pr, expected_pr)
+                    try:
+                        return self.hosted_adapter(
+                            selected.target,
+                            expect_pr=expected_pr,
+                            force=force,
+                            reason=reason,
+                            admit=lambda reserve, selected=selected: self._admit_review(
+                                selected.pr, "hosted", reserve, selection_inputs=selected.selection_inputs
+                            ),
+                            **kwargs,
+                        )
+                    except _SelectionChanged:
+                        if attempt == MAX_BASE_RESELECTIONS:
+                            raise
+                        budget.set_phase("target_reselection")
+                        selected = self._target(policy.Channel.HOSTED, expected_pr)
+                        self._ensure_runnable(selected, force=force, require_force_for_warnings=True)
+                    except StaleReviewTarget:
+                        if not selected.target.default_base_front or attempt == MAX_BASE_RESELECTIONS:
+                            raise
+                        budget.set_phase("target_reselection")
+                        selected = self._target(policy.Channel.HOSTED, selected.pr)
+                        self._ensure_runnable(selected, force=force, require_force_for_warnings=True)
+                    except HostedAdmissionBusy:
+                        if attempt == MAX_BASE_RESELECTIONS:
+                            raise
+                        budget.set_phase("admission_retry")
+                        time.sleep(
+                            min(HOSTED_ADMISSION_RETRY_BASE_SECONDS * (attempt + 1), HOSTED_ADMISSION_RETRY_MAX_SECONDS)
+                        )
+                        selected = self._target(policy.Channel.HOSTED, expected_pr)
+                        self._ensure_runnable(selected, force=force, require_force_for_warnings=True)
+            except github.HostedPreflightDeadlineExceeded as error:
+                raise ControllerError(str(error)) from error
         raise AssertionError("bounded Hosted reselection loop exhausted unexpectedly")
 
     def run_cli(

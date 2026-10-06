@@ -19,7 +19,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "dev-tools"))
 
-from pr_review import cli_runner, evidence, hosted, sqlite_provider_imports, stack
+from pr_review import cli_runner, evidence, github, hosted, sqlite_provider_imports, stack
 from pr_review.cli import _parser
 from pr_review.controller import (
     HOSTED_ACTIVE_RESPONSE_REASON,
@@ -295,6 +295,30 @@ def hosted_anchor(*, parent_identity="develop", parent_head=BASE, merge_base=BAS
 
 
 class ControllerTests(unittest.TestCase):
+    def test_hosted_preflight_deadline_covers_target_selection_before_adapter(self):
+        controller = self.make({})
+        adapter_calls = []
+        observed_phases = []
+        controller.hosted_adapter = lambda *args, **kwargs: adapter_calls.append((args, kwargs))
+
+        def expire_during_selection(*_args, **_kwargs):
+            budget = github.active_hosted_preflight_budget()
+            self.assertIsNotNone(budget)
+            observed_phases.append(budget.current_phase)
+            budget.deadline = budget.started_at - 1
+
+        with (
+            patch.object(controller, "_target", side_effect=expire_during_selection),
+            self.assertRaisesRegex(
+                ControllerError,
+                r"Hosted preflight deadline exceeded \(phase=runnable_check, .*budget=120s\)",
+            ),
+        ):
+            controller.run_hosted()
+
+        self.assertEqual(observed_phases, ["target_selection"])
+        self.assertEqual(adapter_calls, [])
+
     def test_summary_decision_race_reselects_and_holds_before_reservation(self):
         evidence = {(1, "hosted"): [self.allocation_evidence(checkpoint="baseline")]}
         values = {1: pr(1, HEAD_1)}

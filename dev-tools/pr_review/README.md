@@ -24,6 +24,8 @@ The status-site adapter renders these labels once per channel card, uses only `r
 
 ### Manual Hosted adoption
 
+Hosted request preflight shares one 120-second monotonic deadline across target selection, runnable checks, admission retries, and the runner's repository-wide reservation/manual-request reads. Those independent GitHub reads run with bounded concurrency; identical reservation and manual-request comment snapshots are reused within the sweep. If the deadline expires, the command fails closed before reserving quota or posting a Hosted trigger and reports the phase, elapsed time, and completed-read progress. A posted request's provider wait is outside this preflight deadline.
+
 A human-posted Hosted CodeRabbit request can be incorporated without requesting another review: after the review completes, run `dev-tools/pr-review decide trigger-adopt-manual --pr <number> --trigger-id <GitHub comment ID> --head <current reviewed SHA>`. This verifies the immutable public command, completed response, and current anchor before writing a private attribution record. A queued PR uses its reconciled stack parent; an off-queue PR uses its actual live base branch after matching the live base and head tips to their remote refs. Off-queue adoption leaves the configured review queue unchanged. The command does not post a GitHub comment, create a result checkpoint, or grant taper by itself; adjudicate findings and post the normal public Hosted checkpoint next. A moved head or ambiguous response is refused.
 
 The controller continues using its selected JSON state until cutover is explicitly requested. Inspect the current format, then migrate the existing controller state with the matching entrypoint:

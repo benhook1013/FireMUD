@@ -11,6 +11,7 @@ import stat
 import subprocess
 import uuid
 from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
@@ -2156,9 +2157,10 @@ class HostedRunner:
     @staticmethod
     def _authenticated_login() -> str:
         try:
-            completed = subprocess.run(["gh", "api", "user"], check=True, capture_output=True, text=True, timeout=30)
-            login = json.loads(completed.stdout).get("login")
-        except (OSError, subprocess.SubprocessError, json.JSONDecodeError, AttributeError) as exc:
+            login = github.fetch_authenticated_user().get("login")
+        except github.HostedPreflightDeadlineExceeded as exc:
+            raise ControllerError(str(exc)) from exc
+        except (OSError, RuntimeError, TypeError, ValueError, AttributeError) as exc:
             raise ControllerError("could not verify the authenticated GitHub user before Hosted posting") from exc
         if not isinstance(login, str) or not login.strip() or github.is_coderabbit_login(login):
             raise ControllerError("authenticated GitHub user has no trusted login identity")
@@ -2588,17 +2590,69 @@ class HostedRunner:
                 cooldowns.append(reset)
         return max(cooldowns, default=None)
 
+    @staticmethod
+    def _bounded_preflight_fetches(
+        budget: github.HostedPreflightBudget,
+        phase: str,
+        numbers: Sequence[int],
+        operation: Callable[[int], Any],
+        failure_label: str,
+    ) -> dict[int, Any]:
+        selected = tuple(numbers)
+        budget.set_phase(phase, total=len(selected))
+        if not selected:
+            return {}
+
+        def bound_operation(number: int) -> Any:
+            with github.bind_hosted_preflight_budget(budget):
+                return operation(number)
+
+        results: dict[int, Any] = {}
+        with ThreadPoolExecutor(max_workers=min(4, len(selected))) as pool:
+            futures = {pool.submit(bound_operation, number): number for number in selected}
+            for future in as_completed(futures):
+                number = futures[future]
+                try:
+                    results[number] = future.result()
+                except github.HostedPreflightDeadlineExceeded as error:
+                    budget.set_completed(len(results))
+                    raise ControllerError(f"{error}; completed={len(results)}/{len(selected)}") from error
+                except Exception as error:
+                    budget.set_completed(len(results))
+                    detail = (
+                        str(error)
+                        if isinstance(error, ControllerError)
+                        else f"{failure_label} for PR #{number} cannot be verified"
+                    )
+                    raise ControllerError(
+                        f"{detail} (phase={phase}, elapsed={budget.elapsed_seconds():.1f}s, "
+                        f"completed={len(results)}/{len(selected)})"
+                    ) from error
+                budget.set_completed(len(results))
+        return results
+
     def _assert_no_other_active_reservations(
         self,
         pr: int,
         common: Path,
     ) -> None:
+        budget = github.active_hosted_preflight_budget()
+        if budget is None:
+            with github.activate_hosted_preflight_budget() as budget:
+                return self._assert_no_other_active_reservations(pr, common)
         terminal_states = {"completed", "failed", "failed_incomplete_coverage", "rate_limited", "noop", "retired"}
         current = self._repository_current_trigger_paths(self.repo, common)
+        budget.set_phase("open_pr_listing", total=1)
         try:
             open_pull_requests = github.fetch_api_endpoint(f"repos/{self.repo}/pulls?state=open&per_page=100")
+            budget.set_completed(1)
         except (OSError, RuntimeError, ValueError, TypeError) as exc:
-            raise ControllerError("open repository pull requests cannot be checked before posting") from exc
+            if isinstance(exc, github.HostedPreflightDeadlineExceeded):
+                raise ControllerError(str(exc)) from exc
+            raise ControllerError(
+                f"open repository pull requests cannot be checked before posting "
+                f"(phase=open_pr_listing, elapsed={budget.elapsed_seconds():.1f}s, completed=0/1)"
+            ) from exc
         open_prs: set[int] = set()
         for pull_request in open_pull_requests:
             number = pull_request.get("number")
@@ -2625,23 +2679,34 @@ class HostedRunner:
             if reset is not None:
                 raise ControllerError(f"Hosted repository cooldown remains active on closed PR #{closed_pr}")
 
-        comments_by_pr: dict[int, dict[str, Any]] = {}
-        for other_pr in sorted(open_prs):
+        def fetch_comments(other_pr: int) -> dict[str, Any]:
             try:
                 comments = github.fetch_api_endpoint(f"repos/{self.repo}/issues/{other_pr}/comments?per_page=100")
-                comments_by_pr[other_pr] = self._normalize_rest_issue_comments(other_pr, comments)
-            except ControllerError:
-                raise
+                return self._normalize_rest_issue_comments(other_pr, comments)
             except (OSError, RuntimeError, ValueError, TypeError) as exc:
+                if isinstance(exc, github.HostedPreflightDeadlineExceeded):
+                    raise
                 raise ControllerError(f"issue-comment history for PR #{other_pr} cannot be verified") from exc
 
-        payloads: dict[int, dict[str, Any]] = {}
+        comments_by_pr = self._bounded_preflight_fetches(
+            budget,
+            "repository_issue_comments",
+            sorted(open_prs),
+            fetch_comments,
+            "issue-comment history",
+        )
+
+        reservation_paths = sorted(
+            (other_pr, paths[0])
+            for other_pr, paths in current.items()
+            if other_pr != pr and other_pr in open_prs and len(paths) == 1
+        )
         for other_pr, paths in current.items():
-            if other_pr == pr or other_pr not in open_prs:
-                continue
-            if len(paths) != 1:
+            if other_pr != pr and other_pr in open_prs and len(paths) != 1:
                 raise ControllerError(f"multiple current Hosted reservations for PR #{other_pr} require resolution")
-            path = paths[0]
+
+        def inspect_reservation(other_pr: int) -> tuple[dict[str, Any], dict[str, Any], hosted.TriggerState] | None:
+            path = next(path for number, path in reservation_paths if number == other_pr)
             with ExitStack() as reservation_lock:
                 try:
                     other_lock = reservation_lock.enter_context(
@@ -2656,49 +2721,81 @@ class HostedRunner:
                     record = hosted.load_trigger_reservation(path, self.repo, other_pr)
                     status = record.get("status")
                     if status == "retired":
-                        continue
+                        return None
                     if status in {"posting", "posted_boundary_changed", "posted_boundary_unverified"}:
                         raise ControllerError(f"another Hosted request is unresolved for PR #{other_pr}: ambiguous")
                     payload = github.fetch_pull_request(self.repo, other_pr)
-                    payloads[other_pr] = payload
                     state = hosted.trigger_state(self.repo, other_pr, payload, record, path)
+                    return record, payload, state
                 except ControllerError:
                     raise
                 except (OSError, RuntimeError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+                    if isinstance(exc, github.HostedPreflightDeadlineExceeded):
+                        raise
                     raise ControllerError(
                         f"current Hosted reservation for PR #{other_pr} cannot be verified "
                         f"(phase=hosted_reservation_readback, error={type(exc).__name__})"
                     ) from exc
-                if state.state in {"active", "awaiting_response"}:
-                    raise ControllerError(f"another Hosted request is unresolved for PR #{other_pr}: {state.state}")
-                if state.state == "rate_limited":
-                    reset = hosted.parse_timestamp(state.cooldown_until)
-                    if reset is None or reset > datetime.now(timezone.utc):
-                        raise ControllerError(f"Hosted repository cooldown remains unresolved on PR #{other_pr}")
-                if state.state == "ambiguous":
-                    response_id = state.response_id
-                    if (
-                        state.terminal is not True
-                        or isinstance(response_id, bool)
-                        or not isinstance(response_id, int)
-                        or response_id <= 0
-                    ):
-                        raise ControllerError(f"another Hosted request is unresolved for PR #{other_pr}: {state.state}")
-                    continue
-                if state.state not in terminal_states:
-                    raise ControllerError(f"another Hosted request is unresolved for PR #{other_pr}: {state.state}")
 
-        for other_pr, comments_payload in comments_by_pr.items():
+        reservation_results = self._bounded_preflight_fetches(
+            budget,
+            "hosted_reservation_readback",
+            [other_pr for other_pr, _ in reservation_paths],
+            inspect_reservation,
+            "Hosted reservation readback",
+        )
+        payloads: dict[int, dict[str, Any]] = {}
+        for other_pr, result in sorted(reservation_results.items()):
+            if result is None:
+                continue
+            _, payload, state = result
+            payloads[other_pr] = payload
+            if state.state in {"active", "awaiting_response"}:
+                raise ControllerError(f"another Hosted request is unresolved for PR #{other_pr}: {state.state}")
+            if state.state == "rate_limited":
+                reset = hosted.parse_timestamp(state.cooldown_until)
+                if reset is None or reset > datetime.now(timezone.utc):
+                    raise ControllerError(f"Hosted repository cooldown remains unresolved on PR #{other_pr}")
+            if state.state == "ambiguous":
+                response_id = state.response_id
+                if (
+                    state.terminal is not True
+                    or isinstance(response_id, bool)
+                    or not isinstance(response_id, int)
+                    or response_id <= 0
+                ):
+                    raise ControllerError(f"another Hosted request is unresolved for PR #{other_pr}: {state.state}")
+                continue
+            if state.state not in terminal_states:
+                raise ControllerError(f"another Hosted request is unresolved for PR #{other_pr}: {state.state}")
+
+        budget.set_phase("manual_trigger_scan", total=len(comments_by_pr))
+        manual_commands: dict[int, dict[str, Any]] = {}
+        for scanned, (other_pr, comments_payload) in enumerate(comments_by_pr.items(), start=1):
+            command = self._latest_untracked_manual_trigger(other_pr, comments_payload)
+            if command is not None:
+                manual_commands[other_pr] = command
+            budget.set_completed(scanned)
+
+        missing_manual_histories = [other_pr for other_pr in manual_commands if other_pr not in payloads]
+        payloads.update(
+            self._bounded_preflight_fetches(
+                budget,
+                "manual_trigger_history",
+                missing_manual_histories,
+                lambda other_pr: github.fetch_pull_request(self.repo, other_pr),
+                "manual Hosted request history",
+            )
+        )
+
+        budget.set_phase("manual_trigger_verification", total=len(manual_commands))
+        for verified_count, (other_pr, command) in enumerate(manual_commands.items(), start=1):
             try:
-                command = self._latest_untracked_manual_trigger(other_pr, comments_payload)
-                if command is None:
-                    continue
-                payload = payloads.get(other_pr)
-                if payload is None:
-                    payload = github.fetch_pull_request(self.repo, other_pr)
-                command = self._latest_untracked_manual_trigger(other_pr, payload)
-                if command is None:
+                payload = payloads[other_pr]
+                current_command = self._latest_untracked_manual_trigger(other_pr, payload)
+                if current_command is None:
                     raise ControllerError("manual command history changed during the pre-POST check")
+                command = current_command
                 trigger_id = github.immutable_database_id(dict(command))
                 if trigger_id is None:
                     raise ControllerError("manual full-review command has incomplete immutable identity")
@@ -2711,6 +2808,7 @@ class HostedRunner:
                 if reviewed_head is None:
                     if self._manual_terminal_without_head(self.repo, other_pr, payload, command, common):
                         # Public terminality releases only the operational request slot; it is never review credit.
+                        budget.set_completed(verified_count)
                         continue
                     raise ControllerError(
                         f"another manual Hosted request is unresolved for PR #{other_pr}: "
@@ -2756,6 +2854,7 @@ class HostedRunner:
                 or state.reason == "CodeRabbit finished after explicitly reporting incomplete file coverage"
             ):
                 raise ControllerError(f"another manual Hosted request is unresolved for PR #{other_pr}: {state.state}")
+            budget.set_completed(verified_count)
 
     def __call__(
         self,
@@ -2767,6 +2866,17 @@ class HostedRunner:
         admit: Callable[[Callable[[], None]], None] | None = None,
         **_: Any,
     ) -> dict[str, Any]:
+        if github.active_hosted_preflight_budget() is None:
+            with github.activate_hosted_preflight_budget():
+                return self.__call__(
+                    target,
+                    expect_pr=expect_pr,
+                    force=force,
+                    reason=reason,
+                    admit=admit,
+                )
+        budget = github.active_hosted_preflight_budget()
+        assert budget is not None
         if reason is not None and not force:
             raise ControllerError("--reason is only valid with --force")
         if reason is not None and (len(reason) > 240 or any(ord(character) < 32 for character in reason)):
@@ -2775,7 +2885,9 @@ class HostedRunner:
             raise ControllerError("direct default-base target has no verified current base/head test merge")
         pr = target.snapshot.number
         hosted.assert_expected_pr(pr, expect_pr)
+        budget.set_phase("selected_pr_initial_identity", total=1)
         before = self.live.pull_request(pr)
+        budget.set_completed(1)
         if before != target.snapshot:
             if self._base_advanced(target, before):
                 raise StaleReviewTarget("default base advanced after Hosted target selection")
@@ -2832,7 +2944,9 @@ class HostedRunner:
             current_records = hosted.current_trigger_record_paths(self.repo, pr)
             if len(current_records) > 1:
                 raise ControllerError("multiple current Hosted reservations require operator resolution")
+            budget.set_phase("selected_pr_current_trigger_history", total=1)
             payload = github.fetch_pull_request(self.repo, pr)
+            budget.set_completed(1)
             if current_records:
                 current_path = current_records[0]
                 record = hosted.load_trigger_reservation(current_path, self.repo, pr)
@@ -2897,7 +3011,9 @@ class HostedRunner:
                     "actual_base_ref": target.parent.ref_name,
                     "actual_base_sha": before.base_sha,
                 }
+            budget.set_phase("posting_actor_identity", total=1)
             posting_actor = self._authenticated_login()
+            budget.set_completed(1)
             posting_started_at = hosted.utc_now()
             posting = {
                 "schema_version": 2,
@@ -2928,7 +3044,9 @@ class HostedRunner:
                 # before the final target identity/comment check so a manual
                 # target command during that sweep cannot race our POST.
                 self._assert_no_other_active_reservations(pr, common)
+                budget.set_phase("selected_pr_final_identity", total=1)
                 reservation_payload = github.fetch_pull_request(self.repo, pr)
+                budget.set_completed(1)
                 self._assert_latest_manual_trigger_is_tracked(pr, reservation_payload)
                 reservation_pr = reservation_payload["data"]["repository"]["pullRequest"]
                 reservation_head = reservation_pr.get("headRefOid") if isinstance(reservation_pr, dict) else None
@@ -2965,6 +3083,8 @@ class HostedRunner:
             except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
                 if isinstance(exc, ControllerError):
                     raise
+                if isinstance(exc, github.HostedPreflightDeadlineExceeded):
+                    raise ControllerError(str(exc)) from exc
                 raise ControllerError(f"could not establish the Hosted pre-POST comment identity floor: {exc}") from exc
             sqlite_attempt_started = False
             if self.records is not None and sqlite_attempt_id is not None:
@@ -2997,6 +3117,8 @@ class HostedRunner:
 
             def reserve() -> None:
                 nonlocal reservation_saved
+                budget.set_phase("request_reservation", total=1)
+                budget.complete()
                 if archive_current_path is not None:
                     trigger_id = (record.get("trigger") or {}).get("id")
                     archive = archive_current_path.with_name(f"trigger-{trigger_id}.json")
@@ -3021,6 +3143,7 @@ class HostedRunner:
                 reserve()
             else:
                 try:
+                    budget.set_phase("controller_admission", total=1)
                     admit(reserve)
                 except Exception:
                     if sqlite_attempt_started and sqlite_attempt_id is not None:
@@ -3143,6 +3266,7 @@ class HostedRunner:
                 "force_acknowledged": force,
                 "force_reason": reason,
                 "candidate_warnings": list(target.candidate_warnings),
+                "preflight": budget.summary(),
             }
             if sqlite_capture_warnings:
                 result["sqlite_capture_warnings"] = sqlite_capture_warnings

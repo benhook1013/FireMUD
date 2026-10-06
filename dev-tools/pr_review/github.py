@@ -12,7 +12,10 @@ import json
 import os
 import re
 import subprocess
-from collections.abc import Sequence
+import time
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar, Token
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +27,146 @@ REVIEW_COMMAND_TYPES = {
 }
 REPO_NAME = re.compile(r"^[^/\s]+/[^/\s]+$")
 REVIEW_CONNECTIONS = ("reviewThreads", "comments", "reviews")
+HOSTED_PREFLIGHT_BUDGET_SECONDS = 120
+
+
+class HostedPreflightDeadlineExceeded(TimeoutError):
+    """A bounded Hosted preflight ran out of its shared GitHub-read budget."""
+
+    def __init__(self, phase: str, elapsed_seconds: float, budget_seconds: float, completed: int, total: int | None):
+        self.phase = phase
+        self.elapsed_seconds = elapsed_seconds
+        self.budget_seconds = budget_seconds
+        self.completed = completed
+        self.total = total
+        progress = f"{completed}/{total}" if total is not None else str(completed)
+        super().__init__(
+            f"Hosted preflight deadline exceeded (phase={phase}, elapsed={elapsed_seconds:.1f}s, "
+            f"completed={progress}, budget={budget_seconds:.0f}s)"
+        )
+
+
+class HostedPreflightBudget:
+    """One monotonic budget shared across target selection and pre-POST GitHub reads."""
+
+    def __init__(self, timeout_seconds: float = HOSTED_PREFLIGHT_BUDGET_SECONDS) -> None:
+        if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)) or timeout_seconds <= 0:
+            raise ValueError("Hosted preflight budget must be a positive number of seconds")
+        self.timeout_seconds = float(timeout_seconds)
+        self.started_at = time.monotonic()
+        self.deadline = self.started_at + self.timeout_seconds
+        self.current_phase = "starting"
+        self._phase_started_at = self.started_at
+        self.phase_seconds: dict[str, float] = {}
+        self.phase_progress: dict[str, dict[str, int | None]] = {}
+        self.completed = 0
+        self.total: int | None = None
+        self.active = True
+        self._finished_at: float | None = None
+
+    def _close_phase(self, now: float) -> None:
+        elapsed = max(0.0, now - self._phase_started_at)
+        self.phase_seconds[self.current_phase] = self.phase_seconds.get(self.current_phase, 0.0) + elapsed
+        self.phase_progress[self.current_phase] = {"completed": self.completed, "total": self.total}
+        self._phase_started_at = now
+
+    def set_phase(self, phase: str, *, completed: int = 0, total: int | None = None) -> None:
+        now = time.monotonic()
+        self._close_phase(now)
+        self.current_phase = phase
+        self._phase_started_at = now
+        self.completed = completed
+        self.total = total
+        self.remaining_seconds()
+
+    def set_completed(self, completed: int) -> None:
+        self.completed = completed
+        self.remaining_seconds()
+
+    def remaining_seconds(self) -> float:
+        remaining = self.deadline - time.monotonic()
+        if self.active and remaining <= 0:
+            raise self.exceeded()
+        return max(0.0, remaining)
+
+    def elapsed_seconds(self) -> float:
+        return max(0.0, time.monotonic() - self.started_at)
+
+    def request_timeout(self, cap_seconds: float) -> float:
+        remaining = self.remaining_seconds()
+        if not self.active:
+            return cap_seconds
+        return min(cap_seconds, remaining)
+
+    def exceeded(self) -> HostedPreflightDeadlineExceeded:
+        elapsed = max(0.0, time.monotonic() - self.started_at)
+        return HostedPreflightDeadlineExceeded(
+            self.current_phase, elapsed, self.timeout_seconds, self.completed, self.total
+        )
+
+    def complete(self) -> None:
+        self.remaining_seconds()
+        now = time.monotonic()
+        self._close_phase(now)
+        self._finished_at = now
+        self.active = False
+
+    def summary(self) -> dict[str, Any]:
+        now = self._finished_at if self._finished_at is not None else time.monotonic()
+        phase_seconds = dict(self.phase_seconds)
+        if self.active:
+            phase_seconds[self.current_phase] = phase_seconds.get(self.current_phase, 0.0) + max(
+                0.0, now - self._phase_started_at
+            )
+        return {
+            "elapsed_seconds": round(max(0.0, now - self.started_at), 1),
+            "budget_seconds": self.timeout_seconds,
+            "phase_seconds": {name: round(seconds, 1) for name, seconds in phase_seconds.items()},
+            "phase_progress": dict(self.phase_progress),
+        }
+
+
+_HOSTED_PREFLIGHT_BUDGET: ContextVar[HostedPreflightBudget | None] = ContextVar(
+    "firemud_hosted_preflight_budget", default=None
+)
+
+
+@contextmanager
+def activate_hosted_preflight_budget(
+    timeout_seconds: float = HOSTED_PREFLIGHT_BUDGET_SECONDS,
+) -> Iterator[HostedPreflightBudget]:
+    budget = HostedPreflightBudget(timeout_seconds)
+    token = _HOSTED_PREFLIGHT_BUDGET.set(budget)
+    try:
+        yield budget
+    finally:
+        _HOSTED_PREFLIGHT_BUDGET.reset(token)
+
+
+@contextmanager
+def bind_hosted_preflight_budget(budget: HostedPreflightBudget) -> Iterator[None]:
+    """Bind the caller's budget inside a bounded worker thread."""
+
+    token: Token[HostedPreflightBudget | None] = _HOSTED_PREFLIGHT_BUDGET.set(budget)
+    try:
+        yield
+    finally:
+        _HOSTED_PREFLIGHT_BUDGET.reset(token)
+
+
+def active_hosted_preflight_budget() -> HostedPreflightBudget | None:
+    budget = _HOSTED_PREFLIGHT_BUDGET.get()
+    return budget if budget is not None and budget.active else None
+
+
+def _request_timeout(cap_seconds: float) -> tuple[float, HostedPreflightBudget | None]:
+    budget = active_hosted_preflight_budget()
+    return (budget.request_timeout(cap_seconds), budget) if budget is not None else (cap_seconds, None)
+
+
+def _raise_if_budget_expired(budget: HostedPreflightBudget | None) -> None:
+    if budget is not None:
+        budget.remaining_seconds()
 
 
 def parse_repo(repo: str) -> tuple[str, str]:
@@ -39,16 +182,25 @@ def infer_repo(repo: str | None = None) -> str:
     if selected:
         parse_repo(selected)
         return selected
+    timeout, budget = _request_timeout(GH_TIMEOUT_SECONDS)
     try:
         completed = subprocess.run(
             ["gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"],
             check=True,
             capture_output=True,
             text=True,
-            timeout=GH_TIMEOUT_SECONDS,
+            timeout=timeout,
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired, subprocess.CalledProcessError) as exc:
+    except subprocess.TimeoutExpired as exc:
+        if budget is not None:
+            try:
+                _raise_if_budget_expired(budget)
+            except HostedPreflightDeadlineExceeded as expired:
+                raise expired from exc
         raise RuntimeError("could not infer GitHub repository identity") from exc
+    except (FileNotFoundError, subprocess.CalledProcessError) as exc:
+        raise RuntimeError("could not infer GitHub repository identity") from exc
+    _raise_if_budget_expired(budget)
     selected = completed.stdout.strip()
     parse_repo(selected)
     return selected
@@ -74,20 +226,27 @@ def run_gh_query(query: str, variables: dict[str, str | int]) -> dict[str, Any]:
     for key, value in variables.items():
         option = "-F" if isinstance(value, int) and not isinstance(value, bool) else "-f"
         args.extend([option, f"{key}={value}"])
+    timeout, budget = _request_timeout(GH_TIMEOUT_SECONDS)
     try:
         completed = subprocess.run(
             args,
             check=True,
             capture_output=True,
             text=True,
-            timeout=GH_TIMEOUT_SECONDS,
+            timeout=timeout,
         )
     except FileNotFoundError as exc:
         raise RuntimeError("gh CLI is required") from exc
     except subprocess.TimeoutExpired as exc:
+        if budget is not None:
+            try:
+                _raise_if_budget_expired(budget)
+            except HostedPreflightDeadlineExceeded as expired:
+                raise expired from exc
         raise RuntimeError(f"gh api graphql timed out after {GH_TIMEOUT_SECONDS} seconds") from exc
     except subprocess.CalledProcessError as exc:
         raise RuntimeError(exc.stderr.strip() if exc.stderr else "gh api graphql failed") from exc
+    _raise_if_budget_expired(budget)
     try:
         payload = json.loads(completed.stdout)
     except json.JSONDecodeError as exc:
@@ -299,20 +458,27 @@ def load_pull_request(input_path: str | Path | None, repo: str, pr_number: int) 
 def fetch_api_endpoint(endpoint: str) -> list[dict[str, Any]]:
     """Read a REST endpoint with GitHub CLI pagination and validate its shape."""
 
+    timeout, budget = _request_timeout(GH_API_TIMEOUT_SECONDS)
     try:
         completed = subprocess.run(
             ["gh", "api", "--method", "GET", "--paginate", "--slurp", endpoint],
             check=True,
             capture_output=True,
             text=True,
-            timeout=GH_API_TIMEOUT_SECONDS,
+            timeout=timeout,
         )
     except FileNotFoundError as exc:
         raise RuntimeError("gh CLI is required") from exc
     except subprocess.TimeoutExpired as exc:
+        if budget is not None:
+            try:
+                _raise_if_budget_expired(budget)
+            except HostedPreflightDeadlineExceeded as expired:
+                raise expired from exc
         raise RuntimeError(f"gh api timed out after {GH_API_TIMEOUT_SECONDS} seconds") from exc
     except subprocess.CalledProcessError as exc:
         raise RuntimeError(exc.stderr.strip() if exc.stderr else "gh api failed") from exc
+    _raise_if_budget_expired(budget)
     try:
         pages = json.loads(completed.stdout)
     except json.JSONDecodeError as exc:
@@ -328,20 +494,27 @@ def fetch_api_endpoint(endpoint: str) -> list[dict[str, Any]]:
 def _fetch_api_pages(endpoint: str) -> list[dict[str, Any]]:
     """Read an object-shaped REST endpoint through GitHub CLI pagination."""
 
+    timeout, budget = _request_timeout(GH_API_TIMEOUT_SECONDS)
     try:
         completed = subprocess.run(
             ["gh", "api", "--method", "GET", "--paginate", "--slurp", endpoint],
             check=True,
             capture_output=True,
             text=True,
-            timeout=GH_API_TIMEOUT_SECONDS,
+            timeout=timeout,
         )
     except FileNotFoundError as exc:
         raise RuntimeError("gh CLI is required") from exc
     except subprocess.TimeoutExpired as exc:
+        if budget is not None:
+            try:
+                _raise_if_budget_expired(budget)
+            except HostedPreflightDeadlineExceeded as expired:
+                raise expired from exc
         raise RuntimeError(f"gh api timed out after {GH_API_TIMEOUT_SECONDS} seconds") from exc
     except subprocess.CalledProcessError as exc:
         raise RuntimeError(exc.stderr.strip() if exc.stderr else "gh api failed") from exc
+    _raise_if_budget_expired(budget)
     try:
         pages = json.loads(completed.stdout)
     except json.JSONDecodeError as exc:
@@ -354,20 +527,27 @@ def _fetch_api_pages(endpoint: str) -> list[dict[str, Any]]:
 def _fetch_api_object(endpoint: str) -> dict[str, Any]:
     """Read one non-paginated REST object and validate its shape."""
 
+    timeout, budget = _request_timeout(GH_API_TIMEOUT_SECONDS)
     try:
         completed = subprocess.run(
             ["gh", "api", "--method", "GET", endpoint],
             check=True,
             capture_output=True,
             text=True,
-            timeout=GH_API_TIMEOUT_SECONDS,
+            timeout=timeout,
         )
     except FileNotFoundError as exc:
         raise RuntimeError("gh CLI is required") from exc
     except subprocess.TimeoutExpired as exc:
+        if budget is not None:
+            try:
+                _raise_if_budget_expired(budget)
+            except HostedPreflightDeadlineExceeded as expired:
+                raise expired from exc
         raise RuntimeError(f"gh api timed out after {GH_API_TIMEOUT_SECONDS} seconds") from exc
     except subprocess.CalledProcessError as exc:
         raise RuntimeError(exc.stderr.strip() if exc.stderr else "gh api failed") from exc
+    _raise_if_budget_expired(budget)
     try:
         value = json.loads(completed.stdout)
     except json.JSONDecodeError as exc:
@@ -446,26 +626,66 @@ def fetch_pr_metadata(repo: str, pr_number: int) -> dict[str, Any]:
         "number,title,state,headRefName,headRefOid,headRepository,headRepositoryOwner,baseRefName,baseRefOid,"
         "changedFiles,body,statusCheckRollup,mergeable,mergeStateStatus,reviewDecision,isDraft,url,mergedAt"
     )
+    timeout, budget = _request_timeout(GH_TIMEOUT_SECONDS)
     try:
         completed = subprocess.run(
             ["gh", "pr", "view", str(pr_number), "--repo", repo, "--json", fields],
             check=True,
             capture_output=True,
             text=True,
-            timeout=GH_TIMEOUT_SECONDS,
+            timeout=timeout,
         )
     except FileNotFoundError as exc:
         raise RuntimeError("gh CLI is required") from exc
     except subprocess.TimeoutExpired as exc:
+        if budget is not None:
+            try:
+                _raise_if_budget_expired(budget)
+            except HostedPreflightDeadlineExceeded as expired:
+                raise expired from exc
         raise RuntimeError(f"gh pr view timed out after {GH_TIMEOUT_SECONDS} seconds") from exc
     except subprocess.CalledProcessError as exc:
         raise RuntimeError(exc.stderr.strip() if exc.stderr else "gh pr view failed") from exc
+    _raise_if_budget_expired(budget)
     try:
         value = json.loads(completed.stdout)
     except json.JSONDecodeError as exc:
         raise RuntimeError("gh pr view returned invalid JSON") from exc
     if not isinstance(value, dict):
         raise TypeError("gh pr view returned a non-object payload")
+    return value
+
+
+def fetch_authenticated_user() -> dict[str, Any]:
+    """Read the current gh identity under the active Hosted preflight budget."""
+
+    timeout, budget = _request_timeout(GH_TIMEOUT_SECONDS)
+    try:
+        completed = subprocess.run(
+            ["gh", "api", "user"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError("gh CLI is required") from exc
+    except subprocess.TimeoutExpired as exc:
+        if budget is not None:
+            try:
+                _raise_if_budget_expired(budget)
+            except HostedPreflightDeadlineExceeded as expired:
+                raise expired from exc
+        raise RuntimeError(f"gh api user timed out after {GH_TIMEOUT_SECONDS} seconds") from exc
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(exc.stderr.strip() if exc.stderr else "gh api user failed") from exc
+    _raise_if_budget_expired(budget)
+    try:
+        value = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("gh api user returned invalid JSON") from exc
+    if not isinstance(value, dict):
+        raise TypeError("gh api user returned a non-object response")
     return value
 
 
@@ -579,16 +799,25 @@ def branch_head(repo: str, ref_name: str) -> str:
     parse_repo(repo)
     if not ref_name or any(character in ref_name for character in "\r\n"):
         raise ValueError("branch ref must be a non-empty single line")
+    timeout, budget = _request_timeout(GH_TIMEOUT_SECONDS)
     try:
         completed = subprocess.run(
             ["gh", "api", f"repos/{repo}/git/ref/heads/{ref_name}", "--jq", ".object.sha"],
             check=True,
             capture_output=True,
             text=True,
-            timeout=GH_TIMEOUT_SECONDS,
+            timeout=timeout,
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired, subprocess.CalledProcessError) as exc:
+    except subprocess.TimeoutExpired as exc:
+        if budget is not None:
+            try:
+                _raise_if_budget_expired(budget)
+            except HostedPreflightDeadlineExceeded as expired:
+                raise expired from exc
         raise RuntimeError(f"could not resolve branch {ref_name!r}") from exc
+    except (FileNotFoundError, subprocess.CalledProcessError) as exc:
+        raise RuntimeError(f"could not resolve branch {ref_name!r}") from exc
+    _raise_if_budget_expired(budget)
     head = completed.stdout.strip()
     if not re.fullmatch(r"[0-9a-fA-F]{40}", head):
         raise RuntimeError(f"branch {ref_name!r} did not resolve to an exact commit")

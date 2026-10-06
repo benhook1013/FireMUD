@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -123,6 +124,124 @@ class GithubPaginationTests(unittest.TestCase):
 
         self.assertEqual(query.call_count, 2)
         self.assertEqual(query.call_args_list[1].args[1]["after"], "cursor-1")
+
+    def test_pull_request_pages_share_the_hosted_preflight_deadline(self):
+        initial = {
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "headRefOid": "a" * 40,
+                        "commits": {"nodes": []},
+                        "reviewThreads": {"nodes": [], "pageInfo": {"hasNextPage": False}},
+                        "comments": {
+                            "nodes": [],
+                            "pageInfo": {"hasNextPage": True, "endCursor": "comments-1"},
+                        },
+                        "reviews": {"nodes": [], "pageInfo": {"hasNextPage": False}},
+                    }
+                }
+            }
+        }
+        next_page = {
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "comments": {"nodes": [], "pageInfo": {"hasNextPage": False}}
+                    }
+                }
+            }
+        }
+
+        class Clock:
+            now = 0.0
+
+            def monotonic(self):
+                return self.now
+
+        clock = Clock()
+        timeouts = []
+
+        def gh_call(args, *, timeout, **_kwargs):
+            timeouts.append(timeout)
+            clock.now += 25 if len(timeouts) == 1 else 15
+            payload = initial if len(timeouts) == 1 else next_page
+            return subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
+
+        with (
+            patch.object(github.time, "monotonic", side_effect=clock.monotonic),
+            github.activate_hosted_preflight_budget(timeout_seconds=45),
+            patch.object(github.subprocess, "run", side_effect=gh_call),
+        ):
+            github.fetch_pull_request("owner/repo", 42)
+
+        self.assertEqual(timeouts, [30, 20])
+
+    def test_pull_request_pagination_stops_when_shared_budget_expires(self):
+        initial = {
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "headRefOid": "a" * 40,
+                        "commits": {"nodes": []},
+                        "reviewThreads": {"nodes": [], "pageInfo": {"hasNextPage": False}},
+                        "comments": {
+                            "nodes": [],
+                            "pageInfo": {"hasNextPage": True, "endCursor": "comments-1"},
+                        },
+                        "reviews": {"nodes": [], "pageInfo": {"hasNextPage": False}},
+                    }
+                }
+            }
+        }
+
+        class Clock:
+            now = 0.0
+
+            def monotonic(self):
+                return self.now
+
+        clock = Clock()
+        calls = []
+
+        def gh_call(args, **_kwargs):
+            calls.append(args)
+            clock.now = 21
+            return subprocess.CompletedProcess(args, 0, json.dumps(initial), "")
+
+        with (
+            patch.object(github.time, "monotonic", side_effect=clock.monotonic),
+            github.activate_hosted_preflight_budget(timeout_seconds=20),
+            patch.object(github.subprocess, "run", side_effect=gh_call),
+            self.assertRaisesRegex(github.HostedPreflightDeadlineExceeded, "phase=starting"),
+        ):
+            github.fetch_pull_request("owner/repo", 42)
+
+        self.assertEqual(len(calls), 1)
+
+    def test_branch_head_read_uses_remaining_hosted_preflight_budget(self):
+        class Clock:
+            now = 0.0
+
+            def monotonic(self):
+                return self.now
+
+        clock = Clock()
+        timeouts = []
+
+        def gh_call(args, *, timeout, **_kwargs):
+            timeouts.append(timeout)
+            clock.now = 11
+            return subprocess.CompletedProcess(args, 0, "a" * 40, "")
+
+        with (
+            patch.object(github.time, "monotonic", side_effect=clock.monotonic),
+            github.activate_hosted_preflight_budget(timeout_seconds=10),
+            patch.object(github.subprocess, "run", side_effect=gh_call),
+            self.assertRaisesRegex(github.HostedPreflightDeadlineExceeded, "phase=starting"),
+        ):
+            github.branch_head("owner/repo", "develop")
+
+        self.assertEqual(timeouts, [10])
 
 
 if __name__ == "__main__":

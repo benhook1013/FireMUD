@@ -416,6 +416,36 @@ class RuntimeTest(unittest.TestCase):
         ):
             runner._assert_no_other_active_reservations(42, Path("/unused"))
 
+    def test_repository_comment_histories_are_fetched_concurrently(self) -> None:
+        runner = HostedRunner("owner/repo", LiveGitHub("owner/repo"))
+        barrier = threading.Barrier(2)
+        observed = []
+
+        def api_endpoint(endpoint: str) -> list[dict[str, Any]]:
+            if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
+                return [
+                    {"number": 42, "state": "open"},
+                    {"number": 43, "state": "open"},
+                    {"number": 44, "state": "open"},
+                ]
+            observed.append(endpoint)
+            barrier.wait(timeout=5)
+            return []
+
+        with (
+            patch.object(runner, "_repository_current_trigger_paths", return_value={}),
+            patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
+        ):
+            runner._assert_no_other_active_reservations(42, Path("/unused"))
+
+        self.assertCountEqual(
+            observed,
+            [
+                "repos/owner/repo/issues/43/comments?per_page=100",
+                "repos/owner/repo/issues/44/comments?per_page=100",
+            ],
+        )
+
     def test_closed_pr_retired_reservation_skips_live_pull_request_lookup(self) -> None:
         runner = HostedRunner("owner/repo", LiveGitHub("owner/repo"))
         with tempfile.TemporaryDirectory() as directory:
