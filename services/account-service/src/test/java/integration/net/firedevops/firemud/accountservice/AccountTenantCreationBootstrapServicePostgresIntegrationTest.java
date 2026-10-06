@@ -99,7 +99,7 @@ class AccountTenantCreationBootstrapServicePostgresIntegrationTest {
     MembershipEvent originalEvent =
         MembershipAuthorityEventV1Codec.verify(
             new String(originalOutboxEvent.payload(), StandardCharsets.UTF_8));
-    assertThat(originalEvent.outboxSequence()).isEqualTo(1L);
+    assertThat(originalEvent.outboxSequence()).isEqualTo("1");
     assertThat(originalEvent.membershipLifecycleState()).isEqualTo("ACTIVE");
     assertThat(originalEvent.membershipVersion())
         .isEqualTo(Map.of(fixture.tenantUuid().toString(), "2"));

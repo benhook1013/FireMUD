@@ -3152,6 +3152,43 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+      - name: Run Account creator-bootstrap PostgreSQL proof cases
+        if: ${{ matrix.module == 'account-service' }}
+        run: |
+          ./gradlew :account-service:integrationTest \
+            --tests integration.net.firedevops.firemud.accountservice.AccountTenantCreationProvenancePostgresIntegrationTest \
+            --tests integration.net.firedevops.firemud.accountservice.repository.AccountTenantCreationBootstrapOperationRepositoryPostgresIntegrationTest \
+            --tests integration.net.firedevops.firemud.accountservice.AccountTenantCreationBootstrapServicePostgresIntegrationTest \
+            -PfullCheck --no-build-cache --no-configuration-cache
+
+      - name: Capture Account creator-bootstrap PostgreSQL raw XML
+        if: ${{ always() && matrix.module == 'account-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: account-creator-bootstrap-postgresql-proof-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            services/account-service/build/test-results/integrationTest/TEST-*AccountTenantCreationProvenancePostgresIntegrationTest.xml
+            services/account-service/build/test-results/integrationTest/TEST-*AccountTenantCreationBootstrapOperationRepositoryPostgresIntegrationTest.xml
+            services/account-service/build/test-results/integrationTest/TEST-*AccountTenantCreationBootstrapServicePostgresIntegrationTest.xml
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Verify Account creator-bootstrap PostgreSQL proof cases
+        if: ${{ !cancelled() && matrix.module == 'account-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.accountservice.AccountTenantCreationProvenancePostgresIntegrationTest \
+            --require-suite integration.net.firedevops.firemud.accountservice.repository.AccountTenantCreationBootstrapOperationRepositoryPostgresIntegrationTest \
+            --require-suite integration.net.firedevops.firemud.accountservice.AccountTenantCreationBootstrapServicePostgresIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountTenantCreationProvenancePostgresIntegrationTest#forwardMigrationPreservesRetainedStateAndAllowsOnlyControlOnlyCreatorShape()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountTenantCreationBootstrapOperationRepositoryPostgresIntegrationTest#exactImmutableInputReplaysOriginalReceiptAndChangedSnapshotConflicts()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountTenantCreationBootstrapOperationRepositoryPostgresIntegrationTest#claimedReceiptRollsBackWithItsAccountTransaction()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountTenantCreationBootstrapOperationRepositoryPostgresIntegrationTest#concurrentExactClaimsConvergeOnOneCommittedReceipt()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountTenantCreationBootstrapServicePostgresIntegrationTest#commitIsControlOnlyAndHistoricalRetryDoesNotOverwriteLaterMembershipAdvance()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountTenantCreationBootstrapServicePostgresIntegrationTest#lateReceiptFailureRollsBackMembershipRolesPairEventAuditAndClaimTogether()' \
+            account-service
+
       - name: Verify Game Session LOGIN fixture isolation proof
         if: ${{ !cancelled() && matrix.module == 'game-session-service' }}
         run: |
