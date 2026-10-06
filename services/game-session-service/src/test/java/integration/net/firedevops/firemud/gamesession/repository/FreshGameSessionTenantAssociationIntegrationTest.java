@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.Objects;
 import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -90,32 +91,44 @@ class FreshGameSessionTenantAssociationIntegrationTest {
       migrateLatest(dataSource, database.schema());
 
       DSLContext migrationDsl = DSL.using(dataSource, SQLDialect.POSTGRES);
-      int tenantScopeTables =
-          migrationDsl
-              .fetchOne(
+      org.jooq.Record tenantScopeTableCountRow =
+          Objects.requireNonNull(
+              migrationDsl.fetchOne(
                   "SELECT count(DISTINCT table_name) FROM information_schema.columns "
-                      + "WHERE table_schema = current_schema() AND column_name = 'tenant_id'")
-              .get(0, Integer.class);
-      int reservedScopeForeignKeys =
-          migrationDsl
-              .fetchOne(
+                      + "WHERE table_schema = current_schema() AND column_name = 'tenant_id'"),
+              "tenant scope table count query must return one row");
+      int tenantScopeTables =
+          Objects.requireNonNull(
+              tenantScopeTableCountRow.get(0, Integer.class),
+              "tenant scope table count must be present");
+      org.jooq.Record reservationForeignKeyCountRow =
+          Objects.requireNonNull(
+              migrationDsl.fetchOne(
                   "SELECT count(*) FROM information_schema.table_constraints "
                       + "WHERE table_schema = current_schema() AND constraint_type = 'FOREIGN KEY' "
-                      + "AND constraint_name = 'fk_tenant_scope_reservation'")
-              .get(0, Integer.class);
+                      + "AND constraint_name = 'fk_tenant_scope_reservation'"),
+              "reservation foreign key count query must return one row");
+      int reservedScopeForeignKeys =
+          Objects.requireNonNull(
+              reservationForeignKeyCountRow.get(0, Integer.class),
+              "reservation foreign key count must be present");
       assertThat(tenantScopeTables).isPositive();
       assertThat(reservedScopeForeignKeys).isEqualTo(tenantScopeTables);
       assertThat(reservationKind(migrationDsl, 701L)).isEqualTo("LEGACY_OCCUPIED");
       assertThat(reservationKind(migrationDsl, 702L)).isEqualTo("LEGACY_OCCUPIED");
       assertThat(reservationKind(migrationDsl, 812L)).isEqualTo("LEGACY_OCCUPIED");
+      org.jooq.Record retainedAssociationRow =
+          Objects.requireNonNull(
+              migrationDsl.fetchOne(
+                  "SELECT association_kind FROM game_session_tenant_canonical_claim "
+                      + "WHERE target_namespace = ? AND canonical_tenant_id = ?",
+                  NAMESPACE,
+                  uuid(3)),
+              "retained association query must return one row");
       assertThat(
-              migrationDsl
-                  .fetchOne(
-                      "SELECT association_kind FROM game_session_tenant_canonical_claim "
-                          + "WHERE target_namespace = ? AND canonical_tenant_id = ?",
-                      NAMESPACE,
-                      uuid(3))
-                  .get(0, String.class))
+              Objects.requireNonNull(
+                  retainedAssociationRow.get(0, String.class),
+                  "retained association kind must be present"))
           .isEqualTo("RETAINED_V8_1");
 
       DataSourceTransactionManager transactionManager =
@@ -188,14 +201,18 @@ class FreshGameSessionTenantAssociationIntegrationTest {
 
       insertRetainedAssociation(dsl, uuid(5), uuid(6), 820L, uuid(7));
       assertThat(reservationKind(dsl, 820L)).isEqualTo("LEGACY_OCCUPIED");
+      org.jooq.Record concurrentlyRetainedAssociationRow =
+          Objects.requireNonNull(
+              migrationDsl.fetchOne(
+                  "SELECT association_kind FROM game_session_tenant_canonical_claim "
+                      + "WHERE target_namespace = ? AND canonical_tenant_id = ?",
+                  NAMESPACE,
+                  uuid(7)),
+              "concurrently retained association query must return one row");
       assertThat(
-              migrationDsl
-                  .fetchOne(
-                      "SELECT association_kind FROM game_session_tenant_canonical_claim "
-                          + "WHERE target_namespace = ? AND canonical_tenant_id = ?",
-                      NAMESPACE,
-                      uuid(7))
-                  .get(0, String.class))
+              Objects.requireNonNull(
+                  concurrentlyRetainedAssociationRow.get(0, String.class),
+                  "concurrently retained association kind must be present"))
           .isEqualTo("RETAINED_V8_1");
 
       verifyConcurrentExactRetry(repository);
@@ -234,15 +251,26 @@ class FreshGameSessionTenantAssociationIntegrationTest {
       DataSourceTransactionManager transactionManager,
       FreshGameSessionTenantAssociationRepository repository)
       throws Exception {
-    String sequence =
-        dsl.fetchOne(
+    org.jooq.Record sequenceNameRow =
+        Objects.requireNonNull(
+            dsl.fetchOne(
                 "SELECT pg_get_serial_sequence("
-                    + "'game_session_tenant_scope_reservation', 'game_session_tenant_id')")
-            .get(0, String.class);
-    org.jooq.Record sequenceState = dsl.fetchOne("SELECT last_value, is_called FROM " + sequence);
+                    + "'game_session_tenant_scope_reservation', 'game_session_tenant_id')"),
+            "reservation sequence lookup must return one row");
+    String sequence =
+        Objects.requireNonNull(
+            sequenceNameRow.get(0, String.class), "reservation sequence name must be present");
+    org.jooq.Record sequenceState =
+        Objects.requireNonNull(
+            dsl.fetchOne("SELECT last_value, is_called FROM " + sequence),
+            "reservation sequence state query must return one row");
+    Long sequenceLastValue =
+        Objects.requireNonNull(
+            sequenceState.get("last_value", Long.class),
+            "reservation sequence last value must be present");
     long candidate =
         Boolean.TRUE.equals(sequenceState.get("is_called", Boolean.class))
-            ? sequenceState.get("last_value", Long.class) + 1L
+            ? sequenceLastValue + 1L
             : 1L;
 
     CountDownLatch legacyReserved = new CountDownLatch(1);
@@ -340,11 +368,15 @@ class FreshGameSessionTenantAssociationIntegrationTest {
   }
 
   private static String reservationKind(DSLContext dsl, long tenantId) {
-    return dsl.fetchOne(
-            "SELECT reservation_kind FROM game_session_tenant_scope_reservation "
-                + "WHERE game_session_tenant_id = ?",
-            tenantId)
-        .get(0, String.class);
+    org.jooq.Record reservationRow =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT reservation_kind FROM game_session_tenant_scope_reservation "
+                    + "WHERE game_session_tenant_id = ?",
+                tenantId),
+            "reservation lookup must return one row");
+    return Objects.requireNonNull(
+        reservationRow.get(0, String.class), "reservation kind must be present");
   }
 
   private static String digest(char character) {
