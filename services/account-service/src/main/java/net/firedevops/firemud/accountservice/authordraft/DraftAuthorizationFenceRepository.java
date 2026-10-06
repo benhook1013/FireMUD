@@ -14,6 +14,7 @@ import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFence
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.Owner;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.OwnerReadback;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.SourceEvidence;
+import net.firedevops.firemud.accountservice.tenantcreation.TenantCreationAuthorizationFenceRepository;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -277,6 +278,7 @@ public final class DraftAuthorizationFenceRepository {
             operation);
       }
     }
+    new TenantCreationAuthorizationFenceRepository(dsl).revokeAffected(change.sources());
     return allAffectedSettled(change.sources());
   }
 
@@ -544,7 +546,7 @@ public final class DraftAuthorizationFenceRepository {
         return false;
       }
     }
-    return true;
+    return new TenantCreationAuthorizationFenceRepository(dsl).allAffectedSettled(sources);
   }
 
   private Settlement settlement(UUID operation, Ordering ordering) {

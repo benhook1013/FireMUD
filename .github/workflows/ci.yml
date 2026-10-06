@@ -2521,6 +2521,30 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountControlUiCurrentSourcePostgresIntegrationTest#concurrentIssuerAdvanceSerializesOnTheObservationCompositeFence()' \
             account-service
 
+      - name: Capture Account versionless tenant-creation PostgreSQL proof results
+        if: ${{ always() && matrix.module == 'account-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: account-tenant-creation-fence-postgresql-proof-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: services/account-service/build/test-results/integrationTest/TEST-*TenantCreationAuthorizationFencePostgresIntegrationTest.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Verify Account versionless tenant-creation PostgreSQL proof cases
+        if: ${{ !cancelled() && matrix.module == 'account-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.accountservice.tenantcreation.TenantCreationAuthorizationFencePostgresIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.accountservice.tenantcreation.TenantCreationAuthorizationFencePostgresIntegrationTest#revokeFirstRetainsBothFamilyFencesUntilExactAborts()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.tenantcreation.TenantCreationAuthorizationFencePostgresIntegrationTest#commitFirstRequiresBothExactOutcomesAndMixedVectorDoesNotQualifySuccess()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.tenantcreation.TenantCreationAuthorizationFencePostgresIntegrationTest#contradictoryRevokeOutcomeNeverReleasesSourceOrdering()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.tenantcreation.TenantCreationAuthorizationFencePostgresIntegrationTest#exactRetryAndDatabaseGuardsPreserveBindingAndFinalizedResults()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.tenantcreation.TenantCreationAuthorizationFencePostgresIntegrationTest#lateFailureRollsBackSourceTransitionWithOwnersRemainingImmutable()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.tenantcreation.TenantCreationAuthorizationFencePostgresIntegrationTest#sharedSourceLocksSerializeBothCompetingInterleavings()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.tenantcreation.TenantCreationAuthorizationFencePostgresIntegrationTest#migrationRetainsV66AndDraftImagesAndOriginalDraftBindingBytes()' \
+            account-service
+
       - name: Verify Account generation projection PostgreSQL and Redis proof cases
         if: ${{ !cancelled() && matrix.module == 'account-service' }}
         run: |
@@ -2621,7 +2645,7 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.accountservice.IssuerAuthorityProducerPostgresIntegrationTest#sameRequestUuidAcrossExactIssuersHasDistinctPersistedSourceChangeIdentities()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.IssuerAuthorityProducerPostgresIntegrationTest#failedIssuerAdvanceRetainsOriginalPendingCaptureForExactRetry()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.IssuerAuthorityProducerPostgresIntegrationTest#issuerPendingCaptureRetainsIndependentCountersCheckpointAndExactPositiveEventBytes()' \
-            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerAuthorityProducerPostgresIntegrationTest#v59PreservesV58HistoryAndExactKeysBeforeV61ProducerInteractionsWithFullMultibyteIssuer()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerAuthorityProducerPostgresIntegrationTest#v59PreservesV58HistoryAndExactKeysBeforeV67ProducerInteractionsWithFullMultibyteIssuer()' \
             account-service
 
       - name: Verify Account tenant Draft source ordering PostgreSQL proof cases

@@ -243,7 +243,7 @@ BEGIN
     SELECT * INTO source_row FROM account_draft_authorization_source_changes
         WHERE change_id = NEW.source_change_id FOR SHARE;
     IF NOT FOUND OR source_row.binding <> NEW.source_change_binding
-        OR source_row.status <> CASE WHEN TG_OP = 'INSERT' THEN 'WAITING' ELSE 'SOURCE_COMMITTED' END THEN
+        OR source_row.status <> (CASE WHEN TG_OP = 'INSERT' THEN 'WAITING' ELSE 'SOURCE_COMMITTED' END) THEN
         RAISE EXCEPTION 'Security-state V57 source change differs' USING ERRCODE = '23514';
     END IF;
     SELECT * INTO authority_row FROM account_authority_generations
@@ -310,7 +310,7 @@ BEGIN
             OR NEW.result_fence_source_version::NUMERIC <> NEW.expected_fence_source_version::NUMERIC + 1
             OR NEW.event_sequence::NUMERIC <> NEW.checkpoint_sequence::NUMERIC + 1
             OR NEW.result_global_role_source_version::NUMERIC <> NEW.global_role_source_version::NUMERIC
-                + CASE WHEN 'GLOBAL_ROLE_CHANGED' = ANY(kinds) THEN 1 ELSE 0 END
+                + (CASE WHEN 'GLOBAL_ROLE_CHANGED' = ANY(kinds) THEN 1 ELSE 0 END)
             OR authority_row.generation <> NEW.result_generation OR authority_row.source_version <> NEW.result_source_version
             OR fence_row.issuance_fence <> NEW.result_fence OR fence_row.source_version <> NEW.result_fence_source_version
             OR role_row.global_role_source_version <> NEW.result_global_role_source_version THEN
