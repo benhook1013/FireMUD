@@ -243,10 +243,7 @@ class GithubAndEvidenceTests(unittest.TestCase):
             evidence.summary_action_counts("## Outside diff range comments")
 
     def test_summary_tag_and_emoji_markup_accept_canonical_counts(self):
-        body = (
-            "<summary>⚠️ Outside diff range comments (2)</summary>\n"
-            "### :warning: **Duplicate comments (1)**"
-        )
+        body = "<summary>⚠️ Outside diff range comments (2)</summary>\n### :warning: **Duplicate comments (1)**"
         self.assertEqual(evidence.summary_action_counts(body), (2, 1))
 
     def test_quoted_explicit_summary_counts_but_quoted_prose_does_not(self):
@@ -279,8 +276,9 @@ class GithubAndEvidenceTests(unittest.TestCase):
             "<details><summary>Duplicate comments: 1</summary><blockquote>",
             "### :warning: **Duplicate comments**",
         ):
-            with self.subTest(body=body), self.assertRaisesRegex(
-                evidence.EvidenceError, "summary section has no canonical count"
+            with (
+                self.subTest(body=body),
+                self.assertRaisesRegex(evidence.EvidenceError, "summary section has no canonical count"),
             ):
                 evidence.summary_action_counts(body)
 
@@ -469,11 +467,13 @@ class GithubAndEvidenceTests(unittest.TestCase):
         comments = []
         for channel in ("Hosted", "CLI"):
             for labels in (counts, counts.lower(), "4 FOUND / 2 accepted / 1 Routed"):
-                comments.append({
-                    "body": f"{channel}: {labels} · `abcdef1` · 3 files · 9s\n"
-                            "<!-- firemud-review-duration-seconds: 9 -->",
-                    "created_at": "2026-10-03T00:00:00Z",
-                })
+                comments.append(
+                    {
+                        "body": f"{channel}: {labels} · `abcdef1` · 3 files · 9s\n"
+                        "<!-- firemud-review-duration-seconds: 9 -->",
+                        "created_at": "2026-10-03T00:00:00Z",
+                    }
+                )
         parsed, unparsed = evidence.parse_checkpoint_comments(comments)
         self.assertEqual(unparsed, 0)
         self.assertEqual(len(parsed), 6)
@@ -628,9 +628,7 @@ class GithubAndEvidenceTests(unittest.TestCase):
     def test_cli_capture_stdout_parsers_share_successful_event_rules(self):
         events = (
             json.dumps({"type": "finding", "message": "before\u2028after"}, ensure_ascii=False),
-            json.dumps(
-                {"type": "complete", "status": "review_completed", "findings": 1, "reviewedFiles": ["a"]}
-            ),
+            json.dumps({"type": "complete", "status": "review_completed", "findings": 1, "reviewedFiles": ["a"]}),
         )
         stdout = "\r\n".join(events) + "\r\n"
         parsed = evidence.parse_capture_events(stdout)
@@ -652,7 +650,12 @@ class GithubAndEvidenceTests(unittest.TestCase):
         malformed_events = (
             ("invalid JSON", '{"type":"finding"}\nnot-json', "invalid JSON at line 2", "JSON is invalid at line 2"),
             ("non-object", "[]\n", "non-object event at line 1", "event at line 1 is not an object"),
-            ("missing completion", '{"type":"other"}\n', "no unique successful completion", "no unique successful completion"),
+            (
+                "missing completion",
+                '{"type":"other"}\n',
+                "no unique successful completion",
+                "no unique successful completion",
+            ),
             (
                 "duplicate completion",
                 json.dumps(complete) + "\n" + json.dumps(complete) + "\n",
@@ -673,8 +676,7 @@ class GithubAndEvidenceTests(unittest.TestCase):
             ),
         )
         too_many_findings = [
-            json.dumps({"type": "finding", "message": str(index)})
-            for index in range(evidence.MAX_CAPTURE_FINDINGS + 1)
+            json.dumps({"type": "finding", "message": str(index)}) for index in range(evidence.MAX_CAPTURE_FINDINGS + 1)
         ]
         over_limit_complete = {
             "type": "complete",
@@ -800,11 +802,28 @@ class GithubAndEvidenceTests(unittest.TestCase):
         }
         if repository is not None:
             metadata["repository"] = repository
-        events = "\n".join(json.dumps({
-            "type": "finding", "message": "The persisted SQL finding remains readable.", "codegenInstructions": text,
-        }) for text in instructions) + "\n" + json.dumps({
-            "type": "complete", "status": "review_completed", "findings": len(instructions), "reviewedFiles": ["src/a.py"],
-        }) + "\n"
+        events = (
+            "\n".join(
+                json.dumps(
+                    {
+                        "type": "finding",
+                        "message": "The persisted SQL finding remains readable.",
+                        "codegenInstructions": text,
+                    }
+                )
+                for text in instructions
+            )
+            + "\n"
+            + json.dumps(
+                {
+                    "type": "complete",
+                    "status": "review_completed",
+                    "findings": len(instructions),
+                    "reviewedFiles": ["src/a.py"],
+                }
+            )
+            + "\n"
+        )
         result_metadata = {**metadata, "duration_seconds": 9, "exit_status": 0}
         records.start_attempt(
             attempt_id=run_id,
@@ -832,10 +851,12 @@ class GithubAndEvidenceTests(unittest.TestCase):
                         source_finding_key=f"cli-run:{run_id}:finding:{index}",
                         title=(
                             _cli_headline(text) or f"CodeRabbit CLI finding {index}"
-                            if legacy_projection else _cli_finding_title(text, f"CodeRabbit CLI finding {index}")
+                            if legacy_projection
+                            else _cli_finding_title(text, f"CodeRabbit CLI finding {index}")
                         ),
                         detail="" if legacy_projection else _safe_finding_detail(_cli_detail(text)),
-                    ) for index, text in enumerate(instructions, 1)
+                    )
+                    for index, text in enumerate(instructions, 1)
                 ),
                 "source_head": candidate_sha,
                 "reviewer": "CodeRabbit CLI",
@@ -847,17 +868,25 @@ class GithubAndEvidenceTests(unittest.TestCase):
         if decide:
             for index in range(1, len(instructions) + 1):
                 records.record_source_decision(
-                    run_id, f"cli-run:{run_id}:finding:{index}", decision_id=f"{run_id}.decision.{index}",
-                    decision="accepted", actor="reviewer", reason="Useful source finding",
+                    run_id,
+                    f"cli-run:{run_id}:finding:{index}",
+                    decision_id=f"{run_id}.decision.{index}",
+                    decision="accepted",
+                    actor="reviewer",
+                    reason="Useful source finding",
                     decided_at="2026-09-30T00:00:10Z",
                 )
             if finalized:
                 records.finalize_run(run_id, finalized_at="2026-09-30T00:00:11Z")
                 for index in range(1, len(instructions) + 1):
                     records.record_source_resolution(
-                        run_id, f"cli-run:{run_id}:finding:{index}", source_pr=PR,
-                        resolution_id=f"{run_id}.resolution.{index}", fix_sha="d" * 40,
-                        actor="reviewer", proof_note="The accepted source finding has verified proof.",
+                        run_id,
+                        f"cli-run:{run_id}:finding:{index}",
+                        source_pr=PR,
+                        resolution_id=f"{run_id}.resolution.{index}",
+                        fix_sha="d" * 40,
+                        actor="reviewer",
+                        proof_note="The accepted source finding has verified proof.",
                         resolved_at="2026-09-30T00:00:12Z",
                     )
         return records
@@ -873,9 +902,14 @@ class GithubAndEvidenceTests(unittest.TestCase):
         (run / "stdout").write_text(
             json.dumps({"type": "finding", "message": "The retained CLI finding remains readable."})
             + "\n"
-            + json.dumps({
-                "type": "complete", "status": "review_completed", "findings": 1, "reviewedFiles": ["src/a.py"],
-            })
+            + json.dumps(
+                {
+                    "type": "complete",
+                    "status": "review_completed",
+                    "findings": 1,
+                    "reviewedFiles": ["src/a.py"],
+                }
+            )
             + "\n",
             encoding="utf-8",
         )
@@ -935,7 +969,10 @@ class GithubAndEvidenceTests(unittest.TestCase):
                 common = Path(directory)
                 records = self._native_cli_records(
                     common,
-                    instructions=("The first SQL finding remains available.", "The second SQL finding remains available."),
+                    instructions=(
+                        "The first SQL finding remains available.",
+                        "The second SQL finding remains available.",
+                    ),
                 )
                 checkpoint = self._native_cli_checkpoint(found=2, accepted=2)
                 self.assertEqual(
@@ -956,9 +993,16 @@ class GithubAndEvidenceTests(unittest.TestCase):
             common = Path(directory)
             records = self._native_cli_records(common)
             with sqlite3.connect(records.path) as connection:
-                row = connection.execute("SELECT content FROM review_artifacts WHERE attempt_id = 'run.Native' AND kind = 'cli_events'").fetchone()
-                changed = row[0].replace("The complete SQL finding remains available.", "A different valid source finding.")
-                connection.execute("UPDATE review_artifacts SET content = ? WHERE attempt_id = 'run.Native' AND kind = 'cli_events'", (changed,))
+                row = connection.execute(
+                    "SELECT content FROM review_artifacts WHERE attempt_id = 'run.Native' AND kind = 'cli_events'"
+                ).fetchone()
+                changed = row[0].replace(
+                    "The complete SQL finding remains available.", "A different valid source finding."
+                )
+                connection.execute(
+                    "UPDATE review_artifacts SET content = ? WHERE attempt_id = 'run.Native' AND kind = 'cli_events'",
+                    (changed,),
+                )
             with self.assertRaisesRegex(evidence.CaptureInvalid, "content conflicts"):
                 evidence.load_cli_capture(self._native_cli_checkpoint(), REPO, PR, common, records=records)
 
@@ -966,7 +1010,10 @@ class GithubAndEvidenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             common = Path(directory)
             secret = "ghp_" + "A" * 36
-            instructions = ("Validate token " + secret + " before use. " + "more detail " * 130, "Preserve the second distinct source finding.")
+            instructions = (
+                "Validate token " + secret + " before use. " + "more detail " * 130,
+                "Preserve the second distinct source finding.",
+            )
             records = self._native_cli_records(common, instructions=instructions)
             checkpoint = self._native_cli_checkpoint(found=2, accepted=2)
             capture = evidence.load_cli_capture(checkpoint, REPO, PR, common, records=records)
@@ -974,10 +1021,15 @@ class GithubAndEvidenceTests(unittest.TestCase):
             self.assertNotIn(secret, capture.findings[0]["codegenInstructions"])
             self.assertGreater(len(capture.findings[0]["codegenInstructions"]), 1000)
             with sqlite3.connect(records.path) as connection:
-                content = connection.execute("SELECT content FROM review_artifacts WHERE attempt_id = 'run.Native' AND kind = 'cli_events'").fetchone()[0]
+                content = connection.execute(
+                    "SELECT content FROM review_artifacts WHERE attempt_id = 'run.Native' AND kind = 'cli_events'"
+                ).fetchone()[0]
                 events = [json.loads(line) for line in content.splitlines()]
                 changed = "\n".join(json.dumps(event) for event in (events[1], events[0], events[2])) + "\n"
-                connection.execute("UPDATE review_artifacts SET content = ? WHERE attempt_id = 'run.Native' AND kind = 'cli_events'", (changed,))
+                connection.execute(
+                    "UPDATE review_artifacts SET content = ? WHERE attempt_id = 'run.Native' AND kind = 'cli_events'",
+                    (changed,),
+                )
             with self.assertRaisesRegex(evidence.CaptureInvalid, "content conflicts"):
                 evidence.load_cli_capture(checkpoint, REPO, PR, common, records=records)
 
@@ -985,15 +1037,24 @@ class GithubAndEvidenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             common = Path(directory)
             records = self._native_cli_records(
-                common, instructions=("Check  old  input before use.",), legacy_projection=True,
+                common,
+                instructions=("Check  old  input before use.",),
+                legacy_projection=True,
             )
             capture = evidence.load_cli_capture(self._native_cli_checkpoint(), REPO, PR, common, records=records)
             self.assertFalse((common / "coderabbit-review-logs" / "run.Native").exists())
             self.assertEqual(capture.findings[0]["codegenInstructions"], "Check  old  input before use.")
             self.assertEqual(capture.decisions[1][0], "accepted")
-            self.assertEqual(records.source_resolution_status(
-                "run.Native", source_pr=PR, source_channel="cli", source_head=HEAD, accepted_count=1,
-            ), "resolved")
+            self.assertEqual(
+                records.source_resolution_status(
+                    "run.Native",
+                    source_pr=PR,
+                    source_channel="cli",
+                    source_head=HEAD,
+                    accepted_count=1,
+                ),
+                "resolved",
+            )
 
     def test_deleted_modern_detail_cannot_downgrade_to_prior_native_projection(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1052,9 +1113,7 @@ class GithubAndEvidenceTests(unittest.TestCase):
             (run / "stdout").write_text(
                 json.dumps({"type": "finding", "message": "raw"})
                 + "\n"
-                + json.dumps(
-                    {"type": "complete", "status": "review_completed", "findings": 1, "reviewedFiles": ["a"]}
-                )
+                + json.dumps({"type": "complete", "status": "review_completed", "findings": 1, "reviewedFiles": ["a"]})
                 + "\n",
                 encoding="utf-8",
             )
@@ -1062,7 +1121,9 @@ class GithubAndEvidenceTests(unittest.TestCase):
             (run / "decisions.tsv").write_text("1\trejected\tlegacy raw fallback\n", encoding="utf-8")
 
             with self.assertRaisesRegex(evidence.CaptureInvalid, "linked SQLite CLI records"):
-                evidence.load_cli_capture(self._native_cli_checkpoint(accepted=0, duration=None), REPO, PR, common, records=records)
+                evidence.load_cli_capture(
+                    self._native_cli_checkpoint(accepted=0, duration=None), REPO, PR, common, records=records
+                )
 
             repaired = evidence.load_cli_capture_for_repair(
                 self._native_cli_checkpoint(accepted=0, duration=None), REPO, PR, common, records=records
@@ -1093,9 +1154,7 @@ class GithubAndEvidenceTests(unittest.TestCase):
             self.assertEqual(captures[0].decisions, {})
             self.assertIsNone(captures[0].source_identity)
             with self.assertRaisesRegex(evidence.CaptureInvalid, "not finalized"):
-                evidence.load_cli_capture(
-                    self._native_cli_checkpoint(accepted=0), REPO, PR, common, records=records
-                )
+                evidence.load_cli_capture(self._native_cli_checkpoint(accepted=0), REPO, PR, common, records=records)
 
     def test_native_cli_discovery_skips_started_and_failed_sql_attempts_with_retained_files(self):
         for state in ("started", "failed"):
@@ -1106,8 +1165,7 @@ class GithubAndEvidenceTests(unittest.TestCase):
                 with sqlite3.connect(records.path) as connection:
                     if state == "started":
                         connection.execute(
-                            "UPDATE review_attempts SET state = ?, finished_at = NULL "
-                            "WHERE attempt_id = 'run.Native'",
+                            "UPDATE review_attempts SET state = ?, finished_at = NULL WHERE attempt_id = 'run.Native'",
                             (state,),
                         )
                     else:
@@ -1124,8 +1182,7 @@ class GithubAndEvidenceTests(unittest.TestCase):
             self._write_native_cli_raw_capture(common)
             with sqlite3.connect(records.path) as connection:
                 connection.execute(
-                    "UPDATE review_attempts SET state = 'started', finished_at = NULL "
-                    "WHERE attempt_id = 'run.Native'"
+                    "UPDATE review_attempts SET state = 'started', finished_at = NULL WHERE attempt_id = 'run.Native'"
                 )
             enumerate_completed = records.completed_cli_capture_snapshots
 
@@ -1188,8 +1245,17 @@ class GithubAndEvidenceTests(unittest.TestCase):
             decision_path = common / "coderabbit-review-logs" / "run.Decision" / "decisions.tsv"
             decision_path.write_text("malformed readable decision\n", encoding="utf-8")
             checkpoint = evidence.Checkpoint(
-                1, "2026-09-23T00:00:00Z", "CLI", 1, 0, HEAD[:12], 1,
-                False, None, "run.Decision", None,
+                1,
+                "2026-09-23T00:00:00Z",
+                "CLI",
+                1,
+                0,
+                HEAD[:12],
+                1,
+                False,
+                None,
+                "run.Decision",
+                None,
             )
             with self.assertRaisesRegex(evidence.CaptureInvalid, "malformed at line 1"):
                 evidence.load_cli_capture(checkpoint, REPO, PR, common, records=records)
@@ -1220,22 +1286,17 @@ class GithubAndEvidenceTests(unittest.TestCase):
             records = SqliteReviewRecords(database)
             records.bootstrap()
             with sqlite3.connect(database) as connection:
-                connection.execute(
-                    "UPDATE review_records_metadata SET records_schema_version = 5 WHERE singleton = 1"
-                )
+                connection.execute("UPDATE review_records_metadata SET records_schema_version = 5 WHERE singleton = 1")
 
             run_id = "run.UnsupportedV5"
             run = common / "coderabbit-review-logs" / run_id
             run.mkdir(parents=True)
             (run / "metadata").write_text(
-                f"run_id={run_id}\nrepository={REPO}\npull_request={PR}\n"
-                f"candidate_sha={HEAD}\ncandidate_files=1\n",
+                f"run_id={run_id}\nrepository={REPO}\npull_request={PR}\ncandidate_sha={HEAD}\ncandidate_files=1\n",
                 encoding="utf-8",
             )
             (run / "stdout").write_text(
-                json.dumps(
-                    {"type": "complete", "status": "review_completed", "findings": 0, "reviewedFiles": ["a"]}
-                )
+                json.dumps({"type": "complete", "status": "review_completed", "findings": 0, "reviewedFiles": ["a"]})
                 + "\n",
                 encoding="utf-8",
             )
@@ -1258,14 +1319,11 @@ class GithubAndEvidenceTests(unittest.TestCase):
             run = common / "coderabbit-review-logs" / run_id
             run.mkdir(parents=True)
             (run / "metadata").write_text(
-                f"run_id={run_id}\nrepository={REPO}\npull_request={PR}\n"
-                f"candidate_sha={HEAD}\ncandidate_files=1\n",
+                f"run_id={run_id}\nrepository={REPO}\npull_request={PR}\ncandidate_sha={HEAD}\ncandidate_files=1\n",
                 encoding="utf-8",
             )
             (run / "stdout").write_text(
-                json.dumps(
-                    {"type": "complete", "status": "review_completed", "findings": 0, "reviewedFiles": ["a"]}
-                )
+                json.dumps({"type": "complete", "status": "review_completed", "findings": 0, "reviewedFiles": ["a"]})
                 + "\n",
                 encoding="utf-8",
             )
@@ -1356,16 +1414,13 @@ class GithubAndEvidenceTests(unittest.TestCase):
             run = common / "coderabbit-review-logs" / run_id
             run.mkdir(parents=True)
             (run / "metadata").write_text(
-                f"run_id={run_id}\nrepository={REPO}\npull_request={PR}\n"
-                f"candidate_sha={HEAD}\ncandidate_files=1\n",
+                f"run_id={run_id}\nrepository={REPO}\npull_request={PR}\ncandidate_sha={HEAD}\ncandidate_files=1\n",
                 encoding="utf-8",
             )
             (run / "stdout").write_text(
                 json.dumps({"type": "finding", "message": "one"})
                 + "\n"
-                + json.dumps(
-                    {"type": "complete", "status": "review_completed", "findings": 1, "reviewedFiles": ["a"]}
-                )
+                + json.dumps({"type": "complete", "status": "review_completed", "findings": 1, "reviewedFiles": ["a"]})
                 + "\n",
                 encoding="utf-8",
             )
@@ -1407,8 +1462,7 @@ class GithubAndEvidenceTests(unittest.TestCase):
                 run = captures_root / run_id
                 run.mkdir(parents=True)
                 (run / "metadata").write_text(
-                    f"run_id={run_id}\nrepository={REPO}\npull_request={PR}\n"
-                    f"candidate_sha={HEAD}\ncandidate_files=1\n",
+                    f"run_id={run_id}\nrepository={REPO}\npull_request={PR}\ncandidate_sha={HEAD}\ncandidate_files=1\n",
                     encoding="utf-8",
                 )
                 (run / "stdout").write_text(
@@ -1532,6 +1586,7 @@ class GithubAndEvidenceTests(unittest.TestCase):
                         3,
                     )
                     if failure == "unreadable":
+
                         def fail_target_read(path, *args, expected_target=target, **kwargs):
                             if path == expected_target:
                                 raise OSError("permission denied")
@@ -1552,12 +1607,16 @@ class GithubAndEvidenceTests(unittest.TestCase):
             )
             self.assertEqual(capture.decisions, {1: ("rejected", "duplicate finding")})
 
-        with tempfile.TemporaryDirectory() as directory, self.assertRaisesRegex(
-            evidence.CaptureInvalid, "complete linked|cannot explain"
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            self.assertRaisesRegex(evidence.CaptureInvalid, "complete linked|cannot explain"),
         ):
             self._cli_capture(Path(directory), decision_text=None, rejection_text="2\tlegacy-ref\tduplicate finding\n")
 
-        with tempfile.TemporaryDirectory() as directory, self.assertRaisesRegex(evidence.CaptureInvalid, "cannot explain"):
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            self.assertRaisesRegex(evidence.CaptureInvalid, "cannot explain"),
+        ):
             self._cli_capture(
                 Path(directory),
                 decision_text=None,
@@ -1620,18 +1679,14 @@ class HostedEvidenceTests(unittest.TestCase):
             records.bootstrap()
             hosted._finish_recovered_attempt(path, REPO, PR, {"sqlite_attempt_id": "missing-attempt"})
             attempt_id = "malformed-hosted-metadata"
-            records.start_attempt(
-                attempt_id=attempt_id, source_pr=PR, channel="hosted", candidate_sha=HEAD
-            )
+            records.start_attempt(attempt_id=attempt_id, source_pr=PR, channel="hosted", candidate_sha=HEAD)
             with sqlite3.connect(database) as connection:
                 connection.execute(
                     "UPDATE review_attempts SET metadata_json = ? WHERE attempt_id = ?",
                     ("{", attempt_id),
                 )
             with self.assertRaisesRegex(ReviewRecordsError, "metadata is malformed"):
-                hosted._finish_recovered_attempt(
-                    path, REPO, PR, {"sqlite_attempt_id": attempt_id, "head_sha": HEAD}
-                )
+                hosted._finish_recovered_attempt(path, REPO, PR, {"sqlite_attempt_id": attempt_id, "head_sha": HEAD})
 
     def test_prepost_recovery_preserves_reservation_for_incompatible_records_schema(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1643,13 +1698,9 @@ class HostedEvidenceTests(unittest.TestCase):
             records = SqliteReviewRecords(database)
             records.bootstrap()
             attempt_id = "schema-migration-required"
-            records.start_attempt(
-                attempt_id=attempt_id, source_pr=PR, channel="hosted", candidate_sha=HEAD
-            )
+            records.start_attempt(attempt_id=attempt_id, source_pr=PR, channel="hosted", candidate_sha=HEAD)
             with sqlite3.connect(database) as connection:
-                connection.execute(
-                    "UPDATE review_records_metadata SET records_schema_version = 5 WHERE singleton = 1"
-                )
+                connection.execute("UPDATE review_records_metadata SET records_schema_version = 5 WHERE singleton = 1")
 
             path = hosted.default_trigger_record_path(REPO, PR, common)
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -1713,22 +1764,19 @@ class HostedEvidenceTests(unittest.TestCase):
                     channel=channel,
                     candidate_sha=candidate_sha,
                 )
-                with self.subTest(attempt_id=attempt_id), self.assertRaisesRegex(
-                    ValueError, "does not match the recovered reservation"
+                with (
+                    self.subTest(attempt_id=attempt_id),
+                    self.assertRaisesRegex(ValueError, "does not match the recovered reservation"),
                 ):
                     hosted._finish_recovered_attempt(
                         path, REPO, PR, {"sqlite_attempt_id": attempt_id, "head_sha": HEAD}
                     )
 
             terminal_id = "completed-hosted-attempt"
-            records.start_attempt(
-                attempt_id=terminal_id, source_pr=PR, channel="hosted", candidate_sha=HEAD
-            )
+            records.start_attempt(attempt_id=terminal_id, source_pr=PR, channel="hosted", candidate_sha=HEAD)
             records.finish_attempt(terminal_id, state="completed")
             with self.assertRaisesRegex(ValueError, "conflicts with confirmed no-POST recovery"):
-                hosted._finish_recovered_attempt(
-                    path, REPO, PR, {"sqlite_attempt_id": terminal_id, "head_sha": HEAD}
-                )
+                hosted._finish_recovered_attempt(path, REPO, PR, {"sqlite_attempt_id": terminal_id, "head_sha": HEAD})
 
     def test_wrong_target_assertion_happens_before_request_preparation(self):
         with self.assertRaises(ValueError):
@@ -1747,11 +1795,7 @@ class HostedEvidenceTests(unittest.TestCase):
                 "No issues found in tests.\n"
                 "Files selected: 5. Files reviewed: 5. Files not reviewed: 0."
             ),
-            (
-                "02 findings\n"
-                "No issues found in tests.\n"
-                "Files selected: 5. Files reviewed: 5. Files not reviewed: 0."
-            ),
+            ("02 findings\nNo issues found in tests.\nFiles selected: 5. Files reviewed: 5. Files not reviewed: 0."),
         )
         legitimate_zero = (
             "Actionable comments posted: 0\n"
@@ -1766,8 +1810,7 @@ class HostedEvidenceTests(unittest.TestCase):
 
     def test_not_reviewed_label_is_excluded_from_reviewed_count(self):
         summary = (
-            "Files selected: 89. Files not reviewed due to moderation or processing errors: 28. "
-            "Files reviewed: 61."
+            "Files selected: 89. Files not reviewed due to moderation or processing errors: 28. Files reviewed: 61."
         )
 
         self.assertEqual(hosted._reviewed_label_counts(summary), {61})
@@ -1839,10 +1882,7 @@ class HostedEvidenceTests(unittest.TestCase):
 
     def test_reviewed_count_still_proves_complete_coverage_and_conflicts_fail_closed(self):
         complete = "Files selected: 89. Files not reviewed: 0. Files reviewed: 89."
-        inconsistent = (
-            "Files selected: 89. Files not reviewed: 28. "
-            "Files reviewed: 61. Files reviewed: 60."
-        )
+        inconsistent = "Files selected: 89. Files not reviewed: 28. Files reviewed: 61. Files reviewed: 60."
 
         self.assertEqual(hosted._reviewed_label_counts(complete), {89})
         self.assertFalse(hosted._summary_has_explicit_incompleteness(complete))
@@ -1858,6 +1898,94 @@ class HostedEvidenceTests(unittest.TestCase):
         state = hosted.trigger_state(REPO, PR, review_payload([trigger, reply]), trigger_record())
         self.assertEqual(state.state, "rate_limited")
         self.assertNotEqual(state.state, "completed")
+
+    def test_wrapped_explicit_rate_limit_is_terminal_without_inventing_reset(self):
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        body = (
+            "<!-- This is an auto-generated reply by CodeRabbit -->\n"
+            "<!-- CodeRabbit review command invocation: v2:provider-id -->\n"
+            "<details><summary>⚠️ Action not completed</summary>\n\n"
+            "Review rate limited.\n\n</details>"
+        )
+        reply = comment(11, "coderabbitai[bot]", body, "2026-09-23T00:02:00Z")
+
+        state = hosted.trigger_state(REPO, PR, review_payload([trigger, reply]), trigger_record())
+
+        self.assertEqual(hosted.public_response_state(reply, "createdAt", {}), "rate_limited")
+        self.assertEqual(state.state, "rate_limited")
+        self.assertTrue(state.terminal)
+        self.assertTrue(state.attributed)
+        self.assertEqual(state.trigger_comment_id, 10)
+        self.assertEqual(state.response_id, 11)
+        self.assertIsNone(state.cooldown_until)
+
+    def test_rate_limit_phrase_in_normal_finding_code_is_not_a_rate_limit_reply(self):
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        finding = comment(
+            11,
+            "coderabbitai[bot]",
+            f"<!-- walkthrough_start -->\nReviewing files that changed from the base of the PR and between {BASE} and {HEAD}.\n"
+            "The example code contains `Review rate limited` as a string.",
+            "2026-09-23T00:02:00Z",
+        )
+
+        state = hosted.trigger_state(REPO, PR, review_payload([trigger, finding]), trigger_record())
+
+        self.assertEqual(hosted.public_response_state(finding, "createdAt", {}), "completed")
+        self.assertEqual(state.state, "completed")
+        self.assertEqual(state.response_id, 11)
+
+    def test_wrapped_rate_limit_examples_in_fenced_or_quoted_code_are_ignored(self):
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        wrapped = (
+            "<!-- This is an auto-generated reply by CodeRabbit -->\n"
+            "<!-- CodeRabbit review command invocation: v2:provider-id -->\n"
+            "<details><summary>⚠️ Action not completed</summary>\n\n"
+            "Review rate limited.\n\n</details>"
+        )
+        finding_prefix = (
+            f"<!-- walkthrough_start -->\nReviewing files that changed from the base of the PR and between {BASE} and {HEAD}.\n"
+            "Use this example when a provider response is documented:\n"
+        )
+        fenced = comment(
+            11,
+            "coderabbitai[bot]",
+            f"{finding_prefix}```markdown\n{wrapped}\n```\nThe example is documentation only.",
+            "2026-09-23T00:02:00Z",
+        )
+        quoted_block = "\n".join(f"> {line}" for line in wrapped.splitlines())
+        quoted = comment(
+            12,
+            "coderabbitai[bot]",
+            f"{finding_prefix}{quoted_block}\nThe quoted example is documentation only.",
+            "2026-09-23T00:03:00Z",
+        )
+        inline = comment(
+            13,
+            "coderabbitai[bot]",
+            f"{finding_prefix}`{wrapped.replace(chr(10), ' ')}`\nThe inline example is documentation only.",
+            "2026-09-23T00:04:00Z",
+        )
+        indented_block = "\n".join(f"    {line}" for line in wrapped.splitlines())
+        indented = comment(
+            14,
+            "coderabbitai[bot]",
+            f"{finding_prefix}{indented_block}\nThe indented example is documentation only.",
+            "2026-09-23T00:05:00Z",
+        )
+
+        for response in (fenced, quoted, inline, indented):
+            state = hosted.trigger_state(REPO, PR, review_payload([trigger, response]), trigger_record())
+
+            if response is quoted:
+                self.assertNotIn("<details>", hosted._unquoted(response["body"]))
+            else:
+                self.assertIn("<details>", hosted._unquoted(response["body"]))
+            if response is fenced:
+                self.assertNotIn("<details>", hosted._without_fenced_code(hosted._unquoted(response["body"])))
+            self.assertEqual(hosted.public_response_state(response, "createdAt", {}), "completed")
+            self.assertEqual(state.state, "completed")
+            self.assertEqual(state.response_id, response["databaseId"])
 
     def test_finished_reply_with_empty_complete_history_is_clean_completion(self):
         trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
@@ -2003,17 +2131,15 @@ class HostedEvidenceTests(unittest.TestCase):
                 payload, record, record_path = archived_addressed_reply_fixture(
                     Path(directory), include_baseline=include_baseline
                 )
-                thread_nodes = payload["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"][0][
-                    "comments"
-                ]["nodes"]
+                thread_nodes = payload["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"][0]["comments"][
+                    "nodes"
+                ]
                 if mutation == "modified_body":
                     thread_nodes[0]["body"] = thread_nodes[0]["body"].replace(
                         "An archived CodeRabbit finding.", "A changed CodeRabbit finding."
                     )
                 elif mutation == "mismatched_range":
-                    thread_nodes[0]["body"] = thread_nodes[0]["body"].replace(
-                        f"to {HEAD[:7]}", f"to {BASE[:7]}"
-                    )
+                    thread_nodes[0]["body"] = thread_nodes[0]["body"].replace(f"to {HEAD[:7]}", f"to {BASE[:7]}")
                 elif mutation == "new_comment":
                     thread_nodes.append(
                         {
@@ -2073,9 +2199,7 @@ class HostedEvidenceTests(unittest.TestCase):
 
             edited = {**unrelated, "createdAt": "2026-09-23T00:01:30Z", "updatedAt": "2026-09-23T00:03:30Z"}
             self.assertTrue(
-                hosted.unresolved_preceding_full_trigger(
-                    REPO, PR, review_payload([first, edited, second]), 12, common
-                )
+                hosted.unresolved_preceding_full_trigger(REPO, PR, review_payload([first, edited, second]), 12, common)
             )
 
     def test_retired_inflight_predecessor_cannot_supply_successor_zero_reply(self):
@@ -2091,9 +2215,7 @@ class HostedEvidenceTests(unittest.TestCase):
             old_record["retirement"] = {"observed_live_state": "awaiting_response"}
             (current.parent / "trigger-10.json").write_text(json.dumps(old_record), encoding="utf-8")
             new_record = trigger_record()
-            new_record["trigger"].update(
-                {"id": 12, "created_at": "2026-09-23T00:03:00Z", "url": new_trigger["url"]}
-            )
+            new_record["trigger"].update({"id": 12, "created_at": "2026-09-23T00:03:00Z", "url": new_trigger["url"]})
             current.write_text(json.dumps(new_record), encoding="utf-8")
             payload = review_payload([old_trigger, new_trigger, late_finish])
             state = hosted.trigger_state(REPO, PR, payload, new_record, current)
@@ -2327,9 +2449,7 @@ class HostedEvidenceTests(unittest.TestCase):
             "2026-09-23T00:01:45Z",
         )
         thread_comment = comment(13, "coderabbitai[bot]", "A real finding", "2026-09-23T00:01:50Z")
-        conflicted = review_payload(
-            [trigger, reply, summary], threads=[{"comments": {"nodes": [thread_comment]}}]
-        )
+        conflicted = review_payload([trigger, reply, summary], threads=[{"comments": {"nodes": [thread_comment]}}])
         self.assertEqual(hosted.trigger_state(REPO, PR, conflicted, trigger_record()).state, "ambiguous")
 
         later = comment(14, "owner", hosted.FULL_COMMAND, "2026-09-23T00:02:00Z")
@@ -2507,7 +2627,9 @@ class HostedEvidenceTests(unittest.TestCase):
     def test_file_ceiling_skip_requires_provider_wording_and_actual_overflow(self):
         trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
         cases = (
-            comment(11, "coderabbitai[bot]", "Review skipped: 80 files exceed the limit of 100.", "2026-09-23T00:02:00Z"),
+            comment(
+                11, "coderabbitai[bot]", "Review skipped: 80 files exceed the limit of 100.", "2026-09-23T00:02:00Z"
+            ),
             comment(
                 12,
                 "coderabbitai[bot]",
@@ -2687,9 +2809,7 @@ class HostedEvidenceTests(unittest.TestCase):
                 patch.object(hosted, "default_trigger_record_path", return_value=Path(directory) / "lock.json"),
                 self.assertRaisesRegex(ValueError, "same head"),
             ):
-                hosted.retire_trigger_record(
-                    path, REPO, PR, 10, HEAD, "stale", lambda: review_payload([trigger])
-                )
+                hosted.retire_trigger_record(path, REPO, PR, 10, HEAD, "stale", lambda: review_payload([trigger]))
             self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["status"], "timed_out")
 
     def test_retirement_accepts_only_durable_later_exact_head_completion(self):
@@ -2737,9 +2857,7 @@ class HostedEvidenceTests(unittest.TestCase):
                 patch.object(hosted, "default_trigger_record_path", return_value=lock_path),
                 patch.object(hosted, "trigger_record_paths", return_value=[later_path]),
             ):
-                result = hosted.retire_trigger_record(
-                    old_path, REPO, PR, 10, HEAD, "superseded", lambda: payload
-                )
+                result = hosted.retire_trigger_record(old_path, REPO, PR, 10, HEAD, "superseded", lambda: payload)
             self.assertEqual(result["status"], "retired")
 
             unverified_path = common / "unverified.json"
@@ -2749,9 +2867,7 @@ class HostedEvidenceTests(unittest.TestCase):
                 patch.object(hosted, "trigger_record_paths", return_value=[]),
                 self.assertRaisesRegex(ValueError, "later completed exact-head"),
             ):
-                hosted.retire_trigger_record(
-                    unverified_path, REPO, PR, 10, HEAD, "superseded", lambda: payload
-                )
+                hosted.retire_trigger_record(unverified_path, REPO, PR, 10, HEAD, "superseded", lambda: payload)
 
     def test_stuck_trigger_recovery_requires_explicit_wait_and_a_new_exact_head(self):
         current_head = "c" * 40
@@ -3069,9 +3185,7 @@ class HostedEvidenceTests(unittest.TestCase):
             path = Path(directory) / "trigger.json"
             path.write_text(json.dumps(record), encoding="utf-8")
             with (
-                patch.object(
-                    hosted, "default_trigger_record_path", return_value=Path(directory) / "lock.json"
-                ),
+                patch.object(hosted, "default_trigger_record_path", return_value=Path(directory) / "lock.json"),
                 patch.object(hosted, "current_trigger_record_paths", return_value=[path]),
                 self.assertRaisesRegex(ValueError, "current pull-request head"),
             ):
@@ -3097,9 +3211,7 @@ class HostedEvidenceTests(unittest.TestCase):
             path = Path(directory) / "trigger.json"
             path.write_text(json.dumps(record), encoding="utf-8")
             with (
-                patch.object(
-                    hosted, "default_trigger_record_path", return_value=Path(directory) / "lock.json"
-                ),
+                patch.object(hosted, "default_trigger_record_path", return_value=Path(directory) / "lock.json"),
                 patch.object(hosted, "current_trigger_record_paths", return_value=[path]),
                 self.assertRaisesRegex(ValueError, "valid unresolved-state timeout"),
             ):

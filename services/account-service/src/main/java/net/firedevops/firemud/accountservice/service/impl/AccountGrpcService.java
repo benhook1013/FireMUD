@@ -1024,6 +1024,17 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (
+        net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository
+                .SourceEvidenceUnavailableException
+            unavailable) {
+      var response =
+          net.firedevops.firemud.account.v1.CompletePasswordResetResponse.newBuilder()
+              .setSuccess(false)
+              .setError(sourceEvidenceUnavailableError("CompletePasswordReset"))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     } catch (Exception ex) {
       var response =
           net.firedevops.firemud.account.v1.CompletePasswordResetResponse.newBuilder()
@@ -1121,6 +1132,17 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (
+        net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository
+                .SourceEvidenceUnavailableException
+            unavailable) {
+      var response =
+          net.firedevops.firemud.account.v1.VerifyEmailResponse.newBuilder()
+              .setSuccess(false)
+              .setError(sourceEvidenceUnavailableError("VerifyEmail"))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     } catch (Exception ex) {
       var response =
           net.firedevops.firemud.account.v1.VerifyEmailResponse.newBuilder()
@@ -1130,6 +1152,11 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     }
+  }
+
+  private net.firedevops.firemud.shared.v1.ErrorDetail sourceEvidenceUnavailableError(
+      String operation) {
+    return appError(operation, "AUTH_UNAVAILABLE", "Account authority is unavailable");
   }
 
   private net.firedevops.firemud.shared.v1.ErrorDetail appError(

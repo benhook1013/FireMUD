@@ -75,6 +75,7 @@ CREDENTIALS = (
         "TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG",
         (
             ("get", "namespaces", None, "yes"),
+            ("delete", "namespaces", None, "yes"),
             ("get", "secrets", "proof", "no"),
         ),
     ),

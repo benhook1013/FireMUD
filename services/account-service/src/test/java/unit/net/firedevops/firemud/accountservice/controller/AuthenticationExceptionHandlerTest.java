@@ -13,6 +13,17 @@ class AuthenticationExceptionHandlerTest {
   private final AuthenticationExceptionHandler handler = new AuthenticationExceptionHandler();
 
   @Test
+  void mapsExactMissingSourceOwnerDenialToSafeUnavailableWithoutInternalDetails() {
+    var response =
+        handler.handleAccountSourceUnavailable(
+            new net.firedevops.firemud.accountservice.repository
+                .AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException());
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+    assertThat(response.getBody().error().code()).isEqualTo("AUTH_UNAVAILABLE");
+    assertThat(response.getBody().error().message()).isEqualTo("Account authority is unavailable");
+  }
+
+  @Test
   void mapsAuthenticationAuthorityUnavailableToServiceUnavailable() {
     var response =
         handler.handleAuthenticationException(
