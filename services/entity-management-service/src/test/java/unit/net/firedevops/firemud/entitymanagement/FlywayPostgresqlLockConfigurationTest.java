@@ -5,8 +5,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
-import org.flywaydb.core.Flyway;
-import org.flywaydb.database.postgresql.PostgreSQLConfigurationExtension;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.boot.env.YamlPropertySourceLoader;
@@ -39,15 +37,5 @@ class FlywayPostgresqlLockConfigurationTest {
           .as("PostgreSQL transactional advisory locks in %s", resourcePath)
           .isFalse();
     }
-  }
-
-  @Test
-  void manualFlywayConfigurationUsesSessionLevelPostgresqlAdvisoryLocks() {
-    var configuration = Flyway.configure();
-    var postgresql =
-        configuration.getConfigurationExtension(PostgreSQLConfigurationExtension.class);
-    postgresql.setTransactionalLock(false);
-
-    assertThat(postgresql.isTransactionalLock()).isFalse();
   }
 }
