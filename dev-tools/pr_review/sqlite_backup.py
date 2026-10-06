@@ -165,6 +165,35 @@ _JSON_ARTIFACT_KINDS = {"cli_events", "hosted_review", "hosted_comments", "metad
 class BackupError(RuntimeError):
     """An expected backup or restore operation failed closed."""
 
+    def __init__(
+        self, message: str, *, phase: str | None = None,
+        failure: str | None = None, returncode: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.phase = phase
+        self.failure = failure
+        self.returncode = returncode
+        self.cleanup_error: BackupError | None = None
+
+
+def _failure_diagnostic(error: BaseException) -> str:
+    # Only locally defined labels and numeric exit statuses cross the CLI
+    # boundary. Exception messages, subprocess text and paths never do.
+    result = type(error).__name__
+    if isinstance(error, BackupError):
+        if error.phase in {
+            "directory-validation", "upload", "readback", "finalize",
+            "retention", "cleanup", "restore-metadata", "restore-download",
+        }:
+            result += f" phase={error.phase}"
+        if error.failure in {"timeout", "nonzero-exit", "start-failed", "validation"}:
+            result += f" failure={error.failure}"
+        if type(error.returncode) is int:
+            result += f" returncode={error.returncode}"
+        if error.cleanup_error is not None:
+            result += f" cleanup=({_failure_diagnostic(error.cleanup_error)})"
+    return result
+
 
 @dataclass(frozen=True)
 class Snapshot:
@@ -309,30 +338,35 @@ def backup_database(
                 remote,
                 sftp_binary,
                 f"put {_sftp_quote(str(snapshot.path))} {_sftp_quote(partial_remote_path)}\n",
+                phase="upload",
             )
-            _run_sftp(remote, sftp_binary, f"chmod 600 {_sftp_quote(partial_remote_path)}\n")
-            _verify_remote_file(remote, sftp_binary, partial_remote_path)
+            _run_sftp(remote, sftp_binary, f"chmod 600 {_sftp_quote(partial_remote_path)}\n", phase="upload")
+            _verify_remote_file(remote, sftp_binary, partial_remote_path, phase="upload")
             _run_sftp(
                 remote,
                 sftp_binary,
                 f"get {_sftp_quote(partial_remote_path)} {_sftp_quote(str(readback_path))}\n",
+                phase="readback",
             )
             os.chmod(readback_path, 0o600, follow_symlinks=False)
             readback = _snapshot_info(readback_path)
             if readback.sha256 != snapshot.sha256 or readback.size_bytes != snapshot.size_bytes:
-                raise BackupError("uploaded SFTP bytes did not match the local snapshot")
-            _validate_database(readback_path, "remote backup readback")
-            _run_sftp(remote, sftp_binary, f"rename {_sftp_quote(partial_remote_path)} {_sftp_quote(final_remote_path)}\n")
+                raise BackupError("uploaded SFTP bytes did not match the local snapshot", phase="readback", failure="validation")
+            _validate_database(readback_path, "remote backup readback", phase="readback")
+            _run_sftp(remote, sftp_binary, f"rename {_sftp_quote(partial_remote_path)} {_sftp_quote(final_remote_path)}\n", phase="finalize")
         except (BackupError, OSError) as exc:
-            _remove_remote_partial(remote, sftp_binary, partial_remote_path)
+            cleanup_error = _remove_remote_partial(remote, sftp_binary, partial_remote_path)
             if isinstance(exc, OSError):
-                raise BackupError("could not verify uploaded SFTP bytes") from exc
+                error = BackupError("could not verify uploaded SFTP bytes", phase="readback", failure="validation")
+                error.cleanup_error = cleanup_error
+                raise error from exc
+            exc.cleanup_error = cleanup_error
             raise
 
         try:
-            _verify_remote_file(remote, sftp_binary, final_remote_path)
-        except BackupError:
-            _remove_remote_partial(remote, sftp_binary, final_remote_path)
+            _verify_remote_file(remote, sftp_binary, final_remote_path, phase="finalize")
+        except BackupError as exc:
+            exc.cleanup_error = _remove_remote_partial(remote, sftp_binary, final_remote_path)
             raise
         _prune_remote_backups(remote, sftp_binary, retention_count, keep=filename)
         return BackupReceipt(
@@ -363,7 +397,7 @@ def restore_remote_backup(
     remote = _remote_config(host, identity_file, known_hosts_file, remote_directory, remote_uid)
     remote_path = _remote_join(remote.directory, filename)
     _verify_remote_directory(remote, sftp_binary)
-    _verify_remote_file(remote, sftp_binary, remote_path)
+    _verify_remote_file(remote, sftp_binary, remote_path, phase="restore-metadata")
 
     with tempfile.TemporaryDirectory(prefix="firemud-pr-review-restore-") as temporary_name:
         local_snapshot = Path(temporary_name) / "download.sqlite3"
@@ -371,12 +405,13 @@ def restore_remote_backup(
             remote,
             sftp_binary,
             f"get {_sftp_quote(remote_path)} {_sftp_quote(str(local_snapshot))}\n",
+            phase="restore-download",
         )
         os.chmod(local_snapshot, 0o600, follow_symlinks=False)
         downloaded = _snapshot_info(local_snapshot)
         if downloaded.sha256 != match.group("digest"):
-            raise BackupError(f"remote backup digest does not match its versioned filename: {remote_path}")
-        _validate_database(local_snapshot, "downloaded remote backup")
+            raise BackupError(f"remote backup digest does not match its versioned filename: {remote_path}", phase="restore-download", failure="validation")
+        _validate_database(local_snapshot, "downloaded remote backup", phase="restore-download")
         return restore_snapshot(local_snapshot, destination)
 
 
@@ -468,7 +503,7 @@ def _snapshot_info(path: Path) -> Snapshot:
     return Snapshot(path=path, sha256=hasher.hexdigest(), size_bytes=size)
 
 
-def _validate_database(path: Path, label: str) -> None:
+def _validate_database(path: Path, label: str, *, phase: str | None = None) -> None:
     uri = f"{path.as_uri()}?mode=ro"
     try:
         with closing(sqlite3.connect(uri, uri=True, timeout=10)) as connection:
@@ -589,10 +624,13 @@ def _validate_database(path: Path, label: str) -> None:
             ).fetchone()[0]
         if len(open_routes) != expected_open_routes:
             raise BackupError("indexed route-worklist readback does not match persisted records")
-    except BackupError:
+    except BackupError as exc:
+        if phase is not None:
+            exc.phase = phase
+            exc.failure = "validation"
         raise
     except (OSError, sqlite3.Error, ValueError, TypeError) as exc:
-        raise BackupError(f"{label} failed FireMUD SQLite schema or logical readback validation") from exc
+        raise BackupError(f"{label} failed FireMUD SQLite schema or logical readback validation", phase=phase, failure="validation") from exc
 
 
 def _require_allowlisted_schema(connection: sqlite3.Connection) -> None:
@@ -891,8 +929,10 @@ def _sftp_transport_options(remote: _RemoteConfig) -> list[str]:
     ]
 
 
-def _run_sftp(remote: _RemoteConfig, sftp_binary: str, batch: str) -> str:
-    return _run([sftp_binary, *_sftp_transport_options(remote), "-b", "-", remote.host], batch, "SFTP operation")
+def _run_sftp(
+    remote: _RemoteConfig, sftp_binary: str, batch: str, *, phase: str = "directory-validation"
+) -> str:
+    return _run([sftp_binary, *_sftp_transport_options(remote), "-b", "-", remote.host], batch, phase)
 
 
 def _run(arguments: list[str], input_text: str | None, operation: str) -> str:
@@ -906,13 +946,13 @@ def _run(arguments: list[str], input_text: str | None, operation: str) -> str:
             check=False,
         )
     except subprocess.TimeoutExpired as exc:
-        raise BackupError(f"{operation} timed out after {_COMMAND_TIMEOUT_SECONDS} seconds") from exc
+        raise BackupError(f"{operation} timed out after {_COMMAND_TIMEOUT_SECONDS} seconds", phase=operation, failure="timeout") from exc
     except OSError as exc:
-        raise BackupError(f"could not start {operation}: {exc}") from exc
+        raise BackupError(f"could not start {operation}: {exc}", phase=operation, failure="start-failed") from exc
     if result.returncode != 0:
         # Do not copy server diagnostics into reports or job logs: they are
         # external text and can contain sensitive path or account details.
-        raise BackupError(f"{operation} failed with exit status {result.returncode}")
+        raise BackupError(f"{operation} failed with exit status {result.returncode}", phase=operation, failure="nonzero-exit", returncode=result.returncode)
     return result.stdout
 
 
@@ -923,13 +963,13 @@ def _verify_remote_directory(remote: _RemoteConfig, sftp_binary: str) -> None:
         output = _run_sftp(remote, sftp_binary, f"ls -ln {_sftp_quote(str(parent))}\n")
         entry = _listing_entry(output, component, expected_path=str(parent / component))
         if entry is None or not entry[0].startswith("d"):
-            raise BackupError("remote backup path contains a missing or non-directory component")
+            raise BackupError("remote backup path contains a missing or non-directory component", phase="directory-validation", failure="validation")
         is_destination = index == len(components) - 1
         if is_destination:
             if entry[0] != "drwx------" or not _owner_matches(entry[2], remote.remote_uid):
-                raise BackupError("remote backup directory must be mode 0700 and owned by the pinned remote UID")
+                raise BackupError("remote backup directory must be mode 0700 and owned by the pinned remote UID", phase="directory-validation", failure="validation")
         elif entry[0][5] == "w" or entry[0][8] == "w":
-            raise BackupError("remote backup path contains a group- or world-writable directory")
+            raise BackupError("remote backup path contains a group- or world-writable directory", phase="directory-validation", failure="validation")
         parent = parent / component
     _run_sftp(remote, sftp_binary, f"cd {_sftp_quote(remote.directory)}\npwd\n")
 
@@ -959,31 +999,34 @@ def _listing_entry(
     return None
 
 
-def _verify_remote_file(remote: _RemoteConfig, sftp_binary: str, path: str) -> None:
-    output = _run_sftp(remote, sftp_binary, f"ls -ln {_sftp_quote(path)}\n")
+def _verify_remote_file(
+    remote: _RemoteConfig, sftp_binary: str, path: str, *, phase: str = "restore-metadata"
+) -> None:
+    output = _run_sftp(remote, sftp_binary, f"ls -ln {_sftp_quote(path)}\n", phase=phase)
     expected_name = PurePosixPath(path).name
     entry = _listing_entry(output, expected_name, expected_path=path)
     if entry is None or entry[0] != "-rw-------" or not _owner_matches(entry[2], remote.remote_uid):
-        raise BackupError(f"remote backup file metadata is not private and owned by the pinned remote UID: {path}")
+        raise BackupError(f"remote backup file metadata is not private and owned by the pinned remote UID: {path}", phase=phase, failure="validation")
 
 
 def _owner_matches(owner_text: str, expected_uid: int) -> bool:
     return owner_text.isascii() and owner_text.isdecimal() and int(owner_text) == expected_uid
 
 
-def _remove_remote_partial(remote: _RemoteConfig, sftp_binary: str, path: str) -> None:
+def _remove_remote_partial(remote: _RemoteConfig, sftp_binary: str, path: str) -> BackupError | None:
     try:
-        _run_sftp(remote, sftp_binary, f"-rm {_sftp_quote(path)}\n")
-    except BackupError:
+        _run_sftp(remote, sftp_binary, f"-rm {_sftp_quote(path)}\n", phase="cleanup")
+    except BackupError as exc:
         # The primary transfer failure remains authoritative; an inaccessible
         # unique partial path is confined by the already-private directory.
-        return
+        return exc
+    return None
 
 
 def _prune_remote_backups(
     remote: _RemoteConfig, sftp_binary: str, retention_count: int, *, keep: str
 ) -> None:
-    output = _run_sftp(remote, sftp_binary, f"ls -ln {_sftp_quote(remote.directory)}\n")
+    output = _run_sftp(remote, sftp_binary, f"ls -ln {_sftp_quote(remote.directory)}\n", phase="retention")
     entries: list[str] = []
     for line in output.splitlines():
         parsed = _parse_listing_line(line)
@@ -999,14 +1042,14 @@ def _prune_remote_backups(
             filename = listed_name
         if _BACKUP_NAME.fullmatch(filename):
             if mode != "-rw-------" or not _owner_matches(owner, remote.remote_uid):
-                raise BackupError("remote backup retention found an artifact with unsafe metadata")
+                raise BackupError("remote backup retention found an artifact with unsafe metadata", phase="retention", failure="validation")
             entries.append(filename)
     if keep not in entries:
-        raise BackupError("new remote backup is missing from the SFTP retention listing")
+        raise BackupError("new remote backup is missing from the SFTP retention listing", phase="retention", failure="validation")
     retained = {keep, *sorted((name for name in entries if name != keep), reverse=True)[: retention_count - 1]}
     for filename in entries:
         if filename not in retained:
-            _run_sftp(remote, sftp_binary, f"rm {_sftp_quote(_remote_join(remote.directory, filename))}\n")
+            _run_sftp(remote, sftp_binary, f"rm {_sftp_quote(_remote_join(remote.directory, filename))}\n", phase="retention")
 
 
 def _write_report(report_path: str | os.PathLike[str], payload: dict[str, object]) -> None:
@@ -1133,7 +1176,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"restore verified: sha256={restored.sha256} size={restored.size_bytes}")
             return 0
         except (BackupError, OSError) as exc:
-            print(f"restore failed: {type(exc).__name__}", file=sys.stderr)
+            print(f"restore failed: {_failure_diagnostic(exc)}", file=sys.stderr)
             return 1
     if args.report_file is None:
         parser.error("--report-file is required for backup mode")
@@ -1141,7 +1184,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         previous = _read_report(args.report_file)
     except BackupError as exc:
-        print(f"backup failed: {type(exc).__name__}", file=sys.stderr)
+        print(f"backup failed: {_failure_diagnostic(exc)}", file=sys.stderr)
         return 1
     try:
         receipt = backup_database(
@@ -1182,7 +1225,7 @@ def main(argv: list[str] | None = None) -> int:
         except BackupError:
             pass
         # Deliberately omit exception text because it can contain external diagnostics.
-        print(f"backup failed: {type(exc).__name__}", file=sys.stderr)
+        print(f"backup failed: {_failure_diagnostic(exc)}", file=sys.stderr)
         return 1
 
 
