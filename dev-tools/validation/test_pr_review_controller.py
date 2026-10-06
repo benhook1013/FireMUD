@@ -6058,6 +6058,32 @@ class ControllerTests(unittest.TestCase):
             provider.branch_exists("develop")
         self.assertEqual(run.call_args.kwargs["timeout"], 7)
 
+    def test_default_git_provider_uses_hosted_budget_and_checks_after_process_returns(self):
+        class Clock:
+            now = 0.0
+
+            def monotonic(self):
+                return self.now
+
+        clock = Clock()
+
+        def git_call(args, **_kwargs):
+            clock.now = 13
+            return CompletedProcess(args, 0, b"", b"")
+
+        with (
+            patch.object(github.time, "monotonic", side_effect=clock.monotonic),
+            github.activate_hosted_preflight_budget(timeout_seconds=12),
+            patch("pr_review.controller.subprocess.run", side_effect=git_call) as run,
+            self.assertRaisesRegex(
+                github.HostedPreflightDeadlineExceeded,
+                r"phase=starting, elapsed=13.0s.*budget=12s",
+            ),
+        ):
+            DefaultGitProvider(timeout_seconds=30)._run_process(["git", "status"])
+
+        self.assertEqual(run.call_args.kwargs["timeout"], 12)
+
     def test_default_git_provider_hashes_raw_diff_bytes(self):
         raw_diff = b"diff --git a/file b/file\n\xff\x80\x00\n"
         results = [
@@ -6102,6 +6128,36 @@ class ControllerTests(unittest.TestCase):
                 DefaultGitProvider(root, timeout_seconds=11).test_merge_tree(base, head)
 
             self.assertEqual(_git(root, "worktree", "list", "--porcelain"), worktrees_before)
+
+    def test_default_git_provider_cleans_fallback_worktree_after_preflight_deadline(self):
+        cleanup_calls = []
+
+        def git_call(args, **kwargs):
+            git_args = args[args.index("-C") + 2 :]
+            if git_args[:2] == ["merge-tree", "--write-tree"]:
+                return CompletedProcess(args, 129, "", "unsupported option")
+            if git_args[:2] == ["worktree", "add"]:
+                return CompletedProcess(args, 0, "", "")
+            if git_args[:2] == ["worktree", "remove"]:
+                cleanup_calls.append(kwargs)
+                return CompletedProcess(args, 0, "", "")
+            if "merge" in git_args:
+                budget = github.active_hosted_preflight_budget()
+                self.assertIsNotNone(budget)
+                budget.deadline = budget.started_at - 1
+                budget.remaining_seconds()
+            return CompletedProcess(args, 0, "", "")
+
+        with (
+            github.hosted_preflight_budget(timeout_seconds=120),
+            patch.object(DefaultGitProvider, "_run_process", side_effect=git_call),
+            self.assertRaises(github.HostedPreflightDeadlineExceeded),
+        ):
+            DefaultGitProvider().test_merge_tree(BASE, HEAD_1)
+
+        self.assertEqual(len(cleanup_calls), 1)
+        self.assertFalse(cleanup_calls[0]["enforce_preflight_budget"])
+        self.assertLessEqual(cleanup_calls[0]["timeout_seconds"], 10)
 
     def test_test_merge_falls_back_without_lfs_smudge_when_merge_tree_is_unavailable(self):
         tree = "9" * 40

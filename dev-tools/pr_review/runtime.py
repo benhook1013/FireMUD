@@ -2867,7 +2867,7 @@ class HostedRunner:
         **_: Any,
     ) -> dict[str, Any]:
         if github.active_hosted_preflight_budget() is None:
-            with github.activate_hosted_preflight_budget():
+            with github.hosted_preflight_budget():
                 return self.__call__(
                     target,
                     expect_pr=expect_pr,
@@ -3127,28 +3127,24 @@ class HostedRunner:
                         hosted.atomic_write_json(path, posting)
                         reservation_saved = True
                     except Exception as exc:
-                        if sqlite_attempt_started and sqlite_attempt_id is not None:
-                            self._finish_unposted_attempt(sqlite_attempt_id)
                         raise ControllerError("could not establish the durable Hosted posting reservation") from exc
                 else:
                     try:
                         hosted.atomic_write_json(path, posting)
                         reservation_saved = True
                     except Exception as exc:
-                        if sqlite_attempt_started and sqlite_attempt_id is not None:
-                            self._finish_unposted_attempt(sqlite_attempt_id)
                         raise ControllerError("could not establish the durable Hosted posting reservation") from exc
 
-            if admit is None:
-                reserve()
-            else:
-                try:
+            try:
+                if admit is None:
+                    reserve()
+                else:
                     budget.set_phase("controller_admission", total=1)
                     admit(reserve)
-                except Exception:
-                    if sqlite_attempt_started and sqlite_attempt_id is not None:
-                        self._finish_unposted_attempt(sqlite_attempt_id)
-                    raise
+            except Exception:
+                if sqlite_attempt_started and sqlite_attempt_id is not None:
+                    self._finish_unposted_attempt(sqlite_attempt_id)
+                raise
             if not reservation_saved:
                 if sqlite_attempt_started and sqlite_attempt_id is not None:
                     self._finish_unposted_attempt(sqlite_attempt_id)

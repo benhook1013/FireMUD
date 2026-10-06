@@ -15,6 +15,7 @@ import os
 import re
 import subprocess
 import tempfile
+import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,10 @@ FINGERPRINT = re.compile(r"^[0-9a-f]{64}$")
 
 class StateError(ValueError):
     """Raised when private review-stack state is invalid or unavailable."""
+
+
+class StateLockTimeout(StateError):
+    """Raised when a caller's bounded wait for the review-stack lock expires."""
 
 
 def _fingerprint_value(value: Any) -> Any:
@@ -1124,6 +1129,10 @@ class ReviewState:
 def git_common_dir(cwd: str | os.PathLike[str] | None = None) -> Path:
     """Resolve the repository's shared Git common directory."""
 
+    from . import github
+
+    budget = github.active_hosted_preflight_budget()
+    timeout = budget.request_timeout(30) if budget is not None else 30
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--git-common-dir"],
@@ -1131,10 +1140,19 @@ def git_common_dir(cwd: str | os.PathLike[str] | None = None) -> Path:
             check=True,
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=timeout,
         )
-    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+    except subprocess.TimeoutExpired as exc:
+        if budget is not None:
+            try:
+                budget.remaining_seconds()
+            except github.HostedPreflightDeadlineExceeded as deadline_error:
+                raise deadline_error from exc
         raise StateError("cannot resolve the repository Git common directory") from exc
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise StateError("cannot resolve the repository Git common directory") from exc
+    if budget is not None:
+        budget.remaining_seconds()
     common = Path(result.stdout.strip())
     if not common.is_absolute():
         common = Path(cwd or os.getcwd()) / common
@@ -1149,26 +1167,41 @@ def state_path(common_dir: str | os.PathLike[str] | None = None) -> Path:
 
 
 @contextlib.contextmanager
-def _locked(lock_path: Path) -> Iterator[None]:
+def _locked(lock_path: Path, *, deadline: float | None = None) -> Iterator[None]:
     lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     lock_path.parent.chmod(0o700)
     with lock_path.open("a+", encoding="utf-8") as handle:
         os.fchmod(handle.fileno(), 0o600)
         try:
             import fcntl
-
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         except ImportError:  # pragma: no cover - repository execution is Linux/WSL
-            pass
+            fcntl = None
+        locked = False
+        if fcntl is not None:
+            if deadline is None:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                locked = True
+            else:
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise StateLockTimeout("timed out waiting for review-stack state lock")
+                    try:
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        locked = True
+                    except BlockingIOError:
+                        time.sleep(min(0.01, remaining))
+                        continue
+                    if deadline - time.monotonic() <= 0:
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                        locked = False
+                        raise StateLockTimeout("timed out waiting for review-stack state lock")
+                    break
         try:
             yield
         finally:
-            try:
-                import fcntl
-
+            if locked:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-            except ImportError:  # pragma: no cover
-                pass
 
 
 class StateStore:
@@ -1233,8 +1266,8 @@ class StateStore:
         finally:
             temporary.unlink(missing_ok=True)
 
-    def update(self, mutate: Callable[[ReviewState], ReviewState]) -> ReviewState:
-        with _locked(self.lock_path):
+    def update(self, mutate: Callable[[ReviewState], ReviewState], *, lock_deadline: float | None = None) -> ReviewState:
+        with _locked(self.lock_path, deadline=lock_deadline):
             updated = mutate(self.load())
             self._save_unlocked(updated)
             return updated
@@ -1358,10 +1391,10 @@ class ControllerStateStore:
             else:
                 store.update(lambda _: state)
 
-    def update(self, mutate: Callable[[ReviewState], ReviewState]) -> ReviewState:
+    def update(self, mutate: Callable[[ReviewState], ReviewState], *, lock_deadline: float | None = None) -> ReviewState:
         if not callable(mutate):
             raise TypeError("mutate must be callable")
-        with _locked(self.lock_path):
+        with _locked(self.lock_path, deadline=lock_deadline):
             store = self._active_store()
             if isinstance(store, StateStore):
                 updated = mutate(store.load())

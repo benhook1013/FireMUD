@@ -110,6 +110,7 @@ class HostedPreflightBudget:
         self._close_phase(now)
         self._finished_at = now
         self.active = False
+        _HOSTED_PREFLIGHT_BUDGET.set(None)
 
     def summary(self) -> dict[str, Any]:
         now = self._finished_at if self._finished_at is not None else time.monotonic()
@@ -141,6 +142,20 @@ def activate_hosted_preflight_budget(
         yield budget
     finally:
         _HOSTED_PREFLIGHT_BUDGET.reset(token)
+
+
+@contextmanager
+def hosted_preflight_budget(
+    timeout_seconds: float = HOSTED_PREFLIGHT_BUDGET_SECONDS,
+) -> Iterator[HostedPreflightBudget]:
+    """Use the current Hosted budget, creating one only at the outer boundary."""
+
+    current = active_hosted_preflight_budget()
+    if current is not None:
+        yield current
+        return
+    with activate_hosted_preflight_budget(timeout_seconds) as budget:
+        yield budget
 
 
 @contextmanager

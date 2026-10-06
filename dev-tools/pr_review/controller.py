@@ -36,6 +36,7 @@ from .git_merge import TestMergeError, test_merge_tree
 from .hosted import parse_timestamp, prepare_full_trigger
 from .patch_identity import patch_identity
 from .state import (
+    ControllerStateStore,
     FindingRoute,
     Judgment,
     LegacyEvidenceTransition,
@@ -44,6 +45,7 @@ from .state import (
     ReviewState,
     StackReconciliationDecision,
     StateError,
+    StateLockTimeout,
     StateStore,
     merge_open_route,
     observation_fingerprint,
@@ -127,17 +129,30 @@ class DefaultGitProvider:
         check: bool = True,
         capture_output: bool = True,
         text: bool = False,
+        timeout_seconds: float | None = None,
+        enforce_preflight_budget: bool = True,
     ) -> subprocess.CompletedProcess[str] | subprocess.CompletedProcess[bytes]:
+        timeout_limit = self.timeout_seconds if timeout_seconds is None else min(self.timeout_seconds, timeout_seconds)
+        budget = github.active_hosted_preflight_budget() if enforce_preflight_budget else None
+        timeout = budget.request_timeout(timeout_limit) if budget is not None else timeout_limit
         try:
-            return subprocess.run(
+            completed = subprocess.run(
                 list(args),
                 check=check,
                 capture_output=capture_output,
                 text=text,
-                timeout=self.timeout_seconds,
+                timeout=timeout,
             )
         except subprocess.TimeoutExpired as error:
-            raise ControllerError(f"git command timed out after {self.timeout_seconds} seconds") from error
+            if budget is not None:
+                try:
+                    budget.remaining_seconds()
+                except github.HostedPreflightDeadlineExceeded as deadline_error:
+                    raise deadline_error from error
+            raise ControllerError(f"git command timed out after {timeout_limit} seconds") from error
+        if budget is not None:
+            budget.remaining_seconds()
+        return completed
 
     def _run(self, *args: str, check: bool = True) -> str:
         result = self._run_process(
@@ -220,7 +235,19 @@ class DefaultGitProvider:
         self._ensure_commit(normalized_head)
 
         def run_git(args, *, check, text, timeout):
-            del timeout
+            if "worktree" in args and "remove" in args:
+                budget = github.active_hosted_preflight_budget()
+                if budget is not None:
+                    try:
+                        budget.remaining_seconds()
+                    except github.HostedPreflightDeadlineExceeded:
+                        return self._run_process(
+                            args,
+                            check=check,
+                            text=text,
+                            timeout_seconds=timeout,
+                            enforce_preflight_budget=False,
+                        )
             return self._run_process(args, check=check, text=text)
 
         try:
@@ -5747,7 +5774,21 @@ class ReviewController:
             reserve()
             return state
 
-        self.store.update(admit)
+        budget = github.active_hosted_preflight_budget()
+        try:
+            if budget is None:
+                self.store.update(admit)
+            elif isinstance(self.store, (StateStore, ControllerStateStore)):
+                self.store.update(admit, lock_deadline=budget.deadline)
+            else:
+                self.store.update(admit)
+        except StateLockTimeout as error:
+            if budget is not None:
+                try:
+                    budget.remaining_seconds()
+                except github.HostedPreflightDeadlineExceeded as deadline_error:
+                    raise ControllerError(str(deadline_error)) from error
+            raise ControllerError("could not acquire the review-stack state lock before Hosted admission") from error
 
     @staticmethod
     def _validate_force_options(force: bool, reason: str | None) -> None:
@@ -5769,7 +5810,7 @@ class ReviewController:
         **kwargs: Any,
     ) -> Any:
         self._validate_force_options(force, reason)
-        with github.activate_hosted_preflight_budget() as budget:
+        with github.hosted_preflight_budget() as budget:
             try:
                 budget.set_phase("target_selection")
                 selected = self._target(policy.Channel.HOSTED, expected_pr)

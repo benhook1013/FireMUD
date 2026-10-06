@@ -26,10 +26,24 @@ sys.path.insert(0, str(ROOT / "dev-tools"))
 from pr_review import cli as review_cli
 from pr_review import evidence, github, hosted, sqlite_hosted_capture, sqlite_review_records, sqlite_store
 from pr_review.cli_runner import EffectiveParent, PullRequestSnapshot, ReviewRunnerError, ReviewTarget
-from pr_review.controller import ControllerError, HostedAdmissionBusy, StaleReviewTarget, _review_activity
+from pr_review.controller import (
+    ControllerError,
+    HostedAdmissionBusy,
+    ReviewController,
+    StaleReviewTarget,
+    _review_activity,
+)
 from pr_review.policy import Channel, taper_satisfied
 from pr_review.runtime import HostedRunner, LiveEvidence, LiveGitHub, default_controller
-from pr_review.state import ReviewState, StateStore, SummaryFindingDisposition, observation_fingerprint
+from pr_review.state import (
+    ControllerStateStore,
+    ReviewState,
+    StateStore,
+    SummaryFindingDisposition,
+    observation_fingerprint,
+)
+
+_REAL_EVIDENCE_GIT_COMMON_DIR = evidence.git_common_dir
 
 BASE = "a" * 40
 HEAD = "b" * 40
@@ -37,6 +51,34 @@ PATCH = "c" * 64
 
 
 class RuntimeTest(unittest.TestCase):
+    def test_evidence_git_common_dir_uses_remaining_hosted_preflight_budget(self) -> None:
+        class Clock:
+            now = 0.0
+
+            def monotonic(self):
+                return self.now
+
+        clock = Clock()
+
+        def git_call(args, **_kwargs):
+            clock.now = 13
+            return CompletedProcess(args, 0, ".git\n", "")
+
+        error = None
+        with (
+            patch.object(github.time, "monotonic", side_effect=clock.monotonic),
+            github.activate_hosted_preflight_budget(timeout_seconds=12),
+            patch.object(evidence.subprocess, "run", side_effect=git_call) as run,
+        ):
+            try:
+                _REAL_EVIDENCE_GIT_COMMON_DIR()
+            except github.HostedPreflightDeadlineExceeded as raised:
+                error = raised
+
+        self.assertEqual(clock.now, 13)
+        self.assertEqual(run.call_args.kwargs["timeout"], 12)
+        self.assertIsNotNone(error)
+
     def test_admission_history_refreshes_actual_cached_channel_projection(self) -> None:
         for channel in ("hosted", "cli"):
             with self.subTest(channel=channel), tempfile.TemporaryDirectory() as directory:
@@ -1878,10 +1920,138 @@ class RuntimeTest(unittest.TestCase):
 
             self.assertEqual(post_calls, [])
             self.assertFalse(path.exists())
+            with path.parent.joinpath("request.lock").open("a+") as released_lock:
+                fcntl.flock(released_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(released_lock.fileno(), fcntl.LOCK_UN)
             attempts = records.attempt_history(42)
             self.assertEqual(len(attempts), 1)
             self.assertEqual(attempts[0]["state"], "failed")
             self.assertIsNone(attempts[0]["run_id"])
+
+    def test_expired_preflight_after_attempt_start_closes_attempt_without_admission_callback(self) -> None:
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        target = ReviewTarget(
+            snapshot,
+            EffectiveParent("develop", BASE),
+            patch_identity=PATCH,
+            merge_base=BASE,
+            repository="owner/repo",
+        )
+        live = LiveGitHub("owner/repo")
+        post_calls = []
+        start_attempt = sqlite_hosted_capture.start_hosted_attempt
+
+        def start_then_expire(*args, **kwargs):
+            attempt = start_attempt(*args, **kwargs)
+            budget = github.active_hosted_preflight_budget()
+            self.assertIsNotNone(budget)
+            budget.deadline = budget.started_at - 1
+            return attempt
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trigger.json"
+            records = self._new_review_records(Path(directory) / "controller.sqlite3")
+            runner = HostedRunner("owner/repo", live, records=records)
+
+            with (
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(live, "branch_head", return_value=BASE),
+                patch.object(github, "fetch_pull_request", return_value=self._payload()),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(evidence, "git_common_dir", return_value=Path(directory)),
+                patch.object(runner, "_assert_no_other_active_reservations"),
+                patch.object(runner, "_authenticated_login", return_value="maintainer"),
+                patch(
+                    "pr_review.runtime.sqlite_hosted_capture.start_hosted_attempt",
+                    side_effect=start_then_expire,
+                ),
+                patch("pr_review.runtime.subprocess.run", side_effect=post_calls.append),
+                self.assertRaisesRegex(
+                    github.HostedPreflightDeadlineExceeded,
+                    r"Hosted preflight deadline exceeded .*budget=120s",
+                ),
+            ):
+                runner(target, expect_pr=42)
+
+            self.assertEqual(post_calls, [])
+            self.assertFalse(path.exists())
+            attempts = records.attempt_history(42)
+            self.assertEqual(len(attempts), 1)
+            self.assertEqual(attempts[0]["state"], "failed")
+
+    def test_held_controller_state_lock_expires_before_reservation_and_post(self) -> None:
+        class Clock:
+            now = 0.0
+
+            def monotonic(self):
+                return self.now
+
+            def sleep(self, seconds):
+                self.now += seconds
+
+        clock = Clock()
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        target = ReviewTarget(
+            snapshot,
+            EffectiveParent("develop", BASE),
+            patch_identity=PATCH,
+            merge_base=BASE,
+            repository="owner/repo",
+        )
+        live = LiveGitHub("owner/repo")
+        post_calls = []
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            state_store = ControllerStateStore(common / "firemud" / "pr-review-stack.json")
+            state_store.save(ReviewState(ordered_prs=(42,)))
+            controller = ReviewController(store=state_store)
+            records = self._new_review_records(common / "controller.sqlite3")
+            path = hosted.default_trigger_record_path("owner/repo", 42, common)
+            runner = HostedRunner(
+                "owner/repo",
+                live,
+                git=SimpleNamespace(merge_base=lambda *_args: BASE, patch_identity=lambda *_args: PATCH),
+                records=records,
+            )
+            with state_store.lock_path.open("a+") as lock_handle:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+                try:
+                    with (
+                        github.activate_hosted_preflight_budget(timeout_seconds=10) as budget,
+                        patch.object(github.time, "monotonic", side_effect=clock.monotonic),
+                        patch.object(github.time, "sleep", side_effect=clock.sleep),
+                        patch.object(live, "pull_request", return_value=snapshot),
+                        patch.object(live, "branch_head", return_value=BASE),
+                        patch.object(github, "fetch_pull_request", return_value=self._payload()),
+                        patch.object(hosted, "default_trigger_record_path", return_value=path),
+                        patch.object(evidence, "git_common_dir", return_value=common),
+                        patch.object(runner, "_assert_no_other_active_reservations"),
+                        patch.object(runner, "_authenticated_login", return_value="maintainer"),
+                        patch("pr_review.runtime.subprocess.run", side_effect=post_calls.append),
+                        self.assertRaisesRegex(
+                            ControllerError,
+                            r"Hosted preflight deadline exceeded .*budget=10s",
+                        ),
+                    ):
+                        budget.deadline = 0.05
+                        runner(
+                            target,
+                            expect_pr=42,
+                            admit=lambda reserve: controller._admit_review(42, "hosted", reserve),
+                        )
+                finally:
+                    fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+
+            self.assertGreaterEqual(clock.now, 0.05)
+            self.assertEqual(post_calls, [])
+            self.assertFalse(path.exists())
+            with path.parent.joinpath("request.lock").open("a+") as released_lock:
+                fcntl.flock(released_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(released_lock.fileno(), fcntl.LOCK_UN)
+            attempts = records.attempt_history(42)
+            self.assertEqual(len(attempts), 1)
+            self.assertEqual(attempts[0]["state"], "failed")
 
     def test_hosted_admission_callback_must_complete_durable_reservation_before_post(self) -> None:
         snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
