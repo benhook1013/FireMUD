@@ -104,13 +104,18 @@ class AccountControlUiCredentialProducerPostgresRedisIntegrationTest {
   static GenericContainer<?> redis =
       new GenericContainer<>("redis:7.2-alpine").withExposedPorts(6379);
 
+  @Container
+  static GenericContainer<?> cacheRedis =
+      new GenericContainer<>("redis:7.2-alpine").withExposedPorts(6379);
+
   @DynamicPropertySource
   static void configure(DynamicPropertyRegistry registry) {
     PostgresBackedServiceTestSupport.registerPostgresService(registry, postgres, "account_service");
     PostgresBackedServiceTestSupport.registerRedisService(registry, redis);
-    registry.add("firemud.account.platform-auth-abuse.cache-redis.host", redis::getHost);
+    registry.add("firemud.account.platform-auth-abuse.cache-redis.host", cacheRedis::getHost);
     registry.add(
-        "firemud.account.platform-auth-abuse.cache-redis.port", () -> redis.getMappedPort(6379));
+        "firemud.account.platform-auth-abuse.cache-redis.port",
+        () -> cacheRedis.getMappedPort(6379));
     registry.add("firemud.account.platform-auth-abuse.hmac-key-id", () -> ABUSE_HMAC_KEY_ID);
     registry.add(
         "firemud.account.platform-auth-abuse.hmac-key-base64", () -> ABUSE_HMAC_KEY_BASE64);
@@ -137,6 +142,10 @@ class AccountControlUiCredentialProducerPostgresRedisIntegrationTest {
 
   @BeforeEach
   void initializeFixtureOwners() {
+    assertThat(cacheRedis.getMappedPort(6379)).isNotEqualTo(redis.getMappedPort(6379));
+    assertThat(authRateLimitProperties.getCacheRedis().getHost()).isEqualTo(cacheRedis.getHost());
+    assertThat(authRateLimitProperties.getCacheRedis().getPort())
+        .isEqualTo(cacheRedis.getMappedPort(6379));
     issuanceOperations = new AccountControlUiIssuanceOperationRepository(dsl);
     transaction = new TransactionTemplate(transactionManager);
   }
