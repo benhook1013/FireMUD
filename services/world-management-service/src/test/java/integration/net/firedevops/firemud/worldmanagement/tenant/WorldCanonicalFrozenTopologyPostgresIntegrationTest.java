@@ -431,6 +431,7 @@ class WorldCanonicalFrozenTopologyPostgresIntegrationTest {
       connection.setAutoCommit(false);
       retained.execute("SET LOCAL session_replication_role='replica'");
       for (var table : tables.entrySet()) {
+        String columns = retainedColumns(retained, schema, table.getKey());
         String override =
             table.getKey().equals("world_authored_version_identity")
                 ? " OVERRIDING SYSTEM VALUE"
@@ -438,8 +439,13 @@ class WorldCanonicalFrozenTopologyPostgresIntegrationTest {
         retained.execute(
             "INSERT INTO "
                 + table.getKey()
+                + " ("
+                + columns
+                + ")"
                 + override
-                + " SELECT * FROM world_management_service."
+                + " SELECT "
+                + columns
+                + " FROM world_management_service."
                 + table.getKey()
                 + " WHERE "
                 + table.getValue()
@@ -459,6 +465,7 @@ class WorldCanonicalFrozenTopologyPostgresIntegrationTest {
           .load()
           .migrate();
       assertThat(retainedRows(retained, tables)).isEqualTo(before);
+      assertNoPromotionOfRetainedTopology(retained);
       assertThat(
               retained
                   .resultQuery("SELECT count(*) FROM world_canonical_frozen_topology")
@@ -488,14 +495,57 @@ class WorldCanonicalFrozenTopologyPostgresIntegrationTest {
   private Map<String, List<String>> retainedRows(DSLContext database, Map<String, String> tables) {
     Map<String, List<String>> rows = new LinkedHashMap<>();
     for (String table : tables.keySet()) {
+      String rowJson =
+          table.equals("world_topology_draft_commit")
+              ? "to_jsonb(t) - 'application_transaction_id'"
+              : "to_jsonb(t)";
       rows.put(
           table,
           database
               .resultQuery(
-                  "SELECT to_jsonb(t)::text FROM " + table + " t ORDER BY to_jsonb(t)::text")
+                  "SELECT "
+                      + "("
+                      + rowJson
+                      + ")"
+                      + "::text FROM "
+                      + table
+                      + " t ORDER BY "
+                      + rowJson)
               .fetch(0, String.class));
     }
     return rows;
+  }
+
+  private String retainedColumns(DSLContext database, String schema, String table) {
+    return Objects.requireNonNull(
+        database
+            .resultQuery(
+                "SELECT string_agg(quote_ident(column_name), ', ' ORDER BY ordinal_position) "
+                    + "FROM information_schema.columns WHERE table_schema = ? AND table_name = ?",
+                schema,
+                table)
+            .fetchOne(0, String.class),
+        "retained fixture must expose its original columns");
+  }
+
+  private void assertNoPromotionOfRetainedTopology(DSLContext database) {
+    assertThat(
+            database
+                .resultQuery(
+                    "SELECT count(*) FROM world_topology_draft_commit "
+                        + "WHERE application_transaction_id IS NOT NULL")
+                .fetchOne(0, Long.class))
+        .isZero();
+    assertThat(
+            database
+                .resultQuery("SELECT count(*) FROM world_draft_graph_application")
+                .fetchOne(0, Long.class))
+        .isZero();
+    assertThat(
+            database
+                .resultQuery("SELECT count(*) FROM world_draft_graph_terminal_identity")
+                .fetchOne(0, Long.class))
+        .isZero();
   }
 
   @Test
@@ -697,6 +747,7 @@ class WorldCanonicalFrozenTopologyPostgresIntegrationTest {
       connection.setAutoCommit(false);
       retained.execute("SET LOCAL session_replication_role='replica'");
       for (var table : tables.entrySet()) {
+        String columns = retainedColumns(retained, schema, table.getKey());
         String override =
             table.getKey().equals("world_authored_version_identity")
                 ? " OVERRIDING SYSTEM VALUE"
@@ -704,8 +755,13 @@ class WorldCanonicalFrozenTopologyPostgresIntegrationTest {
         retained.execute(
             "INSERT INTO "
                 + table.getKey()
+                + " ("
+                + columns
+                + ")"
                 + override
-                + " SELECT * FROM world_management_service."
+                + " SELECT "
+                + columns
+                + " FROM world_management_service."
                 + table.getKey()
                 + " WHERE "
                 + table.getValue()
@@ -741,6 +797,7 @@ class WorldCanonicalFrozenTopologyPostgresIntegrationTest {
           .load()
           .migrate();
       assertThat(retainedRows(retained, tables)).isEqualTo(before);
+      assertNoPromotionOfRetainedTopology(retained);
       var repo =
           new WorldCanonicalFrozenTopologyRepository(
               retained,

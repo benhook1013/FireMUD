@@ -695,6 +695,7 @@ class GameDesignDraftTerminalOutcomePostgresIntegrationTest {
     var flywayConfiguration =
         Flyway.configure()
             .dataSource(dataSource)
+            .placeholders(Map.of("serviceSchema", schema))
             .schemas(schema)
             .defaultSchema(schema)
             .table(FLYWAY_TABLE);
@@ -759,6 +760,7 @@ class GameDesignDraftTerminalOutcomePostgresIntegrationTest {
     void migrateToLatest() {
       Flyway.configure()
           .dataSource(dataSource)
+          .placeholders(Map.of("serviceSchema", schema))
           .schemas(schema)
           .defaultSchema(schema)
           .table(FLYWAY_TABLE)
