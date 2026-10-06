@@ -2621,7 +2621,7 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.accountservice.IssuerAuthorityProducerPostgresIntegrationTest#sameRequestUuidAcrossExactIssuersHasDistinctPersistedSourceChangeIdentities()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.IssuerAuthorityProducerPostgresIntegrationTest#failedIssuerAdvanceRetainsOriginalPendingCaptureForExactRetry()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.IssuerAuthorityProducerPostgresIntegrationTest#issuerPendingCaptureRetainsIndependentCountersCheckpointAndExactPositiveEventBytes()' \
-            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerAuthorityProducerPostgresIntegrationTest#v59PreservesV58SourceHistoryAndExactKeysAndSupportsFullMultibyteIssuerParticipation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerAuthorityProducerPostgresIntegrationTest#v59PreservesV58HistoryAndExactKeysBeforeV61ProducerInteractionsWithFullMultibyteIssuer()' \
             account-service
 
       - name: Verify Account tenant Draft source ordering PostgreSQL proof cases
