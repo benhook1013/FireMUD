@@ -141,19 +141,32 @@ def test_merge_tree(
         finally:
             if add_attempted:
                 cleanup_timeout = min(max(timeout_seconds, 1.0), 10.0)
-                removed = invoke_fallback(
-                    repository,
-                    "worktree",
-                    "remove",
-                    "--force",
-                    str(worktree),
-                    timeout=cleanup_timeout,
-                )
-                if worktree_created and removed.returncode != 0:
-                    cleanup_error = TestMergeError("could not clean up the isolated test-merge worktree")
+                try:
+                    removed = invoke_fallback(
+                        repository,
+                        "worktree",
+                        "remove",
+                        "--force",
+                        str(worktree),
+                        timeout=cleanup_timeout,
+                    )
+                    if worktree_created and removed.returncode != 0:
+                        raise TestMergeError("could not clean up the isolated test-merge worktree")
+                except Exception as cleanup_error:
+                    cleanup_failure = TestMergeError("could not clean up the isolated test-merge worktree")
                     if primary_error is not None:
-                        raise cleanup_error from primary_error
-                    raise cleanup_error
+                        add_note = getattr(primary_error, "add_note", None)
+                        note = f"Fallback test-merge worktree cleanup also failed: {cleanup_error}"
+                        if callable(add_note):
+                            add_note(note)
+                        else:
+                            notes = getattr(primary_error, "__notes__", None)
+                            if notes is None:
+                                notes = []
+                                primary_error.__notes__ = notes
+                            notes.append(note)
+                    else:
+                        raise cleanup_failure from cleanup_error
         if primary_error is not None:
             raise primary_error
         if tree is None:

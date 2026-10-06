@@ -77,7 +77,7 @@ class AbstractReloadingBlockingGrpcClientTest {
     try {
       client.init();
 
-      awaitCondition(() -> factory.buildAttempts.get() >= 2);
+      awaitCondition(() -> factory.observedCertificates.size() >= 2);
 
       assertThat(factory.observedCertificates).hasSizeGreaterThanOrEqualTo(2);
       assertThat(factory.observedCertificates.get(0)).isEqualTo("certificate-1");
