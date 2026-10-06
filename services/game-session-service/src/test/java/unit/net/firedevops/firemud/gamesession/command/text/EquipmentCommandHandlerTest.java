@@ -24,7 +24,7 @@ class EquipmentCommandHandlerTest {
   private final EquipmentCommandHandler handler = new EquipmentCommandHandler(gameLogicClient);
   private final SessionContext context =
       new SessionContext(
-          1L, 22L, 123L, "emberline@example.com", 911L, "Emberline", 77L, "R-7", "jwt-token");
+          1L, 22L, "123", "emberline@example.com", 911L, "Emberline", 77L, "R-7", "jwt-token");
 
   @Test
   void wearWithoutItemReferenceFailsFast() {

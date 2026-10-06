@@ -10,6 +10,7 @@ import java.util.UUID;
 import net.firedevops.firemud.accountservice.client.EntityManagementClient;
 import net.firedevops.firemud.accountservice.client.GameSessionClient;
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
+import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.test.GatewayTestProperties;
 import net.firedevops.firemud.test.HttpTestSupport;
@@ -29,6 +30,7 @@ import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import tools.jackson.databind.json.JsonMapper;
 
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -60,6 +62,8 @@ class AccountApplicationIntegrationTest {
   @LocalServerPort private int port;
   @Autowired private JwtUtil jwtUtil;
   @Autowired private DSLContext dsl;
+  @Autowired private AccountService accountService;
+  private final JsonMapper jsonMapper = JsonMapper.builder().build();
 
   @MockitoBean private EntityManagementClient entityManagementClient;
   @MockitoBean private GameSessionClient gameSessionClient;
@@ -92,9 +96,29 @@ class AccountApplicationIntegrationTest {
     HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
 
     assertThat(response.statusCode()).isEqualTo(200);
+    String responseAccountUuid =
+        jsonMapper.readTree(response.body()).path("data").path("id").asText(null);
+    assertThat(responseAccountUuid).isNotBlank();
+    UUID accountUuid = UUID.fromString(responseAccountUuid);
     Number accountId =
         dsl.resultQuery("SELECT id FROM accounts WHERE email = ?", email).fetchOne(0, Number.class);
     assertThat(accountId).isNotNull();
+    assertThat(accountUuid)
+        .isEqualTo(
+            dsl.resultQuery("SELECT account_uuid FROM accounts WHERE id = ?", accountId.longValue())
+                .fetchOne(0, UUID.class));
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT account_uuid_source_numeric_id FROM accounts WHERE id = ?",
+                    accountId.longValue())
+                .fetchOne(0, Long.class))
+        .isEqualTo(accountId.longValue());
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT account_uuid_provenance FROM accounts WHERE id = ?",
+                    accountId.longValue())
+                .fetchOne(0, String.class))
+        .isEqualTo("ACCOUNT_REPOSITORY_INSERT");
     assertThat(dsl.fetchValue("SELECT tenant_id FROM accounts WHERE id = ?", accountId.longValue()))
         .isNull();
     assertThat(dsl.fetchValue("SELECT role FROM accounts WHERE id = ?", accountId.longValue()))
@@ -113,8 +137,24 @@ class AccountApplicationIntegrationTest {
                 "SELECT COUNT(*) FROM account_audit_outbox "
                     + "WHERE scope = 'platform' AND tenant_id IS NULL "
                     + "AND event_type = 'ACCOUNT_REGISTERED' AND payload = ?",
-                "{\"accountId\":" + accountId.longValue() + "}"))
+                "{\"accountId\":\"" + responseAccountUuid + "\"}"))
         .isEqualTo(1L);
+
+    var accountExport = accountService.exportAccountData(accountId.longValue());
+    assertThat(accountExport.account().id()).isEqualTo(responseAccountUuid);
+    assertThat(accountExport.profiles()).isEmpty();
+
+    dsl.execute(
+        "INSERT INTO account_tenant_membership (account_id, tenant_id, lifecycle_state, "
+            + "gameplay_admission_allowed, membership_version, "
+            + "membership_authority_generation, authority_provenance) "
+            + "VALUES (?, ?, 'LEGACY_UNVERIFIED', FALSE, 1, 1, 'LEGACY_UNVERIFIED')",
+        accountId.longValue(),
+        999L);
+    var tenantExport = accountService.exportTenantData(999L, accountId.longValue());
+    assertThat(tenantExport.account().id()).isEqualTo(responseAccountUuid);
+    assertThat(tenantExport.tenantId()).isEqualTo(999L);
+    assertThat(tenantExport.profile()).isNull();
   }
 
   @Test
@@ -124,7 +164,7 @@ class AccountApplicationIntegrationTest {
             "operator", java.util.Map.of("globalRoles", java.util.List.of("platformAdmin")));
     HttpRequest request =
         HttpRequest.newBuilder(
-                URI.create("http://localhost:" + port + "/accounts/not-a-number/export"))
+                URI.create("http://localhost:" + port + "/accounts/not-a-uuid/export"))
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
             .GET()
             .build();
@@ -133,7 +173,8 @@ class AccountApplicationIntegrationTest {
 
     assertThat(response.statusCode()).isEqualTo(400);
     assertThat(response.body()).contains("\"code\":\"INVALID_ARGUMENT\"");
-    assertThat(response.body()).contains("\"message\":\"accountId must be numeric\"");
+    assertThat(response.body())
+        .contains("\"message\":\"accountId must be a canonical non-nil UUID\"");
   }
 
   @Test
@@ -159,9 +200,10 @@ class AccountApplicationIntegrationTest {
 
   @Test
   void updateProfileRejectsZeroTenantIdWithInvalidArgumentEnvelope() throws Exception {
-    String token = jwtUtil.generateToken("2", java.util.Map.of("accountId", "2"));
+    String accountUuid = "b8d093f7-cb70-40ed-9fac-3c82d4bf28f1";
+    String token = jwtUtil.generateToken(accountUuid, java.util.Map.of("accountId", accountUuid));
     HttpRequest request =
-        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/profiles/2"))
+        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/profiles/" + accountUuid))
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
             .header(HttpHeaders.CONTENT_TYPE, "application/json")
             .PUT(

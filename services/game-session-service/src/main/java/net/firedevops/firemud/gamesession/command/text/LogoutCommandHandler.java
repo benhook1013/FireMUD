@@ -6,6 +6,7 @@ import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
+import net.firedevops.firemud.gamesession.service.AccountIds;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.SessionIdParsing;
@@ -32,7 +33,7 @@ public final class LogoutCommandHandler {
           SessionIdParsing.parse(sessionId)
               .optionalValue()
               .flatMap(sessionContextService::findBySessionId)
-              .filter(context -> context.accountId() > 0L);
+              .filter(context -> AccountIds.isCanonicalNonNilUuid(context.accountId()));
     } catch (RuntimeException ex) {
       return unavailable();
     }

@@ -1727,7 +1727,7 @@ require_contains(
         "Actual PostgreSQL concurrent proof remains unavailable.",
         "retain the admitted command/source identity for source evidence, and use the complete Command-Handoff Identity for automation handoff and deduplication",
         "the handoff identity is not a mandatory input to root `EffectId` allocation or lookup",
-        "Root allocation and lookup details remain proposal-only under pending [ADR 0183]",
+        "Root allocation and lookup details are accepted under [ADR 0183]",
     ],
 )
 require_absent(
@@ -1739,7 +1739,7 @@ require_contains(
     [
         "A new identity may be re-driven only after authoritative participant/domain evidence conclusively terminalizes the original effect as `ABANDONED` and the owning source command/claim is terminalized; ordinary retry/replay retains the original command/effect identity.",
         "A new identity may be re-driven only after that conclusive terminalization and terminalization of the owning source command/claim; ordinary retry/replay must retain the original command/effect identity.",
-        "Root allocation details remain proposal-only under [ADR 0183]",
+        "Root allocation details are accepted under [ADR 0183]",
     ],
 )
 require_absent(
@@ -2505,9 +2505,10 @@ require_absent(
 require_contains(
     "design/architecture/decisions/adr-0183-deterministic-effect-id-allocation-and-replay-binding.md",
     [
-        "Under this proposal, a command root's enclosing root would be its own persisted `EffectId`",
-        "its parent would be explicitly absent (`null`)",
-        "retry and replay would reuse the same scalar and binding",
+        "A command root's enclosing root is its own persisted `EffectId`",
+        "its parent is explicitly absent (`null`)",
+        "retry and replay reuse the same scalar and binding",
+        "Decision provenance: The human owner delegated the technical choice to the Overseer on 2026-10-04; the Overseer selected acceptance",
     ],
 )
 require_contains(
@@ -2661,7 +2662,7 @@ require_contains(
 require_contains(
     "design/architecture/system-architecture-identifier-glossary.md",
     [
-        "The owner must allocate and durably persist each generated child's ordinal and owner-scope/root/parent/ordinal-to-child-`EffectId` mapping under the accepted owner contract; deterministic child-ID derivation is only proposed by pending [ADR 0183](./decisions/adr-0183-deterministic-effect-id-allocation-and-replay-binding.md) and is not current target.",
+        "The owner must allocate and durably persist each generated child's ordinal and owner-scope/root/parent/ordinal-to-child-`EffectId` mapping under the accepted owner contract; the additional scalar/allocation and manifest choices are defined by accepted [ADR 0183](./decisions/adr-0183-deterministic-effect-id-allocation-and-replay-binding.md).",
     ],
 )
 require_contains(
@@ -2750,7 +2751,7 @@ require_contains(
     [
         "recorded owner-allocated child ordinals",
         "owner-defined ordinal and durable owner-scope/root/parent/ordinal-to-child-`EffectId` mapping are mandatory and replay-stable under accepted [ADR 0075]",
-        "Only scalar choices and additional allocator mechanics remain pending in [ADR 0183]",
+        "Scalar choices and additional allocator mechanics are defined by accepted [ADR 0183]",
         "owner-allocated persisted child ordinals and replay-stable mappings",
     ],
 )
@@ -2795,15 +2796,15 @@ require_contains(
         "Derived reactions retain their owner-defined child ordinal",
         "complete owner-scope/root/parent/ordinal-to-child-`EffectId` mapping before enqueue/apply",
         "This accepted child-identity contract is owned by [ADR 0075]",
-        "Pending [ADR 0183]",
-        "it does not gate or redefine the accepted child mapping",
+        "Accepted [ADR 0183]",
+        "it does not redefine the accepted child mapping",
     ],
 )
 require_contains(
     "design/architecture/decisions/README.md",
     [
         "Depth, cost, and count bounds with replay-stable owner-defined child identity and lineage",
-        "Pending command-plan ordering, `planOrdinal`, command-root allocation, UUIDv7 scalar, canonical serialization, and additional child/fan-out allocation mechanics",
+        "Deterministic command-plan and persisted opaque UUIDv7 root, child, and fan-out allocation with manifest-bound replay",
     ],
 )
 require_absent(
@@ -3020,10 +3021,10 @@ require_contains(
 require_contains(
     "design/architecture/decisions/adr-0183-deterministic-effect-id-allocation-and-replay-binding.md",
     [
-        "Proposed - Pending Human Review",
-        "Every clause in this Decision section is a proposal, conditional on human acceptance",
-        "do not extend the independently accepted owner-defined child ordinal and durable owner-scope/root/parent/ordinal-to-child-`EffectId` mapping",
-        "This exact scalar format is not an accepted cross-service requirement today",
+        "Accepted",
+        "Every clause in this Decision section is accepted target state",
+        "extend, but do not replace or weaken, the independently accepted owner-defined child ordinal and durable owner-scope/root/parent/ordinal-to-child-`EffectId` mapping",
+        "opaque, lowercase, hyphenated UUIDv7 text of exactly 36 characters",
     ],
 )
 

@@ -19,6 +19,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 class GrpcClientAuthTest {
+  private static final String ACCOUNT_UUID = "4cae05e8-7a6b-4b14-9d44-665e3eec450b";
+  private static final String OTHER_ACCOUNT_UUID = "4d3e9d15-a02e-41db-8648-0d2c68d0f0a3";
   private static final Metadata.Key<String> AUTH_HEADER =
       Metadata.Key.of("Authorization", Metadata.ASCII_STRING_MARSHALLER);
 
@@ -38,15 +40,18 @@ class GrpcClientAuthTest {
     TestStub stub = new TestStub(channel, CallOptions.DEFAULT);
     TestStub customized = GrpcClientAuth.attach(stub, jwtUtil, runtimeIdentity);
 
-    SessionContext.setContext("1", List.of("player"), Map.of());
+    SessionContext.setContext(ACCOUNT_UUID, List.of("player"), Map.of());
     customized.invoke();
     String firstToken = bearerToken(channel.lastAuthorization());
-    assertThat(jwtUtil.parseToken(firstToken).getPayload().getSubject()).isEqualTo("1");
+    assertThat(jwtUtil.parseToken(firstToken).getPayload().getSubject()).isEqualTo(ACCOUNT_UUID);
+    assertThat(jwtUtil.parseToken(firstToken).getPayload().get("accountId"))
+        .isEqualTo(ACCOUNT_UUID);
 
-    SessionContext.setContext("2", List.of("player"), Map.of());
+    SessionContext.setContext(OTHER_ACCOUNT_UUID, List.of("player"), Map.of());
     customized.invoke();
     String secondToken = bearerToken(channel.lastAuthorization());
-    assertThat(jwtUtil.parseToken(secondToken).getPayload().getSubject()).isEqualTo("2");
+    assertThat(jwtUtil.parseToken(secondToken).getPayload().getSubject())
+        .isEqualTo(OTHER_ACCOUNT_UUID);
     assertThat(secondToken).isNotEqualTo(firstToken);
   }
 
@@ -77,7 +82,19 @@ class GrpcClientAuthTest {
     TestStub stub = new TestStub(channel, CallOptions.DEFAULT);
     TestStub customized = GrpcClientAuth.attach(stub, jwtUtil, runtimeIdentity);
 
-    SessionContext.setContext("not-a-long", List.of("player"), Map.of());
+    SessionContext.setContext("not-a-uuid", List.of("player"), Map.of());
+
+    assertThrows(IllegalArgumentException.class, customized::invoke);
+    assertThat(channel.lastAuthorization()).isNull();
+  }
+
+  @Test
+  void attachRejectsNumericCurrentAccountClaim() {
+    CapturingChannel channel = new CapturingChannel();
+    TestStub stub = new TestStub(channel, CallOptions.DEFAULT);
+    TestStub customized = GrpcClientAuth.attach(stub, jwtUtil, runtimeIdentity);
+
+    SessionContext.setContext("42", List.of("player"), Map.of());
 
     assertThrows(IllegalArgumentException.class, customized::invoke);
     assertThat(channel.lastAuthorization()).isNull();

@@ -39,6 +39,7 @@ import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -77,6 +78,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
   }
 
   @Autowired private GameRepository gameRepository;
+  @Autowired private JdbcTemplate jdbcTemplate;
   @Autowired private PublishAttemptServiceImpl publishAttemptService;
   @Autowired private VersionPublishCommandServiceImpl versionPublishCommandService;
   @Autowired private PublishAttemptRepository publishAttemptRepository;
@@ -88,6 +90,32 @@ class PublishAttemptServiceTransactionIntegrationTest {
   @MockitoBean private PublishGateService publishGateService;
   @MockitoSpyBean private RecordedParticipantDigestService recordedParticipantDigestService;
   @MockitoSpyBean private VersionAssetArtifactService versionAssetArtifactService;
+
+  @Test
+  void publishedRealmEntryPolicyWorkflowIdentityColumnMatchesReleaseBundleCapacity() {
+    Integer policyWorkflowIdCapacity =
+        jdbcTemplate.queryForObject(
+            """
+            SELECT character_maximum_length
+            FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = 'published_realm_entry_policy'
+              AND column_name = 'publish_workflow_id'
+            """,
+            Integer.class);
+    Integer bundleWorkflowIdCapacity =
+        jdbcTemplate.queryForObject(
+            """
+            SELECT character_maximum_length
+            FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = 'published_release_bundle'
+              AND column_name = 'publish_workflow_id'
+            """,
+            Integer.class);
+
+    assertThat(policyWorkflowIdCapacity).isEqualTo(1024).isEqualTo(bundleWorkflowIdCapacity);
+  }
 
   @Test
   void fullVersionTransactionRollsBackVersionBundleArtifactAndAttemptTogether() {

@@ -78,6 +78,7 @@ import org.mockito.Mockito;
 
 @SuppressWarnings("unchecked")
 class SessionResumptionFlowTest {
+  private static final String ACCOUNT_ID = "5e1340f8-99c8-49fa-a4fe-5fc9d2075621";
   private static final String LOGIN_PAYLOAD = "LOGIN demo@example.com swordfish";
   private static final String PLAY_PAYLOAD = "PLAY demo production";
   private static final String LOOK_PAYLOAD = "LOOK";
@@ -167,12 +168,12 @@ class SessionResumptionFlowTest {
         .thenReturn(CommandEnqueueResult.success());
     when(accountClient.authenticate(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
-            AuthenticateResponse.newBuilder().setAuthToken("jwt").setAccountId("77").build());
+            AuthenticateResponse.newBuilder().setAuthToken("jwt").setAccountId(ACCOUNT_ID).build());
     when(accountClient.getTenantMembershipForRuntime(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             GetTenantMembershipForRuntimeResponse.newBuilder()
-                .setAccountId("77")
+                .setAccountId(ACCOUNT_ID)
                 .setTenantId("22")
                 .setMembershipExists(true)
                 .setGameplayAdmissionAllowed(true)
@@ -188,7 +189,7 @@ class SessionResumptionFlowTest {
             Mockito.anyString(),
             Mockito.anyString()))
         .thenReturn(GetRealmAccessGrantForRuntimeResponse.newBuilder().setGranted(true).build());
-    when(moderationPolicyClient.evaluateGameplayAdmission(Mockito.anyLong(), Mockito.anyLong()))
+    when(moderationPolicyClient.evaluateGameplayAdmission(Mockito.anyLong(), Mockito.anyString()))
         .thenReturn(
             net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyResponse.newBuilder()
                 .setAllowed(true)
@@ -214,7 +215,7 @@ class SessionResumptionFlowTest {
                     net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
                         .setId("7001")
                         .setTenantId("22")
-                        .setAccountId("77")
+                        .setAccountId(ACCOUNT_ID)
                         .setName("Emberline")
                         .setLevel(12)
                         .setPlayableStateScope(
@@ -480,7 +481,7 @@ class SessionResumptionFlowTest {
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             GetTenantMembershipForRuntimeResponse.newBuilder()
-                .setAccountId("77")
+                .setAccountId(ACCOUNT_ID)
                 .setTenantId("22")
                 .setMembershipExists(true)
                 .setGameplayAdmissionAllowed(false)
@@ -494,7 +495,7 @@ class SessionResumptionFlowTest {
     assertTrue(secondLogin.commandResult().accepted());
     SessionContext authenticatedContextBeforeDeniedPlay =
         sessionContextService.findByTenantAndSessionId(22L, 1L).orElseThrow();
-    assertEquals(77L, authenticatedContextBeforeDeniedPlay.accountId());
+    assertEquals(ACCOUNT_ID, authenticatedContextBeforeDeniedPlay.accountId());
     assertEquals("demo@example.com", authenticatedContextBeforeDeniedPlay.loginName());
     assertEquals("jwt", authenticatedContextBeforeDeniedPlay.jwt());
     assertTrue(authenticatedContextBeforeDeniedPlay.hasGameplayRegionBinding());
@@ -671,7 +672,7 @@ class SessionResumptionFlowTest {
     return new SessionContext(
         sessionId,
         22L,
-        0L,
+        null,
         null,
         0L,
         null,

@@ -8,6 +8,7 @@ import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.data.redis.serializer.SerializationException;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -29,17 +30,50 @@ public final class RedisFirstPartyConnectContextRegistry
 
   @Override
   public void register(long sessionId, FirstPartyConnectContext connectContext) {
-    valueOperations().set(key(sessionId), connectContext, ttl);
+    if (connectContext == null || !connectContext.hasCompleteRoutingScope()) {
+      throw new IllegalArgumentException("first-party connect context must be complete");
+    }
+    String key = key(sessionId);
+    try {
+      Object retained = valueOperations().get(key);
+      if (retained != null
+          && (!(retained instanceof FirstPartyConnectContext retainedContext)
+              || !retainedContext.hasCompleteRoutingScope())) {
+        throw new IllegalStateException(
+            "Retained first-party connect context is incompatible and cannot be replaced");
+      }
+    } catch (SerializationException | ClassCastException ex) {
+      throw new IllegalStateException(
+          "Retained first-party connect context is unreadable and cannot be replaced", ex);
+    }
+    valueOperations().set(key, connectContext, ttl);
   }
 
   @Override
   public Optional<FirstPartyConnectContext> find(long sessionId) {
-    return Optional.ofNullable((FirstPartyConnectContext) valueOperations().get(key(sessionId)));
+    Object retained = valueOperations().get(key(sessionId));
+    if (retained == null) {
+      return Optional.empty();
+    }
+    if (!(retained instanceof FirstPartyConnectContext context)) {
+      throw new ClassCastException(
+          "Retained first-party connect context has an incompatible value type");
+    }
+    return Optional.of(context);
   }
 
   @Override
   public void unregister(long sessionId) {
-    redisTemplate.delete(key(sessionId));
+    String key = key(sessionId);
+    Object retained;
+    try {
+      retained = valueOperations().get(key);
+    } catch (SerializationException | ClassCastException ex) {
+      return;
+    }
+    if (retained instanceof FirstPartyConnectContext context && context.hasCompleteRoutingScope()) {
+      redisTemplate.delete(key);
+    }
   }
 
   private ValueOperations<String, Object> valueOperations() {

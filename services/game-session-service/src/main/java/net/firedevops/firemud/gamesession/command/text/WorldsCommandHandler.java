@@ -24,6 +24,7 @@ import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.presentation.CharacterBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
+import net.firedevops.firemud.gamesession.service.AccountIds;
 import net.firedevops.firemud.gamesession.service.DirectTextConnectScopeSessionStore;
 import net.firedevops.firemud.gamesession.service.PositiveLongParsing;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -104,7 +105,7 @@ public class WorldsCommandHandler {
     GameplayWorldCatalog.DiscoverySnapshot snapshot = worldCatalog.readDiscoverySnapshot();
     connectScopeSessionStore.replaceWorldSnapshot(
         sessionId,
-        maybeCaller.map(SessionContext::accountId).orElse(0L),
+        maybeCaller.map(SessionContext::accountId).orElse(null),
         snapshot.catalogFingerprint(),
         snapshot.ordinalTargets(),
         clock.instant());
@@ -124,7 +125,8 @@ public class WorldsCommandHandler {
       String transportSessionId, SessionContext sessionContext, String worldSelector) {
     Objects.requireNonNull(sessionContext, "sessionContext must not be null");
     OptionalLong parsedSessionId = parseTransportSessionId(transportSessionId);
-    if (sessionContext.accountId() <= 0 || parsedSessionId.isEmpty()) {
+    if (!AccountIds.isCanonicalNonNilUuid(sessionContext.accountId())
+        || parsedSessionId.isEmpty()) {
       return RealmBrowseResult.failure("LOGIN_REQUIRED");
     }
     if (parsedSessionId.getAsLong() != sessionContext.sessionId()) {
@@ -487,7 +489,8 @@ public class WorldsCommandHandler {
     if (parsedSessionId.isEmpty() || parsedSessionId.getAsLong() != sessionContext.sessionId()) {
       return JoinMembershipResult.failure("CONNECT_SCOPE_MISMATCH");
     }
-    if (sessionContext.accountId() <= 0 || sessionContext.sessionId() <= 0) {
+    if (!AccountIds.isCanonicalNonNilUuid(sessionContext.accountId())
+        || sessionContext.sessionId() <= 0) {
       return JoinMembershipResult.failure("LOGIN_REQUIRED");
     }
     if (accountClient == null || connectScopeSessionStore == null) {
@@ -616,7 +619,7 @@ public class WorldsCommandHandler {
   private PlayerExecutionContext playerContext(
       SessionContext caller, GameplayWorldCatalog.RealmView realm, String requestId) {
     return PlayerExecutionContext.newBuilder()
-        .setAccountId(Long.toString(caller.accountId()))
+        .setAccountId(caller.accountId())
         .setSessionId(Long.toString(caller.sessionId()))
         .setTenantId(Long.toString(realm.tenantId()))
         .setRealmId(realm.realmId().toString())
@@ -696,7 +699,8 @@ public class WorldsCommandHandler {
       String realmSelector) {
     Objects.requireNonNull(sessionContext, "sessionContext must not be null");
     OptionalLong parsedSessionId = parseTransportSessionId(transportSessionId);
-    if (sessionContext.accountId() <= 0 || parsedSessionId.isEmpty()) {
+    if (!AccountIds.isCanonicalNonNilUuid(sessionContext.accountId())
+        || parsedSessionId.isEmpty()) {
       return CharacterBrowseResult.failure("LOGIN_REQUIRED");
     }
     if (parsedSessionId.getAsLong() != sessionContext.sessionId()) {
@@ -793,7 +797,7 @@ public class WorldsCommandHandler {
     ListCharactersByAccountResponse response =
         entityManagementClient.listCharactersByAccount(
             Long.toString(realm.tenantId()),
-            Long.toString(sessionContext.accountId()),
+            sessionContext.accountId(),
             Long.toString(realm.gameInstanceId()),
             toPlayableStateScope(realm));
     if (response.hasError()) {
@@ -807,7 +811,7 @@ public class WorldsCommandHandler {
       PositiveLongParsing.ParsedPositiveLong parsedCharacterId =
           PositiveLongParsing.parseOptionalText(character.getId(), "characterId");
       if (!Long.toString(realm.tenantId()).equals(character.getTenantId())
-          || !Long.toString(sessionContext.accountId()).equals(character.getAccountId())
+          || !sessionContext.accountId().equals(character.getAccountId())
           || character.getPlayableStateScope() != toPlayableStateScope(realm)
           || !parsedCharacterId.valid()
           || !StringUtils.hasText(character.getName())
@@ -834,7 +838,7 @@ public class WorldsCommandHandler {
     }
     GetTenantMembershipForRuntimeResponse membershipResponse =
         accountClient.getTenantMembershipForRuntime(
-            Long.toString(sessionContext.accountId()), Long.toString(realm.tenantId()), requestId);
+            sessionContext.accountId(), Long.toString(realm.tenantId()), requestId);
     if (membershipResponse == null) {
       return CharacterBrowseAuthorization.AUTH_UNAVAILABLE;
     }

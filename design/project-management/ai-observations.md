@@ -195,3 +195,9 @@ Entry format:
   - Observation: an active watcher does not guarantee prompt adjudication. Its reassuring handoff wording cannot replace checking the attributable result and raw findings.
   - Expected pattern: consume terminal review evidence, adjudicate it, and publish the canonical checkpoint before returning to integration work. Keep CI repair independent rather than postponing completed review reporting.
   - Outcome: review `5398994837` was recorded as 5 found / 4 accepted / 1 routed before implementing its accepted batch; the inherited Account observation has a canonical target route.
+
+- `2026-10-05`: Optional CI reports need different cancellation and token handling from required gates
+  - Context: the dependency-management PR exposed cancellation-resistant native summary jobs, stale Smoke comment writers, and a scanner pipeline whose final `tee` could mask scanner failure under the implicit Linux shell.
+  - Expected pattern: use `!cancelled()` for optional reports, verify the live open PR head/base tuple before comment mutation, and omit native comment jobs where fork or Dependabot tokens cannot write. Keep required gate `always()` conditions and prerequisite evaluation independent. Use explicit `shell: bash` for pipelines that must propagate upstream failures.
+  - Current status: focused workflow contracts exercise publisher guards and trust predicates, plus an offline fake scanner through the real step under explicit Actions Bash semantics. Static-analysis source matching distinguishes conventional workflow `name` from the exact identity-bearing `display_title`.
+  - Proof limits: mocked API and shell fixtures prove local behavior; they do not establish live token permissions or hosted run completion. Reconsider when adding report publishers, changing event/concurrency policy, or wrapping failure-producing commands in pipelines.

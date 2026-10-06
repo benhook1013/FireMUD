@@ -14,7 +14,11 @@ service AccountService {
   rpc Authenticate(AuthenticateRequest) returns (AuthenticateResponse);
   rpc RequestEmailLoginOtp(RequestEmailLoginOtpRequest) returns (RequestEmailLoginOtpResponse);
   rpc VerifyEmailLoginOtp(VerifyEmailLoginOtpRequest) returns (AuthenticateResponse);
+  // Exact Game Session workload only. account_id is the canonical non-nil Account UUID; Account
+  // resolves its private storage row internally and echoes the requested UUID in the response.
+  // tenant_id remains a positive numeric tenant identifier and request_id is passed unchanged.
   rpc GetTenantMembershipForRuntime(GetTenantMembershipForRuntimeRequest) returns (GetTenantMembershipForRuntimeResponse);
+  // Exact same-namespace Game Session mTLS only; no end-user bearer token is required.
   rpc GetRealmAccessGrantForRuntime(GetRealmAccessGrantForRuntimeRequest) returns (GetRealmAccessGrantForRuntimeResponse);
   rpc GetTenantEntitlementsForRuntime(GetTenantEntitlementsForRuntimeRequest) returns (GetTenantEntitlementsForRuntimeResponse);
   rpc IssueDirectTextConnectScope(IssueDirectTextConnectScopeRequest) returns (IssueDirectTextConnectScopeResponse);
@@ -97,7 +101,7 @@ message CreateAccountRequest {
 
 // Result of a CreateAccount call.
 message CreateAccountResponse {
-  // Unique identifier of the newly created account.
+  // Canonical non-nil Account UUID of the newly created account.
   string account_id = 1;
   // Details about why the creation failed, if applicable.
   shared.v1.ErrorDetail error = 2;
@@ -155,6 +159,7 @@ message GetTenantMembershipForRuntimeResponse {
 }
 
 message GetRealmAccessGrantForRuntimeRequest {
+  // Canonical non-nil Account UUID. Account resolves its private storage row internally.
   string account_id = 1;
   string tenant_id = 2;
   string world_slug = 3;
@@ -163,6 +168,7 @@ message GetRealmAccessGrantForRuntimeRequest {
 }
 
 message GetRealmAccessGrantForRuntimeResponse {
+  // Echoes the canonical UUID from the request; never a private Account row identifier.
   string account_id = 1;
   string tenant_id = 2;
   string world_slug = 3;
@@ -198,7 +204,9 @@ message GetProfileResponse {
   shared.v1.ErrorDetail error = 2;
 }
 
-// Internal bounded bulk read used by Social Groups when projecting friend presence.
+// Exact same-namespace Social & Groups mTLS workload only. Accepts at most 100 canonical non-nil
+// Account UUIDs; Account resolves private storage rows internally and returns UUID-keyed policies.
+// Unknown or unproven subjects are omitted so the caller applies complete PRIVATE redaction.
 message ListPresenceVisibilityPoliciesRequest {
   string tenant_id = 1;
   repeated string account_ids = 2;

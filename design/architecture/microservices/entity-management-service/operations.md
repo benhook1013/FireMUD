@@ -4,11 +4,70 @@ This document collects Entity Management’s readiness model, tick-lock/tick-ide
 
 ## Implementation Status
 
-The complete participant-guard contract described here—persisted mutation `EffectId` (the root `EffectId` for a root operation or the generated operation's persisted child `EffectId`, with the enclosing `rootEffectId` retained as lineage), typed operation and target, immutable `requestDigest`, and complete replay verification—is target-state. The current `EntityMutationEffectReplayService` and schema provide narrower effect/operation replay and do not yet enforce or prove the target mutation-boundary contract. Its duplicate-marker catch also runs inside the surrounding transaction, so a PostgreSQL unique-race loser can inherit an aborted/rollback-only transaction rather than reliably replaying or returning conflict; correction must use a conflict-safe insert or a same-transaction savepoint around marker handling while keeping the marker and mutation atomic, never an isolated marker transaction. Actual PostgreSQL concurrent proof remains unavailable. [Transaction Strategies](../../system-architecture-transactions.md) is the canonical owner of participant-guard and replay-verification semantics. The pending [ADR 0183 proposal](../../decisions/adr-0183-deterministic-effect-id-allocation-and-replay-binding.md) is non-authoritative.
+The complete participant-guard contract described here—persisted mutation `EffectId` (the root `EffectId` for a root operation or the generated operation's persisted child `EffectId`, with the enclosing `rootEffectId` retained as lineage), typed operation and target, immutable `requestDigest`, and complete replay verification—is target-state. The current `EntityMutationEffectReplayService` and schema provide narrower effect/operation replay and do not yet enforce or prove the target mutation-boundary contract. Its duplicate-marker catch also runs inside the surrounding transaction, so a PostgreSQL unique-race loser can inherit an aborted/rollback-only transaction rather than reliably replaying or returning conflict; correction must use a conflict-safe insert or a same-transaction savepoint around marker handling while keeping the marker and mutation atomic, never an isolated marker transaction. Actual PostgreSQL concurrent proof remains unavailable. [Transaction Strategies](../../system-architecture-transactions.md) is the canonical owner of participant-guard and replay-verification semantics. Accepted [ADR 0183](../../decisions/adr-0183-deterministic-effect-id-allocation-and-replay-binding.md) defines the allocation target; implementation and proof remain incomplete.
 
 The current replacement-validation path is also narrower than the target contract: `ValidateEntityUpgradeMappings` does not yet bind the stable `playableStateNamespaceId`, owner-resolved `playableStateScope`, and active-instance authorization to the exact source/target versions, and the live result may echo a supplied `remapSetId` without locally validating or applying its mapping. This is an implementation/proof gap; the echo is not compatibility or cleanup evidence.
 
 At the live enqueue boundary, the current Automation implementation expands each enabled command node over its target entity ids, assigns `commandOrdinal`, and enforces configured bounded per-run and per-entity fan-out with atomic rejection before admission when a bound is exceeded. The current path still does not prove complete durable child/target identity or end-to-end fan-out/replay semantics; the target Command-Handoff Identity and its atomic rejection distinction remain required. `automationDispatchId` alone is not a dedupe key; use the complete Command-Handoff Identity for the target contract.
+
+## V3 Concurrent Index Migration Recovery
+
+Entity V3 creates `ux_characters_character_uuid_idx` concurrently, then `idx_characters_owner_resolved_roster` concurrently, and finally attaches the first index as the `ux_characters_character_uuid` unique constraint. Follow the [database migration contract](../../system-architecture-database-migrations.md) for migration activation and roll-forward. These local recovery steps preserve all character rows and require writer admission to remain closed and quiesced throughout inspection and recovery.
+
+Use the deployed Entity `SERVICE_SCHEMA` value, confirm the selected schema, and inspect the exact index definitions, PostgreSQL validity/readiness flags, and any attached constraint before taking action. In `psql`, set `service_schema` to that deployed schema and run:
+
+```sql
+SET search_path TO :"service_schema";
+
+SELECT current_schema() AS selected_schema, current_schemas(false) AS search_path_schemas;
+
+SELECT ns.nspname AS schema_name,
+       idx.relname AS index_name,
+       pg_get_indexdef(idx.oid) AS index_definition,
+       pi.indisvalid,
+       pi.indisready,
+       pi.indisunique,
+       con.conname AS attached_constraint
+FROM pg_class AS idx
+JOIN pg_namespace AS ns ON ns.oid = idx.relnamespace
+JOIN pg_index AS pi ON pi.indexrelid = idx.oid
+LEFT JOIN pg_constraint AS con ON con.conindid = idx.oid
+WHERE ns.nspname = :'service_schema'
+  AND idx.relname IN (
+      'ux_characters_character_uuid_idx',
+      'idx_characters_owner_resolved_roster',
+      'ux_characters_character_uuid'
+  )
+ORDER BY idx.relname;
+```
+
+Before a concurrent index build or drop, inspect long-running transactions and blockers in the target database; concurrent index operations can wait on old snapshots and other transactions. This read-only query identifies long-running active transactions and sessions blocking or blocked by another backend:
+
+```sql
+SELECT activity.pid,
+       activity.usename,
+       activity.state,
+       now() - activity.xact_start AS transaction_age,
+       now() - activity.query_start AS query_age,
+       activity.wait_event_type,
+       activity.wait_event,
+       pg_blocking_pids(activity.pid) AS blocking_pids,
+       activity.query
+FROM pg_stat_activity AS activity
+WHERE activity.datname = current_database()
+  AND activity.pid <> pg_backend_pid()
+  AND (activity.state <> 'idle' OR cardinality(pg_blocking_pids(activity.pid)) > 0)
+ORDER BY activity.xact_start NULLS LAST, activity.query_start NULLS LAST;
+```
+
+An invalid index may be removed only after confirming it is one of these exact V3 indexes, is unattached to a constraint, and its definition matches the expected V3 object. Use the deployed schema explicitly; run each statement outside a transaction:
+
+```sql
+DROP INDEX CONCURRENTLY IF EXISTS :"service_schema".ux_characters_character_uuid_idx;
+DROP INDEX CONCURRENTLY IF EXISTS :"service_schema".idx_characters_owner_resolved_roster;
+```
+
+Drop only the specific invalid, unattached index confirmed by inspection, then verify it is absent. Do not drop a valid index or the attached `ux_characters_character_uuid` constraint as generic cleanup. A blind Flyway repair-and-migrate is unsafe when an earlier V3 statement succeeded: retrying the whole file may collide with a surviving valid index, and attaching the unique index renames it to the constraint's final name. If either expected index is valid, the final constraint exists, or the observed state is otherwise mixed, stop automatic retry and use an operator-reviewed, phase-specific roll-forward plan that accounts for Flyway history and the exact surviving definitions. Do not delete or rewrite character data to make the migration proceed.
 
 ## Target Replacement Operations
 
@@ -57,9 +116,9 @@ Examples:
   - treats a guard conflict as a replay only after verifying the complete effect and target state, and otherwise reconciles or fails closed with the original mutation identity and its enclosing root `EffectId` lineage. Damage does not assume an at-most-one-damage-per-aggregate-per-tick invariant, so the per-aggregate `entity_tick_state` watermark is not sufficient for this path.
 
 - **Trade between two entities** – when a tick performs a trade between `fromEntityId` and `toEntityId`:
-  - **Target state:** retain the admitted command/source identity for source evidence, and use the complete Command-Handoff Identity for automation handoff and deduplication; the handoff identity is not a mandatory input to root `EffectId` allocation or lookup. Root allocation and lookup details remain proposal-only under pending [ADR 0183](../../decisions/adr-0183-deterministic-effect-id-allocation-and-replay-binding.md), not accepted target state. `(automationDispatchId, commandOrdinal)` is only that command identity's dispatch-group suffix and must be interpreted with the complete source/target scope; a non-automation command instead has its admitted `commandId`. `scriptEventId`, participant/item fields, and mutable payload text are never fallback identities. Every retry and owner commit preserves the resulting root identity, typed operation/target projections, and immutable request digest. The live Game Session handoff does not yet carry the full automation command identity end to end, so the current path uses the admitted `commandId` and available persisted work-item/dispatch fields; it must reject a missing command identity rather than synthesize one from the participants. This target gap is tracked under `AS-1.5` in the [automation and scheduler runtime tracker](../../../project-management/implementation-tracking/automation-and-scheduler-runtime.md#capability-status);
-  - **Illustrative proposal only (not an accepted canonical encoding):** before encoding, the handler would validate every identity-bearing and typed field against its declared type and domain; it would not encode malformed input, fallback identities, or alternate textual spellings. Quantity would be parsed as its declared numeric type and rendered as canonical base-10 decimal, so semantically equal values such as `1` and `01` produce identical bytes. The exact scalar/encoding contract remains pending human review in [ADR 0183](../../decisions/adr-0183-deterministic-effect-id-allocation-and-replay-binding.md);
-  - **Illustrative proposal only (not an accepted canonical encoding):** the handler would serialize the admitted identity, the stable per-effect trade discriminator, and the validated canonical fields in a fixed versioned order using canonical UTF-8 length-prefixed fields, for example `trade:v1|<len(identity)>:<identity>|<len(effectDiscriminator)>:<effectDiscriminator>|<len(fromEntityId)>:<fromEntityId>|<len(toEntityId)>:<toEntityId>|<len(itemId)>:<itemId>|<len(quantity)>:<canonicalQuantity>`. If later accepted, the exact resulting bytes would be the retry identity and would be reused unchanged, while sibling effects from one command and separate admitted trades would remain distinct; the pending ADR 0183 proposal is not an implementation or target-state requirement;
+  - **Target state:** retain the admitted command/source identity for source evidence, and use the complete Command-Handoff Identity for automation handoff and deduplication; the handoff identity is not a mandatory input to root `EffectId` allocation or lookup. Root allocation and lookup details are accepted under [ADR 0183](../../decisions/adr-0183-deterministic-effect-id-allocation-and-replay-binding.md); implementation and proof remain incomplete. `(automationDispatchId, commandOrdinal)` is only that command identity's dispatch-group suffix and must be interpreted with the complete source/target scope; a non-automation command instead has its admitted `commandId`. `scriptEventId`, participant/item fields, and mutable payload text are never fallback identities. Every retry and owner commit preserves the resulting root identity, typed operation/target projections, and immutable request digest. The live Game Session handoff does not yet carry the full automation command identity end to end, so the current path uses the admitted `commandId` and available persisted work-item/dispatch fields; it must reject a missing command identity rather than synthesize one from the participants. This target gap is tracked under `AS-1.5` in the [automation and scheduler runtime tracker](../../../project-management/implementation-tracking/automation-and-scheduler-runtime.md#capability-status);
+  - **Illustrative request-encoding example:** before encoding, the handler would validate every identity-bearing and typed field against its declared type and domain; it would not encode malformed input, fallback identities, or alternate textual spellings. Quantity would be parsed as its declared numeric type and rendered as canonical base-10 decimal, so semantically equal values such as `1` and `01` produce identical bytes. This example does not define `EffectId`; opaque identity allocation is defined by accepted [ADR 0183](../../decisions/adr-0183-deterministic-effect-id-allocation-and-replay-binding.md).
+  - **Illustrative request-encoding example:** the handler would serialize the admitted identity, the stable per-effect trade discriminator, and the validated canonical fields in a fixed versioned order using canonical UTF-8 length-prefixed fields, for example `trade:v1|<len(identity)>:<identity>|<len(effectDiscriminator)>:<effectDiscriminator>|<len(fromEntityId)>:<fromEntityId>|<len(toEntityId)>:<toEntityId>|<len(itemId)>:<itemId>|<len(quantity)>:<canonicalQuantity>`. This example does not define `EffectId`: retries reuse the persisted opaque identity and immutable digest binding under accepted [ADR 0183](../../decisions/adr-0183-deterministic-effect-id-allocation-and-replay-binding.md);
   - no canonical one-trade-per-`(fromEntityId,toEntityId,itemId)`-per-tick invariant exists, so the participant/item tuple alone cannot be the effect key;
   - it inserts one complete `(tenantId, gameInstanceId, playableStateNamespaceId, playableStateScope, regionId, regionEpoch, tickId, effectKey, effectId, rootEffectId, typedOperation, targetAggregateType=INVENTORY, targetAggregateId)` `tick_effect_guard` storage projection, linked to the mutation's persisted root-or-child `EffectId` and its enclosing root lineage, for each affected inventory aggregate before moving items between inventories. The S1/S2 participant-guard uniqueness tuple is `(tenantId, playableStateNamespaceId, effectId, typedOperation, targetAggregateType, targetAggregateId)`; `playableStateNamespaceId` is its canonical partition/key component, while `playableStateScope` is separately persisted immutable and exact-validated policy/routing/authorization/migration-fence evidence. `gameInstanceId`, `regionId`, `regionEpoch`, `tickId`, `effectKey`, and `rootEffectId` are active-runtime, descriptor, timeline, or lineage evidence, not uniqueness dimensions; and
   - on any primary-key conflict, it verifies that guard projections for both affected inventories and the corresponding inventory state are complete and consistent; only then is the trade an already-applied no-op. A partial guard set reconciles the original mutation identity, its enclosing root `EffectId`, and both participant guard identities rather than being accepted as completion.

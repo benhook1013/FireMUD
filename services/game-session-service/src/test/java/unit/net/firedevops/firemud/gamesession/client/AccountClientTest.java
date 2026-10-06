@@ -53,6 +53,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 
 class AccountClientTest {
+  private static final String ACCOUNT_ID = "5e1340f8-99c8-49fa-a4fe-5fc9d2075621";
   private static final Instant JOIN_TEST_NOW = Instant.parse("2026-10-02T00:00:00Z");
 
   @Test
@@ -88,7 +89,7 @@ class AccountClientTest {
     ArgumentCaptor<IssueDirectTextConnectScopeRequest> captor =
         ArgumentCaptor.forClass(IssueDirectTextConnectScopeRequest.class);
     verify(stub).issueDirectTextConnectScope(captor.capture());
-    assertThat(captor.getValue().getPlayerContext().getAccountId()).isEqualTo("41");
+    assertThat(captor.getValue().getPlayerContext().getAccountId()).isEqualTo(ACCOUNT_ID);
     assertThat(captor.getValue().getPlayerContext().getSessionId()).isEqualTo("7");
     assertThat(captor.getValue().getTenantId()).isEqualTo("22");
     assertThat(captor.getValue().getWorldSlug()).isEqualTo("demo-world");
@@ -248,7 +249,7 @@ class AccountClientTest {
         JoinPublicProductionMembershipResponse.newBuilder()
             .setSuccess(false)
             .setOutcomeCode("JOIN_NOT_ELIGIBLE")
-            .setAccountId("41")
+            .setAccountId(ACCOUNT_ID)
             .setTenantId("22")
             .setError(
                 ErrorDetail.newBuilder()
@@ -374,7 +375,7 @@ class AccountClientTest {
 
   private static PlayerExecutionContext directTextContext(String requestId) {
     return PlayerExecutionContext.newBuilder()
-        .setAccountId("41")
+        .setAccountId(ACCOUNT_ID)
         .setSessionId("7")
         .setTenantId("22")
         .setRealmId("4c4b57d8-e3a2-48fe-9977-e7df0fdce901")

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.io.IOException;
 import java.net.URI;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import net.firedevops.firemud.cache.ScreenBufferService;
@@ -126,6 +127,11 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   void clearSharedRuntimeState() throws Exception {
     ensureTestServicesStarted();
     STACK.freshGameplayBaseline(TENANT_ID, DEFAULT_GAME_INSTANCE_ID, ACCOUNT_ID, 7L, ACCOUNT_ID);
+    entityStub()
+        .setCharacters(
+            List.of("Emberline", "Sora", "Nyx").stream()
+                .map(ChatTestFixtures::characterByName)
+                .toList());
   }
 
   @Test
@@ -791,19 +797,22 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
 
   private void seedLiveTargetSession() {
     STACK.seedLiveSession(
-        90210L,
-        TENANT_ID,
-        Long.parseLong(ChatTestFixtures.PLAYER_SORA),
-        "sora@example.com",
-        Long.parseLong(ChatTestFixtures.PLAYER_SORA),
-        "Sora",
-        DEMO_WORLD_INSTANCE_ID,
-        LookTestFixtures.ROOM_ID,
-        "target-jwt",
-        "demo",
-        "production",
-        1L,
-        "SHARED");
+        new SessionContext(
+            90210L,
+            TENANT_ID,
+            AccountRuntimeStubServer.accountUuidForTestFixture(SORA_ACCOUNT_ID),
+            "sora@example.com",
+            SORA_ACCOUNT_ID,
+            "Sora",
+            DEMO_WORLD_INSTANCE_ID,
+            LookTestFixtures.ROOM_ID,
+            "target-jwt",
+            null,
+            DEMO_WORLD_INSTANCE_ID,
+            "demo",
+            "production",
+            1L,
+            "SHARED"));
   }
 
   private static GatewayHolder startGateway(int gameSessionPort) {

@@ -17,7 +17,7 @@ from pr_review import cli, cli_attempts, sqlite_review_records
 from pr_review.controller import ReviewController
 from pr_review.sqlite_review_records import FindingObservation, ReviewRecordsError, SqliteReviewRecords
 from pr_review.sqlite_store import SqliteStateStore
-from pr_review.state import FindingRoute, ReviewState, StateStore, SummaryFindingDisposition
+from pr_review.state import ControllerStateStore, FindingRoute, ReviewState, StateStore, SummaryFindingDisposition
 
 
 class ReviewRecordsCliTest(unittest.TestCase):
@@ -59,6 +59,10 @@ class ReviewRecordsCliTest(unittest.TestCase):
                 "2893",
                 "--run-id",
                 f"coverage-{length}",
+                "--model",
+                "gpt-test-model",
+                "--reasoning-effort",
+                "medium",
                 "--reviewer",
                 "Sol medium",
                 "--scope",
@@ -83,6 +87,10 @@ class ReviewRecordsCliTest(unittest.TestCase):
                 "2893",
                 "--run-id",
                 "legacy-controller-round",
+                "--model",
+                "gpt-test-model",
+                "--reasoning-effort",
+                "medium",
                 "--reviewer",
                 "Sol medium",
                 "--scope",
@@ -96,6 +104,14 @@ class ReviewRecordsCliTest(unittest.TestCase):
             )
         self.assertEqual(code, 0)
         records = SqliteReviewRecords(self.database)
+        with sqlite3.connect(self.database) as connection:
+            metadata = json.loads(connection.execute(
+                "SELECT metadata_json FROM review_attempts WHERE attempt_id = ?", ("legacy-controller-round",)
+            ).fetchone()[0])
+            metadata.pop("model", None)
+            metadata.pop("reasoning_effort", None)
+            connection.execute("UPDATE review_attempts SET metadata_json = ? WHERE attempt_id = ?",
+                               (json.dumps(metadata), "legacy-controller-round"))
         metadata = records.attempt("legacy-controller-round")["metadata"]
         arguments = ["subagent", "complete", "--run-id", "legacy-controller-round", "--actor", "root verified"]
         for title in ("Admission selection race", "Stopped historical evidence"):
@@ -216,7 +232,11 @@ class ReviewRecordsCliTest(unittest.TestCase):
             "2893",
             "--run-id",
             "subagent.review-1",
-            "--reviewer",
+            "--model",
+                "gpt-test-model",
+                "--reasoning-effort",
+                "medium",
+                "--reviewer",
             "Luna independent pass",
             "--scope",
             "broad",
@@ -361,7 +381,11 @@ class ReviewRecordsCliTest(unittest.TestCase):
             "2893",
             "--run-id",
             run_id,
-            "--reviewer",
+            "--model",
+                "gpt-test-model",
+                "--reasoning-effort",
+                "medium",
+                "--reviewer",
             "Luna",
             "--scope",
             "narrow",
@@ -497,7 +521,11 @@ class ReviewRecordsCliTest(unittest.TestCase):
             "2893",
             "--run-id",
             run_id,
-            "--reviewer",
+            "--model",
+                "gpt-test-model",
+                "--reasoning-effort",
+                "medium",
+                "--reviewer",
             "Luna",
             "--scope",
             "narrow",
@@ -647,7 +675,11 @@ class ReviewRecordsCliTest(unittest.TestCase):
             "2893",
             "--run-id",
             "subagent.failed-1",
-            "--reviewer",
+            "--model",
+                "gpt-test-model",
+                "--reasoning-effort",
+                "medium",
+                "--reviewer",
             "Luna",
             "--scope",
             "narrow",
@@ -2162,6 +2194,169 @@ class ReviewRecordsCliTest(unittest.TestCase):
         self.assertEqual(current_state.summary_dispositions, original_state.summary_dispositions)
         self.assertEqual(current_state.summary_dispositions[0].route_ids, (incoming.route_id,))
 
+    def test_normal_route_worklist_includes_structured_and_legacy_routes_once(self) -> None:
+        legacy_path = Path(self.temporary_directory.name) / "normal-route-state.json"
+        database = legacy_path.with_suffix(".sqlite3")
+        shared = FindingRoute(
+            source_pr=2600,
+            source_channel="hosted",
+            source_review="summary:review:901",
+            source_finding="duplicate:ref:shared-worklist-route",
+            observations=("shared owner finding",),
+            target_pr=2879,
+        )
+        retargeted = FindingRoute(
+            source_pr=2601,
+            source_channel="hosted",
+            source_review="summary:review:902",
+            source_finding="duplicate:ref:retargeted-worklist-route",
+            observations=("moved to another receiver",),
+            target_pr=2879,
+        )
+        resolved = FindingRoute(
+            source_pr=2600,
+            source_channel="hosted",
+            source_review="summary:review:903",
+            source_finding="duplicate:ref:resolved-worklist-route",
+            observations=("already dispositioned",),
+            target_pr=2879,
+        )
+        legacy_unassigned = FindingRoute(
+            source_pr=2603,
+            source_channel="cli",
+            source_review="legacy-cli-review",
+            source_finding="legacy-unassigned-worklist-route",
+            observations=("not assigned yet",),
+        )
+        StateStore(legacy_path).save(ReviewState(routes=(shared, retargeted, resolved, legacy_unassigned)))
+        SqliteStateStore.migrate_legacy_json(legacy_path, database)
+        records = SqliteReviewRecords(database)
+        records.bootstrap()
+        records.record_run(
+            run_id="normal-route-worklist-native",
+            source_pr=2700,
+            channel="manual",
+            findings=(
+                FindingObservation("native-target", "Native target route", "routed", target_pr=2879),
+                FindingObservation("native-unassigned", "Native unassigned route", "routed"),
+            ),
+        )
+        records.import_completed_run(
+            run_id="normal-route-worklist-shadows",
+            source_pr=2600,
+            channel="hosted",
+            findings=(
+                FindingObservation("shared-shadow", "Legacy route shadow"),
+                FindingObservation("retargeted-shadow", "Retargeted route shadow"),
+                FindingObservation("resolved-shadow", "Resolved route shadow"),
+            ),
+            source_decisions=(
+                {
+                    "source_finding_key": "shared-shadow",
+                    "decision_id": "normal-worklist-shared-shadow",
+                    "decision": "routed",
+                    "actor": "reviewer",
+                    "reason": "preserve the legacy route identity",
+                    "target_pr": 2879,
+                    "route_id": shared.route_id,
+                    "route_status": "open",
+                },
+                {
+                    "source_finding_key": "retargeted-shadow",
+                    "decision_id": "normal-worklist-retargeted-shadow",
+                    "decision": "routed",
+                    "actor": "reviewer",
+                    "reason": "preserve the legacy route identity",
+                    "target_pr": 2879,
+                    "route_id": retargeted.route_id,
+                    "route_status": "open",
+                },
+                {
+                    "source_finding_key": "resolved-shadow",
+                    "decision_id": "normal-worklist-resolved-shadow",
+                    "decision": "routed",
+                    "actor": "reviewer",
+                    "reason": "preserve the legacy route identity",
+                    "target_pr": 2879,
+                    "route_id": resolved.route_id,
+                    "route_status": "open",
+                },
+            ),
+        )
+        controller = ReviewController(store=ControllerStateStore(legacy_path))
+        controller.decide_route(
+            route_id=retargeted.route_id,
+            decision="retargeted",
+            target_pr=2880,
+            reason="receiving owner changed",
+        )
+        controller.decide_route(
+            route_id=resolved.route_id,
+            decision="accepted-fixed",
+            proof="verified at the receiving owner",
+        )
+
+        def normal_routes(*arguments: str) -> tuple[int, dict[str, object]]:
+            output = io.StringIO()
+            errors = io.StringIO()
+            with (
+                patch.object(cli, "default_controller", return_value=controller),
+                contextlib.redirect_stdout(output),
+                contextlib.redirect_stderr(errors),
+            ):
+                code = cli.main(["routes", *arguments])
+            if output.getvalue():
+                return code, json.loads(output.getvalue())
+            return code, {"error": errors.getvalue()}
+
+        code, target = normal_routes("--target-pr", "2879", "--json")
+        self.assertEqual(code, 0, target)
+        self.assertEqual(target["count"], 2)
+        native_target = next(route for route in records.list_routes(source_pr=2700) if route["target_pr"] == 2879)
+        self.assertEqual(
+            {route["route_id"] for route in target["routes"]},
+            {shared.route_id, native_target["route_id"]},
+        )
+        legacy_target = next(route for route in target["routes"] if route["route_id"] == shared.route_id)
+        self.assertEqual(legacy_target["origin"], "legacy_controller")
+        self.assertEqual(legacy_target["source_review"], shared.source_review)
+
+        code, new_target = normal_routes("--target-pr", "2880", "--json")
+        self.assertEqual(code, 0, new_target)
+        self.assertEqual([route["route_id"] for route in new_target["routes"]], [retargeted.route_id])
+        self.assertEqual(new_target["routes"][0]["target_pr"], 2880)
+
+        code, unassigned = normal_routes("--unassigned", "--json")
+        self.assertEqual(code, 0, unassigned)
+        self.assertEqual(unassigned["count"], 2)
+        self.assertEqual(
+            {route["source_pr"] for route in unassigned["routes"]},
+            {2603, 2700},
+        )
+
+        source_target_routes = records.list_routes(
+            status="open",
+            source_pr=2600,
+            target_pr=2879,
+            include_legacy_routes=True,
+        )
+        self.assertEqual([route["route_id"] for route in source_target_routes], [shared.route_id])
+        source_routes = records.list_routes(status="all", source_pr=2600, include_legacy_routes=True)
+        self.assertEqual(
+            {route["route_id"] for route in source_routes},
+            {shared.route_id, resolved.route_id},
+        )
+        resolved_route = next(route for route in source_routes if route["route_id"] == resolved.route_id)
+        self.assertEqual(resolved_route["status"], "accepted_fixed")
+        self.assertEqual(resolved_route["disposition"], "accepted and fixed")
+        retargeted_source_routes = records.list_routes(
+            status="open",
+            source_pr=2601,
+            target_pr=2880,
+            include_legacy_routes=True,
+        )
+        self.assertEqual([route["route_id"] for route in retargeted_source_routes], [retargeted.route_id])
+
     def test_selected_status_adds_sqlite_routes_without_replacing_legacy_route_checks(self) -> None:
         records = SqliteReviewRecords(self.database)
         records.bootstrap()
@@ -2206,6 +2401,7 @@ class ReviewRecordsCliTest(unittest.TestCase):
                             "head": "a" * 40,
                             "base": "main",
                             "parent_head": "b" * 40,
+                            "pr_base_oid": "b" * 40,
                         }
                     ]
                 },
@@ -2238,6 +2434,37 @@ class ReviewRecordsCliTest(unittest.TestCase):
         self.assertEqual(report["record_route_store"]["status"], "available")
         self.assertFalse(report["ready"])
         self.assertTrue(any("SQLite-record incoming route" in reason for reason in report["reasons"]))
+
+    def test_selected_status_compares_retained_pr_identity_not_parent_tip(self) -> None:
+        for changed_field in (None, "headRefOid", "baseRefName", "baseRefOid"):
+            with self.subTest(changed_field=changed_field):
+                item = {
+                    "pr": 42, "head": "a" * 40, "base": "develop", "pr_base_oid": "b" * 40,
+                    "parent_head": "c" * 40, "reconciliation": "PARENT_MOVED",
+                    "channels": {"hosted": "COMPLETE", "cli": "HUMAN_STOPPED"},
+                    "allocations": {}, "incoming_routes": [], "routes_out": [],
+                }
+                controller = type("FakeController", (), {
+                    "status_for_pr": lambda self, pr, row=item: {"prs": [row]},
+                })()
+                identity = {"headRefOid": "a" * 40, "baseRefName": "develop", "baseRefOid": "b" * 40}
+                if changed_field:
+                    identity[changed_field] = "other" if changed_field == "baseRefName" else "d" * 40
+                base_report = {"pull_request": identity, "reasons": [], "ready": True, "verdict": "READY",
+                               "mergeability": {"clean": True, "diagnosis": "READY"}}
+                output = io.StringIO()
+                with (
+                    patch.object(cli, "default_controller", return_value=controller),
+                    patch.object(cli.status_module, "status", return_value=base_report),
+                    patch.object(cli, "_read_record_incoming_routes", return_value=([], {"status": "available"})),
+                    contextlib.redirect_stdout(output),
+                ):
+                    self.assertEqual(cli.main(["status", "--pr", "42", "--json"]), 0)
+                report = json.loads(output.getvalue())
+                self.assertEqual(any("between status snapshots" in reason for reason in report["reasons"]),
+                                 changed_field is not None)
+                self.assertFalse(report["ready"])
+                self.assertIn("review stack is PARENT_MOVED", report["reasons"])
 
     def test_selected_status_deduplicates_legacy_route_shadows_before_filtering(self) -> None:
         retargeted = FindingRoute(

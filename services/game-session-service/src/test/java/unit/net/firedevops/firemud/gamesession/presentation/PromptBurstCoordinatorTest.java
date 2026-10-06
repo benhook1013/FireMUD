@@ -102,7 +102,7 @@ class PromptBurstCoordinatorTest {
     List<PlayerOutput> outputs =
         List.of(PlayerOutput.message("You say, \"hello\""), PlayerOutput.prompt("demo> "));
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 911L, "Sora", 7L, "R-1", null);
+        new SessionContext(1L, 22L, "123", "demo@example.com", 911L, "Sora", 7L, "R-1", null);
 
     coordinator.recordPromptEmission("1", outputs);
 

@@ -123,11 +123,14 @@ if [[ "${EXPORT_TRUSTED_MINIO_IMAGE_ARTIFACT:-}" == true && -n "${RUNNER_TEMP:-}
   artifact_dir="$RUNNER_TEMP/minio-image-artifact"
   mkdir -p "$artifact_dir"
   docker save "$server_image" "$client_image" | gzip -1 > "$artifact_dir/images.tar.gz"
-  python3 - "$artifact_dir/provenance.json" "$server_image" "$client_image" "$server_image_id" "$client_image_id" <<'PY'
+  MINIO_SOURCE_WORKSPACE="$workspace" python3 - "$artifact_dir/provenance.json" "$server_image" "$client_image" "$server_image_id" "$client_image_id" <<'PY'
 import json
 import os
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(os.environ["MINIO_SOURCE_WORKSPACE"]) / "dev-tools/minio"))
+from base_image_refs import trusted_base_images
 
 output, server_image, client_image, server_image_id, client_image_id = sys.argv[1:]
 payload = {
@@ -142,8 +145,7 @@ payload = {
     "client": {"image": client_image, "imageId": client_image_id,
                "tagObject": "835afd0a86e9a3ed396b8162eabc98243c342e5f",
                "sourceCommit": "fdb36acbb1d793b6cca622a55e6292f0d52309f0"},
-    "builder": "golang:1.21.13-bookworm@sha256:c6a5b9308b3f3095e8fde83c8bf4d68bd101fce606c1a0a1394522542509dda9",
-    "runtime": "alpine:3.22.1@sha256:4bcff63911fcb4448bd4fdacec207030997caf25e9bea4045fa6c8c44de311d1",
+    **trusted_base_images(Path(os.environ["MINIO_SOURCE_WORKSPACE"])),
 }
 Path(output).write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
 PY

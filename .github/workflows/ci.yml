@@ -38,7 +38,7 @@ jobs:
       lightweight_only: ${{ steps.compute.outputs.lightweight_only }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
         with:
           egress-policy: audit
 
@@ -151,7 +151,7 @@ jobs:
     if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
         with:
           egress-policy: audit
 
@@ -199,7 +199,7 @@ jobs:
     if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
         with:
           egress-policy: audit
 
@@ -220,7 +220,7 @@ jobs:
     if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
         with:
           egress-policy: audit
 
@@ -266,7 +266,7 @@ jobs:
     if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && (needs.changes.outputs.lightweight_only != 'true' || needs.changes.outputs.python_changed == 'true') }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
         with:
           egress-policy: audit
 
@@ -295,7 +295,7 @@ jobs:
     if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && (needs.changes.outputs.lightweight_only != 'true' || needs.changes.outputs.design_docs_changed == 'true' || needs.changes.outputs.validation_python_changed == 'true') }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
         with:
           egress-policy: audit
 
@@ -319,6 +319,18 @@ jobs:
         uses: ./.github/actions/setup-python
         with:
           requirements: ${{ (needs.changes.outputs.lightweight_only == 'true' && needs.changes.outputs.design_docs_changed == 'true' && needs.changes.outputs.validation_python_changed != 'true') && 'yaml' || 'ci' }}
+
+      - name: Set up Node for Python Markdown contracts
+        if: ${{ needs.changes.outputs.lightweight_only != 'true' || needs.changes.outputs.validation_python_changed == 'true' }}
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: '.node-version'
+          cache: npm
+          cache-dependency-path: config/openapi/package-lock.json
+
+      - name: Install pinned Markdown contract dependencies
+        if: ${{ needs.changes.outputs.lightweight_only != 'true' || needs.changes.outputs.validation_python_changed == 'true' }}
+        run: npm ci --ignore-scripts --no-audit --no-fund --prefix config/openapi
 
       - name: 📦 Install cloc
         if: ${{ needs.changes.outputs.lightweight_only != 'true' }}
@@ -413,7 +425,7 @@ jobs:
     if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only == 'true' }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
         with:
           egress-policy: audit
 
@@ -437,7 +449,7 @@ jobs:
     if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
         with:
           egress-policy: audit
 
@@ -459,7 +471,7 @@ jobs:
     if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
         with:
           egress-policy: audit
 
@@ -479,7 +491,7 @@ jobs:
     if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
         with:
           egress-policy: audit
 
@@ -515,7 +527,7 @@ jobs:
     if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
         with:
           egress-policy: audit
 
@@ -551,7 +563,7 @@ jobs:
     if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
         with:
           egress-policy: audit
 
@@ -582,7 +594,7 @@ jobs:
     if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
         with:
           egress-policy: audit
 
@@ -607,7 +619,7 @@ jobs:
     if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
         with:
           egress-policy: audit
 
@@ -650,11 +662,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      K3S_IMAGE: rancher/k3s:v1.34.5-k3s1@sha256:998f4db28a13143ada759690b554c5d8c1814ac03f77c1bdd78bbd73875a1379
+      K3S_IMAGE: rancher/k3s:v1.34.12-k3s1@sha256:4ea0adb6b0ffedab0c58ffe5c99a49f2f7be871f38636c8baa2692899648d8c5
     if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
         with:
           egress-policy: audit
 
@@ -732,7 +744,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
         with:
           egress-policy: audit
 
@@ -776,7 +788,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
         with:
           egress-policy: audit
 
@@ -904,7 +916,7 @@ jobs:
 
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
         with:
           egress-policy: audit
 
@@ -938,7 +950,11 @@ jobs:
         id: checks
         run: |
           echo "::group::Run Module Validation"
-          ./gradlew :${{ matrix.module }}:check -PfullCheck
+          if [ "${{ matrix.module }}" = "game-session-service" ]; then
+            ./gradlew :game-session-service:integrationTest :game-session-service:check -PfullCheck
+          else
+            ./gradlew :${{ matrix.module }}:check -PfullCheck
+          fi
           echo "::endgroup::"
 
       - name: 📦 Build Runtime JAR
@@ -984,7 +1000,7 @@ jobs:
 
       - name: ☂️ Upload Coverage to Codecov
         continue-on-error: true
-        uses: codecov/codecov-action@75cd11691c0faa626561e295848008c8a7dddffe
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           use_oidc: true
           fail_ci_if_error: false
@@ -994,6 +1010,14 @@ jobs:
           flags: ${{ matrix.module }}
           name: ${{ matrix.module }}-jacoco
           verbose: true
+
+      - name: 📤 Upload JUnit XML Reports
+        if: ${{ always() && contains(fromJSON('["success","failure","cancelled"]'), steps.checks.outcome) }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: junit-${{ matrix.module }}-${{ github.sha }}
+          path: ${{ matrix.module == 'load-testing' && 'dev-tools/load-testing/build/test-results/**/*.xml' || format('services/{0}/build/test-results/**/*.xml', matrix.module) }}
+          if-no-files-found: warn
 
       - name: 📤 Upload Test Logs if Failed
         if: failure()
@@ -1013,7 +1037,7 @@ jobs:
     if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
         with:
           egress-policy: audit
 
@@ -1161,7 +1185,7 @@ jobs:
     if: ${{ always() }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
         with:
           egress-policy: audit
 

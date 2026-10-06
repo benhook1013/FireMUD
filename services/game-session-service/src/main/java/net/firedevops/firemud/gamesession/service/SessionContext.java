@@ -2,13 +2,14 @@ package net.firedevops.firemud.gamesession.service;
 
 import java.io.Serializable;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Optional;
 
 /** Represents persisted login context stored in Redis for a session. */
 public record SessionContext(
     long sessionId,
     long tenantId,
-    long accountId,
+    String accountId,
     String loginName,
     long characterId,
     String characterName,
@@ -41,7 +42,7 @@ public record SessionContext(
   public SessionContext(
       long sessionId,
       long tenantId,
-      long accountId,
+      String accountId,
       String loginName,
       long characterId,
       String characterName,
@@ -77,7 +78,7 @@ public record SessionContext(
   public SessionContext(
       long sessionId,
       long tenantId,
-      long accountId,
+      String accountId,
       String loginName,
       long characterId,
       String characterName,
@@ -108,7 +109,7 @@ public record SessionContext(
   public SessionContext(
       long sessionId,
       long tenantId,
-      long accountId,
+      String accountId,
       String loginName,
       long characterId,
       String characterName,
@@ -140,7 +141,7 @@ public record SessionContext(
   public SessionContext(
       long sessionId,
       long tenantId,
-      long accountId,
+      String accountId,
       long characterId,
       long gameInstanceId,
       String roomInstanceId,
@@ -168,7 +169,7 @@ public record SessionContext(
   public SessionContext(
       long sessionId,
       long tenantId,
-      long accountId,
+      String accountId,
       long characterId,
       long gameInstanceId,
       String jwt) {
@@ -195,7 +196,7 @@ public record SessionContext(
   public SessionContext(
       long sessionId,
       long tenantId,
-      long accountId,
+      String accountId,
       String loginName,
       long characterId,
       String characterName,
@@ -224,7 +225,7 @@ public record SessionContext(
   public SessionContext(
       long sessionId,
       long tenantId,
-      long accountId,
+      String accountId,
       String loginName,
       long characterId,
       String characterName,
@@ -281,6 +282,10 @@ public record SessionContext(
     return gameInstanceId > 0 && characterId > 0;
   }
 
+  public boolean hasAccountIdentity() {
+    return AccountIds.isCanonicalNonNilUuid(accountId);
+  }
+
   public boolean hasGameplayBinding() {
     return gameInstanceId > 0
         || characterId > 0
@@ -304,13 +309,13 @@ public record SessionContext(
     }
     return sessionId == that.sessionId()
         && tenantId == that.tenantId()
-        && accountId == that.accountId()
+        && Objects.equals(accountId, that.accountId())
         && characterId == that.characterId()
         && gameInstanceId == that.gameInstanceId();
   }
 
   public Optional<FirstPartyConnectContext> persistedFirstPartyConnectContext() {
-    if (accountId <= 0 || tenantId <= 0) {
+    if (!hasAccountIdentity() || tenantId <= 0) {
       return Optional.empty();
     }
     FirstPartyConnectContext connectContext =
@@ -331,7 +336,7 @@ public record SessionContext(
   }
 
   public boolean hasPartialPersistedFirstPartyConnectContext() {
-    if (accountId <= 0 || tenantId <= 0) {
+    if (!hasAccountIdentity() || tenantId <= 0) {
       return false;
     }
     boolean hasAnyPersistedSelectorField = connectScopeId != null || connectRequestId != null;

@@ -193,7 +193,7 @@ class HistoryCommandHandlerTest {
 
   private SessionContext standardContext() {
     return new SessionContext(
-        22L, 7L, 99L, "demo@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+        22L, 7L, "99", "demo@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
   }
 
   private HistoryCommandHandler handler(

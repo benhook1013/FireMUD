@@ -31,7 +31,7 @@ class SessionRoutingNormalizationServiceTest {
         new SessionContext(
             41L,
             22L,
-            123L,
+            "123",
             "demo@example.com",
             7001L,
             "Emberline",
@@ -77,7 +77,7 @@ class SessionRoutingNormalizationServiceTest {
         new SessionContext(
             41L,
             22L,
-            123L,
+            "123",
             "demo@example.com",
             7001L,
             "Emberline",
@@ -109,7 +109,7 @@ class SessionRoutingNormalizationServiceTest {
         new SessionContext(
             41L,
             22L,
-            123L,
+            "123",
             "demo@example.com",
             7001L,
             "Emberline",

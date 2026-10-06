@@ -11,7 +11,7 @@ class PromptComposerTest {
   @Test
   void composeIncludesStructuredFieldsAlongsideClassicPromptText() {
     SessionContext context =
-        new SessionContext(41L, 22L, 77L, "demo@example.com", 123L, "Sora", 9L, "R-1021", "jwt");
+        new SessionContext(41L, 22L, "77", "demo@example.com", 123L, "Sora", 9L, "R-1021", "jwt");
 
     PlayerOutput prompt = composer.compose(context).orElseThrow();
 
@@ -29,7 +29,7 @@ class PromptComposerTest {
   @Test
   void composeFallsBackToBarePromptWhileStillPublishingIdentifiers() {
     SessionContext context =
-        new SessionContext(41L, 22L, 77L, null, 123L, null, 9L, "R-1021", "jwt");
+        new SessionContext(41L, 22L, "77", null, 123L, null, 9L, "R-1021", "jwt");
 
     PlayerOutput prompt = composer.compose(context).orElseThrow();
 

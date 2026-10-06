@@ -5,15 +5,18 @@ import java.util.Objects;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
+import net.firedevops.firemud.gamesession.service.AccountIds;
 
 /** Shared validation for caller- and tenant-bound Account runtime authority snapshots. */
 final class AccountAuthorityEvidence {
   private AccountAuthorityEvidence() {}
 
   static boolean hasMatchingAccountAndTenant(
-      String accountId, String tenantId, long expectedAccountId, long expectedTenantId) {
+      String accountId, String tenantId, String expectedAccountId, long expectedTenantId) {
     try {
-      return Long.parseLong(accountId) == expectedAccountId
+      return AccountIds.isCanonicalNonNilUuid(accountId)
+          && AccountIds.isCanonicalNonNilUuid(expectedAccountId)
+          && accountId.equals(expectedAccountId)
           && Long.parseLong(tenantId) == expectedTenantId;
     } catch (NumberFormatException ex) {
       return false;
@@ -30,7 +33,7 @@ final class AccountAuthorityEvidence {
 
   static boolean isSafeMembershipSnapshot(
       GetTenantMembershipForRuntimeResponse response,
-      long expectedAccountId,
+      String expectedAccountId,
       long expectedTenantId,
       Clock clock) {
     Objects.requireNonNull(response, "response must not be null");
@@ -58,7 +61,7 @@ final class AccountAuthorityEvidence {
 
   static boolean isActiveMembership(
       GetTenantMembershipForRuntimeResponse response,
-      long expectedAccountId,
+      String expectedAccountId,
       long expectedTenantId,
       Clock clock) {
     return response.getMembershipExists()
@@ -77,7 +80,7 @@ final class AccountAuthorityEvidence {
 
   static boolean isValidRealmAccessGrant(
       GetRealmAccessGrantForRuntimeResponse response,
-      long expectedAccountId,
+      String expectedAccountId,
       long expectedTenantId,
       String expectedWorldSlug,
       String expectedRealmSlug,

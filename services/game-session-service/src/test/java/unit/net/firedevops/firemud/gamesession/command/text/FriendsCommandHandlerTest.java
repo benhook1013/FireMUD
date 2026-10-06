@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.entitymanagement.v1.Character;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
@@ -36,11 +37,13 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 class FriendsCommandHandlerTest {
+  private record InvalidAccountAction(List<String> args, String errorCode, String message) {}
+
   private static final SessionContext GAMEPLAY_CONTEXT =
       new SessionContext(
           7L,
           1L,
-          41L,
+          "41",
           "demo@example.com",
           99L,
           "Emberline",
@@ -60,6 +63,133 @@ class FriendsCommandHandlerTest {
       ScriptEventPublisher scriptEventPublisher) {
     return new FriendsCommandHandler(
         socialGroupsClient, entityManagementClient, scriptEventPublisher);
+  }
+
+  private SessionContext gameplayContextWithAccountId(String accountId) {
+    return new SessionContext(
+        7L,
+        1L,
+        accountId,
+        "demo@example.com",
+        99L,
+        "Emberline",
+        7L,
+        "R-1",
+        null,
+        null,
+        7L,
+        "demo",
+        "production",
+        1L,
+        "SHARED");
+  }
+
+  @Test
+  void unsupportedAccountIdsFailByActionBeforeEntitySocialOrEventCalls() {
+    SocialGroupsClient socialGroupsClient = Mockito.mock(SocialGroupsClient.class);
+    EntityManagementClient entityManagementClient = Mockito.mock(EntityManagementClient.class);
+    ScriptEventPublisher scriptEventPublisher = Mockito.mock(ScriptEventPublisher.class);
+    FriendsCommandHandler handler =
+        newHandler(socialGroupsClient, entityManagementClient, scriptEventPublisher);
+    List<InvalidAccountAction> actions =
+        List.of(
+            new InvalidAccountAction(
+                List.of(), "FRIEND_PRESENCE_UNAVAILABLE", "Friend presence unavailable"),
+            new InvalidAccountAction(
+                List.of("ADD", "Sora"), "FRIEND_ADD_UNAVAILABLE", "Friend add unavailable"),
+            new InvalidAccountAction(
+                List.of("REMOVE", "77"), "FRIEND_REMOVE_UNAVAILABLE", "Friend removal unavailable"),
+            new InvalidAccountAction(
+                List.of("SHOW", "77"), "FRIEND_DETAIL_UNAVAILABLE", "Friend detail unavailable"),
+            new InvalidAccountAction(
+                List.of("REMOVE", "#1"), "FRIEND_REMOVE_UNAVAILABLE", "Friend removal unavailable"),
+            new InvalidAccountAction(
+                List.of("SHOW", "#1"), "FRIEND_DETAIL_UNAVAILABLE", "Friend detail unavailable"),
+            new InvalidAccountAction(
+                List.of("SUMMARY"),
+                "FRIEND_SUMMARY_UNAVAILABLE",
+                "Friend roster summary unavailable"),
+            new InvalidAccountAction(
+                List.of("VISIBILITY"),
+                "FRIEND_VISIBILITY_UNAVAILABLE",
+                "Friend presence visibility unavailable"),
+            new InvalidAccountAction(
+                List.of("VISIBILITY", "PRIVATE"),
+                "FRIEND_VISIBILITY_UPDATE_UNAVAILABLE",
+                "Friend presence visibility update unavailable"));
+
+    for (String accountId : List.of("opaque-account-uuid", "", "0", "-41")) {
+      SessionContext context = gameplayContextWithAccountId(accountId);
+      for (InvalidAccountAction action : actions) {
+        TextCommandInterpretationResult result =
+            handler.handle(
+                new TextCommand(
+                    TextCommandType.FRIENDS,
+                    action.args(),
+                    "FRIENDS " + String.join(" ", action.args())),
+                context);
+
+        assertThat(result.commandResult().accepted()).isFalse();
+        assertThat(result.commandResult().errorCode()).isEqualTo(action.errorCode());
+        assertThat(result.outputs())
+            .singleElement()
+            .extracting(PlayerOutput::text)
+            .isEqualTo("ERROR " + action.errorCode() + " " + action.message());
+      }
+    }
+
+    Mockito.verifyNoInteractions(socialGroupsClient, entityManagementClient, scriptEventPublisher);
+  }
+
+  @Test
+  void usageErrorsRemainVisibleBeforeUnsupportedAccountFailure() {
+    SocialGroupsClient socialGroupsClient = Mockito.mock(SocialGroupsClient.class);
+    EntityManagementClient entityManagementClient = Mockito.mock(EntityManagementClient.class);
+    ScriptEventPublisher scriptEventPublisher = Mockito.mock(ScriptEventPublisher.class);
+    FriendsCommandHandler handler =
+        newHandler(socialGroupsClient, entityManagementClient, scriptEventPublisher);
+
+    TextCommandInterpretationResult missingTarget =
+        handler.handle(
+            new TextCommand(TextCommandType.FRIENDS, List.of("ADD"), "FRIENDS ADD"),
+            gameplayContextWithAccountId("opaque-account-uuid"));
+    TextCommandInterpretationResult invalidOrdinal =
+        handler.handle(
+            new TextCommand(
+                TextCommandType.FRIENDS, List.of("REMOVE", "#bad"), "FRIENDS REMOVE #bad"),
+            gameplayContextWithAccountId("opaque-account-uuid"));
+    TextCommandInterpretationResult invalidVisibility =
+        handler.handle(
+            new TextCommand(
+                TextCommandType.FRIENDS,
+                List.of("VISIBILITY", "UNKNOWN"),
+                "FRIENDS VISIBILITY UNKNOWN"),
+            gameplayContextWithAccountId("opaque-account-uuid"));
+
+    assertThat(missingTarget.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(invalidOrdinal.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(invalidVisibility.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
+    Mockito.verifyNoInteractions(socialGroupsClient, entityManagementClient, scriptEventPublisher);
+  }
+
+  @Test
+  void friendsListPreservesMaximumPositiveLongAccountId() {
+    SocialGroupsClient socialGroupsClient = Mockito.mock(SocialGroupsClient.class);
+    EntityManagementClient entityManagementClient = Mockito.mock(EntityManagementClient.class);
+    ScriptEventPublisher scriptEventPublisher = Mockito.mock(ScriptEventPublisher.class);
+    FriendsCommandHandler handler =
+        newHandler(socialGroupsClient, entityManagementClient, scriptEventPublisher);
+    when(socialGroupsClient.listFriends(1L, Long.MAX_VALUE))
+        .thenReturn(ListFriendsResponse.newBuilder().build());
+
+    TextCommandInterpretationResult result =
+        handler.handle(
+            new TextCommand(TextCommandType.FRIENDS, List.of(), "FRIENDS"),
+            gameplayContextWithAccountId(Long.toString(Long.MAX_VALUE)));
+
+    assertThat(result.commandResult().accepted()).isTrue();
+    Mockito.verify(socialGroupsClient).listFriends(1L, Long.MAX_VALUE);
+    Mockito.verify(scriptEventPublisher).publishCommandEvent(Mockito.any(), Mockito.any());
   }
 
   @Test
@@ -781,26 +911,33 @@ class FriendsCommandHandlerTest {
   }
 
   @Test
-  void friendsMutationRejectsSelfLink() {
+  void friendsAddAndRemoveRejectSelfLinkForEquivalentNumericAccountText() {
     SocialGroupsClient socialGroupsClient = Mockito.mock(SocialGroupsClient.class);
     EntityManagementClient entityManagementClient = Mockito.mock(EntityManagementClient.class);
+    ScriptEventPublisher scriptEventPublisher = Mockito.mock(ScriptEventPublisher.class);
     FriendsCommandHandler handler =
-        newHandler(
-            socialGroupsClient, entityManagementClient, Mockito.mock(ScriptEventPublisher.class));
+        newHandler(socialGroupsClient, entityManagementClient, scriptEventPublisher);
 
-    TextCommandInterpretationResult result =
-        handler.handle(
-            new TextCommand(
-                TextCommandType.FRIENDS, java.util.List.of("ADD", "41"), "FRIENDS ADD 41"),
-            GAMEPLAY_CONTEXT);
+    for (String accountIdText : List.of("41", "041", "+41")) {
+      SessionContext context = gameplayContextWithAccountId(accountIdText);
+      for (String action : List.of("ADD", "REMOVE")) {
+        TextCommandInterpretationResult result =
+            handler.handle(
+                new TextCommand(
+                    TextCommandType.FRIENDS, List.of(action, "41"), "FRIENDS " + action + " 41"),
+                context);
 
-    assertThat(result.commandResult().accepted()).isFalse();
-    assertThat(result.commandResult().errorCode()).isEqualTo("FRIEND_SELF_LINK_FORBIDDEN");
-    assertThat(result.outputs())
-        .singleElement()
-        .extracting(PlayerOutput::text)
-        .isEqualTo(
-            "ERROR FRIEND_SELF_LINK_FORBIDDEN Cannot add or remove your own account as a friend");
+        assertThat(result.commandResult().accepted()).isFalse();
+        assertThat(result.commandResult().errorCode()).isEqualTo("FRIEND_SELF_LINK_FORBIDDEN");
+        assertThat(result.outputs())
+            .singleElement()
+            .extracting(PlayerOutput::text)
+            .isEqualTo(
+                "ERROR FRIEND_SELF_LINK_FORBIDDEN Cannot add or remove your own account as a friend");
+      }
+    }
+
+    Mockito.verifyNoInteractions(socialGroupsClient, entityManagementClient, scriptEventPublisher);
   }
 
   @Test

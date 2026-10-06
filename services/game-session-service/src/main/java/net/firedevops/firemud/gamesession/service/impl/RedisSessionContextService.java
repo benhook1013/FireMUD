@@ -5,6 +5,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -12,6 +13,7 @@ import net.firedevops.firemud.gamesession.service.SessionContextService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.SessionCallback;
+import org.springframework.data.redis.serializer.SerializationException;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -47,6 +49,8 @@ public final class RedisSessionContextService implements SessionContextService {
                     SessionContext existingContext =
                         readContext(
                             operations, contextKey(context.tenantId(), context.sessionId()));
+                    SessionContext existingSessionContext =
+                        readContext(operations, sessionKey(context.sessionId()));
                     SessionContext existingIdentityContext =
                         context.hasGameplayIdentity()
                             ? readContext(
@@ -68,6 +72,9 @@ public final class RedisSessionContextService implements SessionContextService {
                             : null;
                     LinkedHashSet<String> additionalWatchKeys = new LinkedHashSet<>();
                     addWatchKeys(additionalWatchKeys, existingContext);
+                    if (isSessionAliasFor(existingSessionContext, context)) {
+                      addWatchKeys(additionalWatchKeys, existingSessionContext);
+                    }
                     addWatchKeys(additionalWatchKeys, existingIdentityContext);
                     addWatchKeys(additionalWatchKeys, existingNameContext);
                     if (additionalWatchKeys.removeAll(watchedKeys)
@@ -78,6 +85,10 @@ public final class RedisSessionContextService implements SessionContextService {
                     }
                     operations.multi();
                     deleteIndexes(operations, existingContext);
+                    if (!Objects.equals(existingContext, existingSessionContext)
+                        && isSessionAliasFor(existingSessionContext, context)) {
+                      deleteIndexes(operations, existingSessionContext);
+                    }
                     deleteIndexes(operations, existingIdentityContext);
                     deleteIndexes(operations, existingNameContext);
                     writeContext(operations, context);
@@ -94,22 +105,18 @@ public final class RedisSessionContextService implements SessionContextService {
 
   @Override
   public Optional<SessionContext> findBySessionId(long sessionId) {
-    return Optional.ofNullable(
-        (SessionContext) redisTemplate.opsForValue().get(sessionKey(sessionId)));
+    return findContextForLookup(sessionKey(sessionId));
   }
 
   @Override
   public Optional<SessionContext> findByTenantAndSessionId(long tenantId, long sessionId) {
-    return Optional.ofNullable(
-        (SessionContext) redisTemplate.opsForValue().get(contextKey(tenantId, sessionId)));
+    return findContextForLookup(contextKey(tenantId, sessionId));
   }
 
   @Override
   public Optional<SessionContext> findByGameplayIdentity(
       long tenantId, long gameInstanceId, long characterId) {
-    return Optional.ofNullable(
-        (SessionContext)
-            redisTemplate.opsForValue().get(identityKey(tenantId, gameInstanceId, characterId)));
+    return findContextForLookup(identityKey(tenantId, gameInstanceId, characterId));
   }
 
   @Override
@@ -118,9 +125,7 @@ public final class RedisSessionContextService implements SessionContextService {
     if (!StringUtils.hasText(characterName)) {
       return Optional.empty();
     }
-    return Optional.ofNullable(
-        (SessionContext)
-            redisTemplate.opsForValue().get(nameKey(tenantId, gameInstanceId, characterName)));
+    return findContextForLookup(nameKey(tenantId, gameInstanceId, characterName));
   }
 
   @Override
@@ -139,8 +144,11 @@ public final class RedisSessionContextService implements SessionContextService {
                     operations.watch(watchedKeys);
                     SessionContext existing =
                         readContext(operations, contextKey(tenantId, sessionId));
+                    SessionContext existingSessionContext =
+                        readContext(operations, sessionKey(sessionId));
                     LinkedHashSet<String> additionalWatchKeys = new LinkedHashSet<>();
                     addWatchKeys(additionalWatchKeys, existing);
+                    addWatchKeys(additionalWatchKeys, existingSessionContext);
                     if (additionalWatchKeys.removeAll(watchedKeys)
                         && !additionalWatchKeys.isEmpty()) {
                       operations.unwatch();
@@ -149,6 +157,12 @@ public final class RedisSessionContextService implements SessionContextService {
                     }
                     operations.multi();
                     deleteIndexes(operations, existing);
+                    if (!Objects.equals(existing, existingSessionContext)
+                        && existingSessionContext != null
+                        && existingSessionContext.tenantId() == tenantId
+                        && existingSessionContext.sessionId() == sessionId) {
+                      deleteIndexes(operations, existingSessionContext);
+                    }
                     return operations.exec() != null;
                   }
                 }
@@ -176,6 +190,12 @@ public final class RedisSessionContextService implements SessionContextService {
     return SessionContextRedisKeys.nameKey(tenantId, gameInstanceId, characterName);
   }
 
+  private boolean isSessionAliasFor(SessionContext candidate, SessionContext context) {
+    return candidate != null
+        && candidate.tenantId() == context.tenantId()
+        && candidate.sessionId() == context.sessionId();
+  }
+
   private List<String> watchKeys(SessionContext context) {
     List<String> keys = new ArrayList<>();
     keys.add(contextKey(context.tenantId(), context.sessionId()));
@@ -191,7 +211,24 @@ public final class RedisSessionContextService implements SessionContextService {
 
   private SessionContext readContext(
       org.springframework.data.redis.core.RedisOperations<String, Object> operations, String key) {
-    return (SessionContext) operations.opsForValue().get(key);
+    SessionContext context = (SessionContext) operations.opsForValue().get(key);
+    if (context != null && context.accountId() != null && !context.hasAccountIdentity()) {
+      throw new IllegalStateException(
+          "Retained session context has a non-canonical Account identity and cannot be replaced");
+    }
+    return context;
+  }
+
+  private Optional<SessionContext> findContextForLookup(String key) {
+    try {
+      SessionContext context = (SessionContext) redisTemplate.opsForValue().get(key);
+      if (context != null && context.accountId() != null && !context.hasAccountIdentity()) {
+        return Optional.empty();
+      }
+      return Optional.ofNullable(context);
+    } catch (SerializationException | ClassCastException ex) {
+      return Optional.empty();
+    }
   }
 
   private void addWatchKeys(Set<String> watchKeys, SessionContext context) {

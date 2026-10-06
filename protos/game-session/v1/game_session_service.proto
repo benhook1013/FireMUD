@@ -4,6 +4,7 @@ package game_session.v1;
 
 import "entity-management/v1/entity_management_service.proto";
 import "game-design/v1/game_design_service.proto";
+import "game-design/v1/tenant_identity_service.proto";
 import "shared/v1/errors.proto";
 
 option java_package = "net.firedevops.firemud.gamesession.v1";
@@ -41,6 +42,9 @@ service GameSessionControlPlaneService {
   // Read exact durable owner proof for a World-owned initial-admission hold.
   rpc GetInitialAdmissionBindProof(GetInitialAdmissionBindProofRequest)
       returns (GetInitialAdmissionBindProofResponse);
+  // Read the exact point-in-time published-realm admission owner composition for Entity.
+  rpc GetPublishedRealmAdmissionOwnerRead(GetPublishedRealmAdmissionOwnerReadRequest)
+      returns (GetPublishedRealmAdmissionOwnerReadResponse);
   rpc ValidateBuiltInCommandAlias(ValidateBuiltInCommandAliasRequest)
       returns (ValidateBuiltInCommandAliasResponse);
   rpc ListAdmissionPointers(ListAdmissionPointersRequest)
@@ -498,6 +502,57 @@ message GetInitialAdmissionBindProofResponse {
   string pointer_audit_request_digest = 18;
   bool future_commit_prevented = 19;
   shared.v1.ErrorDetail error = 20;
+}
+
+message GetPublishedRealmAdmissionOwnerReadRequest {
+  string target_namespace = 1;
+  string canonical_tenant_id = 2;
+  string game_session_tenant_id = 3;
+  string world_slug = 4;
+  string realm_slug = 5;
+  int64 expected_catalog_revision = 6;
+  int64 expected_pointer_version = 7;
+}
+
+message PublishedRealmAdmissionOwnerReadEvidence {
+  string target_namespace = 1;
+  string canonical_tenant_id = 2;
+  string game_session_tenant_id = 3;
+  string world_slug = 4;
+  string realm_slug = 5;
+  int64 catalog_revision = 6;
+  int64 expected_pointer_version = 7;
+  string realm_id = 8;
+  string playable_state_namespace_id = 9;
+  gamedesign.v1.PublishedRealmEntryStateScope playable_state_scope = 10;
+  gamedesign.v1.ListPublishedRealmEntryPoliciesResponse published_policy_set = 11;
+  gamedesign.v1.ResolvePublishedRealmEntryPolicyResponse selected_policy_evidence = 12;
+  int64 pointer_version = 13;
+  string game_instance_id = 14;
+  string published_version_id = 15;
+  int64 active_lifecycle_epoch = 16;
+  string game_template_id = 17;
+  string launch_descriptor_id = 18;
+  string release_bundle_id = 19;
+  string published_release_bundle_ref = 20;
+  int64 version_state_epoch = 21;
+  string initial_admission_request_id = 22;
+  string request_digest = 23;
+  string initial_admission_attempt_id = 24;
+  string pointer_audit_id = 25;
+  PublishedRealmAdmissionAttemptStatus initial_admission_attempt_status = 26;
+  string pointer_audit_request_id = 27;
+  string pointer_audit_request_digest = 28;
+}
+
+enum PublishedRealmAdmissionAttemptStatus {
+  PUBLISHED_REALM_ADMISSION_ATTEMPT_STATUS_UNSPECIFIED = 0;
+  PUBLISHED_REALM_ADMISSION_ATTEMPT_STATUS_COMMITTED = 1;
+}
+
+message GetPublishedRealmAdmissionOwnerReadResponse {
+  // Present only when the complete owner composition was read and validated.
+  PublishedRealmAdmissionOwnerReadEvidence proof = 1;
 }
 
 message GetGameplayCommandStatusRequest {

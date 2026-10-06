@@ -24,6 +24,7 @@ import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
+import net.firedevops.firemud.gamesession.service.AccountIds;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.DirectTextConnectScopeSessionStore;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
@@ -527,6 +528,11 @@ public class PlayCommandHandler {
 
   private Optional<PlayCommandHandlingResult> validateModerationPolicy(
       SessionContext context, GameplayWorldCatalog.RealmView selectedRealm, String tenantTag) {
+    if (!AccountIds.isCanonicalNonNilUuid(context.accountId())) {
+      return Optional.of(
+          authorityUnavailableFailure(
+              tenantTag, Long.toString(selectedRealm.gameInstanceId()), context.characterId()));
+    }
     var decision =
         moderationPolicyClient.evaluateGameplayAdmission(
             selectedRealm.tenantId(), context.accountId());
@@ -649,7 +655,7 @@ public class PlayCommandHandler {
     ListCharactersByAccountResponse response =
         entityManagementClient.listCharactersByAccount(
             Long.toString(selectedRealm.tenantId()),
-            Long.toString(context.accountId()),
+            context.accountId(),
             Long.toString(selectedRealm.gameInstanceId()),
             playableStateScope);
     if (response == null || response.hasError()) {
@@ -661,7 +667,7 @@ public class PlayCommandHandler {
     for (Character character : roster) {
       long characterId = requireResolvedCharacterId(character.getId());
       if (!Long.toString(selectedRealm.tenantId()).equals(character.getTenantId())
-          || !Long.toString(context.accountId()).equals(character.getAccountId())
+          || !context.accountId().equals(character.getAccountId())
           || character.getPlayableStateScope() != playableStateScope
           || !StringUtils.hasText(character.getName())
           || !characterIds.add(characterId)) {
@@ -806,7 +812,7 @@ public class PlayCommandHandler {
     String requestId = context.sessionId() + ":" + UUID.randomUUID();
     GetTenantMembershipForRuntimeResponse membershipResponse =
         accountClient.getTenantMembershipForRuntime(
-            Long.toString(context.accountId()), Long.toString(selectedRealm.tenantId()), requestId);
+            context.accountId(), Long.toString(selectedRealm.tenantId()), requestId);
     Optional<PlayCommandHandlingResult> membershipFailure =
         validateMembershipResponse(
             membershipResponse,
@@ -934,7 +940,7 @@ public class PlayCommandHandler {
     if (!isPublicProductionRealm(selectedRealm)) {
       GetRealmAccessGrantForRuntimeResponse grantResponse =
           accountClient.getRealmAccessGrantForRuntime(
-              Long.toString(context.accountId()),
+              context.accountId(),
               Long.toString(selectedRealm.tenantId()),
               selectedWorld.slug(),
               selectedRealm.slug(),
@@ -945,7 +951,17 @@ public class PlayCommandHandler {
             authorityUnavailableFailure(
                 tenantTag, Long.toString(selectedRealm.gameInstanceId()), requestedCharacterId));
       }
-      if (grantError.isPresent() || !grantResponse.getGranted()) {
+      if (grantError.isPresent()) {
+        return Optional.of(
+            worldAccessDeniedFailure(
+                context, tenantTag, selectedWorld, selectedRealm, requestedCharacterId));
+      }
+      if (!isSafeRealmGrantResponse(grantResponse, context, selectedWorld, selectedRealm)) {
+        return Optional.of(
+            authorityUnavailableFailure(
+                tenantTag, Long.toString(selectedRealm.gameInstanceId()), requestedCharacterId));
+      }
+      if (!grantResponse.getGranted()) {
         return Optional.of(
             worldAccessDeniedFailure(
                 context, tenantTag, selectedWorld, selectedRealm, requestedCharacterId));
@@ -958,6 +974,24 @@ public class PlayCommandHandler {
       return Optional.empty();
     }
     return Optional.empty();
+  }
+
+  private boolean isSafeRealmGrantResponse(
+      GetRealmAccessGrantForRuntimeResponse response,
+      SessionContext context,
+      GameplayWorldCatalog.WorldView selectedWorld,
+      GameplayWorldCatalog.RealmView selectedRealm) {
+    if (!AccountIds.isCanonicalNonNilUuid(response.getAccountId())
+        || !context.accountId().equals(response.getAccountId())
+        || !Long.toString(selectedRealm.tenantId()).equals(response.getTenantId())
+        || !selectedWorld.slug().equals(response.getWorldSlug())
+        || !selectedRealm.slug().equals(response.getRealmSlug())
+        || (response.getGranted() && response.getGrantVersion() <= 0L)
+        || !StringUtils.hasText(response.getEvaluatedAt())) {
+      return false;
+    }
+    return AuthorityEvaluationFreshness.isFresh(
+        response.getEvaluatedAt(), authorityEvaluationClock);
   }
 
   private PlayCommandHandlingResult worldAccessDeniedFailure(

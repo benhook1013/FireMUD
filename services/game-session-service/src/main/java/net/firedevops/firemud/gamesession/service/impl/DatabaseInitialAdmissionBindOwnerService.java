@@ -6,12 +6,15 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.regex.Pattern;
+import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointer;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointerEvent;
 import net.firedevops.firemud.gamesession.entity.InitialAdmissionBindAttempt;
 import net.firedevops.firemud.gamesession.entity.InitialAdmissionBindAttempt.Status;
 import net.firedevops.firemud.gamesession.entity.InitialAdmissionBindCatalog;
+import net.firedevops.firemud.gamesession.entity.PublishedRealmCatalogEntry;
+import net.firedevops.firemud.gamesession.entity.PublishedRealmCatalogSnapshot;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerEventRepository;
 import net.firedevops.firemud.gamesession.repository.InitialAdmissionBindAttemptRepository;
@@ -35,7 +38,9 @@ public class DatabaseInitialAdmissionBindOwnerService implements InitialAdmissio
   private static final Pattern SHA_256 = Pattern.compile("[0-9a-f]{64}");
   private static final Pattern SLUG = Pattern.compile("[a-z0-9]+(?:-[a-z0-9]+)*");
   private static final String STATE_SCOPE = "SHARED";
-  private static final String CHARACTER_CREATION_POLICY = "ALLOW_NEW";
+  private static final String FIXTURE_SOURCE = "V9_FIXTURE";
+  private static final String PUBLISHED_SOURCE = "V14_PUBLISHED";
+  private static final String PUBLISHED_CHARACTER_CREATION_POLICY = "PRESEEDED_ONLY";
   private static final String AUDIT_ACTOR = "game-session-initial-admission-bind";
   private static final String AUDIT_REASON = "initial admission pointer bind";
 
@@ -87,14 +92,7 @@ public class DatabaseInitialAdmissionBindOwnerService implements InitialAdmissio
   @Transactional
   public InitialAdmissionBindAttempt beginIntent(InitialAdmissionBindRequest request) {
     validateRequest(request);
-    InitialAdmissionBindCatalog catalog =
-        catalogRepository
-            .findByTenantIdAndSelectors(
-                request.tenantId(), request.worldSlug(), request.realmSlug())
-            .orElseThrow(
-                () ->
-                    new IllegalArgumentException(
-                        "INITIAL_ADMISSION_CATALOG_NOT_FOUND: owner catalog row is missing"));
+    InitialAdmissionBindCatalog catalog = resolveCatalog(request);
     attemptRepository.lockAttemptAndRealm(
         request.tenantId(), request.initialAdmissionRequestId(), catalog.realmId());
 
@@ -146,7 +144,23 @@ public class DatabaseInitialAdmissionBindOwnerService implements InitialAdmissio
             null,
             now,
             now,
-            null));
+            null,
+            request.isPublishedCatalogRequest() ? PUBLISHED_SOURCE : FIXTURE_SOURCE,
+            request.publishedCatalog() == null
+                ? null
+                : request.publishedCatalog().targetNamespace(),
+            request.publishedCatalog() == null
+                ? null
+                : request.publishedCatalog().canonicalTenantId(),
+            request.launchEvidence() == null ? null : request.launchEvidence().gameTemplateId(),
+            request.launchEvidence() == null ? null : request.launchEvidence().launchDescriptorId(),
+            request.launchEvidence() == null ? null : request.launchEvidence().releaseBundleId(),
+            request.launchEvidence() == null
+                ? null
+                : request.launchEvidence().publishedReleaseBundleRef(),
+            request.launchEvidence() == null
+                ? null
+                : request.launchEvidence().versionStateEpoch()));
   }
 
   @Override
@@ -184,17 +198,7 @@ public class DatabaseInitialAdmissionBindOwnerService implements InitialAdmissio
     } catch (IllegalStateException exception) {
       return proof(binding, Outcome.ERROR, null, null, 0L, null, false);
     }
-    requireTargetMatchesCatalogAndRequest(
-        catalog,
-        new InitialAdmissionBindRequest(
-            attempt.tenantId(),
-            catalog.worldSlug(),
-            catalog.realmSlug(),
-            attempt.initialAdmissionRequestId(),
-            attempt.requestDigest(),
-            attempt.gameInstanceId(),
-            attempt.versionId(),
-            attempt.activeLifecycleEpoch()));
+    requireTargetMatchesCatalogAndAttempt(catalog, attempt);
     if (attemptRepository.hasPointerForCatalog(catalog)
         || attemptRepository.hasPointerForRuntimeTarget(
             attempt.tenantId(), attempt.gameInstanceId())) {
@@ -363,6 +367,11 @@ public class DatabaseInitialAdmissionBindOwnerService implements InitialAdmissio
         && Objects.equals(pointer.getRealmSlug(), catalog.realmSlug())
         && Objects.equals(pointer.getRealmId(), attempt.realmId())
         && Objects.equals(pointer.getPlayableStateNamespaceId(), attempt.playableStateNamespaceId())
+        && pointer.isVisible()
+        && pointer.isPublicProductionRealm()
+        && pointer.isRequiresCharacterSelection() == catalog.requiresCharacterSelection()
+        && Objects.equals(pointer.getStateScope(), catalog.stateScope())
+        && Objects.equals(pointer.getCharacterCreationPolicy(), catalog.characterCreationPolicy())
         && pointer.getPointerVersion() != null
         && pointer.getPointerVersion() >= 1L
         && Objects.equals(audit.getId(), attempt.auditEventId())
@@ -379,8 +388,8 @@ public class DatabaseInitialAdmissionBindOwnerService implements InitialAdmissio
         && audit.isVisible()
         && audit.isPublicProductionRealm()
         && audit.isRequiresCharacterSelection() == catalog.requiresCharacterSelection()
-        && Objects.equals(audit.getStateScope(), STATE_SCOPE)
-        && Objects.equals(audit.getCharacterCreationPolicy(), CHARACTER_CREATION_POLICY)
+        && Objects.equals(audit.getStateScope(), catalog.stateScope())
+        && Objects.equals(audit.getCharacterCreationPolicy(), catalog.characterCreationPolicy())
         && Objects.equals(audit.getControlPlaneRequestId(), attempt.initialAdmissionRequestId())
         && Objects.equals(audit.getActorPrincipal(), AUDIT_ACTOR)
         && Objects.equals(audit.getReason(), AUDIT_REASON)
@@ -389,6 +398,47 @@ public class DatabaseInitialAdmissionBindOwnerService implements InitialAdmissio
 
   private InitialAdmissionBindCatalog requireCatalogForAttempt(
       InitialAdmissionBindAttempt attempt) {
+    if (PUBLISHED_SOURCE.equals(attempt.catalogSourceKind())) {
+      PublishedRealmCatalogSnapshot snapshot =
+          catalogRepository
+              .findPublishedSnapshot(
+                  attempt.publishedTargetNamespace(), attempt.tenantId(), attempt.catalogRevision())
+              .orElseThrow(
+                  () ->
+                      new IllegalStateException(
+                          "INITIAL_ADMISSION_PUBLISHED_SNAPSHOT_MISSING: durable attempt lost its immutable snapshot"));
+      if (!snapshot.canonicalTenantId().equals(attempt.canonicalTenantId())
+          || snapshot.policySetEvidence().versionId() != attempt.versionId()) {
+        throw new IllegalStateException(
+            "INITIAL_ADMISSION_PUBLISHED_SNAPSHOT_MISMATCH: attempt no longer matches its exact published snapshot");
+      }
+      PublishedRealmCatalogEntry entry =
+          snapshot.entries().stream()
+              .filter(candidate -> candidate.realmId().equals(attempt.realmId()))
+              .findFirst()
+              .orElseThrow(
+                  () ->
+                      new IllegalStateException(
+                          "INITIAL_ADMISSION_PUBLISHED_ENTRY_MISSING: durable attempt lost its selected entry"));
+      InitialAdmissionBindCatalog catalog =
+          requirePublishedCatalog(
+              snapshot,
+              entry,
+              attempt.gameTemplateId() == null ? 0L : attempt.gameTemplateId(),
+              entry.policyEvidence().policy().worldSlug(),
+              entry.policyEvidence().policy().realmSlug());
+      if (!entry.playableStateNamespaceId().equals(attempt.playableStateNamespaceId())
+          || !catalog.stateScope().equals(attempt.playableStateScope())
+          || !PUBLISHED_SOURCE.equals(attempt.catalogSourceKind())) {
+        throw new IllegalStateException(
+            "INITIAL_ADMISSION_PUBLISHED_ENTRY_MISMATCH: attempt no longer matches its exact published entry");
+      }
+      return catalog;
+    }
+    if (!FIXTURE_SOURCE.equals(attempt.catalogSourceKind())) {
+      throw new IllegalStateException(
+          "INITIAL_ADMISSION_CATALOG_SOURCE_INVALID: durable attempt has an unknown source kind");
+    }
     InitialAdmissionBindCatalog catalog =
         catalogRepository
             .findByTenantId(attempt.tenantId())
@@ -404,6 +454,90 @@ public class DatabaseInitialAdmissionBindOwnerService implements InitialAdmissio
           "INITIAL_ADMISSION_CATALOG_MISMATCH: attempt no longer matches its owner catalog");
     }
     return catalog;
+  }
+
+  private InitialAdmissionBindCatalog resolveCatalog(InitialAdmissionBindRequest request) {
+    if (!request.isPublishedCatalogRequest()) {
+      if (request.publishedCatalog() != null || request.launchEvidence() != null) {
+        throw new IllegalArgumentException(
+            "INVALID_ARGUMENT: published catalog and launch evidence must be supplied together");
+      }
+      return catalogRepository
+          .findByTenantIdAndSelectors(request.tenantId(), request.worldSlug(), request.realmSlug())
+          .orElseThrow(
+              () ->
+                  new IllegalArgumentException(
+                      "INITIAL_ADMISSION_CATALOG_NOT_FOUND: owner fixture catalog row is missing"));
+    }
+    InitialAdmissionBindRequest.PublishedCatalogBinding reference = request.publishedCatalog();
+    InitialAdmissionBindRequest.LaunchEvidence launch = request.launchEvidence();
+    if (reference.targetNamespace() == null
+        || reference.targetNamespace().isBlank()
+        || reference.canonicalTenantId() == null
+        || reference.catalogRevision() <= 0
+        || launch.gameTemplateId() <= 0
+        || launch.releaseBundleId() <= 0
+        || launch.versionStateEpoch() <= 0
+        || launch.launchDescriptorId() == null
+        || launch.launchDescriptorId().isBlank()
+        || launch.publishedReleaseBundleRef() == null
+        || launch.publishedReleaseBundleRef().isBlank()) {
+      throw new IllegalArgumentException(
+          "INVALID_ARGUMENT: published admission requires exact snapshot and authored launch evidence");
+    }
+    PublishedRealmCatalogSnapshot snapshot =
+        catalogRepository
+            .findPublishedSnapshot(
+                reference.targetNamespace(), request.tenantId(), reference.catalogRevision())
+            .orElseThrow(
+                () ->
+                    new IllegalArgumentException(
+                        "INITIAL_ADMISSION_PUBLISHED_SNAPSHOT_NOT_FOUND: exact immutable snapshot is absent"));
+    if (!reference.canonicalTenantId().equals(snapshot.canonicalTenantId())
+        || snapshot.policySetEvidence().versionId() != request.versionId()) {
+      throw new IllegalArgumentException(
+          "INITIAL_ADMISSION_PUBLISHED_SNAPSHOT_MISMATCH: local tenant, canonical tenant, revision, or version changed");
+    }
+    PublishedRealmCatalogEntry selected =
+        snapshot.requireVisibleEntryForAdmission(request.worldSlug(), request.realmSlug());
+    return requirePublishedCatalog(
+        snapshot, selected, launch.gameTemplateId(), request.worldSlug(), request.realmSlug());
+  }
+
+  private InitialAdmissionBindCatalog requirePublishedCatalog(
+      PublishedRealmCatalogSnapshot snapshot,
+      PublishedRealmCatalogEntry entry,
+      long gameTemplateId,
+      String worldSlug,
+      String realmSlug) {
+    RealmEntryPolicy policy = entry.policyEvidence().policy();
+    if (gameTemplateId <= 0
+        || !policy.visible()
+        || !policy.publicProduction()
+        || policy.stateScope() != RealmEntryPolicy.StateScope.SHARED
+        || policy.entryPolicy() != RealmEntryPolicy.EntryPolicy.PRESEEDED_ONLY
+        || !policy.worldSlug().equals(worldSlug)
+        || !policy.realmSlug().equals(realmSlug)
+        || entry.namespaceResolution() != PublishedRealmCatalogEntry.NamespaceResolution.RESOLVED) {
+      throw new IllegalStateException(
+          "INITIAL_ADMISSION_PUBLISHED_POLICY_UNSUPPORTED: only visible public SHARED PRESEEDED_ONLY entries with resolved namespaces are admissible");
+    }
+    return new InitialAdmissionBindCatalog(
+        entry.realmId(),
+        snapshot.tenantId(),
+        gameTemplateId,
+        policy.worldSlug(),
+        policy.worldDisplayName(),
+        policy.realmSlug(),
+        policy.realmDisplayName(),
+        snapshot.catalogRevision(),
+        entry.requirePlayableStateNamespaceId(),
+        true,
+        true,
+        true,
+        STATE_SCOPE,
+        PUBLISHED_CHARACTER_CREATION_POLICY,
+        snapshot.createdAt());
   }
 
   private InitialAdmissionBindAttempt attachHoldIfNeeded(
@@ -457,6 +591,7 @@ public class DatabaseInitialAdmissionBindOwnerService implements InitialAdmissio
     if (attempt.tenantId() != request.tenantId()
         || !attempt.initialAdmissionRequestId().equals(request.initialAdmissionRequestId())
         || !attempt.requestDigest().equals(request.requestDigest())
+        || !matchesCatalogSource(attempt, request)
         || !attempt.realmId().equals(catalog.realmId())
         || !attempt.playableStateNamespaceId().equals(catalog.playableStateNamespaceId())
         || !attempt.playableStateScope().equals(catalog.stateScope())
@@ -468,6 +603,30 @@ public class DatabaseInitialAdmissionBindOwnerService implements InitialAdmissio
       throw new IllegalArgumentException(
           "IDEMPOTENCY_CONFLICT: initial admission request identity changed");
     }
+  }
+
+  private boolean matchesCatalogSource(
+      InitialAdmissionBindAttempt attempt, InitialAdmissionBindRequest request) {
+    if (request.isPublishedCatalogRequest()) {
+      var reference = request.publishedCatalog();
+      var launch = request.launchEvidence();
+      return PUBLISHED_SOURCE.equals(attempt.catalogSourceKind())
+          && Objects.equals(attempt.publishedTargetNamespace(), reference.targetNamespace())
+          && Objects.equals(attempt.canonicalTenantId(), reference.canonicalTenantId())
+          && Objects.equals(attempt.gameTemplateId(), launch.gameTemplateId())
+          && Objects.equals(attempt.launchDescriptorId(), launch.launchDescriptorId())
+          && Objects.equals(attempt.releaseBundleId(), launch.releaseBundleId())
+          && Objects.equals(attempt.publishedReleaseBundleRef(), launch.publishedReleaseBundleRef())
+          && Objects.equals(attempt.versionStateEpoch(), launch.versionStateEpoch());
+    }
+    return FIXTURE_SOURCE.equals(attempt.catalogSourceKind())
+        && attempt.publishedTargetNamespace() == null
+        && attempt.canonicalTenantId() == null
+        && attempt.gameTemplateId() == null
+        && attempt.launchDescriptorId() == null
+        && attempt.releaseBundleId() == null
+        && attempt.publishedReleaseBundleRef() == null
+        && attempt.versionStateEpoch() == null;
   }
 
   private void requireSameBinding(
@@ -509,6 +668,44 @@ public class DatabaseInitialAdmissionBindOwnerService implements InitialAdmissio
         || !Objects.equals(gameInstance.getVersionId(), request.versionId())) {
       throw new IllegalArgumentException(
           "INITIAL_ADMISSION_TARGET_MISMATCH: target does not match persisted tenant/template/version");
+    }
+    if (request.isPublishedCatalogRequest()) {
+      InitialAdmissionBindRequest.LaunchEvidence launch = request.launchEvidence();
+      if (!Objects.equals(gameInstance.getLaunchDescriptorId(), launch.launchDescriptorId())
+          || !Objects.equals(gameInstance.getReleaseBundleId(), launch.releaseBundleId())
+          || !Objects.equals(gameInstance.getVersionStateEpoch(), launch.versionStateEpoch())
+          || !Objects.equals(
+              gameInstance.getRunOwnedStartPublishedReleaseBundleRef(),
+              launch.publishedReleaseBundleRef())) {
+        throw new IllegalArgumentException(
+            "INITIAL_ADMISSION_LAUNCH_EVIDENCE_MISMATCH: authored descriptor no longer matches the persisted runtime target");
+      }
+    }
+  }
+
+  private void requireTargetMatchesCatalogAndAttempt(
+      InitialAdmissionBindCatalog catalog, InitialAdmissionBindAttempt attempt) {
+    GameInstance gameInstance =
+        gameInstanceRepository
+            .findByTenantIdAndGameInstanceIdForUpdate(attempt.tenantId(), attempt.gameInstanceId())
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "GAME_INSTANCE_NOT_FOUND: initial admission target is not GS-owned"));
+    if (!Objects.equals(gameInstance.getGameTemplateId(), catalog.gameTemplateId())
+        || !Objects.equals(gameInstance.getVersionId(), attempt.versionId())) {
+      throw new IllegalStateException(
+          "INITIAL_ADMISSION_TARGET_MISMATCH: target does not match persisted tenant/template/version");
+    }
+    if (PUBLISHED_SOURCE.equals(attempt.catalogSourceKind())
+        && (!Objects.equals(gameInstance.getLaunchDescriptorId(), attempt.launchDescriptorId())
+            || !Objects.equals(gameInstance.getReleaseBundleId(), attempt.releaseBundleId())
+            || !Objects.equals(gameInstance.getVersionStateEpoch(), attempt.versionStateEpoch())
+            || !Objects.equals(
+                gameInstance.getRunOwnedStartPublishedReleaseBundleRef(),
+                attempt.publishedReleaseBundleRef()))) {
+      throw new IllegalStateException(
+          "INITIAL_ADMISSION_LAUNCH_EVIDENCE_MISMATCH: authored descriptor no longer matches the persisted runtime target");
     }
   }
 

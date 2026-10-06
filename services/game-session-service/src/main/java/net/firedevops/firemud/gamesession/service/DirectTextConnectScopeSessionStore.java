@@ -61,13 +61,14 @@ public final class DirectTextConnectScopeSessionStore {
 
   public void replaceWorldSnapshot(
       long transportSessionId,
-      long authenticatedAccountId,
+      String authenticatedAccountId,
       String catalogFingerprint,
       List<WorldOrdinalTarget> ordinalTargets,
       Instant now) {
     requireTransportSessionId(transportSessionId);
-    if (authenticatedAccountId < 0L) {
-      throw new IllegalArgumentException("authenticatedAccountId must not be negative");
+    if (authenticatedAccountId != null
+        && !AccountIds.isCanonicalNonNilUuid(authenticatedAccountId)) {
+      throw new IllegalArgumentException("authenticatedAccountId must be a canonical Account UUID");
     }
     Objects.requireNonNull(now, "now must not be null");
     if (catalogFingerprint == null || catalogFingerprint.isBlank()) {
@@ -87,13 +88,13 @@ public final class DirectTextConnectScopeSessionStore {
           if (record.sessionId() != transportSessionId) {
             throw new ConflictingIdentityException("lobby record transport session did not match");
           }
-          if (authenticatedAccountId > 0L
-              && record.accountId() > 0L
-              && record.accountId() != authenticatedAccountId) {
+          if (authenticatedAccountId != null
+              && record.accountId() != null
+              && !record.accountId().equals(authenticatedAccountId)) {
             record = LobbyRecord.empty(transportSessionId);
           }
-          long accountId =
-              authenticatedAccountId > 0L ? authenticatedAccountId : record.accountId();
+          String accountId =
+              authenticatedAccountId != null ? authenticatedAccountId : record.accountId();
           return record.withWorldSnapshot(
               accountId, expiresAtMillis, catalogFingerprint, safeTargets);
         });
@@ -106,7 +107,7 @@ public final class DirectTextConnectScopeSessionStore {
     LobbyRecord record = readRecord(caller.sessionId());
     if (record == null
         || record.sessionId() != caller.sessionId()
-        || (record.accountId() > 0L && record.accountId() != caller.accountId())) {
+        || (record.accountId() != null && !record.accountId().equals(caller.accountId()))) {
       return Optional.empty();
     }
     return asWorldsSnapshot(record, now);
@@ -168,7 +169,7 @@ public final class DirectTextConnectScopeSessionStore {
           if (record.sessionId() != caller.sessionId()) {
             throw new ConflictingIdentityException("lobby record transport session did not match");
           }
-          if (record.accountId() > 0L && record.accountId() != caller.accountId()) {
+          if (record.accountId() != null && !record.accountId().equals(caller.accountId())) {
             record = LobbyRecord.empty(caller.sessionId());
           }
           Map<String, List<StoredScopedRealm>> byWorld = new HashMap<>(record.scopesByWorld());
@@ -248,7 +249,7 @@ public final class DirectTextConnectScopeSessionStore {
           if (record.sessionId() != caller.sessionId()) {
             throw new ConflictingIdentityException("lobby record transport session did not match");
           }
-          if (record.accountId() > 0L && record.accountId() != caller.accountId()) {
+          if (record.accountId() != null && !record.accountId().equals(caller.accountId())) {
             record = LobbyRecord.empty(caller.sessionId());
           }
           Map<String, List<StoredScopedRealm>> byWorld = new HashMap<>(record.scopesByWorld());
@@ -363,7 +364,7 @@ public final class DirectTextConnectScopeSessionStore {
             throw new ConflictingIdentityException("lobby record transport session did not match");
           }
           LobbyRecord record = current;
-          if (record.accountId() > 0L && record.accountId() != caller.accountId()) {
+          if (record.accountId() != null && !record.accountId().equals(caller.accountId())) {
             record = LobbyRecord.empty(caller.sessionId());
           }
           Map<String, List<StoredScopedRealm>> byWorld = new HashMap<>(record.scopesByWorld());
@@ -543,7 +544,10 @@ public final class DirectTextConnectScopeSessionStore {
     }
     try {
       LobbyRecord record = objectMapper.readValue(json, LobbyRecord.class);
-      if (record == null || record.sessionId() != expectedSessionId || record.accountId() < 0L) {
+      if (record == null
+          || record.sessionId() != expectedSessionId
+          || (record.accountId() != null
+              && !AccountIds.isCanonicalNonNilUuid(record.accountId()))) {
         throw new ConflictingIdentityException("lobby state identity was invalid");
       }
       return record.normalized();
@@ -658,7 +662,7 @@ public final class DirectTextConnectScopeSessionStore {
       SessionContext caller, long tenantId, ScopedRealm scope) {
     Objects.requireNonNull(scope, "scope must not be null");
     PlayerExecutionContext context = scope.playerContext();
-    if (!Long.toString(caller.accountId()).equals(context.getAccountId())
+    if (!caller.accountId().equals(context.getAccountId())
         || !Long.toString(caller.sessionId()).equals(context.getSessionId())
         || tenantId <= 0L
         || !Long.toString(tenantId).equals(context.getTenantId())) {
@@ -740,7 +744,7 @@ public final class DirectTextConnectScopeSessionStore {
   private static boolean matchesCaller(LobbyRecord record, SessionContext caller) {
     return record != null
         && record.sessionId() == caller.sessionId()
-        && record.accountId() == caller.accountId();
+        && caller.accountId().equals(record.accountId());
   }
 
   private static void validateOrdinalTargets(List<WorldOrdinalTarget> targets) {
@@ -764,7 +768,7 @@ public final class DirectTextConnectScopeSessionStore {
   }
 
   private static void requireCallerIdentity(SessionContext caller) {
-    if (caller.accountId() <= 0L) {
+    if (!AccountIds.isCanonicalNonNilUuid(caller.accountId())) {
       throw new IllegalArgumentException("authenticated account is required");
     }
     requireTransportSessionId(caller.sessionId());
@@ -1083,7 +1087,7 @@ public final class DirectTextConnectScopeSessionStore {
 
   private record LobbyRecord(
       long sessionId,
-      long accountId,
+      String accountId,
       long worldsExpiresAtEpochMs,
       String catalogFingerprint,
       List<WorldOrdinalTarget> ordinalTargets,
@@ -1100,11 +1104,11 @@ public final class DirectTextConnectScopeSessionStore {
     }
 
     private static LobbyRecord empty(long sessionId) {
-      return new LobbyRecord(sessionId, 0L, 0L, null, List.of(), Map.of(), Map.of());
+      return new LobbyRecord(sessionId, null, 0L, null, List.of(), Map.of(), Map.of());
     }
 
     private LobbyRecord normalized() {
-      if (sessionId <= 0L || accountId < 0L) {
+      if (sessionId <= 0L || (accountId != null && !AccountIds.isCanonicalNonNilUuid(accountId))) {
         throw new ConflictingIdentityException("lobby state identity was invalid");
       }
       return new LobbyRecord(
@@ -1118,7 +1122,7 @@ public final class DirectTextConnectScopeSessionStore {
     }
 
     private LobbyRecord withWorldSnapshot(
-        long accountId,
+        String accountId,
         long expiresAtEpochMs,
         String fingerprint,
         List<WorldOrdinalTarget> targets) {

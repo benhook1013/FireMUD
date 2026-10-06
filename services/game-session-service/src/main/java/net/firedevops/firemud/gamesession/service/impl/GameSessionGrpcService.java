@@ -16,6 +16,7 @@ import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.service.AccountIds;
 import net.firedevops.firemud.gamesession.service.AccountPresenceQueryService;
 import net.firedevops.firemud.gamesession.service.FeatureFlagService;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
@@ -232,9 +233,16 @@ public final class GameSessionGrpcService
     return ControlPlaneRequestParser.parsePositiveLong(ownerAccountIdText, "ownerAccountId");
   }
 
-  private List<Long> parseAccountIds(List<String> accountIds) {
+  private String parsePresenceAccountId(String accountId, String fieldName) {
+    if (!AccountIds.isCanonicalNonNilUuid(accountId)) {
+      throw new IllegalArgumentException(fieldName + " must be a canonical non-nil Account UUID");
+    }
+    return accountId;
+  }
+
+  private List<String> parsePresenceAccountIds(List<String> accountIds) {
     return accountIds.stream()
-        .map(accountId -> ControlPlaneRequestParser.parsePositiveLong(accountId, "accountId"))
+        .map(accountId -> parsePresenceAccountId(accountId, "accountId"))
         .toList();
   }
 
@@ -437,18 +445,19 @@ public final class GameSessionGrpcService
     try {
       long tenantId =
           ControlPlaneRequestParser.parsePositiveLong(request.getTenantId(), "tenantId");
-      long viewerAccountId = parseOwnerAccountId(request.getViewerAccountId());
+      String viewerAccountId =
+          parsePresenceAccountId(request.getViewerAccountId(), "viewerAccountId");
       requireTenantOrCurrentAccountAccess(tenantId, viewerAccountId);
       if (request.getAccountIdsCount() > 100) {
         throw new IllegalArgumentException("accountIds must contain at most 100 entries");
       }
-      List<Long> accountIds = parseAccountIds(request.getAccountIdsList());
+      List<String> accountIds = parsePresenceAccountIds(request.getAccountIdsList());
       QueryAccountPresenceResponse.Builder builder = QueryAccountPresenceResponse.newBuilder();
       for (var snapshot :
           accountPresenceQueryService.queryAccountPresence(tenantId, viewerAccountId, accountIds)) {
         AccountPresenceEntry.Builder entry =
             AccountPresenceEntry.newBuilder()
-                .setAccountId(Long.toString(snapshot.accountId()))
+                .setAccountId(snapshot.accountId())
                 .setOnline(snapshot.online());
         if (snapshot.gameInstanceId() != null) {
           entry.setGameInstanceId(Long.toString(snapshot.gameInstanceId()));
@@ -788,8 +797,11 @@ public final class GameSessionGrpcService
     throw new AuthorizationException("Tenant access required");
   }
 
-  private void requireTenantOrCurrentAccountAccess(long tenantId, long accountId) {
-    if (SessionContext.hasTenantAccess(tenantId) || isCurrentAccount(accountId)) {
+  private void requireTenantOrCurrentAccountAccess(long tenantId, String accountId) {
+    String currentAccountId = SessionContext.getAccountId();
+    if (SessionContext.hasTenantAccess(tenantId)
+        || (AccountIds.isCanonicalNonNilUuid(currentAccountId)
+            && currentAccountId.equals(accountId))) {
       return;
     }
     throw new AuthorizationException("Account access required");

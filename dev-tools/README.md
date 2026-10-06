@@ -28,6 +28,10 @@ Keep the root of `dev-tools/` small. Only canonical human-facing entrypoints and
 
 The `pr-review`, `report-worktree-pr-topology.sh`, and `maintenance/cloc-report.py pr` entrypoints require GitHub CLI `gh` >= 2.63.0 because they request the `baseRefOid` field. The repository workflow pin is sourced from `config/workflow-tool-versions.env` as `GH_VERSION`.
 
+## FireController
+
+[`fire-controller`](fire_controller/README.md) is the reusable project-configured entrance for independent SQLite jobs and delegated review commands. Project-specific WSL wrappers select reviewed checkouts and explicit contexts; the existing `pr-review` entrance remains during rollout. The separately maintained private status site reads FireController's public job and workstream projections and serves private detail routes locally. Its source and privacy proof are owned by [the native site handoff](fire_controller/integration/README.md); private links and details stay out of static public artifacts.
+
 ## Folder map
 
 - `backups/` – local and operator backup helpers; see `backups/README.md` for the script map.

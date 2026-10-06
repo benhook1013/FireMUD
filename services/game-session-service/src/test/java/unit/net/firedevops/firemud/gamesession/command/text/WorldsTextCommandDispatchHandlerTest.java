@@ -39,6 +39,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mockito;
 
 class WorldsTextCommandDispatchHandlerTest {
+  private static final String ACCOUNT_ID = "5e1340f8-99c8-49fa-a4fe-5fc9d2075621";
   private final EntityManagementClient entityManagementClient =
       Mockito.mock(EntityManagementClient.class);
   private final GameplayCatalogProperties gameplayCatalogProperties =
@@ -58,7 +59,7 @@ class WorldsTextCommandDispatchHandlerTest {
   void publishesCommandEventForGameplayScopedWorldsBrowse() {
     SessionContext context =
         new SessionContext(
-            7L, 22L, 41L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+            7L, 22L, ACCOUNT_ID, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
 
     TextCommandInterpretationResult result =
         handler.handle(
@@ -188,7 +189,7 @@ class WorldsTextCommandDispatchHandlerTest {
         .when(store)
         .replaceWorldSnapshot(
             Mockito.anyLong(),
-            Mockito.anyLong(),
+            Mockito.nullable(String.class),
             Mockito.anyString(),
             Mockito.anyList(),
             Mockito.any(Instant.class));
@@ -207,7 +208,7 @@ class WorldsTextCommandDispatchHandlerTest {
     Mockito.verify(store)
         .replaceWorldSnapshot(
             Mockito.eq(7L),
-            Mockito.eq(0L),
+            Mockito.isNull(),
             Mockito.anyString(),
             Mockito.anyList(),
             Mockito.any(Instant.class));
@@ -257,7 +258,7 @@ class WorldsTextCommandDispatchHandlerTest {
             scriptEventPublisher);
     SessionContext context =
         new SessionContext(
-            7L, 22L, 41L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+            7L, 22L, ACCOUNT_ID, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
 
     TextCommandInterpretationResult result =
         scopedHandler.handle(
@@ -314,7 +315,7 @@ class WorldsTextCommandDispatchHandlerTest {
             Mockito.anyString()))
         .thenReturn(
             GetRealmAccessGrantForRuntimeResponse.newBuilder()
-                .setAccountId("41")
+                .setAccountId(ACCOUNT_ID)
                 .setTenantId("22")
                 .setWorldSlug("sandbox")
                 .setRealmSlug("production")
@@ -332,7 +333,7 @@ class WorldsTextCommandDispatchHandlerTest {
             scriptEventPublisher);
     SessionContext context =
         new SessionContext(
-            7L, 22L, 41L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+            7L, 22L, ACCOUNT_ID, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
 
     TextCommandInterpretationResult result =
         scopedHandler.handle(
@@ -363,7 +364,7 @@ class WorldsTextCommandDispatchHandlerTest {
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             GetTenantMembershipForRuntimeResponse.newBuilder()
-                .setAccountId("123")
+                .setAccountId(ACCOUNT_ID)
                 .setTenantId("22")
                 .setMembershipExists(true)
                 .setGameplayAdmissionAllowed(true)
@@ -382,14 +383,14 @@ class WorldsTextCommandDispatchHandlerTest {
                 .setEvaluatedAt(Instant.now().toString())
                 .build());
     when(entityManagementClient.listCharactersByAccount(
-            "22", "123", "41", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
+            "22", ACCOUNT_ID, "41", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
         .thenReturn(
             ListCharactersByAccountResponse.newBuilder()
                 .addCharacters(
                     net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
                         .setId("7001")
                         .setTenantId("22")
-                        .setAccountId("123")
+                        .setAccountId(ACCOUNT_ID)
                         .setName("Emberline")
                         .setLevel(12)
                         .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
@@ -397,7 +398,7 @@ class WorldsTextCommandDispatchHandlerTest {
                 .build());
     SessionContext context =
         new SessionContext(
-            7L, 22L, 123L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+            7L, 22L, ACCOUNT_ID, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
 
     WorldsTextCommandDispatchHandler scopedHandler =
         new WorldsTextCommandDispatchHandler(
@@ -421,7 +422,8 @@ class WorldsTextCommandDispatchHandlerTest {
         .extracting(output -> output.payload())
         .isInstanceOf(CharacterBrowseViewOutput.class);
     Mockito.verify(entityManagementClient)
-        .listCharactersByAccount("22", "123", "41", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+        .listCharactersByAccount(
+            "22", ACCOUNT_ID, "41", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
     Mockito.verify(scriptEventPublisher)
         .publishCommandEvent(
             Mockito.eq(context),
@@ -448,7 +450,7 @@ class WorldsTextCommandDispatchHandlerTest {
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             GetTenantMembershipForRuntimeResponse.newBuilder()
-                .setAccountId("123")
+                .setAccountId(ACCOUNT_ID)
                 .setTenantId("22")
                 .setMembershipExists(false)
                 .setGameplayAdmissionAllowed(false)
@@ -456,7 +458,7 @@ class WorldsTextCommandDispatchHandlerTest {
                 .setEvaluatedAt(Instant.now().toString())
                 .build(),
             GetTenantMembershipForRuntimeResponse.newBuilder()
-                .setAccountId("123")
+                .setAccountId(ACCOUNT_ID)
                 .setTenantId("22")
                 .setMembershipExists(true)
                 .setGameplayAdmissionAllowed(false)
@@ -466,7 +468,7 @@ class WorldsTextCommandDispatchHandlerTest {
                 .setEvaluatedAt(Instant.now().toString())
                 .build(),
             GetTenantMembershipForRuntimeResponse.newBuilder()
-                .setAccountId("123")
+                .setAccountId(ACCOUNT_ID)
                 .setTenantId("22")
                 .setMembershipExists(true)
                 .setGameplayAdmissionAllowed(true)
@@ -483,7 +485,7 @@ class WorldsTextCommandDispatchHandlerTest {
             Mockito.anyString()))
         .thenReturn(
             GetRealmAccessGrantForRuntimeResponse.newBuilder()
-                .setAccountId("123")
+                .setAccountId(ACCOUNT_ID)
                 .setTenantId("22")
                 .setWorldSlug("demo")
                 .setRealmSlug("playtest")
@@ -500,7 +502,7 @@ class WorldsTextCommandDispatchHandlerTest {
             scriptEventPublisher);
     SessionContext context =
         new SessionContext(
-            7L, 22L, 123L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+            7L, 22L, ACCOUNT_ID, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
 
     TextCommandInterpretationResult unknownRealm =
         scopedHandler.handle(charsRequest("guessed", context));
@@ -537,7 +539,7 @@ class WorldsTextCommandDispatchHandlerTest {
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             GetTenantMembershipForRuntimeResponse.newBuilder()
-                .setAccountId("123")
+                .setAccountId(ACCOUNT_ID)
                 .setTenantId("22")
                 .setMembershipExists(false)
                 .setGameplayAdmissionAllowed(false)
@@ -566,7 +568,7 @@ class WorldsTextCommandDispatchHandlerTest {
             scriptEventPublisher);
     SessionContext context =
         new SessionContext(
-            7L, 22L, 123L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+            7L, 22L, ACCOUNT_ID, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
 
     TextCommandInterpretationResult result =
         scopedHandler.handle(
@@ -651,7 +653,7 @@ class WorldsTextCommandDispatchHandlerTest {
                 .setOutcomeCode("CREATED")
                 .build());
     SessionContext context =
-        new SessionContext(7L, 22L, 41L, "emberline@example.com", 0L, null, 0L, "jwt");
+        new SessionContext(7L, 22L, ACCOUNT_ID, "emberline@example.com", 0L, null, 0L, "jwt");
 
     TextCommandInterpretationResult realmsResult =
         scopedHandler.handle(
@@ -708,7 +710,7 @@ class WorldsTextCommandDispatchHandlerTest {
         org.mockito.ArgumentCaptor.forClass(DirectTextConnectScopeTarget.class);
     Mockito.verify(accountClient)
         .issueDirectTextConnectScope(callerCaptor.capture(), targetCaptor.capture());
-    assertThat(callerCaptor.getValue().getAccountId()).isEqualTo("41");
+    assertThat(callerCaptor.getValue().getAccountId()).isEqualTo(ACCOUNT_ID);
     assertThat(callerCaptor.getValue().getSessionId()).isEqualTo("7");
     assertThat(targetCaptor.getValue().realmId()).isEqualTo(realmId.toString());
     assertThat(targetCaptor.getValue().catalogRevision()).isEqualTo(7L);
@@ -739,7 +741,7 @@ class WorldsTextCommandDispatchHandlerTest {
     assertThat(scopeIds.getLast()).isEqualTo(scopeIds.getFirst());
     assertThat(scopeIds.get(1)).isEqualTo(scopeIds.getFirst());
     assertThat(joinContexts.getFirst().getRequestId()).isEqualTo(requestIds.getFirst());
-    assertThat(joinContexts.getFirst().getAccountId()).isEqualTo("41");
+    assertThat(joinContexts.getFirst().getAccountId()).isEqualTo(ACCOUNT_ID);
     assertThat(joinContexts.getFirst().getSessionId()).isEqualTo("7");
     assertThat(joinContexts.getFirst().getRealmId()).isEqualTo(realmId.toString());
     assertThat(joinContexts.getLast()).isEqualTo(joinContexts.getFirst());
@@ -805,7 +807,7 @@ class WorldsTextCommandDispatchHandlerTest {
                 .setOutcomeCode("MEMBERSHIP_RECONCILIATION_REQUIRED")
                 .build());
     SessionContext context =
-        new SessionContext(7L, 22L, 41L, "emberline@example.com", 0L, null, 0L, "jwt");
+        new SessionContext(7L, 22L, ACCOUNT_ID, "emberline@example.com", 0L, null, 0L, "jwt");
 
     scopedHandler.handle(
         new TextCommandDispatchRequest(
@@ -1053,7 +1055,7 @@ class WorldsTextCommandDispatchHandlerTest {
                 DirectTextConnectScopeSessionStore.inMemoryForTest()),
             scriptEventPublisher);
     SessionContext context =
-        new SessionContext(7L, 22L, 41L, "emberline@example.com", 0L, null, 0L, "jwt");
+        new SessionContext(7L, 22L, ACCOUNT_ID, "emberline@example.com", 0L, null, 0L, "jwt");
     scopedHandler.handle(
         new TextCommandDispatchRequest(
             "7",

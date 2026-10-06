@@ -87,7 +87,7 @@ class AuthoredActionTextCommandDispatchHandlerTest {
 
   private static SessionContext context() {
     return new SessionContext(
-        7L, 22L, 41L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+        7L, 22L, "41", "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
   }
 
   private static TextCommand authoredAction(String commandId, String rawLine, List<String> args) {

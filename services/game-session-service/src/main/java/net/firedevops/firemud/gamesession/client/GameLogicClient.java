@@ -47,6 +47,7 @@ import net.firedevops.firemud.gamelogic.v1.PingRequest;
 import net.firedevops.firemud.gamelogic.v1.PingResponse;
 import net.firedevops.firemud.gamelogic.v1.SendCommunicationRequest;
 import net.firedevops.firemud.gamelogic.v1.SendCommunicationResponse;
+import net.firedevops.firemud.gamesession.service.AccountIds;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.GameplayRuntimeRoomIds;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -156,18 +157,22 @@ public class GameLogicClient
       String targetCharacterId,
       String targetCharacterName,
       String effectId) {
+    String accountUuid = context.accountId();
+    if (!AccountIds.isCanonicalNonNilUuid(accountUuid)) {
+      throw new IllegalArgumentException(
+          "Session context must contain a canonical non-nil Account UUID");
+    }
     String canonicalRoomId = GameplayRuntimeRoomIds.requireCanonical(roomId, "roomInstanceId");
     String tenantId = Long.toString(context.tenantId());
     String sessionId = Long.toString(context.sessionId());
     String characterId = Long.toString(context.characterId());
-    String accountId = Long.toString(context.accountId());
     String gameInstanceId = Long.toString(context.gameInstanceId());
     SendCommunicationRequest request =
         SendCommunicationRequest.newBuilder()
             .setTenantId(tenantId)
             .setSessionId(sessionId)
             .setCharacterId(characterId)
-            .setAccountId(accountId)
+            .setAccountId(accountUuid)
             .setRoomInstance(
                 RoomInstanceRef.newBuilder()
                     .setTenantId(tenantId)
@@ -346,7 +351,7 @@ public class GameLogicClient
       SessionContext context, String itemReference, int quantity, String effectId) {
     String tenantId = Long.toString(context.tenantId());
     String sessionId = Long.toString(context.sessionId());
-    String accountId = Long.toString(context.accountId());
+    String accountId = context.accountId();
     String characterId = Long.toString(context.characterId());
     String gameInstanceId = Long.toString(context.gameInstanceId());
     String roomInstanceId =
@@ -355,7 +360,7 @@ public class GameLogicClient
         PickupVisibleRoomItemRequest.newBuilder()
             .setTenantId(tenantId)
             .setSessionId(sessionId)
-            .setAccountId(accountId)
+            .setAccountId(accountId == null ? "" : accountId)
             .setCharacterId(characterId)
             .setGameInstanceId(gameInstanceId)
             .setRoomInstanceId(roomInstanceId)
@@ -449,7 +454,7 @@ public class GameLogicClient
       SessionContext context, String itemReference, int quantity, String effectId) {
     String tenantId = Long.toString(context.tenantId());
     String sessionId = Long.toString(context.sessionId());
-    String accountId = Long.toString(context.accountId());
+    String accountId = context.accountId();
     String characterId = Long.toString(context.characterId());
     String gameInstanceId = Long.toString(context.gameInstanceId());
     String roomInstanceId =
@@ -458,7 +463,7 @@ public class GameLogicClient
         DropCarriedItemRequest.newBuilder()
             .setTenantId(tenantId)
             .setSessionId(sessionId)
-            .setAccountId(accountId)
+            .setAccountId(accountId == null ? "" : accountId)
             .setCharacterId(characterId)
             .setGameInstanceId(gameInstanceId)
             .setRoomInstanceId(roomInstanceId)
@@ -720,7 +725,7 @@ public class GameLogicClient
     return gameplaySessionAttestationService.issueGameplaySessionAttestation(
         Long.toString(context.tenantId()),
         Long.toString(context.sessionId()),
-        Long.toString(context.accountId()),
+        context.accountId(),
         Long.toString(context.characterId()),
         Long.toString(context.gameInstanceId()),
         canonicalRoomId,

@@ -38,6 +38,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 class WorldsCommandHandlerTest {
+  private static final String ACCOUNT_ID = "5e1340f8-99c8-49fa-a4fe-5fc9d2075621";
   private static final UUID ADMISSION_REALM_ID =
       UUID.fromString("00000000-0000-0000-0000-000000000001");
   private static final UUID ADMISSION_NAMESPACE_ID =
@@ -387,7 +388,7 @@ class WorldsCommandHandlerTest {
         .thenReturn(publicEntitlement(false));
     Mockito.when(
             entityManagementClient.listCharactersByAccount(
-                "22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
+                "22", ACCOUNT_ID, "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
         .thenReturn(ListCharactersByAccountResponse.newBuilder().build());
     DirectTextConnectScopeSessionStore scopeStore =
         DirectTextConnectScopeSessionStore.inMemoryForTest();
@@ -500,14 +501,14 @@ class WorldsCommandHandlerTest {
                 .build());
     Mockito.when(
             entityManagementClient.listCharactersByAccount(
-                "22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
+                "22", ACCOUNT_ID, "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
         .thenReturn(
             ListCharactersByAccountResponse.newBuilder()
                 .addCharacters(
                     net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
                         .setId("7001")
                         .setTenantId("22")
-                        .setAccountId("123")
+                        .setAccountId(ACCOUNT_ID)
                         .setName("Emberline")
                         .setLevel(12)
                         .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
@@ -516,7 +517,7 @@ class WorldsCommandHandlerTest {
     WorldsCommandHandler localHandler =
         authenticatedHandler(gameplayCatalogProperties, accountClient);
     SessionContext session =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt");
+        new SessionContext(1L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "jwt");
     assertThat(localHandler.browseRealms(session, "demo"))
         .isInstanceOfSatisfying(
             WorldsCommandHandler.RealmBrowseResult.Success.class,
@@ -535,7 +536,8 @@ class WorldsCommandHandlerTest {
     assertThat(output.characters()).hasSize(1);
     assertThat(output.characters().get(0).characterName()).isEqualTo("Emberline");
     Mockito.verify(entityManagementClient)
-        .listCharactersByAccount("22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+        .listCharactersByAccount(
+            "22", ACCOUNT_ID, "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
   }
 
   @Test
@@ -553,7 +555,7 @@ class WorldsCommandHandlerTest {
         .thenReturn(publicEntitlement(false));
     Mockito.when(
             entityManagementClient.listCharactersByAccount(
-                "22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
+                "22", ACCOUNT_ID, "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
         .thenReturn(
             ListCharactersByAccountResponse.newBuilder()
                 .setError(
@@ -568,7 +570,8 @@ class WorldsCommandHandlerTest {
 
     assertThat(result).isEqualTo(WorldsCommandHandler.CharacterBrowseResult.unavailable());
     Mockito.verify(entityManagementClient)
-        .listCharactersByAccount("22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+        .listCharactersByAccount(
+            "22", ACCOUNT_ID, "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
   }
 
   @Test
@@ -596,7 +599,7 @@ class WorldsCommandHandlerTest {
     addPublicProductionAuthority(gameplayCatalogProperties);
     AccountClient accountClient = Mockito.mock(AccountClient.class);
     SessionContext session =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt");
+        new SessionContext(1L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "jwt");
     GameplayWorldCatalog catalog =
         TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties);
     GameplayWorldCatalog.WorldView selectedWorld = catalog.resolveWorld("demo").orElseThrow();
@@ -640,7 +643,7 @@ class WorldsCommandHandlerTest {
         net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
             .setId("7001")
             .setTenantId("22")
-            .setAccountId("123")
+            .setAccountId(ACCOUNT_ID)
             .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
             .setName("Emberline")
             .build();
@@ -660,7 +663,7 @@ class WorldsCommandHandlerTest {
             valid.toBuilder().clearName().build())) {
       Mockito.when(
               entityManagementClient.listCharactersByAccount(
-                  "22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
+                  "22", ACCOUNT_ID, "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
           .thenReturn(ListCharactersByAccountResponse.newBuilder().addCharacters(invalid).build());
       assertThat(localHandler.browseCharacters(authenticatedSession(), "demo", "production"))
           .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.unavailable());
@@ -668,7 +671,7 @@ class WorldsCommandHandlerTest {
 
     Mockito.when(
             entityManagementClient.listCharactersByAccount(
-                "22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
+                "22", ACCOUNT_ID, "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
         .thenReturn(
             ListCharactersByAccountResponse.newBuilder()
                 .addCharacters(valid)
@@ -690,7 +693,7 @@ class WorldsCommandHandlerTest {
 
     WorldsCommandHandler.CharacterBrowseResult result =
         localHandler.browseCharacters(
-            new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt"),
+            new SessionContext(1L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "jwt"),
             "demo",
             "production");
 
@@ -758,7 +761,7 @@ class WorldsCommandHandlerTest {
             authorityNow.plusNanos(1));
     Mockito.when(
             entityManagementClient.listCharactersByAccount(
-                "22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
+                "22", ACCOUNT_ID, "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
         .thenReturn(ListCharactersByAccountResponse.newBuilder().build());
 
     for (int index = 0; index < evaluatedAtValues.size(); index++) {
@@ -886,7 +889,7 @@ class WorldsCommandHandlerTest {
                 Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             GetTenantMembershipForRuntimeResponse.newBuilder()
-                .setAccountId("123")
+                .setAccountId(ACCOUNT_ID)
                 .setTenantId("22")
                 .setMembershipExists(false)
                 .setGameplayAdmissionAllowed(false)
@@ -921,7 +924,7 @@ class WorldsCommandHandlerTest {
                 Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             GetTenantMembershipForRuntimeResponse.newBuilder()
-                .setAccountId("123")
+                .setAccountId(ACCOUNT_ID)
                 .setTenantId("22")
                 .setMembershipExists(false)
                 .setGameplayAdmissionAllowed(false)
@@ -1449,7 +1452,7 @@ class WorldsCommandHandlerTest {
                 .build());
     Mockito.when(
             entityManagementClient.listCharactersByAccount(
-                "22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
+                "22", ACCOUNT_ID, "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
         .thenReturn(ListCharactersByAccountResponse.getDefaultInstance());
     WorldsCommandHandler localHandler = authenticatedHandler(properties, accountClient);
 
@@ -1458,7 +1461,8 @@ class WorldsCommandHandlerTest {
 
     assertThat(result).isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.Success.class);
     Mockito.verify(entityManagementClient)
-        .listCharactersByAccount("22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+        .listCharactersByAccount(
+            "22", ACCOUNT_ID, "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
   }
 
   @Test
@@ -1601,7 +1605,7 @@ class WorldsCommandHandlerTest {
         .thenReturn(publicEntitlement(false));
     Mockito.when(
             entityManagementClient.listCharactersByAccount(
-                "22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
+                "22", ACCOUNT_ID, "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
         .thenReturn(ListCharactersByAccountResponse.getDefaultInstance());
     WorldsCommandHandler localHandler =
         authenticatedHandler(publicWorldWithPrivateRealm(), accountClient);
@@ -1614,7 +1618,8 @@ class WorldsCommandHandlerTest {
             WorldsCommandHandler.CharacterBrowseResult.Success.class,
             success -> assertThat(success.output().realmSlug()).isEqualTo("production"));
     Mockito.verify(entityManagementClient)
-        .listCharactersByAccount("22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+        .listCharactersByAccount(
+            "22", ACCOUNT_ID, "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
     Mockito.verify(accountClient, Mockito.never())
         .getRealmAccessGrantForRuntime(
             Mockito.anyString(),
@@ -1681,7 +1686,7 @@ class WorldsCommandHandlerTest {
     Mockito.clearInvocations(accountClient, entityManagementClient);
     Mockito.when(
             entityManagementClient.listCharactersByAccount(
-                "22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
+                "22", ACCOUNT_ID, "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
         .thenReturn(ListCharactersByAccountResponse.getDefaultInstance());
 
     assertThat(localHandler.browseCharacters(authenticatedSession(), "demo", null))
@@ -1689,7 +1694,8 @@ class WorldsCommandHandlerTest {
             WorldsCommandHandler.CharacterBrowseResult.Success.class,
             success -> assertThat(success.output().realmSlug()).isEqualTo("production"));
     Mockito.verify(entityManagementClient)
-        .listCharactersByAccount("22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+        .listCharactersByAccount(
+            "22", ACCOUNT_ID, "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
     Mockito.verify(accountClient, Mockito.never())
         .getRealmAccessGrantForRuntime(
             Mockito.anyString(),
@@ -2378,7 +2384,7 @@ class WorldsCommandHandlerTest {
   }
 
   private SessionContext authenticatedSession() {
-    return new SessionContext(7L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt");
+    return new SessionContext(7L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "jwt");
   }
 
   private GetTenantMembershipForRuntimeResponse activeMembership() {
@@ -2392,7 +2398,7 @@ class WorldsCommandHandlerTest {
       long membershipAuthorityGeneration,
       String lifecycleState) {
     return GetTenantMembershipForRuntimeResponse.newBuilder()
-        .setAccountId("123")
+        .setAccountId(ACCOUNT_ID)
         .setTenantId("22")
         .setMembershipExists(membershipExists)
         .setGameplayAdmissionAllowed(gameplayAdmissionAllowed)
@@ -2425,7 +2431,7 @@ class WorldsCommandHandlerTest {
   private GetRealmAccessGrantForRuntimeResponse grant(
       String worldSlug, String realmSlug, boolean granted) {
     return GetRealmAccessGrantForRuntimeResponse.newBuilder()
-        .setAccountId("123")
+        .setAccountId(ACCOUNT_ID)
         .setTenantId("22")
         .setWorldSlug(worldSlug)
         .setRealmSlug(realmSlug)

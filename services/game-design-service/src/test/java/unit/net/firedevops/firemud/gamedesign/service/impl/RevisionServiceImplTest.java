@@ -31,6 +31,12 @@ import org.mockito.MockitoAnnotations;
 import tools.jackson.databind.ObjectMapper;
 
 class RevisionServiceImplTest {
+  private static final String VALID_REALM_ENTRY_POLICY =
+      "{\"schemaVersion\":1,\"worldSlug\":\"earth\",\"worldDisplayName\":\"Earth\","
+          + "\"realmSlug\":\"main\",\"realmDisplayName\":\"Main Realm\","
+          + "\"visible\":true,\"publicProduction\":false,\"stateScope\":\"SHARED\","
+          + "\"entryPolicy\":\"PRESEEDED_ONLY\"}";
+
   @Mock private RevisionRepository revisionRepository;
   @Mock private GameRepository gameRepository;
   @Mock private VersionRepository versionRepository;
@@ -259,6 +265,94 @@ class RevisionServiceImplTest {
     assertEquals(
         "INVALID_ARGUMENT: commandDefinition APPLY_ACTION_STATE durationSeconds must be between 1 and 3600",
         ex.getMessage());
+    verify(revisionRepository, never()).save(any(Revision.class));
+  }
+
+  @Test
+  void saveRevisionPersistsClosedV1PreseededRealmEntryPolicy() {
+    Game game = setupGameAndVersion();
+    Revision saved = new Revision();
+    saved.setId(13L);
+    saved.setTenantId(game.getTenantId());
+    saved.setVersionId(7L);
+    saved.setRevisionKind("REALM_ENTRY_POLICY");
+    saved.setData(VALID_REALM_ENTRY_POLICY);
+    when(revisionRepository.save(any(Revision.class))).thenReturn(saved);
+
+    RevisionDto result =
+        service.saveRevision(
+            new RevisionDto(
+                null,
+                "1",
+                7L,
+                3L,
+                VALID_REALM_ENTRY_POLICY,
+                "REALM_ENTRY_POLICY",
+                null,
+                null,
+                null,
+                null));
+
+    assertEquals(13L, result.id());
+    assertEquals("REALM_ENTRY_POLICY", result.revisionKind());
+    verify(revisionRepository).save(any(Revision.class));
+  }
+
+  @Test
+  void saveRevisionRejectsUnsupportedOrOpenRealmEntryPolicyBeforePersisting() {
+    setupGameAndVersion();
+    String unsupported = VALID_REALM_ENTRY_POLICY.replace("PRESEEDED_ONLY", "AUTO_PROVISIONED");
+    String descriptor =
+        VALID_REALM_ENTRY_POLICY.replace(
+            "\"entryPolicy\":\"PRESEEDED_ONLY\"",
+            "\"entryPolicy\":\"PRESEEDED_ONLY\",\"descriptor\":{}");
+    String missingBoolean = VALID_REALM_ENTRY_POLICY.replace("\"publicProduction\":false,", "");
+    String duplicateField =
+        VALID_REALM_ENTRY_POLICY.replace(
+            "\"schemaVersion\":1,", "\"schemaVersion\":1,\"schemaVersion\":1,");
+
+    for (String invalid : List.of(unsupported, descriptor, missingBoolean, duplicateField)) {
+      assertThrows(
+          IllegalArgumentException.class,
+          () ->
+              service.saveRevision(
+                  new RevisionDto(
+                      null, "1", 7L, 3L, invalid, "REALM_ENTRY_POLICY", null, null, null, null)));
+    }
+
+    verify(revisionRepository, never()).save(any(Revision.class));
+    verify(worldManagementClient, never())
+        .applyWorldDesignMutation(any(), anyLong(), any(WorldDesignMutationRevisionDto.class));
+  }
+
+  @Test
+  void saveRevisionRejectsRealmEntryPolicyOnScriptOnlyVersion() {
+    setupGameAndVersion();
+    Version scriptOnly = new Version();
+    scriptOnly.setId(7L);
+    scriptOnly.setTenantId("1");
+    scriptOnly.setScriptOnly(true);
+    when(versionRepository.findByTenantIdAndId("1", 7L))
+        .thenReturn(java.util.Optional.of(scriptOnly));
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.saveRevision(
+                    new RevisionDto(
+                        null,
+                        "1",
+                        7L,
+                        3L,
+                        VALID_REALM_ENTRY_POLICY,
+                        "REALM_ENTRY_POLICY",
+                        null,
+                        null,
+                        null,
+                        null)));
+
+    assertEquals("INVALID_ARGUMENT: realmEntryPolicy requires a full version", ex.getMessage());
     verify(revisionRepository, never()).save(any(Revision.class));
   }
 

@@ -13,13 +13,14 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 class LogoutCommandHandlerTest {
+  private static final String ACCOUNT_ID = "5e1340f8-99c8-49fa-a4fe-5fc9d2075621";
   private final SessionContextService sessionContextService =
       Mockito.mock(SessionContextService.class);
   private final LogoutCommandHandler handler = new LogoutCommandHandler(sessionContextService);
 
   @Test
   void authenticatedSharedRuntimeLogoutFailsRetryablyWithoutMutatingContext() {
-    SessionContext context = context(41L, 123L, 1L, "SHARED");
+    SessionContext context = context(41L, ACCOUNT_ID, 1L, "SHARED");
     when(sessionContextService.findBySessionId(41L)).thenReturn(Optional.of(context));
 
     LogoutCommandHandlingResult result = handler.handle("41", logoutCommand());
@@ -31,7 +32,7 @@ class LogoutCommandHandlerTest {
 
   @Test
   void authenticatedIsolatedRuntimeLogoutFailsRetryablyWithoutMutatingContext() {
-    SessionContext context = context(41L, 123L, 7L, "ISOLATED");
+    SessionContext context = context(41L, ACCOUNT_ID, 7L, "ISOLATED");
     when(sessionContextService.findBySessionId(41L)).thenReturn(Optional.of(context));
 
     LogoutCommandHandlingResult result = handler.handle("41", logoutCommand());
@@ -44,7 +45,7 @@ class LogoutCommandHandlerTest {
   @Test
   void unauthenticatedContextStillReturnsNotLoggedInWithoutMutation() {
     when(sessionContextService.findBySessionId(41L))
-        .thenReturn(Optional.of(context(41L, 0L, 1L, "SHARED")));
+        .thenReturn(Optional.of(context(41L, null, 1L, "SHARED")));
 
     LogoutCommandHandlingResult result = handler.handle("41", logoutCommand());
 
@@ -116,7 +117,7 @@ class LogoutCommandHandlerTest {
   }
 
   private static SessionContext context(
-      long sessionId, long accountId, long gameInstanceId, String scope) {
+      long sessionId, String accountId, long gameInstanceId, String scope) {
     return new SessionContext(
         sessionId,
         22L,

@@ -462,7 +462,27 @@ class GithubAndEvidenceTests(unittest.TestCase):
         self.assertIsNone(parsed[0].routed)
         self.assertEqual(parsed[3].routed, 1)
         self.assertEqual(parsed[3].as_json()["routed"], 1)
-        self.assertEqual(evidence.format_checkpoint_counts(3, 1, 1), "3 found / 1 accepted / 1 routed")
+        self.assertEqual(evidence.format_checkpoint_counts(3, 1, 1), "3 Found / 1 Accepted / 1 Routed")
+
+    def test_generated_capitalized_checkpoint_counts_roundtrip_with_legacy_labels(self):
+        counts = evidence.format_checkpoint_counts(4, 2, 1)
+        comments = []
+        for channel in ("Hosted", "CLI"):
+            for labels in (counts, counts.lower(), "4 FOUND / 2 accepted / 1 Routed"):
+                comments.append({
+                    "body": f"{channel}: {labels} · `abcdef1` · 3 files · 9s\n"
+                            "<!-- firemud-review-duration-seconds: 9 -->",
+                    "created_at": "2026-10-03T00:00:00Z",
+                })
+        parsed, unparsed = evidence.parse_checkpoint_comments(comments)
+        self.assertEqual(unparsed, 0)
+        self.assertEqual(len(parsed), 6)
+        for checkpoint in parsed:
+            self.assertEqual((checkpoint.raw_found, checkpoint.accepted, checkpoint.routed), (4, 2, 1))
+            self.assertEqual(checkpoint.reviewed_sha, "abcdef1")
+            self.assertEqual(checkpoint.file_count, 3)
+            self.assertEqual(checkpoint.duration_seconds, 9)
+        self.assertEqual([item.type for item in parsed], ["Hosted"] * 3 + ["CLI"] * 3)
 
     def test_checkpoint_counts_file_counts_and_visible_durations_require_ascii_digits(self):
         comments = [

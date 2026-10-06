@@ -16,10 +16,11 @@ import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.junit.jupiter.api.Test;
 
 class DirectTextOrdinalSelectionResolverTest {
+  private static final String ACCOUNT_ID = "5e1340f8-99c8-49fa-a4fe-5fc9d2075621";
   private static final Instant NOW = Instant.parse("2030-05-06T07:08:09Z");
 
   private final SessionContext caller =
-      new SessionContext(7L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt");
+      new SessionContext(7L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "jwt");
   private final RealmView realm =
       new RealmView(
           "production",

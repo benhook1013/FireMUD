@@ -92,6 +92,9 @@ public final class SessionAuthenticationService {
 
   public SessionContext normalizeResolvedContext(SessionContext context) {
     Objects.requireNonNull(context, "context must not be null");
+    if (context.accountId() != null && !context.hasAccountIdentity()) {
+      return context;
+    }
     SessionContext normalized =
         sessionRoutingNormalizationService.normalizeProjectedContext(context);
     if (normalized.equals(context)) {
@@ -103,7 +106,7 @@ public final class SessionAuthenticationService {
   }
 
   private boolean isAuthenticatedContext(SessionContext context) {
-    return context.accountId() > 0;
+    return context.hasAccountIdentity();
   }
 
   private Optional<Long> parseSessionId(String text) {

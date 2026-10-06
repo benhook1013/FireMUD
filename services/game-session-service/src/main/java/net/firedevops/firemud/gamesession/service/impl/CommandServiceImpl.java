@@ -14,6 +14,7 @@ import net.firedevops.firemud.gamesession.logging.GameSessionCommandLogSanitizer
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
 import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
+import net.firedevops.firemud.gamesession.service.AccountIds;
 import net.firedevops.firemud.gamesession.service.AuthoredCommandAdmission;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
@@ -99,6 +100,15 @@ public class CommandServiceImpl implements CommandService {
     }
 
     var sessionContext = resolveSessionContext(sessionIdText);
+    Optional<UUID> accountUuid;
+    try {
+      accountUuid =
+          sessionContext
+              .map(SessionContext::accountId)
+              .map(CommandServiceImpl::requireCanonicalAccountUuid);
+    } catch (IllegalArgumentException ex) {
+      return CommandEnqueueResult.failure("INVALID_ARGUMENT", ex.getMessage());
+    }
     Optional<QueueTarget> queueTarget = resolveQueueTarget(sessionContext);
     String tenantContext =
         queueTarget.map(target -> String.valueOf(target.tenantId())).orElse("unknown");
@@ -148,6 +158,7 @@ public class CommandServiceImpl implements CommandService {
               requiresSoloTick,
               queueTarget.get(),
               sessionContext,
+              accountUuid,
               authoredAdmission,
               runtimeScope.get());
       logger.info(
@@ -189,6 +200,7 @@ public class CommandServiceImpl implements CommandService {
       boolean requiresSoloTick,
       QueueTarget queueTarget,
       Optional<SessionContext> sessionContext,
+      Optional<UUID> accountUuid,
       AuthoredCommandAdmission authoredAdmission,
       RuntimeRegionStatus runtimeScope) {
     Instant now = Instant.now();
@@ -197,10 +209,7 @@ public class CommandServiceImpl implements CommandService {
     gameplayCommand.setTenantId(queueTarget.tenantId());
     gameplayCommand.setGameInstanceId(queueTarget.queueTargetId());
     gameplayCommand.setSessionId(sessionId);
-    sessionContext
-        .map(SessionContext::accountId)
-        .filter(id -> id > 0)
-        .ifPresent(gameplayCommand::setAccountId);
+    accountUuid.ifPresent(gameplayCommand::setAccountUuid);
     sessionContext
         .map(SessionContext::characterId)
         .filter(id -> id > 0)
@@ -430,5 +439,12 @@ public class CommandServiceImpl implements CommandService {
 
   private static String blankToNull(String value) {
     return value == null || value.isBlank() ? null : value;
+  }
+
+  private static UUID requireCanonicalAccountUuid(String value) {
+    if (!AccountIds.isCanonicalNonNilUuid(value)) {
+      throw new IllegalArgumentException("accountId must be a canonical non-nil UUID");
+    }
+    return UUID.fromString(value);
   }
 }

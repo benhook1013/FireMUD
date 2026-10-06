@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.service;
 
 import java.util.Objects;
 import java.util.Optional;
+import org.springframework.data.redis.serializer.SerializationException;
 
 public record FirstPartyConnectContextResolution(
     Optional<FirstPartyConnectContext> connectContext, boolean invalid) {
@@ -16,8 +17,14 @@ public record FirstPartyConnectContextResolution(
       FirstPartyConnectContextRegistry firstPartyConnectContextRegistry) {
     Objects.requireNonNull(
         firstPartyConnectContextRegistry, "firstPartyConnectContextRegistry must not be null");
-    Optional<FirstPartyConnectContext> registryContext =
-        firstPartyConnectContextRegistry.find(sessionId);
+    Optional<FirstPartyConnectContext> registryContext;
+    try {
+      registryContext = firstPartyConnectContextRegistry.find(sessionId);
+    } catch (SerializationException | ClassCastException ex) {
+      // An unreadable legacy carrier is not absence and cannot authorize persisted-context
+      // fallback.
+      return new FirstPartyConnectContextResolution(Optional.empty(), true);
+    }
     if (registryContext.isPresent()) {
       FirstPartyConnectContext connectContext = registryContext.orElseThrow();
       return new FirstPartyConnectContextResolution(

@@ -2,6 +2,7 @@ package net.firedevops.firemud.entitymanagement.repository;
 
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.*;
 import static net.firedevops.firemud.entitymanagement.jooq.Tables.ACTOR_ACTIVE_CONDITIONS;
+import static net.firedevops.firemud.entitymanagement.jooq.Tables.CHARACTERS;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
@@ -10,6 +11,7 @@ import java.util.Optional;
 import net.firedevops.firemud.entitymanagement.entity.ActorActiveCondition;
 import org.jooq.DSLContext;
 import org.jooq.Record;
+import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
 
 @Repository
@@ -32,6 +34,7 @@ public class ActorActiveConditionRepository {
                 .eq(tenantId)
                 .and(ACTOR_ACTIVE_CONDITIONS.PLAYABLE_STATE_KEY.eq(playableStateKey))
                 .and(ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID.eq(characterId))
+                .and(ownerResolvedActorExists())
                 .and(
                     ACTOR_ACTIVE_CONDITIONS
                         .EXPIRES_AT
@@ -59,6 +62,7 @@ public class ActorActiveConditionRepository {
                     .eq(tenantId)
                     .and(ACTOR_ACTIVE_CONDITIONS.PLAYABLE_STATE_KEY.eq(playableStateKey))
                     .and(ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID.eq(characterId))
+                    .and(ownerResolvedActorExists())
                     .and(ACTOR_ACTIVE_CONDITIONS.SOURCE_TYPE.eq(sourceType))
                     .and(ACTOR_ACTIVE_CONDITIONS.SOURCE_ID.eq(sourceId)))
             .orderBy(ACTOR_ACTIVE_CONDITIONS.ID.asc())
@@ -67,6 +71,7 @@ public class ActorActiveConditionRepository {
   }
 
   public ActorActiveCondition save(ActorActiveCondition entity) {
+    requireOwnerResolvedActor(entity.getTenantId(), entity.getCharacterId());
     if (entity.getId() == null) {
       Long id =
           dsl.insertInto(ACTOR_ACTIVE_CONDITIONS)
@@ -87,18 +92,30 @@ public class ActorActiveConditionRepository {
       entity.setId(id);
       return entity;
     }
-    dsl.update(ACTOR_ACTIVE_CONDITIONS)
-        .set(ACTOR_ACTIVE_CONDITIONS.CONDITION_KEY, entity.getConditionKey())
-        .set(ACTOR_ACTIVE_CONDITIONS.STACK_COUNT, entity.getStackCount())
-        .set(ACTOR_ACTIVE_CONDITIONS.SOURCE_TYPE, entity.getSourceType())
-        .set(ACTOR_ACTIVE_CONDITIONS.SOURCE_ID, entity.getSourceId())
-        .set(ACTOR_ACTIVE_CONDITIONS.STARTED_AT, toOffsetDateTime(entity.getStartedAt()))
-        .set(ACTOR_ACTIVE_CONDITIONS.EXPIRES_AT, toOffsetDateTime(entity.getExpiresAt()))
-        .set(ACTOR_ACTIVE_CONDITIONS.EFFECT_PAYLOAD_JSON, entity.getEffectPayloadJson())
-        .set(ACTOR_ACTIVE_CONDITIONS.UPDATED_AT, toOffsetDateTime(entity.getUpdatedAt()))
-        .set(ACTOR_ACTIVE_CONDITIONS.VERSION, entity.getVersion() + 1)
-        .where(ACTOR_ACTIVE_CONDITIONS.ID.eq(entity.getId()))
-        .execute();
+    int updatedRows =
+        dsl.update(ACTOR_ACTIVE_CONDITIONS)
+            .set(ACTOR_ACTIVE_CONDITIONS.CONDITION_KEY, entity.getConditionKey())
+            .set(ACTOR_ACTIVE_CONDITIONS.STACK_COUNT, entity.getStackCount())
+            .set(ACTOR_ACTIVE_CONDITIONS.SOURCE_TYPE, entity.getSourceType())
+            .set(ACTOR_ACTIVE_CONDITIONS.SOURCE_ID, entity.getSourceId())
+            .set(ACTOR_ACTIVE_CONDITIONS.STARTED_AT, toOffsetDateTime(entity.getStartedAt()))
+            .set(ACTOR_ACTIVE_CONDITIONS.EXPIRES_AT, toOffsetDateTime(entity.getExpiresAt()))
+            .set(ACTOR_ACTIVE_CONDITIONS.EFFECT_PAYLOAD_JSON, entity.getEffectPayloadJson())
+            .set(ACTOR_ACTIVE_CONDITIONS.UPDATED_AT, toOffsetDateTime(entity.getUpdatedAt()))
+            .set(ACTOR_ACTIVE_CONDITIONS.VERSION, entity.getVersion() + 1)
+            .where(
+                ACTOR_ACTIVE_CONDITIONS
+                    .ID
+                    .eq(entity.getId())
+                    .and(ACTOR_ACTIVE_CONDITIONS.TENANT_ID.eq(entity.getTenantId()))
+                    .and(
+                        ACTOR_ACTIVE_CONDITIONS.PLAYABLE_STATE_KEY.eq(entity.getPlayableStateKey()))
+                    .and(ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID.eq(entity.getCharacterId()))
+                    .and(ownerResolvedActorExists()))
+            .execute();
+    if (updatedRows != 1) {
+      throw new IllegalStateException("ACTOR_IDENTITY_NOT_OWNER_RESOLVED");
+    }
     entity.setVersion(entity.getVersion() + 1);
     return entity;
   }
@@ -109,8 +126,35 @@ public class ActorActiveConditionRepository {
             ACTOR_ACTIVE_CONDITIONS
                 .EXPIRES_AT
                 .isNotNull()
-                .and(ACTOR_ACTIVE_CONDITIONS.EXPIRES_AT.le(toOffsetDateTime(now))))
+                .and(ACTOR_ACTIVE_CONDITIONS.EXPIRES_AT.le(toOffsetDateTime(now)))
+                .and(ownerResolvedActorExists()))
         .execute();
+  }
+
+  private org.jooq.Condition ownerResolvedActorExists() {
+    return DSL.exists(
+        dsl.selectOne()
+            .from(CHARACTERS)
+            .where(
+                CHARACTERS
+                    .ID
+                    .eq(ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID)
+                    .and(CHARACTERS.TENANT_ID.eq(ACTOR_ACTIVE_CONDITIONS.TENANT_ID))
+                    .and(CHARACTERS.ACTOR_IDENTITY_STATUS.eq("OWNER_RESOLVED"))));
+  }
+
+  private void requireOwnerResolvedActor(Long tenantId, Long characterId) {
+    long ownerResolvedCount =
+        dsl.fetchCount(
+            CHARACTERS,
+            CHARACTERS
+                .ID
+                .eq(characterId)
+                .and(CHARACTERS.TENANT_ID.eq(tenantId))
+                .and(CHARACTERS.ACTOR_IDENTITY_STATUS.eq("OWNER_RESOLVED")));
+    if (ownerResolvedCount != 1) {
+      throw new IllegalStateException("ACTOR_IDENTITY_NOT_OWNER_RESOLVED");
+    }
   }
 
   private ActorActiveCondition toEntity(Record record) {
