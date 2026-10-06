@@ -44,6 +44,41 @@ class AccountAuthoritySourceEventV1CodecTest {
   }
 
   @Test
+  void accountEventAcceptsAnExplicitNullGlobalRole() {
+    var expected = accountEvent("9", "8", null);
+
+    assertThat(expected.canonicalJson()).contains("\"globalRole\":null");
+    assertThat(AccountAuthoritySourceEventV1Codec.verify(expected.canonicalJson()))
+        .isEqualTo(expected);
+    assertThat(expected.accountState().globalRole()).isNull();
+  }
+
+  @Test
+  void accountEventRejectsMissingNonTextOrInvalidGlobalRole() {
+    var event = accountEvent("9", "8");
+    String globalRole = "\"globalRole\":\"player\"";
+    String missing = event.canonicalJson().replace(globalRole + ",", "");
+    String nonText = event.canonicalJson().replace(globalRole, "\"globalRole\":7");
+    String invalid = event.canonicalJson().replace(globalRole, "\"globalRole\":\"invalid role\"");
+    String tooLong =
+        event.canonicalJson().replace(globalRole, "\"globalRole\":\"" + "a".repeat(129) + "\"");
+
+    assertThat(missing).isNotEqualTo(event.canonicalJson());
+    assertThatThrownBy(() -> AccountAuthoritySourceEventV1Codec.verify(missing))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("globalRole");
+    assertThatThrownBy(() -> AccountAuthoritySourceEventV1Codec.verify(nonText))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("globalRole");
+    assertThatThrownBy(() -> AccountAuthoritySourceEventV1Codec.verify(invalid))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("globalRole");
+    assertThatThrownBy(() -> AccountAuthoritySourceEventV1Codec.verify(tooLong))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("globalRole");
+  }
+
+  @Test
   void rejectsUnknownOrDuplicatePropertiesEvenWhenOtherFieldsAreValid() {
     var event = accountEvent("9", "8");
     String unknown = event.canonicalJson().replaceFirst("}$", ",\"future\":true}");
@@ -87,7 +122,8 @@ class AccountAuthoritySourceEventV1CodecTest {
   void rejectsZeroLeadingNegativeAndOutOfRangeCounters() {
     for (String invalid : List.of("0", "01", "-1", "9223372036854775808")) {
       assertThatThrownBy(() -> accountEvent(invalid, "1"))
-          .isInstanceOf(IllegalArgumentException.class);
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("must be a positive canonical decimal string in the owner range");
     }
   }
 
@@ -105,7 +141,7 @@ class AccountAuthoritySourceEventV1CodecTest {
             "4",
             "4",
             List.of("PASSWORD_RESET"),
-            state());
+            state("player"));
     var unsorted =
         new AccountAuthoritySourceEventV1Codec.AccountPreimage(
             "event-1",
@@ -118,7 +154,7 @@ class AccountAuthoritySourceEventV1CodecTest {
             "4",
             "4",
             List.of("PASSWORD_RESET", "EMAIL_LOGIN_ELIGIBILITY_CHANGED"),
-            state());
+            state("player"));
 
     assertThatThrownBy(() -> AccountAuthoritySourceEventV1Codec.sealAccount(wrongSequence))
         .isInstanceOf(IllegalArgumentException.class);
@@ -128,6 +164,11 @@ class AccountAuthoritySourceEventV1CodecTest {
 
   private static AccountAuthoritySourceEventV1Codec.AccountEvent accountEvent(
       String generation, String sequence) {
+    return accountEvent(generation, sequence, "player");
+  }
+
+  private static AccountAuthoritySourceEventV1Codec.AccountEvent accountEvent(
+      String generation, String sequence, String globalRole) {
     return AccountAuthoritySourceEventV1Codec.sealAccount(
         new AccountAuthoritySourceEventV1Codec.AccountPreimage(
             "event-1",
@@ -140,11 +181,11 @@ class AccountAuthoritySourceEventV1CodecTest {
             generation,
             generation,
             List.of("EMAIL_LOGIN_ELIGIBILITY_CHANGED", "PASSWORD_RESET"),
-            state()));
+            state(globalRole)));
   }
 
-  private static AccountAuthoritySourceEventV1Codec.AccountState state() {
+  private static AccountAuthoritySourceEventV1Codec.AccountState state(String globalRole) {
     return new AccountAuthoritySourceEventV1Codec.AccountState(
-        true, List.of("EMAIL_OTP", "PASSWORD"), "player", "ACTIVE");
+        true, List.of("EMAIL_OTP", "PASSWORD"), globalRole, "ACTIVE");
   }
 }

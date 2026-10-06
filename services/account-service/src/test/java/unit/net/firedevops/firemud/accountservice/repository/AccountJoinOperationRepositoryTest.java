@@ -65,6 +65,10 @@ class AccountJoinOperationRepositoryTest {
     TransactionSynchronizationManager.setActualTransactionActive(true);
     TransactionSynchronizationManager.setCurrentTransactionReadOnly(true);
     try {
+      assertThatThrownBy(() -> repository.findCanonicalEvidenceByRequestId("request-v2"))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage(
+              "Canonical Account JOIN operation write requires a writable owner transaction");
       assertThatThrownBy(() -> repository.findCanonicalEvidenceForUpdateByRequestId("request-v2"))
           .isInstanceOf(IllegalStateException.class)
           .hasMessage(

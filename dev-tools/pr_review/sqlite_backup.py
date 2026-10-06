@@ -519,11 +519,12 @@ def _validate_database(path: Path, label: str) -> None:
             history = records.history(pr)
             with closing(sqlite3.connect(uri, uri=True, timeout=10)) as connection:
                 connection.execute("PRAGMA query_only = ON")
+                persisted_observations = set(connection.execute(
+                    "SELECT o.run_id, o.finding_id FROM finding_observations o WHERE o.source_pr = ?", (pr,)
+                ))
                 expected = (
                     connection.execute("SELECT COUNT(*) FROM review_runs WHERE source_pr = ?", (pr,)).fetchone()[0],
-                    connection.execute(
-                        "SELECT COUNT(*) FROM finding_observations WHERE source_pr = ?", (pr,)
-                    ).fetchone()[0],
+                    len(persisted_observations),
                     connection.execute("SELECT COUNT(*) FROM decisions WHERE decision_pr = ?", (pr,)).fetchone()[0],
                     connection.execute(
                         "SELECT COUNT(*) FROM routes WHERE source_pr = ? OR target_pr = ?", (pr, pr)
@@ -556,8 +557,21 @@ def _validate_database(path: Path, label: str) -> None:
                         "JOIN source_finding_resolutions r USING (resolution_id) WHERE r.source_pr = ?", (pr,)
                     ).fetchone()[0],
                 )
+            # History validates correction provenance and retains the original
+            # observation separately from effective discovery findings.
+            observations = list(history["findings"])
+            for correction in history["record_corrections"]:
+                original = correction["original_observation"]
+                if (original["run_id"] != correction["run_id"]
+                        or original["source_finding_key"] != correction["source_finding_key"]
+                        or original["source_pr"] != pr):
+                    raise BackupError("retained review observation does not match correction provenance")
+                observations.append(original)
+            observation_ids = {(item["run_id"], item["finding_id"]) for item in observations}
+            if len(observation_ids) != len(observations) or observation_ids != persisted_observations:
+                raise BackupError("indexed review-history observations do not match persisted identities")
             actual = (
-                len(history["runs"]), len(history["findings"]),
+                len(history["runs"]), len(observations),
                 len(history["decisions"]), len(history["routes"]), len(history["attempts"]),
                 len(history["corrections"]), len(history["provider_origins"]),
                 len(history["imported_artifacts"]), len(history["historical_gaps"]),

@@ -42,6 +42,8 @@ runtime_relevant() {
       dev-tools/backups/pg-dump-s3-selection.shlib | \
       dev-tools/backups/smoke-backup-verifier-image.sh | \
       dev-tools/build-compose-service-jars.sh | \
+      dev-tools/validation/run-locked-gradle.sh | \
+      dev-tools/validation/gradle-run-supervisor.py | \
       dev-tools/build-local-smoke-images.sh | \
       dev-tools/certs/generate-dev-certs.sh | \
       dev-tools/hosted/controller/smoke-paused-controller-image.sh | \

@@ -28,13 +28,13 @@ class AccountRepositoryLifecycleSourceTest {
   private static final String PASSWORD_HASH = "not-a-real-password-hash";
 
   @Test
-  void updatePersistsLifecycleStateAndPassesExactReadbackIntoSourceEvidence() {
+  void updatePreservesLockedLifecycleStateAndPassesExactReadbackIntoSourceEvidence() {
     DSLContext dsl = mock(DSLContext.class, RETURNS_DEEP_STUBS);
     AccountAuthoritySourceEvidenceRepository sourceEvidence =
         mock(AccountAuthoritySourceEvidenceRepository.class);
     AccountRepository repository = new AccountRepository(dsl, sourceEvidence);
     Account account = account();
-    AccountsRecord before = persisted(AccountLifecycleState.ACTIVE);
+    AccountsRecord before = persisted(AccountLifecycleState.SECURITY_LOCKED);
     AccountsRecord updated = persisted(AccountLifecycleState.SECURITY_LOCKED);
     var selectForUpdate =
         dsl.selectFrom(ACCOUNTS).where(ACCOUNTS.ID.eq(ACCOUNT_NUMERIC_ID)).forUpdate();
@@ -66,8 +66,9 @@ class AccountRepositoryLifecycleSourceTest {
     ArgumentCaptor<AccountRepository.AccountUpdateEvidence> evidence =
         ArgumentCaptor.forClass(AccountRepository.AccountUpdateEvidence.class);
     verify(sourceEvidence).recordAccountUpdate(evidence.capture());
-    assertThat(evidence.getValue().before().lifecycleState()).isEqualTo("ACTIVE");
+    assertThat(evidence.getValue().before().lifecycleState()).isEqualTo("SECURITY_LOCKED");
     assertThat(evidence.getValue().after().lifecycleState()).isEqualTo("SECURITY_LOCKED");
+    assertThat(account.getLifecycleState()).isEqualTo(AccountLifecycleState.SECURITY_LOCKED);
     verify(updateBeforeLifecycle)
         .set(ACCOUNTS.LIFECYCLE_STATE, AccountLifecycleState.SECURITY_LOCKED.storageValue());
   }
@@ -82,7 +83,7 @@ class AccountRepositoryLifecycleSourceTest {
     account.setEmail(EMAIL);
     account.setPasswordHash(PASSWORD_HASH);
     account.setRole("player");
-    account.setLifecycleState(AccountLifecycleState.SECURITY_LOCKED);
+    account.setLifecycleState(AccountLifecycleState.ACTIVE);
     return account;
   }
 

@@ -12,6 +12,7 @@ import time
 import unittest
 from pathlib import Path
 from subprocess import CompletedProcess
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 DEV_TOOLS = Path(__file__).resolve().parents[1]
@@ -170,6 +171,36 @@ class BoundedAllocationCliParserTests(unittest.TestCase):
 
         self.assertIsNone(args.checkpoint)
         self.assertIsNone(args.max_additional_completed)
+
+
+class HostedCliPreflightBudgetTests(unittest.TestCase):
+    def test_main_starts_one_budget_before_dispatch_and_leaves_other_commands_unchanged(self):
+        observed = []
+
+        def hosted_controller(_args):
+            budget = github.active_hosted_preflight_budget()
+            self.assertIsNotNone(budget)
+            observed.append(budget)
+
+            def run_hosted(**_kwargs):
+                with github.hosted_preflight_budget() as nested:
+                    self.assertIs(nested, budget)
+                budget.complete()
+                return {"status": "posted"}
+
+            return SimpleNamespace(run_hosted=run_hosted), None
+
+        def status_controller(_args):
+            self.assertIsNone(github.active_hosted_preflight_budget())
+            return SimpleNamespace(status_overview=lambda: {"status": "ok"}), None
+
+        with patch.object(cli_module, "_controller", side_effect=hosted_controller), patch("builtins.print"):
+            self.assertEqual(cli_module.main(["run", "hosted", "--expect-pr", "42"]), 0)
+        self.assertEqual(len(observed), 1)
+        self.assertIsNone(github.active_hosted_preflight_budget())
+
+        with patch.object(cli_module, "_controller", side_effect=status_controller), patch("builtins.print"):
+            self.assertEqual(cli_module.main(["status"]), 0)
 
 
 def _git(root, *args, input_text=None):

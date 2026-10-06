@@ -260,8 +260,8 @@ public final class AccountAuthoritySourceEventV1Codec {
       throw invalid("accountState.emailVerified", "must be a boolean");
     }
     validateStringSet(state.get("loginAuthModes"), LOGIN_MODES, "accountState.loginAuthModes");
-    String role = text(state, "globalRole");
-    if (!ROLE_PATTERN.matcher(role).matches()) {
+    String role = nullableText(state, "globalRole");
+    if (role != null && !ROLE_PATTERN.matcher(role).matches()) {
       throw invalid("accountState.globalRole", "must be a bounded Account role identifier");
     }
     String lifecycle = text(state, "lifecycleState");
@@ -333,7 +333,7 @@ public final class AccountAuthoritySourceEventV1Codec {
         new AccountState(
             state.get("emailVerified").booleanValue(),
             loginModes,
-            text(state, "globalRole"),
+            nullableText(state, "globalRole"),
             text(state, "lifecycleState")),
         new AccountSecurityCutoff(
             text(cutoff, "accountAuthorityGeneration"),
@@ -400,6 +400,14 @@ public final class AccountAuthoritySourceEventV1Codec {
   private static String text(ObjectNode object, String field) {
     JsonNode value = object.get(field);
     if (value == null || !value.isTextual()) throw invalid(field, "must be a string");
+    return value.textValue();
+  }
+
+  private static String nullableText(ObjectNode object, String field) {
+    JsonNode value = object.get(field);
+    if (value == null) throw invalid(field, "is required");
+    if (value.isNull()) return null;
+    if (!value.isTextual()) throw invalid(field, "must be a string or null");
     return value.textValue();
   }
 

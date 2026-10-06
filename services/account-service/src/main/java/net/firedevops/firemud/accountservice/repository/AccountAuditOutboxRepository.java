@@ -154,6 +154,7 @@ public class AccountAuditOutboxRepository {
             ACCOUNT_AUDIT_OUTBOX
                 .DELIVERY_STATUS
                 .eq("PENDING")
+                .and(ACCOUNT_AUDIT_OUTBOX.TENANT_IDENTITY_VERSION.eq(1))
                 .and(ACCOUNT_AUDIT_OUTBOX.NEXT_ATTEMPT_AT.le(toLocalDateTime(dueBeforeOrAt))))
         .orderBy(
             ACCOUNT_AUDIT_OUTBOX.NEXT_ATTEMPT_AT.asc(),

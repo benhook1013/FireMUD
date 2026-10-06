@@ -61,6 +61,54 @@ class JobStoreTest(unittest.TestCase):
         self.assertTrue(self.database.exists())
         self.assertEqual(SqliteStateStore(self.database).load().to_dict(), SqliteStateStore(self.database).load().to_dict())
 
+    def test_last_activity_includes_appended_events_and_historical_job_note_scopes(self) -> None:
+        self.bootstrap()
+        with patch("fire_controller.jobs._now", return_value="2026-10-01T00:00:00Z"):
+            first = self.store.create("activity-first", "General", "First")
+            second = self.store.create("activity-second", "Gameplay", "Second")
+        with patch("fire_controller.jobs._now", return_value="2026-10-02T00:00:00Z"):
+            self.store.append_update(first["id"], "Update")
+        self.assertEqual(self.store.list(worker="General")[0]["last_activity_at"], "2026-10-02T00:00:00Z")
+        with patch("fire_controller.jobs._now", return_value="2026-10-03T00:00:00Z"):
+            self.store.checkpoint(first["id"], "Done", "Next")
+        self.assertEqual(self.store.get(first["id"])["last_activity_at"], "2026-10-03T00:00:00Z")
+        with patch("fire_controller.jobs._now", return_value="2026-10-04T00:00:00Z"):
+            note = self.store.note("Job note", job=first["id"])
+        with patch("fire_controller.jobs._now", return_value="2026-10-05T00:00:00Z"):
+            revised = self.store.revise_note(note["id"], expected_revision=1, body="Corrected")
+        self.assertEqual(self.store.get(first["id"])["last_activity_at"], "2026-10-05T00:00:00Z")
+        with patch("fire_controller.jobs._now", return_value="2026-10-06T00:00:00Z"):
+            self.store.revise_note(note["id"], expected_revision=revised["revision"], job=second["id"])
+        rows = {job["id"]: job for job in self.store.list()}
+        self.assertEqual(rows[first["id"]]["last_activity_at"], "2026-10-05T00:00:00Z")
+        self.assertEqual(rows[second["id"]]["last_activity_at"], "2026-10-06T00:00:00Z")
+        self.assertEqual(rows[first["id"]]["created_at"], first["created_at"])
+        self.assertEqual(rows[first["id"]]["updated_at"], first["updated_at"])
+        # A worker-only reminder has no durable job association and must not touch every job in that lane.
+        with patch("fire_controller.jobs._now", return_value="2026-10-07T00:00:00Z"):
+            self.store.note("Lane reminder", worker="General")
+        self.assertEqual(self.store.get(first["id"])["last_activity_at"], "2026-10-05T00:00:00Z")
+
+    def test_activity_projection_is_batched_read_only_and_uses_existing_indexes(self) -> None:
+        self.bootstrap()
+        for index in range(12):
+            self.store.create(f"activity-{index}", f"Worker {index}", "Read-only activity")
+        with sqlite3.connect(self.database) as connection:
+            before = list(connection.iterdump())
+            statements = []
+            connection.set_trace_callback(statements.append)
+            activity = JobStore._last_activity(connection, [job["id"] for job in self.store.list()])
+            connection.set_trace_callback(None)
+            self.assertEqual(len(activity), 12)
+            self.assertEqual(len(statements), 1)
+            self.assertEqual(list(connection.iterdump()), before)
+            plan = connection.execute("EXPLAIN QUERY PLAN " + statements[0]).fetchall()
+        details = " ".join(row[3] for row in plan)
+        self.assertIn("job_revisions_created_idx", details)
+        self.assertIn("job_updates_sequence_idx", details)
+        self.assertIn("job_checkpoints_sequence_idx", details)
+        self.assertIn("job_notes_job_status_idx", details)
+
     def test_bootstrap_preserves_review_state_and_writer_metadata(self) -> None:
         controller = SqliteStateStore(self.database)
         controller.update(lambda state: state)

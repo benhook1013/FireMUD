@@ -129,6 +129,15 @@ class AccountTenantMembershipRepositoryTest {
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("active owner transaction");
     verifyNoInteractions(dsl, accounts, tenants, pairs);
+
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    TransactionSynchronizationManager.setCurrentTransactionReadOnly(true);
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> repository.findFreshMembershipForUpdate(ACCOUNT_UUID, TENANT_UUID))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("writable owner transaction");
+    verifyNoInteractions(dsl, accounts, tenants, pairs);
   }
 
   @Test

@@ -13,6 +13,7 @@ import net.firedevops.firemud.accountservice.repository.AccountTenantIdentityRes
 import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepository;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class AccountConnectScopeRepositoryTest {
   @Test
@@ -42,6 +43,55 @@ class AccountConnectScopeRepositoryTest {
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Canonical Account connect scope access requires an active owner transaction");
 
+    verifyNoInteractions(dsl, retainedTenants, freshTenants);
+  }
+
+  @Test
+  void canonicalLockTakingEvidenceReadRejectsReadOnlyTransactionBeforeSql() {
+    DSLContext dsl = mock(DSLContext.class);
+    AccountTenantIdentityResolver retainedTenants = mock(AccountTenantIdentityResolver.class);
+    FreshTenantIdentityAssociationRepository freshTenants =
+        mock(FreshTenantIdentityAssociationRepository.class);
+    AccountConnectScopeRepository repository =
+        new AccountConnectScopeRepository(dsl, retainedTenants, freshTenants);
+    boolean priorActive = TransactionSynchronizationManager.isActualTransactionActive();
+    boolean priorReadOnly = TransactionSynchronizationManager.isCurrentTransactionReadOnly();
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    TransactionSynchronizationManager.setCurrentTransactionReadOnly(true);
+    try {
+      assertThatThrownBy(
+              () -> repository.findCanonicalEvidenceByTokenHash("sha256:" + "b".repeat(64)))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage(
+              "Canonical Account connect scope write requires a writable owner transaction");
+    } finally {
+      TransactionSynchronizationManager.setCurrentTransactionReadOnly(priorReadOnly);
+      TransactionSynchronizationManager.setActualTransactionActive(priorActive);
+    }
+    verifyNoInteractions(dsl, retainedTenants, freshTenants);
+  }
+
+  @Test
+  void canonicalScopeReadRejectsReadOnlyTransactionBeforeDependenciesOrSql() {
+    DSLContext dsl = mock(DSLContext.class);
+    AccountTenantIdentityResolver retainedTenants = mock(AccountTenantIdentityResolver.class);
+    FreshTenantIdentityAssociationRepository freshTenants =
+        mock(FreshTenantIdentityAssociationRepository.class);
+    AccountConnectScopeRepository repository =
+        new AccountConnectScopeRepository(dsl, retainedTenants, freshTenants);
+    boolean priorActive = TransactionSynchronizationManager.isActualTransactionActive();
+    boolean priorReadOnly = TransactionSynchronizationManager.isCurrentTransactionReadOnly();
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    TransactionSynchronizationManager.setCurrentTransactionReadOnly(true);
+    try {
+      assertThatThrownBy(() -> repository.findCanonical("opaque-scope-token"))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage(
+              "Canonical Account connect scope write requires a writable owner transaction");
+    } finally {
+      TransactionSynchronizationManager.setCurrentTransactionReadOnly(priorReadOnly);
+      TransactionSynchronizationManager.setActualTransactionActive(priorActive);
+    }
     verifyNoInteractions(dsl, retainedTenants, freshTenants);
   }
 

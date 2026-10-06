@@ -321,7 +321,7 @@ services:
       <<: *service-health
 
   postgres:
-    image: postgres:16
+    image: postgres:16@sha256:65b16a8b326e0cfbdf33fa7e783f2a0cb352a61448616ccccfd616ef42aa0f65
     command: ["postgres", "-c", "max_connections=200"]
     mem_limit: 1g
     restart: unless-stopped
@@ -341,7 +341,7 @@ services:
       retries: 5
 
   redis-coord:
-    image: redis:7.4.11@sha256:c6eabf748fc7a61dbb5a705c78bcf3d6377b1127a97d0ce965c11c44ba46896f
+    image: redis:7.4.11@sha256:4fa24486b8bcca8eec45ee0eb166edc674795e53a2b53d1a9ef263eecebaac85
     mem_limit: 512m
     restart: unless-stopped
     env_file: *service-env-file
@@ -358,7 +358,7 @@ services:
       retries: 5
 
   redis-cache:
-    image: redis:7.4.11@sha256:c6eabf748fc7a61dbb5a705c78bcf3d6377b1127a97d0ce965c11c44ba46896f
+    image: redis:7.4.11@sha256:4fa24486b8bcca8eec45ee0eb166edc674795e53a2b53d1a9ef263eecebaac85
     mem_limit: 256m
     restart: unless-stopped
     env_file: *service-env-file

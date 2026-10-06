@@ -330,7 +330,7 @@ class WebSocketOutputProjectorTest {
                 new FriendPresenceViewOutput.Entry(
                     1,
                     77L,
-                    41L,
+                    "00000000-0000-4000-8000-000000000041",
                     "ONLINE",
                     null,
                     "Sora",
@@ -498,7 +498,7 @@ class WebSocketOutputProjectorTest {
                                 new FriendPresenceViewOutput.Entry(
                                     1,
                                     11L,
-                                    3L,
+                                    "00000000-0000-4000-8000-000000000003",
                                     "active",
                                     1_744_336_000_000L,
                                     "Sora",
@@ -524,7 +524,7 @@ class WebSocketOutputProjectorTest {
                             new FriendPresenceViewOutput.Entry(
                                 1,
                                 11L,
-                                3L,
+                                "00000000-0000-4000-8000-000000000003",
                                 "active",
                                 1_744_336_000_000L,
                                 "Sora",
@@ -556,8 +556,8 @@ class WebSocketOutputProjectorTest {
                 .path("friends")
                 .get(0)
                 .path("friendAccountId")
-                .asLong())
-        .isEqualTo(3L);
+                .asText())
+        .isEqualTo("00000000-0000-4000-8000-000000000003");
     assertThat(
             json.path("outputs")
                 .get(0)
@@ -625,7 +625,7 @@ class WebSocketOutputProjectorTest {
                             new FriendPresenceViewOutput.Entry(
                                 1,
                                 11L,
-                                3L,
+                                "00000000-0000-4000-8000-000000000003",
                                 "active",
                                 1_744_336_000_000L,
                                 "Sora",
@@ -647,7 +647,7 @@ class WebSocketOutputProjectorTest {
                         new FriendPresenceViewOutput.Entry(
                             1,
                             11L,
-                            3L,
+                            "00000000-0000-4000-8000-000000000003",
                             "active",
                             1_744_336_000_000L,
                             "Sora",
@@ -676,8 +676,8 @@ class WebSocketOutputProjectorTest {
                 .path("payload")
                 .path("friend")
                 .path("friendAccountId")
-                .asLong())
-        .isEqualTo(3L);
+                .asText())
+        .isEqualTo("00000000-0000-4000-8000-000000000003");
     assertThat(
             json.path("outputs")
                 .get(0)
@@ -783,7 +783,8 @@ class WebSocketOutputProjectorTest {
                 GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR, "first_party_web"));
 
     FriendMutationResultOutput payloadView =
-        new FriendMutationResultOutput("REMOVE", 77L, "Sora", "Sora", 1);
+        new FriendMutationResultOutput(
+            "REMOVE", "00000000-0000-4000-8000-000000000077", "Sora", "Sora", 1);
 
     String payload =
         projector.projectCommandResponse(
@@ -801,8 +802,8 @@ class WebSocketOutputProjectorTest {
         .isEqualTo("friend_mutation_result");
     assertThat(json.path("outputs").get(0).path("payload").path("action").asText())
         .isEqualTo("REMOVE");
-    assertThat(json.path("outputs").get(0).path("payload").path("friendAccountId").asLong())
-        .isEqualTo(77L);
+    assertThat(json.path("outputs").get(0).path("payload").path("friendAccountId").asText())
+        .isEqualTo("00000000-0000-4000-8000-000000000077");
     assertThat(json.path("outputs").get(0).path("payload").path("displayName").asText())
         .isEqualTo("Sora");
     assertThat(json.path("outputs").get(0).path("payload").path("ordinal").asInt()).isEqualTo(1);

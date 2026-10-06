@@ -657,6 +657,22 @@ for path_item in (
         "preview workflow",
     )
 
+# ZAP is credential-free PR validation; stacked bases retain the same relevant
+# paths and default substantive PR events, while trusted push scope stays fixed.
+require_equal(
+    zap,
+    ("on",),
+    {
+        "push": {
+            "branches": ["main", "develop"],
+            "paths": [".github/workflows/zap-baseline.yml", "web-client/**"],
+        },
+        "pull_request": {"paths": [".github/workflows/zap-baseline.yml", "web-client/**"]},
+        "workflow_dispatch": "",
+    },
+    "ZAP workflow",
+)
+
 for event in ("push", "pull_request"):
     for path_item in (".github/workflows/zap-baseline.yml", "web-client/**"):
         require_list_item(

@@ -2,7 +2,6 @@ package net.firedevops.firemud.accountservice.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -28,9 +27,11 @@ class AccountAuditDeliveryJobTest {
   private final AccountAuditDeliveryJob job = new AccountAuditDeliveryJob(outbox, client);
 
   @Test
-  void deliveryRemainsExternallyInvokedRatherThanAutomaticallyScheduled() throws Exception {
-    assertNull(
-        AccountAuditDeliveryJob.class.getMethod("deliverPending").getAnnotation(Scheduled.class));
+  void deliveryIsScheduledWithTheConfiguredBoundedInterval() throws Exception {
+    Scheduled scheduled =
+        AccountAuditDeliveryJob.class.getMethod("deliverPending").getAnnotation(Scheduled.class);
+    assertEquals(
+        "${firemud.account.audit.delivery.interval-ms:60000}", scheduled.fixedDelayString());
   }
 
   @Test
