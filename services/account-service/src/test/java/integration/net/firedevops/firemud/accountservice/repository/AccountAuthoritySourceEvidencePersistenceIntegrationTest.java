@@ -53,6 +53,118 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
   }
 
   @Test
+  void preV40RetainedPasswordResetFailsTypedAndRollsBackWithoutInventingSource() {
+    String schema = SCHEMA_PREFIX + "_" + UUID.randomUUID().toString().replace("-", "");
+    DriverManagerDataSource dataSource = postgres.dataSource(schema);
+    Flyway.configure()
+        .dataSource(dataSource)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .locations("classpath:db/migration")
+        .placeholders(java.util.Map.of("serviceSchema", schema))
+        .target("39")
+        .load()
+        .migrate();
+    DSLContext dsl =
+        DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+    String suffix = UUID.randomUUID().toString();
+    String originalHash = "retained-password-" + suffix;
+    Long accountId =
+        Objects.requireNonNull(
+                dsl.fetchOne(
+                    "INSERT INTO accounts (username, email, password_hash, role) VALUES (?, ?, ?, ?) RETURNING id",
+                    "retained-" + suffix,
+                    suffix + "@example.test",
+                    originalHash,
+                    "player"))
+            .get(0, Long.class);
+    String tokenValue = "retained-reset-" + suffix;
+    var expiry = java.time.LocalDateTime.now().plusHours(1);
+    dsl.execute(
+        "INSERT INTO password_reset_token (account_id, token, expires_at) VALUES (?, ?, ?)",
+        accountId,
+        tokenValue,
+        expiry);
+    Flyway.configure()
+        .dataSource(dataSource)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .locations("classpath:db/migration")
+        .placeholders(java.util.Map.of("serviceSchema", schema))
+        .load()
+        .migrate();
+    var accounts = new AccountRepository(dsl);
+    var resetTokens =
+        new net.firedevops.firemud.accountservice.repository.PasswordResetTokenRepository(dsl);
+    var manager = new DataSourceTransactionManager(dataSource);
+    var transaction = new TransactionTemplate(manager);
+    var service =
+        new net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl(
+            accounts,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null, // audit/scope/JOIN/challenge/grant/membership
+            null,
+            null,
+            null,
+            null,
+            null,
+            null, // mapper/profile/payment/subscription/external
+            resetTokens,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null, // verification/notification/mail/config
+            null,
+            null,
+            null,
+            null,
+            manager); // remote clients/JWT/session are not used by reset
+    UUID accountUuid = accounts.findById(accountId).orElseThrow().getAccountUuid();
+    var beforeToken =
+        dsl.fetchOne("SELECT * FROM password_reset_token WHERE token = ?", tokenValue).intoMap();
+    var beforeEvents = dsl.fetch("SELECT * FROM account_authority_outbox_events").intoMaps();
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    status ->
+                        service.completePasswordReset(
+                            new net.firedevops.firemud.accountservice.dto
+                                .CompletePasswordResetRequest(tokenValue, "replacement-password"))))
+        .isInstanceOf(
+            AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException.class);
+    assertThat(accounts.findById(accountId).orElseThrow().getPasswordHash())
+        .isEqualTo(originalHash);
+    assertThat(
+            dsl.fetchOne("SELECT * FROM password_reset_token WHERE token = ?", tokenValue)
+                .intoMap())
+        .isEqualTo(beforeToken);
+    assertThat(dsl.fetch("SELECT * FROM account_authority_outbox_events").intoMaps())
+        .isEqualTo(beforeEvents);
+    assertThat(
+            dsl.fetchCount(
+                dsl.selectFrom("account_authority_source_records")
+                    .where("account_uuid = ?", accountUuid)))
+        .isZero();
+    assertThat(
+            dsl.fetchCount(
+                dsl.selectFrom("account_authority_generations")
+                    .where("scope_kind = 'ACCOUNT' AND account_uuid = ?", accountUuid)))
+        .isZero();
+    assertThat(
+            dsl.fetchOne(
+                    "SELECT account_repository_insert_transaction_id FROM accounts WHERE id = ?",
+                    accountId)
+                .get(0, Long.class))
+        .isNull();
+  }
+
+  @Test
   void freshAccountBaselineAndSecurityMutationsCommitExactSourceEvidence() throws Exception {
     TestContext context = newTestContext();
     DSLContext dsl = context.dsl();

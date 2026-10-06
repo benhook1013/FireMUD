@@ -802,6 +802,21 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (
+        net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository
+                .SourceEvidenceUnavailableException
+            unavailable) {
+      var response =
+          net.firedevops.firemud.account.v1.CompletePasswordResetResponse.newBuilder()
+              .setSuccess(false)
+              .setError(
+                  appError(
+                      "CompletePasswordReset",
+                      "AUTH_UNAVAILABLE",
+                      "Account authority is unavailable"))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     } catch (Exception ex) {
       var response =
           net.firedevops.firemud.account.v1.CompletePasswordResetResponse.newBuilder()
