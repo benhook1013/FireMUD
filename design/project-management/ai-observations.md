@@ -459,3 +459,8 @@ Entry format:
 - `2026-10-06`: JSON string escaping is not shell argument quoting
   - Context: a controller job revision passed Markdown via a JSON-quoted shell argument; Bash evaluated backtick spans and preserved literal newline escapes, corrupting the saved brief despite a successful controller result. The observed substitutions were non-existent commit-name commands; no repository code or secret was read by them.
   - Outcome: the next guarded revision restored the complete intended brief using shell-safe single-argument quoting, and exact readback matched the original text. Use a body file/stdin or shell-safe quoting for multiline controller input; a successful write alone does not prove content preservation.
+
+- `2026-10-06`: Implementation handoffs are not review findings
+  - Context: Document erroneously passed an implementation completion note as a rejected finding when completing controller attempt `gd-versionless-creation-reservation-r1-20261006`. The helper found no independent obligation, but the resulting record displays one finding. A second completion without that note is rejected because imported content is immutable.
+  - Expected pattern: complete a zero-finding helper with no `--finding-json`; record its implementation output and limits in the job, not as a fabricated finding. Read back counts immediately. Do not edit SQLite directly to conceal a mistake.
+  - Outcome: Document reported the exact erroneous attempt and correction-command gap to Overseer in controller message `6d42f60d-c5b5-4e75-ace6-f1449287267e`. The actual discovery count is zero; an audited controller correction remains pending.

@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.service.controlui.AccountControlUiTokenChecks;
+import net.firedevops.firemud.common.security.AccountJwtExactValues;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -196,6 +197,8 @@ class AccountControlUiTokenChecksTest {
               "1",
               "sourceVersion",
               Long.toString(versions[0]),
+              "sourceFence",
+              "19",
               "linearization",
               "123",
               "canonicalSha256",
@@ -208,6 +211,114 @@ class AccountControlUiTokenChecksTest {
               AccountControlUiTokenFixture.unscopedShape());
       assertThat(inspected.registryRecord().get("authEvidenceBundle"))
           .isEqualTo(record.get("authEvidenceBundle"));
+      assertThat(inspected.toString()).contains("non-authorizing");
+    }
+  }
+
+  @Test
+  void completeCaptureReferenceRejectsMissingAndUnknownFields() throws Exception {
+    Map<String, Object> claims = fixture.claims(UUID.randomUUID());
+    String token = fixture.sign(claims);
+    for (String missing :
+        List.of(
+            "bundleVersion", "sourceVersion", "sourceFence", "linearization", "canonicalSha256")) {
+      Map<String, Object> record = fixture.registry(token, claims);
+      Map<String, Object> bundle =
+          new LinkedHashMap<>((Map<String, Object>) record.get("authEvidenceBundle"));
+      bundle.remove(missing);
+      record.put("authEvidenceBundle", bundle);
+      byte[] bytes = AccountControlUiTokenFixture.canonical(record);
+      assertThatThrownBy(
+              () ->
+                  fixture
+                      .checks()
+                      .inspect(
+                          "creator-candidate",
+                          token,
+                          bytes,
+                          AccountControlUiTokenFixture.unscopedShape()))
+          .isInstanceOf(AccountControlUiTokenChecks.InvalidTokenException.class);
+    }
+    Map<String, Object> record = fixture.registry(token, claims);
+    Map<String, Object> bundle =
+        new LinkedHashMap<>((Map<String, Object>) record.get("authEvidenceBundle"));
+    bundle.put("issuanceFence", claims.get("issuanceFence"));
+    record.put("authEvidenceBundle", bundle);
+    byte[] bytes = AccountControlUiTokenFixture.canonical(record);
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .checks()
+                    .inspect(
+                        "creator-candidate",
+                        token,
+                        bytes,
+                        AccountControlUiTokenFixture.unscopedShape()))
+        .isInstanceOf(AccountControlUiTokenChecks.InvalidTokenException.class);
+  }
+
+  @Test
+  void captureSourceFenceRejectsNonpositiveNoncanonicalAndNumericWireForms() throws Exception {
+    Map<String, Object> claims = fixture.claims(UUID.randomUUID());
+    String token = fixture.sign(claims);
+    for (Object invalid :
+        java.util.Arrays.asList(
+            null, 1L, "0", "-1", "+1", "01", " 1", "1 ", "1.0", "1e3", "", "bad")) {
+      Map<String, Object> record = fixture.registry(token, claims);
+      Map<String, Object> bundle =
+          new LinkedHashMap<>((Map<String, Object>) record.get("authEvidenceBundle"));
+      bundle.put("sourceFence", invalid);
+      record.put("authEvidenceBundle", bundle);
+      byte[] bytes = AccountControlUiTokenFixture.canonical(record);
+      assertThatThrownBy(
+              () ->
+                  fixture
+                      .checks()
+                      .inspect(
+                          "creator-candidate",
+                          token,
+                          bytes,
+                          AccountControlUiTokenFixture.unscopedShape()))
+          .isInstanceOf(AccountControlUiTokenChecks.InvalidTokenException.class);
+    }
+  }
+
+  @Test
+  void changedLargeCaptureReferenceCountersRemainExactIndependentAndNonAuthorizing()
+      throws Exception {
+    Map<String, Object> claims = fixture.claims(UUID.randomUUID());
+    claims.put("issuanceFence", "11");
+    String token = fixture.sign(claims);
+    var checks = fixture.checks();
+    for (String[] counters :
+        List.of(
+            new String[] {"9007199254740992", "9007199254740993", "9223372036854775808"},
+            new String[] {"9007199254740992", "9007199254740994", "9223372036854775808"},
+            new String[] {"9223372036854775809", "9007199254740994", "9223372036854775808"},
+            new String[] {"9223372036854775809", "9223372036854775810", "9223372036854775808"})) {
+      Map<String, Object> record = fixture.registry(token, claims);
+      Map<String, Object> bundle =
+          Map.of(
+              "bundleVersion", "1",
+              "sourceVersion", counters[0],
+              "sourceFence", counters[1],
+              "linearization", counters[2],
+              "canonicalSha256", "c".repeat(64));
+      record.put("authEvidenceBundle", bundle);
+      var inspected =
+          checks.inspect(
+              "creator-candidate",
+              token,
+              AccountControlUiTokenFixture.canonical(record),
+              AccountControlUiTokenFixture.unscopedShape());
+      assertThat(inspected.registryRecord().get("authEvidenceBundle")).isEqualTo(bundle);
+      assertThat(inspected.registryRecord().get("issuanceFence")).isEqualTo("11");
+      assertThat(
+              AccountJwtExactValues.sameJsonValue(
+                  inspected.registryRecord().get("authoritySourceVersions"),
+                  record.get("authoritySourceVersions")))
+          .isTrue();
+      // A structurally valid changed reference is retained, not authenticated or made current.
       assertThat(inspected.toString()).contains("non-authorizing");
     }
   }

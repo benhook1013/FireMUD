@@ -162,7 +162,8 @@ public final class AccountControlUiIssuanceOperationRepository {
             "UPDATE "
                 + OPERATIONS
                 + " SET status = 'COMMITTED', token_hash = ?, response_digest = ?, "
-                + "issued_at = ?, expires_at = ? WHERE operation_id = ? AND request_id = ? "
+                + "issued_at = CAST(? AS timestamptz), expires_at = CAST(? AS timestamptz) "
+                + "WHERE operation_id = ? AND request_id = ? "
                 + "AND status = 'PENDING'",
             binding.tokenHash(),
             binding.responseDigest(),
@@ -181,7 +182,8 @@ public final class AccountControlUiIssuanceOperationRepository {
                 + "profile, audience, request_digest_version, request_digest, token_hash, "
                 + "response_digest, authority_capture_digest, issuance_fence_digest, issued_at, "
                 + "expires_at, format_version, key_id, purpose, nonce, ciphertext) "
-                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS timestamptz), "
+                + "CAST(? AS timestamptz), ?, ?, ?, ?, ?)",
             stored.operationId(),
             UUID.fromString(request.requestId()),
             UUID.fromString(request.accountUuid()),

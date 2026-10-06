@@ -54,6 +54,32 @@ firemud:
       cleanup:
         batch-size: ${FIREMUD_ACCOUNT_CONNECT_SCOPE_CLEANUP_BATCH_SIZE:100}
         interval-ms: ${FIREMUD_ACCOUNT_CONNECT_SCOPE_CLEANUP_INTERVAL_MS:60000}
+    platform-auth-abuse:
+      cache-redis:
+        url: ${FIREMUD_REDIS_CACHE_URL:}
+        host: ${FIREMUD_REDIS_CACHE_HOST:redis-cache}
+        port: ${FIREMUD_REDIS_CACHE_PORT:6379}
+        database: ${FIREMUD_ACCOUNT_AUTH_ABUSE_CACHE_REDIS_DATABASE:0}
+        command-timeout-millis: ${FIREMUD_ACCOUNT_AUTH_ABUSE_CACHE_COMMAND_TIMEOUT_MS:1000}
+        username: ${FIREMUD_REDIS_CACHE_USERNAME:}
+        password: ${FIREMUD_REDIS_CACHE_PASSWORD:}
+        use-ssl: ${FIREMUD_REDIS_CACHE_USE_SSL:false}
+        start-tls: ${FIREMUD_REDIS_CACHE_START_TLS:false}
+        verify-peer: ${FIREMUD_REDIS_CACHE_VERIFY_PEER:true}
+      hmac-key-id: ${FIREMUD_ACCOUNT_AUTH_ABUSE_HMAC_KEY_ID:}
+      hmac-key-base64: ${FIREMUD_ACCOUNT_AUTH_ABUSE_HMAC_KEY_BASE64:}
+      subject-window-seconds: ${FIREMUD_ACCOUNT_AUTH_ABUSE_SUBJECT_WINDOW_SECONDS:300}
+      global-window-seconds: ${FIREMUD_ACCOUNT_AUTH_ABUSE_GLOBAL_WINDOW_SECONDS:60}
+      global-admissions-per-window: ${FIREMUD_ACCOUNT_AUTH_ABUSE_GLOBAL_ADMISSIONS_PER_WINDOW:1000}
+      source-attempts-per-window: ${FIREMUD_ACCOUNT_AUTH_ABUSE_SOURCE_ATTEMPTS_PER_WINDOW:60}
+      candidate-attempts-per-window: ${FIREMUD_ACCOUNT_AUTH_ABUSE_CANDIDATE_ATTEMPTS_PER_WINDOW:20}
+      source-failures-per-window: ${FIREMUD_ACCOUNT_AUTH_ABUSE_SOURCE_FAILURES_PER_WINDOW:20}
+      candidate-failures-per-window: ${FIREMUD_ACCOUNT_AUTH_ABUSE_CANDIDATE_FAILURES_PER_WINDOW:5}
+      source-retry-base-seconds: ${FIREMUD_ACCOUNT_AUTH_ABUSE_SOURCE_RETRY_BASE_SECONDS:5}
+      candidate-retry-base-seconds: ${FIREMUD_ACCOUNT_AUTH_ABUSE_CANDIDATE_RETRY_BASE_SECONDS:15}
+      global-retry-base-seconds: ${FIREMUD_ACCOUNT_AUTH_ABUSE_GLOBAL_RETRY_BASE_SECONDS:5}
+      max-retry-seconds: ${FIREMUD_ACCOUNT_AUTH_ABUSE_MAX_RETRY_SECONDS:300}
+      max-counter-value: ${FIREMUD_ACCOUNT_AUTH_ABUSE_MAX_COUNTER_VALUE:1000000}
     tokens:
       session-expiration-ms: 3600000
       player-bootstrap-expiration-ms: 300000

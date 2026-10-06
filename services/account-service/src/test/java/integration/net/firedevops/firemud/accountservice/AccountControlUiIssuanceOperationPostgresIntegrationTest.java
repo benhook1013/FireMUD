@@ -192,7 +192,8 @@ class AccountControlUiIssuanceOperationPostgresIntegrationTest {
                             .dsl()
                             .execute(
                                 "UPDATE account_control_ui_issuance_operations SET status = 'COMMITTED', "
-                                    + "token_hash = ?, response_digest = ?, issued_at = ?, expires_at = ? "
+                                    + "token_hash = ?, response_digest = ?, "
+                                    + "issued_at = CAST(? AS timestamptz), expires_at = CAST(? AS timestamptz) "
                                     + "WHERE operation_id = ?",
                                 missingEnvelopeBinding.tokenHash(),
                                 missingEnvelopeBinding.responseDigest(),
