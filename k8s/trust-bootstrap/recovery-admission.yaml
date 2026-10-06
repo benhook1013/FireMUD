@@ -23,20 +23,25 @@ spec:
         (request.namespace in ['firemud-system', 'cert-manager'] &&
          (request.operation == 'DELETE' ? request.name : object.metadata.name) == 'firemud-grpc-ca' &&
          request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-preview-ca-recovery' &&
-         request.operation in ['CREATE', 'UPDATE'] && request.subResource == '')
-      message: only the protected recovery identity or system:masters may write the fixed CA Secret
+         request.operation in ['CREATE', 'UPDATE'] && request.subResource == '') ||
+        (request.operation == 'DELETE' && request.subResource == '' &&
+         request.name == 'firemud-grpc-ca' &&
+         (request.namespace == 'dev' || request.namespace.matches('^pr-[1-9][0-9]{0,50}$')) &&
+         (request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-preview-runtime' ||
+          request.userInfo.username == 'system:serviceaccount:kube-system:namespace-controller'))
+      message: only system:masters, the protected recovery identity, or the exact runtime/GC identities may mutate the fixed CA Secret
       reason: Forbidden
     - expression: >-
         request.operation == 'DELETE' ||
-        !(request.namespace in ['firemud-system', 'cert-manager']) ||
-        (object.type == (request.namespace == 'firemud-system' ? 'Opaque' : 'kubernetes.io/tls') &&
-         has(object.data) && object.data.size() == 2 &&
-         (request.namespace == 'firemud-system' ?
-           ('ca.crt' in object.data && 'ca.key' in object.data &&
-            object.data['ca.crt'].size() > 0 && object.data['ca.key'].size() > 0) :
-           ('tls.crt' in object.data && 'tls.key' in object.data &&
-            object.data['tls.crt'].size() > 0 && object.data['tls.key'].size() > 0)))
-      message: the fixed CA Secret must have its exact namespace-specific type and two nonempty data keys
+        (request.namespace in ['firemud-system', 'cert-manager'] &&
+         (object.type == (request.namespace == 'firemud-system' ? 'Opaque' : 'kubernetes.io/tls') &&
+          has(object.data) && object.data.size() == 2 &&
+          (request.namespace == 'firemud-system' ?
+            ('ca.crt' in object.data && 'ca.key' in object.data &&
+             object.data['ca.crt'].size() > 0 && object.data['ca.key'].size() > 0) :
+            ('tls.crt' in object.data && 'tls.key' in object.data &&
+             object.data['tls.crt'].size() > 0 && object.data['tls.key'].size() > 0))))
+      message: CREATE and UPDATE of the fixed CA Secret require its exact canonical namespace, type, and two nonempty data keys
       reason: Invalid
 ---
 apiVersion: admissionregistration.k8s.io/v1
