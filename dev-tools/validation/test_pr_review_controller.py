@@ -11,6 +11,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -7713,6 +7714,68 @@ class ControllerTests(unittest.TestCase):
 
         self.assertEqual(len(attempts), 3)
         self.assertEqual([call.args[0] for call in sleep.call_args_list], [0.05, 0.1])
+
+    def test_direct_sqlite_store_admission_lock_is_bounded_before_reservation(self):
+        controller = self.make({1: pr(1, HEAD_1)}, heads={"develop": BASE, "feature-1": HEAD_1}, sqlite=True)
+        controller.set_stack([1])
+        reservations = []
+        posts = []
+        lock_acquired = threading.Event()
+        release_lock = threading.Event()
+        lock_path = controller.store._lock_path
+
+        def hold_state_lock() -> None:
+            with lock_path.open("a+") as handle:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                lock_acquired.set()
+                release_lock.wait(2)
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+        def adapter(_target, *, admit, **_kwargs):
+            holder = threading.Thread(target=hold_state_lock)
+            holder.start()
+            try:
+                self.assertTrue(lock_acquired.wait(1))
+                admit(lambda: reservations.append("reserved"))
+                posts.append("posted")
+            finally:
+                release_lock.set()
+                holder.join(timeout=1)
+
+        controller.hosted_adapter = adapter
+        started = time.monotonic()
+        with (
+            patch.object(
+                github,
+                "hosted_preflight_budget",
+                side_effect=lambda: github.activate_hosted_preflight_budget(timeout_seconds=0.25),
+            ),
+            self.assertRaisesRegex(ControllerError, r"Hosted preflight deadline exceeded \(phase=runnable_check"),
+        ):
+            controller.run_hosted(expected_pr=1)
+
+        self.assertLess(time.monotonic() - started, 1)
+        self.assertEqual(reservations, [])
+        self.assertEqual(posts, [])
+
+    def test_direct_sqlite_store_suspends_deadline_after_successful_reservation(self):
+        controller = self.make({1: pr(1, HEAD_1)}, sqlite=True)
+        controller.set_stack([1])
+        store = controller.store
+        reservation_path = store.path.with_suffix(".reservation")
+        started = time.monotonic()
+
+        with github.activate_hosted_preflight_budget(timeout_seconds=0.05) as budget:
+            def reserve() -> None:
+                budget.complete()
+                reservation_path.write_text("durable reservation", encoding="utf-8")
+                time.sleep(0.08)
+
+            controller._admit_review(1, "hosted", reserve)
+            self.assertGreater(time.monotonic(), budget.deadline)
+
+        self.assertGreater(time.monotonic() - started, 0.05)
+        self.assertEqual(reservation_path.read_text(encoding="utf-8"), "durable reservation")
 
     def test_hosted_admission_retries_only_typed_lock_contention(self):
         controller = self.make({1: pr(1, HEAD_1)}, heads={"develop": BASE, "feature-1": HEAD_1})

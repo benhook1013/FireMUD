@@ -4135,11 +4135,18 @@ class SqliteReviewRecords:
         uri = f"{self.path.resolve().as_uri()}?mode={mode}"
         timeout = self._remaining_timeout(deadline)
         connection = sqlite3.connect(uri, uri=True, timeout=timeout, isolation_level=None)
-        self._set_busy_timeout(connection, deadline)
-        connection.execute("PRAGMA foreign_keys = ON")
-        if read_only:
-            connection.execute("PRAGMA query_only = ON")
-        return connection
+        try:
+            self._set_busy_timeout(connection, deadline)
+            connection.execute("PRAGMA foreign_keys = ON")
+            if read_only:
+                connection.execute("PRAGMA query_only = ON")
+            return connection
+        except BaseException as setup_error:
+            try:
+                connection.close()
+            except BaseException as close_error:
+                raise setup_error from close_error
+            raise
 
     def _require_regular_database(self) -> None:
         if self.path.is_symlink():

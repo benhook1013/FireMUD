@@ -35,6 +35,7 @@ from .cli_runner import (
 from .git_merge import TestMergeError, test_merge_tree
 from .hosted import parse_timestamp, prepare_full_trigger
 from .patch_identity import patch_identity
+from .sqlite_store import SqliteStateStore
 from .state import (
     ControllerStateStore,
     FindingRoute,
@@ -5776,6 +5777,12 @@ class ReviewController:
                 self.store.update(admit)
             elif isinstance(self.store, (StateStore, ControllerStateStore)):
                 self.store.update(admit, lock_deadline=budget.deadline)
+            elif isinstance(self.store, SqliteStateStore):
+                self.store.update(
+                    admit,
+                    deadline=budget.deadline,
+                    deadline_active=lambda: budget.active,
+                )
             else:
                 self.store.update(admit)
         except StateLockTimeout as error:

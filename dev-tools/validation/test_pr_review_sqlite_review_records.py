@@ -985,6 +985,31 @@ class SqliteReviewRecordsTest(unittest.TestCase):
                 contender.close()
             connection.close()
 
+    def test_connection_setup_failure_closes_connection_and_preserves_original_error(self) -> None:
+        class TrackingConnection:
+            def __init__(self) -> None:
+                self.connection = sqlite3.connect(":memory:")
+                self.closed = False
+
+            def execute(self, statement: str):
+                return self.connection.execute(statement)
+
+            def close(self) -> None:
+                self.closed = True
+                self.connection.close()
+
+        connection = TrackingConnection()
+        setup_error = RuntimeError("injected connection setup failure")
+        with (
+            patch.object(sqlite_review_records.sqlite3, "connect", return_value=connection),
+            patch.object(self.records, "_set_busy_timeout", side_effect=setup_error),
+            self.assertRaisesRegex(RuntimeError, "injected connection setup failure") as raised,
+        ):
+            self.records._connect(read_only=True, deadline=time.monotonic() + 1)
+
+        self.assertIs(raised.exception, setup_error)
+        self.assertTrue(connection.closed)
+
     def test_unparameterized_record_operations_inherit_only_an_active_hosted_budget(self) -> None:
         self.bootstrap()
         writer = sqlite3.connect(self.database, isolation_level=None)
