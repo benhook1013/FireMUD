@@ -389,9 +389,8 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
         .isEqualTo(1L);
 
     var actualInput = isolatedOwners.service().assemble(stableSelector);
-    assertThat(actualInput.gameSessionReadEvidence().currentGameInstanceStatus())
-        .isEqualTo(
-            CanonicalGameInstanceLaunchAssociationReadEvidence.CurrentGameInstanceStatus.STARTING);
+    assertThat(actualInput.gameSessionReadEvidence().currentGameSessionStatus())
+        .isEqualTo("STARTING");
     assertThat(actualInput.topologyPlan().sourceBinding().freeze())
         .isEqualTo(frozen.request().freeze());
     var firstLifecycleRequest = lifecycleReadRequest(firstRequest, actualInput);
@@ -409,6 +408,43 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
         .isNotEqualTo(actualInput.topologyPlan().rooms().getFirst().identity().templateId());
     assertThat(firstLifecycle.runtimeRoomInstanceId()).isPositive();
     assertThat(verifierInvocations).hasValue(1);
+
+    var selectedRoomPlan =
+        actualInput.topologyPlan().rooms().stream()
+            .filter(room -> room.identity().templateId().equals(selectedRoom))
+            .findFirst()
+            .orElseThrow();
+    var selectedZonePlan =
+        actualInput.topologyPlan().zones().stream()
+            .filter(zone -> zone.identity().equals(selectedRoomPlan.zone()))
+            .findFirst()
+            .orElseThrow();
+    var materializedRegion =
+        materializedOperationalRegionRow(
+            ownerRequest.gameInstanceUuid(),
+            selectedZonePlan.region().templateId(),
+            selectedRoomPlan.zone().templateId(),
+            selectedRoom);
+    UUID operationalRegionId =
+        materializedRegion.get("operational_region_id", UUID.class);
+    UUID canonicalRegionInstanceId =
+        materializedRegion.get("canonical_region_instance_id", UUID.class);
+    assertThat(operationalRegionId).isNotNull().isNotEqualTo(new UUID(0L, 0L));
+    assertThat(operationalRegionId).isNotEqualTo(canonicalRegionInstanceId);
+    assertThat(materializedRegion.get("canonical_runtime_identity", UUID.class))
+        .isEqualTo(canonicalRegionInstanceId);
+    assertThat(materializedRegion.get("region_tenant_id", Long.class))
+        .isEqualTo(materializedRegion.get("room_tenant_id", Long.class));
+    assertThat(materializedRegion.get("region_game_instance_id", Long.class))
+        .isEqualTo(materializedRegion.get("room_game_instance_id", Long.class));
+    assertThat(materializedRegion.get("region_row_id", Long.class))
+        .isEqualTo(materializedRegion.get("room_region_instance_id", Long.class));
+    assertThat(materializedRegion.get("region_row_id", Long.class))
+        .isEqualTo(materializedRegion.get("zone_region_instance_id", Long.class));
+    assertThat(materializedRegion.get("zone_row_id", Long.class))
+        .isEqualTo(materializedRegion.get("room_zone_instance_id", Long.class));
+    String retainedOperationalRegionRow =
+        materializedRegion.get("region_row_json", String.class);
 
     var mappedRoom =
         Objects.requireNonNull(
@@ -447,6 +483,12 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     var retryLifecycle =
         CanonicalWorldInstancePreparationGrpcCodec.fromResponse(
             retryRequest, retryLifecycleRequest, retryResponse);
+    var retriedOperationalRegion =
+        materializedOperationalRegionRow(
+            ownerRequest.gameInstanceUuid(),
+            selectedZonePlan.region().templateId(),
+            selectedRoomPlan.zone().templateId(),
+            selectedRoom);
     assertThat(retryResponse.getRequest()).isEqualTo(retryTransportRequest);
     assertThat(retryLifecycle).isEqualTo(retryActualLifecycle);
     assertThat(retryLifecycle.lifecycleStatus()).isEqualTo("PREPARING");
@@ -459,6 +501,12 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     assertThat(retryLifecycle.preparationInputDigest())
         .isEqualTo(firstLifecycle.preparationInputDigest());
     assertThat(retryLifecycle.startLocation()).isEqualTo(firstLifecycle.startLocation());
+    assertThat(retriedOperationalRegion.get("operational_region_id", UUID.class))
+        .isEqualTo(operationalRegionId);
+    assertThat(retriedOperationalRegion.get("canonical_region_instance_id", UUID.class))
+        .isEqualTo(canonicalRegionInstanceId);
+    assertThat(retriedOperationalRegion.get("region_row_json", String.class))
+        .isEqualTo(retainedOperationalRegionRow);
     assertThat(verifierInvocations).hasValue(2);
     assertThat(preparationRows(ownerRequest.gameInstanceUuid()))
         .containsExactly(retainedPreparationRows);
@@ -468,6 +516,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     assertThat(
             publishedSelectors()
                 .readCommitted(frozen.request().freeze())
+                .map(this::publishedEvidence)
                 .orElseThrow()
                 .canonicalBytes())
         .containsExactly(originalSelectorBytes);
@@ -2821,6 +2870,43 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
                 canonicalTenantId,
                 controlPlaneRequestId))
         .get(0, Long.class);
+  }
+
+  private org.jooq.Record materializedOperationalRegionRow(
+      UUID canonicalGameInstanceId,
+      UUID regionTemplateId,
+      UUID zoneTemplateId,
+      UUID roomTemplateId) {
+    return Objects.requireNonNull(
+        dsl.fetchOne(
+            "SELECT to_jsonb(ri)::text AS region_row_json,ri.id AS region_row_id,"
+                + "ri.operational_region_id,ri.canonical_region_instance_id,"
+                + "region_map.runtime_identity AS canonical_runtime_identity,"
+                + "ri.tenant_id AS region_tenant_id,room.tenant_id AS room_tenant_id,"
+                + "ri.game_instance_id AS region_game_instance_id,room.game_instance_id AS room_game_instance_id,"
+                + "room.region_instance_id AS room_region_instance_id,"
+                + "zone.region_instance_id AS zone_region_instance_id,zone.id AS zone_row_id,"
+                + "room.zone_instance_id AS room_zone_instance_id "
+                + "FROM world_canonical_instance_topology_identity region_map "
+                + "JOIN region_instance ri ON ri.id=region_map.runtime_row_id "
+                + "JOIN world_canonical_instance_topology_identity room_map "
+                + "ON room_map.canonical_game_instance_id=region_map.canonical_game_instance_id "
+                + "AND room_map.world_instance_id=region_map.world_instance_id "
+                + "AND room_map.family='ROOM' AND room_map.template_id=? "
+                + "JOIN room_instance room ON room.id=room_map.runtime_row_id "
+                + "JOIN zone_instance zone ON zone.id=room.zone_instance_id "
+                + "JOIN world_canonical_instance_topology_identity zone_map "
+                + "ON zone_map.canonical_game_instance_id=region_map.canonical_game_instance_id "
+                + "AND zone_map.world_instance_id=region_map.world_instance_id "
+                + "AND zone_map.runtime_row_id=zone.id AND zone_map.family='ZONE' "
+                + "AND zone_map.template_id=? "
+                + "WHERE region_map.canonical_game_instance_id=? AND region_map.family='REGION' "
+                + "AND region_map.template_id=? AND region_map.runtime_row_id=room.region_instance_id "
+                + "AND room.region_instance_id=zone.region_instance_id",
+            roomTemplateId,
+            zoneTemplateId,
+            canonicalGameInstanceId,
+            regionTemplateId));
   }
 
   private PrepareCanonicalWorldInstanceResponse invokePreparationAsGameSession(
