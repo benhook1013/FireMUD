@@ -2216,6 +2216,8 @@ jobs:
           bash dev-tools/validation/inspect-test-results.sh \
             --strict \
             --require-suite net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#publishedSelectorJoinsExactFrozenCheckpointToOriginalAppliedWithoutWrites()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#permissionUnverifiedGraphAndFrozenHistoryCannotSupplyPublishedSelector()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#freshApplicationRetainsCompleteExactGraphAndOriginalAccountReadbackAndRetriesAfterFreeze()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#explicitEmptyOptionalFamiliesProduceAppliedGraphAndExactTypedStartSelector()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#newAccountBoundGraphRequiresCompleteOriginalDeclaration()' \

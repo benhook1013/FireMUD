@@ -20,6 +20,7 @@ import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.Outcome;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.Owner;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
+import net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence;
 import net.firedevops.firemud.worldmanagement.v1.ReadWorldDraftTerminalOutcomeRequest;
 import net.firedevops.firemud.worldmanagement.v1.ReadWorldDraftTerminalOutcomeResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldDraftTerminalReadStatus;
@@ -31,7 +32,6 @@ public final class WorldDraftTerminalReadGrpcCodec {
   private static final UUID NIL_UUID = new UUID(0L, 0L);
   private static final String APPLIED_V1 = "world-draft-graph-applied/v1";
   private static final String APPLIED_V2 = "world-draft-graph-applied/v2";
-  private static final String START_LOCATION_RECEIPT_V1 = "world-draft-start-location-receipt/v1";
   private static final java.util.List<String> FRESH_GRAPH_FAMILIES =
       java.util.List.of(
           "WORLD_DESIGN_AGGREGATE_TYPE_REGION",
@@ -306,6 +306,13 @@ public final class WorldDraftTerminalReadGrpcCodec {
       operation.expectBytes(request.originalAccountBinding());
       operation.requireEnd();
       byte[] graph = base64(result, "graphBytesBase64");
+      if (v2) {
+        StandardCharsets.UTF_8
+            .newDecoder()
+            .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+            .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+            .decode(ByteBuffer.wrap(graph));
+      }
       String graphDigest = sha256(graph);
       exactText(result, "graphDigest", graphDigest);
       JsonNode graphValue = JSON.readTree(graph);
@@ -314,18 +321,6 @@ public final class WorldDraftTerminalReadGrpcCodec {
       exactText(graphValue, "schemaVersion", "2");
       exactText(graphValue, "canonicalTenantId", account.tenantId().toString());
       exactText(graphValue, "canonicalVersionId", account.versionId().toString());
-      if (v2) {
-        String graphJson =
-            StandardCharsets.UTF_8
-                .newDecoder()
-                .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
-                .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
-                .decode(ByteBuffer.wrap(graph))
-                .toString();
-        if (!Arrays.equals(graph, Rfc8785CanonicalJson.canonicalizeUtf8(graphJson))) {
-          throw new IllegalArgumentException("World v2 graph bytes are not canonical");
-        }
-      }
       if (!graphValue.get("rows").isArray() || graphValue.get("rows").isEmpty())
         throw new IllegalArgumentException("World applied graph is absent");
       if (v2) {
@@ -575,100 +570,24 @@ public final class WorldDraftTerminalReadGrpcCodec {
       WorldDraftTerminalReadEvidence.Request request,
       DraftCommitBinding draft,
       DraftAuthorizationFenceBinding binding)
-      throws java.io.IOException, NoSuchAlgorithmException {
-    byte[] receiptBytes = base64(result, "startLocationReceiptBase64");
-    String receiptJson =
-        StandardCharsets.UTF_8
-            .newDecoder()
-            .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
-            .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
-            .decode(ByteBuffer.wrap(receiptBytes))
-            .toString();
-    if (!Arrays.equals(receiptBytes, Rfc8785CanonicalJson.canonicalizeUtf8(receiptJson))) {
-      throw new IllegalArgumentException("World start-location receipt is not canonical");
-    }
-    JsonNode receipt = JSON.readTree(receiptBytes);
-    fields(
-        receipt,
-        Set.of(
-            "schema",
-            "targetNamespace",
-            "operationId",
-            "requestId",
-            "commitId",
-            "authorizationFenceId",
-            "accountBindingDigest",
-            "bindingDigest",
-            "startLocation",
-            "graphDigest",
-            "receiptDigest"));
-    exactText(receipt, "schema", START_LOCATION_RECEIPT_V1);
-    exactText(receipt, "targetNamespace", request.targetNamespace());
-    exactText(receipt, "operationId", binding.operationId().toString());
-    exactText(receipt, "requestId", binding.requestId().toString());
-    exactText(receipt, "commitId", binding.commitId().toString());
-    exactText(receipt, "authorizationFenceId", binding.fenceId().toString());
-    exactText(receipt, "accountBindingDigest", sha256(request.originalAccountBinding()));
-    exactText(receipt, "bindingDigest", draft.digest());
-    exactText(receipt, "graphDigest", graphDigest);
-    JsonNode selector = receipt.get("startLocation");
-    fields(selector, ROOM_TEMPLATE_REF_FIELDS);
-    exactText(selector, "tenantId", original.tenantId().toString());
-    exactText(selector, "versionId", original.versionId().toString());
-    exactText(selector, "roomTemplateId", original.roomTemplateId().toString());
-    String receiptDigest = text(receipt, "receiptDigest");
-    exactText(result, "startLocationReceiptDigest", receiptDigest);
-    String expectedReceiptDigest =
-        startLocationReceiptDigest(
-            request.targetNamespace(),
-            binding.operationId(),
-            binding.requestId(),
-            binding.commitId(),
-            binding.fenceId(),
-            sha256(request.originalAccountBinding()),
-            draft.digest(),
-            original.tenantId(),
-            original.versionId(),
-            original.roomTemplateId(),
-            graphDigest);
-    if (!expectedReceiptDigest.equals(receiptDigest)) {
-      throw new IllegalArgumentException("World start-location receipt digest is invalid");
-    }
-  }
-
-  private static String startLocationReceiptDigest(
-      String targetNamespace,
-      UUID operationId,
-      UUID requestId,
-      UUID commitId,
-      UUID fenceId,
-      String accountBindingDigest,
-      String bindingDigest,
-      UUID tenantId,
-      UUID versionId,
-      UUID roomTemplateId,
-      String graphDigest)
       throws NoSuchAlgorithmException {
-    java.io.ByteArrayOutputStream framed = new java.io.ByteArrayOutputStream();
-    for (String value :
-        java.util.List.of(
-            START_LOCATION_RECEIPT_V1,
-            targetNamespace,
-            operationId.toString(),
-            requestId.toString(),
-            commitId.toString(),
-            fenceId.toString(),
-            accountBindingDigest,
-            bindingDigest,
-            tenantId.toString(),
-            versionId.toString(),
-            roomTemplateId.toString(),
-            graphDigest)) {
-      byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
-      framed.writeBytes(ByteBuffer.allocate(Integer.BYTES).putInt(bytes.length).array());
-      framed.writeBytes(bytes);
+    var receipt =
+        WorldDraftStartLocationEvidence.fromStored(base64(result, "startLocationReceiptBase64"));
+    if (!receipt.targetNamespace().equals(request.targetNamespace())
+        || !receipt.operationId().equals(binding.operationId())
+        || !receipt.requestId().equals(binding.requestId())
+        || !receipt.commitId().equals(binding.commitId())
+        || !receipt.authorizationFenceId().equals(binding.fenceId())
+        || !receipt.accountBindingDigest().equals(sha256(request.originalAccountBinding()))
+        || !receipt.bindingDigest().equals(draft.digest())
+        || !receipt.startLocation().tenantId().equals(original.tenantId())
+        || !receipt.startLocation().versionId().equals(original.versionId())
+        || !receipt.startLocation().roomTemplateId().equals(original.roomTemplateId())
+        || !receipt.graphDigest().equals(graphDigest)) {
+      throw new IllegalArgumentException(
+          "World start-location receipt differs from its original Account-bound graph");
     }
-    return sha256(framed.toByteArray());
+    exactText(result, "startLocationReceiptDigest", receipt.receiptDigest());
   }
 
   private static long positiveLong(JsonNode value, String field) {

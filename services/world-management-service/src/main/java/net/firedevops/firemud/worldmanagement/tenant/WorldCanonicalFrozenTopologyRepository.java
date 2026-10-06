@@ -54,6 +54,28 @@ public class WorldCanonicalFrozenTopologyRepository {
     return Optional.ofNullable(find(Objects.requireNonNull(request, "request")));
   }
 
+  /** Complete publication selection; owner and original commit are reconstructed internally. */
+  public Optional<WorldCanonicalFrozenTopology> readCommitted(CaptureRequest request) {
+    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new ConflictException("Frozen topology readback requires no caller transaction");
+    }
+    Objects.requireNonNull(request, "request");
+    Record row =
+        dsl.resultQuery(
+                "SELECT binding_json,binding_digest,owner_binding_json FROM world_canonical_frozen_topology WHERE publication_fence=?",
+                request.publicationFence())
+            .fetchOne();
+    if (row == null) return Optional.empty();
+    var binding =
+        DraftCommitBinding.fromStored(
+            required(row, "binding_json", String.class),
+            required(row, "binding_digest", String.class));
+    var ownerBinding =
+        JSON.readValue(required(row, "owner_binding_json", String.class), OwnerBinding.class);
+    return readCommitted(
+        new Request(WorldDraftTopologyCommitPlan.create(binding, ownerBinding), request));
+  }
+
   WorldCanonicalFrozenTopology capture(Request request) {
     // This seam validates actual PostgreSQL isolation and serializes through the existing V25 row.
     var provenance = owner.lockAndResolve(request.freeze());

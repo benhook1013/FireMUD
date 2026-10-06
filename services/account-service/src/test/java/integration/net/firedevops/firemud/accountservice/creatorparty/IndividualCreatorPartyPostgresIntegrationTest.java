@@ -71,7 +71,10 @@ class IndividualCreatorPartyPostgresIntegrationTest {
             .intoMap();
     db.dsl()
         .execute(
-            "INSERT INTO account_tenant_membership (account_id, tenant_id, gameplay_admission_allowed) VALUES (?, 42, FALSE)",
+            "INSERT INTO account_tenant_membership "
+                + "(account_id, tenant_id, gameplay_admission_allowed, lifecycle_state, "
+                + "membership_version, membership_authority_generation, authority_provenance) "
+                + "VALUES (?, 42, FALSE, 'LEGACY_UNVERIFIED', 1, 1, 'LEGACY_UNVERIFIED')",
             accountKey);
     Map<String, Object> before =
         Objects.requireNonNull(

@@ -103,6 +103,12 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   @Autowired private WorldAuthoredSourceIntakeRepository intakeRepository;
   @Autowired private WorldDesignPublicationFenceRepository fence;
   @Autowired private ObjectMapper mapper;
+  @Autowired private WorldAuthoredGraphSnapshotRepository snapshots;
+
+  @Autowired
+  private net.firedevops.firemud.worldmanagement.service.WorldDraftDesignDigestService
+      digestService;
+
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
 
   @MockitoBean(enforceOverride = true)
@@ -111,6 +117,198 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   @MockitoBean private GameDesignClient gameDesignClient;
   @MockitoBean private GameSessionClient gameSessionClient;
   @MockitoBean private EntityManagementClient entityManagementClient;
+
+  @Test
+  void publishedSelectorJoinsExactFrozenCheckpointToOriginalAppliedWithoutWrites() {
+    Fixture f = fixture();
+    var application = application(f);
+    var applied = appliedComponent().apply(application);
+    var capture = capture(application.plan());
+    var request = capture.request().freeze();
+    var source = publishedSelectors().readCommitted(request).orElseThrow();
+    assertThat(source.selectorReceipt()).isEqualTo(applied.startLocationReceipt().orElseThrow());
+    assertThat(source.appliedResult().canonicalBytes()).containsExactly(applied.canonicalBytes());
+    assertThat(source.frozenTopology().resultBytes()).containsExactly(capture.resultBytes());
+    assertThat(source.frozenTopology().status()).isEqualTo("CAPTURED_UNVERIFIED");
+    assertThat(source.appliedResult().application().operation().accountBindingBytes())
+        .containsExactly(application.operation().accountBindingBytes());
+    var another = application(fixture());
+    var anotherResult = appliedComponent().apply(another);
+    var substitutedApplications =
+        org.mockito.Mockito.mock(WorldDraftGraphApplicationRepository.class);
+    org.mockito.Mockito.when(
+            substitutedApplications.readCommitted(
+                org.mockito.ArgumentMatchers.eq(NAMESPACE),
+                org.mockito.ArgumentMatchers.any(byte[].class)))
+        .thenReturn(java.util.Optional.of(anotherResult));
+    assertThatThrownBy(
+            () ->
+                new WorldPublishedStartLocationRepository(
+                        dsl, frozenRepository(), substitutedApplications)
+                    .readCommitted(request))
+        .hasMessageContaining("differs from original frozen application");
+    // A plausible result for a distinct Account operation on the same plan is also substitution.
+    org.mockito.Mockito.when(
+            substitutedApplications.readCommitted(
+                org.mockito.ArgumentMatchers.eq(NAMESPACE),
+                org.mockito.ArgumentMatchers.any(byte[].class)))
+        .thenReturn(
+            java.util.Optional.of(
+                WorldDraftGraphAppliedResult.create(
+                    changedAccountApplication(application), applied.graphBytes())));
+    assertThatThrownBy(
+            () ->
+                new WorldPublishedStartLocationRepository(
+                        dsl, frozenRepository(), substitutedApplications)
+                    .readCommitted(request))
+        .hasMessageContaining("differs from original frozen application");
+    byte[] before = retainedApplicationBytes(application);
+    assertThat(publishedSelectors().readCommitted(request).orElseThrow().selectorReceipt())
+        .isEqualTo(source.selectorReceipt());
+    assertThat(retainedApplicationBytes(application)).containsExactly(before);
+    assertThat(count(f, "world_draft_graph_application")).isEqualTo(1);
+    assertThat(count(f, "world_draft_start_location_receipt")).isEqualTo(1);
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT count(*) FROM world_canonical_frozen_topology WHERE publication_fence=?",
+                        request.publicationFence()))
+                .get(0, Long.class))
+        .isEqualTo(1L);
+    assertThatThrownBy(
+            () ->
+                publishedSelectors()
+                    .readCommitted(
+                        changedSelection(request, "changed-request", request.contentDigest())))
+        .hasMessageContaining("canonical full-version workflow identity");
+    assertThatThrownBy(
+            () ->
+                publishedSelectors()
+                    .readCommitted(
+                        changedSelection(request, request.publicationRequestId(), "c".repeat(64))))
+        .hasMessageContaining("changed complete input or checkpoint");
+    assertThatThrownBy(
+            () -> ownerTransaction().execute(status -> publishedSelectors().readCommitted(request)))
+        .hasMessageContaining("no caller transaction");
+    assertOrigin();
+  }
+
+  @Test
+  void permissionUnverifiedGraphAndFrozenHistoryCannotSupplyPublishedSelector() {
+    var plan = plan(fixture());
+    component().store(plan);
+    var capture = capture(plan);
+    assertThat(frozenRepository().readCommitted(capture.request().freeze())).isPresent();
+    assertThatThrownBy(() -> publishedSelectors().readCommitted(capture.request().freeze()))
+        .hasMessageContaining("lacks original APPLIED application");
+    assertOrigin();
+  }
+
+  private byte[] retainedApplicationBytes(WorldDraftGraphApplication application) {
+    return Objects.requireNonNull(
+        Objects.requireNonNull(
+                dsl.fetchOne(
+                    "SELECT convert_to(to_jsonb(a)::text,'UTF8') FROM world_draft_graph_application a WHERE operation_id=?",
+                    application.operation().operationId()))
+            .get(0, byte[].class));
+  }
+
+  private WorldAuthoredGraphSnapshot.CaptureRequest changedSelection(
+      WorldAuthoredGraphSnapshot.CaptureRequest request, String publicationRequest, String digest) {
+    return new WorldAuthoredGraphSnapshot.CaptureRequest(
+        request.targetNamespace(),
+        request.canonicalTenantId(),
+        request.canonicalVersionId(),
+        request.intakeRequestId(),
+        request.publicationFence(),
+        publicationRequest,
+        request.requestDigest(),
+        request.versionStateEpoch(),
+        request.publishWorkflowId(),
+        request.appliedCommitId(),
+        digest,
+        request.digestSchemaVersion(),
+        request.suppliedOwnedAffectedTuples());
+  }
+
+  private WorldCanonicalFrozenTopologyRepository frozenRepository() {
+    return new WorldCanonicalFrozenTopologyRepository(dsl, snapshots, repository(), digestService);
+  }
+
+  private WorldPublishedStartLocationRepository publishedSelectors() {
+    return new WorldPublishedStartLocationRepository(dsl, frozenRepository(), appliedRepository());
+  }
+
+  private WorldCanonicalFrozenTopology capture(WorldDraftTopologyCommitPlan plan) {
+    var owner = plan.ownerBinding();
+    String publicationRequest = "selector-" + UUID.randomUUID();
+    var evidence =
+        new WorldDesignPublicationFenceEvidence(
+            owner.targetNamespace(),
+            owner.canonicalTenantId(),
+            owner.canonicalVersionId(),
+            owner.versionIdentityOperationId(),
+            owner.gameDesignVersionId(),
+            owner.intakeRequestId(),
+            owner.intakeOperationId(),
+            owner.intakeRequestDigest(),
+            owner.sourceOperationId(),
+            owner.sourceEvidenceDigest(),
+            owner.intakeReceiptDigest(),
+            publicationRequest,
+            "a".repeat(64),
+            1,
+            "publish:" + owner.canonicalTenantId() + ":publish-request:" + publicationRequest);
+    var attempt =
+        Objects.requireNonNull(
+            ownerTransaction()
+                .execute(
+                    status ->
+                        fence.claimFreeze(
+                            evidence,
+                            () -> {
+                              var identity =
+                                  Objects.requireNonNull(
+                                      dsl.fetchOne(
+                                          "SELECT local_tenant_key,local_version_key FROM world_authored_version_identity WHERE operation_id=?",
+                                          owner.versionIdentityOperationId()));
+                              var digest =
+                                  digestService.getDraftDesignDigest(
+                                      identity.get("local_tenant_key", Long.class).toString(),
+                                      identity.get("local_version_key", Long.class).toString());
+                              return new WorldDesignPublicationFenceEvidence.Checkpoint(
+                                  plan.binding().commitId().toString(), digest.contentDigest(), 3);
+                            })));
+    var tuples =
+        plan.binding().affectedUnits(Owner.WORLD_MANAGEMENT).stream()
+            .map(
+                unit ->
+                    new WorldAuthoredGraphSnapshot.OwnedAffectedTuple(
+                        unit.owner().name(),
+                        unit.aggregateType(),
+                        unit.aggregateId(),
+                        unit.scopeType(),
+                        unit.scopeId(),
+                        unit.expectedEpoch()))
+            .toList();
+    var request =
+        new WorldAuthoredGraphSnapshot.CaptureRequest(
+            owner.targetNamespace(),
+            owner.canonicalTenantId(),
+            owner.canonicalVersionId(),
+            owner.intakeRequestId(),
+            attempt.publicationFence(),
+            publicationRequest,
+            evidence.requestDigest(),
+            evidence.versionStateEpoch(),
+            evidence.publishWorkflowId(),
+            attempt.checkpoint().appliedCommitId(),
+            attempt.checkpoint().contentDigest(),
+            attempt.checkpoint().digestSchemaVersion(),
+            tuples);
+    return new WorldCanonicalFrozenTopologyService(frozenRepository(), manager)
+        .capture(new WorldCanonicalFrozenTopology.Request(plan, request));
+  }
 
   @Test
   void freshApplicationRetainsCompleteExactGraphAndOriginalAccountReadbackAndRetriesAfterFreeze() {
@@ -486,7 +684,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     assertThat(component().store(priorPlan).status()).isEqualTo("STORED_PERMISSION_UNVERIFIED");
 
     assertThatThrownBy(() -> appliedComponent().apply(application))
-        .hasMessageContaining("extra or missing actual");
+        .hasMessageContaining("Fresh World topology conflicts with retained region");
     assertThat(appliedRepository().readCommitted(application)).isEmpty();
     assertThat(count(f, "world_authored_topology_identity")).isEqualTo(4);
     assertThat(count(f, "world_draft_start_location_receipt")).isZero();
@@ -582,6 +780,53 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     assertThat(exact.canonicalBytes()).containsExactly(legacyResult.canonicalBytes());
     assertThat(exact.graphBytes()).containsExactly(legacyResult.graphBytes());
     assertThat(exact.startLocationReceipt()).isEmpty();
+    // Negative source-reader proof uses real retained v1 APPLIED bytes, with a stipulated frozen
+    // selection only. This is not positive capture or publication-checkpoint proof for v1 history.
+    var historicalFreeze =
+        new WorldAuthoredGraphSnapshot.CaptureRequest(
+            NAMESPACE,
+            historicalPlan.ownerBinding().canonicalTenantId(),
+            historicalPlan.ownerBinding().canonicalVersionId(),
+            historicalPlan.ownerBinding().intakeRequestId(),
+            UUID.randomUUID(),
+            "historical-selector-denial",
+            "a".repeat(64),
+            1,
+            "publish:"
+                + historicalPlan.ownerBinding().canonicalTenantId()
+                + ":publish-request:historical-selector-denial",
+            historicalPlan.binding().commitId().toString(),
+            "b".repeat(64),
+            3,
+            historicalPlan.binding().affectedUnits(Owner.WORLD_MANAGEMENT).stream()
+                .map(
+                    unit ->
+                        new WorldAuthoredGraphSnapshot.OwnedAffectedTuple(
+                            unit.owner().name(),
+                            unit.aggregateType(),
+                            unit.aggregateId(),
+                            unit.scopeType(),
+                            unit.scopeId(),
+                            unit.expectedEpoch()))
+                .toList());
+    var historicalSelection =
+        new WorldCanonicalFrozenTopology(
+            UUID.randomUUID(),
+            new WorldCanonicalFrozenTopology.Request(historicalPlan, historicalFreeze),
+            f.version(),
+            new WorldCanonicalAuthoredGraphReader().read(historicalPlan, exact.graphBytes()),
+            exact.graphBytes(),
+            new byte[0],
+            new byte[0]);
+    var stipulatedFrozen = org.mockito.Mockito.mock(WorldCanonicalFrozenTopologyRepository.class);
+    org.mockito.Mockito.when(stipulatedFrozen.readCommitted(historicalFreeze))
+        .thenReturn(java.util.Optional.of(historicalSelection));
+    assertThatThrownBy(
+            () ->
+                new WorldPublishedStartLocationRepository(
+                        retainedDsl, stipulatedFrozen, retainedApplications)
+                    .readCommitted(historicalFreeze))
+        .hasMessageContaining("lacks original selector receipt");
     assertThat(
             retainedApplications
                 .readCommitted(NAMESPACE, historicalApplication.operation().accountBindingBytes())

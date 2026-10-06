@@ -23,7 +23,7 @@ import net.firedevops.firemud.worldmanagement.v1.ReadWorldDraftTerminalOutcomeRe
 import net.firedevops.firemud.worldmanagement.v1.WorldDraftTerminalReadStatus;
 import org.junit.jupiter.api.Test;
 
-class WorldDraftTerminalReadGrpcCodecTest {
+public class WorldDraftTerminalReadGrpcCodecTest {
   private static final UUID OPERATION_ID = uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
   private static final UUID REQUEST_ID = uuid("44444444-4444-4444-8444-444444444444");
   private static final UUID COMMIT_ID = uuid("55555555-5555-4555-8555-555555555555");
@@ -296,6 +296,9 @@ class WorldDraftTerminalReadGrpcCodecTest {
       throws Exception {
     var request = freshGraphRequest();
     var committed = committedReadback(request, true);
+    byte[] graphBytes =
+        Base64.getDecoder().decode(object(committed.result()).get("graphBytesBase64").textValue());
+    assertThat(java.util.Arrays.equals(graphBytes, canonical(JSON.readTree(graphBytes)))).isFalse();
     var response = WorldDraftTerminalReadGrpcCodec.toResponse(request, Optional.of(committed));
 
     assertThat(response.getStatus())
@@ -306,6 +309,32 @@ class WorldDraftTerminalReadGrpcCodecTest {
                 .orElseThrow()
                 .canonicalBytes())
         .containsExactly(committed.canonicalBytes());
+  }
+
+  @Test
+  void v2RejectsMalformedOrDigestSubstitutedOriginalOwnerGraphBytes() throws Exception {
+    var request = freshGraphRequest();
+    var committed = committedReadback(request, true);
+    var result = object(committed.result());
+    result.put("graphDigest", "sha256:" + "0".repeat(64));
+    assertResultRejected(request, committed, canonical(result));
+
+    result = object(committed.result());
+    byte[] malformedGraph = Base64.getDecoder().decode(result.get("graphBytesBase64").textValue());
+    malformedGraph[0] = (byte) 0xff;
+    String graphDigest = sha256(malformedGraph);
+    result.put("graphBytesBase64", Base64.getEncoder().encodeToString(malformedGraph));
+    result.put("graphDigest", graphDigest);
+    var draft =
+        DraftCommitBinding.fromStored(
+            new String(request.accountBinding().gameDesignBinding(), StandardCharsets.UTF_8),
+            request.accountBinding().inputDigest());
+    var changedReceipt = receipt(request, draft, graphDigest);
+    byte[] changedReceiptBytes = canonical(changedReceipt);
+    result.put(
+        "startLocationReceiptBase64", Base64.getEncoder().encodeToString(changedReceiptBytes));
+    result.put("startLocationReceiptDigest", changedReceipt.get("receiptDigest").textValue());
+    assertResultRejected(request, committed, canonical(result));
   }
 
   @Test
@@ -537,6 +566,23 @@ class WorldDraftTerminalReadGrpcCodecTest {
     return accountBinding(draft);
   }
 
+  /** Test-only exact fresh graph request shared with the published selector carrier proof. */
+  public static WorldDraftTerminalReadEvidence.Request
+      freshGraphRequestForStartLocationEvidenceTest() throws Exception {
+    return freshGraphRequest();
+  }
+
+  /** Test-only complete World APPLIED-v2 readback for the exact fresh graph request. */
+  public static DraftAuthorizationFenceBinding.OwnerReadback
+      committedFreshGraphReadbackForStartLocationEvidenceTest(
+          WorldDraftTerminalReadEvidence.Request request) {
+    try {
+      return committedReadback(request, true);
+    } catch (Exception impossible) {
+      throw new AssertionError(impossible);
+    }
+  }
+
   private static WorldDraftTerminalReadEvidence.Request freshGraphRequest() throws Exception {
     DraftCommitBinding draft = freshGraphBinding();
     return new WorldDraftTerminalReadEvidence.Request(
@@ -701,7 +747,7 @@ class WorldDraftTerminalReadGrpcCodecTest {
       rows.add(Map.of("mapping", mapping, "content", Map.of()));
     }
     root.put("rows", rows);
-    return canonical(JSON.valueToTree(root));
+    return JSON.writeValueAsBytes(root);
   }
 
   private static tools.jackson.databind.node.ObjectNode receipt(
