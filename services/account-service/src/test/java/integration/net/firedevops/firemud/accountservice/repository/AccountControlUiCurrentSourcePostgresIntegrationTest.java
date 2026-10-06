@@ -453,7 +453,7 @@ class AccountControlUiCurrentSourcePostgresIntegrationTest {
         .defaultSchema(schema)
         .placeholders(Map.of("serviceSchema", schema))
         .locations("classpath:db/migration")
-        .target(MigrationVersion.fromVersion("67"))
+        .target(MigrationVersion.fromVersion("79"))
         .load()
         .migrate();
     DSLContext dsl =
