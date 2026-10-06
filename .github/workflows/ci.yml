@@ -3208,6 +3208,41 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountTenantCreationBootstrapServicePostgresIntegrationTest#creatorControlCaptureDoesNotCreateMissingMembershipOrReceiptHistory()' \
             account-service
 
+      # Run after creator-bootstrap XML is captured: integrationTest replaces reports.
+      - name: Run Account individual creator-party PostgreSQL proof cases
+        if: ${{ matrix.module == 'account-service' }}
+        run: |
+          ./gradlew :account-service:integrationTest \
+            --tests integration.net.firedevops.firemud.accountservice.creatorparty.IndividualCreatorPartyPostgresIntegrationTest \
+            -PfullCheck --no-build-cache --no-configuration-cache
+
+      - name: Capture Account individual creator-party PostgreSQL raw XML
+        if: ${{ always() && matrix.module == 'account-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: account-individual-creator-party-postgresql-proof-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: services/account-service/build/test-results/integrationTest/TEST-*IndividualCreatorPartyPostgresIntegrationTest.xml
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Verify Account individual creator-party PostgreSQL proof cases
+        if: ${{ !cancelled() && matrix.module == 'account-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.accountservice.creatorparty.IndividualCreatorPartyPostgresIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.accountservice.creatorparty.IndividualCreatorPartyPostgresIntegrationTest#migrationPreservesExistingAccountAndMembershipAndEnrollsNoParty()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.creatorparty.IndividualCreatorPartyPostgresIntegrationTest#committedAssociationReadsExactSourcesAndRetriesWithoutAnotherResult()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.creatorparty.IndividualCreatorPartyPostgresIntegrationTest#changedPartyCreationAndOperationCannotRewriteAnOriginal()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.creatorparty.IndividualCreatorPartyPostgresIntegrationTest#unverifiedMissingPolicyForeignPartyAndMissingCreatorProofWriteNothing()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.creatorparty.IndividualCreatorPartyPostgresIntegrationTest#priorRetainedAndTombstonedHistoryCannotBeTreatedAsAbsent()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.creatorparty.IndividualCreatorPartyPostgresIntegrationTest#historicalReplaySurvivesLaterTombstoneButCurrentInitialReadDenies()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.creatorparty.IndividualCreatorPartyPostgresIntegrationTest#concurrentFirstAssociationsHaveOneCommittedWinner()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.creatorparty.IndividualCreatorPartyPostgresIntegrationTest#retainedHistoryCommitWinsAgainstWaitingFreshAssociation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.creatorparty.IndividualCreatorPartyPostgresIntegrationTest#commitBoundaryRejectsHistoryAddedAfterInitialAssociationInSameTransaction()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.creatorparty.IndividualCreatorPartyPostgresIntegrationTest#databaseRejectsSourceAndReceiptRewritesAndOrphanInitialHistory()' \
+            account-service
+
       - name: Verify Game Session LOGIN fixture isolation proof
         if: ${{ !cancelled() && matrix.module == 'game-session-service' }}
         run: |
