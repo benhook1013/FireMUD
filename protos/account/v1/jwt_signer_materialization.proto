@@ -1,0 +1,176 @@
+syntax = "proto3";
+
+package account.v1;
+
+option java_package = "net.firedevops.firemud.account.v1";
+option java_multiple_files = true;
+
+// This exact authenticated peer performs only fixed-name Secret observation, pending-slot key
+// generation, and an operation-bound private-slot transition after Account durably authorizes a
+// PREPARED promotion. Account alone prepares/commits/promotes the lifecycle and publishes JWKS.
+service AccountJwtSignerMaterializationService {
+  rpc GetCurrentGenerationRequest(GetCurrentGenerationRequestRequest)
+      returns (GetCurrentGenerationRequestResponse);
+  rpc RecordSecretObservation(RecordSecretObservationRequest)
+      returns (GetCurrentGenerationRequestResponse);
+  rpc RecordGenerationResult(RecordGenerationResultRequest)
+      returns (RecordGenerationResultResponse);
+  rpc GetCurrentPromotionRequest(GetCurrentPromotionRequestRequest)
+      returns (GetCurrentPromotionRequestResponse);
+  rpc RecordPrivatePromotionResult(RecordPrivatePromotionResultRequest)
+      returns (RecordPrivatePromotionResultResponse);
+}
+
+message ActiveSigner {
+  string generation = 1;
+  string kid = 2;
+}
+
+message GetCurrentGenerationRequestRequest {
+  int32 schema_version = 1;
+}
+
+message GetCurrentGenerationRequestResponse {
+  enum Phase {
+    PHASE_UNSPECIFIED = 0;
+    OBSERVE_PRIVATE_SECRET = 1;
+    GENERATE_PENDING = 2;
+    GENERATION_RECORDED = 3;
+  }
+
+  int32 schema_version = 1;
+  Phase phase = 2;
+  string operation_id = 3;
+  string operation_digest = 4;
+  string generation_request_digest = 5;
+  string desired_state_version = 6;
+  string environment_id = 7;
+  string cluster_id = 8;
+  string namespace = 9;
+  string expected_cluster_incarnation_uid = 10;
+  string expected_namespace_uid = 11;
+  string trust_binding_digest = 12;
+  string trust_config_revision = 13;
+  string private_secret_name = 14;
+  string target_generation = 15;
+  string target_kid = 16;
+  string target_algorithm = 17;
+  string operation_action = 18;
+  repeated string allowed_private_slots = 19;
+  ActiveSigner expected_active = 20;
+  string secret_uid = 21;
+  string expected_secret_resource_version = 22;
+  string generation_receipt_digest = 23;
+  string public_key_fingerprint = 24;
+  string public_jwk_json = 25;
+  string observed_secret_resource_version = 26;
+  ActiveSigner expected_published_active = 27;
+}
+
+message RecordSecretObservationRequest {
+  int32 schema_version = 1;
+  string operation_id = 2;
+  string operation_digest = 3;
+  string secret_uid = 4;
+  string observed_resource_version = 5;
+}
+
+message RecordGenerationResultRequest {
+  int32 schema_version = 1;
+  string operation_id = 2;
+  string generation_request_digest = 3;
+  string secret_uid = 4;
+  string expected_prior_resource_version = 5;
+  string observed_resource_version = 6;
+  // Exactly one bounded public RSA JWK; private RSA members and arbitrary resource names are not
+  // part of this schema. Account validates and canonicalizes the JWK and derives its fingerprint.
+  string public_jwk_json = 7;
+}
+
+message RecordGenerationResultResponse {
+  int32 schema_version = 1;
+  string operation_id = 2;
+  string operation_digest = 3;
+  string generation_request_digest = 4;
+  string generation_receipt_digest = 5;
+  string desired_state_version = 6;
+  string environment_id = 7;
+  string cluster_id = 8;
+  string namespace = 9;
+  string expected_cluster_incarnation_uid = 10;
+  string expected_namespace_uid = 11;
+  string trust_binding_digest = 12;
+  string trust_config_revision = 13;
+  string private_secret_name = 14;
+  string secret_uid = 15;
+  string expected_prior_resource_version = 16;
+  string observed_resource_version = 17;
+  string target_generation = 18;
+  string target_kid = 19;
+  string target_algorithm = 20;
+  string public_key_fingerprint = 21;
+  string public_jwk_json = 22;
+}
+
+// Account-authorized fixed-Secret slot transition. This peer response contains public identity
+// fences only; it never selects or publishes the Account-owned JWKS ConfigMap and never commits
+// the Account lifecycle.
+message GetCurrentPromotionRequestRequest {
+  int32 schema_version = 1;
+}
+
+message GetCurrentPromotionRequestResponse {
+  int32 schema_version = 1;
+  string promotion_operation_id = 2;
+  string promotion_request_digest = 3;
+  string generation_operation_id = 4;
+  string generation_operation_digest = 5;
+  string generation_receipt_digest = 6;
+  string environment_id = 7;
+  string cluster_id = 8;
+  string namespace = 9;
+  string expected_cluster_incarnation_uid = 10;
+  string expected_namespace_uid = 11;
+  string trust_binding_digest = 12;
+  string trust_config_revision = 13;
+  string private_secret_name = 14;
+  string target_generation = 15;
+  string target_kid = 16;
+  string target_algorithm = 17;
+  string target_public_key_fingerprint = 18;
+  string expected_secret_uid = 19;
+  string expected_secret_resource_version = 20;
+  string expected_previous_generation = 21;
+  string expected_previous_kid = 22;
+  string expected_previous_public_key_fingerprint = 23;
+  repeated string allowed_private_slots = 24;
+  string operation_action = 25;
+}
+
+message PromotionPublicKeyIdentity {
+  string generation = 1;
+  string kid = 2;
+  string public_key_fingerprint = 3;
+}
+
+message RecordPrivatePromotionResultRequest {
+  int32 schema_version = 1;
+  string promotion_operation_id = 2;
+  string promotion_request_digest = 3;
+  string generation_operation_id = 4;
+  string generation_operation_digest = 5;
+  string secret_uid = 6;
+  string expected_prior_resource_version = 7;
+  string observed_resource_version = 8;
+  PromotionPublicKeyIdentity current = 9;
+  PromotionPublicKeyIdentity previous = 10;
+  repeated string resulting_slots = 11;
+}
+
+message RecordPrivatePromotionResultResponse {
+  int32 schema_version = 1;
+  string promotion_operation_id = 2;
+  string generation_operation_id = 3;
+  string observed_resource_version = 4;
+  string public_receipt_digest = 5;
+}

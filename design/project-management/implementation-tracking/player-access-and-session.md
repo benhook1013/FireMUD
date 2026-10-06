@@ -55,6 +55,12 @@ At the Account gRPC boundary, `GetTenantMembershipForRuntime` enforces its exact
 
 Reconnect prompt-setting precedence remains owned by [Input, Output, and Presentation](../../architecture/system-architecture-input-output-and-presentation.md#prompt-behavior); this tracker records only the current reconnect capability and proof gaps.
 
+## Account Signer and Readiness Source Foundation
+
+This prerequisite preserves the shared Redis script contracts, closed JWT codecs and fixtures, Account signer desired-state and JWKS prepublication storage, the protected materializer handoff, readiness probes, validator inventory, and the associated owner-method validation components. The Account schema adds V41–V47 and V49–V52 above the existing V40 source baseline; no duplicate V48 baseline is installed. The closed authority-event codecs and receipt/writer proof remain together in the later Account source owner; tenant-source and committed-issuance Java consumers also remain separate downstream work. This is source/storage preparation, not public LOGIN, first-bound credential release, PLAY, signer provisioning, or controller activation.
+
+The extracted candidate passed canonical schema generation, Account main/unit/integration-test source compilation, boot JAR packaging, selected Java formatting, link checking, and Markdown lint. The selected Account suites reported 148 tests with no failures and three skips; all 134 common-security and 11 shared Redis-contract unit tests passed. Signed RS256 proof covers profile-specific counter types and exact delegation counters above JavaScript integer precision. Physical PostgreSQL migration/retained-data and Redis execution remain unrun locally while Docker and remote fixture execution are unavailable. The readiness validation endpoint remains opt-in and disabled by default; adding its source does not establish genuine mounted key material, a complete active validator inventory, or the full cross-owner readiness barrier. The remaining actual credential and authenticated World/Game Session composition must be proved before playable-entry completion is claimed.
+
 ## Canonical Design Sources
 
 - [Authentication and authorization](../../architecture/system-architecture-authentication.md) defines global account identity, tenant membership and authorization, access grants, credentials, and gameplay admission.
