@@ -21,6 +21,7 @@ import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFence
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.Ordering;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.Settlement;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.SourceChange;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.SourceChangeAbortReason;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
@@ -73,6 +74,76 @@ class DraftAuthorizationFencePostgresIntegrationTest {
         });
     assertThatThrownBy(() -> tx(context, () -> context.repository().claimCommitOrder(binding)))
         .isInstanceOf(IllegalStateException.class);
+  }
+
+  @Test
+  void abortedSourceChangeRetainsExactTerminalReasonAndCannotReopenOrBecomeMalformed() {
+    Context context = context();
+    DraftAuthorizationFenceBinding binding = binding();
+    SourceChange change = change(binding);
+    tx(context, () -> context.repository().reserve(binding));
+    assertThat(tx(context, () -> context.repository().requestSourceChange(change))).isFalse();
+    assertThat(tx(context, () -> context.repository().sourceAbortPermitted(change))).isFalse();
+    owner(context, binding, Owner.WORLD, Outcome.DEFINITIVELY_ABORTED, new byte[] {31});
+    owner(context, binding, Owner.GAME_DESIGN, Outcome.DEFINITIVELY_ABORTED, new byte[] {32});
+    assertThat(tx(context, () -> context.repository().sourceAbortPermitted(change))).isTrue();
+
+    tx(
+        context,
+        () -> {
+          context.repository().markSourceAborted(change, SourceChangeAbortReason.EXPIRED);
+          return null;
+        });
+    var aborted = tx(context, () -> context.repository().readSourceChange(change));
+    assertThat(aborted.status()).isEqualTo("SOURCE_ABORTED");
+    assertThat(aborted.committedAt()).isNull();
+    assertThat(aborted.abortedAt()).isNotNull();
+    assertThat(aborted.abortReason()).isEqualTo(SourceChangeAbortReason.EXPIRED);
+
+    tx(
+        context,
+        () -> {
+          context.repository().markSourceAborted(change, SourceChangeAbortReason.EXPIRED);
+          return null;
+        });
+    assertThatThrownBy(
+            () ->
+                tx(
+                    context,
+                    () -> {
+                      context
+                          .repository()
+                          .markSourceAborted(change, SourceChangeAbortReason.DEFINITIVE_ABORT);
+                      return null;
+                    }))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                tx(
+                    context,
+                    () ->
+                        context
+                            .dsl()
+                            .execute(
+                                "UPDATE account_draft_authorization_source_changes"
+                                    + " SET status = 'WAITING', aborted_at = NULL, abort_reason = NULL"
+                                    + " WHERE change_id = ?",
+                                change.changeId())))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () ->
+                tx(
+                    context,
+                    () ->
+                        context
+                            .dsl()
+                            .execute(
+                                "INSERT INTO account_draft_authorization_source_changes"
+                                    + " (change_id, binding, status, aborted_at, abort_reason)"
+                                    + " VALUES (?, ?, 'SOURCE_ABORTED', NULL, NULL)",
+                                UUID.randomUUID(),
+                                new byte[] {1})))
+        .isInstanceOf(DataAccessException.class);
   }
 
   @Test

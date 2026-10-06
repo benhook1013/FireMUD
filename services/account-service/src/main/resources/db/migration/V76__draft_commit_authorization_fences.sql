@@ -36,10 +36,26 @@ CREATE TABLE account_draft_authorization_owner_readbacks (
 CREATE TABLE account_draft_authorization_source_changes (
     change_id UUID PRIMARY KEY,
     binding BYTEA NOT NULL CHECK (octet_length(binding) > 0),
-    status VARCHAR(16) NOT NULL CHECK (status IN ('WAITING', 'SOURCE_COMMITTED')),
+    status VARCHAR(16) NOT NULL
+        CHECK (status IN ('WAITING', 'SOURCE_COMMITTED', 'SOURCE_ABORTED')),
     requested_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     committed_at TIMESTAMPTZ,
-    CHECK ((status = 'WAITING') = (committed_at IS NULL))
+    aborted_at TIMESTAMPTZ,
+    abort_reason VARCHAR(32) CHECK (abort_reason IN ('EXPIRED', 'DEFINITIVE_ABORT')),
+    CHECK (
+        (status = 'WAITING'
+            AND committed_at IS NULL
+            AND aborted_at IS NULL
+            AND abort_reason IS NULL)
+        OR (status = 'SOURCE_COMMITTED'
+            AND committed_at IS NOT NULL
+            AND aborted_at IS NULL
+            AND abort_reason IS NULL)
+        OR (status = 'SOURCE_ABORTED'
+            AND committed_at IS NULL
+            AND aborted_at IS NOT NULL
+            AND abort_reason IS NOT NULL)
+    )
 );
 
 CREATE TABLE account_draft_authorization_changed_scopes (
@@ -85,11 +101,16 @@ BEGIN
     IF TG_OP = 'DELETE' THEN
         RAISE EXCEPTION 'Draft source change cannot be deleted';
     END IF;
-    IF OLD.status <> 'WAITING' OR NEW.status <> 'SOURCE_COMMITTED'
+    IF OLD.status <> 'WAITING' OR NEW.status NOT IN ('SOURCE_COMMITTED', 'SOURCE_ABORTED')
         OR NEW.change_id IS DISTINCT FROM OLD.change_id
         OR NEW.binding IS DISTINCT FROM OLD.binding
         OR NEW.requested_at IS DISTINCT FROM OLD.requested_at
-        OR NEW.committed_at IS NULL THEN
+        OR (NEW.status = 'SOURCE_COMMITTED'
+            AND (NEW.committed_at IS NULL OR NEW.aborted_at IS NOT NULL OR NEW.abort_reason IS NOT NULL))
+        OR (NEW.status = 'SOURCE_ABORTED'
+            AND (NEW.committed_at IS NOT NULL OR NEW.aborted_at IS NULL
+                OR NEW.abort_reason IS NULL
+                OR NEW.abort_reason NOT IN ('EXPIRED', 'DEFINITIVE_ABORT'))) THEN
         RAISE EXCEPTION 'Draft source change result is immutable';
     END IF;
     IF EXISTS (

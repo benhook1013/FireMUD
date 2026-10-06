@@ -174,10 +174,11 @@ BEGIN
         RAISE EXCEPTION 'Tenant authority source must advance one exact immutable event'
             USING ERRCODE = '23514', CONSTRAINT = 'account_tenant_authority_source_monotonic';
     END IF;
-    SELECT event_id, event_digest, payload INTO authority_event
-        FROM account_authority_outbox_events
-        WHERE outbox_stream_key = NEW.outbox_stream_key
-          AND outbox_sequence = NEW.last_outbox_sequence;
+    SELECT authority_event_row.event_id, authority_event_row.event_digest,
+           authority_event_row.payload INTO authority_event
+        FROM account_authority_outbox_events AS authority_event_row
+        WHERE authority_event_row.outbox_stream_key = NEW.outbox_stream_key
+          AND authority_event_row.outbox_sequence = NEW.last_outbox_sequence;
     IF authority_event.event_id IS DISTINCT FROM NEW.last_event_id
         OR authority_event.event_digest IS DISTINCT FROM NEW.last_event_digest THEN
         RAISE EXCEPTION 'Tenant authority source head differs from its exact event'
@@ -221,10 +222,11 @@ BEGIN
         RAISE EXCEPTION 'Tenant authority event differs from fresh Game Design source evidence'
             USING ERRCODE = '23514', CONSTRAINT = 'account_tenant_authority_source_evidence';
     END IF;
-    SELECT event_id, event_digest, payload INTO billing_event
-        FROM account_tenant_entitlement_outbox_events
-        WHERE tenant_uuid = NEW.tenant_uuid
-          AND tenant_billing_sequence = NEW.tenant_billing_sequence;
+    SELECT billing_event_row.event_id, billing_event_row.event_digest,
+           billing_event_row.payload INTO billing_event
+        FROM account_tenant_entitlement_outbox_events AS billing_event_row
+        WHERE billing_event_row.tenant_uuid = NEW.tenant_uuid
+          AND billing_event_row.tenant_billing_sequence = NEW.tenant_billing_sequence;
     IF billing_event.event_id IS DISTINCT FROM NEW.tenant_billing_event_id
         OR billing_event.event_digest IS DISTINCT FROM NEW.tenant_billing_event_digest THEN
         RAISE EXCEPTION 'Tenant authority event does not link to the exact tenant billing event'
@@ -357,10 +359,11 @@ BEGIN
         RAISE EXCEPTION 'Demo entitlement tenant authority event has the wrong scope'
             USING ERRCODE = '23514', CONSTRAINT = 'account_demo_entitlement_authority_scope';
     END IF;
-    SELECT event_id, event_digest, payload INTO authority_event
-        FROM account_authority_outbox_events
-        WHERE outbox_stream_key = NEW.tenant_authority_outbox_stream_key
-          AND outbox_sequence = NEW.tenant_authority_outbox_sequence;
+    SELECT authority_event_row.event_id, authority_event_row.event_digest,
+           authority_event_row.payload INTO authority_event
+        FROM account_authority_outbox_events AS authority_event_row
+        WHERE authority_event_row.outbox_stream_key = NEW.tenant_authority_outbox_stream_key
+          AND authority_event_row.outbox_sequence = NEW.tenant_authority_outbox_sequence;
     IF authority_event.event_id IS DISTINCT FROM NEW.tenant_authority_event_id
         OR authority_event.event_digest IS DISTINCT FROM NEW.tenant_authority_event_digest THEN
         RAISE EXCEPTION 'Demo entitlement authority receipt differs from its exact source event'
@@ -412,10 +415,11 @@ BEGIN
             RAISE EXCEPTION 'Committed demo receipt requires its exact tenant authority checkpoint'
                 USING ERRCODE = '23514', CONSTRAINT = 'account_demo_entitlement_authority_receipt_required';
         END IF;
-        SELECT event_id, event_digest, payload INTO authority_event
-            FROM account_authority_outbox_events
-            WHERE outbox_stream_key = NEW.tenant_authority_outbox_stream_key
-              AND outbox_sequence = NEW.tenant_authority_outbox_sequence;
+        SELECT authority_event_row.event_id, authority_event_row.event_digest,
+               authority_event_row.payload INTO authority_event
+            FROM account_authority_outbox_events AS authority_event_row
+            WHERE authority_event_row.outbox_stream_key = NEW.tenant_authority_outbox_stream_key
+              AND authority_event_row.outbox_sequence = NEW.tenant_authority_outbox_sequence;
         IF authority_event.event_id IS DISTINCT FROM NEW.tenant_authority_event_id
             OR authority_event.event_digest IS DISTINCT FROM NEW.tenant_authority_event_digest THEN
             RAISE EXCEPTION 'Committed demo receipt authority event differs from Account outbox'
