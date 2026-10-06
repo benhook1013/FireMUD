@@ -38,9 +38,78 @@ class AccountAuthoritySourceEventV1CodecTest {
 
     assertThat(AccountAuthoritySourceEventV1Codec.verify(expected.canonicalJson()))
         .isEqualTo(expected);
+    assertThat(expected.accountId()).isEqualTo(ACCOUNT_ID);
     assertThat(expected.canonicalJson())
         .contains("\"issuanceFenceSourceVersion\":\"9223372036854775807\"")
         .contains("\"accountSecurityCutoff\"");
+  }
+
+  @Test
+  void accountEventRejectsNilAccountUuid() {
+    String nilAccountId = "00000000-0000-0000-0000-000000000000";
+    String nilAccountStream =
+        AccountAuthoritySourceEventV1Codec.EVENT_STREAM_PREFIX + "account/" + nilAccountId;
+    var nilAccount =
+        new AccountAuthoritySourceEventV1Codec.AccountPreimage(
+            "event-1",
+            "request-1",
+            nilAccountStream,
+            "4",
+            nilAccountId,
+            "5",
+            "5",
+            "5",
+            "5",
+            List.of("PASSWORD_RESET"),
+            state("player"));
+
+    assertThatThrownBy(() -> AccountAuthoritySourceEventV1Codec.sealAccount(nilAccount))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("canonical lowercase non-nil UUID");
+  }
+
+  @Test
+  void accountEventRejectsNullMutationKindsAsAnInvalidRequiredArray() {
+    var event =
+        new AccountAuthoritySourceEventV1Codec.AccountPreimage(
+            "event-1",
+            "request-1",
+            ACCOUNT_STREAM,
+            "8",
+            ACCOUNT_ID,
+            "9",
+            "9",
+            "9",
+            "9",
+            null,
+            state("player"));
+
+    assertThatThrownBy(() -> AccountAuthoritySourceEventV1Codec.sealAccount(event))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("mutationKinds")
+        .hasMessageContaining("required array");
+  }
+
+  @Test
+  void accountEventRejectsNullLoginAuthModesAsAnInvalidRequiredArray() {
+    var event =
+        new AccountAuthoritySourceEventV1Codec.AccountPreimage(
+            "event-1",
+            "request-1",
+            ACCOUNT_STREAM,
+            "8",
+            ACCOUNT_ID,
+            "9",
+            "9",
+            "9",
+            "9",
+            List.of("PASSWORD_RESET"),
+            new AccountAuthoritySourceEventV1Codec.AccountState(true, null, "player", "ACTIVE"));
+
+    assertThatThrownBy(() -> AccountAuthoritySourceEventV1Codec.sealAccount(event))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("accountState.loginAuthModes")
+        .hasMessageContaining("required array");
   }
 
   @Test

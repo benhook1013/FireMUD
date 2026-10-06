@@ -2452,7 +2452,8 @@ class ReviewController:
                 or item["response_id"] <= 0
                 or not isinstance(item.get("captured_head"), str)
                 or re.fullmatch(r"[0-9a-fA-F]{40}", item["captured_head"]) is None
-                or parse_timestamp(item.get("cooldown_until")) is None
+                or "cooldown_until" not in item
+                or (item["cooldown_until"] is not None and parse_timestamp(item["cooldown_until"]) is None)
                 or item.get("terminal") is not True
                 or item.get("attributable") is not True
                 or item["trigger_id"] in rate_limit_trigger_ids
@@ -2854,13 +2855,21 @@ class ReviewController:
                     consumed_active_cli_overlap = True
                     continue
                 blocker_flags = (
-                    "held",
-                    "unstable",
                     "unreconciled",
                     "parent_moved",
                     "over_ceiling",
                 )
+                # Only the observer's unknown-reset cooldown hold is waived.
+                # Other held/unstable evidence retains its ordinary fence.
+                audited_unknown_reset_hold = (
+                    audited_terminal_rate_limit
+                    and rate_limit_proof["cooldown_until"] is None
+                    and _field(value, "reason") == "Hosted cooldown has no attributable reset time"
+                )
                 if any(_field(value, flag) is True for flag in blocker_flags) or (
+                    not audited_unknown_reset_hold
+                    and any(_field(value, flag) is True for flag in ("held", "unstable"))
+                ) or (
                     not audited_terminal_rate_limit and _field(value, "rate_limited") is True
                 ):
                     checkpoint = _field(value, "checkpoint", "checkpoint_id")
@@ -5298,7 +5307,14 @@ class ReviewController:
                 "routes_out": [item.to_dict() for item in state.routes if item.source_pr == pr],
             }
         scoped = dataclasses.replace(state, ordered_prs=state.ordered_prs[: index + 1])
-        report = self._status_from_state(scoped)
+        live_identities, _ = self._batch_live_pull_requests(self._require_github(), scoped.ordered_prs)
+        report = self._status_from_state(
+            scoped,
+            live_identities=live_identities,
+            # Keep the later selected-PR identity observation independent of
+            # both the batch and the standalone selected review report.
+            live_identity_cache={pr: self._require_github().pull_request(pr)},
+        )
         report["ordered_prs"] = list(state.ordered_prs)
         report["selected_pr"] = pr
         report["scope"] = "selected PR and configured ancestors"

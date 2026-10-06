@@ -5964,6 +5964,33 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void missingRetainedSourceDeniesPasswordResetBeforeTokenConsumption() {
+    var account = new Account();
+    account.setId(2L);
+    account.setPasswordHash("original-password-hash");
+    var token = new net.firedevops.firemud.accountservice.entity.PasswordResetToken();
+    token.setAccount(account);
+    token.setToken("retained-reset-token");
+    token.setExpiresAt(java.time.LocalDateTime.now().plusMinutes(10));
+    when(passwordResetTokenRepository.findByToken(token.getToken())).thenReturn(Optional.of(token));
+    org.mockito.Mockito.doThrow(
+            new net.firedevops.firemud.accountservice.repository
+                .AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException())
+        .when(accountRepository)
+        .save(account);
+    assertThrows(
+        net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository
+            .SourceEvidenceUnavailableException.class,
+        () ->
+            service.completePasswordReset(
+                new net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest(
+                    token.getToken(), "new-password")));
+    org.mockito.Mockito.verify(passwordResetTokenRepository, org.mockito.Mockito.never())
+        .delete(token);
+    org.mockito.Mockito.verify(accountRepository).save(account);
+  }
+
+  @Test
   void requestPasswordResetUnknownEmailIsNeutral() {
     when(accountRepository.findByEmail("unknown@example.com")).thenReturn(Optional.empty());
 

@@ -52,6 +52,125 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
   }
 
   @Test
+  void preV40RetainedPasswordResetFailsTypedAndRollsBackWithoutInventingSource() {
+    String schema = SCHEMA_PREFIX + "_" + UUID.randomUUID().toString().replace("-", "");
+    DriverManagerDataSource dataSource = postgres.dataSource(schema);
+    Flyway.configure()
+        .dataSource(dataSource)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .locations("classpath:db/migration")
+        .placeholders(java.util.Map.of("serviceSchema", schema))
+        .target("39")
+        .load()
+        .migrate();
+    DSLContext dsl =
+        DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+    String suffix = UUID.randomUUID().toString();
+    String originalHash = "retained-password-" + suffix;
+    Long accountId =
+        Objects.requireNonNull(
+                dsl.fetchOne(
+                    "INSERT INTO accounts (username, email, password_hash, role) VALUES (?, ?, ?, ?) RETURNING id",
+                    "retained-" + suffix,
+                    suffix + "@example.test",
+                    originalHash,
+                    "player"))
+            .get(0, Long.class);
+    String tokenValue = "retained-reset-" + suffix;
+    var expiry = java.time.LocalDateTime.now().plusHours(1);
+    dsl.execute(
+        "INSERT INTO password_reset_token (account_id, token, expires_at) VALUES (?, ?, ?)",
+        accountId,
+        tokenValue,
+        expiry);
+    Flyway.configure()
+        .dataSource(dataSource)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .locations("classpath:db/migration")
+        .placeholders(java.util.Map.of("serviceSchema", schema))
+        .load()
+        .migrate();
+    var accounts = new AccountRepository(dsl);
+    var resetTokens =
+        new net.firedevops.firemud.accountservice.repository.PasswordResetTokenRepository(dsl);
+    var manager = new DataSourceTransactionManager(dataSource);
+    var transaction = new TransactionTemplate(manager);
+    var service =
+        new net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl(
+            accounts,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null, // audit/scope/JOIN/challenge/grant/membership
+            null,
+            null,
+            null,
+            null,
+            null,
+            null, // mapper/profile/payment/subscription/external
+            resetTokens,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null, // verification/notification/mail/config
+            null,
+            null,
+            null,
+            null,
+            manager); // remote clients/JWT/session are not used by reset
+    UUID accountUuid = accounts.findById(accountId).orElseThrow().getAccountUuid();
+    var beforeToken =
+        Objects.requireNonNull(
+                dsl.fetchOne("SELECT * FROM password_reset_token WHERE token = ?", tokenValue),
+                "expected retained reset token")
+            .intoMap();
+    var beforeEvents = dsl.fetch("SELECT * FROM account_authority_outbox_events").intoMaps();
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    status ->
+                        service.completePasswordReset(
+                            new net.firedevops.firemud.accountservice.dto
+                                .CompletePasswordResetRequest(tokenValue, "replacement-password"))))
+        .isInstanceOf(
+            AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException.class);
+    assertThat(accounts.findById(accountId).orElseThrow().getPasswordHash())
+        .isEqualTo(originalHash);
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne("SELECT * FROM password_reset_token WHERE token = ?", tokenValue),
+                    "expected retained reset token after rollback")
+                .intoMap())
+        .isEqualTo(beforeToken);
+    assertThat(dsl.fetch("SELECT * FROM account_authority_outbox_events").intoMaps())
+        .isEqualTo(beforeEvents);
+    assertThat(
+            dsl.fetchCount(
+                dsl.selectFrom("account_authority_source_records")
+                    .where("account_uuid = ?", accountUuid)))
+        .isZero();
+    assertThat(
+            dsl.fetchCount(
+                dsl.selectFrom("account_authority_generations")
+                    .where("scope_kind = 'ACCOUNT' AND account_uuid = ?", accountUuid)))
+        .isZero();
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT account_repository_insert_transaction_id FROM accounts WHERE id = ?",
+                        accountId),
+                    "expected account after reset rollback")
+                .get(0, Long.class))
+        .isNull();
+  }
+
+  @Test
   void freshAccountBaselineIsValidButGenericSaveHistoryCannotAuthorizeSecurityCurrentness()
       throws Exception {
     TestContext context = newTestContext();
@@ -166,11 +285,80 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
         .hasMessageContaining("Account source event schema is unsupported");
     Account lifecycleUpdate = accounts.findByAccountUuid(account.getAccountUuid()).orElseThrow();
     lifecycleUpdate.setLifecycleState(AccountLifecycleState.SECURITY_LOCKED);
-    transaction.executeWithoutResult(status -> accounts.save(lifecycleUpdate));
-    assertThat(
-            accounts.findByAccountUuid(account.getAccountUuid()).orElseThrow().getLifecycleState())
+    var accountBeforeLifecycleRejection =
+        Objects.requireNonNull(
+                dsl.fetchOne(
+                    "SELECT * FROM accounts WHERE account_uuid = ?", account.getAccountUuid()),
+                "expected Account before lifecycle rejection")
+            .intoMap();
+    var generationsBeforeLifecycleRejection =
+        dsl.fetch(
+                "SELECT * FROM account_authority_generations "
+                    + "WHERE scope_kind = 'ACCOUNT' AND account_uuid = ?",
+                account.getAccountUuid())
+            .intoMaps();
+    var fencesBeforeLifecycleRejection =
+        dsl.fetch(
+                "SELECT * FROM account_authority_issuance_fences WHERE account_uuid = ?",
+                account.getAccountUuid())
+            .intoMaps();
+    var sourceRowsBeforeLifecycleRejection =
+        dsl.fetch(
+                "SELECT * FROM account_authority_source_records WHERE account_uuid = ?",
+                account.getAccountUuid())
+            .intoMaps();
+    var outboxRowsBeforeLifecycleRejection =
+        dsl.fetch(
+                "SELECT * FROM account_authority_outbox_events WHERE outbox_stream_key = ? "
+                    + "ORDER BY outbox_sequence",
+                streamKey)
+            .intoMaps();
+    assertThatThrownBy(
+            () -> transaction.executeWithoutResult(status -> accounts.save(lifecycleUpdate)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("lifecycle changes are unavailable");
+    Account persistedAfterLifecycleRejection =
+        accounts.findByAccountUuid(account.getAccountUuid()).orElseThrow();
+    assertThat(persistedAfterLifecycleRejection.getLifecycleState())
         .isEqualTo(AccountLifecycleState.ACTIVE);
-    assertThat(lifecycleUpdate.getLifecycleState()).isEqualTo(AccountLifecycleState.ACTIVE);
+    assertThat(persistedAfterLifecycleRejection.getPasswordHash())
+        .isEqualTo(account.getPasswordHash());
+    assertThat(lifecycleUpdate.getLifecycleState())
+        .isEqualTo(AccountLifecycleState.SECURITY_LOCKED);
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT * FROM accounts WHERE account_uuid = ?",
+                        account.getAccountUuid()),
+                    "expected Account after lifecycle rejection")
+                .intoMap())
+        .isEqualTo(accountBeforeLifecycleRejection);
+    assertThat(
+            dsl.fetch(
+                    "SELECT * FROM account_authority_generations "
+                        + "WHERE scope_kind = 'ACCOUNT' AND account_uuid = ?",
+                    account.getAccountUuid())
+                .intoMaps())
+        .isEqualTo(generationsBeforeLifecycleRejection);
+    assertThat(
+            dsl.fetch(
+                    "SELECT * FROM account_authority_issuance_fences WHERE account_uuid = ?",
+                    account.getAccountUuid())
+                .intoMaps())
+        .isEqualTo(fencesBeforeLifecycleRejection);
+    assertThat(
+            dsl.fetch(
+                    "SELECT * FROM account_authority_source_records WHERE account_uuid = ?",
+                    account.getAccountUuid())
+                .intoMaps())
+        .isEqualTo(sourceRowsBeforeLifecycleRejection);
+    assertThat(
+            dsl.fetch(
+                    "SELECT * FROM account_authority_outbox_events WHERE outbox_stream_key = ? "
+                        + "ORDER BY outbox_sequence",
+                    streamKey)
+                .intoMaps())
+        .isEqualTo(outboxRowsBeforeLifecycleRejection);
     var absentLifecycleEvent = transaction.execute(status -> outbox.findEvent(streamKey, 3L));
     assertThat(absentLifecycleEvent).isEmpty();
     assertThatThrownBy(

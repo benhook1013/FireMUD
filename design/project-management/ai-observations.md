@@ -54,3 +54,10 @@ Entry format:
   - Expected pattern: verify successful source reads and parse transferred structured fixtures before integration. Preserve authentic fixed vectors and their source revision instead of replacing expected values with implementation-generated output.
   - Current status: issuer vectors were recovered from composition history at `8344e6ea1`; reset and logout vectors were recovered from preserved main resources. All three parse as JSON, and all 173 shared-platform unit cases pass after recovery.
   - Reconsideration trigger: check source-read success and fixture parsing on the next structured-artifact transfer; no new general-purpose tooling is required for this bounded repair.
+
+- `2026-10-07`: Redacted backup failures need trusted phase diagnostics
+  - Context: seven public status-page publishing timeouts coincided with failed controller backup and retained-backup restore verification after a compatible runtime promotion.
+  - Observation: healthy host/API snapshots and intermittent SSH pre-authentication stalls do not establish a common root cause. The canonical `BackupError` output hid the failing phase; a bounded read-only SFTP check succeeded for the root listing but timed out on the next directory metadata call.
+  - Expected pattern: retain remote output and payload suppression while reporting trusted static phase, timeout versus nonzero exit, and secondary cleanup failure labels.
+  - Current status: safe backup diagnostics are being added; fresh backup and isolated restore proof remain unavailable. Publishing and backup root causes are unresolved.
+  - Reconsideration trigger: update the outcome after an authorized exact-phase failure capture and successful fresh backup/isolated restore verification; do not treat host health or a single successful SFTP listing as recovery proof.
