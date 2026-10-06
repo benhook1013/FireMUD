@@ -223,6 +223,41 @@ class ReviewRecordsCliTest(unittest.TestCase):
             ],
         )
 
+    def test_subagent_correct_retains_handoff_and_completes_with_zero_effective_findings(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        run_id = "gd-versionless-creation-reservation-r1-20261006"
+        code, _ = self.invoke(
+            "subagent", "start", "--pr", "3012", "--run-id", run_id,
+            "--model", "gpt-test-model", "--reviewer", "Independent pass", "--scope", "narrow",
+            "--database", str(self.database),
+        )
+        self.assertEqual(code, 0)
+        finding = json.dumps({"key": "implementation-handoff", "title": "Implementation handoff",
+                              "detail": "Implementation was delegated; discovery found no concerns.",
+                              "severity": "Trivial", "decision": "rejected", "reason": "Handoff mistakenly recorded as finding"})
+        completion = ("subagent", "complete", "--run-id", run_id, "--actor", "root",
+                      "--finding-json", finding, "--database", str(self.database))
+        code, _ = self.invoke(*completion)
+        self.assertEqual(code, 0)
+        correction = ("subagent", "correct", "--run-id", run_id, "--finding-key", "implementation-handoff",
+                      "--actor", "root", "--reason", "Implementation handoff; actual discovery count is zero",
+                      "--database", str(self.database))
+        code, result = self.invoke(*correction)
+        self.assertEqual(code, 0)
+        self.assertEqual(result["result"]["counts"], {"found": 0, "accepted": 0, "routed": 0})
+        self.assertEqual(result["result"]["original_counts"], {"found": 1, "accepted": 0, "routed": 0})
+        code, replay = self.invoke(*correction)
+        self.assertEqual(code, 0)
+        self.assertTrue(replay["result"]["idempotent_replay"])
+        code, completed = self.invoke(*completion)
+        self.assertEqual(code, 0)
+        self.assertEqual(completed["result"]["run"]["counts"], {"found": 0, "accepted": 0, "routed": 0})
+        code, history = self.invoke("history", "--pr", "3012", "--database", str(self.database))
+        self.assertEqual(code, 0)
+        self.assertEqual(history["result"]["findings"], [])
+        self.assertEqual(history["result"]["record_corrections"][0]["original_observation"]["title"], "Implementation handoff")
+        self.assertEqual(history["result"]["runs"][0]["channel"], "subagent")
+
     def test_subagent_pass_records_attempt_findings_decisions_and_route_without_taper(self) -> None:
         self.invoke("bootstrap", "--database", str(self.database))
         code, started = self.invoke(

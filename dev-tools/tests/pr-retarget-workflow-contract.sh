@@ -1424,6 +1424,26 @@ if runtime_job_name != "PR Full-Stack Smoke":
 
 runtime_paths = pull_request_paths(runtime_images, "runtime-images.yml")
 
+# Boot JARs use these helpers; each selector must retain both dependencies.
+build_dependencies = {
+    "dev-tools/validation/run-locked-gradle.sh",
+    "dev-tools/validation/gradle-run-supervisor.py",
+}
+selectors = {"runtime trigger": runtime_paths, "smoke full scope": set(full_files)}
+marker = "const runtimeFiles = new Set(["
+positions = [match.end() for match in re.finditer(re.escape(marker), runtime_images)]
+if len(positions) != 2:
+    raise SystemExit("runtime-images.yml must retain both runtime file selectors")
+for index, position in enumerate(positions):
+    end = runtime_images.index("]);", position)
+    selectors[f"runtime selector {index + 1}"] = set(
+        re.findall(r'["\']([^"\']+)["\']', runtime_images[position:end])
+    )
+for label, paths in selectors.items():
+    missing = build_dependencies - paths
+    if missing:
+        raise SystemExit(f"{label} misses Gradle source-build dependencies: {sorted(missing)}")
+
 runtime_images_fixture = """on:
   pull_request:
     paths:
