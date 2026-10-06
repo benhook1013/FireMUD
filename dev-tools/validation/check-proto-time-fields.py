@@ -35,6 +35,7 @@ AMBIGUOUS_SUFFIXES = (
 ALLOWED_EXPLICIT_SUFFIXES = (
     "_at",
     "_at_ms",
+    "_epoch_millis",
     "_ms",
     "_seconds",
     "_ticks",
@@ -75,7 +76,7 @@ def validate_file(path: Path) -> list[str]:
             findings.append(
                 f"{path.relative_to(REPO_ROOT)}:{line_number}: "
                 f"time-related proto field '{field_name}' must declare its domain/unit "
-                "with a suffix such as '_at', '_ms', '_seconds', '_tick', or '_ticks'"
+                "with a suffix such as '_at', '_ms', '_epoch_millis', '_seconds', '_tick', or '_ticks'"
             )
     return findings
 
