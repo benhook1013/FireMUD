@@ -5307,7 +5307,14 @@ class ReviewController:
                 "routes_out": [item.to_dict() for item in state.routes if item.source_pr == pr],
             }
         scoped = dataclasses.replace(state, ordered_prs=state.ordered_prs[: index + 1])
-        report = self._status_from_state(scoped)
+        live_identities, _ = self._batch_live_pull_requests(self._require_github(), scoped.ordered_prs)
+        report = self._status_from_state(
+            scoped,
+            live_identities=live_identities,
+            # Keep the later selected-PR identity observation independent of
+            # both the batch and the standalone selected review report.
+            live_identity_cache={pr: self._require_github().pull_request(pr)},
+        )
         report["ordered_prs"] = list(state.ordered_prs)
         report["selected_pr"] = pr
         report["scope"] = "selected PR and configured ancestors"
