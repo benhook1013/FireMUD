@@ -617,7 +617,8 @@ def render_workstream(record: dict, notes=(), history=False) -> str:
     if not _WORKSTREAM_ID.fullmatch(identifier):
         raise ValueError("workstream id is invalid")
     encoded_id = quote(identifier, safe="")
-    name = html.escape(str(record.get("name", identifier)), quote=True)
+    raw_name = str(record.get("name", identifier))
+    name = html.escape(raw_name, quote=True)
     if history:
         rows = record.get("history", [])
         entries = []
@@ -646,7 +647,7 @@ def render_workstream(record: dict, notes=(), history=False) -> str:
             f'<nav class="job-history-paging">{"".join(paging)}</nav>'
             f'<p class="job-links"><a href="/workstreams/{encoded_id}">Current workstream</a></p>'
         )
-        return _private_document(f"{name} history", content)
+        return _private_document(f"{raw_name} history", content)
 
     content = [
         f'<article class="job-private"><h1>{name}</h1>',
@@ -676,7 +677,7 @@ def render_workstream(record: dict, notes=(), history=False) -> str:
         f'</section><p class="job-links"><a href="/workstreams/{encoded_id}/history">'
         "Workstream history</a></p></article>"
     )
-    return _private_document(f"{name} · local workstream", "".join(content))
+    return _private_document(f"{raw_name} · local workstream", "".join(content))
 
 
 def _inbox_views(worker: str, *, messages: bool = False) -> str:
@@ -700,7 +701,8 @@ def render_inbox_conversations(worker: str, conversations, *, offset: int = 0,
     if not _worker_alias(worker) or not isinstance(conversations, list):
         raise ValueError("inbox conversation data is invalid")
     base = f"/inbox/{quote(worker, safe='')}"
-    title = f"{html.escape(worker, quote=True)} inbox"
+    raw_title = f"{worker} inbox"
+    title = html.escape(raw_title, quote=True)
     count = "" if unread_count is None else f'<p>{unread_count} unread incoming message(s).</p>'
     entries = []
     for conversation in conversations:
@@ -730,7 +732,7 @@ def render_inbox_conversations(worker: str, conversations, *, offset: int = 0,
         content += f'<a href="{base}?offset={max(0, offset - HISTORY_PAGE_SIZE)}">Newer conversations</a> '
     if has_more:
         content += f'<a href="{base}?offset={offset + HISTORY_PAGE_SIZE}">Older conversations</a>'
-    return _private_document(f"{title} · FireController", content + "</nav></article>")
+    return _private_document(f"{raw_title} · FireController", content + "</nav></article>")
 
 
 def render_inbox(worker: str, messages, *, offset: int = 0, unread_count: int | None = None,
@@ -742,7 +744,8 @@ def render_inbox(worker: str, messages, *, offset: int = 0, unread_count: int | 
     encoded_worker = quote(worker, safe="")
     if not isinstance(messages, list):
         raise TypeError("inbox messages must be a list")
-    title = f"{html.escape(worker, quote=True)} inbox"
+    raw_title = f"{worker} inbox"
+    title = html.escape(raw_title, quote=True)
     count = "" if unread_count is None else f'<p>{unread_count} unread incoming message(s).</p>'
     entries = []
     for message in messages:
@@ -794,7 +797,7 @@ def render_inbox(worker: str, messages, *, offset: int = 0, unread_count: int | 
         content += (f'<a href="/inbox/{encoded_worker}?view=messages&amp;offset='
                     f'{offset + HISTORY_PAGE_SIZE}">Older messages</a>')
     content += "</nav></article>"
-    return _private_document(f"{title} · FireController", content)
+    return _private_document(f"{raw_title} · FireController", content)
 
 
 def render_inbox_thread(worker: str, messages, *, message_id: str, offset: int = 0, has_more: bool = False) -> str:

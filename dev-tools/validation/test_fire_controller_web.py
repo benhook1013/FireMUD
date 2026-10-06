@@ -499,6 +499,25 @@ class FireControllerWebTest(unittest.TestCase):
         self.assertIn("No conversations on this page.", pages[4])
         self.assertNotIn("private-pages", json.dumps(web.public_jobs([public_row()])))
 
+    def test_private_page_titles_and_headings_escape_aliases_and_names_once(self):
+        for worker in ("Build & Tools", "Build <script>alert(1)</script>"):
+            escaped_worker = web.html.escape(worker, quote=True)
+            for render in (web.render_inbox_conversations, web.render_inbox):
+                document = render(worker, [])
+                with self.subTest(worker=worker, render=render):
+                    self.assertIn(f"<title>{escaped_worker} inbox · FireController</title>", document)
+                    self.assertIn(f"<h1>{escaped_worker} inbox</h1>", document)
+                    self.assertNotIn("&amp;amp;", document)
+                    self.assertNotIn("&amp;lt;", document)
+                    self.assertNotIn("<script>", document)
+        record = {"id": "delivery", "name": "Build & <Tools>", "history": []}
+        for history in (False, True):
+            document = web.render_workstream(record, history=history)
+            suffix = " history" if history else " · local workstream"
+            self.assertIn(f"<title>Build &amp; &lt;Tools&gt;{suffix}</title>", document)
+            self.assertNotIn("&amp;amp;", document)
+            self.assertNotIn("&amp;lt;", document)
+
     def test_worker_history_orders_all_jobs_by_activity_after_the_primary(self):
         jobs = [
             {**public_row(), "id": "state-newer", "name": "state-newer", "title": "State newer",
