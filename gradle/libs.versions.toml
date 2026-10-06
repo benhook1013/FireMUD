@@ -27,6 +27,7 @@ fabric8-kubernetes-client = "7.9.0"
 # Keep these pins split: bcprov-jdk18on has 1.85.2, but bcpkix-jdk18on and bcutil-jdk18on 1.85.2 artifacts are unpublished.
 bcprov = "1.86"
 bcpkix = "1.86"
+java-json-canonicalization = "1.1"
 
 [libraries]
 # Spring Boot Starters
@@ -100,6 +101,7 @@ java-operator-sdk-spring-boot-starter = { module = "io.javaoperatorsdk:operator-
 fabric8-kubernetes-client = { module = "io.fabric8:kubernetes-client", version.ref = "fabric8-kubernetes-client" }
 bouncycastle = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bcprov" }
 bouncycastle-pkix = { module = "org.bouncycastle:bcpkix-jdk18on", version.ref = "bcpkix" }
+java-json-canonicalization = { module = "io.github.erdtman:java-json-canonicalization", version.ref = "java-json-canonicalization" }
 
 testcontainers = { module = "org.testcontainers:testcontainers", version.ref = "testcontainers" }
 testcontainers-junit-jupiter = { module = "org.testcontainers:testcontainers-junit-jupiter", version.ref = "testcontainers" }

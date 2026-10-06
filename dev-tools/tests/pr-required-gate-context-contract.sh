@@ -219,7 +219,7 @@ while IFS='|' read -r workflow gate_job_id gate workflow_name workflow_file work
   }
   harden_block="$(awk '/^      - name: Harden runner$/{in_harden=1} in_harden{if (/^      - / && $0 != "      - name: Harden runner") exit; print}' <<<"$gate_block")"
   if grep -Fq '        if:' <<<"$harden_block" ||
-    ! grep -Eq '        uses: step-security/harden-runner@[0-9a-f]{40}$' <<<"$harden_block" ||
+    ! grep -Eq '        uses: step-security/harden-runner@[0-9a-f]{40}( # v[0-9]+(\.[0-9]+){0,2})?$' <<<"$harden_block" ||
     ! grep -Fq '          egress-policy: audit' <<<"$harden_block"; then
     echo "$workflow $gate hardening must remain unconditional and retain its pinned audit configuration" >&2
     exit 1
@@ -354,8 +354,8 @@ PY
   fi
 done <<'EOF'
 ci.yml|validation-gate|Validation Gate|CI — Validation|ci.yml|.github/workflows/ci.yml
-security.yml|security-gate|Security Gate|Security Checks|security.yml|.github/workflows/security.yml
-license-scan.yml|license-gate|License Gate|License Checks|license-scan.yml|.github/workflows/license-scan.yml
+security.yml|security-gate|Security Gate|Security Gate|security.yml|.github/workflows/security.yml
+license-scan.yml|license-gate|License Gate|License Gate|license-scan.yml|.github/workflows/license-scan.yml
 smoke.yml|smoke-gate|Smoke Gate|PR Smoke Gate|smoke.yml|.github/workflows/smoke.yml
 codeql.yml|codeql-gate|CodeQL Gate|CodeQL Analysis|codeql.yml|.github/workflows/codeql.yml
 EOF

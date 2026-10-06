@@ -275,6 +275,74 @@ class InboxStore:
             ).fetchall()
             return [self._message_dict(row) for row in rows]
 
+    def thread(
+        self,
+        message_id: str,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """Return one reply thread across recipients in chronological pages."""
+
+        return self.thread_page(message_id, limit=limit, offset=offset)["messages"]
+
+    def thread_page(
+        self,
+        message_id: str,
+        limit: int = 50,
+        offset: int = 0,
+        *,
+        focus_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Return one bounded chronological page, optionally focused on a message.
+
+        This is a read-only projection. It never changes a message's seen or
+        acknowledged state.
+        """
+
+        selected_id = _text(message_id, "message id", maximum=100)
+        selected_limit = _limit(limit)
+        selected_offset = _offset(offset)
+        selected_focus = None if focus_id is None else _text(focus_id, "focus message id", maximum=100)
+        with self._read() as connection:
+            root_id = self._thread_root(connection, selected_id)
+            if selected_focus is not None:
+                focus = connection.execute(
+                    "WITH RECURSIVE thread(id) AS ("
+                    "SELECT id FROM inbox_messages WHERE id = ? "
+                    "UNION "
+                    "SELECT message.id FROM inbox_messages AS message "
+                    "JOIN thread AS parent ON message.reply_to = parent.id) "
+                    "SELECT created_at, rowid FROM inbox_messages "
+                    "WHERE id = ? AND id IN (SELECT id FROM thread)",
+                    (root_id, selected_focus),
+                ).fetchone()
+                if focus is None:
+                    raise MessageNotFound(
+                        f"focus message {selected_focus} is not in the thread containing {selected_id}"
+                    )
+                preceding = connection.execute(
+                    "WITH RECURSIVE thread(id) AS ("
+                    "SELECT id FROM inbox_messages WHERE id = ? "
+                    "UNION "
+                    "SELECT message.id FROM inbox_messages AS message "
+                    "JOIN thread AS parent ON message.reply_to = parent.id) "
+                    "SELECT COUNT(*) FROM inbox_messages WHERE id IN (SELECT id FROM thread) "
+                    "AND (created_at < ? OR (created_at = ? AND rowid < ?))",
+                    (root_id, focus[0], focus[0], focus[1]),
+                ).fetchone()
+                selected_offset = (int(preceding[0]) // selected_limit) * selected_limit
+            rows = connection.execute(
+                "WITH RECURSIVE thread(id) AS ("
+                "SELECT id FROM inbox_messages WHERE id = ? "
+                "UNION "
+                "SELECT message.id FROM inbox_messages AS message "
+                "JOIN thread AS parent ON message.reply_to = parent.id) "
+                f"SELECT {', '.join(INBOX_COLUMNS['inbox_messages'])} FROM inbox_messages "
+                "WHERE id IN (SELECT id FROM thread) ORDER BY created_at ASC, rowid ASC LIMIT ? OFFSET ?",
+                (root_id, selected_limit, selected_offset),
+            ).fetchall()
+            return {"messages": [self._message_dict(row) for row in rows], "offset": selected_offset}
+
     def read(self, message_id: str, recipient: str | None = None) -> dict[str, Any]:
         """Mark one message seen and return it; recipient is an optional selector."""
 
@@ -347,6 +415,23 @@ class InboxStore:
             sql += " AND recipient = ?"
             parameters = (*parameters, recipient)
         return connection.execute(sql, parameters).fetchone()
+
+    @staticmethod
+    def _thread_root(connection: sqlite3.Connection, message_id: str) -> str:
+        if connection.execute("SELECT 1 FROM inbox_messages WHERE id = ?", (message_id,)).fetchone() is None:
+            raise MessageNotFound(f"message {message_id} was not found")
+        root = connection.execute(
+            "WITH RECURSIVE ancestors(id, reply_to) AS ("
+            "SELECT id, reply_to FROM inbox_messages WHERE id = ? "
+            "UNION "
+            "SELECT parent.id, parent.reply_to FROM inbox_messages AS parent "
+            "JOIN ancestors ON parent.id = ancestors.reply_to) "
+            "SELECT id FROM ancestors WHERE reply_to IS NULL",
+            (message_id,),
+        ).fetchone()
+        if root is None:
+            raise InboxSchemaIncompatible("message reply ancestry has no root")
+        return str(root[0])
 
     @staticmethod
     def _table_names(connection: sqlite3.Connection) -> set[str]:
