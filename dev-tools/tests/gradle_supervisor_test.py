@@ -31,6 +31,11 @@ import os, pathlib, signal, subprocess, sys, time
 root = pathlib.Path(os.environ['FIXTURE_DIR'])
 (root / 'args').write_text(' '.join(sys.argv[1:]))
 (root / 'ready').write_text(str(os.getpid()))
+fds = []
+for fd in pathlib.Path('/proc/self/fd').iterdir():
+    try: fds.append(os.readlink(fd))
+    except FileNotFoundError: pass
+(root / 'fds').write_text(str(fds))
 mode = os.environ.get('FIXTURE_MODE', 'hold')
 if mode == 'exit': sys.exit(23)
 if mode == 'stdin':
@@ -40,6 +45,11 @@ if mode == 'worker':
     worker = subprocess.Popen([sys.executable, '-c', 'import os,pathlib,signal,time; pathlib.Path(os.environ["FIXTURE_DIR"],"worker").write_text(str(os.getpid())); signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)'], start_new_session=True)
     while not (root / 'worker').exists(): time.sleep(.01)
     sys.exit(0)
+if mode == 'nonutf8':
+    import ctypes
+    ctypes.CDLL(None).prctl(15, ctypes.c_char_p(bytes([110, 97, 116, 105, 118, 101, 45, 255])), 0, 0, 0)
+    (root / 'renamed').write_text(str(os.getpid()))
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
 if mode == 'cleanenv':
     os.execve(sys.executable, [sys.executable, '-c', 'import os,pathlib,signal,time; pathlib.Path(os.environ["FIXTURE_CLEAN_DIR"],"clean").write_text(str(os.getpid())); signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)'], {'FIXTURE_CLEAN_DIR': str(root)})
 time.sleep(float(os.environ.get('FIXTURE_SLEEP', '60')))
@@ -132,6 +142,7 @@ time.sleep(float(os.environ.get('FIXTURE_SLEEP', '60')))
         self.assertEqual(process.wait(timeout=5), 0)
         self.assertEqual((fixture / "stdin").read_text(), "input retained\n")
         self.assertIn("--no-daemon", (fixture / "args").read_text())
+        self.assertNotIn("firemud-gradle-cancel", (fixture / "fds").read_text())
 
     def test_ci_retains_daemon_policy(self):
         process, fixture, _ = self.launch("ci", FIXTURE_MODE="exit", CI="true",
@@ -194,6 +205,35 @@ time.sleep(float(os.environ.get('FIXTURE_SLEEP', '60')))
             os.close(writer)
             os.close(reader)
 
+    def test_non_utf8_process_name_preserves_exact_identity(self):
+        stat = b"123 (name with ) and \xff) " + b" ".join([b"S"] + [b"0"] * 18 + [b"123456"])
+        with mock.patch.object(SUPERVISOR.Path, "read_bytes", return_value=stat):
+            self.assertEqual(SUPERVISOR.identity(123), ("123456", "S"))
+            self.assertTrue(SUPERVISOR.alive(123, "123456"))
+
+    def test_non_utf8_native_name_cannot_bypass_cleanup(self):
+        process, fixture, _ = self.launch("nonutf8", FIXTURE_MODE="nonutf8",
+                                         FIREMUD_LOCK_GRADLE_RUN_SECONDS="1")
+        pid = self.ready(fixture, "renamed")
+        self.assertIn(b"\xff", Path(f"/proc/{pid}/stat").read_bytes())
+        self.assertEqual(process.wait(timeout=6), 124)
+        self.assertFalse(self.running(pid))
+        replacement, _, _ = self.launch("nonutf8-replacement", FIXTURE_MODE="exit")
+        self.assertEqual(replacement.wait(timeout=5), 23)
+
+    def test_pidfd_readiness_supports_descriptor_above_select_limit(self):
+        reader, writer = os.pipe()
+        descriptor = SUPERVISOR.fcntl.fcntl(reader, SUPERVISOR.fcntl.F_DUPFD_CLOEXEC, 1024)
+        try:
+            process = SUPERVISOR.OwnedProcess(123, "start", descriptor)
+            self.assertTrue(process.running())
+            os.write(writer, b"ready")
+            self.assertFalse(process.running())
+        finally:
+            os.close(descriptor)
+            os.close(reader)
+            os.close(writer)
+
     def test_pid_reuse_during_admission_rejects_replacement(self):
         # The numerical PID now exposes a replacement with the same marker,
         # but the original stable handle became ready while procfs was read.
@@ -240,12 +280,30 @@ time.sleep(float(os.environ.get('FIXTURE_SLEEP', '60')))
             SUPERVISOR.require_pidfds()
 
     def test_interrupt_and_hangup_exit_status(self):
-        for sig in (signal.SIGINT, signal.SIGHUP):
-            process, fixture, _ = self.launch(f"signal-{sig}")
-            pid = self.ready(fixture)
+        for sig in (signal.SIGINT, signal.SIGHUP, signal.SIGTERM):
+            process, fixture, _ = self.launch(f"signal-{sig}", FIXTURE_MODE="worker")
+            pid = self.ready(fixture, "worker")
             process.send_signal(sig)
             self.assertEqual(process.wait(timeout=5), 128 + sig)
             self.assertFalse(self.running(pid))
+
+    def test_bound_channel_cancels_during_acquisition(self):
+        reader, writer = os.pipe()
+        args = SimpleNamespace(root=str(self.root), wrapper_pid=os.getpid(), command=["fixture"],
+                               lock=[], cancel_fd=reader)
+        try:
+            with mock.patch.dict(os.environ, {"CI": "false"}):
+                supervisor = SUPERVISOR.Supervisor(args)
+            os.write(writer, b"130\n")
+            try:
+                with mock.patch.object(SUPERVISOR.fcntl, "flock") as flock:
+                    self.assertFalse(supervisor.acquire(self.resource, "local-resource"))
+                    flock.assert_not_called()
+                self.assertEqual(supervisor.cancel_status, 130)
+            finally:
+                supervisor.release()
+        finally:
+            os.close(writer)
 
     def test_total_wait_budget_spans_resource_and_output_locks(self):
         output_holder, fixture, _ = self.launch("output-holder", "check", CI="true")
@@ -336,7 +394,7 @@ time.sleep(float(os.environ.get('FIXTURE_SLEEP', '60')))
     @staticmethod
     def running(pid):
         try:
-            return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] != "Z"
+            return Path(f"/proc/{pid}/stat").read_bytes().rsplit(b")", 1)[1].split()[0] != b"Z"
         except FileNotFoundError:
             return False
 

@@ -141,7 +141,15 @@ elif ((${#LOCK_TARGET_SET[@]} > 0)); then
   done < <(printf '%s\n' "${!LOCK_TARGET_SET[@]}" | sort)
 fi
 
-supervisor_args=(--root "$ROOT_DIR" --wrapper-pid "$$")
+# Bind graceful cancellation to one private channel, never a recyclable PID.
+# Unlink the FIFO after opening it so only this run's inherited FD can address it.
+cancel_directory="$(mktemp -d "${TMPDIR:-/tmp}/firemud-gradle-cancel.XXXXXXXX")"
+mkfifo "$cancel_directory/request"
+exec {cancel_fd}<>"$cancel_directory/request"
+rm -- "$cancel_directory/request"
+rmdir -- "$cancel_directory"
+
+supervisor_args=(--root "$ROOT_DIR" --wrapper-pid "$$" --cancel-fd "$cancel_fd")
 for idx in "${!actual_lock_targets[@]}"; do
   supervisor_args+=(--lock "${lock_modes[idx]}=${actual_lock_targets[idx]}")
 done
@@ -153,7 +161,8 @@ python3 "$ROOT_DIR/dev-tools/validation/gradle-run-supervisor.py" \
 supervisor_pid=$!
 cancel_run() {
   local status="$1"
-  kill -TERM "$supervisor_pid" 2>/dev/null || true
+  trap '' INT TERM HUP
+  printf '%s\n' "$status" >&"$cancel_fd"
   wait "$supervisor_pid" || true
   exit "$status"
 }

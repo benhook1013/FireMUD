@@ -55,8 +55,10 @@ def report(message, *, error=False):
 def identity(pid):
     """Return start time and state without confusing spaces in process names."""
     try:
-        fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
-        return fields[19], fields[0]
+        # Linux comm is arbitrary bytes, including invalid UTF-8. Only the
+        # ASCII start-time/state fields after its final ')' are interpreted.
+        fields = Path(f"/proc/{pid}/stat").read_bytes().rsplit(b")", 1)[1].split()
+        return fields[19].decode("ascii"), fields[0].decode("ascii")
     except (FileNotFoundError, ProcessLookupError):
         return None
 
@@ -75,7 +77,9 @@ class OwnedProcess:
         self.descriptor = descriptor
 
     def running(self):
-        return not select.select([self.descriptor], [], [], 0)[0]
+        poller = select.poll()
+        poller.register(self.descriptor, select.POLLIN)
+        return not poller.poll(0)
 
     def send(self, sig):
         signal.pidfd_send_signal(self.descriptor, sig)
@@ -171,6 +175,10 @@ class Supervisor:
         self.args = args
         self.token = secrets.token_hex(24)
         self.cancel_status = None
+        self.cancel_fd = getattr(args, "cancel_fd", None)
+        self.cancel_buffer = b""
+        if self.cancel_fd is not None:
+            os.set_blocking(self.cancel_fd, False)
         self.locks = []
         self.child = None
         self.owned = {}
@@ -195,6 +203,21 @@ class Supervisor:
     def cancel(self, sig, _frame):
         if self.cancel_status is None:
             self.cancel_status = 128 + sig
+
+    def check_cancel(self):
+        if self.cancel_fd is None or self.cancel_status is not None:
+            return
+        try:
+            self.cancel_buffer += os.read(self.cancel_fd, 16)
+        except BlockingIOError:
+            return
+        if b"\n" in self.cancel_buffer or len(self.cancel_buffer) >= 16:
+            request = self.cancel_buffer.split(b"\n", 1)[0]
+            self.cancel_buffer = b""
+            if request in {b"129", b"130", b"143"}:
+                self.cancel_status = int(request)
+            else:
+                self.fail("invalid graceful cancellation request")
 
     def wrapper_gone(self):
         return not alive(self.args.wrapper_pid, self.wrapper_start[0])
@@ -227,6 +250,7 @@ class Supervisor:
         self.locks.append((handle, meta, not shared))
         mode = fcntl.LOCK_SH if shared else fcntl.LOCK_EX
         while True:
+            self.check_cancel()
             if self.cancel_status is not None or self.wrapper_gone():
                 return False
             try:
@@ -254,6 +278,9 @@ class Supervisor:
         return True
 
     def release(self):
+        if self.cancel_fd is not None:
+            os.close(self.cancel_fd)
+            self.cancel_fd = None
         for process in self.owned.values():
             process.close()
         self.owned.clear()
@@ -331,6 +358,10 @@ class Supervisor:
 
     def supervise(self):
         while True:
+            try:
+                self.check_cancel()
+            except OSError as error:
+                self.fail(error)
             remaining = self.remaining_owned()
             try:
                 self.admit_client()
@@ -375,6 +406,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", required=True)
     parser.add_argument("--wrapper-pid", required=True, type=int)
+    parser.add_argument("--cancel-fd", required=True, type=int)
     parser.add_argument("--lock", action="append", default=[])
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
