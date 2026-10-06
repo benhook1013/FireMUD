@@ -3,6 +3,7 @@ package net.firedevops.firemud.worldmanagement.tenant;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HexFormat;
@@ -17,6 +18,7 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstancePrepa
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceTopologyPlan.Entry;
 import org.jooq.DSLContext;
 import org.jooq.Record;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -91,10 +93,7 @@ public final class WorldCanonicalInstancePreparationRepository {
                   authority.requireHeld();
                   Record row =
                       Objects.requireNonNull(
-                          dsl.fetchOne(
-                              "SELECT * FROM world_prepare_canonical_instance(?, ?)",
-                              inputJson,
-                              inputDigest),
+                          fetchCanonicalPreparation(inputJson, inputDigest),
                           "V35 canonical preparation function returned no row");
                   MaterializedInstance materialized =
                       new MaterializedInstance(
@@ -126,6 +125,41 @@ public final class WorldCanonicalInstancePreparationRepository {
           "Canonical World preparation readback differs from its committed owner row");
     }
     return result;
+  }
+
+  /**
+   * Calls the V35 writer inside its owner transaction and translates only its explicit
+   * canonical-identity conflict signals. Throwing the domain exception here keeps the transaction
+   * rollback behavior while leaving unrelated database uniqueness failures visible as such.
+   */
+  private Record fetchCanonicalPreparation(String inputJson, String inputDigest) {
+    try {
+      return dsl.fetchOne(
+          "SELECT * FROM world_prepare_canonical_instance(?, ?)", inputJson, inputDigest);
+    } catch (DuplicateKeyException exception) {
+      throw translateCanonicalPreparationConflict(exception);
+    }
+  }
+
+  static RuntimeException translateCanonicalPreparationConflict(DuplicateKeyException exception) {
+    for (Throwable cause = exception; cause != null; cause = cause.getCause()) {
+      if (cause instanceof SQLException sqlException
+          && "23505".equals(sqlException.getSQLState())
+          && isCanonicalPreparationConflictMessage(sqlException.getMessage())) {
+        return new ConflictingPreparationException(
+            "Canonical gameInstanceId is already bound to a different preparation", exception);
+      }
+    }
+    return exception;
+  }
+
+  private static boolean isCanonicalPreparationConflictMessage(String message) {
+    if (message == null) return false;
+    String ownerMessage = message.lines().findFirst().orElse("");
+    if (ownerMessage.startsWith("ERROR: ")) ownerMessage = ownerMessage.substring(7);
+    return ownerMessage.equals(
+            "Canonical gameInstanceId is already bound to a different preparation")
+        || ownerMessage.equals("Canonical game instance or request identity is already reserved");
   }
 
   /** Independent exact read; lifecycle state is intentionally absent from the retained result. */
@@ -531,6 +565,10 @@ public final class WorldCanonicalInstancePreparationRepository {
   public static class ConflictingPreparationException extends IllegalStateException {
     public ConflictingPreparationException(String message) {
       super(message);
+    }
+
+    public ConflictingPreparationException(String message, Throwable cause) {
+      super(message, cause);
     }
   }
 

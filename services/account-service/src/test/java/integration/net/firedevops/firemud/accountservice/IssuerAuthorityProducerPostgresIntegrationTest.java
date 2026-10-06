@@ -461,8 +461,19 @@ class IssuerAuthorityProducerPostgresIntegrationTest {
                     "SELECT * FROM account_draft_authorization_changed_scopes ORDER BY source_key, change_id")
                 .formatJSON())
         .isEqualTo(oldChangedScopes);
-    assertThat(
-            transaction(fixture.transaction(), () -> fences.readSourceChange(oldChange).binding()))
+    byte[] retainedBinding =
+        Objects.requireNonNull(
+            Objects.requireNonNull(
+                    fixture
+                        .setupDsl()
+                        .fetchOne(
+                            "SELECT binding FROM account_draft_authorization_source_changes WHERE change_id = ?",
+                            oldChange.changeId()),
+                    "Retained V59 source-change row is missing")
+                .get("binding", byte[].class),
+            "Retained V59 source-change binding is missing");
+    assertThat(retainedBinding).containsExactly(oldChange.canonicalBytes());
+    assertThat(SourceChange.fromStored(retainedBinding).canonicalBytes())
         .containsExactly(oldChange.canonicalBytes());
     assertThat(fixture.producer().advance(ISSUER_ID, oldRequest, 1, 1).requestId())
         .isEqualTo(oldRequest.toString());
