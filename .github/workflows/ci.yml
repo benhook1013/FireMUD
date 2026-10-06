@@ -1023,13 +1023,6 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#noPublicationSerializesAgainstAnAlreadyScheduledLatePublisher()' \
             game-design-service
 
-      - name: Preserve Game Design publication operation XML before later selectors
-        if: ${{ always() && matrix.module == 'game-design-service' }}
-        run: |
-          preserved_results=services/game-design-service/build/publication-operation-proof/services/game-design-service/build/test-results/integrationTest
-          mkdir -p "$preserved_results"
-          cp services/game-design-service/build/test-results/integrationTest/TEST-*GameDesignPublicationOperationPostgresIntegrationTest.xml "$preserved_results/"
-
       - name: Verify Game Design fresh tenant creation PostgreSQL proof
         if: ${{ !cancelled() && matrix.module == 'game-design-service' }}
         run: |
@@ -1064,6 +1057,13 @@ jobs:
             services/game-design-service/build/reports/tests/integrationTest/**
           if-no-files-found: error
           retention-days: 7
+
+      - name: Preserve Game Design publication operation XML before later selectors
+        if: ${{ always() && matrix.module == 'game-design-service' }}
+        run: |
+          preserved_results=services/game-design-service/build/publication-operation-proof/services/game-design-service/build/test-results/integrationTest
+          mkdir -p "$preserved_results"
+          cp services/game-design-service/build/test-results/integrationTest/TEST-*GameDesignPublicationOperationPostgresIntegrationTest.xml "$preserved_results/"
 
       - name: Run Game Design authored-source launch descriptor PostgreSQL and socket mTLS proof
         if: ${{ matrix.module == 'game-design-service' }}
