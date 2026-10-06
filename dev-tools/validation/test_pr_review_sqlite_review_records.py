@@ -4,6 +4,7 @@ import json
 import sqlite3
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -23,7 +24,7 @@ from pr_review.sqlite_review_records import (
     _archive_artifact,
 )
 from pr_review.sqlite_store import SQLITE_SCHEMA_VERSION, WRITER_BUILD, SqliteStateStore
-from pr_review.state import FindingRoute, StateError
+from pr_review.state import FindingRoute, StateError, StateLockTimeout
 
 
 class SqliteReviewRecordsTest(unittest.TestCase):
@@ -907,6 +908,34 @@ class SqliteReviewRecordsTest(unittest.TestCase):
                 metadata={"unsupported": object()},
             )
         self.assertIsInstance(raised.exception.__cause__, TypeError)
+
+    def test_start_attempt_bounds_preflight_transaction_wait_to_remaining_deadline(self) -> None:
+        self.bootstrap()
+        writer = sqlite3.connect(self.database, isolation_level=None)
+        try:
+            writer.execute("BEGIN IMMEDIATE")
+            started = time.monotonic()
+            with self.assertRaisesRegex(StateLockTimeout, "SQLite review-records transaction lock"):
+                self.records.start_attempt(
+                    attempt_id="attempt-preflight-lock",
+                    source_pr=2890,
+                    channel="hosted",
+                    deadline=started + 0.05,
+                )
+            self.assertLess(time.monotonic() - started, 1)
+            self.assertEqual(self.records.attempt_history(2890), [])
+        finally:
+            writer.rollback()
+            writer.close()
+
+        self.assertEqual(
+            self.records.start_attempt(
+                attempt_id="attempt-preflight-lock",
+                source_pr=2890,
+                channel="hosted",
+            )["state"],
+            "started",
+        )
 
     def test_history_validates_attempt_metadata_once_as_an_object(self) -> None:
         self.bootstrap()

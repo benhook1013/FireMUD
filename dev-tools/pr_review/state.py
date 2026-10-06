@@ -1285,7 +1285,7 @@ def sqlite_state_path(json_path: str | os.PathLike[str]) -> Path:
     return target.parent.resolve() / target.name
 
 
-def _cutover_sqlite_store(path: Path) -> tuple[Any, dict[str, Any]]:
+def _cutover_sqlite_store(path: Path, *, deadline: float | None = None) -> tuple[Any, dict[str, Any]]:
     """Read and validate the immutable pointer installed by JSON-to-SQLite cutover."""
 
     from .sqlite_store import CUTOVER_VERSION, SQLITE_SCHEMA_VERSION, SqliteStateStore
@@ -1330,7 +1330,7 @@ def _cutover_sqlite_store(path: Path) -> tuple[Any, dict[str, Any]]:
         raise StateError("SQLite cutover marker database path does not match the canonical sibling")
 
     store = SqliteStateStore(database)
-    status = store.status()
+    status = store.status(deadline=deadline)
     expected_values = {
         "sqlite_schema_version": status.get("schema_version"),
         "state_schema_version": status.get("data_model_version"),
@@ -1368,9 +1368,22 @@ class ControllerStateStore:
         self.path = Path(path).resolve() if path is not None else state_path()
         self.lock_path = self.path.with_name(".pr-review-stack.lock")
 
-    def _active_store(self) -> Any:
+    @staticmethod
+    def _hosted_deadline(deadline: float | None) -> tuple[float | None, Any | None]:
+        if deadline is not None:
+            from . import github
+
+            budget = github.active_hosted_preflight_budget()
+            return deadline, budget if budget is not None and budget.deadline == deadline else None
+        from . import github
+
+        budget = github.active_hosted_preflight_budget()
+        return (budget.deadline, budget) if budget is not None else (None, None)
+
+    def _active_store(self, *, deadline: float | None = None) -> Any:
+        deadline, _ = self._hosted_deadline(deadline)
         if self.path.is_dir():
-            store, status = _cutover_sqlite_store(self.path)
+            store, status = _cutover_sqlite_store(self.path, deadline=deadline)
             if status.get("compatible") is not True:
                 raise StateError(f"SQLite review state is incompatible: {status.get('reason')}")
             return store
@@ -1378,8 +1391,27 @@ class ControllerStateStore:
             raise StateError("review-stack state path must be a regular JSON file or SQLite cutover directory")
         return StateStore(self.path)
 
-    def load(self) -> ReviewState:
-        return self._active_store().load()
+    def load(self, *, deadline: float | None = None) -> ReviewState:
+        deadline, _ = self._hosted_deadline(deadline)
+        store = self._active_store(deadline=deadline)
+        if isinstance(store, StateStore):
+            state = store.load()
+            if deadline is not None:
+                self._check_hosted_deadline(deadline)
+            return state
+        return store.load(deadline=deadline)
+
+    @staticmethod
+    def _check_hosted_deadline(deadline: float | None) -> None:
+        if deadline is None:
+            return
+        from . import github
+
+        budget = github.active_hosted_preflight_budget()
+        if budget is not None and budget.deadline == deadline:
+            budget.remaining_seconds()
+        elif time.monotonic() >= deadline:
+            raise StateLockTimeout("timed out waiting for the Hosted preflight state read")
 
     def save(self, state: ReviewState) -> None:
         if not isinstance(state, ReviewState):
@@ -1394,15 +1426,20 @@ class ControllerStateStore:
     def update(self, mutate: Callable[[ReviewState], ReviewState], *, lock_deadline: float | None = None) -> ReviewState:
         if not callable(mutate):
             raise TypeError("mutate must be callable")
-        with _locked(self.lock_path, deadline=lock_deadline):
-            store = self._active_store()
+        deadline, budget = self._hosted_deadline(lock_deadline)
+        with _locked(self.lock_path, deadline=deadline):
+            store = self._active_store(deadline=deadline)
             if isinstance(store, StateStore):
                 updated = mutate(store.load())
                 if not isinstance(updated, ReviewState):
                     raise TypeError("mutate must return ReviewState")
                 store._save_unlocked(updated)
                 return updated
-            return store.update(mutate, deadline=lock_deadline)
+            return store.update(
+                mutate,
+                deadline=deadline,
+                deadline_active=(lambda: budget.active) if budget is not None else None,
+            )
 
 
 def controller_state_status(path: str | os.PathLike[str] | None = None) -> dict[str, Any]:

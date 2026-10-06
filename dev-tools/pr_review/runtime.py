@@ -2509,6 +2509,8 @@ class HostedRunner:
         self,
         pr: int,
         paths: Sequence[Path],
+        *,
+        budget: github.HostedPreflightBudget | None = None,
     ) -> datetime | None:
         """Return only a future cooldown proved by an archived terminal capture."""
 
@@ -2517,8 +2519,12 @@ class HostedRunner:
         now = datetime.now(timezone.utc)
         cooldowns: list[datetime] = []
         for path in paths:
+            if budget is not None:
+                budget.remaining_seconds()
             try:
                 record = hosted.load_trigger_reservation(path, self.repo, pr)
+                if budget is not None:
+                    budget.remaining_seconds()
                 trigger = record.get("trigger")
                 attempt_id = record.get("sqlite_attempt_id")
                 if (
@@ -2531,7 +2537,14 @@ class HostedRunner:
                 trigger_id = trigger.get("id")
                 if isinstance(trigger_id, bool) or not isinstance(trigger_id, int) or trigger_id <= 0:
                     continue
-                attempts = [item for item in self.records.attempt_history(pr) if item.get("attempt_id") == attempt_id]
+                attempt_rows = (
+                    self.records.attempt_history(pr, deadline=budget.deadline)
+                    if budget is not None
+                    else self.records.attempt_history(pr)
+                )
+                if budget is not None:
+                    budget.remaining_seconds()
+                attempts = [item for item in attempt_rows if item.get("attempt_id") == attempt_id]
                 if len(attempts) != 1:
                     continue
                 attempt = attempts[0]
@@ -2542,7 +2555,13 @@ class HostedRunner:
                     or attempt.get("trigger_id") != str(trigger_id)
                 ):
                     continue
-                artifacts = self.records.attempt_artifacts(attempt_id)
+                artifacts = (
+                    self.records.attempt_artifacts(attempt_id, deadline=budget.deadline)
+                    if budget is not None
+                    else self.records.attempt_artifacts(attempt_id)
+                )
+                if budget is not None:
+                    budget.remaining_seconds()
                 metadata = json.loads(artifacts["metadata"])
                 archived = json.loads(artifacts["hosted_comments"])
                 if (
@@ -2584,7 +2603,11 @@ class HostedRunner:
                 if not github.is_coderabbit_login(login) or not isinstance(body, str):
                     continue
                 reset = hosted._rate_limit(body, response_at)
+            except github.HostedPreflightDeadlineExceeded:
+                raise
             except Exception:  # noqa: BLE001 - missing closed-history proof cannot retain an execution slot
+                if budget is not None:
+                    budget.remaining_seconds()
                 reset = None
             if reset is not None and reset > now and reset not in cooldowns:
                 cooldowns.append(reset)
@@ -2641,7 +2664,9 @@ class HostedRunner:
             with github.activate_hosted_preflight_budget() as budget:
                 return self._assert_no_other_active_reservations(pr, common)
         terminal_states = {"completed", "failed", "failed_incomplete_coverage", "rate_limited", "noop", "retired"}
+        budget.remaining_seconds()
         current = self._repository_current_trigger_paths(self.repo, common)
+        budget.remaining_seconds()
         budget.set_phase("open_pr_listing", total=1)
         try:
             open_pull_requests = github.fetch_api_endpoint(f"repos/{self.repo}/pulls?state=open&per_page=100")
@@ -2673,9 +2698,11 @@ class HostedRunner:
         # Preserve a repository cooldown only when an exact local terminal
         # capture proves an attributed rate limit that has not expired.
         for closed_pr, paths in current.items():
+            budget.remaining_seconds()
             if closed_pr == pr or closed_pr in open_prs:
                 continue
-            reset = self._closed_repository_cooldown_until(closed_pr, paths)
+            reset = self._closed_repository_cooldown_until(closed_pr, paths, budget=budget)
+            budget.remaining_seconds()
             if reset is not None:
                 raise ControllerError(f"Hosted repository cooldown remains active on closed PR #{closed_pr}")
 
@@ -3106,6 +3133,7 @@ class HostedRunner:
                             "force_reason": reason,
                             "candidate_warnings": list(target.candidate_warnings),
                         },
+                        deadline=budget.deadline,
                     )
                     sqlite_attempt_started = True
                 except Exception as exc:  # noqa: BLE001 - optional capture cannot block provider POST

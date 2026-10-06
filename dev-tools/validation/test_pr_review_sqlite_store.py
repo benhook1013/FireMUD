@@ -92,6 +92,64 @@ class SqliteStateStoreTest(unittest.TestCase):
         controller_store.update(lambda state: ReviewState(ordered_prs=state.ordered_prs + (43,)))
         self.assertEqual(sqlite_store.load().ordered_prs, (42, 43))
 
+    def test_controller_reads_bound_sqlite_status_and_load_to_deadline(self) -> None:
+        controller_store, sqlite_store, initial = self._controller_sqlite_store()
+        with sqlite3.connect(sqlite_store.path, isolation_level=None) as writer:
+            writer.execute("BEGIN EXCLUSIVE")
+            started = time.monotonic()
+            with self.assertRaisesRegex(StateLockTimeout, "SQLite review-state status lock"):
+                sqlite_store.status(deadline=started + 0.05)
+            self.assertLess(time.monotonic() - started, 1)
+
+            started = time.monotonic()
+            with self.assertRaisesRegex(StateLockTimeout, "SQLite review-state status lock"):
+                controller_store.load(deadline=started + 0.05)
+            self.assertLess(time.monotonic() - started, 1)
+            writer.rollback()
+
+        self.assertEqual(controller_store.load(), initial)
+        self.assertTrue(sqlite_store.status()["compatible"])
+
+    def test_completed_admission_allows_bounded_sqlite_commit_after_preflight_deadline(self) -> None:
+        sqlite_store = SqliteStateStore(self.root / "state.sqlite3")
+        sqlite_store.update(lambda _: ReviewState(ordered_prs=(42,)))
+        reservation = self.root / "trigger.json"
+        started = time.monotonic()
+        deadline = started + 0.03
+        budget_active = [True]
+
+        def reserve_after_budget_completion(state: ReviewState) -> ReviewState:
+            budget_active[0] = False
+            reservation.write_text("durable reservation", encoding="utf-8")
+            time.sleep(0.05)
+            return ReviewState(ordered_prs=state.ordered_prs + (43,))
+
+        sqlite_store.update(
+            reserve_after_budget_completion,
+            deadline=deadline,
+            deadline_active=lambda: budget_active[0],
+        )
+
+        self.assertGreater(time.monotonic(), deadline)
+        self.assertEqual(reservation.read_text(encoding="utf-8"), "durable reservation")
+        self.assertEqual(sqlite_store.load().ordered_prs, (42, 43))
+
+    def test_expired_mutator_without_admission_completion_still_rolls_back(self) -> None:
+        sqlite_store = SqliteStateStore(self.root / "state.sqlite3")
+        sqlite_store.update(lambda _: ReviewState(ordered_prs=(42,)))
+        started = time.monotonic()
+        deadline = started + 0.03
+
+        def slow_mutation(state: ReviewState) -> ReviewState:
+            time.sleep(0.05)
+            return ReviewState(ordered_prs=state.ordered_prs + (43,))
+
+        with self.assertRaisesRegex(StateLockTimeout, "SQLite review-state transaction lock"):
+            sqlite_store.update(slow_mutation, deadline=deadline, deadline_active=lambda: True)
+
+        self.assertGreater(time.monotonic(), deadline)
+        self.assertEqual(sqlite_store.load().ordered_prs, (42,))
+
     @staticmethod
     def representative_state() -> ReviewState:
         head = "a" * 40

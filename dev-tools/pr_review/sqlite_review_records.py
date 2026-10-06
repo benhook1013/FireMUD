@@ -20,13 +20,14 @@ import json
 import os
 import re
 import sqlite3
+import time
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
 from .sqlite_store import SQLITE_SCHEMA_VERSION, WRITER_BUILD
-from .state import FindingRoute, ReviewState
+from .state import FindingRoute, ReviewState, StateLockTimeout
 
 ReviewChannel = Literal["hosted", "cli", "manual", "subagent"]
 FindingDisposition = Literal["accepted", "routed", "rejected", "unresolved"]
@@ -517,6 +518,7 @@ class SqliteReviewRecords:
         candidate_sha: str | None = None,
         started_at: str | None = None,
         metadata: Mapping[str, Any] | None = None,
+        deadline: float | None = None,
     ) -> dict[str, Any]:
         """Record an attempt before a provider request or independent pass starts."""
 
@@ -541,7 +543,7 @@ class SqliteReviewRecords:
         metadata_json, _, redactions = _archive_artifact("metadata", serialized_metadata)
         if redactions:
             raise ReviewRecordsError("attempt metadata contains credential-shaped material")
-        with self._write_connection() as connection:
+        with self._write_connection(deadline=deadline) as connection:
             existing = connection.execute(
                 "SELECT source_pr, channel, candidate_sha, state, started_at, metadata_json "
                 "FROM review_attempts WHERE attempt_id = ?",
@@ -649,19 +651,22 @@ class SqliteReviewRecords:
         return {"attempt_id": attempt_id, "state": state, "idempotent_replay": False}
 
     @_translate_database_errors
-    def attempt_history(self, pr: int) -> list[dict[str, Any]]:
+    def attempt_history(self, pr: int, *, deadline: float | None = None) -> list[dict[str, Any]]:
         """Return bounded metadata for all attempts on one PR, without private artifacts."""
 
         pr = _positive_pr(pr)
         self._require_regular_database()
-        with contextlib.closing(self._connect(read_only=True)) as connection:
+        self._check_deadline(deadline)
+        with contextlib.closing(self._connect(read_only=True, deadline=deadline)) as connection:
             self._require_compatible(connection)
+            self._set_busy_timeout(connection, deadline)
             rows = connection.execute(
                 "SELECT attempt_id, channel, candidate_sha, state, started_at, finished_at, "
                 "duration_seconds, exit_status, trigger_id, provider_review_id, checkpoint_id, run_id, "
                 "diagnostic FROM review_attempts WHERE source_pr = ? ORDER BY started_at, attempt_id",
                 (pr,),
             ).fetchall()
+        self._check_deadline(deadline)
         return [
             {
                 "attempt_id": row[0],
@@ -716,21 +721,28 @@ class SqliteReviewRecords:
 
     @_translate_database_errors
     def attempt_artifacts(
-        self, attempt_id: str, *, _connection: sqlite3.Connection | None = None
+        self,
+        attempt_id: str,
+        *,
+        deadline: float | None = None,
+        _connection: sqlite3.Connection | None = None,
     ) -> dict[str, str]:
         """Read private archived evidence for exact recovery, outside ordinary history."""
 
         attempt_id = _safe_identifier(attempt_id, "attempt ID", maximum=100)
         self._require_regular_database()
+        self._check_deadline(deadline)
         with (
-            contextlib.closing(self._connect(read_only=True))
+            contextlib.closing(self._connect(read_only=True, deadline=deadline))
             if _connection is None else contextlib.nullcontext(_connection)
         ) as connection:
             self._require_compatible(connection)
+            self._set_busy_timeout(connection, deadline)
             rows = connection.execute(
                 "SELECT kind, content FROM review_artifacts WHERE attempt_id = ?",
                 (attempt_id,),
             ).fetchall()
+        self._check_deadline(deadline)
         return {kind: content for kind, content in rows}
 
     @_translate_database_errors
@@ -3986,14 +3998,45 @@ class SqliteReviewRecords:
                 (target_pr, route_status, observed_at, route_id),
             )
 
+    @staticmethod
+    def _check_deadline(deadline: float | None) -> None:
+        if deadline is not None and time.monotonic() >= deadline:
+            raise StateLockTimeout("timed out waiting for SQLite review-records deadline")
+
+    def _remaining_timeout(self, deadline: float | None) -> float:
+        if deadline is None:
+            return self.timeout
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise StateLockTimeout("timed out waiting for SQLite review-records deadline")
+        return min(self.timeout, remaining)
+
+    def _set_busy_timeout(self, connection: sqlite3.Connection, deadline: float | None) -> None:
+        timeout = self._remaining_timeout(deadline)
+        connection.execute(f"PRAGMA busy_timeout = {int(timeout * 1000)}")
+
+    @staticmethod
+    def _is_sqlite_lock_error(error: sqlite3.OperationalError) -> bool:
+        message = str(error).lower()
+        return "locked" in message or "busy" in message
+
     @contextlib.contextmanager
-    def _write_connection(self):
+    def _write_connection(self, *, deadline: float | None = None):
         self._require_regular_database()
-        connection = self._connect(read_only=False)
+        connection = self._connect(read_only=False, deadline=deadline)
         try:
-            connection.execute("BEGIN IMMEDIATE")
+            self._set_busy_timeout(connection, deadline)
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+            except sqlite3.OperationalError as exc:
+                if deadline is not None and self._is_sqlite_lock_error(exc):
+                    raise StateLockTimeout("timed out waiting for SQLite review-records transaction lock") from exc
+                raise
+            self._check_deadline(deadline)
             self._require_compatible(connection)
             yield connection
+            self._check_deadline(deadline)
+            self._set_busy_timeout(connection, deadline)
             connection.commit()
         except BaseException:
             if connection.in_transaction:
@@ -4002,13 +4045,14 @@ class SqliteReviewRecords:
         finally:
             connection.close()
 
-    def _connect(self, *, read_only: bool) -> sqlite3.Connection:
+    def _connect(self, *, read_only: bool, deadline: float | None = None) -> sqlite3.Connection:
         if self.path.is_symlink():
             raise ReviewRecordsError("SQLite controller database path must not be a symlink")
         mode = "ro" if read_only else "rw"
         uri = f"{self.path.resolve().as_uri()}?mode={mode}"
-        connection = sqlite3.connect(uri, uri=True, timeout=self.timeout, isolation_level=None)
-        connection.execute(f"PRAGMA busy_timeout = {int(self.timeout * 1000)}")
+        timeout = self._remaining_timeout(deadline)
+        connection = sqlite3.connect(uri, uri=True, timeout=timeout, isolation_level=None)
+        self._set_busy_timeout(connection, deadline)
         connection.execute("PRAGMA foreign_keys = ON")
         if read_only:
             connection.execute("PRAGMA query_only = ON")

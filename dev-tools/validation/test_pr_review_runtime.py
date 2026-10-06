@@ -237,6 +237,38 @@ class RuntimeTest(unittest.TestCase):
                     reset = runner._closed_repository_cooldown_until(99, [path])
                 self.assertEqual(reset is not None, should_hold)
 
+    def test_closed_pr_cooldown_sqlite_read_rechecks_active_deadline(self) -> None:
+        class Clock:
+            now = 0.0
+
+            def monotonic(self):
+                return self.now
+
+        clock = Clock()
+        runner = HostedRunner("owner/repo", LiveGitHub("owner/repo"))
+        record = self._trigger_record(created="2026-10-06T00:00:00Z")
+        record.update({"pr_number": 99, "sqlite_attempt_id": "attempt-99"})
+        record["anchor"]["pr"] = 99
+        path = Path("/unused/pr-99/trigger.json")
+        deadlines = []
+
+        def read_attempts(_pr, *, deadline):
+            deadlines.append(deadline)
+            clock.now = deadline + 0.01
+            return [{"attempt_id": "attempt-99"}]
+
+        runner.records = SimpleNamespace(attempt_history=read_attempts)
+        with (
+            patch.object(github.time, "monotonic", side_effect=clock.monotonic),
+            github.activate_hosted_preflight_budget(timeout_seconds=10) as budget,
+            patch.object(hosted, "load_trigger_reservation", return_value=record),
+            self.assertRaises(github.HostedPreflightDeadlineExceeded),
+        ):
+            budget.deadline = 0.05
+            runner._closed_repository_cooldown_until(99, [path], budget=budget)
+
+        self.assertEqual(deadlines, [0.05])
+
     def test_hosted_source_resolution_rejects_malformed_or_foreign_origin_repository(self) -> None:
         origin = {
             "source_pr": 42,
@@ -354,8 +386,8 @@ class RuntimeTest(unittest.TestCase):
                 "provider_review_id": "11",
             }
             return SimpleNamespace(
-                attempt_history=lambda _pr: [attempt],
-                attempt_artifacts=lambda _id: artifacts,
+                attempt_history=lambda _pr, *, deadline=None: [attempt],
+                attempt_artifacts=lambda _id, *, deadline=None: artifacts,
             )
 
         for label, minutes, should_hold in (("future", 10, True), ("expired", -10, False), ("unknown", None, False)):
@@ -2052,6 +2084,98 @@ class RuntimeTest(unittest.TestCase):
             attempts = records.attempt_history(42)
             self.assertEqual(len(attempts), 1)
             self.assertEqual(attempts[0]["state"], "failed")
+
+    def test_sqlite_admission_commits_after_reservation_fsync_crosses_preflight_deadline(self) -> None:
+        class Clock:
+            now = 0.0
+
+            def monotonic(self):
+                return self.now
+
+        clock = Clock()
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        target = ReviewTarget(
+            snapshot,
+            EffectiveParent("develop", BASE),
+            patch_identity=PATCH,
+            merge_base=BASE,
+            repository="owner/repo",
+        )
+        live = LiveGitHub("owner/repo")
+        posts = []
+        comment = {
+            "id": 123,
+            "created_at": "2026-10-06T00:00:00Z",
+            "html_url": "https://example.test/123",
+            "body": hosted.FULL_COMMAND,
+            "user": {"login": "maintainer"},
+        }
+
+        def gh_call(args, **_kwargs):
+            if args == ["gh", "api", "user"]:
+                return CompletedProcess(args, 0, json.dumps({"login": "maintainer"}), "")
+            posts.append(args)
+            return CompletedProcess(args, 0, json.dumps(comment), "")
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            state_path = common / "firemud" / "pr-review-stack.json"
+            state_path.parent.mkdir(parents=True)
+            state_path.write_text(json.dumps(ReviewState(ordered_prs=(42,)).to_dict()), encoding="utf-8")
+            database = state_path.with_suffix(".sqlite3")
+            sqlite_store.SqliteStateStore.migrate_legacy_json(state_path, database)
+            records = sqlite_review_records.SqliteReviewRecords(database)
+            records.bootstrap()
+            state_store = ControllerStateStore(state_path)
+            controller = ReviewController(store=state_store)
+            reservation = hosted.default_trigger_record_path("owner/repo", 42, common)
+            runner = HostedRunner(
+                "owner/repo",
+                live,
+                git=SimpleNamespace(merge_base=lambda *_args: BASE, patch_identity=lambda *_args: PATCH),
+                records=records,
+            )
+            write_reservation = hosted.atomic_write_json
+
+            def write_then_cross_deadline(path, payload):
+                write_reservation(path, payload)
+                if payload.get("status") == "posting":
+                    clock.now = 11
+
+            with (
+                github.activate_hosted_preflight_budget(timeout_seconds=10),
+                patch.object(github.time, "monotonic", side_effect=clock.monotonic),
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(live, "branch_head", return_value=BASE),
+                patch.object(github, "fetch_pull_request", return_value=self._payload()),
+                patch.object(hosted, "default_trigger_record_path", return_value=reservation),
+                patch.object(evidence, "git_common_dir", return_value=common),
+                patch.object(runner, "_assert_no_other_active_reservations"),
+                patch.object(runner, "_authenticated_login", return_value="maintainer"),
+                patch.object(hosted, "atomic_write_json", side_effect=write_then_cross_deadline),
+                patch("pr_review.runtime.subprocess.run", side_effect=gh_call),
+            ):
+                result = runner(
+                    target,
+                    expect_pr=42,
+                    admit=lambda reserve: controller._admit_review(42, "hosted", reserve),
+                )
+
+            self.assertEqual(clock.now, 11)
+            self.assertEqual(result["status"], "posted")
+            self.assertEqual(len(posts), 1)
+            record = json.loads(reservation.read_text(encoding="utf-8"))
+            self.assertEqual(record["status"], "posted")
+            self.assertEqual(len(records.attempt_history(42)), 1)
+            self.assertEqual(state_store.load().ordered_prs, (42,))
+            for lock_path in (
+                reservation.parent / "request.lock",
+                state_store.lock_path,
+                database.with_name(f".{database.name}.lock"),
+            ):
+                with lock_path.open("a+") as handle:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
     def test_hosted_admission_callback_must_complete_durable_reservation_before_post(self) -> None:
         snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
