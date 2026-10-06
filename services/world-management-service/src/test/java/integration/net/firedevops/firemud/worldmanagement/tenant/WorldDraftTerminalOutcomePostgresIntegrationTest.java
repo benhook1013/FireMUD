@@ -175,9 +175,10 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
         .extracting(WorldDraftTerminalOutcome.ObservedEpoch::epoch)
         .containsOnly("1");
 
+    Fixture topology = fixture(false);
     WorldDraftTopologyCommitPlan abortedTopology =
-        topologyPlan(f, UUID.randomUUID(), UUID.randomUUID());
-    WorldDraftTerminalOperation topologyOperation = operation(f, abortedTopology.binding());
+        topologyPlan(topology, UUID.randomUUID(), UUID.randomUUID());
+    WorldDraftTerminalOperation topologyOperation = operation(topology, abortedTopology.binding());
     WorldDraftTerminalOutcome topologyAbort =
         terminalService().recordDefinitiveAbort(topologyOperation);
     assertThat(topologyAbort.observedEpochs())
@@ -226,6 +227,7 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
     assertThat(count("world_region_draft_commit", abortedRegion.binding().requestId())).isZero();
     assertThat(regionName(f.seededRegion())).isEqualTo("committed");
     assertThat(regionEpochs(f)).containsExactly(1L, 1L);
+    assertThat(draftRegionCount(topology)).isZero();
     assertThat(
             List.of(
                 retainedTerminalSourceFenceAndEpochSnapshot(regionOperation),
@@ -916,6 +918,17 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
     long scopeEpoch =
         Objects.requireNonNull(scopeRow.get(0, Long.class), "scope epoch value must exist");
     return List.of(aggregateEpoch, scopeEpoch);
+  }
+
+  private long draftRegionCount(Fixture f) {
+    var row =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT count(*) FROM region WHERE tenant_id = ? AND version_id = ?",
+                f.intake().localTenantKey(),
+                f.version().localVersionKey()),
+            "region count query must return a row");
+    return Objects.requireNonNull(row.get(0, Long.class), "region count must have a value");
   }
 
   private String retainedTerminalSourceFenceAndEpochSnapshot(
