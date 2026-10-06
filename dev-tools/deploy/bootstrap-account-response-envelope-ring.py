@@ -30,6 +30,7 @@ from pathlib import Path
 
 SOURCE_RECORD_VERSION = 1
 KEY_BYTES = 32
+RING_PURPOSES = ("bare-login", "connect-token", "pending-reset", "control-ui-response")
 OWNER_DIRECTORY_MODE = 0o700
 OWNER_FILE_MODE = 0o600
 KEY_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,64}\Z")
@@ -111,22 +112,20 @@ def _random_identifier(byte_count: int) -> str:
 
 def _manifest() -> bytes:
     key_id = _random_identifier(16)
-    bare_login_key = secrets.token_bytes(KEY_BYTES)
-    connect_token_key = secrets.token_bytes(KEY_BYTES)
-    pending_reset_key = secrets.token_bytes(KEY_BYTES)
-    while connect_token_key == bare_login_key or connect_token_key == pending_reset_key:
-        connect_token_key = secrets.token_bytes(KEY_BYTES)
-    while pending_reset_key in (bare_login_key, connect_token_key):
-        pending_reset_key = secrets.token_bytes(KEY_BYTES)
-    bare_login_encoded = base64.urlsafe_b64encode(bare_login_key).rstrip(b"=").decode("ascii")
-    connect_token_encoded = base64.urlsafe_b64encode(connect_token_key).rstrip(b"=").decode("ascii")
-    pending_reset_encoded = base64.urlsafe_b64encode(pending_reset_key).rstrip(b"=").decode("ascii")
-    return (
-        f"version=1\nactiveKeyId={key_id}\n"
-        f"key:{key_id}:bare-login={bare_login_encoded}\n"
-        f"key:{key_id}:connect-token={connect_token_encoded}\n"
-        f"key:{key_id}:pending-reset={pending_reset_encoded}\n"
-    ).encode("ascii")
+    used_material: set[bytes] = set()
+    active_keys: dict[str, bytes] = {}
+    for purpose in RING_PURPOSES:
+        while True:
+            candidate = secrets.token_bytes(KEY_BYTES)
+            if candidate not in used_material:
+                used_material.add(candidate)
+                active_keys[purpose] = candidate
+                break
+    lines = ["version=1", f"activeKeyId={key_id}"]
+    for purpose, key_material in active_keys.items():
+        encoded = base64.urlsafe_b64encode(key_material).rstrip(b"=").decode("ascii")
+        lines.append(f"key:{key_id}:{purpose}={encoded}")
+    return ("\n".join(lines) + "\n").encode("ascii")
 
 
 def _source_record_bytes(
@@ -265,11 +264,11 @@ def _rotation_manifest(materializer, previous_manifest: bytes) -> bytes:
                 return candidate
 
     active_keys: dict[str, bytes] = {}
-    for purpose in ("bare-login", "connect-token", "pending-reset"):
+    for purpose in RING_PURPOSES:
         active_keys[purpose] = fresh_key()
     lines = ["version=1", f"activeKeyId={active_key_id}"]
     for key_id, purposes in previous.keys.items():
-        for purpose in ("bare-login", "connect-token", "pending-reset"):
+        for purpose in RING_PURPOSES:
             if purpose not in purposes:
                 continue
             encoded = base64.urlsafe_b64encode(purposes[purpose]).rstrip(b"=").decode("ascii")

@@ -433,7 +433,7 @@ def parse_manifest(manifest: bytes) -> ParsedManifest:
     keys: dict[str, dict[str, bytes]] = {}
     seen_material: set[bytes] = set()
     required_purposes = {"bare-login", "connect-token"}
-    allowed_purposes = required_purposes | {"pending-reset"}
+    allowed_purposes = required_purposes | {"pending-reset", "control-ui-response"}
     for line in lines[2:]:
         if line.count("=") != 1:
             raise MaterializationError("source manifest contains a malformed key line")

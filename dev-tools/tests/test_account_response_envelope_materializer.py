@@ -255,18 +255,21 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
             now=now,
         )
 
-    def test_manifest_parser_accepts_optional_pending_reset_purpose(self) -> None:
+    def test_manifest_parser_accepts_optional_pending_reset_and_control_ui_purposes(self) -> None:
         manifest = manifest_for(
             active="k2",
             ids=("k1", "k2"),
-            purposes_by_id={"k2": ("bare-login", "connect-token", "pending-reset")},
+            purposes_by_id={"k2": ("bare-login", "connect-token", "pending-reset", "control-ui-response")},
         )
 
         parsed = MATERIALIZER.parse_manifest(manifest)
 
         self.assertEqual({"bare-login", "connect-token"}, set(parsed.keys["k1"]))
-        self.assertEqual({"bare-login", "connect-token", "pending-reset"}, set(parsed.keys["k2"]))
-        self.assertEqual(5, len({key for values in parsed.keys.values() for key in values.values()}))
+        self.assertEqual(
+            {"bare-login", "connect-token", "pending-reset", "control-ui-response"},
+            set(parsed.keys["k2"]),
+        )
+        self.assertEqual(6, len({key for values in parsed.keys.values() for key in values.values()}))
 
     def test_manifest_parser_rejects_missing_original_purpose(self) -> None:
         manifest = manifest_for(

@@ -24,6 +24,7 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRe
 import net.firedevops.firemud.accountservice.service.AccountAuthoritySourceReader.AccountSourceSnapshot;
 import net.firedevops.firemud.common.account.authority.AccountLogoutAllAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.AccountLogoutAllAuthorityEventV1Codec.AccountLogoutAllAuthorityEvent;
+import net.firedevops.firemud.common.account.authority.AccountSecurityStateAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.PasswordResetAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.PasswordResetAuthorityEventV1Codec.PasswordResetAuthorityEvent;
 
@@ -227,23 +228,33 @@ public record AccountGenerationProjection(
       String sourceVersion,
       String streamKey,
       String sequence) {
-    String canonicalEvent;
+    final JsonNode root;
     try {
-      PasswordResetAuthorityEvent reset = PasswordResetAuthorityEventV1Codec.verify(eventJson);
-      canonicalEvent = new String(reset.canonicalJsonUtf8(), StandardCharsets.UTF_8);
-      requireEventBinding(
-          accountId,
-          generation,
-          sourceVersion,
-          streamKey,
-          sequence,
-          reset.accountId(),
-          reset.accountAuthorityGeneration(),
-          reset.sourceVersion(),
-          reset.outboxStreamKey(),
-          reset.outboxSequence());
-    } catch (IllegalArgumentException resetFailure) {
-      try {
+      root = JSON.readTree(eventJson);
+    } catch (IOException exception) {
+      throw new IllegalArgumentException("Account source event JSON is malformed", exception);
+    }
+    if (!(root instanceof ObjectNode object)) {
+      throw new IllegalArgumentException("Account source event must be a JSON object");
+    }
+    String canonicalEvent;
+    switch (requireText(object, "schemaVersion")) {
+      case PasswordResetAuthorityEventV1Codec.SCHEMA_VERSION -> {
+        PasswordResetAuthorityEvent reset = PasswordResetAuthorityEventV1Codec.verify(eventJson);
+        canonicalEvent = new String(reset.canonicalJsonUtf8(), StandardCharsets.UTF_8);
+        requireEventBinding(
+            accountId,
+            generation,
+            sourceVersion,
+            streamKey,
+            sequence,
+            reset.accountId(),
+            reset.accountAuthorityGeneration(),
+            reset.sourceVersion(),
+            reset.outboxStreamKey(),
+            reset.outboxSequence());
+      }
+      case AccountLogoutAllAuthorityEventV1Codec.SCHEMA_VERSION -> {
         AccountLogoutAllAuthorityEvent logout =
             AccountLogoutAllAuthorityEventV1Codec.verify(eventJson);
         canonicalEvent = new String(logout.canonicalJsonUtf8(), StandardCharsets.UTF_8);
@@ -258,10 +269,25 @@ public record AccountGenerationProjection(
             logout.sourceVersion(),
             logout.outboxStreamKey(),
             logout.outboxSequence());
-      } catch (IllegalArgumentException logoutFailure) {
-        logoutFailure.addSuppressed(resetFailure);
+      }
+      case AccountSecurityStateAuthorityEventV1Codec.SCHEMA_VERSION -> {
+        var security = AccountSecurityStateAuthorityEventV1Codec.verify(eventJson);
+        canonicalEvent = security.canonicalJson();
+        requireEventBinding(
+            accountId,
+            generation,
+            sourceVersion,
+            streamKey,
+            sequence,
+            security.accountId(),
+            security.accountAuthorityGeneration(),
+            security.sourceVersion(),
+            security.outboxStreamKey(),
+            security.outboxSequence());
+      }
+      default -> {
         throw new IllegalArgumentException(
-            "Account source event is not one of the declared closed schemas", logoutFailure);
+            "Account source event is not one of the declared closed schemas");
       }
     }
     if (!canonicalEvent.equals(eventJson)) {

@@ -3,8 +3,11 @@ package unit.net.firedevops.firemud.accountservice.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -15,6 +18,7 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRe
 import net.firedevops.firemud.accountservice.service.AccountAuthoritySourceReader.AccountSourceSnapshot;
 import net.firedevops.firemud.accountservice.service.AccountGenerationProjection;
 import net.firedevops.firemud.common.account.authority.AccountLogoutAllAuthorityEventV1Codec;
+import net.firedevops.firemud.common.account.authority.AccountSecurityStateAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.PasswordResetAuthorityEventV1Codec;
 import org.junit.jupiter.api.Test;
 
@@ -109,8 +113,6 @@ class AccountGenerationProjectionTest {
 
     assertThatThrownBy(() -> projection(ACCOUNT_TEXT, "3", "2", "1", Optional.of(event)))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("declared closed schemas")
-        .cause()
         .hasMessageContaining("does not match");
     assertThatThrownBy(() -> projection(ACCOUNT_TEXT, "2", "2", "0", Optional.empty()))
         .isInstanceOf(IllegalArgumentException.class)
@@ -129,6 +131,133 @@ class AccountGenerationProjectionTest {
 
     assertThat(withNewerLocalFence).isEqualTo(first);
     assertThat(first.toJson()).doesNotContain("issuanceFence");
+  }
+
+  @Test
+  void preservesTheCompleteSecurityStateEventWithTheOriginalProjectionSchema() {
+    String event = securityEvent(ACCOUNT_TEXT, "2", "2", "1");
+    AccountGenerationProjection projection =
+        projection(ACCOUNT_TEXT, "2", "2", "1", Optional.of(event));
+
+    assertThat(AccountGenerationProjection.parse(projection.toJson())).isEqualTo(projection);
+    assertThat(projection.sourceEvent()).contains(event);
+    assertThat(projection.toJson())
+        .startsWith("{\"schemaVersion\":\"account-auth-account-generation-projection/v1\"");
+    assertThat(projection.key()).isEqualTo("session:auth:generation:account:" + ACCOUNT_TEXT);
+    assertThat(projection.toJson()).doesNotContain("issuanceFence");
+  }
+
+  @Test
+  void securityStateCountersRetainArbitraryPrecisionThroughProjectionRoundtrip() {
+    String large = "18446744073709551616000000000000000001";
+    String event = securityEvent(ACCOUNT_TEXT, large, large, large);
+    AccountGenerationProjection projection =
+        projection(ACCOUNT_TEXT, large, large, large, Optional.of(event));
+
+    assertThat(AccountGenerationProjection.parse(projection.toJson())).isEqualTo(projection);
+    assertThat(projection.generationValue()).isEqualTo(new BigInteger(large));
+    assertThat(projection.sourceVersionValue()).isEqualTo(new BigInteger(large));
+    assertThat(projection.outboxSequenceValue()).isEqualTo(new BigInteger(large));
+    assertThat(projection.sourceEvent()).contains(event);
+  }
+
+  @Test
+  void securityStateRequiresExactAccountCountersAndCheckpoint() {
+    String event = securityEvent(ACCOUNT_TEXT, "2", "3", "4");
+    String foreign = securityEvent("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "2", "3", "4");
+    for (AccountGenerationProjectionRequest request :
+        List.of(
+            new AccountGenerationProjectionRequest("3", "3", "4", event),
+            new AccountGenerationProjectionRequest("2", "4", "4", event),
+            new AccountGenerationProjectionRequest("2", "3", "5", event),
+            new AccountGenerationProjectionRequest("2", "3", "4", foreign))) {
+      assertThatThrownBy(
+              () ->
+                  projection(
+                      ACCOUNT_TEXT,
+                      request.generation(),
+                      request.sourceVersion(),
+                      request.sequence(),
+                      Optional.of(request.event())))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("does not match its current projection checkpoint");
+    }
+  }
+
+  @Test
+  void securityStateRejectsSubstitutedStateNoncanonicalBytesGenericSchemasAndFences()
+      throws Exception {
+    String event = securityEvent(ACCOUNT_TEXT, "2", "2", "1");
+    ObjectMapper json = new ObjectMapper();
+    ObjectNode changedState = (ObjectNode) json.readTree(event);
+    ((ObjectNode) changedState.get("accountState")).put("emailVerified", false);
+    ObjectNode generic = (ObjectNode) json.readTree(event);
+    generic.put("schemaVersion", "account-auth-authority-source-event/v1");
+    ObjectNode fence = (ObjectNode) json.readTree(event);
+    fence.put("issuanceFence", "2");
+    ObjectNode wrongStream = (ObjectNode) json.readTree(event);
+    wrongStream.put("outboxStreamKey", STREAM_KEY + "other");
+    for (String invalid :
+        List.of(
+            changedState.toString(),
+            generic.toString(),
+            fence.toString(),
+            wrongStream.toString(),
+            " " + event,
+            event.replace(
+                "\"emailVerified\":true", "\"emailVerified\":true,\"emailVerified\":true"))) {
+      assertThatThrownBy(() -> projection(ACCOUNT_TEXT, "2", "2", "1", Optional.of(invalid)))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+    assertThatThrownBy(() -> projection(ACCOUNT_TEXT, "1", "1", "0", Optional.of(event)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("sequence zero");
+  }
+
+  private record AccountGenerationProjectionRequest(
+      String generation, String sourceVersion, String sequence, String event) {}
+
+  private static String securityEvent(
+      String accountId, String generation, String sourceVersion, String sequence) {
+    String requestId = "11111111-1111-4111-8111-111111111111";
+    String stream = "account:auth-authority:v1:account/" + accountId;
+    return AccountSecurityStateAuthorityEventV1Codec.seal(
+            Map.ofEntries(
+                Map.entry(
+                    "schemaVersion", AccountSecurityStateAuthorityEventV1Codec.SCHEMA_VERSION),
+                Map.entry("eventType", AccountSecurityStateAuthorityEventV1Codec.EVENT_TYPE),
+                Map.entry(
+                    "eventId",
+                    AccountSecurityStateAuthorityEventV1Codec.EVENT_ID_PREFIX + requestId),
+                Map.entry("requestId", requestId),
+                Map.entry("accountId", accountId),
+                Map.entry("sourceScope", "account/" + accountId),
+                Map.entry("outboxStreamKey", stream),
+                Map.entry("outboxSequence", sequence),
+                Map.entry("accountAuthorityGeneration", generation),
+                Map.entry("sourceVersion", sourceVersion),
+                Map.entry(
+                    "accountSecurityCutoff",
+                    Map.of(
+                        "accountAuthorityGeneration",
+                        generation,
+                        "outboxStreamKey",
+                        stream,
+                        "outboxSequence",
+                        sequence)),
+                Map.entry("mutationKinds", List.of("EMAIL_LOGIN_ELIGIBILITY_CHANGED")),
+                Map.entry(
+                    "accountState",
+                    Map.of(
+                        "emailVerified",
+                        true,
+                        "loginAuthModes",
+                        List.of("EMAIL_OTP", "PASSWORD"),
+                        "globalRoles",
+                        List.of(),
+                        "lifecycleState",
+                        "ACTIVE"))))
+        .canonicalJson();
   }
 
   private static AccountGenerationProjection projection(
