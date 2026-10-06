@@ -4,6 +4,7 @@
 import argparse
 import datetime
 import fcntl
+import math
 import os
 import secrets
 import shlex
@@ -59,9 +60,17 @@ def owned_processes(token):
 
 def positive_env(name, default):
     value = os.environ.get(name, str(default))
-    if not value.isdecimal() or int(value) < 1:
-        raise ValueError(f"{name} must be a positive integer number of seconds")
-    return int(value)
+    error = f"{name} must be a positive integer number of seconds representable as a finite deadline"
+    if not value.isdecimal():
+        raise ValueError(error)
+    try:
+        seconds = int(value)
+        finite = math.isfinite(time.monotonic() + seconds)
+    except (ValueError, OverflowError):
+        raise ValueError(error) from None
+    if seconds < 1 or not finite:
+        raise ValueError(error)
+    return seconds
 
 
 class Supervisor:

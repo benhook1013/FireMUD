@@ -299,6 +299,16 @@ time.sleep(float(os.environ.get('FIXTURE_SLEEP', '60')))
         self.assertEqual(process.wait(timeout=5), 1)
         self.assertFalse((fixture / "ready").exists())
 
+    def test_unrepresentable_budgets_fail_before_launch(self):
+        for index, setting in enumerate(("FIREMUD_LOCK_GRADLE_WAIT_SECONDS", "FIREMUD_LOCK_GRADLE_RUN_SECONDS",
+                                         "FIREMUD_LOCK_GRADLE_CANCEL_SECONDS")):
+            with self.subTest(setting=setting):
+                process, fixture, log = self.launch(f"huge-budget-{index}", **{setting: "9" * 400})
+                self.assertEqual(process.wait(timeout=5), 1)
+                self.assertFalse((fixture / "ready").exists())
+                self.assertIn(f"{setting} must be a positive integer", self.output(log))
+                self.assertIn("finite deadline", self.output(log))
+
 
 if __name__ == "__main__":
     unittest.main()
