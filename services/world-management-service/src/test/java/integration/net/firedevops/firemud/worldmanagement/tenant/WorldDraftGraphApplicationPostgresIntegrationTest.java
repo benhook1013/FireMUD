@@ -312,9 +312,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     var selector =
         publishedEvidence(
             publishedSelectors().readCommitted(frozen.request().freeze()).orElseThrow());
-    var launchFixture =
-        preparationLaunchFixture(
-            f, frozen, selector, 2L, List.of("LOOK"));
+    var launchFixture = preparationLaunchFixture(f, frozen, selector, 2L, List.of("LOOK"));
     var evidence = launchFixture.evidence();
     var ownerRequest = launchFixture.ownerRequest();
     byte[] originalAppliedRows = retainedApplicationBytes(application);
@@ -333,9 +331,9 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
 
     // Account authorization and Game Design publication inputs are isolated fixture evidence. The
     // Game Design and Game Session readers below are isolated doubles; World storage and services
-    // remain actual. No V26 binding is seeded here; the protected adapter's producer owns that write.
-    var originalTerminal =
-        isolatedTerminalEvidence(evidence, launchFixture.topologyPlan());
+    // remain actual. No V26 binding is seeded here; the protected adapter's producer owns that
+    // write.
+    var originalTerminal = isolatedTerminalEvidence(evidence, launchFixture.topologyPlan());
     byte[] originalTerminalBytes = originalTerminal.canonicalBytes();
     publicationTerminalComponent(originalTerminal)
         .complete(originalTerminal.operationBytes(), originalTerminalBytes);
@@ -343,9 +341,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     assertThat(publicationOwnerPhase(publicationFence)).isEqualTo("PUBLISHED");
     assertThat(publicationTerminalBytes(publicationFence)).containsExactly(originalTerminalBytes);
 
-    var isolatedOwners =
-        preparationAssemblyFixture(
-            NAMESPACE, evidence, UUID.randomUUID());
+    var isolatedOwners = preparationAssemblyFixture(NAMESPACE, evidence, UUID.randomUUID());
     var bindingService =
         new WorldCompleteLaunchBindingService(
             isolatedOwners.gameDesignClient(),
@@ -358,8 +354,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     var repository = preparationRepository();
     var verifierInvocations = new AtomicInteger();
     var preparation =
-        preparationComponentWithRetainedTerminal(
-            repository, originalTerminal, verifierInvocations);
+        preparationComponentWithRetainedTerminal(repository, originalTerminal, verifierInvocations);
     var lifecycleRepository =
         new WorldCanonicalInstanceLifecycleReadRepository(dsl, manager, associationRepository());
     var adapter =
@@ -377,8 +372,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
                 ownerRequest.canonicalTenantId(),
                 ownerRequest.controlPlaneRequestId()))
         .isZero();
-    var firstRequest =
-        CanonicalWorldInstancePreparationGrpcCodec.toRequest(ownerRequest);
+    var firstRequest = CanonicalWorldInstancePreparationGrpcCodec.toRequest(ownerRequest);
     var firstResponse = invokePreparationAsGameSession(adapter, firstRequest);
     assertThat(firstResponse.getRequest()).isEqualTo(firstRequest);
     assertThat(
@@ -389,9 +383,8 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
         .isEqualTo(1L);
 
     var actualInput = isolatedOwners.service().assemble(stableSelector);
-    assertThat(actualInput.gameSessionReadEvidence().currentGameInstanceStatus())
-        .isEqualTo(
-            CanonicalGameInstanceLaunchAssociationReadEvidence.CurrentGameInstanceStatus.STARTING);
+    assertThat(actualInput.gameSessionReadEvidence().currentGameSessionStatus())
+        .isEqualTo("STARTING");
     assertThat(actualInput.topologyPlan().sourceBinding().freeze())
         .isEqualTo(frozen.request().freeze());
     var firstLifecycleRequest = lifecycleReadRequest(firstRequest, actualInput);
@@ -438,8 +431,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             ownerRequest.expectedDescriptorRequestDigest(),
             ownerRequest.expectedDescriptorResultDigest(),
             ownerRequest.expectedReleaseAttestationEvidenceDigest());
-    var retryTransportRequest =
-        CanonicalWorldInstancePreparationGrpcCodec.toRequest(retryRequest);
+    var retryTransportRequest = CanonicalWorldInstancePreparationGrpcCodec.toRequest(retryRequest);
     var retryResponse = invokePreparationAsGameSession(adapter, retryTransportRequest);
     var retryInput = isolatedOwners.service().assemble(stableSelector);
     var retryLifecycleRequest = lifecycleReadRequest(retryTransportRequest, retryInput);
@@ -462,12 +454,12 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     assertThat(verifierInvocations).hasValue(2);
     assertThat(preparationRows(ownerRequest.gameInstanceUuid()))
         .containsExactly(retainedPreparationRows);
-    assertThat(retainedPreparationSourceRows(f, retryInput, frozen))
-        .isEqualTo(retainedSourceRows);
+    assertThat(retainedPreparationSourceRows(f, retryInput, frozen)).isEqualTo(retainedSourceRows);
     assertThat(retainedApplicationBytes(application)).containsExactly(originalAppliedRows);
     assertThat(
             publishedSelectors()
                 .readCommitted(frozen.request().freeze())
+                .map(this::publishedEvidence)
                 .orElseThrow()
                 .canonicalBytes())
         .containsExactly(originalSelectorBytes);
@@ -2073,7 +2065,8 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
       long descriptorVersionStateEpoch,
       List<String> commandDefinitions) {
     PreparationLaunchFixture launchFixture =
-        preparationLaunchFixture(f, frozen, selector, descriptorVersionStateEpoch, commandDefinitions);
+        preparationLaunchFixture(
+            f, frozen, selector, descriptorVersionStateEpoch, commandDefinitions);
     var evidence = launchFixture.evidence();
     var descriptor = evidence.descriptor();
     var release = evidence.releaseAttestation();
@@ -2117,11 +2110,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             descriptor,
             release);
     return new WorldCanonicalInstancePreparation.Input(
-        request,
-        response,
-        launch,
-        f.version(),
-        launchFixture.topologyPlan());
+        request, response, launch, f.version(), launchFixture.topologyPlan());
   }
 
   private PreparationLaunchFixture preparationLaunchFixture(
