@@ -450,3 +450,17 @@ Entry format:
 - `2026-10-06`: A terminal CI failure may contain no acquired test runner
   - Context: exact #3007 source `a6f10921` Validation run 37369680372 ended after about 45 minutes without an Account or World matrix job, raw XML or artifacts. The detector's check annotation explicitly reports that the hosted runner was not acquired despite multiple attempts; its steps are empty.
   - Expected pattern: inspect terminal job annotations before attributing an aggregate failure to code. Record zero execution credit and the concrete runner-acquisition failure, retain local skipped-test limits, and continue independent implementation. A failed or cancelled detector is neither a database failure nor successful proof.
+
+- `2026-10-06`: Successful commits can coexist with failed background Git housekeeping
+  - Context: commits and normal parent merges in the Unit 1B worktrees succeeded, but Git reported an earlier `gc.log` failure and excessive unreachable loose objects, then disabled automatic cleanup. The shared repository's root cause and object-retention needs are not established.
+  - Expected pattern: distinguish successful publication from housekeeping health. Do not delete the warning log or run destructive object pruning as an implementation workaround; preserve unmerged branches, worktrees and unpublished objects until separately authorized maintenance establishes safe retention.
+  - Outcome: commit/push and byte-exact patch-preservation checks succeeded. Housekeeping remains a nonblocking maintenance concern; no cleanup or pruning was attempted.
+
+- `2026-10-06`: JSON string escaping is not shell argument quoting
+  - Context: a controller job revision passed Markdown via a JSON-quoted shell argument; Bash evaluated backtick spans and preserved literal newline escapes, corrupting the saved brief despite a successful controller result. The observed substitutions were non-existent commit-name commands; no repository code or secret was read by them.
+  - Outcome: the next guarded revision restored the complete intended brief using shell-safe single-argument quoting, and exact readback matched the original text. Use a body file/stdin or shell-safe quoting for multiline controller input; a successful write alone does not prove content preservation.
+
+- `2026-10-06`: Implementation handoffs are not review findings
+  - Context: Document erroneously passed an implementation completion note as a rejected finding when completing controller attempt `gd-versionless-creation-reservation-r1-20261006`. The helper found no independent obligation, but the resulting record displays one finding. A second completion without that note is rejected because imported content is immutable.
+  - Expected pattern: complete a zero-finding helper with no `--finding-json`; record its implementation output and limits in the job, not as a fabricated finding. Read back counts immediately. Do not edit SQLite directly to conceal a mistake.
+  - Outcome: Document reported the exact erroneous attempt and correction-command gap to Overseer in controller message `6d42f60d-c5b5-4e75-ace6-f1449287267e`. The actual discovery count is zero; an audited controller correction remains pending.

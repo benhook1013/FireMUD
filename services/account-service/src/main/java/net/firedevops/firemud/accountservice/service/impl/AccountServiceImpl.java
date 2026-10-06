@@ -18,6 +18,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -78,6 +79,7 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRe
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Event;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.EventEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
+import net.firedevops.firemud.accountservice.repository.AccountControlUiCredentialOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.JoinOperation;
@@ -99,8 +101,10 @@ import net.firedevops.firemud.accountservice.repository.SubscriptionRepository;
 import net.firedevops.firemud.accountservice.service.AccountAuthoritySourceEventReadback;
 import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer;
 import net.firedevops.firemud.accountservice.service.AccountService;
+import net.firedevops.firemud.accountservice.service.CredentialAttemptSource;
 import net.firedevops.firemud.accountservice.service.EmailService;
 import net.firedevops.firemud.accountservice.service.NotificationService;
+import net.firedevops.firemud.accountservice.service.controlui.AccountControlUiAuthenticationRequest;
 import net.firedevops.firemud.accountservice.service.exception.AccountAlreadyExistsException;
 import net.firedevops.firemud.accountservice.service.exception.AccountLifecycleException;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
@@ -117,6 +121,7 @@ import org.jooq.exception.DataAccessException;
 import org.jooq.exception.IntegrityConstraintViolationException;
 import org.jooq.exception.MappingException;
 import org.slf4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -186,6 +191,9 @@ public class AccountServiceImpl implements AccountService {
   private final JwtUtil jwtUtil;
   private final net.firedevops.firemud.accountservice.service.session.SessionService sessionService;
   private final TransactionTemplate joinTransactionTemplate;
+  private final TransactionTemplate controlUiAuthenticationTransaction;
+  private AccountPlatformAuthAbuseLimiter controlUiCredentialLimiter;
+  private AccountControlUiCredentialOperationRepository controlUiCredentialOperations;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -196,6 +204,8 @@ public class AccountServiceImpl implements AccountService {
       AccountAuthorityOutboxRepository accountAuthorityOutboxRepository,
       AccountPasswordResetOperationRepository passwordResetOperationRepository,
       AccountLogoutAllOperationRepository logoutAllOperationRepository,
+      net.firedevops.firemud.accountservice.repository.AccountSecurityStateOperationRepository
+          securityStateOperationRepository,
       AccountAuditOutboxRepository accountAuditOutboxRepository,
       AccountConnectScopeRepository accountConnectScopeRepository,
       AccountJoinOperationRepository accountJoinOperationRepository,
@@ -231,7 +241,8 @@ public class AccountServiceImpl implements AccountService {
         new AccountAuthoritySourceEventReadback(
             accountAuthorityOutboxRepository,
             passwordResetOperationRepository,
-            logoutAllOperationRepository);
+            logoutAllOperationRepository,
+            securityStateOperationRepository);
     this.accountAuditOutboxRepository = accountAuditOutboxRepository;
     this.accountConnectScopeRepository = accountConnectScopeRepository;
     this.accountJoinOperationRepository = accountJoinOperationRepository;
@@ -262,7 +273,162 @@ public class AccountServiceImpl implements AccountService {
     this.joinTransactionTemplate = new TransactionTemplate(transactionManager);
     this.joinTransactionTemplate.setPropagationBehavior(
         TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    this.controlUiAuthenticationTransaction = new TransactionTemplate(transactionManager);
+    this.controlUiAuthenticationTransaction.setPropagationBehavior(
+        TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    this.controlUiAuthenticationTransaction.setIsolationLevel(
+        TransactionDefinition.ISOLATION_READ_COMMITTED);
   }
+
+  /** Uses the real shared credential limiter and V66-bound credential evidence owner. */
+  @Autowired
+  public void configureControlUiAuthentication(
+      AccountPlatformAuthAbuseLimiter limiter,
+      AccountControlUiCredentialOperationRepository operations) {
+    this.controlUiCredentialLimiter = Objects.requireNonNull(limiter);
+    this.controlUiCredentialOperations = Objects.requireNonNull(operations);
+  }
+
+  /**
+   * Fresh authentication only. The original operation must already exist with its actual source
+   * capture. No JWT, registry record, authorization principal or issuance completion is created.
+   * Every retry, including COMMITTED result recovery, verifies the current credential again.
+   */
+  public ControlUiCredentialAuthentication authenticateControlUiOperation(
+      AccountControlUiAuthenticationRequest request) {
+    Objects.requireNonNull(request);
+    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new IllegalStateException(
+          "Control-UI credential admission requires no ambient transaction");
+    }
+    CredentialAttemptSource source = request.credentialAttemptSource();
+    if (source == null
+        || source.connectionMode() != CredentialAttemptSource.ConnectionMode.FIRST_PARTY_WEB
+        || controlUiCredentialLimiter == null
+        || controlUiCredentialOperations == null) {
+      throw new AuthenticationException(
+          "AUTH_ABUSE_CONTROL_UNAVAILABLE",
+          "Trusted credential source and shared abuse control are required");
+    }
+    var permit = controlUiCredentialLimiter.begin(source);
+    byte[] candidateIdentity =
+        AccountPlatformAuthAbuseLimiter.candidateIdentity(
+            request.accountIdentifier().trim().toLowerCase(Locale.ROOT));
+    controlUiCredentialLimiter.admitCandidate(permit, candidateIdentity);
+    ControlUiPreparation prepared =
+        controlUiAuthenticationTransaction.execute(
+            status -> {
+              PrimaryAuthentication authentication;
+              try {
+                Account selected =
+                    findAccountForAuthentication(request.accountIdentifier())
+                        .orElseThrow(this::invalidCredentials);
+                requireAuthenticationPersistedIdentity(selected);
+                // Follow the source-writer issuer/account/fence lock order before recipient/OTP
+                // rows.
+                var sourceSnapshot =
+                    Objects.requireNonNull(
+                        accountAuthorityGenerationRepository.readCompositeSnapshot(
+                            ACCOUNT_JWT_ISSUER, selected.getAccountUuid(), List.of(), List.of()));
+                if (!AuthorityScope.issuer(ACCOUNT_JWT_ISSUER)
+                        .equals(sourceSnapshot.issuer().scope())
+                    || !AuthorityScope.account(selected.getAccountUuid())
+                        .equals(sourceSnapshot.account().scope())
+                    || !selected.getAccountUuid().equals(sourceSnapshot.issuanceFence().accountId())
+                    || !sourceSnapshot
+                        .issuanceFence()
+                        .equals(sourceSnapshot.account().issuanceFence())
+                    || !sourceSnapshot.tenants().isEmpty()
+                    || !sourceSnapshot.memberships().isEmpty()) {
+                  throw new IllegalStateException(
+                      "Control-UI current Account source snapshot differs");
+                }
+                Account current =
+                    accountRepository
+                        .findByAccountUuidForUpdate(selected.getAccountUuid())
+                        .orElseThrow(this::invalidCredentials);
+                requireAuthenticationPersistedIdentity(current);
+                if (!selected.getId().equals(current.getId())) throw invalidCredentials();
+                authentication = authenticateAccountIdentity(current, request.credential(), true);
+              } catch (AuthenticationException rejected) {
+                // Commit the existing verifier's failed OTP counters before shared failure
+                // accounting.
+                return new ControlUiPreparation(null, rejected);
+              }
+              var recorded =
+                  controlUiCredentialOperations.recordVerifiedCredential(
+                      request.requestId(),
+                      authentication.account(),
+                      request.purpose(),
+                      authentication.emailLoginChallenge());
+              return new ControlUiPreparation(
+                  new ControlUiCredentialAuthentication(
+                      authentication.account().getAccountUuid(),
+                      request.requestId(),
+                      request.purpose(),
+                      recorded),
+                  null);
+            });
+    if (prepared == null)
+      throw new IllegalStateException("Control-UI credential transaction returned no result");
+    if (prepared.rejection() != null) {
+      if (AuthenticationErrorCodes.INVALID_CREDENTIALS.equals(prepared.rejection().getCode())) {
+        controlUiCredentialLimiter.recordFailure(permit, candidateIdentity);
+      }
+      throw prepared.rejection();
+    }
+    return Objects.requireNonNull(prepared.authentication());
+  }
+
+  /** Owner-minted fresh credential metadata, not token/source currentness or creator permission. */
+  public static final class ControlUiCredentialAuthentication {
+    private final UUID accountId;
+    private final UUID requestId;
+    private final AccountControlUiAuthenticationRequest.Purpose purpose;
+    private final AccountControlUiCredentialOperationRepository.RecordedAttempt attempt;
+
+    private ControlUiCredentialAuthentication(
+        UUID accountId,
+        UUID requestId,
+        AccountControlUiAuthenticationRequest.Purpose purpose,
+        AccountControlUiCredentialOperationRepository.RecordedAttempt attempt) {
+      this.accountId = accountId;
+      this.requestId = requestId;
+      this.purpose = purpose;
+      this.attempt = attempt;
+    }
+
+    public UUID accountId() {
+      return accountId;
+    }
+
+    public UUID requestId() {
+      return requestId;
+    }
+
+    public UUID operationId() {
+      return attempt.operationId();
+    }
+
+    public UUID authenticationAttemptId() {
+      return attempt.attemptId();
+    }
+
+    public String authenticationMethod() {
+      return attempt.method();
+    }
+
+    public Instant authenticatedAt() {
+      return attempt.authenticatedAt();
+    }
+
+    public AccountControlUiAuthenticationRequest.Purpose purpose() {
+      return purpose;
+    }
+  }
+
+  private record ControlUiPreparation(
+      ControlUiCredentialAuthentication authentication, AuthenticationException rejection) {}
 
   @Override
   @Transactional

@@ -182,7 +182,10 @@ class AccountLogoutAllAuthorityEventProducerTest {
         new AccountAuthoritySourceEventReadback(
             collaborators.outboxRepository(),
             collaborators.passwordResetRepository(),
-            collaborators.logoutAllRepository());
+            collaborators.logoutAllRepository(),
+            org.mockito.Mockito.mock(
+                net.firedevops.firemud.accountservice.repository
+                    .AccountSecurityStateOperationRepository.class));
     return new AccountLogoutAllAuthorityEventProducer(
         collaborators.accountRepository(),
         collaborators.generationRepository(),

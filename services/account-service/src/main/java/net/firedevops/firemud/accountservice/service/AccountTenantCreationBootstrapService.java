@@ -321,7 +321,7 @@ public class AccountTenantCreationBootstrapService {
         || checkpoint.outboxSequence() != 1L
         || !checkpoint.sourceEventId().equals(event.eventId())
         || !checkpoint.sourceEventDigest().equals(event.eventDigest())
-        || !verifiedEvent.equals(expectedEvent)
+        || !verifiedEvent.canonicalJson().equals(expectedEvent.canonicalJson())
         || !verifiedEvent.roles().equals(List.of("tenantAdmin"))
         || verifiedEvent.gameplayAdmissionAllowed()
         || verifiedEvent.callerBoundAuthorityInvalidated()

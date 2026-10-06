@@ -202,18 +202,25 @@ public final class AccountControlUiTokenChecks {
     Map<String, Object> bundle = object(record.get("authEvidenceBundle"));
     if (!bundle
         .keySet()
-        .equals(Set.of("bundleVersion", "sourceVersion", "linearization", "canonicalSha256"))) {
+        .equals(
+            Set.of(
+                "bundleVersion",
+                "sourceVersion",
+                "sourceFence",
+                "linearization",
+                "canonicalSha256"))) {
       throw invalid();
     }
-    for (String field : List.of("bundleVersion", "sourceVersion", "linearization")) {
+    for (String field : List.of("bundleVersion", "sourceVersion", "sourceFence", "linearization")) {
       requirePositiveDecimal(bundle.get(field));
     }
     if (!(bundle.get("canonicalSha256") instanceof String digest)
         || !digest.matches("[0-9a-f]{64}")) throw invalid();
     if (!"1".equals(bundle.get("bundleVersion"))) throw invalid();
-    // The bundle sourceVersion identifies its durable evidence capture. It is independent of
-    // each authority source counter; equality with the actual bundle and its exact source
-    // versions/checkpoints belongs to the missing owner-readback/currentness gate.
+    // sourceVersion identifies the durable capture and sourceFence fences its commit/readback.
+    // Both remain independent of issuanceFence and each authority source counter; equality with
+    // the actual complete capture reference and its exact source versions/checkpoints belongs to
+    // the missing owner-readback/currentness gate. Structural validity is not authorization.
   }
 
   private static Map<String, Object> object(Object value) {

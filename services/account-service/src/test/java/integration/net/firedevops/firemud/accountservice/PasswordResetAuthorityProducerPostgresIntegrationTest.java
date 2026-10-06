@@ -370,6 +370,8 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
         fixture.outbox(),
         operations,
         fixture.logoutAllOperations(),
+        new net.firedevops.firemud.accountservice.repository
+            .AccountSecurityStateOperationRepository(fixture.transactionDsl()),
         null, // audit outbox
         null, // connect scopes
         null, // join operations

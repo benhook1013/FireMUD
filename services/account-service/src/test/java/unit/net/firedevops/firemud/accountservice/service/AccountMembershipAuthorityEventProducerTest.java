@@ -53,6 +53,9 @@ class AccountMembershipAuthorityEventProducerTest {
             outboxRepository,
             mock(AccountPasswordResetOperationRepository.class),
             mock(AccountLogoutAllOperationRepository.class),
+            org.mockito.Mockito.mock(
+                net.firedevops.firemud.accountservice.repository
+                    .AccountSecurityStateOperationRepository.class),
             receiptRepository,
             membershipRepository,
             rolesRepository,
@@ -106,6 +109,9 @@ class AccountMembershipAuthorityEventProducerTest {
             mock(AccountAuthorityOutboxRepository.class),
             mock(AccountPasswordResetOperationRepository.class),
             mock(AccountLogoutAllOperationRepository.class),
+            org.mockito.Mockito.mock(
+                net.firedevops.firemud.accountservice.repository
+                    .AccountSecurityStateOperationRepository.class),
             mock(AccountMembershipTransitionReceiptRepository.class),
             mock(AccountTenantMembershipRepository.class),
             mock(AccountTenantMembershipRoleSnapshotRepository.class),
@@ -145,6 +151,9 @@ class AccountMembershipAuthorityEventProducerTest {
             mock(AccountAuthorityOutboxRepository.class),
             mock(AccountPasswordResetOperationRepository.class),
             mock(AccountLogoutAllOperationRepository.class),
+            org.mockito.Mockito.mock(
+                net.firedevops.firemud.accountservice.repository
+                    .AccountSecurityStateOperationRepository.class),
             mock(AccountMembershipTransitionReceiptRepository.class),
             mock(AccountTenantMembershipRepository.class),
             mock(AccountTenantMembershipRoleSnapshotRepository.class),
@@ -198,6 +207,9 @@ class AccountMembershipAuthorityEventProducerTest {
             authorityOutboxRepository,
             mock(AccountPasswordResetOperationRepository.class),
             mock(AccountLogoutAllOperationRepository.class),
+            org.mockito.Mockito.mock(
+                net.firedevops.firemud.accountservice.repository
+                    .AccountSecurityStateOperationRepository.class),
             transitionReceiptRepository,
             membershipRepository,
             roleSnapshotRepository,
@@ -259,6 +271,9 @@ class AccountMembershipAuthorityEventProducerTest {
             authorityOutboxRepository,
             mock(AccountPasswordResetOperationRepository.class),
             mock(AccountLogoutAllOperationRepository.class),
+            org.mockito.Mockito.mock(
+                net.firedevops.firemud.accountservice.repository
+                    .AccountSecurityStateOperationRepository.class),
             transitionReceiptRepository,
             membershipRepository,
             roleSnapshotRepository,

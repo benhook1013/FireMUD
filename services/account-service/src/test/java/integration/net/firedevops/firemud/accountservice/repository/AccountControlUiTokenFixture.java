@@ -173,6 +173,8 @@ final class AccountControlUiTokenFixture {
             "1",
             "sourceVersion",
             "1",
+            "sourceFence",
+            "7",
             "linearization",
             "123",
             "canonicalSha256",

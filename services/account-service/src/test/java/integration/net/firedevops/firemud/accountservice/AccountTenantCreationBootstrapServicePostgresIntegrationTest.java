@@ -72,7 +72,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 class AccountTenantCreationBootstrapServicePostgresIntegrationTest {
   private static final String TEST_NAMESPACE = "creator-bootstrap-proof";
   private static final String AUDIT_EVENT_TYPE = "ACCOUNT_TENANT_CREATOR_BOOTSTRAPPED";
-  private static final String SCHEMA_PREFIX = "creator_bootstrap_service_proof_";
+  private static final String SCHEMA_PREFIX = "creator_bootstrap_service_";
 
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
@@ -99,7 +99,7 @@ class AccountTenantCreationBootstrapServicePostgresIntegrationTest {
     MembershipEvent originalEvent =
         MembershipAuthorityEventV1Codec.verify(
             new String(originalOutboxEvent.payload(), StandardCharsets.UTF_8));
-    assertThat(originalEvent.outboxSequence()).isEqualTo(1L);
+    assertThat(originalEvent.outboxSequence()).isEqualTo("1");
     assertThat(originalEvent.membershipLifecycleState()).isEqualTo("ACTIVE");
     assertThat(originalEvent.membershipVersion())
         .isEqualTo(Map.of(fixture.tenantUuid().toString(), "2"));
@@ -451,6 +451,8 @@ class AccountTenantCreationBootstrapServicePostgresIntegrationTest {
             outbox,
             passwordResets,
             logoutAll,
+            new net.firedevops.firemud.accountservice.repository
+                .AccountSecurityStateOperationRepository(txDsl),
             transitionReceipts,
             memberships,
             roles,

@@ -155,6 +155,30 @@ class AccountIssuerAuthorityEventProducerTest {
   }
 
   @Test
+  void composedSnapshotRequiresExactIssuerAndWritableOwnerTransactionBeforePersistence() {
+    Collaborators collaborators = new Collaborators();
+    var producer = newProducer(ISSUER_ID, collaborators);
+    assertThatThrownBy(() -> producer.readCurrentInAccountSnapshot(OTHER_ISSUER_ID))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> producer.readCurrentInAccountSnapshot(ISSUER_ID))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("active Account owner transaction");
+    boolean active = TransactionSynchronizationManager.isActualTransactionActive();
+    boolean readOnly = TransactionSynchronizationManager.isCurrentTransactionReadOnly();
+    try {
+      TransactionSynchronizationManager.setActualTransactionActive(true);
+      TransactionSynchronizationManager.setCurrentTransactionReadOnly(true);
+      assertThatThrownBy(() -> producer.readCurrentInAccountSnapshot(ISSUER_ID))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("writable Account transaction");
+      collaborators.verifyUnused();
+    } finally {
+      TransactionSynchronizationManager.setCurrentTransactionReadOnly(readOnly);
+      TransactionSynchronizationManager.setActualTransactionActive(active);
+    }
+  }
+
+  @Test
   void sequenceZeroSnapshotRejectsWrongIssuerStreamAndUnprovenCounters() {
     assertThatThrownBy(
             () ->

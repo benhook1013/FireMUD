@@ -145,6 +145,24 @@ public final class AccountIssuerAuthorityEventProducer {
   }
 
   /**
+   * Reads existing issuer state and its exact history in the caller's writable Account snapshot.
+   *
+   * <p>This owner-local composition boundary acquires the same issuer row fence as {@link
+   * #readCurrent(String)}, but never creates a separate transaction or enrolls missing authority.
+   * Callers must acquire this issuer fence before locking recipient Account source rows. The
+   * returned source evidence is not recipient authorization or an issuance result.
+   */
+  public IssuerAuthoritySnapshot readCurrentInAccountSnapshot(String requestedIssuerId) {
+    requireExactIssuer(requestedIssuerId);
+    requireActiveOwnerTransaction();
+    if (TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
+      throw new IllegalStateException(
+          "Issuer snapshot access requires a writable Account transaction");
+    }
+    return readCurrentInTransaction();
+  }
+
+  /**
    * Reads one exact retained immutable event together with the current source and checkpoint
    * evidence that bounds it, all while holding the issuer source row lock.
    *

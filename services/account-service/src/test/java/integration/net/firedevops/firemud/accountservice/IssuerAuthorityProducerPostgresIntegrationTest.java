@@ -359,7 +359,7 @@ class IssuerAuthorityProducerPostgresIntegrationTest {
   }
 
   @Test
-  void v59PreservesV58HistoryAndExactKeysBeforeV61ProducerInteractionsWithFullMultibyteIssuer() {
+  void v59PreservesV58HistoryAndExactKeysBeforeV67ProducerInteractionsWithFullMultibyteIssuer() {
     Fixture fixture = newFixture("58");
     seedIssuer(fixture);
     UUID oldRequest = UUID.randomUUID();
@@ -379,7 +379,33 @@ class IssuerAuthorityProducerPostgresIntegrationTest {
     transaction(fixture.transaction(), () -> fences.reserve(oldBinding));
     SourceChange oldChange =
         new SourceChange(UUID.randomUUID(), oldBinding.sources(), new byte[] {9});
-    transaction(fixture.transaction(), () -> fences.requestSourceChange(oldChange));
+    // Canonical synthetic V58 history, not a current-engine call against an obsolete schema.
+    transaction(
+        fixture.transaction(),
+        () -> {
+          fixture
+              .transactionDsl()
+              .execute(
+                  "INSERT INTO account_draft_authorization_source_changes (change_id, binding, status)"
+                      + " VALUES (?, ?, 'WAITING')",
+                  oldChange.changeId(),
+                  oldChange.canonicalBytes());
+          for (var source : oldChange.sources()) {
+            fixture
+                .transactionDsl()
+                .execute(
+                    "INSERT INTO account_draft_authorization_changed_scopes (change_id, source_key) VALUES (?, ?)",
+                    oldChange.changeId(),
+                    source.key());
+          }
+          fixture
+              .transactionDsl()
+              .execute(
+                  "UPDATE account_draft_authorization_fences SET ordering = 'REVOKE_ORDER',"
+                      + " ordered_at = CURRENT_TIMESTAMP WHERE operation_id = ?",
+                  oldBinding.operationId());
+          return null;
+        });
     String oldEvents =
         fixture
             .setupDsl()
@@ -476,15 +502,15 @@ class IssuerAuthorityProducerPostgresIntegrationTest {
     assertThat(SourceChange.fromStored(retainedBinding).canonicalBytes())
         .containsExactly(oldChange.canonicalBytes());
 
-    // V59's retained-data proof is complete above. Current producer readback uses aborted_at,
-    // which first exists after V61, so run interactions only after advancing this private schema.
+    // V59's retained-data proof is complete above. Current source ordering also consumes the
+    // distinct CREATE_TENANT family, so advance to V67 before current producer interactions.
     Flyway.configure()
         .dataSource(dataSource)
         .schemas(schema)
         .defaultSchema(schema)
         .placeholders(Map.of("serviceSchema", schema))
         .locations("classpath:db/migration")
-        .target("61")
+        .target("67")
         .load()
         .migrate();
 

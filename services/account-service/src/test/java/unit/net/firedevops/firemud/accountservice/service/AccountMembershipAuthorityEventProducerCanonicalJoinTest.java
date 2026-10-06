@@ -113,6 +113,9 @@ class AccountMembershipAuthorityEventProducerCanonicalJoinTest {
           authorityOutbox,
           mock(AccountPasswordResetOperationRepository.class),
           mock(AccountLogoutAllOperationRepository.class),
+          org.mockito.Mockito.mock(
+              net.firedevops.firemud.accountservice.repository
+                  .AccountSecurityStateOperationRepository.class),
           transitionReceipts,
           memberships,
           roleSnapshots,

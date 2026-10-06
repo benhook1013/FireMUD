@@ -28,6 +28,7 @@ import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperatio
 import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperationRepository.LogoutAllReceipt;
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository.PasswordResetReceipt;
+import net.firedevops.firemud.accountservice.repository.AccountSecurityStateOperationRepository;
 import net.firedevops.firemud.common.account.authority.AccountLogoutAllAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.AccountLogoutAllAuthorityEventV1Codec.AccountLogoutAllAuthorityEvent;
 import net.firedevops.firemud.common.account.authority.AccountSecurityStateAuthorityEventV1Codec;
@@ -35,8 +36,8 @@ import net.firedevops.firemud.common.account.authority.PasswordResetAuthorityEve
 import net.firedevops.firemud.common.account.authority.PasswordResetAuthorityEventV1Codec.PasswordResetAuthorityEvent;
 
 /**
- * Narrow validator for the two closed Account account-scope source-event schemas currently emitted.
- * It does not authenticate a caller or turn source evidence into recipient authority.
+ * Narrow receipt validator for the three closed Account account-scope source-event schemas. It does
+ * not authenticate a caller or turn source evidence into recipient authority.
  */
 public final class AccountAuthoritySourceEventReadback {
   private static final ObjectMapper SNAPSHOT_JSON =
@@ -56,11 +57,13 @@ public final class AccountAuthoritySourceEventReadback {
   private final AccountAuthorityOutboxRepository outboxRepository;
   private final AccountPasswordResetOperationRepository passwordResetRepository;
   private final AccountLogoutAllOperationRepository logoutAllRepository;
+  private final AccountSecurityStateOperationRepository securityStateRepository;
 
   public AccountAuthoritySourceEventReadback(
       AccountAuthorityOutboxRepository outboxRepository,
       AccountPasswordResetOperationRepository passwordResetRepository,
-      AccountLogoutAllOperationRepository logoutAllRepository) {
+      AccountLogoutAllOperationRepository logoutAllRepository,
+      AccountSecurityStateOperationRepository securityStateRepository) {
     this.outboxRepository =
         Objects.requireNonNull(outboxRepository, "Account authority outbox repository is required");
     this.passwordResetRepository =
@@ -68,6 +71,9 @@ public final class AccountAuthoritySourceEventReadback {
             passwordResetRepository, "Password-reset operation repository is required");
     this.logoutAllRepository =
         Objects.requireNonNull(logoutAllRepository, "Logout-all operation repository is required");
+    this.securityStateRepository =
+        Objects.requireNonNull(
+            securityStateRepository, "Security-state operation repository is required");
   }
 
   /**
@@ -124,6 +130,8 @@ public final class AccountAuthoritySourceEventReadback {
                       new IllegalStateException(
                           "Latest Account password-reset event has no immutable operation receipt"));
       requirePasswordResetReceipt(account, receipt, latestEvent, verified, current);
+    } else if (verified.securityState().isPresent()) {
+      requireSecurityStateReceipt(account, latestEvent, verified, current, true);
     } else {
       UUID requestId = parseLogoutAllRequestId(verified.requestId());
       LogoutAllReceipt receipt =
@@ -186,6 +194,10 @@ public final class AccountAuthoritySourceEventReadback {
       return;
     }
 
+    if (verified.securityState().isPresent()) {
+      requireSecurityStateReceipt(account, event, verified, current, false);
+      return;
+    }
     UUID requestId = parseLogoutAllRequestId(verified.requestId());
     LogoutAllReceipt receipt =
         logoutAllRepository
@@ -202,6 +214,41 @@ public final class AccountAuthoritySourceEventReadback {
         .readCheckpoint(streamKey(account.getAccountUuid()))
         .map(Checkpoint::outboxSequence)
         .orElse(0L);
+  }
+
+  private void requireSecurityStateReceipt(
+      Account account,
+      Event event,
+      VerifiedSourceEvent verified,
+      ScopeState current,
+      boolean latest) {
+    var operation =
+        securityStateRepository
+            .findByRequestId(UUID.fromString(verified.requestId()))
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "Account security-state event has no immutable operation receipt"));
+    var receipt =
+        operation
+            .receipt()
+            .orElseThrow(
+                () ->
+                    new IllegalStateException("Account security-state operation is not COMMITTED"));
+    if (!operation.request().accountUuid().equals(account.getAccountUuid())
+        || operation.capture().accountId() != account.getId()
+        || operation.capture().provenance() != account.getAccountUuidProvenance()
+        || !receipt.event().equals(event)) {
+      throw new IllegalStateException("Account security-state operation association/event differs");
+    }
+    requireReceiptNotAhead(
+        receipt.sourceState().generation(),
+        receipt.sourceState().sourceVersion(),
+        receipt.sourceState().issuanceFence().value(),
+        receipt.sourceState().issuanceFence().sourceVersion(),
+        current,
+        "Security-state");
+    if (latest) securityStateRepository.requireCurrentPostState(operation, current);
   }
 
   private void requirePasswordResetReceipt(
@@ -321,49 +368,85 @@ public final class AccountAuthoritySourceEventReadback {
   }
 
   private static VerifiedSourceEvent verifyEvent(Event event, UUID accountUuid) {
-    if (event == null) {
-      throw new IllegalStateException("Account source event is missing");
-    }
+    if (event == null) throw new IllegalStateException("Account source event is missing");
     String payload = new String(event.payload(), StandardCharsets.UTF_8);
     try {
-      PasswordResetAuthorityEvent reset = PasswordResetAuthorityEventV1Codec.verify(payload);
-      if (!MessageDigest.isEqual(event.payload(), reset.canonicalJsonUtf8())
-          || !event.outboxStreamKey().equals(reset.outboxStreamKey())
-          || !event.requestId().equals(reset.requestId())
-          || !event.eventId().equals(reset.eventId())
-          || !event.eventDigest().equals(reset.eventDigest())
-          || !accountUuid.toString().equals(reset.accountId())
-          || !Long.toString(event.outboxSequence()).equals(reset.outboxSequence())) {
-        throw new IllegalStateException("Account password-reset event readback is inconsistent");
+      JsonNode tree = SNAPSHOT_JSON.readTree(payload);
+      if (tree == null || !tree.isObject() || !tree.path("schemaVersion").isTextual()) {
+        throw new IllegalStateException("Account source event schema is missing");
       }
-      return VerifiedSourceEvent.passwordReset(reset);
-    } catch (IllegalArgumentException resetFailure) {
-      try {
-        AccountLogoutAllAuthorityEvent logout =
-            AccountLogoutAllAuthorityEventV1Codec.verify(payload);
-        if (!MessageDigest.isEqual(event.payload(), logout.canonicalJsonUtf8())
-            || !event.outboxStreamKey().equals(logout.outboxStreamKey())
-            || !event.requestId().equals(logout.requestId())
-            || !event.eventId().equals(logout.eventId())
-            || !event.eventDigest().equals(logout.eventDigest())
-            || !accountUuid.toString().equals(logout.accountId())
-            || !Long.toString(event.outboxSequence()).equals(logout.outboxSequence())) {
-          throw new IllegalStateException("Account logout-all event readback is inconsistent");
+      return switch (tree.path("schemaVersion").textValue()) {
+        case PasswordResetAuthorityEventV1Codec.SCHEMA_VERSION -> {
+          var reset = PasswordResetAuthorityEventV1Codec.verify(payload);
+          requireEventBinding(
+              event,
+              accountUuid,
+              reset.accountId(),
+              reset.requestId(),
+              reset.eventId(),
+              reset.eventDigest(),
+              reset.outboxStreamKey(),
+              reset.outboxSequence(),
+              reset.canonicalJsonUtf8());
+          yield VerifiedSourceEvent.passwordReset(reset);
         }
-        return VerifiedSourceEvent.logoutAll(logout);
-      } catch (IllegalArgumentException logoutFailure) {
-        logoutFailure.addSuppressed(resetFailure);
-        throw new IllegalStateException(
-            "Account source event is not a valid declared password-reset or logout-all event",
-            logoutFailure);
-      }
+        case AccountLogoutAllAuthorityEventV1Codec.SCHEMA_VERSION -> {
+          var logout = AccountLogoutAllAuthorityEventV1Codec.verify(payload);
+          requireEventBinding(
+              event,
+              accountUuid,
+              logout.accountId(),
+              logout.requestId(),
+              logout.eventId(),
+              logout.eventDigest(),
+              logout.outboxStreamKey(),
+              logout.outboxSequence(),
+              logout.canonicalJsonUtf8());
+          yield VerifiedSourceEvent.logoutAll(logout);
+        }
+        case AccountSecurityStateAuthorityEventV1Codec.SCHEMA_VERSION -> {
+          var security = AccountSecurityStateAuthorityEventV1Codec.verify(payload);
+          requireEventBinding(
+              event,
+              accountUuid,
+              security.accountId(),
+              security.requestId(),
+              security.eventId(),
+              security.eventDigest(),
+              security.outboxStreamKey(),
+              security.outboxSequence(),
+              security.canonicalJsonUtf8());
+          yield VerifiedSourceEvent.securityState(security);
+        }
+        default -> throw new IllegalStateException("Account source event schema is unsupported");
+      };
+    } catch (IOException | IllegalArgumentException invalid) {
+      throw new IllegalStateException("Account source event is invalid", invalid);
     }
   }
 
-  /**
-   * Checks structural source-result invariants, without proving an immutable operation receipt.
-   * Security-state evidence remains unsupported by the owner current/historical receipt readers.
-   */
+  private static void requireEventBinding(
+      Event event,
+      UUID accountUuid,
+      String accountId,
+      String requestId,
+      String eventId,
+      String digest,
+      String stream,
+      String sequence,
+      byte[] canonical) {
+    if (!MessageDigest.isEqual(event.payload(), canonical)
+        || !accountUuid.toString().equals(accountId)
+        || !event.requestId().equals(requestId)
+        || !event.eventId().equals(eventId)
+        || !event.eventDigest().equals(digest)
+        || !event.outboxStreamKey().equals(stream)
+        || !Long.toString(event.outboxSequence()).equals(sequence)) {
+      throw new IllegalStateException("Account source event readback is inconsistent");
+    }
+  }
+
+  /** Structural binding only; owner receipt proof is checked separately. */
   static void requireEventMatchesSnapshot(
       Event event, UUID accountUuid, ScopeState current, boolean mustBeCurrentLatest) {
     if (accountUuid == null
@@ -391,42 +474,8 @@ public final class AccountAuthoritySourceEventReadback {
   }
 
   private static SnapshotCounters verifySnapshotEvent(Event event, UUID accountUuid) {
-    if (event == null) {
-      throw new IllegalStateException("Account source event is missing");
-    }
-    String payload = new String(event.payload(), StandardCharsets.UTF_8);
-    final JsonNode tree;
-    try {
-      tree = SNAPSHOT_JSON.readTree(payload);
-    } catch (IOException exception) {
-      throw new IllegalStateException("Account source event snapshot JSON is malformed", exception);
-    }
-    if (tree == null || !tree.isObject() || !tree.path("schemaVersion").isTextual()) {
-      throw new IllegalStateException("Account source event snapshot schema is missing");
-    }
-    if (!AccountSecurityStateAuthorityEventV1Codec.SCHEMA_VERSION.equals(
-        tree.path("schemaVersion").textValue())) {
-      VerifiedSourceEvent original = verifyEvent(event, accountUuid);
-      return new SnapshotCounters(original.accountAuthorityGeneration(), original.sourceVersion());
-    }
-    final AccountSecurityStateAuthorityEventV1Codec.AccountSecurityStateAuthorityEvent security;
-    try {
-      security = AccountSecurityStateAuthorityEventV1Codec.verify(payload);
-    } catch (IllegalArgumentException exception) {
-      throw new IllegalStateException(
-          "Account security-state snapshot event is invalid", exception);
-    }
-    if (!MessageDigest.isEqual(event.payload(), security.canonicalJsonUtf8())
-        || !event.outboxStreamKey().equals(security.outboxStreamKey())
-        || !event.requestId().equals(security.requestId())
-        || !event.eventId().equals(security.eventId())
-        || !event.eventDigest().equals(security.eventDigest())
-        || !accountUuid.toString().equals(security.accountId())
-        || !Long.toString(event.outboxSequence()).equals(security.outboxSequence())) {
-      throw new IllegalStateException(
-          "Account security-state snapshot event readback is inconsistent");
-    }
-    return new SnapshotCounters(security.accountAuthorityGeneration(), security.sourceVersion());
+    VerifiedSourceEvent verified = verifyEvent(event, accountUuid);
+    return new SnapshotCounters(verified.accountAuthorityGeneration(), verified.sourceVersion());
   }
 
   private record SnapshotCounters(String accountAuthorityGeneration, String sourceVersion) {}
@@ -546,13 +595,16 @@ public final class AccountAuthoritySourceEventReadback {
       String requestId,
       String accountAuthorityGeneration,
       String sourceVersion,
-      Optional<PasswordResetAuthorityEvent> passwordReset) {
+      Optional<PasswordResetAuthorityEvent> passwordReset,
+      Optional<AccountSecurityStateAuthorityEventV1Codec.AccountSecurityStateAuthorityEvent>
+          securityState) {
     private static VerifiedSourceEvent passwordReset(PasswordResetAuthorityEvent event) {
       return new VerifiedSourceEvent(
           event.requestId(),
           event.accountAuthorityGeneration(),
           event.sourceVersion(),
-          Optional.of(event));
+          Optional.of(event),
+          Optional.empty());
     }
 
     private static VerifiedSourceEvent logoutAll(AccountLogoutAllAuthorityEvent event) {
@@ -560,7 +612,18 @@ public final class AccountAuthoritySourceEventReadback {
           event.requestId(),
           event.accountAuthorityGeneration(),
           event.sourceVersion(),
+          Optional.empty(),
           Optional.empty());
+    }
+
+    private static VerifiedSourceEvent securityState(
+        AccountSecurityStateAuthorityEventV1Codec.AccountSecurityStateAuthorityEvent event) {
+      return new VerifiedSourceEvent(
+          event.requestId(),
+          event.accountAuthorityGeneration(),
+          event.sourceVersion(),
+          Optional.empty(),
+          Optional.of(event));
     }
   }
 }

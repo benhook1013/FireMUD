@@ -1343,7 +1343,23 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
         () -> {
           fences.reserve(binding);
           fences.claimCommitOrder(binding);
-          fences.requestSourceChange(change);
+          // Canonical synthetic V59 fixture SQL preserves the declared historical boundary;
+          // the current source-change engine requires V67 and must not run on this old schema.
+          fixture
+              .transactionDsl()
+              .execute(
+                  "INSERT INTO account_draft_authorization_source_changes (change_id, binding, status)"
+                      + " VALUES (?, ?, 'WAITING')",
+                  change.changeId(),
+                  change.canonicalBytes());
+          for (SourceEvidence source : change.sources()) {
+            fixture
+                .transactionDsl()
+                .execute(
+                    "INSERT INTO account_draft_authorization_changed_scopes (change_id, source_key) VALUES (?, ?)",
+                    change.changeId(),
+                    source.key());
+          }
           return null;
         });
     syntheticOwnerReadback(fixture, binding, Owner.WORLD, Outcome.COMMITTED, new byte[] {61});
@@ -1351,7 +1367,12 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
     transaction(
         fixture.transaction(),
         () -> {
-          fences.markSourceCommitted(change);
+          fixture
+              .transactionDsl()
+              .execute(
+                  "UPDATE account_draft_authorization_source_changes SET status = 'SOURCE_COMMITTED',"
+                      + " committed_at = CURRENT_TIMESTAMP WHERE change_id = ?",
+                  change.changeId());
           return null;
         });
   }
@@ -1547,7 +1568,11 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
   private AccountAuthoritySourceEventReadback sourceReadback(
       Fixture fixture, AccountAuthorityOutboxRepository outbox) {
     return new AccountAuthoritySourceEventReadback(
-        outbox, fixture.passwordResetOperations(), fixture.logoutOperations());
+        outbox,
+        fixture.passwordResetOperations(),
+        fixture.logoutOperations(),
+        new net.firedevops.firemud.accountservice.repository
+            .AccountSecurityStateOperationRepository(fixture.transactionDsl()));
   }
 
   private void reset(Fixture fixture, Seed seed, String password) {
@@ -1562,6 +1587,8 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
             fixture.outbox(),
             fixture.passwordResetOperations(),
             fixture.logoutOperations(),
+            new net.firedevops.firemud.accountservice.repository
+                .AccountSecurityStateOperationRepository(fixture.transactionDsl()),
             null,
             null,
             null,

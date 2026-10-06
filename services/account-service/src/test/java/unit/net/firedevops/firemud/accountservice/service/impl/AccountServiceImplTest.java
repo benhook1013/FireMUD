@@ -280,6 +280,9 @@ class AccountServiceImplTest {
             accountAuthorityOutboxRepository,
             passwordResetOperationRepository,
             logoutAllOperationRepository,
+            org.mockito.Mockito.mock(
+                net.firedevops.firemud.accountservice.repository
+                    .AccountSecurityStateOperationRepository.class),
             accountAuditOutboxRepository,
             accountConnectScopeRepository,
             accountJoinOperationRepository,
@@ -308,6 +311,316 @@ class AccountServiceImplTest {
             sessionService,
             transactionManager);
   }
+
+  @Test
+  void controlUiPasswordAuthenticationRecordsFreshEvidenceWithoutMintingOrSessions() {
+    var fixture = controlUiCredentialFixture();
+    var result =
+        service.authenticateControlUiOperation(
+            controlUiCredentialRequest(
+                fixture.requestId(),
+                "password",
+                net.firedevops.firemud.accountservice.service.controlui
+                    .AccountControlUiAuthenticationRequest.Purpose.INITIAL_ISSUANCE));
+
+    assertEquals(fixture.account().getAccountUuid(), result.accountId());
+    assertEquals(fixture.requestId(), result.requestId());
+    assertEquals("PASSWORD", result.authenticationMethod());
+    verify(fixture.operations())
+        .recordVerifiedCredential(
+            fixture.requestId(),
+            fixture.account(),
+            net.firedevops.firemud.accountservice.service.controlui
+                .AccountControlUiAuthenticationRequest.Purpose.INITIAL_ISSUANCE,
+            Optional.empty());
+    verifyNoInteractions(
+        sessionService, accountTenantMembershipRepository, accountConnectScopeRepository);
+    org.mockito.Mockito.verify(accountEmailLoginChallengeRepository, org.mockito.Mockito.never())
+        .delete(org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
+  void controlUiRecoveryAlwaysChecksTheFreshPasswordAgain() {
+    var fixture = controlUiCredentialFixture();
+    var purpose =
+        net.firedevops.firemud.accountservice.service.controlui
+            .AccountControlUiAuthenticationRequest.Purpose.EXACT_RESPONSE_RECOVERY;
+    service.authenticateControlUiOperation(
+        controlUiCredentialRequest(fixture.requestId(), "password", purpose));
+    AuthenticationException rejected =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.authenticateControlUiOperation(
+                    controlUiCredentialRequest(fixture.requestId(), "wrong", purpose)));
+
+    assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, rejected.getCode());
+    verify(fixture.operations(), org.mockito.Mockito.times(1))
+        .recordVerifiedCredential(
+            fixture.requestId(), fixture.account(), purpose, Optional.empty());
+    verify(fixture.limiter())
+        .recordFailure(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(byte[].class));
+    verifyNoInteractions(sessionService);
+  }
+
+  @Test
+  void controlUiFreshOtpBindsTheActualChallengeToTheExactOriginalRequest() {
+    var fixture = controlUiCredentialFixture();
+    fixture.account().setLoginAuthModes("EMAIL_OTP");
+    var challenge = new net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge();
+    challenge.setId(73L);
+    challenge.setAccountId(fixture.account().getId());
+    challenge.setCodeHash(hash("123456"));
+    challenge.setExpiresAt(LocalDateTime.now().plusMinutes(5));
+    when(accountEmailLoginChallengeRepository.findByAccountId(fixture.account().getId()))
+        .thenReturn(Optional.of(challenge));
+    var purpose =
+        net.firedevops.firemud.accountservice.service.controlui
+            .AccountControlUiAuthenticationRequest.Purpose.EXACT_RESPONSE_RECOVERY;
+
+    service.authenticateControlUiOperation(
+        controlUiCredentialRequest(fixture.requestId(), "123456", purpose));
+
+    verify(fixture.operations())
+        .recordVerifiedCredential(
+            fixture.requestId(), fixture.account(), purpose, Optional.of(challenge));
+    verifyNoInteractions(sessionService);
+  }
+
+  @Test
+  void controlUiConsumedOriginalOtpCannotAuthenticateRecovery() {
+    var fixture = controlUiCredentialFixture();
+    fixture.account().setLoginAuthModes("EMAIL_OTP");
+    when(accountEmailLoginChallengeRepository.findByAccountId(fixture.account().getId()))
+        .thenReturn(Optional.empty());
+
+    AuthenticationException rejected =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.authenticateControlUiOperation(
+                    controlUiCredentialRequest(
+                        fixture.requestId(),
+                        "123456",
+                        net.firedevops.firemud.accountservice.service.controlui
+                            .AccountControlUiAuthenticationRequest.Purpose
+                            .EXACT_RESPONSE_RECOVERY)));
+
+    assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, rejected.getCode());
+    verifyNoInteractions(fixture.operations(), sessionService);
+  }
+
+  @Test
+  void controlUiExpiredOtpCannotAuthenticateRecovery() {
+    var fixture = controlUiCredentialFixture();
+    fixture.account().setLoginAuthModes("EMAIL_OTP");
+    var challenge = new net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge();
+    challenge.setId(73L);
+    challenge.setAccountId(fixture.account().getId());
+    challenge.setCodeHash(hash("123456"));
+    challenge.setExpiresAt(LocalDateTime.now().minusMinutes(1));
+    when(accountEmailLoginChallengeRepository.findByAccountId(fixture.account().getId()))
+        .thenReturn(Optional.of(challenge));
+    AuthenticationException rejected =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.authenticateControlUiOperation(
+                    controlUiCredentialRequest(
+                        fixture.requestId(),
+                        "123456",
+                        net.firedevops.firemud.accountservice.service.controlui
+                            .AccountControlUiAuthenticationRequest.Purpose
+                            .EXACT_RESPONSE_RECOVERY)));
+    assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, rejected.getCode());
+    verifyNoInteractions(fixture.operations(), sessionService);
+  }
+
+  @Test
+  void controlUiOperationConflictCannotBecomeAuthenticationSuccess() {
+    var fixture = controlUiCredentialFixture();
+    when(fixture
+            .operations()
+            .recordVerifiedCredential(
+                fixture.requestId(),
+                fixture.account(),
+                net.firedevops.firemud.accountservice.service.controlui
+                    .AccountControlUiAuthenticationRequest.Purpose.INITIAL_ISSUANCE,
+                Optional.empty()))
+        .thenThrow(
+            new net.firedevops.firemud.accountservice.repository
+                .AccountControlUiCredentialOperationRepository
+                .CredentialOperationConflictException());
+    assertThrows(
+        net.firedevops.firemud.accountservice.repository
+            .AccountControlUiCredentialOperationRepository.CredentialOperationConflictException
+            .class,
+        () ->
+            service.authenticateControlUiOperation(
+                controlUiCredentialRequest(
+                    fixture.requestId(),
+                    "password",
+                    net.firedevops.firemud.accountservice.service.controlui
+                        .AccountControlUiAuthenticationRequest.Purpose.INITIAL_ISSUANCE)));
+    verifyNoInteractions(sessionService);
+  }
+
+  @Test
+  void controlUiUnavailableAbuseControlStopsBeforeAccountLookup() {
+    var fixture = controlUiCredentialFixture();
+    org.mockito.Mockito.doThrow(
+            new AuthenticationException("AUTH_ABUSE_CONTROL_UNAVAILABLE", "unavailable"))
+        .when(fixture.limiter())
+        .begin(org.mockito.ArgumentMatchers.any());
+    assertThrows(
+        AuthenticationException.class,
+        () ->
+            service.authenticateControlUiOperation(
+                controlUiCredentialRequest(
+                    fixture.requestId(),
+                    "password",
+                    net.firedevops.firemud.accountservice.service.controlui
+                        .AccountControlUiAuthenticationRequest.Purpose.INITIAL_ISSUANCE)));
+    verifyNoInteractions(accountRepository, fixture.operations(), sessionService);
+  }
+
+  @Test
+  void controlUiMissingTrustedSourceStopsBeforeAccountLookup() {
+    var fixture = controlUiCredentialFixture();
+    var request =
+        new net.firedevops.firemud.accountservice.service.controlui
+            .AccountControlUiAuthenticationRequest(
+            fixture.requestId(),
+            "creator@example.com",
+            "password",
+            net.firedevops.firemud.accountservice.service.controlui
+                .AccountControlUiAuthenticationRequest.Purpose.INITIAL_ISSUANCE,
+            null);
+    AuthenticationException rejected =
+        assertThrows(
+            AuthenticationException.class, () -> service.authenticateControlUiOperation(request));
+    assertEquals("AUTH_ABUSE_CONTROL_UNAVAILABLE", rejected.getCode());
+    verifyNoInteractions(
+        fixture.limiter(), accountRepository, fixture.operations(), sessionService);
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = AccountLifecycleState.class,
+      names = {"SECURITY_LOCKED", "DEACTIVATED_PENDING_DELETE", "DELETED"})
+  void controlUiCurrentLifecycleDeniesCredentialEvidence(AccountLifecycleState state) {
+    var fixture = controlUiCredentialFixture();
+    fixture.account().setLifecycleState(state);
+    assertThrows(
+        AuthenticationException.class,
+        () ->
+            service.authenticateControlUiOperation(
+                controlUiCredentialRequest(
+                    fixture.requestId(),
+                    "password",
+                    net.firedevops.firemud.accountservice.service.controlui
+                        .AccountControlUiAuthenticationRequest.Purpose.INITIAL_ISSUANCE)));
+    verifyNoInteractions(fixture.operations(), sessionService);
+  }
+
+  @Test
+  void controlUiMissingCurrentSourceFailsWithoutAuthenticationEvidence() {
+    var fixture = controlUiCredentialFixture();
+    when(accountAuthorityGenerationRepository.readCompositeSnapshot(
+            AccountServiceImpl.ACCOUNT_JWT_ISSUER,
+            fixture.account().getAccountUuid(),
+            java.util.List.of(),
+            java.util.List.of()))
+        .thenThrow(new IllegalStateException("source unavailable"));
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            service.authenticateControlUiOperation(
+                controlUiCredentialRequest(
+                    fixture.requestId(),
+                    "password",
+                    net.firedevops.firemud.accountservice.service.controlui
+                        .AccountControlUiAuthenticationRequest.Purpose.INITIAL_ISSUANCE)));
+    verifyNoInteractions(
+        fixture.operations(), accountEmailLoginChallengeRepository, sessionService);
+  }
+
+  private ControlUiCredentialFixture controlUiCredentialFixture() {
+    Account account = new Account();
+    account.setId(9L);
+    setPersistedAuthenticationIdentity(account);
+    account.setEmail("creator@example.com");
+    account.setPasswordHash(hash("password"));
+    account.setLoginAuthModes("PASSWORD");
+    account.setLifecycleState(AccountLifecycleState.ACTIVE);
+    when(accountRepository.findByEmail("creator@example.com")).thenReturn(Optional.of(account));
+    when(accountRepository.findByAccountUuidForUpdate(account.getAccountUuid()))
+        .thenReturn(Optional.of(account));
+    IssuanceFence fence = new IssuanceFence(account.getAccountUuid(), 1L, 1L);
+    var snapshot =
+        new AccountAuthorityGenerationRepository.CompositeSnapshot(
+            new ScopeState(
+                AuthorityScope.issuer(AccountServiceImpl.ACCOUNT_JWT_ISSUER), 1L, 1L, null),
+            new ScopeState(AuthorityScope.account(account.getAccountUuid()), 1L, 1L, fence),
+            java.util.List.of(),
+            java.util.List.of(),
+            fence);
+    when(accountAuthorityGenerationRepository.readCompositeSnapshot(
+            AccountServiceImpl.ACCOUNT_JWT_ISSUER,
+            account.getAccountUuid(),
+            java.util.List.of(),
+            java.util.List.of()))
+        .thenReturn(snapshot);
+    var limiter = org.mockito.Mockito.mock(AccountPlatformAuthAbuseLimiter.class);
+    var operations =
+        org.mockito.Mockito.mock(
+            net.firedevops.firemud.accountservice.repository
+                .AccountControlUiCredentialOperationRepository.class);
+    UUID requestId = UUID.randomUUID();
+    when(operations.recordVerifiedCredential(
+            org.mockito.ArgumentMatchers.eq(requestId),
+            org.mockito.ArgumentMatchers.eq(account),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            call ->
+                new net.firedevops.firemud.accountservice.repository
+                    .AccountControlUiCredentialOperationRepository.RecordedAttempt(
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    ((Optional<?>) call.getArgument(3)).isPresent() ? "EMAIL_OTP" : "PASSWORD",
+                    java.time.Instant.now()));
+    service.configureControlUiAuthentication(limiter, operations);
+    return new ControlUiCredentialFixture(account, requestId, limiter, operations);
+  }
+
+  private net.firedevops.firemud.accountservice.service.controlui
+          .AccountControlUiAuthenticationRequest
+      controlUiCredentialRequest(
+          UUID requestId,
+          String credential,
+          net.firedevops.firemud.accountservice.service.controlui
+                  .AccountControlUiAuthenticationRequest.Purpose
+              purpose) {
+    return new net.firedevops.firemud.accountservice.service.controlui
+        .AccountControlUiAuthenticationRequest(
+        requestId,
+        "creator@example.com",
+        credential,
+        purpose,
+        new net.firedevops.firemud.accountservice.service.CredentialAttemptSource(
+            "198.51.100.7",
+            net.firedevops.firemud.accountservice.service.CredentialAttemptSource.ConnectionMode
+                .FIRST_PARTY_WEB));
+  }
+
+  private record ControlUiCredentialFixture(
+      Account account,
+      UUID requestId,
+      AccountPlatformAuthAbuseLimiter limiter,
+      net.firedevops.firemud.accountservice.repository.AccountControlUiCredentialOperationRepository
+          operations) {}
 
   @Test
   void createAccountPersistsOnlyGlobalIdentity() {
@@ -3158,6 +3471,9 @@ class AccountServiceImplTest {
             accountAuthorityOutboxRepository,
             passwordResetOperationRepository,
             logoutAllOperationRepository,
+            org.mockito.Mockito.mock(
+                net.firedevops.firemud.accountservice.repository
+                    .AccountSecurityStateOperationRepository.class),
             accountAuditOutboxRepository,
             accountConnectScopeRepository,
             accountJoinOperationRepository,
