@@ -225,7 +225,7 @@ public class AccountTenantAuthorityEventRepository {
             typed.eventId().toString(),
             typed.eventDigest(),
             typed.tenantBillingSequence(),
-            typed.tenantBillingEventId().toString(),
+            typed.tenantBillingEventId(),
             typed.tenantBillingEventDigest(),
             streamKey,
             typed.tenantAuthorityGeneration() - 1L,

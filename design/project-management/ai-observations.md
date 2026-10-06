@@ -48,3 +48,9 @@ Entry format:
   - Expected pattern: obtain explicit infrastructure authorization before provisioning, record the exact run-owned resource and cleanup responsibility privately, and announce remote proof distinctly from local tests and required CI. Use a permitted existing fixture only when targeted iteration is materially faster; do not add a redundant pre-publication gate.
   - Current status: continued use of the existing bounded fixture is explicitly approved; additional provisioning is not. Original setup authorization remains unverified, and hosted CI remains required.
   - Reconsideration trigger: revisit when the original provisioning authorization is confirmed or the fixture is retired, and before any additional remote provisioning.
+
+- `2026-10-07`: Validate transferred fixed-vector artifacts before treating them as source evidence
+  - Context: the Account authority storage composition included three JSON resources whose contents were failed shell-read diagnostics, not test vectors; shared codec tests failed during initialization.
+  - Expected pattern: verify successful source reads and parse transferred structured fixtures before integration. Preserve authentic fixed vectors and their source revision instead of replacing expected values with implementation-generated output.
+  - Current status: issuer vectors were recovered from composition history at `8344e6ea1`; reset and logout vectors were recovered from preserved main resources. All three parse as JSON, and all 173 shared-platform unit cases pass after recovery.
+  - Reconsideration trigger: check source-read success and fixture parsing on the next structured-artifact transfer; no new general-purpose tooling is required for this bounded repair.

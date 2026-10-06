@@ -78,7 +78,7 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
     AccountAuthorityOutboxRepository repository = context.repository();
     TransactionTemplate transaction = context.transaction();
     String stream = membershipStream(UUID.randomUUID(), UUID.randomUUID());
-    String unrelated = "account:auth-authority:v1:tenant/" + UUID.randomUUID();
+    String unrelated = membershipStream(UUID.randomUUID(), UUID.randomUUID());
 
     assertThat(inTransaction(transaction, () -> repository.readCheckpoint(stream))).isEmpty();
 
@@ -336,7 +336,7 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
     TransactionTemplate transaction = context.transaction();
     DSLContext dsl = context.dsl();
     String missingStream = membershipStream(UUID.randomUUID(), UUID.randomUUID());
-    String retainedStream = "account:auth-authority:v1:tenant/" + UUID.randomUUID();
+    String retainedStream = membershipStream(UUID.randomUUID(), UUID.randomUUID());
     byte[] retainedPayload = new byte[] {4, 5, 6};
 
     Event retained =

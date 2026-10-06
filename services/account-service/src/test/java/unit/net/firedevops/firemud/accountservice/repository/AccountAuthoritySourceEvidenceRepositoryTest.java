@@ -26,6 +26,268 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 class AccountAuthoritySourceEvidenceRepositoryTest {
+  @Test
+  void closedPreparationRequiresWritableOwnerTransactionAndExactAccountScope() {
+    var issuer =
+        new AccountAuthoritySourceEvidenceRepository.CurrentSourceEvidence(
+            AuthorityScope.issuer(ISSUER_ID),
+            1L,
+            1L,
+            null,
+            zeroCheckpoint("issuer/" + ISSUER_ID),
+            Optional.empty(),
+            "ISSUER_SCOPE_INSERT",
+            null,
+            null,
+            7L,
+            null);
+    assertThatThrownBy(() -> repository.prepareClosedAccountAdvance(ACCOUNT_ID, issuer))
+        .isInstanceOf(
+            AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException.class);
+    org.springframework.transaction.support.TransactionSynchronizationManager
+        .setActualTransactionActive(true);
+    try {
+      assertThatThrownBy(() -> repository.prepareClosedAccountAdvance(ACCOUNT_ID, issuer))
+          .isInstanceOf(
+              AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException.class);
+      assertThatThrownBy(() -> repository.prepareClosedAccountAdvance(new UUID(0L, 0L), null))
+          .isInstanceOf(
+              AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException.class);
+      org.springframework.transaction.support.TransactionSynchronizationManager
+          .setCurrentTransactionReadOnly(true);
+      assertThatThrownBy(
+              () -> repository.prepareClosedAccountAdvance(ACCOUNT_ID, accountBaseline()))
+          .isInstanceOf(
+              AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException.class);
+      verifyNoInteractions(dsl);
+    } finally {
+      org.springframework.transaction.support.TransactionSynchronizationManager.clear();
+    }
+  }
+
+  @Test
+  void closedPreparationCannotAdvanceFromCallerBaselineWhenOwnedSourceIsMissing() {
+    DSLContext ownerDsl = mock(DSLContext.class);
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              String sql = invocation.getArgument(0);
+              if (sql.contains("FROM account_authority_generations"))
+                return record("generation", 1L, "source_version", 1L);
+              if (sql.contains("FROM account_authority_issuance_fences"))
+                return record("issuance_fence", 1L, "source_version", 1L);
+              return null;
+            })
+        .when(ownerDsl)
+        .fetchOne(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(Object[].class));
+    var sourceOwner =
+        new AccountAuthoritySourceEvidenceRepository(
+            ownerDsl,
+            new AccountAuthorityGenerationRepository(ownerDsl),
+            new AccountAuthorityOutboxRepository(ownerDsl));
+    org.springframework.transaction.support.TransactionSynchronizationManager
+        .setActualTransactionActive(true);
+    try {
+      assertThatThrownBy(
+              () -> sourceOwner.prepareClosedAccountAdvance(ACCOUNT_ID, accountBaseline()))
+          .isInstanceOf(
+              AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException.class);
+      org.mockito.Mockito.verify(ownerDsl, org.mockito.Mockito.never())
+          .fetchOne(
+              org.mockito.ArgumentMatchers.startsWith("UPDATE"),
+              org.mockito.ArgumentMatchers.any(Object[].class));
+    } finally {
+      org.springframework.transaction.support.TransactionSynchronizationManager.clear();
+    }
+  }
+
+  private static AccountAuthoritySourceEvidenceRepository.CurrentSourceEvidence accountBaseline() {
+    return new AccountAuthoritySourceEvidenceRepository.CurrentSourceEvidence(
+        AuthorityScope.account(ACCOUNT_ID),
+        1L,
+        1L,
+        new IssuanceFence(ACCOUNT_ID, 1L, 1L),
+        zeroCheckpoint("account/" + ACCOUNT_ID),
+        Optional.empty(),
+        "ACCOUNT_REPOSITORY_INSERT",
+        9L,
+        "ACCOUNT_REPOSITORY_INSERT",
+        7L,
+        7L);
+  }
+
+  @Test
+  void closedReceiptStorageAndSourceConstructorsDoNotRecursivelyMintOrReadEvidence() {
+    DSLContext ownerDsl = mock(DSLContext.class);
+    new net.firedevops.firemud.accountservice.repository.AccountSecurityStateOperationRepository(
+        ownerDsl);
+    new AccountAuthoritySourceEvidenceRepository(
+        ownerDsl,
+        new AccountAuthorityGenerationRepository(ownerDsl),
+        new AccountAuthorityOutboxRepository(ownerDsl));
+    verifyNoInteractions(ownerDsl);
+  }
+
+  @Test
+  void canonicalIssuerReadRequiresActualWritableOwnerTransactionBeforeAccess() {
+    assertThatThrownBy(() -> repository.readCurrentCanonicalIssuerSource(ISSUER_ID))
+        .isInstanceOf(
+            AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException.class);
+    verifyNoInteractions(dsl);
+    org.springframework.transaction.support.TransactionSynchronizationManager
+        .setActualTransactionActive(true);
+    org.springframework.transaction.support.TransactionSynchronizationManager
+        .setCurrentTransactionReadOnly(true);
+    try {
+      assertThatThrownBy(() -> repository.readCurrentCanonicalIssuerSource(ISSUER_ID))
+          .isInstanceOf(
+              AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException.class);
+      verifyNoInteractions(dsl);
+    } finally {
+      org.springframework.transaction.support.TransactionSynchronizationManager.clear();
+    }
+  }
+
+  @Test
+  void closedAppendActuallyReadsImmutableReceiptAndDeniesMissingOwnerEvidence() {
+    DSLContext ownerDsl = mock(DSLContext.class);
+    var ownerOutbox = mock(AccountAuthorityOutboxRepository.class);
+    var source =
+        record(
+            "scope_kind",
+            "ACCOUNT",
+            "account_uuid",
+            ACCOUNT_ID,
+            "baseline_generation",
+            1L,
+            "baseline_source_version",
+            1L,
+            "baseline_issuance_fence",
+            1L,
+            "initialization_provenance",
+            "ACCOUNT_REPOSITORY_INSERT",
+            "account_source_numeric_id",
+            9L,
+            "account_uuid_provenance",
+            "ACCOUNT_REPOSITORY_INSERT",
+            "initialization_transaction_id",
+            7L,
+            "account_repository_insert_transaction_id",
+            7L,
+            "current_generation",
+            1L,
+            "current_source_version",
+            1L,
+            "current_issuance_fence",
+            1L,
+            "current_issuance_fence_source_version",
+            1L,
+            "last_outbox_sequence",
+            0L);
+    var account =
+        record(
+            "id",
+            9L,
+            "account_uuid",
+            ACCOUNT_ID,
+            "account_uuid_source_numeric_id",
+            9L,
+            "account_uuid_provenance",
+            "ACCOUNT_REPOSITORY_INSERT",
+            "account_repository_insert_transaction_id",
+            7L,
+            "password_hash",
+            "retained-verifier");
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              String sql = invocation.getArgument(0);
+              if (sql.contains("FROM account_authority_source_records")) return source;
+              if (sql.contains("FROM account_authority_outbox_streams"))
+                return record("last_sequence", 1L);
+              if (sql.contains("count(*)")) return record("event_count", 1L);
+              if (sql.contains("FROM accounts")) return account;
+              return null;
+            })
+        .when(ownerDsl)
+        .fetchOne(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(Object[].class));
+    String stream = "account:auth-authority:v1:account/" + ACCOUNT_ID;
+    String request = "account-password-reset-request-v1:" + "a".repeat(64);
+    var wire =
+        net.firedevops.firemud.common.account.authority.PasswordResetAuthorityEventV1Codec.seal(
+            Map.ofEntries(
+                Map.entry(
+                    "schemaVersion",
+                    net.firedevops.firemud.common.account.authority
+                        .PasswordResetAuthorityEventV1Codec.SCHEMA_VERSION),
+                Map.entry(
+                    "eventType",
+                    net.firedevops.firemud.common.account.authority
+                        .PasswordResetAuthorityEventV1Codec.EVENT_TYPE),
+                Map.entry("eventId", "account-password-reset-event-v1:" + "a".repeat(64)),
+                Map.entry("requestId", request),
+                Map.entry("accountId", ACCOUNT_ID.toString()),
+                Map.entry("sourceScope", "account/" + ACCOUNT_ID),
+                Map.entry("outboxStreamKey", stream),
+                Map.entry("outboxSequence", "1"),
+                Map.entry("accountAuthorityGeneration", "2"),
+                Map.entry("sourceVersion", "2"),
+                Map.entry(
+                    "accountSecurityCutoff",
+                    Map.of(
+                        "accountAuthorityGeneration",
+                        "2",
+                        "outboxStreamKey",
+                        stream,
+                        "outboxSequence",
+                        "1"))));
+    var pending =
+        new AccountAuthorityOutboxRepository.Event(
+            stream, request, 1L, wire.eventId(), wire.eventDigest(), wire.canonicalJsonUtf8());
+    org.mockito.Mockito.doReturn(Optional.of(pending)).when(ownerOutbox).findEvent(stream, 1L);
+    org.mockito.Mockito.doReturn(Optional.of(pending)).when(ownerOutbox).findEvent(stream, request);
+    org.mockito.Mockito.doReturn(
+            Optional.of(
+                new AccountAuthorityOutboxRepository.Checkpoint(
+                    stream, 1L, pending.eventId(), pending.eventDigest())))
+        .when(ownerOutbox)
+        .readCheckpoint(stream);
+    var sourceOwner =
+        new AccountAuthoritySourceEvidenceRepository(
+            ownerDsl, new AccountAuthorityGenerationRepository(ownerDsl), ownerOutbox);
+    var expected =
+        new AccountAuthorityGenerationRepository.ScopeState(
+            AuthorityScope.account(ACCOUNT_ID), 1L, 1L, new IssuanceFence(ACCOUNT_ID, 1L, 1L));
+    var advanced =
+        new AccountAuthorityGenerationRepository.ScopeState(
+            AuthorityScope.account(ACCOUNT_ID), 2L, 2L, new IssuanceFence(ACCOUNT_ID, 2L, 2L));
+    org.springframework.transaction.support.TransactionSynchronizationManager
+        .setActualTransactionActive(true);
+    try {
+      assertThatThrownBy(
+              () -> sourceOwner.advanceClosedAccountHead(ACCOUNT_ID, expected, advanced, pending))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("no immutable operation receipt");
+      org.mockito.Mockito.verify(ownerDsl)
+          .fetchOne(
+              org.mockito.ArgumentMatchers.contains(
+                  "FROM account_password_reset_operation_receipts"),
+              org.mockito.ArgumentMatchers.any(Object[].class));
+      org.mockito.Mockito.verify(ownerDsl, org.mockito.Mockito.never())
+          .fetchOne(
+              org.mockito.ArgumentMatchers.startsWith("UPDATE"),
+              org.mockito.ArgumentMatchers.any(Object[].class));
+      org.mockito.Mockito.verify(ownerDsl, org.mockito.Mockito.never())
+          .execute(
+              org.mockito.ArgumentMatchers.anyString(),
+              org.mockito.ArgumentMatchers.any(Object[].class));
+    } finally {
+      org.springframework.transaction.support.TransactionSynchronizationManager.clear();
+    }
+  }
+
   private static final UUID ACCOUNT_ID = UUID.fromString("11111111-1111-4111-8111-111111111111");
   private static final String ISSUER_ID = "firemud-account-service";
   private static final String ISSUER_STREAM_KEY = "account:auth-authority:v1:issuer/" + ISSUER_ID;
@@ -117,7 +379,34 @@ class AccountAuthoritySourceEvidenceRepositoryTest {
     assertThat(
             new AccountAuthoritySourceEvidenceRepository.IssuerAccountSourceSnapshot(
                 issuer, account, fence))
-        .satisfies(snapshot -> assertThat(snapshot.account().issuanceFence()).isEqualTo(fence));
+        .satisfies(
+            snapshot -> {
+              assertThat(snapshot.account().issuanceFence()).isEqualTo(fence);
+              assertThat(snapshot.canonicalAccountProjection().accountId())
+                  .isEqualTo(ACCOUNT_ID.toString());
+              assertThat(snapshot.canonicalAccountProjection().outboxSequence()).isEqualTo("0");
+              assertThat(snapshot.canonicalAccountProjection().sourceEvent()).isEmpty();
+              assertThat(snapshot.canonicalIssuerProjection().issuerId())
+                  .isEqualTo("firemud-account-service");
+              assertThat(snapshot.canonicalIssuerProjection().lastAppliedSourceOutboxSequence())
+                  .isEqualTo("0");
+              assertThat(snapshot.canonicalIssuerProjection().sourceEvent()).isEmpty();
+            });
+    UUID otherAccount = UUID.randomUUID();
+    var mismatchedProjection =
+        new net.firedevops.firemud.accountservice.service.AccountGenerationProjection(
+            otherAccount.toString(),
+            "1",
+            "1",
+            "account:auth-authority:v1:account/" + otherAccount,
+            "0",
+            Optional.empty());
+    assertThatThrownBy(
+            () ->
+                new AccountAuthoritySourceEvidenceRepository.IssuerAccountSourceSnapshot(
+                    issuer, account, fence, mismatchedProjection))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Canonical Account source projection differs from its snapshot");
     assertThatThrownBy(
             () ->
                 new AccountAuthoritySourceEvidenceRepository.IssuerAccountSourceSnapshot(
