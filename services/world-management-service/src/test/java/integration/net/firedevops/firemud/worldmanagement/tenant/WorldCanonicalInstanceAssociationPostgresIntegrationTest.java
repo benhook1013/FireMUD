@@ -1688,11 +1688,12 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
       String commit) {
     List<AuthoredWorldReleaseAttestationEvidence.Participant> participants =
         List.of(
-            participant("WORLD_MANAGEMENT", 3, "a", false, commit),
-            participant("ENTITY_MANAGEMENT", 2, "b", false, commit),
-            participant("GAME_LOGIC", 1, "c", true, commit),
-            participant("AUTOMATION_SCRIPTING", 5, "d", false, commit),
-            participant("GAME_DESIGN_CONTROL_PLANE", 1, "e", false, commit));
+            participant("WORLD_MANAGEMENT", 3, "a", false, descriptor.versionId(), commit),
+            participant("ENTITY_MANAGEMENT", 2, "b", false, descriptor.versionId(), commit),
+            participant("GAME_LOGIC", 1, "c", true, descriptor.versionId(), commit),
+            participant("AUTOMATION_SCRIPTING", 5, "d", false, descriptor.versionId(), commit),
+            participant(
+                "GAME_DESIGN_CONTROL_PLANE", 1, "e", false, descriptor.versionId(), commit));
     return AuthoredWorldReleaseAttestationEvidence.create(
         NAMESPACE,
         descriptor.resultDigest(),
@@ -1716,10 +1717,15 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
   }
 
   private static AuthoredWorldReleaseAttestationEvidence.Participant participant(
-      String owner, int schema, String contentHex, boolean hasAbilityDigest, String commit) {
+      String owner,
+      int schema,
+      String contentHex,
+      boolean hasAbilityDigest,
+      long descriptorVersion,
+      String commit) {
     return new AuthoredWorldReleaseAttestationEvidence.Participant(
         owner,
-        "73",
+        Long.toString(descriptorVersion),
         false,
         null,
         commit,

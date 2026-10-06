@@ -547,7 +547,7 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
             "account_issuer_tenant_draft_source_changes");
     List<List<String>> before = preservedTables.stream().map(t -> rowImages(fixture, t)).toList();
 
-    migrateFixtureToLatest(fixture);
+    migrateFixtureToV60(fixture);
 
     for (int index = 0; index < preservedTables.size(); index++) {
       assertThat(rowImages(fixture, preservedTables.get(index)))
@@ -1333,29 +1333,21 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
     DraftAuthorizationFenceBinding binding =
         syntheticDraftBinding(seed, state, latest.outboxSequence(), latest.payload());
     DraftAuthorizationFenceRepository fences = draftFences(fixture);
+    SourceChange change =
+        new SourceChange(
+            UUID.randomUUID(),
+            binding.sources(),
+            "synthetic prior source change".getBytes(StandardCharsets.UTF_8));
     transaction(
         fixture.transaction(),
         () -> {
           fences.reserve(binding);
           fences.claimCommitOrder(binding);
-          fences.requestSourceChange(
-              new SourceChange(
-                  UUID.randomUUID(),
-                  binding.sources(),
-                  "synthetic prior source change".getBytes(StandardCharsets.UTF_8)));
+          fences.requestSourceChange(change);
           return null;
         });
     syntheticOwnerReadback(fixture, binding, Owner.WORLD, Outcome.COMMITTED, new byte[] {61});
     syntheticOwnerReadback(fixture, binding, Owner.GAME_DESIGN, Outcome.COMMITTED, new byte[] {62});
-    SourceChange change =
-        transaction(
-            fixture.transaction(),
-            () ->
-                fences.waitingSourceChanges().stream()
-                    .map(DraftAuthorizationFenceRepository.SourceChangeSnapshot::binding)
-                    .map(SourceChange::fromStored)
-                    .findFirst()
-                    .orElseThrow());
     transaction(
         fixture.transaction(),
         () -> {
@@ -1374,13 +1366,14 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
         .getValues("row_image", String.class);
   }
 
-  private void migrateFixtureToLatest(Fixture fixture) {
+  private void migrateFixtureToV60(Fixture fixture) {
     Flyway.configure()
         .dataSource(fixture.dataSource())
         .schemas(fixture.schema())
         .defaultSchema(fixture.schema())
         .placeholders(Map.of("serviceSchema", fixture.schema()))
         .locations("classpath:db/migration")
+        .target(MigrationVersion.fromVersion("60"))
         .load()
         .migrate();
   }

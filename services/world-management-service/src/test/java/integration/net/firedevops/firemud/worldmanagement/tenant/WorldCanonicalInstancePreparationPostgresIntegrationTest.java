@@ -14,10 +14,11 @@ import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
 import net.firedevops.firemud.worldmanagement.client.GameSessionClient;
 import net.firedevops.firemud.worldmanagement.client.GrpcGameSessionInitialAdmissionBindProofClient;
 import org.jooq.DSLContext;
-import org.jooq.exception.DataAccessException;
 import org.junit.jupiter.api.Test;
+import org.postgresql.util.PSQLException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -78,7 +79,10 @@ class WorldCanonicalInstancePreparationPostgresIntegrationTest {
             "synthetic World source fixture returned no intake receipt");
 
     assertThatThrownBy(() -> insertInReservedCanonicalTenant(receipt.localTenantKey()))
-        .isInstanceOf(DataAccessException.class);
+        .isInstanceOf(DataIntegrityViolationException.class)
+        .rootCause()
+        .isInstanceOf(PSQLException.class)
+        .hasMessageContaining(reservedTenantDenial());
 
     long legacyInstance = insertLegacyRow(8_700_000_000L + positiveLong() % 100_000L);
     assertThatThrownBy(
@@ -87,7 +91,10 @@ class WorldCanonicalInstancePreparationPostgresIntegrationTest {
                     "UPDATE world_instance SET tenant_id = ? WHERE id = ?",
                     receipt.localTenantKey(),
                     legacyInstance))
-        .isInstanceOf(DataAccessException.class);
+        .isInstanceOf(DataIntegrityViolationException.class)
+        .rootCause()
+        .isInstanceOf(PSQLException.class)
+        .hasMessageContaining(reservedTenantDenial());
 
     assertThat(
             Objects.requireNonNull(
@@ -120,6 +127,11 @@ class WorldCanonicalInstancePreparationPostgresIntegrationTest {
             + "'direct-release', 5, 'DIRECT_FIXTURE')",
         tenantKey,
         positiveLong());
+  }
+
+  private static String reservedTenantDenial() {
+    return "World tenant key is reserved for a canonical authored source; "
+        + "no exact transaction execution manifest";
   }
 
   private long insertLegacyRow(long tenantKey) {

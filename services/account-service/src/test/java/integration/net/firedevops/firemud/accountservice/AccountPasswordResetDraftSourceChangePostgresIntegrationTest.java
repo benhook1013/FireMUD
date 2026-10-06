@@ -77,7 +77,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  */
 @Testcontainers(disabledWithoutDocker = true)
 class AccountPasswordResetDraftSourceChangePostgresIntegrationTest {
-  private static final String SCHEMA_PREFIX = "password_reset_draft_source_proof";
+  private static final String SCHEMA_PREFIX = "pw_reset_draft_source";
   private static final String STREAM_PREFIX = "account:auth-authority:v1:account/";
   private static final String TARGET_VERIFIER =
       "$argon2id$v=19$m=65536,t=3,p=1$AAAAAAAAAAAAAAAAAAAAAA$"
