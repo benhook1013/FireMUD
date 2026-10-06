@@ -71,6 +71,7 @@ public final class MembershipAuthorityEventV1Codec {
   private static final Set<String> TENANT_ROLES =
       Set.of("player", "designer", "tenantAdmin", "moderator");
   private static final String NIL_UUID = "00000000-0000-0000-0000-000000000000";
+  private static final String MAX_OWNER_COUNTER = "9223372036854775807";
   private static final Pattern UUID_PATTERN =
       Pattern.compile("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}");
   private static final Pattern SLUG_PATTERN = Pattern.compile("[a-z0-9]+(?:-[a-z0-9]+)*");
@@ -260,9 +261,12 @@ public final class MembershipAuthorityEventV1Codec {
             entry -> {
               requireUuidKey(entry.getKey(), path);
               JsonNode value = entry.getValue();
-              if (value == null || !value.isTextual() || !isPositiveDecimal(value.textValue())) {
+              if (value == null
+                  || !value.isTextual()
+                  || !isPositiveOwnerCounter(value.textValue())) {
                 throw invalid(
-                    path + "." + entry.getKey(), "must be a positive canonical decimal string");
+                    path + "." + entry.getKey(),
+                    "must be a positive canonical decimal string in the owner range");
               }
               values.put(entry.getKey(), value.textValue());
             });
@@ -546,14 +550,18 @@ public final class MembershipAuthorityEventV1Codec {
 
   private static String requirePositiveDecimal(ObjectNode object, String field, String path) {
     String value = requireText(object, field, path);
-    if (!isPositiveDecimal(value)) {
-      throw invalid(path + "." + field, "must be a positive canonical unsigned decimal string");
+    if (!isPositiveOwnerCounter(value)) {
+      throw invalid(
+          path + "." + field, "must be a positive canonical decimal string in the owner range");
     }
     return value;
   }
 
-  private static boolean isPositiveDecimal(String value) {
-    return POSITIVE_DECIMAL_PATTERN.matcher(value).matches();
+  private static boolean isPositiveOwnerCounter(String value) {
+    if (!POSITIVE_DECIMAL_PATTERN.matcher(value).matches()) return false;
+    return value.length() < MAX_OWNER_COUNTER.length()
+        || (value.length() == MAX_OWNER_COUNTER.length()
+            && value.compareTo(MAX_OWNER_COUNTER) <= 0);
   }
 
   private static boolean requireBoolean(ObjectNode object, String field, String path) {

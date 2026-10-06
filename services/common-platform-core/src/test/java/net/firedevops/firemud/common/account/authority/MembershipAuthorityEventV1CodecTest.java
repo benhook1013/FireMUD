@@ -105,6 +105,29 @@ class MembershipAuthorityEventV1CodecTest {
   }
 
   @Test
+  void countersRespectSignedLongOwnerRangeAndRemainStrings() {
+    ObjectNode maximum = (ObjectNode) vectors.path("validEvents").get(0).path("event").deepCopy();
+    maximum.remove("eventDigest");
+    maximum.put("outboxSequence", "9223372036854775807");
+    Map<String, Object> preimage =
+        JSON.convertValue(maximum, new TypeReference<LinkedHashMap<String, Object>>() {});
+
+    MembershipEvent sealed = MembershipAuthorityEventV1Codec.seal(preimage);
+
+    assertThat(sealed.outboxSequence()).isEqualTo("9223372036854775807");
+    assertThat(sealed.canonicalJson()).contains("\"outboxSequence\":\"9223372036854775807\"");
+    assertThat(MembershipAuthorityEventV1Codec.verify(sealed.canonicalJson()).outboxSequence())
+        .isEqualTo("9223372036854775807");
+
+    maximum.put("outboxSequence", "9223372036854775808");
+    Map<String, Object> overflowPreimage =
+        JSON.convertValue(maximum, new TypeReference<LinkedHashMap<String, Object>>() {});
+    assertThatThrownBy(() -> MembershipAuthorityEventV1Codec.seal(overflowPreimage))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("positive canonical decimal string in the owner range");
+  }
+
+  @Test
   void nilUuidValuesAndGenerationMapKeysAreRejected() {
     ObjectNode nilValue = (ObjectNode) vectors.path("validEvents").get(0).path("event").deepCopy();
     nilValue.put("accountId", "00000000-0000-0000-0000-000000000000");

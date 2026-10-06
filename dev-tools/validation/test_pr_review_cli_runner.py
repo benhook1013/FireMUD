@@ -2,6 +2,7 @@ import contextlib
 import dataclasses
 import fcntl
 import hashlib
+import io
 import json
 import sqlite3
 import subprocess
@@ -38,6 +39,7 @@ from pr_review.cli_runner import (
     run_cli_review,
     target_from_resolver,
 )
+from pr_review.controller import ControllerError, _SelectionChanged
 from pr_review.patch_identity import patch_diff_args
 from pr_review.policy import Channel, taper_satisfied
 from pr_review.runtime import LiveEvidence, LiveGitHub
@@ -201,6 +203,22 @@ class HostedCliPreflightBudgetTests(unittest.TestCase):
 
         with patch.object(cli_module, "_controller", side_effect=status_controller), patch("builtins.print"):
             self.assertEqual(cli_module.main(["status"]), 0)
+
+    def test_main_starts_one_cli_budget_before_controller_construction(self):
+        observed = []
+
+        def cli_controller(_args):
+            budget = github.active_hosted_preflight_budget()
+            self.assertIsNotNone(budget)
+            observed.append(budget)
+            return SimpleNamespace(run_cli=lambda **_kwargs: {"status": "completed"}), None
+
+        with patch.object(cli_module, "_controller", side_effect=cli_controller), patch("builtins.print"):
+            self.assertEqual(cli_module.main(["run", "cli", "--expect-pr", "42"]), 0)
+
+        self.assertEqual(len(observed), 1)
+        self.assertEqual(observed[0].preflight_name, "CLI")
+        self.assertIsNone(github.active_hosted_preflight_budget())
 
 
 def _git(root, *args, input_text=None):
@@ -501,6 +519,510 @@ def cli_anchor(*, parent_identity="develop", parent_head=PARENT, merge_base=PARE
 
 
 class CliReviewRunnerTests(unittest.TestCase):
+    def test_context_setup_deadline_remains_primary_when_pinned_ref_cleanup_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            commands = FakeCommands(root)
+            original_git = cli_runner._git
+            cleanup_calls = []
+
+            def cleanup_fails(runner, source_root, *args, **kwargs):
+                if args[:2] == ("update-ref", "-d"):
+                    cleanup_calls.append(kwargs)
+                    return CompletedProcess(args, 1, "", "pinned ref is busy\n")
+                return original_git(runner, source_root, *args, **kwargs)
+
+            def expire_context_setup(*_args, **_kwargs):
+                budget.deadline = time.monotonic() - 1
+                budget.remaining_seconds()
+
+            with (
+                github.cli_preflight_budget() as budget,
+                patch.object(cli_runner, "_git", side_effect=cleanup_fails),
+                patch.object(cli_runner.tempfile, "mkdtemp", side_effect=expire_context_setup),
+                self.assertRaisesRegex(
+                    github.HostedPreflightDeadlineExceeded,
+                    r"CLI preflight deadline exceeded \(phase=candidate_context_setup, .*budget=120s\)",
+                ) as raised,
+            ):
+                run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands)
+
+            self.assertEqual(len(cleanup_calls), 1)
+            self.assertFalse(cleanup_calls[0]["enforce_preflight_budget"])
+            self.assertEqual(cleanup_calls[0]["timeout"], cli_runner.GIT_TIMEOUT_SECONDS)
+            self.assertTrue(
+                any(
+                    "CLI pinned-ref cleanup also failed: CLI pinned-ref cleanup failed with exit status 1: pinned ref is busy"
+                    in note
+                    for note in getattr(raised.exception, "__notes__", [])
+                )
+            )
+
+    def test_nonzero_candidate_cleanup_reports_both_failures_and_preserves_completed_capture(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / ".git" / "firemud" / "records.sqlite3"
+            database.parent.mkdir(parents=True)
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            output = (
+                '{"type":"start","reviewType":"full"}\n'
+                '{"type":"complete","status":"review_completed",'
+                '"findings":0,"reviewedFiles":["src/Representative.java"]}\n'
+            )
+            commands = FakeCommands(root, review_output=output)
+            commands.records = records
+            cleanup_operations = []
+            original_run = commands.run
+
+            def fail_cleanup(args, **kwargs):
+                if args[0] == "git" and "-C" in args:
+                    git_args = args[args.index("-C") + 2 :]
+                    if git_args[:2] == ["worktree", "remove"]:
+                        cleanup_operations.append("worktree")
+                        return CompletedProcess(args, 1, "", "worktree is busy\n")
+                    if git_args[:2] == ["update-ref", "-d"]:
+                        cleanup_operations.append("pinned-ref")
+                        return CompletedProcess(args, 1, "", "pinned ref is busy\n")
+                return original_run(args, **kwargs)
+
+            commands.run = fail_cleanup
+
+            with self.assertRaisesRegex(ReviewRunnerError, "CLI worktree cleanup failed with exit status 1") as raised:
+                run_cli_review(
+                    target(),
+                    github=FakeGitHub(),
+                    source_root=root,
+                    runner=commands,
+                    records=records,
+                )
+
+            self.assertEqual(cleanup_operations, ["worktree", "pinned-ref"])
+            self.assertTrue(
+                any(
+                    "CLI candidate cleanup also failed: CLI pinned-ref cleanup failed with exit status 1: pinned ref is busy"
+                    in note
+                    for note in getattr(raised.exception, "__notes__", [])
+                )
+            )
+            attempts = records.attempt_history(42)
+            self.assertEqual(len(attempts), 1)
+            self.assertEqual(attempts[0]["state"], "completed")
+            run_id = attempts[0]["attempt_id"]
+            capture_dir = root / ".git" / "firemud" / "pr-review" / "runs" / run_id
+            self.assertTrue((capture_dir / "capture-complete").is_file())
+            self.assertEqual((capture_dir / "stdout").read_text(encoding="utf-8"), output)
+            self.assertEqual((capture_dir / "exit-status").read_text(encoding="utf-8"), "0\n")
+            self.assertEqual(records.history(42)["runs"][0]["run_id"], run_id)
+
+    def test_preflight_error_remains_primary_when_candidate_cleanup_returns_nonzero(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            commands = FakeCommands(root)
+            cleanup_operations = []
+            original_run = commands.run
+
+            def fail_cleanup(args, **kwargs):
+                if args[0] == "git" and "-C" in args:
+                    git_args = args[args.index("-C") + 2 :]
+                    if git_args[:2] == ["worktree", "remove"]:
+                        cleanup_operations.append("worktree")
+                        return CompletedProcess(args, 1, "", "worktree is busy\n")
+                    if git_args[:2] == ["update-ref", "-d"]:
+                        cleanup_operations.append("pinned-ref")
+                        return CompletedProcess(args, 1, "", "pinned ref is busy\n")
+                return original_run(args, **kwargs)
+
+            commands.run = fail_cleanup
+
+            with (
+                patch.object(
+                    cli_runner,
+                    "_verify_target_still_current",
+                    side_effect=ReviewRunnerError("target changed during preflight"),
+                ),
+                self.assertRaisesRegex(ReviewRunnerError, "target changed during preflight") as raised,
+            ):
+                run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands)
+
+            self.assertEqual(cleanup_operations, ["worktree", "pinned-ref"])
+            notes = getattr(raised.exception, "__notes__", [])
+            self.assertTrue(any("CLI worktree cleanup failed with exit status 1: worktree is busy" in note for note in notes))
+            self.assertTrue(any("CLI pinned-ref cleanup failed with exit status 1: pinned ref is busy" in note for note in notes))
+            self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
+
+    def test_deadline_cleanup_notes_reach_capture_sqlite_and_wrapped_cli_boundary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / ".git" / "firemud" / "records.sqlite3"
+            database.parent.mkdir(parents=True)
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            commands = FakeCommands(root)
+            original_run = commands.run
+
+            def fail_cleanup(args, **kwargs):
+                if args[0] == "git" and "-C" in args:
+                    git_args = args[args.index("-C") + 2 :]
+                    if git_args[:2] == ["worktree", "remove"]:
+                        return CompletedProcess(args, 1, "", "worktree is busy\n")
+                    if git_args[:2] == ["update-ref", "-d"]:
+                        return CompletedProcess(args, 1, "", "pinned ref is busy\n")
+                return original_run(args, **kwargs)
+
+            commands.run = fail_cleanup
+            deadline = github.HostedPreflightDeadlineExceeded(
+                "final_identity_check", 121.5, 120, 0, 1, "CLI"
+            )
+            with (
+                github.cli_preflight_budget(),
+                patch.object(cli_runner, "_verify_target_still_current", side_effect=deadline),
+                self.assertRaises(github.HostedPreflightDeadlineExceeded) as raised,
+            ):
+                run_cli_review(
+                    target(),
+                    github=FakeGitHub(),
+                    source_root=root,
+                    runner=commands,
+                    records=records,
+                )
+
+            self.assertIs(raised.exception, deadline)
+            attempts = records.attempt_history(42)
+            self.assertEqual(len(attempts), 1)
+            attempt = attempts[0]
+            self.assertEqual(attempt["state"], "failed")
+            run_id = attempt["attempt_id"]
+            capture_dir = root / ".git" / "firemud" / "pr-review" / "runs" / run_id
+            diagnostic = (capture_dir / "error").read_text(encoding="utf-8")
+            self.assertIn("phase=final_identity_check", diagnostic)
+            self.assertIn("CLI worktree cleanup failed with exit status 1: worktree is busy", diagnostic)
+            self.assertIn("CLI pinned-ref cleanup failed with exit status 1: pinned ref is busy", diagnostic)
+            self.assertEqual(attempt["diagnostic"], f"CLI setup or preflight failed: {diagnostic.rstrip()}")
+
+            wrapped = ControllerError(str(deadline))
+            wrapped.__cause__ = deadline
+            duplicate = getattr(deadline, "__notes__", [None])[0]
+            cli_runner._add_exception_note(wrapped, duplicate)
+            stderr = io.StringIO()
+            with patch.object(cli_module, "_dispatch", side_effect=wrapped), patch("sys.stderr", stderr):
+                self.assertEqual(cli_module.main(["run", "cli", "--expect-pr", "42"]), 1)
+            command_text = stderr.getvalue()
+            self.assertIn("error: CLI preflight deadline exceeded (phase=final_identity_check", command_text)
+            self.assertIn("CLI worktree cleanup failed with exit status 1: worktree is busy", command_text)
+            self.assertEqual(command_text.count(duplicate), 1)
+
+    def test_exception_note_renderer_keeps_cleanup_only_primary_and_plain_errors_unchanged(self):
+        primary = ReviewRunnerError("CLI worktree cleanup failed with exit status 1: worktree is busy")
+        cli_runner._add_exception_note(
+            primary,
+            "CLI candidate cleanup also failed: CLI pinned-ref cleanup failed with exit status 1: pinned ref is busy",
+        )
+        self.assertEqual(
+            cli_runner.format_exception_notes(primary),
+            "CLI worktree cleanup failed with exit status 1: worktree is busy; "
+            "note: CLI candidate cleanup also failed: CLI pinned-ref cleanup failed with exit status 1: pinned ref is busy",
+        )
+        self.assertEqual(cli_runner.format_exception_notes(RuntimeError("ordinary failure")), "ordinary failure")
+
+        older_runtime_error = RuntimeError("wrapped failure")
+        older_runtime_error.__notes__ = ["cleanup\nwarning", "cleanup warning"]
+        outer_error = ControllerError("wrapped failure")
+        outer_error.__cause__ = older_runtime_error
+        older_runtime_error.__cause__ = outer_error
+        self.assertEqual(cli_runner.format_exception_notes(outer_error), "wrapped failure; note: cleanup warning")
+
+    def test_capture_and_sqlite_archive_failures_remain_notes_on_python310_style_exceptions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / ".git" / "firemud" / "records.sqlite3"
+            database.parent.mkdir(parents=True)
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            original_finish = records.finish_attempt
+
+            def fail_failed_archive(*args, **kwargs):
+                if kwargs.get("state") == "failed":
+                    raise ReviewRecordsError("archive unavailable")
+                return original_finish(*args, **kwargs)
+
+            records.finish_attempt = fail_failed_archive
+            deadline = github.HostedPreflightDeadlineExceeded(
+                "final_identity_check", 121.5, 120, 0, 1, "CLI"
+            )
+            if callable(getattr(deadline, "add_note", None)):
+                deadline.add_note = None
+            original_write_text = Path.write_text
+
+            def fail_error_capture(path, *args, **kwargs):
+                if path.name == "error":
+                    raise OSError("capture unavailable")
+                return original_write_text(path, *args, **kwargs)
+
+            with (
+                github.cli_preflight_budget(),
+                patch.object(cli_runner, "_verify_target_still_current", side_effect=deadline),
+                patch.object(Path, "write_text", new=fail_error_capture),
+                self.assertRaises(github.HostedPreflightDeadlineExceeded) as raised,
+            ):
+                run_cli_review(
+                    target(),
+                    github=FakeGitHub(),
+                    source_root=root,
+                    runner=FakeCommands(root),
+                    records=records,
+                )
+
+            self.assertIs(raised.exception, deadline)
+            rendered = cli_runner.format_exception_notes(deadline)
+            self.assertIn("phase=final_identity_check", rendered)
+            self.assertIn("CLI failure diagnostic could not be written to its capture: capture unavailable", rendered)
+            self.assertIn("SQLite review-attempt archival also failed: archive unavailable", rendered)
+
+    def test_selection_retry_failure_preserves_the_original_cli_budget_and_capture(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            commands = FakeCommands(root)
+
+            def reject_admission(_reserve):
+                raise _SelectionChanged("selection changed during admission")
+
+            with github.cli_preflight_budget(timeout_seconds=30) as budget:
+                with self.assertRaisesRegex(_SelectionChanged, "selection changed during admission"):
+                    run_cli_review(
+                        target(),
+                        github=FakeGitHub(),
+                        source_root=root,
+                        runner=commands,
+                        admit=reject_admission,
+                    )
+
+                self.assertTrue(budget.active)
+                self.assertIs(github.active_hosted_preflight_budget(), budget)
+                self.assertGreater(budget.remaining_seconds(), 0)
+
+            run_dirs = list((root / ".git" / "firemud" / "pr-review" / "runs").glob("run.*"))
+            self.assertEqual(len(run_dirs), 1)
+            self.assertIn("selection changed during admission", (run_dirs[0] / "error").read_text())
+            self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
+
+    def test_overlap_preflight_deadline_keeps_its_diagnostic_in_cli_capture(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            common_dir = root / ".git"
+            common_dir.mkdir()
+            write_hosted_trigger(common_dir)
+            commands = FakeCommands(root)
+            deadline = github.HostedPreflightDeadlineExceeded(
+                "hosted_overlap_preflight", 121.5, 120, 0, 1, "CLI"
+            )
+
+            with (
+                github.cli_preflight_budget(),
+                patch("pr_review.cli_runner.github_api.fetch_pull_request", side_effect=deadline),
+                self.assertRaises(github.HostedPreflightDeadlineExceeded) as raised,
+            ):
+                run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands)
+
+            self.assertIs(raised.exception, deadline)
+            run_dirs = list((common_dir / "firemud" / "pr-review" / "runs").glob("run.*"))
+            self.assertEqual(len(run_dirs), 1)
+            self.assertEqual((run_dirs[0] / "error").read_text(), f"{deadline}\n")
+            self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
+
+    def test_cli_lock_acquisition_checks_the_shared_deadline_and_reports_progress(self):
+        class Clock:
+            now = 0.0
+
+            def monotonic(self):
+                return self.now
+
+        clock = Clock()
+        original_flock = fcntl.flock
+
+        def acquire_then_expire(fd, operation):
+            original_flock(fd, operation)
+            if operation & fcntl.LOCK_EX:
+                clock.now = 121
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            commands = FakeCommands(root)
+            with (
+                patch.object(github.time, "monotonic", side_effect=clock.monotonic),
+                patch.object(cli_runner.fcntl, "flock", side_effect=acquire_then_expire),
+                github.cli_preflight_budget(),
+                self.assertRaisesRegex(
+                    github.HostedPreflightDeadlineExceeded,
+                    r"CLI preflight deadline exceeded \(phase=lock_acquisition, elapsed=121.0s, completed=1/2, budget=120s\)",
+                ),
+            ):
+                run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands)
+
+        self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
+        self.assertFalse(commands.test_worktrees)
+
+    def test_cli_gh_metadata_read_uses_the_shared_remaining_deadline(self):
+        class Clock:
+            now = 0.0
+
+            def monotonic(self):
+                return self.now
+
+        clock = Clock()
+        timeouts = []
+
+        def slow_gh(args, **kwargs):
+            timeouts.append(kwargs["timeout"])
+            clock.now += 9
+            return CompletedProcess(args, 0, '{"number":42}', "")
+
+        with (
+            patch.object(github.time, "monotonic", side_effect=clock.monotonic),
+            patch.object(github.subprocess, "run", side_effect=slow_gh),
+            github.cli_preflight_budget(timeout_seconds=8) as budget,
+            self.assertRaisesRegex(
+                github.HostedPreflightDeadlineExceeded,
+                r"CLI preflight deadline exceeded \(phase=live_github_preflight, elapsed=9.0s, completed=0/3, budget=8s\)",
+            ) as raised,
+        ):
+            budget.set_phase("live_github_preflight", total=3)
+            github.fetch_pr_metadata("owner/repo", 42)
+
+        self.assertEqual(timeouts, [8])
+        self.assertEqual(raised.exception.preflight_name, "CLI")
+
+    def test_cumulative_git_preflight_delays_share_the_cli_deadline(self):
+        class Clock:
+            now = 0.0
+
+            def monotonic(self):
+                return self.now
+
+        clock = Clock()
+
+        class SlowGitCommands(FakeCommands):
+            def run(self, args, **kwargs):
+                result = super().run(args, **kwargs)
+                if args[0] == "git":
+                    clock.now += 4
+                return result
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            commands = SlowGitCommands(root)
+            with (
+                patch.object(github.time, "monotonic", side_effect=clock.monotonic),
+                github.cli_preflight_budget(timeout_seconds=10),
+                self.assertRaisesRegex(
+                    github.HostedPreflightDeadlineExceeded,
+                    r"CLI preflight deadline exceeded \(phase=candidate_git_preflight, elapsed=12.0s, completed=1, budget=10s\)",
+                ),
+            ):
+                run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands)
+
+        git_timeouts = [timeout for args, timeout, _text in commands.timeout_calls if args[0] == "git"]
+        self.assertEqual(git_timeouts, [10, 6, 2])
+        self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
+
+    def test_preflight_timeout_after_sqlite_attempt_start_fails_attempt_and_cleans_candidate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / ".git" / "firemud" / "records.sqlite3"
+            database.parent.mkdir()
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            commands = FakeCommands(root)
+            commands.records = records
+
+            def expire_during_final_identity(*_args, **_kwargs):
+                budget = github.active_hosted_preflight_budget()
+                self.assertIsNotNone(budget)
+                budget.deadline = time.monotonic() - 1
+                budget.remaining_seconds()
+
+            with (
+                github.cli_preflight_budget(),
+                patch.object(cli_runner, "_verify_target_still_current", side_effect=expire_during_final_identity),
+                self.assertRaisesRegex(
+                    github.HostedPreflightDeadlineExceeded,
+                    r"CLI preflight deadline exceeded \(phase=final_identity_check, .*completed=0/1, budget=120s\)",
+                ),
+            ):
+                run_cli_review(
+                    target(),
+                    github=FakeGitHub(),
+                    source_root=root,
+                    runner=commands,
+                    records=records,
+                )
+
+            attempts = records.attempt_history(42)
+            self.assertEqual(len(attempts), 1)
+            self.assertEqual(attempts[0]["state"], "failed")
+            self.assertIn("final_identity_check", attempts[0]["diagnostic"])
+            run_dirs = list((root / ".git" / "firemud" / "pr-review" / "runs").glob("run.*"))
+            self.assertEqual(len(run_dirs), 1)
+            self.assertIn("CLI preflight deadline exceeded", (run_dirs[0] / "error").read_text())
+            self.assertFalse((run_dirs[0] / "capture-complete").exists())
+            self.assertFalse(commands.test_worktrees)
+            self.assertTrue(
+                any(
+                    args[:2] == ("git", "-C") and args[2:] and args[-2:-1] == ("-d",)
+                    for args, _cwd in commands.calls
+                )
+            )
+            self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
+
+    def test_cli_budget_is_suspended_before_provider_and_keeps_provider_timeout(self):
+        class BudgetInspectingCommands(FakeCommands):
+            budget_at_provider = "unset"
+
+            def run(self, args, **kwargs):
+                if args[0] == "coderabbit":
+                    self.budget_at_provider = github.active_hosted_preflight_budget()
+                return super().run(args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            commands = BudgetInspectingCommands(
+                root,
+                review_output=(
+                    '{"type":"start","reviewType":"full"}\n'
+                    '{"type":"complete","status":"review_completed",'
+                    '"findings":0,"reviewedFiles":["src/Representative.java"]}\n'
+                ),
+            )
+            with github.cli_preflight_budget(timeout_seconds=30):
+                result = run_cli_review(
+                    target(),
+                    github=FakeGitHub(),
+                    source_root=root,
+                    runner=commands,
+                    review_timeout_seconds=777,
+                )
+
+        self.assertEqual(result.exit_status, 0)
+        self.assertIsNone(commands.budget_at_provider)
+        self.assertEqual(
+            [timeout for args, timeout, _text in commands.timeout_calls if args[0] == "coderabbit"],
+            [777],
+        )
+
     def test_admission_callback_must_reserve_before_attempt_or_provider(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
