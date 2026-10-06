@@ -49,7 +49,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  */
 @Testcontainers(disabledWithoutDocker = true)
 class AccountTenantCreationBootstrapOperationRepositoryPostgresIntegrationTest {
-  private static final String SCHEMA_PREFIX = "creator_bootstrap_operation_proof_";
+  private static final String SCHEMA_PREFIX = "creator_bootstrap_operation_";
   private static final String AUDIT_EVENT_TYPE = "ACCOUNT_TENANT_CREATOR_BOOTSTRAPPED";
 
   @Container

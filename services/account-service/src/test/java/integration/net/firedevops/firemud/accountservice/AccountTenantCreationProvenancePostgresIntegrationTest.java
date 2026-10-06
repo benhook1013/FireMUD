@@ -192,7 +192,7 @@ class AccountTenantCreationProvenancePostgresIntegrationTest {
                 "INSERT INTO accounts (username, email, password_hash) VALUES (?, ?, ?) "
                     + "RETURNING id")) {
       String suffix = UUID.randomUUID().toString().replace("-", "");
-      statement.setString(1, label + "-" + suffix);
+      statement.setString(1, label + "-" + suffix.substring(0, 16));
       statement.setString(2, label + "-" + suffix + "@example.com");
       statement.setString(3, "test-hash");
       try (var result = statement.executeQuery()) {

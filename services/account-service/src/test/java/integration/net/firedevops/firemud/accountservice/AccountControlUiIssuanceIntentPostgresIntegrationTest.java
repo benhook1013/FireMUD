@@ -83,8 +83,7 @@ class AccountControlUiIssuanceIntentPostgresIntegrationTest {
     var bound = fixture.tx().execute(status -> restart.bindSignedToken(initial, SIGNER_BYTES));
     assertThat(bound).isNotNull();
     assertThat(bound.tokenHash())
-        .hasValue(
-            net.firedevops.firemud.accountservice.dto.AccountJoinDigest.tokenHash(SIGNER_BYTES));
+        .hasValue("bbd9b4fbf04eea2ba68c68d87cd16a878a1f52c1be163a94009dfaed28592d51");
     assertThat(
             fixture
                 .tx()
