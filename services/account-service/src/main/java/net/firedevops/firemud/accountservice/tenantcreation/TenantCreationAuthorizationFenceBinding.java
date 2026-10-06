@@ -11,8 +11,8 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
-import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding;
-import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.SourceEvidence;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 
 /**

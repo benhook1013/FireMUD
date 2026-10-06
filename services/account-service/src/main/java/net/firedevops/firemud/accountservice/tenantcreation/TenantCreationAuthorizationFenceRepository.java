@@ -9,7 +9,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
-import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.SourceEvidence;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.Ordering;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.Settlement;
 import net.firedevops.firemud.accountservice.tenantcreation.TenantCreationAuthorizationFenceBinding.Outcome;
