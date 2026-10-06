@@ -19,6 +19,9 @@ project(":common-temporal").projectDir = File("services/common-temporal")
 include("common-security")
 project(":common-security").projectDir = File("services/common-security")
 
+include("common-redis-contracts")
+project(":common-redis-contracts").projectDir = File("services/common-redis-contracts")
+
 include("common-test-support")
 project(":common-test-support").projectDir = File("services/common-test-support")
 
