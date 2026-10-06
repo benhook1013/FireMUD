@@ -30,6 +30,7 @@ import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorClient;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateEvidence;
@@ -40,10 +41,13 @@ import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvi
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence.Participant;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence.ReleaseContent;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalReadEvidence;
+import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationClient;
+import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
 import net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding;
+import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
@@ -83,6 +87,7 @@ import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 import org.springframework.aop.framework.ProxyFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -171,16 +176,16 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     var selector =
         publishedEvidence(
             publishedSelectors().readCommitted(frozen.request().freeze()).orElseThrow());
-    var input = preparationInput(f, frozen, selector);
+    var seedInput = preparationInput(f, frozen, selector);
     var retainedEpoch =
         Objects.requireNonNull(
             dsl.fetchOne(
                 "SELECT jsonb_typeof(release_attestation_json::jsonb->'worldStartLocationEvidence'->'request'->'versionStateEpoch') AS epoch_type,"
                     + "release_attestation_json::jsonb->'worldStartLocationEvidence'->'request'->>'versionStateEpoch' AS epoch_value "
                     + "FROM world_complete_launch_binding WHERE target_namespace=? AND canonical_tenant_id=? AND control_plane_request_id=?",
-                input.gameSessionReadEvidence().targetNamespace(),
-                input.gameSessionReadEvidence().canonicalTenantId(),
-                input.gameSessionReadEvidence().controlPlaneRequestId()));
+                seedInput.gameSessionReadEvidence().targetNamespace(),
+                seedInput.gameSessionReadEvidence().canonicalTenantId(),
+                seedInput.gameSessionReadEvidence().controlPlaneRequestId()));
     assertThat(retainedEpoch.get("epoch_type", String.class)).isEqualTo("number");
     String retainedEpochValue = retainedEpoch.get("epoch_value", String.class);
     assertThat(retainedEpochValue).isEqualTo(Long.toString(selector.request().versionStateEpoch()));
@@ -188,8 +193,63 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     assertThat(selectorRequestJson.get("versionStateEpoch").isTextual()).isTrue();
     assertThat(selectorRequestJson.get("versionStateEpoch").textValue())
         .isEqualTo(retainedEpochValue);
+
+    // This isolated fixture writes and reads back an actual retained World PUBLISHED terminal.
+    var originalTerminal = isolatedTerminalEvidence(seedInput);
+    byte[] originalTerminalBytes = originalTerminal.canonicalBytes();
+    publicationTerminalComponent(originalTerminal)
+        .complete(originalTerminal.operationBytes(), originalTerminalBytes);
+    UUID publicationFence = selector.request().publicationFence();
+    assertThat(publicationOwnerPhase(publicationFence)).isEqualTo("PUBLISHED");
+    assertThat(publicationTerminalBytes(publicationFence)).containsExactly(originalTerminalBytes);
+
+    UUID canonicalGameInstanceId = UUID.randomUUID();
+    var stableSelector =
+        new WorldCanonicalInstancePreparationAssemblyService.Selector(
+            f.intake().canonicalTenantId(),
+            canonicalGameInstanceId,
+            seedInput.completeLaunchBinding().controlPlaneRequestId());
+    var allocationsBefore = canonicalPreparationAllocationRows(f, canonicalGameInstanceId);
+    assertThat(allocationsBefore.values()).containsOnly(0L);
+    var substitutedInput =
+        preparationInput(f, frozen, selector, 2L, List.of("LOOK", "SUBSTITUTED"));
+    var sourceRowsBefore = retainedPreparationSourceRows(f, seedInput, frozen);
+    var substitutedCompletePair =
+        preparationAssemblyFixture(
+            NAMESPACE, substitutedInput.completeLaunchBinding().evidence(), UUID.randomUUID());
+    assertThatThrownBy(() -> substitutedCompletePair.service().assemble(stableSelector))
+        .isInstanceOf(
+            WorldCanonicalInstancePreparationAssemblyService.AssemblyRejectedException.class)
+        .hasMessageContaining("Authenticated Game Design complete launch pair differs");
+    Mockito.verifyNoInteractions(substitutedCompletePair.gameSessionClient());
+    assertThat(canonicalPreparationAllocationRows(f, canonicalGameInstanceId))
+        .isEqualTo(allocationsBefore);
+    assertThat(retainedPreparationSourceRows(f, seedInput, frozen)).isEqualTo(sourceRowsBefore);
+
+    var assembly =
+        preparationAssemblyFixture(
+            NAMESPACE, seedInput.completeLaunchBinding().evidence(), UUID.randomUUID());
+    var input = assembly.service().assemble(stableSelector);
+    assertThat(input.completeLaunchBinding()).isEqualTo(seedInput.completeLaunchBinding());
+    assertThat(input.versionIdentity()).isEqualTo(f.version());
+    assertThat(input.topologyPlan().captureId()).isEqualTo(frozen.captureId());
+    assertThat(input.topologyPlan().sourceBinding().freeze()).isEqualTo(frozen.request().freeze());
+    assertThat(
+            input.topologyPlan().rooms().stream()
+                .map(room -> room.identity().templateId())
+                .toList())
+        .containsExactlyElementsOf(
+            WorldCanonicalInstanceTopologyPlan.create(frozen).rooms().stream()
+                .map(room -> room.identity().templateId())
+                .toList());
+    assertThat(input.gameSessionReadRequest().canonicalGameInstanceId())
+        .isEqualTo(canonicalGameInstanceId);
+    assertThat(input.gameSessionReadEvidence().currentGameSessionStatus()).isEqualTo("STARTING");
+    assertThat(input.gameSessionReadEvidence().playableStateNamespaceId())
+        .isEqualTo(assembly.playableStateNamespaceId());
+
     var repository = preparationRepository();
-    var service = preparationComponent(repository);
+    var service = preparationComponentWithRetainedTerminal(repository, originalTerminal);
     var result = service.prepare(input);
     assertThat(result.startLocation().roomTemplateId()).isEqualTo(lastRoom);
     assertThat(result.runtimeRoomInstanceId()).isPositive();
@@ -206,9 +266,15 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     assertThat(mapped.get("room_instance_id", Long.class))
         .isEqualTo(result.runtimeRoomInstanceId());
     byte[] before = preparationRows(input.canonicalGameInstanceId());
-    assertThat(preparationComponent(preparationRepository()).prepare(input)).isEqualTo(result);
-    assertThat(preparationRepository().readOwnerPreparation(input)).contains(result);
+    var reassembled = assembly.service().assemble(stableSelector);
+    assertThat(WorldCanonicalInstancePreparationRepository.inputJson(reassembled))
+        .isEqualTo(WorldCanonicalInstancePreparationRepository.inputJson(input));
+    assertThat(service.prepare(reassembled)).isEqualTo(result);
+    assertThat(repository.readOwnerPreparation(reassembled)).contains(result);
     assertThat(preparationRows(input.canonicalGameInstanceId())).containsExactly(before);
+    assertThat(retainedPreparationSourceRows(f, seedInput, frozen)).isEqualTo(sourceRowsBefore);
+    assertThat(publicationOwnerPhase(publicationFence)).isEqualTo("PUBLISHED");
+    assertThat(publicationTerminalBytes(publicationFence)).containsExactly(originalTerminalBytes);
     assertThatThrownBy(
             () ->
                 dsl.execute(
@@ -1940,6 +2006,107 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             release);
     return new WorldCanonicalInstancePreparation.Input(
         request, response, launch, f.version(), WorldCanonicalInstanceTopologyPlan.create(frozen));
+  }
+
+  /**
+   * Isolated upstream client doubles return a complete expected pair and an exact Game Session
+   * selector echo; they do not claim live producer authentication or currentness.
+   */
+  private PreparationAssemblyFixture preparationAssemblyFixture(
+      String workloadNamespace,
+      CompleteLaunchBindingEvidence returnedPair,
+      UUID playableStateNamespaceId) {
+    var gameDesign = Mockito.mock(AuthoredWorldLaunchDescriptorClient.class);
+    Mockito.when(gameDesign.getComplete(Mockito.any())).thenReturn(returnedPair);
+
+    var gameSession = Mockito.mock(CanonicalGameInstanceLaunchAssociationClient.class);
+    Mockito.when(gameSession.read(Mockito.any()))
+        .thenAnswer(
+            invocation -> {
+              var request =
+                  invocation.getArgument(
+                      0, CanonicalGameInstanceLaunchAssociationReadEvidence.Request.class);
+              return new CanonicalGameInstanceLaunchAssociationReadEvidence.Result(
+                  request,
+                  playableStateNamespaceId,
+                  RealmEntryPolicy.StateScope.SHARED,
+                  true,
+                  CanonicalGameInstanceLaunchAssociationReadEvidence.CurrentGameInstanceStatus
+                      .STARTING,
+                  1L,
+                  returnedPair);
+            });
+
+    var assembly =
+        new WorldCanonicalInstancePreparationAssemblyService(
+            workloadNamespace,
+            new WorldCompleteLaunchBindingRepository(dsl),
+            new WorldAuthoredSourceIntakeRepository(dsl),
+            new WorldAuthoredVersionIdentityRepository(dsl),
+            frozenRepository(),
+            gameSession,
+            gameDesign);
+    return new PreparationAssemblyFixture(
+        assembly, gameDesign, gameSession, playableStateNamespaceId);
+  }
+
+  private Map<String, String> retainedPreparationSourceRows(
+      Fixture fixture,
+      WorldCanonicalInstancePreparation.Input input,
+      WorldCanonicalFrozenTopology frozen) {
+    var descriptor = input.completeLaunchBinding().descriptor();
+    return Map.of(
+        "sourceIntake",
+        retainedJson(
+            "SELECT to_jsonb(i)::text FROM world_authored_source_intake i WHERE intake_request_id=?",
+            fixture.intake().intakeRequestId()),
+        "versionIdentity",
+        retainedJson(
+            "SELECT to_jsonb(v)::text FROM world_authored_version_identity v WHERE operation_id=?",
+            fixture.version().operationId()),
+        "completeLaunchBinding",
+        retainedJson(
+            "SELECT to_jsonb(b)::text FROM world_complete_launch_binding b WHERE target_namespace=? AND canonical_tenant_id=? AND control_plane_request_id=?",
+            descriptor.targetNamespace(),
+            descriptor.canonicalTenantId(),
+            descriptor.controlPlaneRequestId()),
+        "frozenCapture",
+        retainedJson(
+            "SELECT to_jsonb(c)::text FROM world_canonical_frozen_topology c WHERE publication_fence=?",
+            frozen.request().freeze().publicationFence()));
+  }
+
+  private Map<String, Long> canonicalPreparationAllocationRows(
+      Fixture fixture, UUID canonicalGameInstanceId) {
+    Map<String, Long> rows = new LinkedHashMap<>();
+    for (String table :
+        List.of(
+            "world_instance",
+            "region_instance",
+            "zone_instance",
+            "room_instance",
+            "room_instance_exit")) {
+      rows.put(table, count(fixture, table));
+    }
+    for (String table :
+        List.of(
+            "world_canonical_instance_association",
+            "world_canonical_instance_preparation",
+            "world_canonical_instance_topology_identity",
+            "world_canonical_preparation_start_location")) {
+      rows.put(
+          table,
+          Objects.requireNonNull(
+                  dsl.fetchOne(
+                      "SELECT count(*) FROM " + table + " WHERE canonical_game_instance_id=?",
+                      canonicalGameInstanceId))
+              .get(0, Long.class));
+    }
+    return rows;
+  }
+
+  private String retainedJson(String sql, Object... bindings) {
+    return Objects.requireNonNull(dsl.resultQuery(sql, bindings).fetchOne()).get(0, String.class);
   }
 
   private WorldCanonicalInstancePreparationRepository preparationRepository() {
@@ -4268,6 +4435,12 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
       completed = true;
     }
   }
+
+  private record PreparationAssemblyFixture(
+      WorldCanonicalInstancePreparationAssemblyService service,
+      AuthoredWorldLaunchDescriptorClient gameDesignClient,
+      CanonicalGameInstanceLaunchAssociationClient gameSessionClient,
+      UUID playableStateNamespaceId) {}
 
   private record Fixture(
       WorldAuthoredSourceIntakeReceipt intake,
