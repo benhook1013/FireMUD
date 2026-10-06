@@ -165,7 +165,7 @@ public final class WorldDraftTerminalOutcomeRepository {
               + "local_tenant_key,local_version_key,owner_binding_json,binding_json,binding_digest,"
               + "account_binding_bytes,account_binding_digest,affected_units_json,outcome,"
               + "outcome_bytes,outcome_digest,recorded_at) "
-              + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?::jsonb,?,?,?,?)",
+              + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?::jsonb,?,?,?,?::timestamptz)",
           operation.operationId(),
           operation.requestId(),
           operation.commitId(),

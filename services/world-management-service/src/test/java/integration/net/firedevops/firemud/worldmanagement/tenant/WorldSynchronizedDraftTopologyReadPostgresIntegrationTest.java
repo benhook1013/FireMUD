@@ -183,16 +183,19 @@ class WorldSynchronizedDraftTopologyReadPostgresIntegrationTest {
 
   private static DraftSynchronizedVisibilityEvidence evidence(
       DraftSynchronizedVisibilityEvidence.Request request, DraftCommitBinding binding) {
-    AffectedUnit unit = binding.affectedUnits(Owner.WORLD_MANAGEMENT).getFirst();
-    Map<String, Object> epoch = new java.util.LinkedHashMap<>();
-    epoch.put("aggregateType", unit.aggregateType());
-    epoch.put("aggregateId", unit.aggregateId());
-    epoch.put("scopeType", unit.scopeType());
-    epoch.put("scopeId", unit.scopeId());
-    epoch.put("expectedEpoch", unit.expectedEpoch());
-    epoch.put(
-        "resultingEpoch",
-        new java.math.BigInteger(unit.expectedEpoch()).add(java.math.BigInteger.ONE).toString());
+    List<Map<String, Object>> epochs = new java.util.ArrayList<>();
+    for (AffectedUnit unit : binding.affectedUnits(Owner.WORLD_MANAGEMENT)) {
+      Map<String, Object> epoch = new java.util.LinkedHashMap<>();
+      epoch.put("aggregateType", unit.aggregateType());
+      epoch.put("aggregateId", unit.aggregateId());
+      epoch.put("scopeType", unit.scopeType());
+      epoch.put("scopeId", unit.scopeId());
+      epoch.put("expectedEpoch", unit.expectedEpoch());
+      epoch.put(
+          "resultingEpoch",
+          new java.math.BigInteger(unit.expectedEpoch()).add(java.math.BigInteger.ONE).toString());
+      epochs.add(epoch);
+    }
     Map<String, Object> result = new java.util.LinkedHashMap<>();
     result.put("owner", Owner.WORLD_MANAGEMENT.name());
     result.put("status", "APPLIED");
@@ -204,7 +207,7 @@ class WorldSynchronizedDraftTopologyReadPostgresIntegrationTest {
         "resultBytesBase64",
         Base64.getEncoder()
             .encodeToString("fixture-world-result-bytes".getBytes(StandardCharsets.UTF_8)));
-    result.put("appliedEpochs", List.of(epoch));
+    result.put("appliedEpochs", epochs);
     String vector = canonical(new ObjectMapper().writeValueAsString(List.of(result)));
     return new DraftSynchronizedVisibilityEvidence(
         request,
