@@ -82,7 +82,7 @@ public class AccountAuthorityGenerationRepository {
     if (inserted < 0 || inserted > 1) {
       throw new IllegalStateException("Account issuer authority enrollment was ambiguous");
     }
-    return new IssuerEnrollment(readScopeState(scope, true), inserted == 1);
+    return new IssuerEnrollment(readIssuerStateShared(scope), inserted == 1);
   }
 
   ScopeState initializeAccountForFreshRepositoryInsert(AccountRepository.FreshAccountInsert proof) {
@@ -129,7 +129,20 @@ public class AccountAuthorityGenerationRepository {
   @Transactional(propagation = Propagation.MANDATORY)
   public ScopeState read(AuthorityScope scope) {
     validateScope(scope);
+    if (scope.kind() == ScopeKind.ISSUER) {
+      return readIssuerStateShared(scope);
+    }
     return readScopeState(scope, true);
+  }
+
+  /** Reads and exclusively locks an issuer row for a source mutation that will advance it. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  ScopeState readIssuerStateForSourceMutation(AuthorityScope scope) {
+    validateScope(scope);
+    if (scope.kind() != ScopeKind.ISSUER) {
+      throw new IllegalArgumentException("Issuer source mutation requires an exact issuer scope");
+    }
+    return readIssuerStateExclusive(scope);
   }
 
   /**
@@ -215,7 +228,7 @@ public class AccountAuthorityGenerationRepository {
     // Every composite reader must take that same first lock so it cannot hold authority rows while
     // waiting for the Account row that a writer already owns.
     lockAccountRow(accountId);
-    ScopeState issuer = readScopeState(issuerScope, true);
+    ScopeState issuer = readIssuerStateShared(issuerScope);
     ScopeState account = readScopeState(accountScope, true);
     IssuanceFence fence = requireIssuanceFence(accountId, true);
     List<ScopeState> tenantStates = new ArrayList<>();
@@ -282,6 +295,49 @@ public class AccountAuthorityGenerationRepository {
             ? requireIssuanceFence(scope.accountId(), lock)
             : null;
     return new ScopeState(scope, generation, sourceVersion, fence);
+  }
+
+  /** Reads an issuer generation without excluding other exact-source readers. */
+  private ScopeState readIssuerStateShared(AuthorityScope scope) {
+    if (scope.kind() != ScopeKind.ISSUER) {
+      throw new IllegalArgumentException("Shared issuer read requires an exact issuer scope");
+    }
+    Record row =
+        dsl.fetchOne(
+            "SELECT generation, source_version FROM "
+                + GENERATION_TABLE
+                + " WHERE scope_kind = ? AND issuer_id IS NOT DISTINCT FROM ? "
+                + "AND account_uuid IS NOT DISTINCT FROM ? "
+                + "AND tenant_uuid IS NOT DISTINCT FROM ? FOR SHARE",
+            scope.kind().name(),
+            scope.issuerId(),
+            scope.accountId(),
+            scope.tenantId());
+    if (row == null) {
+      throw new IllegalStateException("Account authority generation is missing");
+    }
+    return state(scope, row, null);
+  }
+
+  private ScopeState readIssuerStateExclusive(AuthorityScope scope) {
+    if (scope.kind() != ScopeKind.ISSUER) {
+      throw new IllegalArgumentException("Exclusive issuer read requires an exact issuer scope");
+    }
+    Record row =
+        dsl.fetchOne(
+            "SELECT generation, source_version FROM "
+                + GENERATION_TABLE
+                + " WHERE scope_kind = ? AND issuer_id IS NOT DISTINCT FROM ? "
+                + "AND account_uuid IS NOT DISTINCT FROM ? "
+                + "AND tenant_uuid IS NOT DISTINCT FROM ? FOR UPDATE",
+            scope.kind().name(),
+            scope.issuerId(),
+            scope.accountId(),
+            scope.tenantId());
+    if (row == null) {
+      throw new IllegalStateException("Account authority generation is missing");
+    }
+    return state(scope, row, null);
   }
 
   private Record updateGeneration(

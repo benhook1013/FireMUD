@@ -263,6 +263,96 @@ class AccountCanonicalJoinScopePersistenceIntegrationTest {
         .isZero();
   }
 
+  @Test
+  void expiredScopeCleanupSkipsImmutableV2BeforeLimitingV1Batch() {
+    String schema = "canonical_scope_cleanup_" + UUID.randomUUID().toString().replace("-", "");
+    DriverManagerDataSource dataSource = postgres.dataSource(schema);
+    Flyway.configure()
+        .dataSource(dataSource)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .placeholders(Map.of("serviceSchema", schema))
+        .locations("classpath:db/migration")
+        .load()
+        .migrate();
+
+    DSLContext setupDsl = DSL.using(dataSource, SQLDialect.POSTGRES);
+    DSLContext transactionDsl =
+        DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+    TransactionTemplate transaction =
+        new TransactionTemplate(new DataSourceTransactionManager(dataSource));
+    Record v2Account =
+        setupDsl.fetchOne(
+            "INSERT INTO accounts (username, email, password_hash) VALUES (?, ?, ?) "
+                + "RETURNING id, account_uuid",
+            "scope-cleanup-v2-account",
+            "scope-cleanup-v2@example.test",
+            "test-hash");
+    long v2AccountId = Objects.requireNonNull(v2Account).get("id", Long.class);
+    UUID v2AccountUuid = Objects.requireNonNull(v2Account).get("account_uuid", UUID.class);
+    Long v1AccountId =
+        Objects.requireNonNull(
+                setupDsl.fetchOne(
+                    "INSERT INTO accounts (username, email, password_hash) VALUES (?, ?, ?) RETURNING id",
+                    "scope-cleanup-v1-account",
+                    "scope-cleanup-v1@example.test",
+                    "test-hash"))
+            .get(0, Long.class);
+
+    FreshTenantIdentityAssociationRepository freshTenants =
+        new FreshTenantIdentityAssociationRepository(transactionDsl, "prod");
+    FreshTenantCreationEvidence tenantSource = freshTenantEvidence();
+    transaction.executeWithoutResult(status -> freshTenants.importVerified(tenantSource));
+    AccountConnectScopeRepository scopes =
+        new AccountConnectScopeRepository(
+            transactionDsl, mock(AccountTenantIdentityResolver.class), freshTenants);
+
+    VerifiedJoinScope v1Scope = retainedV1Scope(v1AccountId);
+    scopes.insert(v1Scope);
+    setupDsl.execute(
+        "UPDATE account_connect_scope_records SET connect_scope_expires_at = ? "
+            + "WHERE scope_token_hash = ?",
+        java.time.Instant.now().minusSeconds(60).toString(),
+        AccountJoinDigest.tokenHash(v1Scope.connectScopeId()));
+
+    CanonicalJoinScopeV2 v2Scope =
+        new CanonicalJoinScopeV2(
+            "scope-cleanup-v2-token",
+            v2AccountUuid,
+            tenantSource.canonicalTenantId(),
+            UUID.fromString("00ae2e76-b686-4a25-9b07-52b8bd3ee147"),
+            "canonical-tenant",
+            "demo",
+            "production",
+            UUID.fromString("fc085a0d-1180-4a10-8c54-04378645f0d5"),
+            "SHARED",
+            UUID.fromString("ce41c1f3-94a2-498c-94a2-20b763d7b3c2"),
+            7L,
+            3L,
+            java.time.Instant.now().minusSeconds(120).toString(),
+            java.time.Instant.now().minusSeconds(60).toString());
+    VerifiedTenantProvenance v2Provenance =
+        new VerifiedTenantProvenance(
+            null,
+            TenantProvenanceKind.FRESH_GAME_DESIGN,
+            tenantSource.operationId(),
+            tenantSource.evidenceDigest());
+    transaction.executeWithoutResult(
+        status -> scopes.insertCanonical(v2AccountId, v2Scope, v2Provenance));
+
+    assertThat(scopes.deleteExpiredUnreferenced(java.time.Instant.now(), 1)).isEqualTo(1);
+    assertThat(scopeRowCount(setupDsl, v1Scope.connectScopeId())).isZero();
+    assertThat(scopeRowCount(setupDsl, v2Scope.connectScopeId())).isEqualTo(1);
+  }
+
+  private static long scopeRowCount(DSLContext dsl, String connectScopeId) {
+    return Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT COUNT(*) FROM account_connect_scope_records WHERE scope_token_hash = ?",
+                AccountJoinDigest.tokenHash(connectScopeId)))
+        .get(0, Long.class);
+  }
+
   private static FreshTenantCreationEvidence freshTenantEvidence() {
     UUID requestId = UUID.fromString("650173d3-96f4-4a74-b2af-14920ac7ba31");
     UUID operationId = UUID.fromString("78cad081-53da-4dd7-a0ac-6e880c3a1004");

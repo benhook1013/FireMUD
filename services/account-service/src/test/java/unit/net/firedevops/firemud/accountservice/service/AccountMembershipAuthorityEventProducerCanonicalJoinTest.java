@@ -13,6 +13,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -42,6 +43,7 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEv
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.CanonicalJoinOperationEvidence;
+import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.CanonicalJoinTerminalProof;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.PairAuthority;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.PairTransition;
@@ -52,6 +54,7 @@ import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipR
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository.RoleSnapshot;
 import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer;
+import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec.AccountSecurityCutoff;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.MembershipEvent;
 import org.junit.jupiter.api.AfterEach;
@@ -158,6 +161,14 @@ class AccountMembershipAuthorityEventProducerCanonicalJoinTest {
     Fixture fixture = new Fixture();
     fixture.arrangePendingFirstJoin();
     Event event = fixture.existingEvent();
+    when(fixture.joinOperations.findCanonicalEvidenceForUpdateByRequestId(REQUEST_ID))
+        .thenReturn(Optional.of(fixture.committedOperation(CALLER_BINDING, event)));
+    when(fixture.authority.readCompositeSnapshot(
+            "firemud-account-service", ACCOUNT_UUID, List.of(TENANT_UUID), List.of(TENANT_UUID)))
+        .thenReturn(fixture.authoritySnapshot(5L, 4L, 3L, 1L));
+    when(fixture.sourceEvidence.readCurrentIssuerAccountSources(
+            "firemud-account-service", ACCOUNT_UUID))
+        .thenReturn(fixture.sourceSnapshot(5L, 4L));
     Checkpoint checkpoint = fixture.checkpoint(event);
     when(fixture.memberships.findFreshJoinForPublicationForUpdate(ACCOUNT_UUID, TENANT_UUID))
         .thenReturn(Optional.of(fixture.membership));
@@ -181,15 +192,98 @@ class AccountMembershipAuthorityEventProducerCanonicalJoinTest {
     verify(fixture.outbox, never())
         .append(eq(MEMBERSHIP_STREAM), eq(REQUEST_ID), any(LongFunction.class));
     verify(fixture.pairs, never()).commitTransition(any(), any());
+    verify(fixture.authority, never())
+        .readCompositeSnapshot(
+            "firemud-account-service", ACCOUNT_UUID, List.of(TENANT_UUID), List.of(TENANT_UUID));
+    verifyNoInteractions(fixture.sourceEvidence);
   }
 
   @Test
-  void generationOneRejectsAnIssuanceFenceWithAdvancedValueAndGenesisSourceVersion() {
+  void firstJoinUsesCurrentAccountAndIssuerAuthorityAfterPriorSourceMutation() {
     Fixture fixture = new Fixture();
     fixture.arrangePendingFirstJoin();
     when(fixture.authority.readCompositeSnapshot(
             "firemud-account-service", ACCOUNT_UUID, List.of(TENANT_UUID), List.of(TENANT_UUID)))
-        .thenReturn(fixture.authoritySnapshot(2L, 1L));
+        .thenReturn(fixture.authoritySnapshot(3L, 3L, 1L, 1L));
+    when(fixture.sourceEvidence.readCurrentIssuerAccountSources(
+            "firemud-account-service", ACCOUNT_UUID))
+        .thenReturn(fixture.sourceSnapshot(3L, 3L));
+    fixture.startWritableTransaction();
+
+    AtomicReference<Event> committedEvent = new AtomicReference<>();
+    AtomicInteger membershipCheckpointReads = new AtomicInteger();
+    when(fixture.outbox.readCheckpoint(any(String.class)))
+        .thenAnswer(
+            invocation -> {
+              String stream = invocation.getArgument(0);
+              if (!MEMBERSHIP_STREAM.equals(stream)) {
+                return Optional.of(new Checkpoint(stream, 1L, "tenant-event-1", DIGEST));
+              }
+              return membershipCheckpointReads.getAndIncrement() == 0
+                  ? Optional.empty()
+                  : Optional.of(fixture.checkpoint(committedEvent.get()));
+            });
+    when(fixture.outbox.append(eq(MEMBERSHIP_STREAM), eq(REQUEST_ID), any(LongFunction.class)))
+        .thenAnswer(
+            invocation -> {
+              LongFunction<EventEvidence> factory = invocation.getArgument(2);
+              EventEvidence evidence = factory.apply(1L);
+              Event event =
+                  new Event(
+                      MEMBERSHIP_STREAM,
+                      REQUEST_ID,
+                      1L,
+                      evidence.eventId(),
+                      evidence.eventDigest(),
+                      evidence.payload());
+              committedEvent.set(event);
+              return event;
+            });
+    when(fixture.outbox.findEvent(MEMBERSHIP_STREAM, REQUEST_ID))
+        .thenAnswer(invocation -> Optional.of(committedEvent.get()));
+    when(fixture.outbox.findEvent(MEMBERSHIP_STREAM, 1L))
+        .thenAnswer(invocation -> Optional.of(committedEvent.get()));
+    when(fixture.pairs.commitTransition(eq(fixture.absenceBaseline), any(PairTransition.class)))
+        .thenAnswer(
+            invocation -> {
+              PairTransition transition = invocation.getArgument(1);
+              return fixture.positivePair(transition.eventId(), transition.eventDigest());
+            });
+
+    fixture.producer.publishCanonicalFirstJoinMembershipChange(
+        fixture.scope, REQUEST_ID, CALLER_BINDING);
+
+    MembershipEvent event =
+        MembershipAuthorityEventV1Codec.verify(
+            new String(committedEvent.get().payload(), StandardCharsets.UTF_8));
+    assertThat(event.authorityTuple().issuerAuthGeneration()).isEqualTo("3");
+    assertThat(event.authorityTuple().accountAuthorityGeneration()).isEqualTo("3");
+    assertThat(event.authorityTuple().tenantAuthorityGeneration())
+        .isEqualTo(Map.of(TENANT_UUID.toString(), "1"));
+    assertThat(event.authorityTuple().membershipAuthorityGeneration())
+        .isEqualTo(Map.of(TENANT_UUID.toString(), "1"));
+    assertThat(event.issuanceFence()).isEqualTo("3");
+    assertThat(event.authorityTuple().accountSecurityCutoff()).isPresent();
+    assertThat(event.authorityTuple().accountSecurityCutoff().orElseThrow())
+        .usingRecursiveComparison()
+        .isEqualTo(
+            new AccountSecurityCutoff(
+                "3", "account:auth-authority:v1:account/" + ACCOUNT_UUID, "2"));
+    verify(fixture.memberships).findFreshJoinForPublicationForUpdate(ACCOUNT_UUID, TENANT_UUID);
+    verify(fixture.outbox, never())
+        .readCheckpoint("account:auth-authority:v1:tenant/" + TENANT_UUID);
+  }
+
+  @Test
+  void firstJoinDeniesAdvancedTenantAuthorityWithoutTenantSourceEventReadback() {
+    Fixture fixture = new Fixture();
+    fixture.arrangePendingFirstJoin();
+    when(fixture.authority.readCompositeSnapshot(
+            "firemud-account-service", ACCOUNT_UUID, List.of(TENANT_UUID), List.of(TENANT_UUID)))
+        .thenReturn(fixture.authoritySnapshot(3L, 3L, 2L, 1L));
+    when(fixture.sourceEvidence.readCurrentIssuerAccountSources(
+            "firemud-account-service", ACCOUNT_UUID))
+        .thenReturn(fixture.sourceSnapshot(3L, 3L));
     fixture.startWritableTransaction();
 
     assertThatThrownBy(
@@ -197,10 +291,51 @@ class AccountMembershipAuthorityEventProducerCanonicalJoinTest {
                 fixture.producer.publishCanonicalFirstJoinMembershipChange(
                     fixture.scope, REQUEST_ID, CALLER_BINDING))
         .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("generation-one owner rows");
+        .hasMessageContaining("exact current Account, source, and tenant authority evidence");
 
-    verifyNoInteractions(fixture.outbox);
+    verify(fixture.outbox, never())
+        .append(eq(MEMBERSHIP_STREAM), eq(REQUEST_ID), any(LongFunction.class));
     verify(fixture.pairs, never()).commitTransition(any(), any());
+  }
+
+  @Test
+  void firstJoinDeniesWhenCurrentAccountSourceIdentityDoesNotMatchLockedAccount() {
+    Fixture fixture = new Fixture();
+    fixture.arrangePendingFirstJoin();
+    when(fixture.sourceEvidence.readCurrentIssuerAccountSources(
+            "firemud-account-service", ACCOUNT_UUID))
+        .thenReturn(fixture.sourceSnapshot(1L, 1L, 18L));
+    fixture.startWritableTransaction();
+
+    assertThatThrownBy(
+            () ->
+                fixture.producer.publishCanonicalFirstJoinMembershipChange(
+                    fixture.scope, REQUEST_ID, CALLER_BINDING))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("exact current Account, source, and tenant authority evidence");
+
+    verify(fixture.outbox, never())
+        .append(eq(MEMBERSHIP_STREAM), eq(REQUEST_ID), any(LongFunction.class));
+    verify(fixture.pairs, never()).commitTransition(any(), any());
+  }
+
+  @Test
+  void firstJoinDeniesWhenLockedMembershipTenantProvenanceDiffersFromItsOperation() {
+    Fixture fixture = new Fixture();
+    fixture.arrangePendingFirstJoin();
+    fixture.membership.setTenantProvenanceDigest("sha256:" + "b".repeat(64));
+    fixture.startWritableTransaction();
+
+    assertThatThrownBy(
+            () ->
+                fixture.producer.publishCanonicalFirstJoinMembershipChange(
+                    fixture.scope, REQUEST_ID, CALLER_BINDING))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("locked Account or tenant provenance");
+
+    verify(fixture.roles, never())
+        .findForCanonicalUpdate(any(), any(), any(), anyLong(), anyLong());
+    verifyNoInteractions(fixture.authority, fixture.outbox, fixture.sourceEvidence);
   }
 
   @Test
@@ -291,38 +426,63 @@ class AccountMembershipAuthorityEventProducerCanonicalJoinTest {
     }
 
     private IssuerAccountSourceSnapshot freshSourceSnapshot() {
+      return sourceSnapshot(1L, 1L);
+    }
+
+    private IssuerAccountSourceSnapshot sourceSnapshot(
+        long issuerGeneration, long accountGeneration) {
+      return sourceSnapshot(issuerGeneration, accountGeneration, 17L);
+    }
+
+    private IssuerAccountSourceSnapshot sourceSnapshot(
+        long issuerGeneration, long accountGeneration, long sourceAccountId) {
+      long issuerSequence = issuerGeneration - 1L;
+      long accountSequence = accountGeneration - 1L;
+      String issuerStream = "account:auth-authority:v1:issuer/firemud-account-service";
+      String accountStream = "account:auth-authority:v1:account/" + ACCOUNT_UUID;
       CurrentSourceEvidence issuerSource =
           new CurrentSourceEvidence(
               AuthorityScope.issuer("firemud-account-service"),
-              1L,
-              1L,
+              issuerGeneration,
+              issuerGeneration,
               null,
               new SourceCheckpoint(
-                  "account:auth-authority:v1:issuer/firemud-account-service",
-                  0L,
-                  Optional.empty(),
-                  Optional.empty()),
+                  issuerStream,
+                  issuerSequence,
+                  issuerSequence == 0L
+                      ? Optional.empty()
+                      : Optional.of("issuer-event-" + issuerSequence),
+                  issuerSequence == 0L ? Optional.empty() : Optional.of(DIGEST)),
               Optional.empty(),
               "ISSUER_SCOPE_INSERT",
               null,
               null,
               17L,
               null);
-      IssuanceFence accountFence = new IssuanceFence(ACCOUNT_UUID, 1L, 1L);
+      IssuanceFence accountFence =
+          new IssuanceFence(ACCOUNT_UUID, accountGeneration, accountGeneration);
       CurrentSourceEvidence accountSource =
           new CurrentSourceEvidence(
               AuthorityScope.account(ACCOUNT_UUID),
-              1L,
-              1L,
+              accountGeneration,
+              accountGeneration,
               accountFence,
               new SourceCheckpoint(
-                  "account:auth-authority:v1:account/" + ACCOUNT_UUID,
-                  0L,
-                  Optional.empty(),
-                  Optional.empty()),
-              Optional.empty(),
+                  accountStream,
+                  accountSequence,
+                  accountSequence == 0L
+                      ? Optional.empty()
+                      : Optional.of("account-event-" + accountSequence),
+                  accountSequence == 0L ? Optional.empty() : Optional.of(DIGEST)),
+              accountSequence == 0L
+                  ? Optional.empty()
+                  : Optional.of(
+                      new AccountSecurityCutoff(
+                          Long.toString(accountGeneration),
+                          accountStream,
+                          Long.toString(accountSequence))),
               "ACCOUNT_REPOSITORY_INSERT",
-              17L,
+              sourceAccountId,
               "ACCOUNT_REPOSITORY_INSERT",
               17L,
               17L);
@@ -389,17 +549,32 @@ class AccountMembershipAuthorityEventProducerCanonicalJoinTest {
     }
 
     private CompositeSnapshot authoritySnapshot() {
-      return authoritySnapshot(1L, 1L);
+      return authoritySnapshot(1L, 1L, 1L, 1L);
     }
 
-    private CompositeSnapshot authoritySnapshot(long fenceValue, long sourceVersion) {
-      IssuanceFence fence = new IssuanceFence(ACCOUNT_UUID, fenceValue, sourceVersion);
+    private CompositeSnapshot authoritySnapshot(
+        long issuerGeneration,
+        long accountGeneration,
+        long tenantGeneration,
+        long membershipGeneration) {
+      IssuanceFence fence = new IssuanceFence(ACCOUNT_UUID, accountGeneration, accountGeneration);
       return new CompositeSnapshot(
-          new ScopeState(AuthorityScope.issuer("firemud-account-service"), 1L, 1L, null),
-          new ScopeState(AuthorityScope.account(ACCOUNT_UUID), 1L, 1L, fence),
-          List.of(new ScopeState(AuthorityScope.tenant(TENANT_UUID), 1L, 1L, null)),
+          new ScopeState(
+              AuthorityScope.issuer("firemud-account-service"),
+              issuerGeneration,
+              issuerGeneration,
+              null),
+          new ScopeState(
+              AuthorityScope.account(ACCOUNT_UUID), accountGeneration, accountGeneration, fence),
           List.of(
-              new ScopeState(AuthorityScope.membership(ACCOUNT_UUID, TENANT_UUID), 1L, 1L, fence)),
+              new ScopeState(
+                  AuthorityScope.tenant(TENANT_UUID), tenantGeneration, tenantGeneration, null)),
+          List.of(
+              new ScopeState(
+                  AuthorityScope.membership(ACCOUNT_UUID, TENANT_UUID),
+                  membershipGeneration,
+                  membershipGeneration,
+                  fence)),
           fence);
     }
 
@@ -446,6 +621,48 @@ class AccountMembershipAuthorityEventProducerCanonicalJoinTest {
           false,
           "PENDING",
           scopeEvidence);
+    }
+
+    private CanonicalJoinOperationEvidence committedOperation(String callerBinding, Event event) {
+      CanonicalJoinOperationEvidence pending = operation(callerBinding);
+      CanonicalJoinTerminalProof proof =
+          new CanonicalJoinTerminalProof(
+              MEMBERSHIP_STREAM,
+              1L,
+              event.eventId(),
+              event.eventDigest(),
+              UUID.nameUUIDFromBytes(("audit:" + REQUEST_ID).getBytes(StandardCharsets.UTF_8)),
+              DIGEST,
+              Instant.parse("2026-10-03T00:00:00Z"),
+              5L,
+              73L,
+              2L,
+              1L);
+      return new CanonicalJoinOperationEvidence(
+          pending.requestId(),
+          pending.privateAccountId(),
+          pending.callerBinding(),
+          pending.scopeTokenHash(),
+          pending.connectScopeDigest(),
+          pending.operationRepresentationVersion(),
+          pending.scopeDigestVersion(),
+          pending.intentDigestVersion(),
+          pending.intentDigest(),
+          pending.entitlementAuthorityAvailability(),
+          pending.allowPublicJoin(),
+          pending.entitlementVersion(),
+          pending.requestDigestVersion(),
+          pending.requestDigest(),
+          pending.lastAttemptAuthorityAvailability(),
+          pending.lastAttemptFailureCode(),
+          pending.callerBoundAuthorityInvalidated(),
+          "COMMITTED",
+          "JOINED",
+          73L,
+          2L,
+          1L,
+          proof,
+          pending.scopeEvidence());
     }
 
     private RoleSnapshot roleSnapshot() {

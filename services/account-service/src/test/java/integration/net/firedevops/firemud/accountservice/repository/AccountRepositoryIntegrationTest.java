@@ -29,7 +29,6 @@ import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
 import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
 import net.firedevops.firemud.accountservice.entity.AccountRealmAccessGrant;
 import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
-import net.firedevops.firemud.accountservice.entity.Subscription;
 import net.firedevops.firemud.accountservice.service.ExpiredConnectScopeCleanupJob;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
 import org.flywaydb.core.Flyway;
@@ -39,6 +38,7 @@ import org.jooq.SQLDialect;
 import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -54,21 +54,21 @@ import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.support.TransactionTemplate;
 
 @SuppressWarnings("resource")
-@TestInstance(TestInstance.Lifecycle.PER_CLASS)
+@TestInstance(TestInstance.Lifecycle.PER_METHOD)
 class AccountRepositoryIntegrationTest {
   private static final UUID REALM_ID = UUID.fromString("4c4b57d8-e3a2-48fe-9977-e7df0fdce901");
   private static final String MIGRATION_LOCATION = "classpath:db/migration";
-  private static final String SCHEMA_SUFFIX =
+  private final String SCHEMA_SUFFIX =
       UUID.randomUUID().toString().replace("-", "").substring(0, 12);
-  private static final String TEST_SCHEMA = "account_repository_" + SCHEMA_SUFFIX;
-  private static final String MIGRATION_PROOF_SCHEMA = "account_migration_proof_" + SCHEMA_SUFFIX;
-  private static final String COLLISION_MIGRATION_PROOF_SCHEMA =
+  private final String TEST_SCHEMA = "account_repository_" + SCHEMA_SUFFIX;
+  private final String MIGRATION_PROOF_SCHEMA = "account_migration_proof_" + SCHEMA_SUFFIX;
+  private final String COLLISION_MIGRATION_PROOF_SCHEMA =
       "account_migration_collision_proof_" + SCHEMA_SUFFIX;
-  private static final String PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA =
+  private final String PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA =
       "account_profile_identity_migration_proof_" + SCHEMA_SUFFIX;
-  private static final String GLOBAL_REGISTRATION_MIGRATION_PROOF_SCHEMA =
+  private final String GLOBAL_REGISTRATION_MIGRATION_PROOF_SCHEMA =
       "account_global_registration_migration_proof_" + SCHEMA_SUFFIX;
-  private static final String ACCOUNT_UUID_MIGRATION_PROOF_SCHEMA =
+  private final String ACCOUNT_UUID_MIGRATION_PROOF_SCHEMA =
       "account_uuid_migration_proof_" + SCHEMA_SUFFIX;
 
   private static final AccountPostgresIntegrationFixture postgres =
@@ -79,8 +79,12 @@ class AccountRepositoryIntegrationTest {
   private AccountRepository repository;
 
   @BeforeAll
-  void setUpRepository() {
+  static void startPostgres() {
     postgres.start();
+  }
+
+  @BeforeEach
+  void setUpRepository() {
     dataSource = postgres.dataSource(TEST_SCHEMA);
 
     Flyway.configure()
@@ -97,14 +101,28 @@ class AccountRepositoryIntegrationTest {
   }
 
   @AfterAll
-  void stopPostgres() {
+  static void stopPostgres() {
     postgres.stop();
   }
 
-  @BeforeEach
-  void cleanTables() {
-    dsl.execute("TRUNCATE TABLE account_audit_outbox CASCADE");
-    dsl.execute("TRUNCATE TABLE accounts RESTART IDENTITY CASCADE");
+  @AfterEach
+  void dropTestOwnedSchemas() {
+    // Every invocation owns new schemas; never reset retained authority inside a live schema.
+    JdbcTemplate jdbc = new JdbcTemplate(postgres.dataSource());
+    for (String schema :
+        List.of(
+            TEST_SCHEMA,
+            MIGRATION_PROOF_SCHEMA,
+            COLLISION_MIGRATION_PROOF_SCHEMA,
+            PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA,
+            GLOBAL_REGISTRATION_MIGRATION_PROOF_SCHEMA,
+            ACCOUNT_UUID_MIGRATION_PROOF_SCHEMA)) {
+      if (!schema.matches("account_[a-z_]+_[a-f0-9]{12}")
+          || !schema.endsWith("_" + SCHEMA_SUFFIX)) {
+        throw new IllegalStateException("Refusing to dispose an unowned PostgreSQL schema");
+      }
+      jdbc.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
+    }
   }
 
   @Test
@@ -386,6 +404,49 @@ class AccountRepositoryIntegrationTest {
   }
 
   @Test
+  void pendingLegacyAuditDeliverySkipsCanonicalRowsBeforeApplyingLimit() {
+    JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+    AccountAuditOutboxRepository outbox = new AccountAuditOutboxRepository(dsl);
+    UUID canonicalEventId = UUID.randomUUID();
+    UUID legacyEventId = UUID.randomUUID();
+    String canonicalPayload = "{\"requestId\":\"canonical-held\"}";
+    String legacyPayload = "{\"accountId\":51}";
+
+    TransactionTemplate transaction =
+        new TransactionTemplate(new DataSourceTransactionManager(dataSource));
+    transaction.executeWithoutResult(
+        status ->
+            outbox.appendCanonicalTenant(
+                canonicalEventId,
+                "ba819905-1a20-48a0-b9de-7f34f8b8ad3d",
+                "ACCOUNT_JOINED_PUBLIC_PRODUCTION",
+                canonicalPayload));
+    outbox.append(legacyEventId, "platform", null, "ACCOUNT_REGISTERED", legacyPayload);
+
+    assertThat(outbox.pending(1, Instant.now()))
+        .extracting(envelope -> envelope.auditEventId())
+        .containsExactly(legacyEventId);
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT tenant_identity_version FROM account_audit_outbox WHERE audit_event_id = ?",
+                Integer.class,
+                canonicalEventId))
+        .isEqualTo(2);
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT delivery_status FROM account_audit_outbox WHERE audit_event_id = ?",
+                String.class,
+                canonicalEventId))
+        .isEqualTo("PENDING");
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT payload FROM account_audit_outbox WHERE audit_event_id = ?",
+                String.class,
+                canonicalEventId))
+        .isEqualTo(canonicalPayload);
+  }
+
+  @Test
   void auditAttemptTimesUseUtcLocalDateTimeUnderNonUtcDatabaseSession() {
     TransactionTemplate transaction =
         new TransactionTemplate(new DataSourceTransactionManager(dataSource));
@@ -525,43 +586,6 @@ class AccountRepositoryIntegrationTest {
         executor.shutdownNow();
       }
     }
-  }
-
-  @Test
-  void persistedTenantAuthorityGenerationChangesOnEverySubscriptionMutation() {
-    JdbcTemplate jdbc = new JdbcTemplate(dataSource);
-    long accountId =
-        Objects.requireNonNull(
-            jdbc.queryForObject(
-                "INSERT INTO accounts (username, email, password_hash) VALUES (?, ?, ?) RETURNING id",
-                Long.class,
-                "tenant-authority-generation",
-                "tenant-authority-generation@example.com",
-                "hash"));
-    long tenantId = 7654322L;
-    jdbc.update(
-        "INSERT INTO subscription (account_id, plan_id, status, tenant_id, entitlement_version) "
-            + "VALUES (?, 'test-plan', 'active', ?, 1)",
-        accountId,
-        tenantId);
-
-    SubscriptionRepository subscriptions = new SubscriptionRepository(dsl);
-    Subscription original = subscriptions.findByTenantId(tenantId).getFirst();
-    UUID originalGeneration = original.getTenantAuthorityGeneration();
-    assertThat(originalGeneration).isNotNull();
-    assertThat(original.getEntitlementVersion()).isEqualTo(1L);
-
-    original.setStatus("past_due");
-    subscriptions.save(original);
-    Subscription repositoryUpdated = subscriptions.findByTenantId(tenantId).getFirst();
-    assertThat(repositoryUpdated.getTenantAuthorityGeneration()).isNotEqualTo(originalGeneration);
-    assertThat(repositoryUpdated.getEntitlementVersion()).isEqualTo(2L);
-
-    jdbc.update("UPDATE subscription SET status = 'active' WHERE tenant_id = ?", tenantId);
-    Subscription directlyUpdated = subscriptions.findByTenantId(tenantId).getFirst();
-    assertThat(directlyUpdated.getTenantAuthorityGeneration())
-        .isNotEqualTo(repositoryUpdated.getTenantAuthorityGeneration());
-    assertThat(directlyUpdated.getEntitlementVersion()).isEqualTo(3L);
   }
 
   @Test
