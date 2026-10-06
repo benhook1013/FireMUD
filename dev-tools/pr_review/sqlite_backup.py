@@ -1015,7 +1015,7 @@ def _owner_matches(owner_text: str, expected_uid: int) -> bool:
 
 def _remove_remote_partial(remote: _RemoteConfig, sftp_binary: str, path: str) -> BackupError | None:
     try:
-        _run_sftp(remote, sftp_binary, f"-rm {_sftp_quote(path)}\n", phase="cleanup")
+        _run_sftp(remote, sftp_binary, f"rm {_sftp_quote(path)}\n", phase="cleanup")
     except BackupError as exc:
         # The primary transfer failure remains authoritative; an inaccessible
         # unique partial path is confined by the already-private directory.

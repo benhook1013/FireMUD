@@ -833,7 +833,7 @@ class SqliteBackupTest(unittest.TestCase):
                     self.assertIsNone(saved["lastSuccess"])
                     self.assertNotIn(malicious, report.read_text())
 
-    def test_cleanup_failure_keeps_original_transfer_failure_and_last_success(self) -> None:
+    def test_cleanup_server_denial_keeps_original_transfer_failure_and_last_success(self) -> None:
         report = self.root / "cleanup-report.json"
         arguments = self._cli_arguments(report)
         with patch("pr_review.sqlite_backup._run_sftp", side_effect=self._fake_sftp), contextlib.redirect_stdout(io.StringIO()):
@@ -844,13 +844,21 @@ class SqliteBackupTest(unittest.TestCase):
             if phase in {"upload", "cleanup"}:
                 return real_run_sftp(remote, binary, batch, phase=phase)
             return self._fake_sftp(remote, binary, batch, phase=phase)
+        def server_denies_cleanup(arguments, *, input, **kwargs):
+            if input.startswith("put "):
+                raise subprocess.TimeoutExpired(["secret argv"], 120, stderr="secret stderr")
+            self.assertTrue(input.lstrip("-").startswith("rm "))
+            # OpenSSH batch mode ignores deletion failure with the '-' prefix.
+            # A plain command must return nonzero for the same server denial.
+            return SimpleNamespace(
+                returncode=0 if input.startswith("-") else 7,
+                stdout="private payload", stderr="secret cleanup permission denied",
+            )
         stderr, stdout = io.StringIO(), io.StringIO()
         with (
             patch("pr_review.sqlite_backup._run_sftp", side_effect=transport),
-            patch("pr_review.sqlite_backup.subprocess.run", side_effect=[
-                subprocess.TimeoutExpired(["secret argv"], 120, stderr="secret stderr"),
-                SimpleNamespace(returncode=7, stdout="private payload", stderr="secret cleanup"),
-            ]), contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(stdout),
+            patch("pr_review.sqlite_backup.subprocess.run", side_effect=server_denies_cleanup),
+            contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(stdout),
         ):
             self.assertEqual(sqlite_backup.main(arguments), 1)
         self.assertIn("BackupError phase=upload failure=timeout", stderr.getvalue())
