@@ -79,11 +79,13 @@ class AccountAuditOutboxRepositoryTest {
     String sql = executedSql.get();
     int where = sql.indexOf("where");
     int orderBy = sql.indexOf("order by");
+    int tenantIdentityFilter = sql.indexOf("tenant_identity_version", where);
     int retryOrder = sql.indexOf("next_attempt_at", orderBy);
     int createdOrder = sql.indexOf("created_at", retryOrder);
     int eventOrder = sql.indexOf("audit_event_id", createdOrder);
     assertThat(sql.substring(where, orderBy))
-        .contains("delivery_status", "next_attempt_at", "<=", "=");
+        .contains("delivery_status", "tenant_identity_version", "next_attempt_at", "<=", "=");
+    assertThat(tenantIdentityFilter).isGreaterThan(where).isLessThan(orderBy);
     assertThat(retryOrder).isGreaterThan(orderBy);
     assertThat(createdOrder).isGreaterThan(retryOrder);
     assertThat(eventOrder).isGreaterThan(createdOrder);

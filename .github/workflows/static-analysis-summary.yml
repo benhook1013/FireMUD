@@ -226,12 +226,12 @@ jobs:
               license: await workflowRunFor("license-scan.yml"),
             };
             let checks = resolveStatuses(await loadChecks(), workflowRuns);
-            for (let attempt = 0; attempt < 30; attempt += 1) {
+            for (let attempt = 0; attempt < 10; attempt += 1) {
               const allCompleted = checks.every(([, result]) => terminalConclusions.has(result));
               if (allCompleted) {
                 break;
               }
-              await new Promise((resolve) => setTimeout(resolve, 10000));
+              await new Promise((resolve) => setTimeout(resolve, 30000));
               workflowRuns = {
                 codeql: await workflowRunFor("codeql.yml"),
                 license: await workflowRunFor("license-scan.yml"),
@@ -304,13 +304,13 @@ jobs:
               return Number(comment.id) < Number(oldest.id) ? comment : oldest;
             }, null);
 
-            if (existing) {
+            if (existing && existing.body !== body) {
               await github.rest.issues.updateComment({
                 ...context.repo,
                 comment_id: existing.id,
                 body,
               });
-            } else {
+            } else if (!existing) {
               await github.rest.issues.createComment({
                 ...context.repo,
                 issue_number: issueNumber,

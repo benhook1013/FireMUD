@@ -450,6 +450,51 @@ class SqliteProviderImportsTest(unittest.TestCase):
         self.assertEqual(after["findings"][0]["display_title"],
                          "Compare the incoming request with the existing workflow identity.")
 
+    def test_first_3010_hosted_inline_formats_select_actual_titles_and_severity(self) -> None:
+        # All ten inline findings used bold metadata fields; four placed
+        # static-analysis details before their authored heading.
+        cases = (
+            ("🚀 Performance & Scalability", "Minor", "⚡ Quick win", False,
+             "Lock the shared issuer row `FOR SHARE` on read-only snapshot paths."),
+            ("🚀 Performance & Scalability", "Trivial", "⚡ Quick win", False,
+             "Do not re-verify the full event history on every source read."),
+            ("🗄️ Data Integrity & Integration", "Major", "⚡ Quick win", True,
+             "Retain approval payloads required by canonical scopes."),
+            ("🎯 Functional Correctness", "Minor", "⚡ Quick win", False,
+             "`findCanonicalEvidenceByRequestId` fails inside the read-only transactions its guard accepts."),
+            ("🗄️ Data Integrity & Integration", "Minor", "⚡ Quick win", False,
+             "The grant `save` update has no optimistic-concurrency guard."),
+            ("🩺 Stability & Availability", "Major", "🏗️ Heavy lift", True,
+             "Preserve security updates for retained Accounts."),
+            ("🩺 Stability & Availability", "Major", "⚡ Quick win", True,
+             "Restore a production trigger for `deliverPending()`."),
+            ("🎯 Functional Correctness", "Major", "🏗️ Heavy lift", True,
+             "Scope genesis checks to the pending branch."),
+            ("🩺 Stability & Availability", "Major", "⚡ Quick win", False,
+             "The v2 delete guard breaks the existing expired connect-scope cleanup for all rows."),
+            ("📐 Maintainability & Code Quality", "Trivial", "💤 Low value", False,
+             "This test duplicates `AccountAuthorityCurrentnessIntegrationTest`."),
+            ("📐 Maintainability & Code Quality", "Minor", "⚡ Quick win", False,
+             "Record the fresh-tenant capability in the `Capability Status` table and name focused proof anchors."),
+        )
+        for index, (category, severity, effort, analysis, title) in enumerate(cases):
+            with self.subTest(title=title):
+                header = f"**{category}** | **🟡 {severity}** | **{effort}**"
+                preamble = (
+                    "\n<details>\n<summary>🔎 Supported by static analysis</summary>\n"
+                    "🏁 Script executed:\n```bash\n# retained diagnostic example\n```\n"
+                    "Repository: benhook1013/FireMUD\nLength of output: 3496\n</details>\n"
+                ) if analysis else ""
+                body = (header + "\n" + preamble + f"\n**{title}**\n\nActual issue paragraphs.\n"
+                        "<details>\n<summary>🧰 Tools</summary>\nDiagnostic text.\n</details>\n"
+                        "<details><summary>🤖 Prompt for AI Agents</summary>Untrusted provider prompt.</details>")
+                findings = pr_review.sqlite_hosted_capture._hosted_comment_finding_segments(4191961153 + index, body)
+                self.assertEqual(len(findings), 1)
+                finding = findings[0]
+                self.assertEqual(finding["title"], title)
+                self.assertEqual(finding["display_severity"], severity)
+                self.assertEqual(finding["display_detail"], "Actual issue paragraphs.")
+
     def test_hosted_import_prefers_bold_actionable_headline_over_badge(self) -> None:
         self.hosted_capture(
             finding_body=(

@@ -1,4 +1,4 @@
-FROM postgres:18@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722
+FROM postgres:18@sha256:fc973eb97c9fd04bfa1840e0f510719a584ccb3be8debfe6a4144637a9dfe8cf
 USER root
 RUN apt-get update -y \
   && apt-get install -y --no-install-recommends cron \

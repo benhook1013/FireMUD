@@ -41,6 +41,7 @@ syntax = "proto3";
 message Session {
   int64 expires_at_ms = 1;
   int64 remaining_ticks = 2;
+  int64 diagnostic_expires_at_epoch_millis = 15;
 }
 """,
                 encoding="utf-8",
@@ -53,6 +54,32 @@ message Session {
                 module.REPO_ROOT = old_repo_root
                 module.PROTO_ROOT = old_proto_root
             self.assertEqual(findings, [])
+
+    def test_rejects_incomplete_or_malformed_epoch_millis_suffixes(self) -> None:
+        module = _load_checker_module()
+        ambiguous_fields = (
+            "diagnostic_expires_at_epoch",
+            "diagnostic_expires_at_millis",
+            "diagnostic_expires_at_epoch_milli",
+            "diagnostic_expires_at_epoch_millis_extra",
+            "expiry",
+            "duration",
+        )
+        with tempfile_path() as tmp_root:
+            proto_root, old_repo_root, old_proto_root = _with_test_roots(module, tmp_root)
+            proto_path = proto_root / "hold.proto"
+            try:
+                for field_name in ambiguous_fields:
+                    with self.subTest(field_name=field_name):
+                        proto_path.write_text(
+                            f"int64 {field_name} = 15;\n", encoding="utf-8"
+                        )
+                        findings = module.validate_file(proto_path)
+                        self.assertEqual(len(findings), 1)
+                        self.assertIn(f"'{field_name}'", findings[0])
+            finally:
+                module.REPO_ROOT = old_repo_root
+                module.PROTO_ROOT = old_proto_root
 
     def test_rejects_ambiguous_time_fields(self) -> None:
         module = _load_checker_module()

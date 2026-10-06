@@ -43,7 +43,8 @@ public class AccountConnectScopeRepository {
           + "WHERE scope.ctid IN ("
           + "  SELECT candidate.ctid "
           + "  FROM account_connect_scope_records candidate "
-          + "  WHERE CASE "
+          + "  WHERE candidate.scope_digest_version = 1 "
+          + "  AND CASE "
           + "    WHEN candidate.connect_scope_expires_at ~ "
           + "      '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$' "
           + "      AND pg_input_is_valid(candidate.connect_scope_expires_at, "
@@ -221,7 +222,7 @@ public class AccountConnectScopeRepository {
   /** Resolves v2 only from a bearer whose exact immutable owner evidence is persisted. */
   @Transactional(propagation = Propagation.MANDATORY)
   public Optional<CanonicalJoinScopeV2> findCanonical(String connectScopeId) {
-    requireOwnerTransaction();
+    requireWritableOwnerTransaction();
     requireCanonicalDependencies();
     Objects.requireNonNull(connectScopeId, "Connect scope bearer is required");
     if (connectScopeId.isBlank()) {

@@ -3,12 +3,15 @@ package net.firedevops.firemud.accountservice.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
@@ -17,6 +20,7 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerati
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.ScopeKind;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.ScopeState;
 import org.jooq.DSLContext;
+import org.jooq.Record;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -201,6 +205,73 @@ class AccountAuthorityGenerationRepositoryTest {
     assertThat(firstSql.get()).contains("FROM accounts").contains("FOR SHARE");
     assertThat(firstBinding.get()).isEqualTo(accountId);
     verify(dsl, times(1)).fetchOne(anyString(), eq(accountId));
+  }
+
+  @Test
+  void issuerReadAndEnrollmentUseSharedGenerationRowLocks() {
+    AtomicReference<String> readSql = new AtomicReference<>();
+    IllegalStateException stopAtIssuerRead = new IllegalStateException("stop at issuer read");
+    doAnswer(
+            invocation -> {
+              readSql.set(invocation.getArgument(0, String.class));
+              throw stopAtIssuerRead;
+            })
+        .when(dsl)
+        .fetchOne(anyString(), eq("ISSUER"), eq("issuer-A"), isNull(), isNull());
+
+    assertThatThrownBy(() -> repository.read(AuthorityScope.issuer("issuer-A")))
+        .isSameAs(stopAtIssuerRead);
+    assertThat(readSql.get()).contains("FOR SHARE").doesNotContain("FOR UPDATE");
+
+    readSql.set(null);
+    assertThatThrownBy(() -> repository.initializeIssuerIfAbsentForSourceEvidence("issuer-A"))
+        .isSameAs(stopAtIssuerRead);
+    assertThat(readSql.get()).contains("FOR SHARE").doesNotContain("FOR UPDATE");
+  }
+
+  @Test
+  void issuerSourceMutationReadsWithExclusiveGenerationRowLock() {
+    AtomicReference<String> readSql = new AtomicReference<>();
+    IllegalStateException stopAtIssuerRead = new IllegalStateException("stop at issuer read");
+    doAnswer(
+            invocation -> {
+              readSql.set(invocation.getArgument(0, String.class));
+              throw stopAtIssuerRead;
+            })
+        .when(dsl)
+        .fetchOne(anyString(), eq("ISSUER"), eq("issuer-A"), isNull(), isNull());
+
+    assertThatThrownBy(
+            () -> repository.readIssuerStateForSourceMutation(AuthorityScope.issuer("issuer-A")))
+        .isSameAs(stopAtIssuerRead);
+
+    assertThat(readSql.get()).contains("FOR UPDATE");
+  }
+
+  @Test
+  void compositeSnapshotSharesIssuerOnlyAfterLockingTheAccountRowFirst() {
+    UUID accountId = UUID.fromString("11111111-1111-4111-8111-111111111111");
+    Record accountRow = mock(Record.class);
+    when(dsl.fetchOne(contains("FROM accounts"), eq(accountId))).thenReturn(accountRow);
+    when(accountRow.get("account_uuid", UUID.class)).thenReturn(accountId);
+    AtomicReference<String> issuerSql = new AtomicReference<>();
+    IllegalStateException stopAtIssuerRead = new IllegalStateException("stop at issuer read");
+    doAnswer(
+            invocation -> {
+              issuerSql.set(invocation.getArgument(0, String.class));
+              throw stopAtIssuerRead;
+            })
+        .when(dsl)
+        .fetchOne(anyString(), eq("ISSUER"), eq("firemud-account-service"), isNull(), isNull());
+
+    assertThatThrownBy(
+            () ->
+                repository.readCompositeSnapshot(
+                    "firemud-account-service", accountId, java.util.List.of(), java.util.List.of()))
+        .isSameAs(stopAtIssuerRead);
+
+    assertThat(issuerSql.get()).contains("FOR SHARE").doesNotContain("FOR UPDATE");
+    verify(dsl, times(1)).fetchOne(contains("FROM accounts"), eq(accountId));
   }
 
   private void assertMandatory(java.lang.reflect.Method method) {

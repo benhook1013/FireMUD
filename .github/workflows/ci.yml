@@ -361,6 +361,7 @@ jobs:
           bash ./dev-tools/tests/workflow-tool-updater-contract.sh
           bash ./dev-tools/tests/publisher-checksum-contract.sh
           bash ./dev-tools/tests/jacoco-combined-report-contract.sh
+          bash ./dev-tools/tests/gradle-proof-tooling-contract.sh
           bash ./dev-tools/tests/pr-review-controller-contract.sh
           bash ./dev-tools/tests/testcontainers-disabled-contract.sh
           bash ./dev-tools/tests/pr-retarget-workflow-contract.sh
@@ -1147,13 +1148,13 @@ jobs:
               return Number(comment.id) < Number(oldest.id) ? comment : oldest;
             }, null);
 
-            if (existing) {
+            if (existing && existing.body !== body) {
               await github.rest.issues.updateComment({
                 ...context.repo,
                 comment_id: existing.id,
                 body
               });
-            } else {
+            } else if (!existing) {
               await github.rest.issues.createComment({
                 ...context.repo,
                 issue_number: context.issue.number,

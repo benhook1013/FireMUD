@@ -4,13 +4,16 @@ import json
 import sqlite3
 import sys
 import tempfile
+import threading
+import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
-from pr_review import sqlite_backup, sqlite_hosted_capture, sqlite_provider_imports, sqlite_review_records
+from pr_review import github, sqlite_backup, sqlite_hosted_capture, sqlite_provider_imports, sqlite_review_records
 from pr_review.evidence import Checkpoint
 from pr_review.sqlite_finding_text import _hosted_aggregate_display_detail, _safe_finding_detail
 from pr_review.sqlite_review_records import (
@@ -23,7 +26,7 @@ from pr_review.sqlite_review_records import (
     _archive_artifact,
 )
 from pr_review.sqlite_store import SQLITE_SCHEMA_VERSION, WRITER_BUILD, SqliteStateStore
-from pr_review.state import FindingRoute, StateError
+from pr_review.state import FindingRoute, StateError, StateLockTimeout
 
 
 class SqliteReviewRecordsTest(unittest.TestCase):
@@ -328,6 +331,44 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         finding = self.records.history(2839)["findings"][0]
         self.assertNotIn("display_title_is_excerpt", finding)
         self.assertEqual(finding["display_detail"], "Distinct issue prose.")
+
+    def test_retained_bold_metadata_title_is_enriched_without_rewriting_evidence(self) -> None:
+        raw_title = "📐 Maintainability & Code Quality** | **🟡 Minor** | **⚡ Quick win"
+        title = "Record the fresh-tenant capability in the `Capability Status` table and name focused proof anchors."
+        self.hosted_display_run(title=raw_title)
+        archive = json.loads(self.hosted_display_archive())
+        archive["comments"][0]["body"] = (
+            "**" + raw_title + "**\n\n"
+            "<details><summary>🔎 Supported by static analysis</summary>\n"
+            "```bash\n# retained analysis\n```\n</details>\n"
+            f"**{title}**\n\nKeep the focused proof references.")
+        self.records.archive_imported_artifacts("display-run", {"hosted_comments": json.dumps(archive)})
+        with sqlite3.connect(self.database) as connection:
+            before = list(connection.iterdump())
+        history = self.records.history(2839)
+        finding = history["findings"][0]
+        self.assertEqual(finding["title"], raw_title)
+        self.assertEqual(finding["display_title"], title)
+        self.assertEqual(finding["display_severity"], "Minor")
+        self.assertEqual(finding["display_detail"], "Keep the focused proof references.")
+        self.assertEqual(self.records.history(2879)["routes"][0]["display_title"], title)
+        self.assertEqual(self.records.history_batch((2839,))[2839], history)
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(list(connection.iterdump()), before)
+
+    def test_bold_security_metadata_keeps_severity_and_selects_remediation_title(self) -> None:
+        self.hosted_display_run(title="Authorization Bypass")
+        archive = json.loads(self.hosted_display_archive())
+        archive["comments"][0]["body"] = (
+            "**🔒 Security & Privacy** | **🛡️ Detected with Advanced Tier** | **🟠 Major** | **🏗️ Heavy lift**\n"
+            "**Authorization Bypass**\n**Exploitability:** Difficult\n**CWE:** CWE-693\n"
+            "**Require durability proof for the existing-marker outcome.**\nKeep the proof.")
+        self.records.archive_imported_artifacts("display-run", {"hosted_comments": json.dumps(archive)})
+        finding = self.records.history(2839)["findings"][0]
+        self.assertEqual(finding["title"], "Authorization Bypass")
+        self.assertEqual(finding["display_title"], "Require durability proof for the existing-marker outcome.")
+        self.assertEqual(finding["display_severity"], "Major")
+        self.assertEqual(finding["display_detail"], "Keep the proof.")
 
     def test_structural_security_classification_override_requires_same_archive(self) -> None:
         self.hosted_display_run(title="Authorization Bypass")
@@ -870,6 +911,142 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             )
         self.assertIsInstance(raised.exception.__cause__, TypeError)
 
+    def test_start_attempt_bounds_preflight_transaction_wait_to_remaining_deadline(self) -> None:
+        self.bootstrap()
+        writer = sqlite3.connect(self.database, isolation_level=None)
+        try:
+            writer.execute("BEGIN IMMEDIATE")
+            started = time.monotonic()
+            with self.assertRaisesRegex(StateLockTimeout, "SQLite review-records transaction lock"):
+                self.records.start_attempt(
+                    attempt_id="attempt-preflight-lock",
+                    source_pr=2890,
+                    channel="hosted",
+                    deadline=started + 0.05,
+                )
+            self.assertLess(time.monotonic() - started, 1)
+            self.assertEqual(self.records.attempt_history(2890), [])
+        finally:
+            writer.rollback()
+            writer.close()
+
+        self.assertEqual(
+            self.records.start_attempt(
+                attempt_id="attempt-preflight-lock",
+                source_pr=2890,
+                channel="hosted",
+            )["state"],
+            "started",
+        )
+
+    def test_compatibility_reads_refresh_remaining_deadline_after_lock_reacquisition(self) -> None:
+        self.bootstrap()
+        started = time.monotonic()
+        deadline = started + 0.4
+        connection = self.records._connect(read_only=True, deadline=deadline)
+        holder_acquired = threading.Event()
+        release_holder = threading.Event()
+        contender: sqlite3.Connection | None = None
+        original_query = self.records._compatibility_query
+
+        def hold_exclusive_lock() -> None:
+            writer = sqlite3.connect(self.database, isolation_level=None)
+            try:
+                writer.execute("BEGIN EXCLUSIVE")
+                holder_acquired.set()
+                release_holder.wait(0.25)
+                writer.rollback()
+            finally:
+                writer.close()
+
+        def reacquire_before_next_read(conn, statement, *, deadline):
+            nonlocal contender
+            if statement.startswith("SELECT name FROM sqlite_master"):
+                contender = sqlite3.connect(self.database, isolation_level=None)
+                contender.execute("BEGIN EXCLUSIVE")
+            return original_query(conn, statement, deadline=deadline)
+
+        try:
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                holder = executor.submit(hold_exclusive_lock)
+                self.assertTrue(holder_acquired.wait(1))
+                with (
+                    patch.object(self.records, "_compatibility_query", side_effect=reacquire_before_next_read),
+                    self.assertRaisesRegex(StateLockTimeout, "SQLite review-records deadline"),
+                ):
+                    self.records._require_compatible(connection, deadline=deadline)
+                self.assertLess(time.monotonic() - started, 0.5)
+                release_holder.set()
+                holder.result(timeout=1)
+        finally:
+            release_holder.set()
+            if contender is not None:
+                contender.rollback()
+                contender.close()
+            connection.close()
+
+    def test_connection_setup_failure_closes_connection_and_preserves_original_error(self) -> None:
+        class TrackingConnection:
+            def __init__(self) -> None:
+                self.connection = sqlite3.connect(":memory:")
+                self.closed = False
+
+            def execute(self, statement: str):
+                return self.connection.execute(statement)
+
+            def close(self) -> None:
+                self.closed = True
+                self.connection.close()
+
+        connection = TrackingConnection()
+        setup_error = RuntimeError("injected connection setup failure")
+        with (
+            patch.object(sqlite_review_records.sqlite3, "connect", return_value=connection),
+            patch.object(self.records, "_set_busy_timeout", side_effect=setup_error),
+            self.assertRaisesRegex(RuntimeError, "injected connection setup failure") as raised,
+        ):
+            self.records._connect(read_only=True, deadline=time.monotonic() + 1)
+
+        self.assertIs(raised.exception, setup_error)
+        self.assertTrue(connection.closed)
+
+    def test_unparameterized_record_operations_inherit_only_an_active_hosted_budget(self) -> None:
+        self.bootstrap()
+        writer = sqlite3.connect(self.database, isolation_level=None)
+        try:
+            writer.execute("BEGIN IMMEDIATE")
+            started = time.monotonic()
+            with (
+                github.activate_hosted_preflight_budget(timeout_seconds=0.05) as budget,
+                self.assertRaises(github.HostedPreflightDeadlineExceeded),
+            ):
+                def register_attempt_in_worker():
+                    with github.bind_hosted_preflight_budget(budget):
+                        self.records.start_attempt(
+                            attempt_id="attempt-inherited-hosted-budget",
+                            source_pr=2890,
+                            channel="hosted",
+                        )
+
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    pool.submit(register_attempt_in_worker).result()
+            self.assertLess(time.monotonic() - started, 1)
+            self.assertIsNone(github.active_hosted_preflight_budget())
+        finally:
+            writer.rollback()
+            writer.close()
+
+        bounded_records = SqliteReviewRecords(self.database, timeout=0.05)
+        with sqlite3.connect(self.database, isolation_level=None) as writer:
+            writer.execute("BEGIN EXCLUSIVE")
+            started = time.monotonic()
+            with self.assertRaisesRegex(ReviewRecordsError, "SQLite failure in attempt_history"):
+                bounded_records.attempt_history(2890)
+            self.assertLess(time.monotonic() - started, 1)
+            writer.rollback()
+
+        self.assertEqual(self.records.attempt_history(2890), [])
+
     def test_history_validates_attempt_metadata_once_as_an_object(self) -> None:
         self.bootstrap()
         self.records.start_attempt(attempt_id="attempt-corrupt-metadata", source_pr=2890, channel="cli")
@@ -1282,6 +1459,129 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         self.assertEqual(len(recovered["historical_gap_artifacts"]), 1)
         with self.assertRaisesRegex(ReviewRecordsError, "attributed provider origin"):
             self.records.record_historical_gap(**gap)
+
+    def subagent_correction_run(self, run_id="subagent-correction", decision="rejected", channel="subagent"):
+        self.bootstrap()
+        if channel != "manual":
+            self.records.start_attempt(
+                attempt_id=run_id, source_pr=2890, channel=channel,
+                metadata={"model": "gpt-test-model", "reviewer": "independent reviewer", "scope": "narrow"},
+            )
+        self.records.import_completed_run(
+            run_id=run_id, source_pr=2890, channel=channel,
+            findings=(self.observation("implementation-handoff", decision,
+                                       target_pr=2891 if decision == "routed" else None),),
+            source_decisions=({"source_finding_key": "implementation-handoff", "decision_id": run_id + "-decision",
+                               "decision": decision, "actor": "reviewer", "reason": "Original recording",
+                               "target_pr": 2891 if decision == "routed" else None},),
+        )
+        if channel != "manual":
+            self.records.finish_attempt(run_id, state="completed")
+            self.records.link_attempt_run(run_id, run_id)
+
+    def test_subagent_non_finding_correction_retains_original_and_effective_counts(self) -> None:
+        self.subagent_correction_run()
+        before = self.records.history(2890)
+        with sqlite3.connect(self.database) as connection:
+            payload = connection.execute("SELECT import_payload_json FROM review_runs").fetchone()[0]
+            state = connection.execute("SELECT state_json FROM review_state").fetchone()[0]
+        result = self.records.correct_subagent_record(
+            "subagent-correction", "implementation-handoff", actor="root", reason="Implementation handoff; zero discovery findings"
+        )
+        self.assertEqual(result["counts"], {"found": 0, "accepted": 0, "routed": 0})
+        self.assertEqual(result["original_counts"], {"found": 1, "accepted": 0, "routed": 0})
+        self.assertFalse(result["idempotent_replay"])
+        after = self.records.history(2890)
+        self.assertEqual(after["findings"], [])
+        self.assertEqual(after["decisions"], before["decisions"])
+        self.assertEqual(after["attempts"], before["attempts"])
+        self.assertEqual(after["runs"][0]["finalized_at"], before["runs"][0]["finalized_at"])
+        self.assertEqual(after["record_corrections"][0]["original_observation"], before["findings"][0])
+        self.assertEqual(self.records.history_batch((2890,))[2890], after)
+        self.assertEqual(self.records.history(2890, include_display=False), after)
+        self.assertEqual(self.records.finalize_run("subagent-correction")["counts"], result["counts"])
+        replay = self.records.correct_subagent_record(
+            "subagent-correction", "implementation-handoff", actor="root", reason="Implementation handoff; zero discovery findings"
+        )
+        self.assertTrue(replay["idempotent_replay"])
+        self.assertEqual(self.records.history(2890), after)
+        with self.assertRaisesRegex(ReviewRecordsError, "different provenance"):
+            self.records.correct_subagent_record("subagent-correction", "implementation-handoff", actor="other", reason="Other reason")
+        with self.assertRaisesRegex(ReviewRecordsError, "non-finding note"):
+            self.records.correct_source_decision(
+                "subagent-correction", "implementation-handoff", supersedes_id="subagent-correction-decision",
+                correction_id="later-acceptance", decision="accepted", actor="root", reason="Must not hide an obligation",
+            )
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(connection.execute("SELECT import_payload_json FROM review_runs").fetchone()[0], payload)
+            self.assertEqual(connection.execute("SELECT state_json FROM review_state").fetchone()[0], state)
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM finding_observations").fetchone()[0], 1)
+            self.assertEqual(connection.execute("SELECT found_count FROM review_runs").fetchone()[0], 1)
+
+    def test_uncorrected_history_adds_no_per_run_correction_queries(self) -> None:
+        self.subagent_correction_run()
+        self.subagent_correction_run("provider-run", channel="hosted")
+        with patch.object(self.records, "_subagent_record_corrections") as corrections:
+            self.records.history(2890)
+            self.records.history_batch((2890,))
+            corrections.assert_not_called()
+
+    def test_subagent_non_finding_correction_refuses_provider_and_owned_findings(self) -> None:
+        for channel, decision in (("hosted", "rejected"), ("cli", "rejected"), ("manual", "rejected"),
+                                  ("subagent", "accepted"), ("subagent", "routed")):
+            run_id = channel + "-" + decision
+            self.subagent_correction_run(run_id, decision, channel)
+            with self.subTest(channel=channel, decision=decision):
+                with sqlite3.connect(self.database) as connection:
+                    before = list(connection.iterdump())
+                with self.assertRaises(ReviewRecordsError):
+                    self.records.correct_subagent_record(run_id, "implementation-handoff", actor="root", reason="Not a discovery finding")
+                with sqlite3.connect(self.database) as connection:
+                    self.assertEqual(list(connection.iterdump()), before)
+
+    def test_subagent_non_finding_correction_refuses_unresolved_unlinked_and_fix_associations(self) -> None:
+        self.subagent_correction_run(decision="accepted")
+        self.records.record_source_resolution(
+            "subagent-correction", "implementation-handoff", source_pr=2890, resolution_id="original-fix",
+            fix_sha="a" * 40, actor="root", proof_note="Published proof",
+        )
+        # Even inconsistent old/private writes must never hide retained fix evidence.
+        with sqlite3.connect(self.database) as connection:
+            connection.execute("UPDATE finding_observations SET disposition = 'rejected'")
+            connection.execute("UPDATE decisions SET decision = 'rejected'")
+        with self.assertRaisesRegex(ReviewRecordsError, "fix evidence"):
+            self.records.correct_subagent_record("subagent-correction", "implementation-handoff", actor="root", reason="Not a finding")
+        self.subagent_correction_run("unlinked")
+        with sqlite3.connect(self.database) as connection:
+            connection.execute("UPDATE review_attempts SET run_id = NULL WHERE attempt_id = 'unlinked'")
+        with self.assertRaisesRegex(ReviewRecordsError, "linked finalized"):
+            self.records.correct_subagent_record("unlinked", "implementation-handoff", actor="root", reason="Not a finding")
+        self.subagent_correction_run("unresolved")
+        with sqlite3.connect(self.database) as connection:
+            connection.execute("UPDATE finding_observations SET disposition = 'unresolved' WHERE run_id = 'unresolved'")
+        with self.assertRaisesRegex(ReviewRecordsError, "rejected subagent"):
+            self.records.correct_subagent_record("unresolved", "implementation-handoff", actor="root", reason="Not a finding")
+        self.subagent_correction_run("unfinished")
+        with sqlite3.connect(self.database) as connection:
+            connection.execute("UPDATE review_runs SET finalized = 0, finalized_at = NULL WHERE run_id = 'unfinished'")
+        with self.assertRaisesRegex(ReviewRecordsError, "linked finalized"):
+            self.records.correct_subagent_record("unfinished", "implementation-handoff", actor="root", reason="Not a finding")
+
+    def test_malformed_or_changed_subagent_correction_fails_closed(self) -> None:
+        self.subagent_correction_run()
+        self.records.correct_subagent_record("subagent-correction", "implementation-handoff", actor="root", reason="Not a finding")
+        with sqlite3.connect(self.database) as connection:
+            metadata = json.loads(connection.execute("SELECT metadata_json FROM review_attempts").fetchone()[0])
+            metadata["record_corrections"][0]["corrected_at"] = None
+            connection.execute("UPDATE review_attempts SET metadata_json = ?", (json.dumps(metadata),))
+        with self.assertRaisesRegex(ReviewRecordsError, "correction time"):
+            self.records.history(2890)
+        with sqlite3.connect(self.database) as connection:
+            metadata["record_corrections"][0]["corrected_at"] = "2026-10-06T00:00:00Z"
+            connection.execute("UPDATE review_attempts SET metadata_json = ?", (json.dumps(metadata),))
+            connection.execute("UPDATE finding_observations SET disposition = 'accepted'")
+        with self.assertRaisesRegex(ReviewRecordsError, "rejected subagent"):
+            self.records.history(2890)
 
     def test_cli_decision_correction_is_append_only_and_exact_prior(self) -> None:
         self.bootstrap()

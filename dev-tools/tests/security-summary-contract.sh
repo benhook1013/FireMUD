@@ -58,6 +58,7 @@ const script = fs.readFileSync(process.argv[2], "utf8");
 const calls = { paginate: [], deleted: [], updated: [], created: [] };
 let currentPullRequest;
 let deleteStatus = null;
+let existingBody = "### Security Summary\nstale";
 const commentsList = async () => undefined;
 const github = {
   rest: {
@@ -94,7 +95,7 @@ const github = {
       {
         id: 10,
         user: { login: "github-actions[bot]" },
-        body: "### Security Summary\nstale",
+        body: existingBody,
         created_at: "2026-09-19T00:00:00Z",
         updated_at: "2026-09-21T00:00:00Z",
       },
@@ -139,6 +140,13 @@ run(github, context, core).then(async () => {
   if (calls.updated.length !== 1 || calls.updated[0].comment_id !== 10) throw new Error("oldest bot summary was not updated");
   if (calls.deleted.length !== 1 || calls.deleted[0] !== 11) throw new Error("only later bot summary should be deleted");
   if (calls.created.length !== 0) throw new Error("existing bot summary should be updated");
+
+  existingBody = calls.updated[0].body;
+  resetCalls();
+  await run(github, context, core);
+  if (calls.updated.length || calls.created.length) throw new Error("identical security summaries must not write comments");
+  if (calls.deleted.length !== 1 || calls.deleted[0] !== 11) throw new Error("unchanged security summaries must still delete duplicates");
+  existingBody = "### Security Summary\nstale";
 
   resetCalls();
   currentPullRequest.head.sha = "c".repeat(40);

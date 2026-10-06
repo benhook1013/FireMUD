@@ -564,6 +564,148 @@ class RetainedActorIdentityIntegrationTest {
   }
 
   @Test
+  void destinationOnlyQuarantinedAuditBlocksCleanupWithoutRuntimeRows() {
+    String auditOnlyInstance = "GI-RETAINED-AUDIT-ONLY";
+    long quarantinedActorId =
+        insertActor(
+            "legacy audit destination",
+            UUID.fromString("42000000-0000-4000-8000-000000000001"),
+            null,
+            null,
+            null,
+            null,
+            "shared-live",
+            "QUARANTINED",
+            "OWNER_PROVENANCE_MISSING",
+            ACCOUNT_ID,
+            TENANT_ID);
+    jdbcTemplate.update(
+        "INSERT INTO item_transfer_audits "
+            + "(id, tenant_id, item_id, quantity, verb, effect_id, correlation_key, source_holder_kind, source_game_instance_id, destination_holder_kind, destination_character_id, destination_game_instance_id) "
+            + "VALUES (3601, ?, 3001, 1, 'TAKE', 'effect-audit-only-quarantined', 'corr-audit-only-quarantined', 'ROOM', ?, 'CHARACTER', ?, ?)",
+        TENANT_ID,
+        auditOnlyInstance,
+        quarantinedActorId,
+        auditOnlyInstance);
+
+    assertNoRuntimeRowsForInstance(auditOnlyInstance);
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM item_transfer_audits WHERE id = 3601 AND actor_character_id IS NULL AND source_character_id IS NULL AND destination_character_id = ?",
+                Integer.class,
+                quarantinedActorId))
+        .isEqualTo(1);
+    assertThat(
+            quarantinedActorRetentionRepository.hasUnclassifiedOrQuarantinedRuntimeEvidence(
+                TENANT_ID, auditOnlyInstance))
+        .isTrue();
+    assertThatThrownBy(
+            () ->
+                runtimeInstanceCleanupService.cleanupRuntimeInstance(
+                    TENANT_ID, auditOnlyInstance, "termination-audit-only-quarantined"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("ENTITY_UNCLASSIFIED_OR_QUARANTINED_EVIDENCE_BLOCKS_CLEANUP");
+
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM item_transfer_audits WHERE id = 3601 AND tenant_id = ? AND correlation_key = 'corr-audit-only-quarantined' AND destination_character_id = ?",
+                Integer.class,
+                TENANT_ID,
+                quarantinedActorId))
+        .isEqualTo(1);
+    assertNoRuntimeRowsForInstance(auditOnlyInstance);
+  }
+
+  @Test
+  void destinationOnlyOwnerResolvedAuditDoesNotBlockCleanupWithoutRuntimeRows() {
+    String auditOnlyInstance = "GI-RETAINED-AUDIT-OWNER-RESOLVED";
+    insertNamespace(
+        UUID.fromString("43000000-0000-4000-8000-000000000003"),
+        UUID.fromString("43000000-0000-4000-8000-000000000004"),
+        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+    long ownerResolvedActorId =
+        insertActor(
+            "owner-resolved audit destination fixture",
+            UUID.fromString("43000000-0000-4000-8000-000000000001"),
+            UUID.fromString("43000000-0000-4000-8000-000000000002"),
+            UUID.fromString("43000000-0000-4000-8000-000000000003"),
+            UUID.fromString("43000000-0000-4000-8000-000000000004"),
+            PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+            "shared-live",
+            "OWNER_RESOLVED",
+            null,
+            ACCOUNT_ID,
+            TENANT_ID);
+    jdbcTemplate.update(
+        "INSERT INTO item_transfer_audits "
+            + "(id, tenant_id, item_id, quantity, verb, effect_id, correlation_key, source_holder_kind, source_game_instance_id, destination_holder_kind, destination_character_id, destination_game_instance_id) "
+            + "VALUES (3602, ?, 3001, 1, 'TAKE', 'effect-audit-only-owner-resolved', 'corr-audit-only-owner-resolved', 'ROOM', ?, 'CHARACTER', ?, ?)",
+        TENANT_ID,
+        auditOnlyInstance,
+        ownerResolvedActorId,
+        auditOnlyInstance);
+
+    assertNoRuntimeRowsForInstance(auditOnlyInstance);
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM item_transfer_audits WHERE id = 3602 AND actor_character_id IS NULL AND source_character_id IS NULL AND destination_character_id = ?",
+                Integer.class,
+                ownerResolvedActorId))
+        .isEqualTo(1);
+    assertThat(
+            quarantinedActorRetentionRepository.hasUnclassifiedOrQuarantinedRuntimeEvidence(
+                TENANT_ID, auditOnlyInstance))
+        .isFalse();
+    var result =
+        runtimeInstanceCleanupService.cleanupRuntimeInstance(
+            TENANT_ID, auditOnlyInstance, "termination-audit-only-owner-resolved");
+    assertThat(result).isNotNull();
+    assertThat(result.deletedItemInstances()).isZero();
+    assertThat(result.deletedContainerInstances()).isZero();
+    assertThat(result.deletedItemStacks()).isZero();
+    assertThat(result.deletedRoomGroundEntries()).isZero();
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM item_transfer_audits WHERE id = 3602 AND tenant_id = ? AND correlation_key = 'corr-audit-only-owner-resolved' AND destination_character_id = ?",
+                Integer.class,
+                TENANT_ID,
+                ownerResolvedActorId))
+        .isEqualTo(1);
+    assertNoRuntimeRowsForInstance(auditOnlyInstance);
+  }
+
+  private void assertNoRuntimeRowsForInstance(String gameInstanceId) {
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM item_instances WHERE tenant_id = ? AND game_instance_id = ?",
+                Integer.class,
+                TENANT_ID,
+                gameInstanceId))
+        .isZero();
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM container_instances WHERE tenant_id = ? AND game_instance_id = ?",
+                Integer.class,
+                TENANT_ID,
+                gameInstanceId))
+        .isZero();
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM item_stacks WHERE tenant_id = ? AND game_instance_id = ?",
+                Integer.class,
+                TENANT_ID,
+                gameInstanceId))
+        .isZero();
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM room_ground_inventory WHERE tenant_id = ? AND game_instance_id = ?",
+                Integer.class,
+                TENANT_ID,
+                gameInstanceId))
+        .isZero();
+  }
+
+  @Test
   void unresolvedRoomGroundIsHeldWithoutInferringActorOrS3Mapping() {
     insertActor(
         "legacy shared actor",

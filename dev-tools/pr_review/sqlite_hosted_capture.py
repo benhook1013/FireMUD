@@ -39,6 +39,7 @@ def start_hosted_attempt(
     candidate_sha: str,
     started_at: str | None = None,
     metadata: Mapping[str, Any] | None = None,
+    deadline: float | None = None,
 ) -> dict[str, Any]:
     """Record the pre-request boundary; the caller remains responsible for POST."""
 
@@ -54,6 +55,7 @@ def start_hosted_attempt(
         candidate_sha=candidate_sha,
         started_at=started_at,
         metadata=attempt_metadata,
+        deadline=deadline,
     )
 
 

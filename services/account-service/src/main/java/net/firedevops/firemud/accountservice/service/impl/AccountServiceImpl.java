@@ -2248,7 +2248,7 @@ public class AccountServiceImpl implements AccountService {
   @Transactional
   @Timed(value = "account.delete")
   public void deleteAccount(Long accountId) {
-    Account account = requireAccount(accountId);
+    requireAccount(accountId);
     if (accountJoinOperationRepository.hasRetainedOperation(accountId)) {
       throw new AccountLifecycleException(
           "ACCOUNT_DELETE_JOIN_RECEIPT_RETAINED",
@@ -2263,15 +2263,10 @@ public class AccountServiceImpl implements AccountService {
           "ACCOUNT_DELETE_ACTIVE_BILLING_OWNER",
           "Account has nonterminal tenant subscriptions; cancel or end subscriptions first");
     }
-    emailVerificationTokenRepository.deleteByAccountId(accountId);
-    passwordResetTokenRepository.deleteByAccountId(accountId);
-    accountRealmAccessGrantRepository.deleteByAccountId(accountId);
-    externalAccountRepository.deleteByAccountId(accountId);
-    paymentTransactionRepository.deleteByAccountId(accountId);
-    subscriptionRepository.deleteByAccountId(accountId);
-    profileRepository.deleteByAccountId(accountId);
-    accountTenantMembershipRepository.deleteByAccountId(accountId);
-    accountRepository.delete(account);
+    throw new AccountLifecycleException(
+        "ACCOUNT_DELETE_UNAVAILABLE",
+        "Account deletion is unavailable until retained-data lifecycle and "
+            + "deletion reconciliation are implemented");
   }
 
   private boolean isNonterminalSubscription(

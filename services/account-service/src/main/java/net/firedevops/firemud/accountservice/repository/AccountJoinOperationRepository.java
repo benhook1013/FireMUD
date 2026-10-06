@@ -201,7 +201,7 @@ public class AccountJoinOperationRepository {
   @Transactional(propagation = Propagation.MANDATORY)
   public Optional<CanonicalJoinOperationEvidence> findCanonicalEvidenceByRequestId(
       String requestId) {
-    requireOwnerTransaction();
+    requireWritableOwnerTransaction();
     requireRequestId(requestId);
     requireCanonicalDependencies();
     return readCanonicalEvidenceByRequestId(requestId, false);

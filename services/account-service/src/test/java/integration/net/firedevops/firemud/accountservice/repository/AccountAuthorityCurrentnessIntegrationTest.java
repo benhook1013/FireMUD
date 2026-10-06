@@ -3,9 +3,15 @@ package integration.net.firedevops.firemud.accountservice.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountRealmAccessGrant;
 import net.firedevops.firemud.accountservice.entity.Subscription;
@@ -133,5 +139,122 @@ class AccountAuthorityCurrentnessIntegrationTest {
             grants.existsByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
                 accountId, tenantId, "world", "private"))
         .isFalse();
+  }
+
+  @Test
+  void concurrentRealmGrantWritersCannotOverwriteAnObservedGeneration() throws Exception {
+    String schema = "account_grant_cas_" + UUID.randomUUID().toString().replace("-", "");
+    var dataSource = postgres.dataSource(schema);
+    Flyway.configure()
+        .dataSource(dataSource)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .placeholders(Map.of("serviceSchema", schema))
+        .locations("classpath:db/migration")
+        .load()
+        .migrate();
+    JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+    DSLContext dsl =
+        DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+    Long accountId =
+        Objects.requireNonNull(
+            jdbc.queryForObject(
+                "INSERT INTO accounts (username, email, password_hash) VALUES (?, ?, ?) RETURNING id",
+                Long.class,
+                "grant-cas-" + UUID.randomUUID(),
+                "grant-cas-" + UUID.randomUUID() + "@example.test",
+                "test-hash"));
+    Account account = new Account();
+    account.setId(accountId);
+    AccountRealmAccessGrantRepository grants = new AccountRealmAccessGrantRepository(dsl);
+    AccountRealmAccessGrant initial = new AccountRealmAccessGrant();
+    initial.setAccount(account);
+    initial.setTenantId(7_654_329L);
+    initial.setWorldSlug("world");
+    initial.setRealmSlug("cas");
+    initial.setGrantVersion(1L);
+    initial.setGranted(true);
+    initial.setGrantedBy("initial");
+    initial.setGrantReason("initial grant");
+    initial.setCreatedAt(Instant.now());
+    initial.setUpdatedAt(Instant.now());
+    grants.save(initial);
+    UUID originalGeneration = initial.getGrantAuthorityGeneration();
+
+    AccountRealmAccessGrant firstWriter =
+        grants
+            .findByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
+                accountId, 7_654_329L, "world", "cas")
+            .orElseThrow();
+    AccountRealmAccessGrant secondWriter =
+        grants
+            .findByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
+                accountId, 7_654_329L, "world", "cas")
+            .orElseThrow();
+    assertThat(firstWriter.getGrantAuthorityGeneration()).isEqualTo(originalGeneration);
+    assertThat(secondWriter.getGrantAuthorityGeneration()).isEqualTo(originalGeneration);
+    firstWriter.setGrantVersion(2L);
+    firstWriter.setGranted(false);
+    firstWriter.setGrantedBy("writer-a");
+    firstWriter.setGrantReason("writer A update");
+    secondWriter.setGrantVersion(2L);
+    secondWriter.setGranted(false);
+    secondWriter.setGrantedBy("writer-b");
+    secondWriter.setGrantReason("writer B update");
+
+    TransactionTemplate transaction =
+        new TransactionTemplate(new DataSourceTransactionManager(dataSource));
+    CountDownLatch ready = new CountDownLatch(2);
+    CountDownLatch release = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      Future<String> first =
+          executor.submit(() -> updateGrant(transaction, grants, firstWriter, ready, release));
+      Future<String> second =
+          executor.submit(() -> updateGrant(transaction, grants, secondWriter, ready, release));
+      assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+      release.countDown();
+      assertThat(List.of(first.get(5, TimeUnit.SECONDS), second.get(5, TimeUnit.SECONDS)))
+          .containsExactlyInAnyOrder("committed", "stale");
+    } finally {
+      release.countDown();
+      executor.shutdownNow();
+    }
+
+    AccountRealmAccessGrant persisted =
+        grants
+            .findByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
+                accountId, 7_654_329L, "world", "cas")
+            .orElseThrow();
+    assertThat(persisted.getGrantAuthorityGeneration()).isNotEqualTo(originalGeneration);
+    assertThat(persisted.getGrantVersion()).isEqualTo(2L);
+    assertThat(persisted.isGranted()).isFalse();
+    assertThat(persisted.getGrantedBy()).isIn("writer-a", "writer-b");
+    assertThat(persisted.getGrantReason())
+        .isEqualTo(
+            "writer-a".equals(persisted.getGrantedBy()) ? "writer A update" : "writer B update");
+  }
+
+  private static String updateGrant(
+      TransactionTemplate transaction,
+      AccountRealmAccessGrantRepository grants,
+      AccountRealmAccessGrant grant,
+      CountDownLatch ready,
+      CountDownLatch release)
+      throws InterruptedException {
+    ready.countDown();
+    if (!release.await(5, TimeUnit.SECONDS)) {
+      throw new IllegalStateException("Timed out waiting to race realm-grant writes");
+    }
+    try {
+      transaction.executeWithoutResult(status -> grants.save(grant));
+      return "committed";
+    } catch (IllegalStateException failure) {
+      if (("Failed to update account_realm_access_grant id=" + grant.getId())
+          .equals(failure.getMessage())) {
+        return "stale";
+      }
+      throw failure;
+    }
   }
 }

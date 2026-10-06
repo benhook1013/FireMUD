@@ -83,6 +83,11 @@ public class AccountRealmAccessGrantRepository {
           inserted.get(ACCOUNT_REALM_ACCESS_GRANT.GRANT_AUTHORITY_GENERATION));
       return entity;
     }
+    UUID observedGeneration = entity.getGrantAuthorityGeneration();
+    if (observedGeneration == null) {
+      throw new IllegalStateException(
+          "Realm grant update requires an observed grant-authority generation");
+    }
     var updated =
         dsl.update(ACCOUNT_REALM_ACCESS_GRANT)
             .set(ACCOUNT_REALM_ACCESS_GRANT.ACCOUNT_ID, accountId)
@@ -99,7 +104,13 @@ public class AccountRealmAccessGrantRepository {
             .set(
                 ACCOUNT_REALM_ACCESS_GRANT.UPDATED_AT,
                 JooqAccountRepositorySupport.toOffsetDateTime(entity.getUpdatedAt()))
-            .where(ACCOUNT_REALM_ACCESS_GRANT.ID.eq(entity.getId()))
+            .where(
+                ACCOUNT_REALM_ACCESS_GRANT
+                    .ID
+                    .eq(entity.getId())
+                    .and(
+                        ACCOUNT_REALM_ACCESS_GRANT.GRANT_AUTHORITY_GENERATION.eq(
+                            observedGeneration)))
             .returningResult(
                 ACCOUNT_REALM_ACCESS_GRANT.GRANT_VERSION,
                 ACCOUNT_REALM_ACCESS_GRANT.GRANT_AUTHORITY_GENERATION)

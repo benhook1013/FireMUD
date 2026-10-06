@@ -124,7 +124,7 @@ public class AccountRepository {
             .set(ACCOUNTS.ROLE, entity.getRole())
             .set(ACCOUNTS.EMAIL_VERIFIED, entity.isEmailVerified())
             .set(ACCOUNTS.LOGIN_AUTH_MODES, normalizedLoginAuthModes(entity))
-            .set(ACCOUNTS.LIFECYCLE_STATE, entity.getLifecycleState().storageValue())
+            .set(ACCOUNTS.LIFECYCLE_STATE, before.getLifecycleState())
             .where(ACCOUNTS.ID.eq(entity.getId()));
     if (expectedUuid != null) {
       update = update.and(ACCOUNTS.ACCOUNT_UUID.eq(expectedUuid));
@@ -146,6 +146,7 @@ public class AccountRepository {
             ? AccountIdentityProvenance.fromStorageValue(updated.getAccountUuidProvenance())
             : expectedProvenance);
     copyIdentityToEntity(entity, updated);
+    entity.setLifecycleState(AccountLifecycleState.fromStorageValue(updated.getLifecycleState()));
     AccountAuthorityState afterState = authorityState(updated);
     sourceEvidence.recordAccountUpdate(
         new AccountUpdateEvidence(

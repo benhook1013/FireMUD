@@ -17,16 +17,18 @@ import dataclasses
 import functools
 import hashlib
 import json
+import math
 import os
 import re
 import sqlite3
+import time
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
 from .sqlite_store import SQLITE_SCHEMA_VERSION, WRITER_BUILD
-from .state import FindingRoute, ReviewState
+from .state import FindingRoute, ReviewState, StateLockTimeout
 
 ReviewChannel = Literal["hosted", "cli", "manual", "subagent"]
 FindingDisposition = Literal["accepted", "routed", "rejected", "unresolved"]
@@ -99,6 +101,8 @@ def _translate_database_errors(method):
         except ReviewRecordsError:
             raise
         except sqlite3.DatabaseError as exc:
+            if args and isinstance(args[0], SqliteReviewRecords):
+                args[0]._raise_hosted_deadline_if_expired(kwargs.get("deadline"), error=exc)
             raise ReviewRecordsError(f"SQLite failure in {method.__name__}") from exc
 
     return wrapped
@@ -517,6 +521,7 @@ class SqliteReviewRecords:
         candidate_sha: str | None = None,
         started_at: str | None = None,
         metadata: Mapping[str, Any] | None = None,
+        deadline: float | None = None,
     ) -> dict[str, Any]:
         """Record an attempt before a provider request or independent pass starts."""
 
@@ -541,7 +546,7 @@ class SqliteReviewRecords:
         metadata_json, _, redactions = _archive_artifact("metadata", serialized_metadata)
         if redactions:
             raise ReviewRecordsError("attempt metadata contains credential-shaped material")
-        with self._write_connection() as connection:
+        with self._write_connection(deadline=deadline) as connection:
             existing = connection.execute(
                 "SELECT source_pr, channel, candidate_sha, state, started_at, metadata_json "
                 "FROM review_attempts WHERE attempt_id = ?",
@@ -578,6 +583,7 @@ class SqliteReviewRecords:
         checkpoint_id: str | None = None,
         diagnostic: str = "",
         artifacts: Mapping[str, str] | None = None,
+        deadline: float | None = None,
         _connection: sqlite3.Connection | None = None,
     ) -> dict[str, Any]:
         """Finish an attempt and archive its evidence in one transaction."""
@@ -601,7 +607,11 @@ class SqliteReviewRecords:
         trigger_id, provider_review_id, checkpoint_id = identifiers
         diagnostic = _bounded_text(diagnostic, "attempt diagnostic", maximum=1000, allow_empty=True)
         archived = {kind: _archive_artifact(kind, content) for kind, content in (artifacts or {}).items()}
-        with self._write_connection() if _connection is None else contextlib.nullcontext(_connection) as connection:
+        with (
+            self._write_connection(deadline=deadline)
+            if _connection is None
+            else contextlib.nullcontext(_connection)
+        ) as connection:
             existing = connection.execute(
                 "SELECT state, finished_at, duration_seconds, exit_status, trigger_id, provider_review_id, "
                 "checkpoint_id, diagnostic FROM review_attempts WHERE attempt_id = ?",
@@ -649,19 +659,23 @@ class SqliteReviewRecords:
         return {"attempt_id": attempt_id, "state": state, "idempotent_replay": False}
 
     @_translate_database_errors
-    def attempt_history(self, pr: int) -> list[dict[str, Any]]:
+    def attempt_history(self, pr: int, *, deadline: float | None = None) -> list[dict[str, Any]]:
         """Return bounded metadata for all attempts on one PR, without private artifacts."""
 
         pr = _positive_pr(pr)
         self._require_regular_database()
-        with contextlib.closing(self._connect(read_only=True)) as connection:
-            self._require_compatible(connection)
+        deadline = self._effective_deadline(deadline)
+        self._check_deadline(deadline)
+        with contextlib.closing(self._connect(read_only=True, deadline=deadline)) as connection:
+            self._require_compatible(connection, deadline=deadline)
+            self._set_busy_timeout(connection, deadline)
             rows = connection.execute(
                 "SELECT attempt_id, channel, candidate_sha, state, started_at, finished_at, "
                 "duration_seconds, exit_status, trigger_id, provider_review_id, checkpoint_id, run_id, "
                 "diagnostic FROM review_attempts WHERE source_pr = ? ORDER BY started_at, attempt_id",
                 (pr,),
             ).fetchall()
+        self._check_deadline(deadline)
         return [
             {
                 "attempt_id": row[0],
@@ -682,18 +696,22 @@ class SqliteReviewRecords:
         ]
 
     @_translate_database_errors
-    def attempt(self, attempt_id: str) -> dict[str, Any]:
+    def attempt(self, attempt_id: str, *, deadline: float | None = None) -> dict[str, Any]:
         """Read one attempt for exact retry or a direct subagent-pass command."""
 
         attempt_id = _safe_identifier(attempt_id, "attempt ID", maximum=100)
         self._require_regular_database()
-        with contextlib.closing(self._connect(read_only=True)) as connection:
-            self._require_compatible(connection)
+        deadline = self._effective_deadline(deadline)
+        self._check_deadline(deadline)
+        with contextlib.closing(self._connect(read_only=True, deadline=deadline)) as connection:
+            self._require_compatible(connection, deadline=deadline)
+            self._set_busy_timeout(connection, deadline)
             row = connection.execute(
                 "SELECT source_pr, channel, candidate_sha, state, started_at, finished_at, "
                 "run_id, metadata_json FROM review_attempts WHERE attempt_id = ?",
                 (attempt_id,),
             ).fetchone()
+        self._check_deadline(deadline)
         if row is None:
             raise AttemptNotFound("review attempt does not exist")
         try:
@@ -716,21 +734,29 @@ class SqliteReviewRecords:
 
     @_translate_database_errors
     def attempt_artifacts(
-        self, attempt_id: str, *, _connection: sqlite3.Connection | None = None
+        self,
+        attempt_id: str,
+        *,
+        deadline: float | None = None,
+        _connection: sqlite3.Connection | None = None,
     ) -> dict[str, str]:
         """Read private archived evidence for exact recovery, outside ordinary history."""
 
         attempt_id = _safe_identifier(attempt_id, "attempt ID", maximum=100)
         self._require_regular_database()
+        deadline = self._effective_deadline(deadline)
+        self._check_deadline(deadline)
         with (
-            contextlib.closing(self._connect(read_only=True))
+            contextlib.closing(self._connect(read_only=True, deadline=deadline))
             if _connection is None else contextlib.nullcontext(_connection)
         ) as connection:
-            self._require_compatible(connection)
+            self._require_compatible(connection, deadline=deadline)
+            self._set_busy_timeout(connection, deadline)
             rows = connection.execute(
                 "SELECT kind, content FROM review_artifacts WHERE attempt_id = ?",
                 (attempt_id,),
             ).fetchall()
+        self._check_deadline(deadline)
         return {kind: content for kind, content in rows}
 
     @_translate_database_errors
@@ -1318,6 +1344,131 @@ class SqliteReviewRecords:
             result[index] = (decision, reason)
         return result
 
+    @_translate_database_errors
+    def correct_subagent_record(
+        self, run_id: str, source_finding_key: str, *, actor: str, reason: str
+    ) -> dict[str, Any]:
+        """Retain a rejected non-finding as a note without rewriting its evidence."""
+
+        run_id = _safe_identifier(run_id, "run ID", maximum=100)
+        source_finding_key = _safe_identifier(source_finding_key, "finding key", maximum=200)
+        actor = _bounded_text(actor, "actor", maximum=100)
+        reason = _bounded_text(reason, "correction reason", maximum=300)
+        with self._write_connection() as connection:
+            row = connection.execute(
+                "SELECT a.metadata_json FROM review_attempts a JOIN review_runs r ON r.run_id = a.run_id "
+                "WHERE a.attempt_id = ? AND a.run_id = ? AND a.channel = 'subagent' "
+                "AND a.state = 'completed' AND r.channel = 'subagent' AND r.outcome = 'completed' "
+                "AND r.finalized = 1 AND a.source_pr = r.source_pr",
+                (run_id, run_id),
+            ).fetchone()
+            if row is None:
+                raise ReviewRecordsError("correction requires a completed linked finalized subagent run")
+            metadata = json.loads(row[0])
+            if not isinstance(metadata, dict):
+                raise ReviewRecordsError("review attempt metadata is not an object")
+            existing = self._subagent_record_corrections(connection, run_id)
+            prior = next((item for item in existing if item["source_finding_key"] == source_finding_key), None)
+            if prior is not None:
+                if prior["actor"] != actor or prior["reason"] != reason:
+                    raise ReviewRecordsError("non-finding correction already has different provenance")
+                replay = True
+            else:
+                self._subagent_non_finding_observation(connection, run_id, source_finding_key)
+                corrections = metadata.setdefault("record_corrections", [])
+                if len(corrections) >= 200:
+                    raise ReviewRecordsError("a subagent run may record at most 200 non-finding corrections")
+                correction = {
+                    "source_finding_key": source_finding_key,
+                    "actor": actor,
+                    "reason": reason,
+                    "corrected_at": _timestamp(None, "correction time"),
+                }
+                corrections.append(correction)
+                serialized = _json(metadata)
+                _, _, redactions = _archive_artifact("metadata", serialized)
+                if redactions:
+                    raise ReviewRecordsError("correction provenance contains credential-shaped material")
+                connection.execute(
+                    "UPDATE review_attempts SET metadata_json = ? WHERE attempt_id = ?", (serialized, run_id)
+                )
+                replay = False
+            source_pr = connection.execute(
+                "SELECT source_pr FROM review_runs WHERE run_id = ?", (run_id,)
+            ).fetchone()[0]
+            run = next(item for item in self.history(source_pr, _connection=connection)["runs"]
+                       if item["run_id"] == run_id)
+        return {"run_id": run_id, "source_finding_key": source_finding_key,
+                "counts": run["counts"], "original_counts": run["original_counts"],
+                "idempotent_replay": replay}
+
+    def _subagent_non_finding_observation(
+        self, connection: sqlite3.Connection, run_id: str, source_finding_key: str
+    ) -> dict[str, Any]:
+        row = connection.execute(
+            "SELECT o.run_id, o.finding_id, o.source_pr, o.source_channel, f.source_finding_key, "
+            "o.title, o.detail, o.disposition, o.route_id, o.display_severity "
+            "FROM finding_observations o JOIN findings f USING (finding_id) JOIN review_runs r USING (run_id) "
+            "WHERE o.run_id = ? AND f.source_finding_key = ? "
+            "AND o.source_pr = r.source_pr AND o.source_channel = r.channel",
+            (run_id, source_finding_key),
+        ).fetchone()
+        if row is None or row[3] != "subagent" or row[7] != "rejected" or row[8] is not None:
+            raise ReviewRecordsError("only an exact rejected subagent observation may become a non-finding note")
+        if connection.execute(
+            "SELECT 1 FROM routes WHERE finding_id = ? UNION ALL "
+            "SELECT 1 FROM source_finding_resolutions WHERE finding_id = ? UNION ALL "
+            "SELECT 1 FROM decisions WHERE run_id = ? AND finding_id = ? AND decision != 'rejected' UNION ALL "
+            "SELECT 1 FROM source_decision_corrections WHERE run_id = ? AND finding_id = ? "
+            "AND decision != 'rejected'",
+            (row[1], row[1], run_id, row[1], run_id, row[1]),
+        ).fetchone():
+            raise ReviewRecordsError("a finding with route, accepted decision, or fix evidence cannot become a note")
+        if connection.execute(
+            "SELECT COUNT(*) FROM decisions WHERE decision_scope = 'source' AND run_id = ? AND finding_id = ? "
+            "AND decision = 'rejected'", (run_id, row[1])
+        ).fetchone()[0] != 1:
+            raise ReviewRecordsError("non-finding correction requires the exact rejected source decision")
+        return self._observation_record(row)
+
+    def _subagent_record_corrections(
+        self, connection: sqlite3.Connection, run_id: str
+    ) -> list[dict[str, Any]]:
+        row = connection.execute(
+            "SELECT a.metadata_json, a.state, a.source_pr, r.source_pr, r.channel, r.finalized "
+            "FROM review_attempts a JOIN review_runs r ON r.run_id = a.run_id "
+            "WHERE a.attempt_id = ? AND a.run_id = ? AND a.channel = 'subagent'", (run_id, run_id)
+        ).fetchone()
+        if row is None:
+            return []
+        metadata = json.loads(row[0])
+        if not isinstance(metadata, dict):
+            raise ReviewRecordsError("review attempt metadata is not an object")
+        corrections = metadata.get("record_corrections", [])
+        if not isinstance(corrections, list) or len(corrections) > 200:
+            raise ReviewRecordsError("subagent record correction history is malformed")
+        if corrections and (row[1] != "completed" or row[2] != row[3] or row[4] != "subagent" or not row[5]):
+            raise ReviewRecordsError("subagent record corrections require a completed finalized association")
+        result = []
+        keys = set()
+        for correction in corrections:
+            if not isinstance(correction, dict) or set(correction) != {
+                "source_finding_key", "actor", "reason", "corrected_at"
+            }:
+                raise ReviewRecordsError("subagent record correction history is malformed")
+            key = _safe_identifier(correction["source_finding_key"], "finding key", maximum=200)
+            if key in keys:
+                raise ReviewRecordsError("subagent record correction history repeats a finding")
+            keys.add(key)
+            _bounded_text(correction["actor"], "actor", maximum=100)
+            _bounded_text(correction["reason"], "correction reason", maximum=300)
+            if not isinstance(correction["corrected_at"], str):
+                raise ReviewRecordsError("stored subagent correction time is malformed")
+            _timestamp(correction["corrected_at"], "correction time")
+            observation = self._subagent_non_finding_observation(connection, run_id, key)
+            result.append({"run_id": run_id, **correction, "original_observation": observation})
+        return result
+
     def correct_source_decision(
         self,
         run_id: str,
@@ -1355,6 +1506,9 @@ class SqliteReviewRecords:
                 ).fetchone()
                 if row is None:
                     raise ReviewRecordsError("source finding was not observed in that run")
+                if any(item["source_finding_key"] == source_finding_key
+                       for item in self._subagent_record_corrections(connection, run_id)):
+                    raise ReviewRecordsError("a retained non-finding note cannot change its source decision")
                 finding_id, old_decision, finalized = row
                 if old_decision not in {"accepted", "rejected"}:
                     raise ReviewRecordsError("routed and unresolved source findings need owner adjudication")
@@ -2654,6 +2808,8 @@ class SqliteReviewRecords:
                     )
                 else:
                     finalized_at = run[1]
+                counts = (counts[0] - len(self._subagent_record_corrections(connection, run_id)),
+                          counts[1], counts[2])
         except ReviewRecordsError:
             raise
         except sqlite3.DatabaseError as exc:
@@ -2837,6 +2993,7 @@ class SqliteReviewRecords:
         *,
         include_legacy_routes: bool = False,
         include_display: bool = True,
+        deadline: float | None = None,
         _connection: sqlite3.Connection | None = None,
     ) -> dict[str, Any]:
         """Return machine-readable source and incoming route history for one PR.
@@ -2853,15 +3010,18 @@ class SqliteReviewRecords:
             raise ReviewRecordsError("include_legacy_routes must be boolean")
         if not isinstance(include_display, bool):
             raise ReviewRecordsError("include_display must be boolean")
+        deadline = self._effective_deadline(deadline)
+        self._check_deadline(deadline)
         try:
             with (
-                contextlib.closing(self._connect(read_only=True))
+                contextlib.closing(self._connect(read_only=True, deadline=deadline))
                 if _connection is None
                 else contextlib.nullcontext(_connection)
             ) as connection:
                 if _connection is None:
+                    self._set_busy_timeout(connection, deadline)
                     connection.execute("BEGIN")
-                self._require_compatible(connection)
+                self._require_compatible(connection, deadline=deadline)
                 controller_state = self._controller_state(connection) if include_legacy_routes else None
                 runs = [
                     self._run_record(row)
@@ -2986,6 +3146,7 @@ class SqliteReviewRecords:
                         }
                     )
                 attempts = []
+                corrected_subagent_runs = set()
                 for row in connection.execute(
                     "SELECT attempt_id, channel, candidate_sha, state, started_at, finished_at, "
                     "duration_seconds, exit_status, trigger_id, provider_review_id, checkpoint_id, run_id, "
@@ -2999,6 +3160,10 @@ class SqliteReviewRecords:
                         raise ReviewRecordsError("review attempt metadata is malformed") from exc
                     if not isinstance(metadata, dict):
                         raise ReviewRecordsError("review attempt metadata is not an object")
+                    if row[1] == "subagent" and metadata.get("record_corrections") != [] and "record_corrections" in metadata:
+                        if row[0] != row[11] or row[3] != "completed":
+                            raise ReviewRecordsError("subagent record corrections have no completed exact run association")
+                        corrected_subagent_runs.add(row[11])
                     attempts.append(
                         {
                             "attempt_id": row[0],
@@ -3107,9 +3272,25 @@ class SqliteReviewRecords:
                         (pr,),
                     )
                 ]
+                record_corrections = []
+                for run in runs:
+                    if run["channel"] != "subagent" or run["run_id"] not in corrected_subagent_runs:
+                        continue
+                    retained_notes = self._subagent_record_corrections(connection, run["run_id"])
+                    if not retained_notes:
+                        continue
+                    record_corrections.extend(retained_notes)
+                    run["original_counts"] = dict(run["counts"])
+                    run["counts"] = {**run["counts"], "found": run["counts"]["found"] - len(retained_notes)}
+                    if run["counts"]["found"] < run["counts"]["accepted"] + run["counts"]["routed"]:
+                        raise ReviewRecordsError("subagent non-finding corrections conflict with retained counts")
+                    excluded_keys = {item["source_finding_key"] for item in retained_notes}
+                    observations = [item for item in observations if item["run_id"] != run["run_id"]
+                                    or item["source_finding_key"] not in excluded_keys]
                 if include_display:
                     self._add_hosted_display_titles(connection, observations, routes)
                     self._add_run_durations(connection, runs)
+                self._check_deadline(deadline)
                 return {
                     "pr": pr,
                     "runs": runs,
@@ -3120,6 +3301,7 @@ class SqliteReviewRecords:
                     "source_resolution_corrections": source_resolution_corrections,
                     "attempts": attempts,
                     "corrections": corrections,
+                    "record_corrections": record_corrections,
                     "provider_origins": provider_origins,
                     "imported_artifacts": imported_artifacts,
                     "historical_gaps": historical_gaps,
@@ -3128,6 +3310,10 @@ class SqliteReviewRecords:
         except ReviewRecordsError:
             raise
         except (OSError, sqlite3.DatabaseError, json.JSONDecodeError) as exc:
+            if isinstance(exc, sqlite3.DatabaseError):
+                self._raise_hosted_deadline_if_expired(deadline, error=exc)
+            else:
+                self._raise_hosted_deadline_if_expired(deadline)
             raise ReviewRecordsError("cannot read SQLite review history") from exc
 
     def history_batch(
@@ -3835,14 +4021,104 @@ class SqliteReviewRecords:
                 (target_pr, route_status, observed_at, route_id),
             )
 
-    @contextlib.contextmanager
-    def _write_connection(self):
-        self._require_regular_database()
-        connection = self._connect(read_only=False)
+    def _effective_deadline(self, deadline: float | None) -> float | None:
+        if deadline is not None:
+            return deadline
         try:
-            connection.execute("BEGIN IMMEDIATE")
-            self._require_compatible(connection)
+            from . import github
+        except ImportError:  # pragma: no cover - direct script module execution
+            import github  # type: ignore[no-redef]
+
+        budget = github.active_hosted_preflight_budget()
+        return budget.deadline if budget is not None else None
+
+    def _hosted_budget(self):
+        try:
+            from . import github
+        except ImportError:  # pragma: no cover - direct script module execution
+            import github  # type: ignore[no-redef]
+
+        return github.active_hosted_preflight_budget()
+
+    def _raise_hosted_deadline_if_expired(
+        self,
+        deadline: float | None,
+        *,
+        error: sqlite3.DatabaseError | None = None,
+    ) -> None:
+        budget = self._hosted_budget()
+        if budget is not None and (deadline is None or deadline == budget.deadline):
+            remaining = budget.remaining_seconds()
+            if (
+                error is not None
+                and self._is_sqlite_lock_error(error)
+                and remaining <= 0.002
+            ):
+                time.sleep(remaining)
+                budget.remaining_seconds()
+
+    def _check_deadline(self, deadline: float | None) -> None:
+        deadline = self._effective_deadline(deadline)
+        if deadline is not None and time.monotonic() >= deadline:
+            self._raise_hosted_deadline_if_expired(deadline)
+            raise StateLockTimeout("timed out waiting for SQLite review-records deadline")
+
+    def _remaining_timeout(self, deadline: float | None) -> float:
+        deadline = self._effective_deadline(deadline)
+        if deadline is None:
+            return self.timeout
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            self._raise_hosted_deadline_if_expired(deadline)
+            raise StateLockTimeout("timed out waiting for SQLite review-records deadline")
+        return min(self.timeout, remaining)
+
+    def _set_busy_timeout(self, connection: sqlite3.Connection, deadline: float | None) -> None:
+        deadline = self._effective_deadline(deadline)
+        timeout = self._remaining_timeout(deadline)
+        milliseconds = math.ceil(timeout * 1000) if deadline is not None else int(timeout * 1000)
+        connection.execute(f"PRAGMA busy_timeout = {milliseconds}")
+
+    def _compatibility_query(
+        self,
+        connection: sqlite3.Connection,
+        statement: str,
+        *,
+        deadline: float | None,
+    ) -> sqlite3.Cursor:
+        self._set_busy_timeout(connection, deadline)
+        try:
+            return connection.execute(statement)
+        except sqlite3.DatabaseError as exc:
+            if deadline is not None and self._is_sqlite_lock_error(exc):
+                self._raise_hosted_deadline_if_expired(deadline, error=exc)
+                raise StateLockTimeout("timed out waiting for SQLite review-records deadline") from exc
+            raise
+
+    @staticmethod
+    def _is_sqlite_lock_error(error: sqlite3.DatabaseError) -> bool:
+        message = str(error).lower()
+        return "locked" in message or "busy" in message
+
+    @contextlib.contextmanager
+    def _write_connection(self, *, deadline: float | None = None):
+        deadline = self._effective_deadline(deadline)
+        self._require_regular_database()
+        connection = self._connect(read_only=False, deadline=deadline)
+        try:
+            self._set_busy_timeout(connection, deadline)
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+            except sqlite3.OperationalError as exc:
+                if deadline is not None and self._is_sqlite_lock_error(exc):
+                    self._raise_hosted_deadline_if_expired(deadline, error=exc)
+                    raise StateLockTimeout("timed out waiting for SQLite review-records transaction lock") from exc
+                raise
+            self._check_deadline(deadline)
+            self._require_compatible(connection, deadline=deadline)
             yield connection
+            self._check_deadline(deadline)
+            self._set_busy_timeout(connection, deadline)
             connection.commit()
         except BaseException:
             if connection.in_transaction:
@@ -3851,17 +4127,26 @@ class SqliteReviewRecords:
         finally:
             connection.close()
 
-    def _connect(self, *, read_only: bool) -> sqlite3.Connection:
+    def _connect(self, *, read_only: bool, deadline: float | None = None) -> sqlite3.Connection:
+        deadline = self._effective_deadline(deadline)
         if self.path.is_symlink():
             raise ReviewRecordsError("SQLite controller database path must not be a symlink")
         mode = "ro" if read_only else "rw"
         uri = f"{self.path.resolve().as_uri()}?mode={mode}"
-        connection = sqlite3.connect(uri, uri=True, timeout=self.timeout, isolation_level=None)
-        connection.execute(f"PRAGMA busy_timeout = {int(self.timeout * 1000)}")
-        connection.execute("PRAGMA foreign_keys = ON")
-        if read_only:
-            connection.execute("PRAGMA query_only = ON")
-        return connection
+        timeout = self._remaining_timeout(deadline)
+        connection = sqlite3.connect(uri, uri=True, timeout=timeout, isolation_level=None)
+        try:
+            self._set_busy_timeout(connection, deadline)
+            connection.execute("PRAGMA foreign_keys = ON")
+            if read_only:
+                connection.execute("PRAGMA query_only = ON")
+            return connection
+        except BaseException as setup_error:
+            try:
+                connection.close()
+            except BaseException as close_error:
+                raise setup_error from close_error
+            raise
 
     def _require_regular_database(self) -> None:
         if self.path.is_symlink():
@@ -3869,21 +4154,41 @@ class SqliteReviewRecords:
         if not self.path.is_file():
             raise ReviewRecordsError("controller SQLite database must already exist")
 
-    @staticmethod
-    def _table_names(connection: sqlite3.Connection) -> set[str]:
-        return {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    def _table_names(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        deadline: float | None = None,
+    ) -> set[str]:
+        rows = self._compatibility_query(
+            connection,
+            "SELECT name FROM sqlite_master WHERE type = 'table'",
+            deadline=deadline,
+        )
+        return {row[0] for row in rows}
 
-    def _require_controller_compatible(self, connection: sqlite3.Connection) -> None:
-        schema_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+    def _require_controller_compatible(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        deadline: float | None = None,
+    ) -> None:
+        deadline = self._effective_deadline(deadline)
+        schema_version = int(
+            self._compatibility_query(connection, "PRAGMA user_version", deadline=deadline).fetchone()[0]
+        )
         if schema_version != SQLITE_SCHEMA_VERSION:
             raise RecordsSchemaIncompatible(f"unsupported controller SQLite schema version {schema_version}")
-        if "controller_metadata" not in self._table_names(connection):
+        if "controller_metadata" not in self._table_names(connection, deadline=deadline):
             raise RecordsSchemaIncompatible("controller SQLite metadata is missing")
         try:
-            row = connection.execute(
-                "SELECT data_model_version, min_writer_build FROM controller_metadata WHERE singleton = 1"
+            row = self._compatibility_query(
+                connection,
+                "SELECT data_model_version, min_writer_build FROM controller_metadata WHERE singleton = 1",
+                deadline=deadline,
             ).fetchone()
         except sqlite3.DatabaseError as exc:
+            self._raise_hosted_deadline_if_expired(deadline, error=exc)
             raise RecordsSchemaIncompatible("controller SQLite metadata has an incompatible shape") from exc
         if row is None:
             raise RecordsSchemaIncompatible("controller SQLite metadata row is missing")
@@ -3904,19 +4209,23 @@ class SqliteReviewRecords:
             (WRITER_BUILD, WRITER_BUILD),
         )
 
-    def _require_compatible(self, connection: sqlite3.Connection) -> None:
-        self._require_controller_compatible(connection)
-        tables = self._table_names(connection)
+    def _require_compatible(self, connection: sqlite3.Connection, *, deadline: float | None = None) -> None:
+        deadline = self._effective_deadline(deadline)
+        self._require_controller_compatible(connection, deadline=deadline)
+        tables = self._table_names(connection, deadline=deadline)
         if _RECORDS_METADATA_TABLE not in tables:
             if tables & _RECORDS_TABLES:
                 raise RecordsSchemaIncompatible("review-records schema is partial: metadata table is missing")
             raise RecordsNotBootstrapped("review-records schema is not bootstrapped; call bootstrap() explicitly")
         try:
-            row = connection.execute(
+            row = self._compatibility_query(
+                connection,
                 f"SELECT records_schema_version, controller_schema_version, controller_data_model_version, "
-                f"min_writer_build FROM {_RECORDS_METADATA_TABLE} WHERE singleton = 1"
+                f"min_writer_build FROM {_RECORDS_METADATA_TABLE} WHERE singleton = 1",
+                deadline=deadline,
             ).fetchone()
         except sqlite3.DatabaseError as exc:
+            self._raise_hosted_deadline_if_expired(deadline, error=exc)
             raise RecordsSchemaIncompatible("review-records metadata has an incompatible shape") from exc
         if row is None:
             raise RecordsSchemaIncompatible("review-records metadata row is missing")
