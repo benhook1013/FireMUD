@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -26,12 +27,15 @@ import net.firedevops.firemud.accountservice.config.AccountTokenProperties;
 import net.firedevops.firemud.accountservice.config.MailProperties;
 import net.firedevops.firemud.accountservice.dto.AccountDto;
 import net.firedevops.firemud.accountservice.dto.AuthenticationResult;
+import net.firedevops.firemud.accountservice.dto.CanonicalGameplayLoginRequest;
 import net.firedevops.firemud.accountservice.dto.ConnectTokenRequest;
 import net.firedevops.firemud.accountservice.dto.ConnectTokenResult;
 import net.firedevops.firemud.accountservice.dto.CreateAccountRequest;
 import net.firedevops.firemud.accountservice.dto.DirectTextCallerContext;
 import net.firedevops.firemud.accountservice.dto.DirectTextJoinScope;
 import net.firedevops.firemud.accountservice.dto.DirectTextJoinTarget;
+import net.firedevops.firemud.accountservice.dto.GameplayCredentialSourceContext;
+import net.firedevops.firemud.accountservice.dto.InitialGameplayLoginResult;
 import net.firedevops.firemud.accountservice.dto.JoinPublicProductionRequest;
 import net.firedevops.firemud.accountservice.dto.JoinPublicProductionResult;
 import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
@@ -68,6 +72,7 @@ import net.firedevops.firemud.accountservice.service.NotificationService;
 import net.firedevops.firemud.accountservice.service.exception.AccountAlreadyExistsException;
 import net.firedevops.firemud.accountservice.service.exception.AccountLifecycleException;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
+import net.firedevops.firemud.accountservice.service.session.AccountGameplayCanonicalLoginOwner;
 import net.firedevops.firemud.accountservice.service.session.SessionService;
 import net.firedevops.firemud.common.security.JwtAuthProperties;
 import net.firedevops.firemud.common.security.JwtUtil;
@@ -83,12 +88,14 @@ import org.mapstruct.factory.Mappers;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.SimpleTransactionStatus;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class AccountServiceImplTest {
   private static final String JWT_SECRET = "mysecretkey123456789012345678901";
@@ -113,6 +120,11 @@ class AccountServiceImplTest {
   @Mock private GameSessionClient gameSessionClient;
   @Mock private EntityManagementClient entityManagementClient;
   @Mock private SessionService sessionService;
+  @Mock private AccountGameplayCanonicalLoginOwner gameplayCanonicalLoginOwner;
+
+  @Mock
+  private ObjectProvider<AccountGameplayCanonicalLoginOwner> gameplayCanonicalLoginOwnerProvider;
+
   @Mock private PaymentTransactionRepository paymentTransactionRepository;
   @Mock private SubscriptionRepository subscriptionRepository;
   @Mock private ExternalAccountRepository externalAccountRepository;
@@ -2093,6 +2105,95 @@ class AccountServiceImplTest {
 
     assertEquals(expectedCode, exception.getCode());
     verifyNoInteractions(sessionService);
+  }
+
+  @Test
+  void canonicalGameplayLoginFailsClosedWithoutOptionalOwnerWiring() {
+    CanonicalGameplayLoginRequest request =
+        new CanonicalGameplayLoginRequest(
+            UUID.fromString("dca937dd-a92a-466a-9a1a-56f4627180a4"),
+            "demo@example.com",
+            "secret",
+            new GameplayCredentialSourceContext(
+                UUID.fromString("0d27a7e7-dcba-427c-a476-d05480ae83cf"),
+                "203.0.113.5",
+                "trusted_tcp_proxy"));
+
+    service.setGameplayCanonicalLoginOwnerProvider(gameplayCanonicalLoginOwnerProvider);
+    verifyNoInteractions(gameplayCanonicalLoginOwnerProvider);
+
+    AuthenticationException unavailable =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.authenticateForGameplay(
+                    request, "spiffe://firemud/ns/test/sa/game-session-service"));
+
+    assertEquals("AUTH_UNAVAILABLE", unavailable.getCode());
+    org.mockito.Mockito.verify(gameplayCanonicalLoginOwnerProvider).getIfAvailable();
+    verifyNoInteractions(accountRepository, accountEmailLoginChallengeRepository, sessionService);
+  }
+
+  @Test
+  void canonicalGameplayLoginVerifiesAndConsumesOtpOutsideFacadeTransaction() {
+    Account account = new Account();
+    account.setId(9L);
+    setPersistedAuthenticationIdentity(account);
+    account.setEmail("demo@example.com");
+    account.setLoginAuthModes("EMAIL_OTP");
+    net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge challenge =
+        new net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge();
+    challenge.setId(3L);
+    challenge.setAccountId(9L);
+    challenge.setCodeHash(hash("123456"));
+    challenge.setExpiresAt(java.time.LocalDateTime.now().plusMinutes(5));
+    when(accountEmailLoginChallengeRepository.findByAccountId(9L))
+        .thenReturn(Optional.of(challenge));
+    CanonicalGameplayLoginRequest request =
+        new CanonicalGameplayLoginRequest(
+            UUID.fromString("dca937dd-a92a-466a-9a1a-56f4627180a4"),
+            "demo@example.com",
+            "123456",
+            new GameplayCredentialSourceContext(
+                UUID.fromString("0d27a7e7-dcba-427c-a476-d05480ae83cf"),
+                "203.0.113.5",
+                "trusted_tcp_proxy"));
+    InitialGameplayLoginResult expectedResult =
+        org.mockito.Mockito.mock(InitialGameplayLoginResult.class);
+    service.setGameplayCanonicalLoginOwnerProvider(gameplayCanonicalLoginOwnerProvider);
+    verifyNoInteractions(gameplayCanonicalLoginOwnerProvider);
+    when(gameplayCanonicalLoginOwnerProvider.getIfAvailable())
+        .thenReturn(gameplayCanonicalLoginOwner);
+    when(gameplayCanonicalLoginOwner.authenticate(
+            org.mockito.ArgumentMatchers.eq(request),
+            org.mockito.ArgumentMatchers.eq("spiffe://firemud/ns/test/sa/game-session-service"),
+            org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            invocation -> {
+              assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+              AccountGameplayCanonicalLoginOwner.CredentialVerifier verifier =
+                  invocation.getArgument(2);
+              AccountGameplayCanonicalLoginOwner.CredentialVerification verification =
+                  verifier.verify(account, "123456");
+              assertEquals(account.getAccountUuid(), verification.accountId());
+              assertEquals(3L, verification.oneTimeChallengeId());
+              verifier.consumeOneTimeCredential(account, verification);
+              return expectedResult;
+            });
+
+    InitialGameplayLoginResult actualResult =
+        service.authenticateForGameplay(
+            request, "spiffe://firemud/ns/test/sa/game-session-service");
+
+    assertSame(expectedResult, actualResult);
+    org.mockito.Mockito.verify(gameplayCanonicalLoginOwnerProvider).getIfAvailable();
+    org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(accountEmailLoginChallengeRepository);
+    inOrder.verify(accountEmailLoginChallengeRepository).lockAccountChallenge(9L);
+    inOrder.verify(accountEmailLoginChallengeRepository).findByAccountId(9L);
+    inOrder.verify(accountEmailLoginChallengeRepository).lockAccountChallenge(9L);
+    inOrder.verify(accountEmailLoginChallengeRepository).findByAccountId(9L);
+    inOrder.verify(accountEmailLoginChallengeRepository).delete(challenge);
+    verifyNoInteractions(accountRepository, sessionService);
   }
 
   @Test

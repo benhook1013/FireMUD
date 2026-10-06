@@ -627,8 +627,10 @@ class AccountGameplayDelegationIssuanceRepositoryTest {
     value.put(
         "credentialRequestBinding",
         Map.of(
-            "digestSchemaVersion", intent.credentialRequestBinding().digestSchemaVersion(),
-            "digestKeyId", intent.credentialRequestBinding().digestKeyId(),
+            "digestSchemaVersion",
+            intent.credentialRequestBinding().digestSchemaVersion(),
+            "digestKeyId",
+            intent.credentialRequestBinding().digestKeyId(),
             "credentialRequestDigest",
             intent.credentialRequestBinding().credentialRequestDigest()));
     value.put("jti", intent.tokenJti().toString());

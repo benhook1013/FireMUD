@@ -26,13 +26,15 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * Explicit, unwired Account owner for request-bound gameplay LOGIN.
+ * Explicit Account owner for request-bound gameplay LOGIN, activated only by its protected
+ * default-inactive Spring composition.
  *
  * <p>Credential verification and optional one-time challenge consumption occur in the same SQL
  * transaction as the immutable keyed PENDING operation. Signing, registry writes, commit, response
  * recovery, and credential release run only after that transaction closes, through their existing
  * owner boundaries. Construction requires the protected key source and complete issuance owners;
- * this class does not install runtime configuration or activate Authenticate.
+ * {@link net.firedevops.firemud.accountservice.config.AccountCanonicalGameplayLoginConfiguration}
+ * supplies the explicit, default-inactive runtime composition.
  */
 public final class AccountGameplayCanonicalLoginOwner {
   private final AccountRepository accounts;

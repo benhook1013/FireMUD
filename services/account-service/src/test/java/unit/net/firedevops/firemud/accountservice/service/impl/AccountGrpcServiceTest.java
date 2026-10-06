@@ -9,6 +9,7 @@ import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -20,6 +21,8 @@ import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.account.v1.CreateAccountRequest;
 import net.firedevops.firemud.account.v1.CreateAccountResponse;
+import net.firedevops.firemud.account.v1.CredentialSourceConnectionMode;
+import net.firedevops.firemud.account.v1.CredentialSourceContext;
 import net.firedevops.firemud.account.v1.DeleteAccountRequest;
 import net.firedevops.firemud.account.v1.DeleteAccountResponse;
 import net.firedevops.firemud.account.v1.ExportAccountRequest;
@@ -47,19 +50,34 @@ import net.firedevops.firemud.account.v1.RequestEmailLoginOtpResponse;
 import net.firedevops.firemud.account.v1.UpdateProfileRequest;
 import net.firedevops.firemud.account.v1.UpdateProfileResponse;
 import net.firedevops.firemud.account.v1.VerifyEmailLoginOtpRequest;
+import net.firedevops.firemud.accountservice.dto.AccountAuthEvidenceBundle;
+import net.firedevops.firemud.accountservice.dto.AccountAuthEvidenceBundle.AccountIdentitySource;
+import net.firedevops.firemud.accountservice.dto.AccountAuthEvidenceBundle.AuthoritySourceVersions;
+import net.firedevops.firemud.accountservice.dto.AccountAuthEvidenceBundle.BundleReference;
+import net.firedevops.firemud.accountservice.dto.AccountAuthEvidenceBundle.OperationIdentity;
+import net.firedevops.firemud.accountservice.dto.AccountAuthEvidenceBundle.OutboxCheckpoint;
+import net.firedevops.firemud.accountservice.dto.AccountAuthEvidenceBundle.OwnerEvaluation;
+import net.firedevops.firemud.accountservice.dto.AccountAuthEvidenceBundle.TokenIdentity;
 import net.firedevops.firemud.accountservice.dto.AccountDto;
+import net.firedevops.firemud.accountservice.dto.CanonicalGameplayLoginRequest;
 import net.firedevops.firemud.accountservice.dto.DirectTextCallerContext;
 import net.firedevops.firemud.accountservice.dto.DirectTextJoinScope;
 import net.firedevops.firemud.accountservice.dto.DirectTextJoinTarget;
+import net.firedevops.firemud.accountservice.dto.GameplayCredentialSourceContext;
+import net.firedevops.firemud.accountservice.dto.InitialGameplayLoginResult;
 import net.firedevops.firemud.accountservice.dto.JoinPublicProductionRequest;
 import net.firedevops.firemud.accountservice.dto.JoinPublicProductionResult;
 import net.firedevops.firemud.accountservice.dto.RealmAccessGrantResult;
+import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
 import net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPolicy;
+import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationResponseEnvelopeRepository.IdempotencyConflictException;
+import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationResponseEnvelopeRepository.RecoveredCredential;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.accountservice.service.PingService;
 import net.firedevops.firemud.accountservice.service.exception.AccountAlreadyExistsException;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 import org.junit.jupiter.api.AfterEach;
@@ -126,6 +144,86 @@ class AccountGrpcServiceTest {
         .setConnectScopeId("scope-1")
         .setRequestId("request-1")
         .build();
+  }
+
+  private static AuthenticateRequest canonicalAuthenticateRequest(String email, String credential) {
+    return AuthenticateRequest.newBuilder()
+        .setEmail(email)
+        .setPassword(credential)
+        .setCallerContextId("0d27a7e7-dcba-427c-a476-d05480ae83cf")
+        .setRequestId("dca937dd-a92a-466a-9a1a-56f4627180a4")
+        .setCredentialSourceContext(
+            CredentialSourceContext.newBuilder()
+                .setCanonicalClientIp("203.0.113.5")
+                .setConnectionMode(
+                    CredentialSourceConnectionMode
+                        .CREDENTIAL_SOURCE_CONNECTION_MODE_TRUSTED_TCP_PROXY))
+        .build();
+  }
+
+  private static InitialGameplayLoginResult immutableLoginResult() {
+    UUID accountId = UUID.fromString(ACCOUNT_UUID);
+    UUID requestId = UUID.fromString("dca937dd-a92a-466a-9a1a-56f4627180a4");
+    UUID callerContextId = UUID.fromString("0d27a7e7-dcba-427c-a476-d05480ae83cf");
+    UUID tokenJti = UUID.fromString("2921ba03-bf74-49ac-b24b-a9255f5de308");
+    long issuedAt = 1_800_000_000L;
+    long expiresAt = issuedAt + GameSessionAccountDelegationProfile.MAX_TOKEN_LIFETIME_SECONDS;
+    long issuanceFence = 9_007_199_254_740_995L;
+    String accountStream = "account:auth-authority:v1:account/" + accountId;
+    String issuerStream = "account:auth-authority:v1:issuer/firemud-account-service";
+    AccountAuthEvidenceBundle bundle =
+        AccountAuthEvidenceBundle.fromOwnerEvaluation(
+            new OwnerEvaluation(
+                new BundleReference("1", "1", Long.toString(issuanceFence), "12345678"),
+                "1".repeat(64),
+                "2".repeat(64),
+                accountId,
+                new OperationIdentity(
+                    UUID.fromString("5414e55d-0393-4561-ac3d-cb916a08d3f0"),
+                    requestId,
+                    "3".repeat(64),
+                    GAME_SESSION_PEER.uri(),
+                    callerContextId,
+                    accountId),
+                new TokenIdentity(tokenJti, 1L, issuedAt, issuedAt, expiresAt),
+                GameSessionAccountDelegationProfile.authorityTuple(1L, 1L),
+                issuanceFence,
+                new AuthoritySourceVersions(1L, 1L, 1L),
+                new AccountIdentitySource(
+                    42L, AccountIdentityProvenance.ACCOUNT_DATABASE_INSERT, 42L),
+                List.of(
+                    new OutboxCheckpoint(accountStream, 0L, null, null),
+                    new OutboxCheckpoint(
+                        issuerStream, 1L, "issuer-event-1", "sha256:" + "b".repeat(64)))));
+    RecoveredCredential credential = Mockito.mock(RecoveredCredential.class);
+    Mockito.when(credential.compactJwtBytes())
+        .thenAnswer(
+            invocation -> "header.payload.signature".getBytes(StandardCharsets.US_ASCII).clone());
+    Mockito.when(credential.accountId()).thenReturn(accountId);
+    Mockito.when(credential.tokenJti()).thenReturn(tokenJti);
+    Mockito.when(credential.tokenSha256()).thenReturn("a".repeat(64));
+    Mockito.when(credential.profile()).thenReturn(GameSessionAccountDelegationProfile.PROFILE);
+    Mockito.when(credential.expiresAtEpochSecond()).thenReturn(expiresAt);
+    Mockito.when(credential.authEvidenceBundle()).thenReturn(bundle);
+    return InitialGameplayLoginResult.fromRecoveredCredential(credential);
+  }
+
+  private static void assertAuthenticateErrorHasNoCredentialOrMetadata(
+      AuthenticateResponse response) {
+    assertTrue(response.hasError());
+    assertEquals("", response.getAuthToken());
+    assertEquals("", response.getAccountId());
+    assertEquals("", response.getCallerContextId());
+    assertEquals("", response.getRequestId());
+    assertEquals("", response.getTokenJti());
+    assertEquals("", response.getTokenSha256());
+    assertEquals(0L, response.getIssuedAtEpochSecond());
+    assertEquals(0L, response.getExpiresAtEpochSecond());
+    assertEquals("", response.getTokenGeneration());
+    assertEquals("", response.getIssuanceFence());
+    assertTrue(response.getAuthorityTupleCanonicalJson().isEmpty());
+    assertTrue(response.getOutboxCheckpointsCanonicalJson().isEmpty());
+    assertTrue(response.getOutboxSourceEventEvidenceCanonicalJson().isEmpty());
   }
 
   private static void withPeer(GrpcPeerIdentity peer, Runnable action) {
@@ -492,58 +590,230 @@ class AccountGrpcServiceTest {
   }
 
   @Test
-  void authenticateFailureReturnsErrorDetail() {
-    PingService pingService = Mockito.mock(PingService.class);
+  void authenticateProjectsExactImmutableOwnerResultAndDecimalMetadata() {
     AccountService accountService = Mockito.mock(AccountService.class);
+    InitialGameplayLoginResult result = immutableLoginResult();
+    UUID requestId = UUID.fromString("dca937dd-a92a-466a-9a1a-56f4627180a4");
+    UUID callerContextId = UUID.fromString("0d27a7e7-dcba-427c-a476-d05480ae83cf");
+    UUID accountId = UUID.fromString(ACCOUNT_UUID);
+    UUID tokenJti = UUID.fromString("2921ba03-bf74-49ac-b24b-a9255f5de308");
+    byte[] jwt = "header.payload.signature".getBytes(StandardCharsets.US_ASCII);
     Mockito.when(
             accountService.authenticateForGameplay(
-                Mockito.eq("demo@example.com"), Mockito.eq("bad")))
-        .thenThrow(
-            new AuthenticationException(
-                AuthenticationErrorCodes.INVALID_CREDENTIALS, "Invalid credentials"));
-    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+                Mockito.any(CanonicalGameplayLoginRequest.class),
+                Mockito.eq(GAME_SESSION_PEER.uri())))
+        .thenReturn(result);
+    AccountGrpcService service =
+        new AccountGrpcService(
+            Mockito.mock(PingService.class), accountService, null, WORKLOAD_NAMESPACE);
+    RecordingObserver<AuthenticateResponse> observer = new RecordingObserver<>();
 
-    AtomicReference<AuthenticateResponse> ref = new AtomicReference<>();
-    service.authenticate(
-        AuthenticateRequest.newBuilder().setEmail("demo@example.com").setPassword("bad").build(),
-        new StreamObserver<AuthenticateResponse>() {
-          @Override
-          public void onNext(AuthenticateResponse value) {
-            ref.set(value);
-          }
+    withPeer(
+        GAME_SESSION_PEER,
+        () ->
+            service.authenticate(
+                canonicalAuthenticateRequest("demo@example.com", "secret"), observer));
 
-          @Override
-          public void onError(Throwable t) {}
-
-          @Override
-          public void onCompleted() {}
-        });
-
-    assertNotNull(ref.get());
-    assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, ref.get().getError().getCode());
-    Mockito.verify(accountService).authenticateForGameplay("demo@example.com", "bad");
+    AuthenticateResponse response = observer.response();
+    assertTrue(observer.completed());
+    assertFalse(response.hasError());
+    assertEquals(new String(jwt, StandardCharsets.US_ASCII), response.getAuthToken());
+    assertEquals(accountId.toString(), response.getAccountId());
+    assertEquals(callerContextId.toString(), response.getCallerContextId());
+    assertEquals(requestId.toString(), response.getRequestId());
+    assertEquals(tokenJti.toString(), response.getTokenJti());
+    assertEquals("a".repeat(64), response.getTokenSha256());
+    assertEquals(1_800_000_000L, response.getIssuedAtEpochSecond());
+    assertEquals(1_800_000_300L, response.getExpiresAtEpochSecond());
+    assertEquals("1", response.getTokenGeneration());
+    assertEquals("9007199254740995", response.getIssuanceFence());
+    assertEquals(
+        com.google.protobuf.ByteString.copyFrom(result.authorityTupleCanonicalJson()),
+        response.getAuthorityTupleCanonicalJson());
+    assertEquals(
+        com.google.protobuf.ByteString.copyFrom(result.outboxCheckpointsCanonicalJson()),
+        response.getOutboxCheckpointsCanonicalJson());
+    assertEquals(
+        com.google.protobuf.ByteString.copyFrom(result.outboxSourceEventEvidenceCanonicalJson()),
+        response.getOutboxSourceEventEvidenceCanonicalJson());
+    Mockito.verify(accountService)
+        .authenticateForGameplay(
+            new CanonicalGameplayLoginRequest(
+                requestId,
+                "demo@example.com",
+                "secret",
+                new GameplayCredentialSourceContext(
+                    callerContextId, "203.0.113.5", "trusted_tcp_proxy")),
+            GAME_SESSION_PEER.uri());
   }
 
   @Test
-  void authenticateConvertsIllegalStateToBoundedAuthorityUnavailableError() {
+  void authenticateRejectsWrongPeerAndMalformedEnvelopeBeforeCallingAccount() {
     AccountService accountService = Mockito.mock(AccountService.class);
-    Mockito.when(accountService.authenticateForGameplay("demo@example.com", "password"))
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    AccountGrpcService service =
+        new AccountGrpcService(
+            Mockito.mock(PingService.class), accountService, registry, WORKLOAD_NAMESPACE);
+    RecordingObserver<AuthenticateResponse> wrongPeerObserver = new RecordingObserver<>();
+    RecordingObserver<AuthenticateResponse> missingRequestObserver = new RecordingObserver<>();
+    RecordingObserver<AuthenticateResponse> missingCallerObserver = new RecordingObserver<>();
+    RecordingObserver<AuthenticateResponse> missingContextObserver = new RecordingObserver<>();
+    RecordingObserver<AuthenticateResponse> unspecifiedModeObserver = new RecordingObserver<>();
+    RecordingObserver<AuthenticateResponse> malformedAddressObserver = new RecordingObserver<>();
+
+    withPeer(
+        SOCIAL_GROUPS_PEER,
+        () ->
+            service.authenticate(
+                canonicalAuthenticateRequest("demo@example.com", "secret"), wrongPeerObserver));
+    withPeer(
+        GAME_SESSION_PEER,
+        () ->
+            service.authenticate(
+                canonicalAuthenticateRequest("demo@example.com", "secret").toBuilder()
+                    .clearRequestId()
+                    .build(),
+                missingRequestObserver));
+    withPeer(
+        GAME_SESSION_PEER,
+        () ->
+            service.authenticate(
+                canonicalAuthenticateRequest("demo@example.com", "secret").toBuilder()
+                    .clearCallerContextId()
+                    .build(),
+                missingCallerObserver));
+    withPeer(
+        GAME_SESSION_PEER,
+        () ->
+            service.authenticate(
+                canonicalAuthenticateRequest("demo@example.com", "secret").toBuilder()
+                    .clearCredentialSourceContext()
+                    .build(),
+                missingContextObserver));
+    withPeer(
+        GAME_SESSION_PEER,
+        () ->
+            service.authenticate(
+                canonicalAuthenticateRequest("demo@example.com", "secret").toBuilder()
+                    .setCredentialSourceContext(CredentialSourceContext.getDefaultInstance())
+                    .build(),
+                unspecifiedModeObserver));
+    withPeer(
+        GAME_SESSION_PEER,
+        () ->
+            service.authenticate(
+                canonicalAuthenticateRequest("demo@example.com", "secret").toBuilder()
+                    .setCredentialSourceContext(
+                        CredentialSourceContext.newBuilder()
+                            .setCanonicalClientIp("203.000.113.5")
+                            .setConnectionMode(
+                                CredentialSourceConnectionMode
+                                    .CREDENTIAL_SOURCE_CONNECTION_MODE_TRUSTED_TCP_PROXY))
+                    .build(),
+                malformedAddressObserver));
+
+    assertEquals("PERMISSION_DENIED", wrongPeerObserver.response().getError().getCode());
+    assertAuthenticateErrorHasNoCredentialOrMetadata(wrongPeerObserver.response());
+    assertEquals("INVALID_ARGUMENT", missingRequestObserver.response().getError().getCode());
+    assertAuthenticateErrorHasNoCredentialOrMetadata(missingRequestObserver.response());
+    assertEquals("INVALID_ARGUMENT", missingCallerObserver.response().getError().getCode());
+    assertAuthenticateErrorHasNoCredentialOrMetadata(missingCallerObserver.response());
+    assertEquals("INVALID_ARGUMENT", missingContextObserver.response().getError().getCode());
+    assertAuthenticateErrorHasNoCredentialOrMetadata(missingContextObserver.response());
+    assertEquals("INVALID_ARGUMENT", unspecifiedModeObserver.response().getError().getCode());
+    assertAuthenticateErrorHasNoCredentialOrMetadata(unspecifiedModeObserver.response());
+    assertEquals("INVALID_ARGUMENT", malformedAddressObserver.response().getError().getCode());
+    assertAuthenticateErrorHasNoCredentialOrMetadata(malformedAddressObserver.response());
+    assertTrue(wrongPeerObserver.completed());
+    assertTrue(missingRequestObserver.completed());
+    assertTrue(missingCallerObserver.completed());
+    assertTrue(missingContextObserver.completed());
+    assertTrue(unspecifiedModeObserver.completed());
+    assertTrue(malformedAddressObserver.completed());
+    Mockito.verifyNoInteractions(accountService);
+    assertEquals(
+        1.0, registry.get("grpc.app_error").tag("code", "PERMISSION_DENIED").counter().count());
+    assertEquals(
+        5.0, registry.get("grpc.app_error").tag("code", "INVALID_ARGUMENT").counter().count());
+  }
+
+  @Test
+  void authenticateMapsReplayConflictWithoutReturningAnyCredentialMetadata() {
+    AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(
+            accountService.authenticateForGameplay(
+                Mockito.any(CanonicalGameplayLoginRequest.class),
+                Mockito.eq(GAME_SESSION_PEER.uri())))
+        .thenThrow(new IdempotencyConflictException());
+    AccountGrpcService service =
+        new AccountGrpcService(
+            Mockito.mock(PingService.class), accountService, null, WORKLOAD_NAMESPACE);
+    RecordingObserver<AuthenticateResponse> observer = new RecordingObserver<>();
+
+    withPeer(
+        GAME_SESSION_PEER,
+        () ->
+            service.authenticate(
+                canonicalAuthenticateRequest("demo@example.com", "secret"), observer));
+
+    assertEquals("IDEMPOTENCY_CONFLICT", observer.response().getError().getCode());
+    assertAuthenticateErrorHasNoCredentialOrMetadata(observer.response());
+    assertTrue(observer.completed());
+    assertFalse(observer.receivedTransportError());
+  }
+
+  @Test
+  void authenticatePreservesInvalidCredentialDenialWithoutReturningMetadata() {
+    AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(
+            accountService.authenticateForGameplay(
+                Mockito.any(CanonicalGameplayLoginRequest.class),
+                Mockito.eq(GAME_SESSION_PEER.uri())))
+        .thenThrow(
+            new AuthenticationException(
+                AuthenticationErrorCodes.INVALID_CREDENTIALS, "Invalid credentials"));
+    AccountGrpcService service =
+        new AccountGrpcService(
+            Mockito.mock(PingService.class), accountService, null, WORKLOAD_NAMESPACE);
+    RecordingObserver<AuthenticateResponse> observer = new RecordingObserver<>();
+
+    withPeer(
+        GAME_SESSION_PEER,
+        () ->
+            service.authenticate(
+                canonicalAuthenticateRequest("demo@example.com", "bad"), observer));
+
+    assertEquals(
+        AuthenticationErrorCodes.INVALID_CREDENTIALS, observer.response().getError().getCode());
+    assertAuthenticateErrorHasNoCredentialOrMetadata(observer.response());
+    assertTrue(observer.completed());
+    assertFalse(observer.receivedTransportError());
+  }
+
+  @Test
+  void authenticateBoundsUnexpectedOwnerFailureWithoutReturningMetadata() {
+    AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(
+            accountService.authenticateForGameplay(
+                Mockito.any(CanonicalGameplayLoginRequest.class),
+                Mockito.eq(GAME_SESSION_PEER.uri())))
         .thenThrow(new IllegalStateException("private provenance detail"));
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     AccountGrpcService service =
-        new AccountGrpcService(Mockito.mock(PingService.class), accountService, registry);
+        new AccountGrpcService(
+            Mockito.mock(PingService.class), accountService, registry, WORKLOAD_NAMESPACE);
     RecordingObserver<AuthenticateResponse> observer = new RecordingObserver<>();
 
-    service.authenticate(
-        AuthenticateRequest.newBuilder()
-            .setEmail("demo@example.com")
-            .setPassword("password")
-            .build(),
-        observer);
+    withPeer(
+        GAME_SESSION_PEER,
+        () ->
+            service.authenticate(
+                canonicalAuthenticateRequest("demo@example.com", "secret"), observer));
 
     assertEquals("AUTH_UNAVAILABLE", observer.response().getError().getCode());
     assertEquals(
         "Account authority unavailable; retry later", observer.response().getError().getMessage());
+    assertAuthenticateErrorHasNoCredentialOrMetadata(observer.response());
     assertTrue(observer.completed());
     assertFalse(observer.receivedTransportError());
     assertEquals(
@@ -631,26 +901,18 @@ class AccountGrpcServiceTest {
   }
 
   @Test
-  void authenticateReturnsCanonicalUuid() {
-    PingService pingService = Mockito.mock(PingService.class);
+  void authenticateNeverFallsBackToLegacyGameplayTokenMethod() {
     AccountService accountService = Mockito.mock(AccountService.class);
-    Mockito.when(accountService.authenticateForGameplay("demo@example.com", "password"))
-        .thenReturn(
-            new net.firedevops.firemud.accountservice.dto.AuthenticationResult(
-                ACCOUNT_UUID, "jwt"));
-    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+    AccountGrpcService service =
+        new AccountGrpcService(Mockito.mock(PingService.class), accountService);
     RecordingObserver<AuthenticateResponse> observer = new RecordingObserver<>();
 
-    service.authenticate(
-        AuthenticateRequest.newBuilder()
-            .setEmail("demo@example.com")
-            .setPassword("password")
-            .build(),
-        observer);
+    service.authenticate(canonicalAuthenticateRequest("demo@example.com", "password"), observer);
 
-    assertEquals(ACCOUNT_UUID, observer.response().getAccountId());
-    assertEquals("jwt", observer.response().getAuthToken());
+    assertEquals("PERMISSION_DENIED", observer.response().getError().getCode());
+    assertAuthenticateErrorHasNoCredentialOrMetadata(observer.response());
     assertTrue(observer.completed());
+    Mockito.verifyNoInteractions(accountService);
   }
 
   @Test

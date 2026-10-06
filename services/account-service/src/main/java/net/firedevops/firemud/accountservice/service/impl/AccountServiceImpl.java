@@ -30,6 +30,7 @@ import net.firedevops.firemud.accountservice.dto.AccountLoginAuthModesDto;
 import net.firedevops.firemud.accountservice.dto.BootstrapCharacterDto;
 import net.firedevops.firemud.accountservice.dto.BootstrapRealmDto;
 import net.firedevops.firemud.accountservice.dto.BootstrapWorldDto;
+import net.firedevops.firemud.accountservice.dto.CanonicalGameplayLoginRequest;
 import net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.ConnectTokenRequest;
 import net.firedevops.firemud.accountservice.dto.ConnectTokenResult;
@@ -37,6 +38,7 @@ import net.firedevops.firemud.accountservice.dto.CreateAccountRequest;
 import net.firedevops.firemud.accountservice.dto.DirectTextCallerContext;
 import net.firedevops.firemud.accountservice.dto.DirectTextJoinScope;
 import net.firedevops.firemud.accountservice.dto.DirectTextJoinTarget;
+import net.firedevops.firemud.accountservice.dto.InitialGameplayLoginResult;
 import net.firedevops.firemud.accountservice.dto.JoinPublicProductionRequest;
 import net.firedevops.firemud.accountservice.dto.JoinPublicProductionResult;
 import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
@@ -85,6 +87,7 @@ import net.firedevops.firemud.accountservice.service.NotificationService;
 import net.firedevops.firemud.accountservice.service.exception.AccountAlreadyExistsException;
 import net.firedevops.firemud.accountservice.service.exception.AccountLifecycleException;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
+import net.firedevops.firemud.accountservice.service.session.AccountGameplayCanonicalLoginOwner;
 import net.firedevops.firemud.common.EmailCanonicalization;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.security.JwtAuthProperties;
@@ -93,6 +96,8 @@ import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.jooq.exception.IntegrityConstraintViolationException;
 import org.slf4j.Logger;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
@@ -148,6 +153,8 @@ public class AccountServiceImpl implements AccountService {
   private final JwtUtil jwtUtil;
   private final net.firedevops.firemud.accountservice.service.session.SessionService sessionService;
   private final TransactionTemplate joinTransactionTemplate;
+  private volatile ObjectProvider<AccountGameplayCanonicalLoginOwner>
+      gameplayCanonicalLoginOwnerProvider;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -205,6 +212,13 @@ public class AccountServiceImpl implements AccountService {
     this.joinTransactionTemplate = new TransactionTemplate(transactionManager);
     this.joinTransactionTemplate.setPropagationBehavior(
         TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+  }
+
+  /** Optional source-only owner binding; absence keeps gameplay LOGIN fail-closed by default. */
+  @Autowired(required = false)
+  public void setGameplayCanonicalLoginOwnerProvider(
+      ObjectProvider<AccountGameplayCanonicalLoginOwner> ownerProvider) {
+    this.gameplayCanonicalLoginOwnerProvider = ownerProvider;
   }
 
   @Override
@@ -275,6 +289,55 @@ public class AccountServiceImpl implements AccountService {
         account.getId(), token, jwtAuthProperties.getJwtExpirationMs());
     return new net.firedevops.firemud.accountservice.dto.AuthenticationResult(
         accountUuid.toString(), token);
+  }
+
+  /** Canonical request-bound LOGIN; its owner controls the only credential-release path. */
+  @Override
+  @Timed(value = "account.authenticate_gameplay_canonical")
+  public InitialGameplayLoginResult authenticateForGameplay(
+      CanonicalGameplayLoginRequest request, String verifiedGameSessionWorkload) {
+    ObjectProvider<AccountGameplayCanonicalLoginOwner> ownerProvider =
+        gameplayCanonicalLoginOwnerProvider;
+    AccountGameplayCanonicalLoginOwner owner =
+        ownerProvider == null ? null : ownerProvider.getIfAvailable();
+    if (owner == null) {
+      throw new AuthenticationException(
+          "AUTH_UNAVAILABLE", "Account gameplay LOGIN is unavailable");
+    }
+    return owner.authenticate(
+        request,
+        verifiedGameSessionWorkload,
+        new AccountGameplayCanonicalLoginOwner.CredentialVerifier() {
+          @Override
+          public AccountGameplayCanonicalLoginOwner.CredentialVerification verify(
+              Account account, String presentedCredential) {
+            PrimaryAuthentication authentication =
+                authenticateAccountIdentity(account, presentedCredential, true);
+            UUID accountUuid = requireAuthenticationPersistedIdentity(authentication.account());
+            Long oneTimeChallengeId =
+                authentication
+                    .emailLoginChallenge()
+                    .map(AccountEmailLoginChallenge::getId)
+                    .orElse(null);
+            return new AccountGameplayCanonicalLoginOwner.CredentialVerification(
+                accountUuid, oneTimeChallengeId);
+          }
+
+          @Override
+          public void consumeOneTimeCredential(
+              Account account,
+              AccountGameplayCanonicalLoginOwner.CredentialVerification verification) {
+            accountEmailLoginChallengeRepository.lockAccountChallenge(account.getId());
+            AccountEmailLoginChallenge challenge =
+                accountEmailLoginChallengeRepository
+                    .findByAccountId(account.getId())
+                    .orElseThrow(AccountServiceImpl.this::invalidCredentials);
+            if (!java.util.Objects.equals(challenge.getId(), verification.oneTimeChallengeId())) {
+              throw invalidCredentials();
+            }
+            accountEmailLoginChallengeRepository.delete(challenge);
+          }
+        });
   }
 
   @Override

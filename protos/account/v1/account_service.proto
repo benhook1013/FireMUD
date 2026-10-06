@@ -112,14 +112,49 @@ message AuthenticateRequest {
   reserved "tenant_id";
   reserved 2;
   reserved "username";
+  // One account-selected credential: a password or verified-email login code.
   string password = 3;
   string email = 4;
+  // Server-derived client source metadata attested by the authenticated Game Session caller.
+  CredentialSourceContext credential_source_context = 5;
+  // Opaque UUID for the still-open pre-auth socket attempt, bound to the authenticated caller.
+  string caller_context_id = 6;
+  // Stable Account operation identity reused only for an exact retry.
+  string request_id = 7;
+}
+
+// Non-authorizing source metadata carried by the authenticated Game Session workload.
+message CredentialSourceContext {
+  string canonical_client_ip = 1;
+  CredentialSourceConnectionMode connection_mode = 2;
+}
+
+enum CredentialSourceConnectionMode {
+  CREDENTIAL_SOURCE_CONNECTION_MODE_UNSPECIFIED = 0;
+  CREDENTIAL_SOURCE_CONNECTION_MODE_FIRST_PARTY_WEB = 1;
+  CREDENTIAL_SOURCE_CONNECTION_MODE_TRUSTED_TCP_PROXY = 2;
 }
 
 message AuthenticateResponse {
   string auth_token = 1;
   string account_id = 2;
   shared.v1.ErrorDetail error = 3;
+  // Exact original operation identity from immutable Account evidence.
+  string caller_context_id = 4;
+  string request_id = 5;
+  // Exact issuer metadata from the recovered Account result.
+  string token_jti = 6;
+  string token_sha256 = 7;
+  int64 issued_at_epoch_second = 8;
+  int64 expires_at_epoch_second = 9;
+  // Keep monotonic decimal values as strings so protobuf consumers do not round them.
+  string token_generation = 10;
+  string issuance_fence = 11;
+  bytes authority_tuple_canonical_json = 12;
+  // Preserve canonical stream order; entries contain only stream key and sequence.
+  bytes outbox_checkpoints_canonical_json = 13;
+  // Positive source events from the same immutable bundle, separate from checkpoint pairs.
+  bytes outbox_source_event_evidence_canonical_json = 14;
 }
 
 message RequestEmailLoginOtpRequest {
