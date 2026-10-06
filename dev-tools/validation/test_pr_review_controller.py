@@ -412,7 +412,10 @@ class ControllerTests(unittest.TestCase):
             admit(lambda: admitted.append(1))
 
         controller.hosted_adapter = adapter
-        with self.assertRaisesRegex(ControllerError, "accepted findings remain pending"):
+        with self.assertRaisesRegex(
+            ControllerError,
+            "review stop is blocked by an unresolved actionable finding or thread",
+        ):
             controller.run_hosted()
         self.assertEqual(attempted, [1])
         self.assertEqual(admitted, [])
@@ -1946,8 +1949,74 @@ class ControllerTests(unittest.TestCase):
             "status",
         ):
             self.assertEqual(evidence_readback[field], allocation[field], field)
-        with self.assertRaisesRegex(ControllerError, "accepted findings remain pending"):
+        with self.assertRaisesRegex(
+            ControllerError,
+            "accepted findings need a published corrected head before review can stop",
+        ):
             controller.resolve_hosted_target()
+
+    def test_cli_allocation_refusal_leads_with_concrete_stop_evidence_error(self):
+        stop_error = "pull-request head or parent moved from the review stop anchor"
+        evidence = {
+            (1, "cli"): [
+                self.allocation_evidence(checkpoint="cli-baseline", channel="cli"),
+            ]
+        }
+        controller = self.grant_bounded_allocation(
+            channel="cli",
+            checkpoint="cli-baseline",
+            cap=2,
+            minimum=1,
+            evidence=evidence,
+        )
+        evidence[(1, "cli")].append(
+            self.allocation_evidence(
+                checkpoint="cli-accepted-result",
+                accepted=1,
+                channel="cli",
+            )
+        )
+
+        with patch.object(controller, "_check_stop_evidence", side_effect=ControllerError(stop_error)):
+            allocation = controller.status()["prs"][0]["allocations"]["cli"]
+
+            self.assertEqual(allocation["status"], "CAP_FINDINGS_PENDING")
+            self.assertEqual(allocation["used"], 1)
+            self.assertEqual(allocation["cap"], 2)
+            self.assertEqual(allocation["reason"], "accepted findings remain pending; their fixes are mandatory")
+            self.assertEqual(allocation["details"], stop_error)
+            with self.assertRaisesRegex(
+                ControllerError,
+                f"cli review cannot run: {stop_error}",
+            ) as refusal:
+                controller.resolve_cli_target()
+            self.assertNotIn("accepted findings remain pending", str(refusal.exception))
+
+    def test_cli_allocation_hold_without_details_keeps_its_reason(self):
+        evidence = {
+            (1, "cli"): [
+                self.allocation_evidence(
+                    checkpoint="cli-baseline-with-pending-finding",
+                    accepted=1,
+                    channel="cli",
+                ),
+            ]
+        }
+        controller = self.grant_bounded_allocation(
+            channel="cli",
+            checkpoint="cli-baseline-with-pending-finding",
+            cap=2,
+            minimum=1,
+            evidence=evidence,
+        )
+
+        allocation = controller.status()["prs"][0]["allocations"]["cli"]
+
+        self.assertEqual(allocation["status"], "CAP_FINDINGS_PENDING")
+        self.assertIsNone(allocation["details"])
+        with self.assertRaises(ControllerError) as refusal:
+            controller.resolve_cli_target()
+        self.assertIn(allocation["reason"], str(refusal.exception))
 
     def test_hosted_allocation_clearance_allows_only_verified_active_cli_overlap(self):
         current_anchor = {
@@ -2638,7 +2707,10 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(allocation["selection_control"], "unresolved_work")
         self.assertEqual((target["pr"], target["status"]), (1, "HELD"))
         self.assertEqual((front["pr"], front["status"]), (1, "HELD"))
-        with self.assertRaisesRegex(ControllerError, "still in flight"):
+        with self.assertRaisesRegex(
+            ControllerError,
+            "the in-flight request does not count until it is complete and attributable",
+        ):
             controller.resolve_hosted_target()
 
     def test_bounded_hosted_allocation_reopens_completed_front_until_taper_finishes(self):
