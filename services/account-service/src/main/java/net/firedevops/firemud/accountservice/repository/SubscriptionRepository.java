@@ -5,6 +5,7 @@ import static net.firedevops.firemud.accountservice.jooq.Tables.SUBSCRIPTION;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.List;
+import java.util.UUID;
 import net.firedevops.firemud.accountservice.entity.Subscription;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -48,7 +49,7 @@ public class SubscriptionRepository {
   public Subscription save(Subscription entity) {
     Long accountId = entity.getAccount() == null ? null : entity.getAccount().getId();
     if (entity.getId() == null) {
-      Long id =
+      var inserted =
           dsl.insertInto(SUBSCRIPTION)
               .set(SUBSCRIPTION.ACCOUNT_ID, accountId)
               .set(SUBSCRIPTION.PLAN_ID, entity.getPlanId())
@@ -57,13 +58,21 @@ public class SubscriptionRepository {
               .set(SUBSCRIPTION.ENDED_AT, entity.getEndedAt())
               .set(SUBSCRIPTION.TENANT_ID, entity.getTenantId())
               .set(SUBSCRIPTION.ENTITLEMENT_VERSION, 1L)
-              .returningResult(SUBSCRIPTION.ID)
-              .fetchOne(SUBSCRIPTION.ID);
-      entity.setId(id);
+              .set(SUBSCRIPTION.TENANT_AUTHORITY_GENERATION, UUID.randomUUID())
+              .returningResult(
+                  SUBSCRIPTION.ID,
+                  SUBSCRIPTION.ENTITLEMENT_VERSION,
+                  SUBSCRIPTION.TENANT_AUTHORITY_GENERATION)
+              .fetchOne();
+      if (inserted == null) {
+        throw new IllegalStateException("Subscription insert did not return its authority state");
+      }
+      entity.setId(inserted.get(SUBSCRIPTION.ID));
       entity.setEntitlementVersion(1L);
+      entity.setTenantAuthorityGeneration(inserted.get(SUBSCRIPTION.TENANT_AUTHORITY_GENERATION));
       return entity;
     }
-    int updated =
+    var updated =
         dsl.update(SUBSCRIPTION)
             .set(SUBSCRIPTION.ACCOUNT_ID, accountId)
             .set(SUBSCRIPTION.PLAN_ID, entity.getPlanId())
@@ -71,17 +80,24 @@ public class SubscriptionRepository {
             .set(SUBSCRIPTION.STARTED_AT, entity.getStartedAt())
             .set(SUBSCRIPTION.ENDED_AT, entity.getEndedAt())
             .set(SUBSCRIPTION.TENANT_ID, entity.getTenantId())
-            .set(SUBSCRIPTION.ENTITLEMENT_VERSION, SUBSCRIPTION.ENTITLEMENT_VERSION.add(1L))
             .where(
                 SUBSCRIPTION
                     .ID
                     .eq(entity.getId())
-                    .and(SUBSCRIPTION.ENTITLEMENT_VERSION.eq(entity.getEntitlementVersion())))
-            .execute();
-    if (updated != 1) {
+                    .and(SUBSCRIPTION.ENTITLEMENT_VERSION.eq(entity.getEntitlementVersion()))
+                    .and(
+                        entity.getTenantAuthorityGeneration() == null
+                            ? SUBSCRIPTION.TENANT_AUTHORITY_GENERATION.isNull()
+                            : SUBSCRIPTION.TENANT_AUTHORITY_GENERATION.eq(
+                                entity.getTenantAuthorityGeneration())))
+            .returningResult(
+                SUBSCRIPTION.ENTITLEMENT_VERSION, SUBSCRIPTION.TENANT_AUTHORITY_GENERATION)
+            .fetchOne();
+    if (updated == null) {
       throw JooqAccountRepositorySupport.staleWrite("subscription", entity.getId());
     }
-    entity.setEntitlementVersion(entity.getEntitlementVersion() + 1L);
+    entity.setEntitlementVersion(updated.get(SUBSCRIPTION.ENTITLEMENT_VERSION));
+    entity.setTenantAuthorityGeneration(updated.get(SUBSCRIPTION.TENANT_AUTHORITY_GENERATION));
     return entity;
   }
 
@@ -105,6 +121,7 @@ public class SubscriptionRepository {
             SUBSCRIPTION.ENDED_AT,
             SUBSCRIPTION.TENANT_ID,
             SUBSCRIPTION.ENTITLEMENT_VERSION,
+            SUBSCRIPTION.TENANT_AUTHORITY_GENERATION,
             ACCOUNTS.ID,
             ACCOUNTS.USERNAME,
             ACCOUNTS.EMAIL,
@@ -135,6 +152,7 @@ public class SubscriptionRepository {
     entity.setEndedAt(record.get(SUBSCRIPTION.ENDED_AT));
     entity.setTenantId(record.get(SUBSCRIPTION.TENANT_ID));
     entity.setEntitlementVersion(record.get(SUBSCRIPTION.ENTITLEMENT_VERSION));
+    entity.setTenantAuthorityGeneration(record.get(SUBSCRIPTION.TENANT_AUTHORITY_GENERATION));
     return entity;
   }
 }

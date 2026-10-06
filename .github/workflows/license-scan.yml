@@ -1,4 +1,4 @@
-name: License Checks
+name: License Gate
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
     types: [opened, synchronize, reopened, edited]
   workflow_dispatch:
 
-run-name: License Checks ${{ github.event_name == 'pull_request' && format('pr-{0} base-{1} head-{2}', github.event.pull_request.number, github.event.pull_request.base.sha, github.event.pull_request.head.sha) || github.ref_name }}
+run-name: License Gate ${{ github.event_name == 'pull_request' && format('pr-{0} base-{1} head-{2}', github.event.pull_request.number, github.event.pull_request.base.sha, github.event.pull_request.head.sha) || github.ref_name }}
 
 permissions:
   contents: read
@@ -258,7 +258,7 @@ jobs:
         uses: ./.github/actions/preserve-required-gate
         with:
           gate-name: License Gate
-          workflow-name: License Checks
+          workflow-name: License Gate
           workflow-file: license-scan.yml
           workflow-path: .github/workflows/license-scan.yml
 

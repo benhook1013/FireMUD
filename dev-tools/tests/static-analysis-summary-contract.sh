@@ -159,7 +159,7 @@ const github = {
           id: 300,
           event: "pull_request",
           head_sha: headSha,
-          display_title: `License Checks pr-42 base-${baseSha} head-${headSha}`,
+          display_title: `License Gate pr-42 base-${baseSha} head-${headSha}`,
           created_at: "2026-09-20T00:00:00Z",
           run_attempt: 1,
           status: "completed",

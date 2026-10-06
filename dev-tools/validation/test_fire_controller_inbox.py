@@ -103,6 +103,52 @@ class InboxStoreTest(unittest.TestCase):
         self.assertEqual(self.store.unread_count("Gameplay"), 3)
         self.assertEqual(other.unread_count("Gameplay"), 1)
 
+    def test_thread_follows_root_and_returns_cross_recipient_replies_read_only(self) -> None:
+        from unittest.mock import patch
+
+        self.store.bootstrap()
+        timestamps = iter((
+            "2026-10-01T00:00:00Z",
+            "2026-10-01T00:01:00Z",
+            "2026-10-01T00:02:00Z",
+            "2026-10-01T00:03:00Z",
+        ))
+        with patch("fire_controller.inbox._now", side_effect=lambda: next(timestamps)):
+            root = self.store.send("General", "Original request", author="Overseer", job="merge-train", pr=2898)
+            first_reply = self.store.send("Overseer", "First response", author="General", reply_to=root["id"])
+            sibling_reply = self.store.send("Gameplay", "Parallel response", author="Review", reply_to=root["id"])
+            nested_reply = self.store.send("General", "Follow-up", author="Overseer", reply_to=first_reply["id"])
+
+        thread = self.store.thread(nested_reply["id"])
+        self.assertEqual([message["id"] for message in thread], [
+            root["id"], first_reply["id"], sibling_reply["id"], nested_reply["id"],
+        ])
+        self.assertEqual([message["recipient"] for message in thread], ["General", "Overseer", "Gameplay", "General"])
+        self.assertEqual((thread[0]["job"], thread[0]["pr"], thread[0]["body"]), ("merge-train", 2898, "Original request"))
+        page = self.store.thread(root["id"], limit=2, offset=1)
+        self.assertEqual([message["id"] for message in page], [first_reply["id"], sibling_reply["id"]])
+        self.assertTrue(all(message["seen_at"] is None and message["acknowledged_at"] is None for message in thread))
+        self.assertEqual(self.store.unread_count("General"), 2)
+        with self.assertRaises(MessageNotFound):
+            self.store.thread("missing-message")
+
+    def test_thread_same_timestamp_preserves_inserted_parent_and_reply_order(self) -> None:
+        from unittest.mock import patch
+        from uuid import UUID
+
+        self.store.bootstrap()
+        ids = iter((UUID(int=3), UUID(int=2), UUID(int=1)))
+        with (
+            patch("fire_controller.inbox._now", return_value="2026-10-01T00:00:00Z"),
+            patch("fire_controller.inbox.uuid.uuid4", side_effect=lambda: next(ids)),
+        ):
+            root = self.store.send("General", "Root")
+            reply = self.store.send("Overseer", "Reply", reply_to=root["id"])
+            sibling = self.store.send("Gameplay", "Sibling", reply_to=root["id"])
+        self.assertEqual([message["id"] for message in self.store.thread(sibling["id"])], [
+            root["id"], reply["id"], sibling["id"],
+        ])
+
     def test_schema_validation_and_input_bounds(self) -> None:
         self.store.bootstrap()
         with sqlite3.connect(self.database) as connection:

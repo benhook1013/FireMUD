@@ -5398,6 +5398,14 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void revokeRealmAccessUsesDurableRepositoryRevocation() {
+    service.revokeRealmAccess(11L, 7L, "demo", "preview");
+
+    org.mockito.Mockito.verify(accountRealmAccessGrantRepository)
+        .revokeByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(11L, 7L, "demo", "preview");
+  }
+
+  @Test
   void getRealmAccessGrantForRuntimeReturnsGrantState() {
     Account account = new Account();
     account.setId(11L);
@@ -5412,6 +5420,55 @@ class AccountServiceImplTest {
 
     assertTrue(result.granted());
     assertEquals(4L, result.grantVersion());
+  }
+
+  @Test
+  void getRealmAccessGrantForRuntimeDoesNotAuthorizeRetainedRevocationTombstone() {
+    Account account = new Account();
+    account.setId(11L);
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    AccountRealmAccessGrant revoked = new AccountRealmAccessGrant();
+    revoked.setGrantVersion(7L);
+    revoked.setGranted(false);
+    when(accountRealmAccessGrantRepository.findByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
+            11L, 7L, "demo", "preview"))
+        .thenReturn(Optional.of(revoked));
+
+    var result = service.getRealmAccessGrantForRuntime(11L, 7L, "demo", "preview", "req-grant-2");
+
+    assertFalse(result.granted());
+    assertEquals(7L, result.grantVersion());
+  }
+
+  @Test
+  void grantRealmAccessReactivatesRetainedTombstoneAndAdvancesItsVersion() {
+    Account account = new Account();
+    account.setId(11L);
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    AccountRealmAccessGrant revoked = new AccountRealmAccessGrant();
+    revoked.setId(19L);
+    revoked.setAccount(account);
+    revoked.setTenantId(7L);
+    revoked.setWorldSlug("demo");
+    revoked.setRealmSlug("preview");
+    revoked.setGrantVersion(7L);
+    revoked.setGranted(false);
+    when(accountRealmAccessGrantRepository.findByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
+            11L, 7L, "demo", "preview"))
+        .thenReturn(Optional.of(revoked));
+    when(accountRealmAccessGrantRepository.save(
+            org.mockito.ArgumentMatchers.any(AccountRealmAccessGrant.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    var result =
+        service.grantRealmAccess(
+            new RealmAccessGrantRequest(
+                11L, 7L, "demo", "preview", "operator", "regrant", "req-grant-3"));
+
+    assertTrue(result.granted());
+    assertEquals(8L, result.grantVersion());
+    assertTrue(revoked.isGranted());
+    org.mockito.Mockito.verify(accountRealmAccessGrantRepository).save(revoked);
   }
 
   @Test

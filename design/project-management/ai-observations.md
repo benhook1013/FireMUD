@@ -36,13 +36,6 @@ Entry format:
   - Current status: the launching Gameplay agent retained the live CLI wait. Whether cross-agent process handles are supported in other execution environments is unverified.
   - Reconsideration trigger: revisit if a future harness requires cross-platform handle portability or a canonical watcher fix is verified.
 
-- `2026-10-05`: Renovate file ignores can silently defeat valid dependency extractors
-  - Context: the dependency coverage audit added a bounded custom manager for Java Testcontainers image literals.
-  - Observation: the pattern matched source text and configuration validation passed, but native extraction discovered no images because the inherited `**/test/**` ignore excluded real `services/*/src/test/java` authorities. The cached Renovate installation also lacked native RE2 and required its declared Node version; fallback-regex parsing supplied only partial proof.
-  - Expected pattern: compare native extraction output against actual dependency declarations with the supported runtime and RE2 engine. Include real test image authorities explicitly while preserving vendor/generated/fixture exclusions; do not infer coverage from regex matches or configuration validation.
-  - Current status: the dependency-management repair explicitly includes service test sources and confirms their PostgreSQL/Redis image extraction with native Renovate and RE2. No database major or deployment was changed.
-  - Reconsideration trigger: repeat the bounded coverage check when adding dependency surfaces, changing manager patterns/ignore policy, or repairing recurring update projection drift.
-
 - `2026-10-05`: Optional CI reports need different cancellation and token handling from required gates
   - Context: the dependency-management PR exposed cancellation-resistant native summary jobs, stale Smoke comment writers, and a scanner pipeline whose final `tee` could mask scanner failure under the implicit Linux shell.
   - Expected pattern: use `!cancelled()` for optional reports, verify the live open PR head/base tuple before comment mutation, and omit native comment jobs where fork or Dependabot tokens cannot write. Keep required gate `always()` conditions and prerequisite evaluation independent. Use explicit `shell: bash` for pipelines that must propagate upstream failures.

@@ -51,8 +51,13 @@ class ControllerHelpTest(unittest.TestCase):
         revise = self.help("jobs", "revise")
         self.assertIn("revision returned by jobs read", revise)
         self.assertIn("stale revisions are refused", revise)
-        self.assertIn("public high-level assignment", revise)
+        self.assertIn("public assignment and outcome", revise)
         self.assertIn("Private working brief", revise)
+        create = self.help("jobs", "create")
+        self.assertIn("mission-first", create)
+        self.assertIn("#2898 Smoke", create)
+        self.assertIn("Prerequisite PRs", create)
+        self.assertIn("unpublished PRs (estimate)", create)
         for command in ("checkpoint", "lane-pause", "lane-resume"):
             with self.subTest(command=command):
                 detail = self.help("jobs", command)
@@ -69,6 +74,12 @@ class ControllerHelpTest(unittest.TestCase):
         ack = self.help("inbox", "ack")
         self.assertIn("acknowledged and seen", ack)
         self.assertIn("not job completion", ack)
+        thread = self.help("inbox", "thread")
+        self.assertIn("across recipients", thread)
+        self.assertIn("chronological order", thread)
+        self.assertIn("does not mark messages seen or acknowledged", thread)
+        self.assertIn("--limit", thread)
+        self.assertIn("--offset", thread)
 
     def test_review_help_points_to_native_resolution_and_exact_round_semantics(self):
         self.assertIn("records route resolve", self.help("reviews", "routes"))
@@ -139,6 +150,25 @@ class ControllerCliTest(unittest.TestCase):
 
         from fire_controller.cli import _body
         self.assertEqual(_body(argparse.Namespace(body_file=str(body_file))), original)
+
+    def test_inbox_thread_command_is_read_only_and_crosses_recipients(self):
+        from fire_controller.cli import main
+        from fire_controller.inbox import InboxStore
+
+        database = ProjectContext.load(self.contexts["alpha"]).database
+        inbox = InboxStore(database)
+        inbox.bootstrap()
+        root = inbox.send("General", "Original", author="Overseer")
+        reply = inbox.send("Overseer", "Reply", author="General", reply_to=root["id"])
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(main(["--context", str(self.contexts["alpha"]), "inbox", "--json", "thread",
+                                   reply["id"], "--limit", "2", "--offset", "0"]), 0)
+        page = json.loads(output.getvalue())
+        self.assertEqual({message["body"] for message in page}, {"Original", "Reply"})
+        self.assertEqual({message["recipient"] for message in inbox.thread(root["id"])}, {"General", "Overseer"})
+        self.assertTrue(all(message["seen_at"] is None and message["acknowledged_at"] is None
+                            for message in inbox.thread(reply["id"])))
 
     def test_invalid_utf8_file_and_piped_input_fail_before_writes(self):
         import sqlite3
