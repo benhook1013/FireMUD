@@ -2379,9 +2379,15 @@ class ControllerTests(unittest.TestCase):
             ],
         }
 
-        for cooldown_until in ("2999-01-01T00:00:00Z", "2000-01-01T00:00:00Z"):
+        for cooldown_until in ("2999-01-01T00:00:00Z", "2000-01-01T00:00:00Z", None):
             with self.subTest(cooldown_until=cooldown_until):
                 rate_limit["cooldown_until"] = cooldown_until
+                rate_limit["held"] = rate_limit["unstable"] = cooldown_until is None
+                rate_limit["reason"] = (
+                    "Hosted cooldown has no attributable reset time"
+                    if cooldown_until is None
+                    else "Hosted cooldown remains active"
+                )
                 audit["terminal_rate_limits"][0]["cooldown_until"] = cooldown_until
                 evidence = AuditedEvidence(
                     {
@@ -2412,9 +2418,65 @@ class ControllerTests(unittest.TestCase):
 
                 self.assertEqual(allocation["status"], "CAP_ACTIVE")
                 self.assertEqual(controller.resolve_cli_target().snapshot.number, 1)
-                if cooldown_until.startswith("2999"):
+                if cooldown_until is None or cooldown_until.startswith("2999"):
                     with self.assertRaisesRegex(ControllerError, "RATE_LIMITED"):
                         controller.resolve_hosted_target()
+                if cooldown_until is None:
+                    observation = evidence[(1, "hosted")][0]
+                    for fence in ("unrelated-hold", "unreconciled", "parent_moved", "over_ceiling", "response-id"):
+                        with self.subTest(fence=fence):
+                            changed = observation.copy()
+                            if fence == "unrelated-hold":
+                                changed["reason"] = "unrelated evidence ambiguity"
+                            elif fence == "response-id":
+                                changed["response_id"] = 99
+                            else:
+                                changed[fence] = True
+                            evidence[(1, "hosted")][0] = changed
+                            self.assertEqual(
+                                controller.status()["prs"][0]["allocations"]["cli"]["status"],
+                                "CAP_FINDINGS_PENDING",
+                            )
+                    evidence[(1, "hosted")][0] = observation
+
+    def test_unknown_reset_terminal_rate_limit_proof_keeps_identity_validation(self):
+        proof = {
+            "trigger_id": 42,
+            "response_id": 43,
+            "captured_head": HEAD_1,
+            "cooldown_until": None,
+            "terminal": True,
+            "attributable": True,
+        }
+        for field, value in (
+            ("cooldown_until", "invalid"),
+            ("cooldown_until", "missing"),
+            ("trigger_id", 0),
+            ("response_id", False),
+            ("captured_head", "abbreviated"),
+            ("terminal", False),
+            ("attributable", False),
+            ("duplicate", True),
+        ):
+            with self.subTest(field=field, value=value):
+                changed = {**proof, field: value}
+                if value == "missing":
+                    changed.pop(field)
+                limits = [proof.copy(), proof.copy()] if field == "duplicate" else [changed]
+                provider = AuditedEvidence({}, audit={
+                    "complete": True,
+                    "active_reservations": [],
+                    "unmatched_responses": [],
+                    "ambiguous_responses": [],
+                    "unresolved_findings": [],
+                    "terminal_rate_limits": limits,
+                })
+                controller = self.make({1: pr(1, HEAD_1)}, provider, heads={"feature-1": HEAD_1})
+                controller.set_stack([1])
+                live, reconciliation = controller._reconciliation(controller._state())
+                current = controller._anchor(1, live[1], reconciliation.links[1])
+                with self.assertRaisesRegex(ControllerError, "malformed terminal rate-limit identity"):
+                    controller._stop_audit(1, current, ())
 
     def test_audited_rate_limit_does_not_waive_active_ambiguity_or_unpublished_fixes(self):
         rate_limit = {
@@ -6656,6 +6718,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(full["review_targets"]["hosted"]["draft_notice"], full_draft["draft_notice"])
         self.assertNotEqual(full["review_targets"]["hosted"]["status"], "HELD")
 
+        self._enable_batch_status(controller, values)
         selected = controller.status_for_pr(1)
         self.assertTrue(selected["prs"][0]["is_draft"])
         self.assertEqual(selected["prs"][0]["draft_notice"], full_draft["draft_notice"])
@@ -7410,10 +7473,15 @@ class ControllerTests(unittest.TestCase):
             self.assertIsNone(front["pr"])
 
     def test_selected_tail_status_reads_ancestors_but_no_later_prs(self):
-        values, heads = _stacked_prs(7)
+        values, heads = _stacked_prs(7, merged=(1, 2))
         evidence = CountingEvidence()
         controller = self.make(values, evidence, heads=heads)
         controller.set_stack(list(values))
+        expected = controller._status_from_state(
+            dataclasses.replace(controller.store.load(), ordered_prs=tuple(range(1, 7)))
+        )
+        evidence.history_reads.clear()
+        batch_calls = self._enable_batch_status(controller, values)
         pull_calls = []
         original = controller.github.pull_request
 
@@ -7426,9 +7494,64 @@ class ControllerTests(unittest.TestCase):
         report = controller.status_for_pr(6)
 
         self.assertEqual([item["pr"] for item in report["prs"]], [1, 2, 3, 4, 5, 6])
-        self.assertTrue(all(number <= 6 for number in pull_calls))
-        self.assertTrue(all(pr_number <= 6 for pr_number, _ in evidence.history_reads))
+        self.assertEqual(pull_calls, [6])
+        self.assertEqual(batch_calls, [(1, 2, 3, 4, 5, 6)])
+        self.assertEqual(report["prs"], expected["prs"])
+        self.assertEqual(
+            set(evidence.history_reads),
+            {(number, channel) for number in range(1, 7) for channel in ("hosted", "cli")},
+        )
         self.assertEqual(report["scope"], "selected PR and configured ancestors")
+
+    def test_selected_status_retains_later_selected_identity_observation(self):
+        values, heads = _stacked_prs(3)
+        controller = self.make(values, heads=heads)
+        controller.set_stack(list(values))
+        self._enable_batch_status(controller, values)
+        moved = dataclasses.replace(values[2], head=HEAD_2)
+        with patch.object(controller.github, "pull_request", return_value=moved) as pull:
+            report = controller.status_for_pr(2)
+        pull.assert_called_once_with(2)
+        self.assertEqual(report["prs"][1]["head"], HEAD_2)
+        self.assertNotEqual(report["prs"][1]["reconciliation"], "COHERENT")
+
+    def test_selected_status_uses_bounded_identity_batches_under_the_shared_budget(self):
+        values, heads = _stacked_prs(27)
+        controller = self.make(values, heads=heads)
+        controller.set_stack(list(values))
+        controller.github.batch_pull_requests = lambda numbers: github.fetch_pr_identity_batch("owner/repo", numbers)
+        batches = []
+
+        def query(_query, _variables):
+            self.assertIs(github.active_hosted_preflight_budget(), budget)
+            numbers = tuple(range(1, 26)) if not batches else (26,)
+            batches.append(numbers)
+            return {"data": {"repository": {f"pr_{number}": _batch_identity(values[number]) for number in numbers}}}
+
+        with (
+            github.activate_hosted_preflight_budget(preflight_name="PR status") as budget,
+            patch("pr_review.github.run_gh_query", side_effect=query),
+            patch.object(controller.github, "pull_request", wraps=controller.github.pull_request) as pull,
+        ):
+            report = controller.status_for_pr(26)
+
+        self.assertEqual(batches, [tuple(range(1, 26)), (26,)])
+        pull.assert_called_once_with(26)
+        self.assertEqual([row["pr"] for row in report["prs"]], list(range(1, 27)))
+
+    def test_selected_status_invalid_batch_fails_closed_before_deep_reads(self):
+        for invalid in (None, {}, {1: None}, {1: {"headRefOid": "bad"}}, {1: _batch_identity(pr(2, HEAD_2))}):
+            with self.subTest(invalid=invalid):
+                evidence = CountingEvidence()
+                controller = self.make({1: pr(1, HEAD_1)}, evidence)
+                controller.set_stack([1])
+                controller.github.batch_pull_requests = lambda _numbers, invalid=invalid: invalid
+                with (
+                    patch.object(controller.github, "pull_request", side_effect=AssertionError("invalid batch")),
+                    self.assertRaises(ControllerError),
+                ):
+                    controller.status_for_pr(1)
+                self.assertEqual(evidence.history_reads, [])
 
     def test_target_selection_reuses_the_exact_anchor_computed_by_reconciliation(self):
         values, heads = _stacked_prs(1)
@@ -7790,7 +7913,7 @@ class ControllerTests(unittest.TestCase):
         }
         controller = self.make({1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1})
         controller.set_stack([1])
-
+        self._enable_batch_status(controller, controller.github.values)
         result = controller.status_for_pr(1)["prs"][0]
 
         self.assertEqual(

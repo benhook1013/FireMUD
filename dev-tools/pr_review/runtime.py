@@ -625,7 +625,8 @@ class LiveEvidence:
                 and response_id > 0
                 and isinstance(captured_head, str)
                 and hosted.EXACT_SHA.fullmatch(captured_head) is not None
-                and cooldown_until is not None
+                and hasattr(state, "cooldown_until")
+                and (cooldown_value is None or cooldown_until is not None)
             ):
                 terminal_rate_limits.append(
                     {
@@ -650,8 +651,12 @@ class LiveEvidence:
         active_reservations = list(audit["active_reservations"])
         unmatched_responses = list(audit["unmatched_responses"])
         ambiguous_responses = list(audit["ambiguous_responses"])
+        # A proven terminal response has ended execution even when its quota
+        # reset is unknown. Hosted admission still owns that cooldown hold.
         active_terminal_rate_limits = [
-            item for item in terminal_rate_limits if hosted.parse_timestamp(item["cooldown_until"]) > audit_now
+            item
+            for item in terminal_rate_limits
+            if item["cooldown_until"] is None or hosted.parse_timestamp(item["cooldown_until"]) > audit_now
         ]
         if len(active_terminal_rate_limits) > active_reservations.count("rate_limited"):
             raise ControllerError("terminal Hosted rate-limit evidence cannot be isolated from other reservations")

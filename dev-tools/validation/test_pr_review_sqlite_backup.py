@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import io
 import json
 import shlex
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -156,7 +159,7 @@ class SqliteBackupTest(unittest.TestCase):
                 "SELECT COUNT(*) FROM review_artifacts WHERE attempt_id = 'run.backupfixture'"
             ).fetchone()[0], 1)
 
-    def _fake_sftp(self, remote: object, binary: str, batch: str) -> str:
+    def _fake_sftp(self, remote: object, binary: str, batch: str, *, phase: str = "directory-validation") -> str:
         self.assertEqual(binary, "sftp")
         self.sftp_batches.append(batch)
         output: list[str] = []
@@ -273,12 +276,12 @@ class SqliteBackupTest(unittest.TestCase):
         original_verify = sqlite_backup._verify_remote_file
         verifications = 0
 
-        def fail_final_verification(remote: object, binary: str, path: str) -> None:
+        def fail_final_verification(remote: object, binary: str, path: str, *, phase: str) -> None:
             nonlocal verifications
             verifications += 1
             if verifications == 2:
                 raise BackupError("synthetic final verification failure")
-            original_verify(remote, binary, path)
+            original_verify(remote, binary, path, phase=phase)
 
         (sftp_patch,) = self._transport_patches()
         with (
@@ -788,6 +791,113 @@ class SqliteBackupTest(unittest.TestCase):
         self.assertIn(f"UserKnownHostsFile={self.known_hosts}", arguments)
         self.assertEqual(arguments[-1], "backup@backup.example")
         self.assertEqual(run.call_args.kwargs["input"], "pwd\n")
+
+    def _cli_arguments(self, report: Path) -> list[str]:
+        return [
+            str(self.database), "--host", "backup@backup.example", "--identity-file", str(self.identity),
+            "--known-hosts-file", str(self.known_hosts), "--remote-directory", self.remote_directory,
+            "--remote-uid", "1001", "--report-file", str(report),
+        ]
+
+    def test_cli_transport_failures_keep_trusted_phase_and_hide_external_text(self) -> None:
+        real_run_sftp = sqlite_backup._run_sftp
+        malicious = "REMOTE_SECRET /private/key payload\nphase=success"
+        for phase in ("directory-validation", "upload", "readback", "finalize", "retention"):
+            for failure in ("timeout", "nonzero-exit"):
+                with self.subTest(phase=phase, failure=failure):
+                    report = self.root / f"{phase}-{failure}.json"
+                    arguments = self._cli_arguments(report)
+                    stdout, stderr = io.StringIO(), io.StringIO()
+                    def transport(selected_remote, binary, batch, *, phase="directory-validation", target=phase):
+                        if phase == target:
+                            return real_run_sftp(selected_remote, binary, batch, phase=phase)
+                        return self._fake_sftp(selected_remote, binary, batch, phase=phase)
+                    response = SimpleNamespace(returncode=255, stdout=malicious, stderr=malicious)
+                    side_effect = subprocess.TimeoutExpired([malicious], 120, output=malicious, stderr=malicious)
+                    with (
+                        patch("pr_review.sqlite_backup._run_sftp", side_effect=transport),
+                        patch("pr_review.sqlite_backup.subprocess.run", **(
+                            {"side_effect": side_effect} if failure == "timeout" else {"return_value": response}
+                        )) as run,
+                        contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr),
+                    ):
+                        self.assertEqual(sqlite_backup.main(arguments), 1)
+                    self.assertIn(f"phase={phase} failure={failure}", stderr.getvalue())
+                    if failure == "nonzero-exit":
+                        self.assertIn("returncode=255", stderr.getvalue())
+                    self.assertEqual(run.call_args.kwargs["timeout"], 120)
+                    self.assertNotIn(malicious, stderr.getvalue())
+                    self.assertEqual(stdout.getvalue(), "")
+                    saved = json.loads(report.read_text())
+                    self.assertEqual(saved["lastAttempt"]["status"], "failure")
+                    self.assertIsNone(saved["lastSuccess"])
+                    self.assertNotIn(malicious, report.read_text())
+
+    def test_cleanup_server_denial_keeps_original_transfer_failure_and_last_success(self) -> None:
+        report = self.root / "cleanup-report.json"
+        arguments = self._cli_arguments(report)
+        with patch("pr_review.sqlite_backup._run_sftp", side_effect=self._fake_sftp), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(sqlite_backup.main(arguments), 0)
+        successful = json.loads(report.read_text())["lastSuccess"]
+        real_run_sftp = sqlite_backup._run_sftp
+        def transport(remote, binary, batch, *, phase="directory-validation"):
+            if phase in {"upload", "cleanup"}:
+                return real_run_sftp(remote, binary, batch, phase=phase)
+            return self._fake_sftp(remote, binary, batch, phase=phase)
+        def server_denies_cleanup(arguments, *, input, **kwargs):
+            if input.startswith("put "):
+                raise subprocess.TimeoutExpired(["secret argv"], 120, stderr="secret stderr")
+            self.assertTrue(input.lstrip("-").startswith("rm "))
+            # OpenSSH batch mode ignores deletion failure with the '-' prefix.
+            # A plain command must return nonzero for the same server denial.
+            return SimpleNamespace(
+                returncode=0 if input.startswith("-") else 7,
+                stdout="private payload", stderr="secret cleanup permission denied",
+            )
+        stderr, stdout = io.StringIO(), io.StringIO()
+        with (
+            patch("pr_review.sqlite_backup._run_sftp", side_effect=transport),
+            patch("pr_review.sqlite_backup.subprocess.run", side_effect=server_denies_cleanup),
+            contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(stdout),
+        ):
+            self.assertEqual(sqlite_backup.main(arguments), 1)
+        self.assertIn("BackupError phase=upload failure=timeout", stderr.getvalue())
+        self.assertIn("cleanup=(BackupError phase=cleanup failure=nonzero-exit returncode=7)", stderr.getvalue())
+        self.assertNotIn("secret", stderr.getvalue())
+        self.assertEqual(stdout.getvalue(), "")
+        saved = json.loads(report.read_text())
+        self.assertEqual(saved["lastAttempt"]["status"], "failure")
+        self.assertEqual(saved["lastSuccess"], successful)
+
+    def test_restore_cli_preserves_phase_without_external_diagnostics_or_destination(self) -> None:
+        with patch("pr_review.sqlite_backup._run_sftp", side_effect=self._fake_sftp):
+            receipt = backup_database(self.database, **self._backup_arguments())
+        real_run_sftp = sqlite_backup._run_sftp
+        for selected_phase in ("restore-metadata", "restore-download"):
+            with self.subTest(phase=selected_phase):
+                destination = self.root / f"{selected_phase}.sqlite3"
+                arguments = self._cli_arguments(self.root / "unused.json")
+                arguments[0] = str(destination)
+                arguments += ["--restore", receipt.filename]
+                def transport(remote, binary, batch, *, phase="directory-validation", target=selected_phase):
+                    if phase == target:
+                        return real_run_sftp(remote, binary, batch, phase=phase)
+                    return self._fake_sftp(remote, binary, batch, phase=phase)
+                stderr = io.StringIO()
+                with (
+                    patch("pr_review.sqlite_backup._run_sftp", side_effect=transport),
+                    patch("pr_review.sqlite_backup.subprocess.run", return_value=SimpleNamespace(
+                        returncode=3, stdout="remote payload", stderr="malicious secret stderr",
+                    )), contextlib.redirect_stderr(stderr),
+                ):
+                    self.assertEqual(sqlite_backup.main(arguments), 1)
+                self.assertIn(f"phase={selected_phase} failure=nonzero-exit returncode=3", stderr.getvalue())
+                self.assertNotIn("secret", stderr.getvalue())
+                self.assertFalse(destination.exists())
+
+    def test_untrusted_diagnostic_fields_are_not_printed(self) -> None:
+        error = BackupError("private message", phase="secret phase", failure="secret failure", returncode="secret code")
+        self.assertEqual(sqlite_backup._failure_diagnostic(error), "BackupError")
 
 
 if __name__ == "__main__":
