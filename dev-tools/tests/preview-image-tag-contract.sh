@@ -556,6 +556,8 @@ run_resolver 'dev-tools/hosted/shared/check-kubectl-version-skew.sh' "$base_imag
 run_resolver 'services/game-logic-service/src/main/Foo.kt' "$runtime_image_tag"
 run_resolver 'gradlew' "$runtime_image_tag"
 run_resolver 'gradlew.bat' "$runtime_image_tag"
+run_resolver 'dev-tools/validation/run-locked-gradle.sh' "$runtime_image_tag"
+run_resolver 'dev-tools/validation/gradle-run-supervisor.py' "$runtime_image_tag"
 # A rename from a runtime-relevant path must keep the PR image selected even
 # when the current filename is no longer runtime-relevant.
 run_resolver 'design/architecture/new-name.md' "$runtime_image_tag" 'dev-tools/build-local-smoke-images.sh'
