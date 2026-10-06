@@ -9,7 +9,6 @@ the live pull request.  No live observation is persisted here.
 from __future__ import annotations
 
 import json
-import os
 import re
 import subprocess
 from collections import defaultdict
@@ -514,20 +513,28 @@ def _loc_status(pr: Mapping[str, Any]) -> dict[str, Any]:
     merge_base = metadata.get("merge_base")
     if not isinstance(merge_base, str) or not EXACT_SHA.fullmatch(merge_base):
         return {"status": "invalid", "merge_base_checked": False, "reason": "LOC merge base is missing or malformed"}
+    budget = github.active_hosted_preflight_budget()
+    timeout = budget.request_timeout(30) if budget is not None else 30
     try:
         result = subprocess.run(
             ["git", "merge-base", pr["baseRefOid"], pr["headRefOid"]],
             check=True,
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=timeout,
         )
+    except github.HostedPreflightDeadlineExceeded:
+        raise
     except (OSError, subprocess.SubprocessError) as exc:
+        if budget is not None:
+            budget.remaining_seconds()
         return {
             "status": "unverified",
             "merge_base_checked": False,
             "reason": f"LOC merge base could not be checked: {exc}",
         }
+    if budget is not None:
+        budget.remaining_seconds()
     actual = result.stdout.strip()
     if actual.casefold() != merge_base.casefold():
         return {"status": "stale", "merge_base_checked": True, "reason": "LOC merge base does not match the current PR"}
@@ -835,23 +842,12 @@ def _historical_comments(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
 
 
 def _repo_name(repo: str | None) -> str:
-    selected = repo or os.environ.get("GH_REPO") or os.environ.get("GITHUB_REPOSITORY")
-    if selected:
-        github.parse_repo(selected)
-        return selected
     try:
-        result = subprocess.run(
-            ["gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
+        return github.infer_repo(repo)
+    except github.HostedPreflightDeadlineExceeded:
+        raise
+    except (OSError, RuntimeError) as exc:
         raise StatusError(f"repository identity is unavailable: {exc}") from exc
-    selected = result.stdout.strip()
-    github.parse_repo(selected)
-    return selected
 
 
 def _trigger(repo: str, number: int, payload: dict[str, Any], head: str) -> dict[str, Any]:
