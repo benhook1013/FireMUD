@@ -29,16 +29,16 @@ import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-class WorldDraftTerminalReadClientTest {
+class GameDesignDraftTerminalReadClientTest {
   @Test
-  void rejectsPlaintextBeforeCreatingAChannel(@TempDir Path directory) throws Exception {
+  void rejectsPlaintextBeforeCreatingChannel(@TempDir Path directory) throws Exception {
     GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
     CommonGrpcClientProperties tls = tls(directory);
     tls.setPlaintext(true);
 
     assertThatThrownBy(
             () ->
-                new WorldDraftTerminalReadClient(
+                new GameDesignDraftTerminalReadClient(
                     new ServiceEndpointsProperties(), tls, channelFactory, "test"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("workload mTLS");
@@ -49,8 +49,8 @@ class WorldDraftTerminalReadClientTest {
   void rejectsWrongNamespaceAndUninitializedUseBeforeTransport(@TempDir Path directory)
       throws Exception {
     GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
-    WorldDraftTerminalReadClient client =
-        new WorldDraftTerminalReadClient(
+    GameDesignDraftTerminalReadClient client =
+        new GameDesignDraftTerminalReadClient(
             new ServiceEndpointsProperties(), tls(directory), channelFactory, "test");
     try {
       assertThatThrownBy(() -> client.read(request("other")))
@@ -66,90 +66,44 @@ class WorldDraftTerminalReadClientTest {
   }
 
   @Test
-  void initializesAnExactWorldPeerAuthenticatedStubForConfiguredEndpoint(@TempDir Path directory)
-      throws Exception {
+  void initializesAnExactGameDesignPeerAuthenticatedStubForConfiguredEndpoint(
+      @TempDir Path directory) throws Exception {
     ServiceEndpointsProperties endpoints = new ServiceEndpointsProperties();
-    endpoints.setWorldManagementService("world.internal:6565");
+    endpoints.setGameDesignService("game-design.internal:6565");
     GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
     ManagedChannel channel = mock(ManagedChannel.class);
     when(channelFactory.buildChannel(
-            eq("world.internal:6565"), eq(6565), any(CommonGrpcClientProperties.class), eq(true)))
+            eq("game-design.internal:6565"),
+            eq(6565),
+            any(CommonGrpcClientProperties.class),
+            eq(true)))
         .thenReturn(channel);
-    WorldDraftTerminalReadClient client =
-        new WorldDraftTerminalReadClient(endpoints, tls(directory), channelFactory, "test");
+    GameDesignDraftTerminalReadClient client =
+        new GameDesignDraftTerminalReadClient(endpoints, tls(directory), channelFactory, "test");
     try {
       client.init();
 
       verify(channelFactory)
           .buildChannel(
-              eq("world.internal:6565"), eq(6565), any(CommonGrpcClientProperties.class), eq(true));
+              eq("game-design.internal:6565"),
+              eq(6565),
+              any(CommonGrpcClientProperties.class),
+              eq(true));
       AbstractStub<?> stub = initializedStub(client);
       assertThat(stub.getCallOptions().getCredentials())
           .isInstanceOf(GrpcServerPeerIdentityCallCredentials.class);
       assertThat(readField(stub.getCallOptions().getCredentials(), "expectedPeerUri"))
-          .isEqualTo("spiffe://firemud/ns/test/sa/world-management-service");
+          .isEqualTo("spiffe://firemud/ns/test/sa/game-design-service");
     } finally {
       client.close();
     }
   }
 
-  private static AbstractStub<?> initializedStub(WorldDraftTerminalReadClient client)
+  private static AbstractStub<?> initializedStub(GameDesignDraftTerminalReadClient client)
       throws ReflectiveOperationException {
     Field field = AbstractReloadingBlockingGrpcClient.class.getDeclaredField("stub");
     field.setAccessible(true);
     return (AbstractStub<?>) field.get(client);
-  }
-
-  @Test
-  void clientDecodesCommittedCarrierAndRejectsSubstitutedResult(@TempDir Path directory)
-      throws Exception {
-    var factory = mock(GrpcChannelFactory.class);
-    var channel = mock(ManagedChannel.class);
-    when(factory.buildChannel(
-            any(String.class), eq(6565), any(CommonGrpcClientProperties.class), eq(true)))
-        .thenReturn(channel);
-    var client =
-        new WorldDraftTerminalReadClient(
-            new ServiceEndpointsProperties(), tls(directory), factory, "test");
-    try {
-      client.init();
-      var stub =
-          mock(
-              net.firedevops.firemud.worldmanagement.v1.WorldDraftTerminalReadServiceGrpc
-                  .WorldDraftTerminalReadServiceBlockingStub.class);
-      when(stub.withDeadlineAfter(eq(5L), eq(java.util.concurrent.TimeUnit.SECONDS)))
-          .thenReturn(stub);
-      Field stubField = AbstractReloadingBlockingGrpcClient.class.getDeclaredField("stub");
-      stubField.setAccessible(true);
-      stubField.set(client, stub);
-      var request = request("test");
-      var committed = WorldDraftTerminalReadGrpcCodecTest.committedReadback(request);
-      var response =
-          WorldDraftTerminalReadGrpcCodec.toResponse(request, java.util.Optional.of(committed));
-      when(stub.readWorldDraftTerminalOutcome(any())).thenReturn(response);
-      assertThat(client.read(request).ownerReadback().orElseThrow().canonicalBytes())
-          .containsExactly(committed.canonicalBytes());
-      var changed =
-          new DraftAuthorizationFenceBinding.OwnerReadback(
-              committed.owner(),
-              committed.outcome(),
-              committed.operationId(),
-              committed.commitId(),
-              committed.fenceId(),
-              committed.inputDigest(),
-              committed.fullBinding(),
-              new byte[] {1});
-      when(stub.readWorldDraftTerminalOutcome(any()))
-          .thenReturn(
-              response.toBuilder()
-                  .setOwnerReadbackBytes(
-                      com.google.protobuf.ByteString.copyFrom(changed.canonicalBytes()))
-                  .build());
-      assertThatThrownBy(() -> client.read(request))
-          .hasMessageContaining("invalid terminal readback evidence");
-    } finally {
-      client.close();
-    }
   }
 
   private static Object readField(Object target, String name) throws ReflectiveOperationException {
@@ -158,7 +112,7 @@ class WorldDraftTerminalReadClientTest {
     return field.get(target);
   }
 
-  private static WorldDraftTerminalReadEvidence.Request request(String namespace) {
+  private static GameDesignDraftTerminalReadEvidence.Request request(String namespace) {
     UUID tenant = uuid("11111111-1111-4111-8111-111111111111");
     UUID version = uuid("22222222-2222-4222-8222-222222222222");
     UUID request = uuid("44444444-4444-4444-8444-444444444444");
@@ -201,14 +155,14 @@ class WorldDraftTerminalReadClientTest {
                 List.of(
                     new SourceEvidence(
                         SourceKind.GLOBAL_ROLES,
-                        "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+                        uuid("dddddddd-dddd-4ddd-8ddd-dddddddddddd").toString(),
                         null,
                         "1",
                         null,
                         null,
                         new byte[] {1})))
             .canonicalBytes();
-    return new WorldDraftTerminalReadEvidence.Request(
+    return new GameDesignDraftTerminalReadEvidence.Request(
         1, namespace, uuid("33333333-3333-4333-8333-333333333333"), accountBinding);
   }
 

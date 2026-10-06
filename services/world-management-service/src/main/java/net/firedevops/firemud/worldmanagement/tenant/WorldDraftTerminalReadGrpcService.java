@@ -15,18 +15,22 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.dao.TransientDataAccessException;
 
 /**
- * Standalone authenticated read-only adapter for exact World definitive-abort evidence.
+ * Standalone authenticated read-only adapter for exact World committed/definitive-abort evidence.
  * Authentication is checked before decoding the binding or querying terminal storage. This type is
  * deliberately not registered as a runtime gRPC service in this slice.
  */
 public final class WorldDraftTerminalReadGrpcService
     extends WorldDraftTerminalReadServiceGrpc.WorldDraftTerminalReadServiceImplBase {
   private final WorldDraftTerminalOutcomeRepository repository;
+  private final WorldDraftGraphApplicationRepository applications;
   private final String trustedNamespace;
 
   public WorldDraftTerminalReadGrpcService(
-      WorldDraftTerminalOutcomeRepository repository, String trustedNamespace) {
+      WorldDraftTerminalOutcomeRepository repository,
+      WorldDraftGraphApplicationRepository applications,
+      String trustedNamespace) {
     this.repository = Objects.requireNonNull(repository, "repository");
+    this.applications = Objects.requireNonNull(applications, "applications");
     if (!GrpcPeerIdentity.isValidNamespace(trustedNamespace)) {
       throw new IllegalArgumentException("World workload namespace is invalid");
     }
@@ -60,9 +64,16 @@ public final class WorldDraftTerminalReadGrpcService
     }
 
     Optional<WorldDraftTerminalOutcome> outcome;
+    Optional<WorldDraftGraphAppliedResult> committed;
     try {
       outcome =
           repository.readDefinitiveAbort(trustedNamespace, readRequest.originalAccountBinding());
+      committed =
+          applications.readCommitted(trustedNamespace, readRequest.originalAccountBinding());
+      if (outcome.isPresent() && committed.isPresent()) {
+        throw new WorldDesignPublicationFenceRepository.ConflictException(
+            "World operation has contradictory terminal outcomes");
+      }
     } catch (WorldDesignPublicationFenceRepository.ConflictException conflict) {
       responseObserver.onError(
           Status.FAILED_PRECONDITION
@@ -94,7 +105,9 @@ public final class WorldDraftTerminalReadGrpcService
     }
 
     Optional<DraftAuthorizationFenceBinding.OwnerReadback> readback =
-        outcome.map(WorldDraftTerminalReadGrpcService::toOwnerReadback);
+        committed
+            .map(WorldDraftGraphAppliedResult::ownerReadback)
+            .or(() -> outcome.map(WorldDraftTerminalReadGrpcService::toOwnerReadback));
     ReadWorldDraftTerminalOutcomeResponse response;
     try {
       response = WorldDraftTerminalReadGrpcCodec.toResponse(readRequest, readback);

@@ -54,6 +54,7 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFence
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceEvidence.Checkpoint;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceEvidence.OwnerBinding;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceRepository;
+import net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftRegionCommitPlan;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftRegionCommitRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftRegionCommitService;
@@ -382,7 +383,8 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
     WorldDraftTerminalOperation operation = operation(f, plan.binding());
     WorldDraftTerminalOutcomeRepository repository = terminalRepository();
     WorldDraftTerminalReadGrpcService receiver =
-        new WorldDraftTerminalReadGrpcService(repository, NAMESPACE);
+        new WorldDraftTerminalReadGrpcService(
+            repository, new WorldDraftGraphApplicationRepository(dsl, fence, mapper), NAMESPACE);
 
     var absentRequest =
         WorldDraftTerminalReadEvidence.Request.create(NAMESPACE, operation.accountBindingBytes());

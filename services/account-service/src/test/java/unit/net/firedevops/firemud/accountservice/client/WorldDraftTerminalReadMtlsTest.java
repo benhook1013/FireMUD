@@ -177,6 +177,47 @@ class WorldDraftTerminalReadMtlsTest {
   }
 
   @Test
+  void physicallyReadsExactCommittedCarrierAndRejectsTerminalSubstitution(@TempDir Path directory)
+      throws Exception {
+    TestPki pki = newTestPki();
+    for (Reply reply :
+        List.of(
+            Reply.COMMITTED,
+            Reply.COMMITTED_STATUS_MISMATCH,
+            Reply.COMMITTED_WRONG_OWNER,
+            Reply.COMMITTED_SUBSTITUTED_RESULT,
+            Reply.COMMITTED_CHANGED_BINDING)) {
+      PhysicalServer server = startReceiver(pki.worldServer(), pki.caCertificate(), reply);
+      var client = newClient(server.server().getPort(), pki, directory.resolve(reply.name()));
+      try {
+        client.init();
+        var request = request(READ_REQUEST_ID);
+        if (reply == Reply.COMMITTED) {
+          var first = client.read(request).ownerReadback().orElseThrow();
+          var retry = client.read(request(REPLAY_READ_REQUEST_ID)).ownerReadback().orElseThrow();
+          assertThat(first.outcome()).isEqualTo(Outcome.COMMITTED);
+          assertThat(first.canonicalBytes()).containsExactly(canonicalCommitted().canonicalBytes());
+          assertThat(retry.canonicalBytes()).containsExactly(first.canonicalBytes());
+          assertThat(first.fullBinding()).containsExactly(request.originalAccountBinding());
+          assertPhysicalRequest(server, request(REPLAY_READ_REQUEST_ID));
+          assertThat(server.applicationMetadataCalls()).hasValue(2);
+          assertThat(server.requestBodies()).hasValue(2);
+        } else {
+          assertThat(catchThrowable(() -> client.read(request)))
+              .isInstanceOf(IllegalStateException.class)
+              .hasMessageContaining("invalid terminal readback evidence");
+          assertPhysicalRequest(server, request);
+          assertThat(server.applicationMetadataCalls()).hasValue(1);
+          assertThat(server.requestBodies()).hasValue(1);
+        }
+      } finally {
+        client.close();
+        stopServer(server.server());
+      }
+    }
+  }
+
+  @Test
   void rejectsChangedEchoedReadIdentityAndOriginalBinding(@TempDir Path directory)
       throws Exception {
     TestPki pki = newTestPki();
@@ -189,7 +230,7 @@ class WorldDraftTerminalReadMtlsTest {
         Throwable failure = catchThrowable(() -> client.read(request(READ_REQUEST_ID)));
 
         assertThat(failure).isInstanceOf(IllegalStateException.class);
-        assertThat(failure).hasMessageContaining("invalid definitive-abort readback evidence");
+        assertThat(failure).hasMessageContaining("invalid terminal readback evidence");
         assertThat(server.applicationMetadataCalls()).hasValue(1);
         assertThat(server.requestBodies()).hasValue(1);
         assertThat(server.authenticatedCallerPeer()).hasValue(ACCOUNT_PEER);
@@ -293,6 +334,7 @@ class WorldDraftTerminalReadMtlsTest {
     AtomicReference<ReadWorldDraftTerminalOutcomeRequest> capturedRequest = new AtomicReference<>();
     AtomicReference<String> authenticatedCallerPeer = new AtomicReference<>();
     OwnerReadback canonicalAbort = canonicalAbort();
+    OwnerReadback canonicalCommitted = canonicalCommitted();
 
     // This receiver double proves transport and client decoding only. It is not World's SQL owner,
     // an authenticated production readback producer, Account authorization, or settlement proof.
@@ -322,6 +364,57 @@ class WorldDraftTerminalReadMtlsTest {
                           WorldDraftTerminalReadStatus
                               .WORLD_DRAFT_TERMINAL_READ_STATUS_DEFINITIVELY_ABORTED)
                       .setOwnerReadbackBytes(ByteString.copyFrom(canonicalAbort.canonicalBytes()));
+              case COMMITTED ->
+                  builder
+                      .setStatus(
+                          WorldDraftTerminalReadStatus.WORLD_DRAFT_TERMINAL_READ_STATUS_COMMITTED)
+                      .setOwnerReadbackBytes(
+                          ByteString.copyFrom(canonicalCommitted.canonicalBytes()));
+              case COMMITTED_STATUS_MISMATCH ->
+                  builder
+                      .setStatus(
+                          WorldDraftTerminalReadStatus.WORLD_DRAFT_TERMINAL_READ_STATUS_COMMITTED)
+                      .setOwnerReadbackBytes(ByteString.copyFrom(canonicalAbort.canonicalBytes()));
+              case COMMITTED_WRONG_OWNER,
+                  COMMITTED_SUBSTITUTED_RESULT,
+                  COMMITTED_CHANGED_BINDING -> {
+                var original =
+                    DraftAuthorizationFenceBinding.fromStored(canonicalCommitted.fullBinding());
+                byte[] fullBinding = original.canonicalBytes();
+                if (reply == Reply.COMMITTED_CHANGED_BINDING)
+                  fullBinding =
+                      new DraftAuthorizationFenceBinding(
+                              original.operationId(),
+                              original.requestId(),
+                              original.commitId(),
+                              original.fenceId(),
+                              UUID.randomUUID(),
+                              original.tenantId(),
+                              original.versionId(),
+                              original.baseCommitId(),
+                              original.expectedDraftEpoch(),
+                              original.gameDesignBinding(),
+                              original.normalizedInput(),
+                              original.inputDigest(),
+                              original.sources())
+                          .canonicalBytes();
+                var changed =
+                    new OwnerReadback(
+                        reply == Reply.COMMITTED_WRONG_OWNER ? Owner.GAME_DESIGN : Owner.WORLD,
+                        Outcome.COMMITTED,
+                        original.operationId(),
+                        original.commitId(),
+                        original.fenceId(),
+                        original.inputDigest(),
+                        fullBinding,
+                        reply == Reply.COMMITTED_SUBSTITUTED_RESULT
+                            ? new byte[] {1}
+                            : canonicalCommitted.result());
+                builder
+                    .setStatus(
+                        WorldDraftTerminalReadStatus.WORLD_DRAFT_TERMINAL_READ_STATUS_COMMITTED)
+                    .setOwnerReadbackBytes(ByteString.copyFrom(changed.canonicalBytes()));
+              }
               case CHANGED_READ_ID -> builder.setReadRequestId(REPLAY_READ_REQUEST_ID.toString());
               case CHANGED_ORIGINAL_BINDING ->
                   builder.setOriginalAccountBinding(ByteString.copyFrom(new byte[] {9, 8, 7}));
@@ -355,6 +448,114 @@ class WorldDraftTerminalReadMtlsTest {
             .start();
     return new PhysicalServer(
         server, applicationMetadataCalls, requestBodies, capturedRequest, authenticatedCallerPeer);
+  }
+
+  private static OwnerReadback canonicalCommitted() {
+    var request = request(READ_REQUEST_ID);
+    try {
+      var account = request.accountBinding();
+      var draft =
+          DraftCommitBinding.fromStored(
+              new String(account.gameDesignBinding(), java.nio.charset.StandardCharsets.UTF_8),
+              account.inputDigest());
+      var operation = new java.io.ByteArrayOutputStream();
+      var frames = new java.io.DataOutputStream(operation);
+      java.util.function.Consumer<byte[]> frame =
+          bytes -> {
+            try {
+              frames.writeInt(bytes.length);
+              frames.write(bytes);
+            } catch (java.io.IOException impossible) {
+              throw new AssertionError(impossible);
+            }
+          };
+      java.util.function.Consumer<String> text =
+          value -> frame.accept(value.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+      text.accept("world-draft-terminal-operation/v1");
+      for (UUID id :
+          List.of(
+              account.operationId(),
+              account.requestId(),
+              account.commitId(),
+              account.fenceId(),
+              account.tenantId(),
+              account.versionId())) text.accept(id.toString());
+      frame.accept(draft.canonicalBytes());
+      for (String value :
+          List.of(
+              request.targetNamespace(),
+              account.tenantId().toString(),
+              account.versionId().toString(),
+              "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+              Long.toString(draft.target().gameDesignVersionRowId()),
+              "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+              "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+              "a".repeat(64),
+              "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+              "b".repeat(64),
+              "c".repeat(64))) text.accept(value);
+      text.accept(
+          "sha256:"
+              + java.util.HexFormat.of()
+                  .formatHex(
+                      java.security.MessageDigest.getInstance("SHA-256")
+                          .digest(account.canonicalBytes())));
+      frame.accept(account.canonicalBytes());
+      byte[] graph =
+          ("{\"schemaVersion\":\"2\",\"canonicalTenantId\":\""
+                  + account.tenantId()
+                  + "\",\"canonicalVersionId\":\""
+                  + account.versionId()
+                  + "\",\"rows\":[{}]}")
+              .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+      var result = new java.util.LinkedHashMap<String, Object>();
+      result.put("schema", "world-draft-graph-applied/v1");
+      result.put("status", "APPLIED");
+      result.put(
+          "operationBytesBase64",
+          java.util.Base64.getEncoder().encodeToString(operation.toByteArray()));
+      result.put("graphBytesBase64", java.util.Base64.getEncoder().encodeToString(graph));
+      result.put(
+          "graphDigest",
+          "sha256:"
+              + java.util.HexFormat.of()
+                  .formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(graph)));
+      result.put(
+          "appliedEpochs",
+          draft.affectedUnits(DraftCommitBinding.Owner.WORLD_MANAGEMENT).stream()
+              .map(
+                  unit ->
+                      java.util.Map.of(
+                          "aggregateType",
+                          unit.aggregateType(),
+                          "aggregateId",
+                          unit.aggregateId(),
+                          "scopeType",
+                          unit.scopeType(),
+                          "scopeId",
+                          unit.scopeId(),
+                          "expectedEpoch",
+                          unit.expectedEpoch(),
+                          "resultingEpoch",
+                          new java.math.BigInteger(unit.expectedEpoch())
+                              .add(java.math.BigInteger.ONE)
+                              .toString()))
+              .toList());
+      var bytes =
+          net.firedevops.firemud.common.json.Rfc8785CanonicalJson.canonicalizeUtf8(
+              new tools.jackson.databind.ObjectMapper().writeValueAsString(result));
+      return new DraftAuthorizationFenceBinding.OwnerReadback(
+          Owner.WORLD,
+          Outcome.COMMITTED,
+          account.operationId(),
+          account.commitId(),
+          account.fenceId(),
+          account.inputDigest(),
+          account.canonicalBytes(),
+          bytes);
+    } catch (java.io.IOException | java.security.NoSuchAlgorithmException impossible) {
+      throw new AssertionError(impossible);
+    }
   }
 
   private static OwnerReadback canonicalAbort() {
@@ -522,6 +723,11 @@ class WorldDraftTerminalReadMtlsTest {
   private enum Reply {
     UNKNOWN,
     ABORT,
+    COMMITTED,
+    COMMITTED_STATUS_MISMATCH,
+    COMMITTED_WRONG_OWNER,
+    COMMITTED_SUBSTITUTED_RESULT,
+    COMMITTED_CHANGED_BINDING,
     CHANGED_READ_ID,
     CHANGED_ORIGINAL_BINDING
   }

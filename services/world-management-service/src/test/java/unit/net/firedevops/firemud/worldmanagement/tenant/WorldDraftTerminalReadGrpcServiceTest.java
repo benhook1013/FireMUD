@@ -24,6 +24,9 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayloa
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.authoring.WorldDraftTerminalReadEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationRepository;
+import net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphAppliedResult;
+import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOutcome;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOutcomeRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalReadGrpcService;
 import net.firedevops.firemud.worldmanagement.v1.ReadWorldDraftTerminalOutcomeRequest;
@@ -32,11 +35,14 @@ import net.firedevops.firemud.worldmanagement.v1.WorldDraftTerminalReadStatus;
 import org.junit.jupiter.api.Test;
 
 class WorldDraftTerminalReadGrpcServiceTest {
+  private final WorldDraftGraphApplicationRepository applications =
+      mock(WorldDraftGraphApplicationRepository.class);
+
   @Test
   void rejectsMissingOrSubstitutedAccountPeerBeforeDecodingOrQuerying() {
     WorldDraftTerminalOutcomeRepository repository =
         mock(WorldDraftTerminalOutcomeRepository.class);
-    var service = new WorldDraftTerminalReadGrpcService(repository, "test");
+    var service = new WorldDraftTerminalReadGrpcService(repository, applications, "test");
     ReadWorldDraftTerminalOutcomeRequest malformed =
         ReadWorldDraftTerminalOutcomeRequest.newBuilder().setSchemaVersion(-1).build();
 
@@ -57,7 +63,7 @@ class WorldDraftTerminalReadGrpcServiceTest {
     }
     assertThat(Status.fromThrowable(wrongPeer.error).getCode())
         .isEqualTo(Status.Code.PERMISSION_DENIED);
-    verifyNoInteractions(repository);
+    verifyNoInteractions(repository, applications);
   }
 
   @Test
@@ -67,7 +73,7 @@ class WorldDraftTerminalReadGrpcServiceTest {
     var request = WorldDraftTerminalReadEvidence.Request.create("test", accountBinding());
     when(repository.readDefinitiveAbort(eq("test"), any(byte[].class)))
         .thenReturn(Optional.empty());
-    var service = new WorldDraftTerminalReadGrpcService(repository, "test");
+    var service = new WorldDraftTerminalReadGrpcService(repository, applications, "test");
     Collector response = new Collector();
     Context context =
         Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer("account-service", "test"));
@@ -82,6 +88,7 @@ class WorldDraftTerminalReadGrpcServiceTest {
     }
 
     verify(repository).readDefinitiveAbort(eq("test"), any(byte[].class));
+    verify(applications).readCommitted(eq("test"), any(byte[].class));
     assertThat(response.error).isNull();
     assertThat(response.completed).isTrue();
     assertThat(response.value.getStatus())
@@ -96,7 +103,7 @@ class WorldDraftTerminalReadGrpcServiceTest {
     var request = WorldDraftTerminalReadEvidence.Request.create("test", accountBinding());
     when(repository.readDefinitiveAbort(eq("test"), any(byte[].class)))
         .thenThrow(new org.jooq.exception.DataAccessException("database unavailable"));
-    var service = new WorldDraftTerminalReadGrpcService(repository, "test");
+    var service = new WorldDraftTerminalReadGrpcService(repository, applications, "test");
     Collector response = new Collector();
     Context context =
         Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer("account-service", "test"));
@@ -119,6 +126,69 @@ class WorldDraftTerminalReadGrpcServiceTest {
   private static GrpcPeerIdentity peer(String service, String namespace) {
     return new GrpcPeerIdentity(
         "spiffe://firemud/ns/" + namespace + "/sa/" + service, namespace, service);
+  }
+
+  @Test
+  void conflictingCommittedAndAbortReceiptsReturnFailedPreconditionInsteadOfChoosingOne() {
+    var repository = mock(WorldDraftTerminalOutcomeRepository.class);
+    var request = WorldDraftTerminalReadEvidence.Request.create("test", accountBinding());
+    var committed = mock(WorldDraftGraphAppliedResult.class);
+    when(repository.readDefinitiveAbort(eq("test"), any(byte[].class)))
+        .thenReturn(Optional.of(mock(WorldDraftTerminalOutcome.class)));
+    when(applications.readCommitted(eq("test"), any(byte[].class)))
+        .thenReturn(Optional.of(committed));
+    var service = new WorldDraftTerminalReadGrpcService(repository, applications, "test");
+    Collector response = callAsAccount(service, request);
+    assertThat(Status.fromThrowable(response.error).getCode())
+        .isEqualTo(Status.Code.FAILED_PRECONDITION);
+    assertThat(response.value).isNull();
+    verifyNoInteractions(committed);
+  }
+
+  @Test
+  void substitutedCommittedOwnerReadbackFailsClosedAfterAuthenticatedOwnerReads() {
+    var repository = mock(WorldDraftTerminalOutcomeRepository.class);
+    var request = WorldDraftTerminalReadEvidence.Request.create("test", accountBinding());
+    var committed = mock(WorldDraftGraphAppliedResult.class);
+    var binding = request.accountBinding();
+    when(repository.readDefinitiveAbort(eq("test"), any(byte[].class)))
+        .thenReturn(Optional.empty());
+    when(applications.readCommitted(eq("test"), any(byte[].class)))
+        .thenReturn(Optional.of(committed));
+    when(committed.ownerReadback())
+        .thenReturn(
+            new DraftAuthorizationFenceBinding.OwnerReadback(
+                DraftAuthorizationFenceBinding.Owner.GAME_DESIGN,
+                DraftAuthorizationFenceBinding.Outcome.COMMITTED,
+                binding.operationId(),
+                binding.commitId(),
+                binding.fenceId(),
+                binding.inputDigest(),
+                binding.canonicalBytes(),
+                new byte[] {1}));
+    var response =
+        callAsAccount(
+            new WorldDraftTerminalReadGrpcService(repository, applications, "test"), request);
+    assertThat(Status.fromThrowable(response.error).getCode())
+        .isEqualTo(Status.Code.FAILED_PRECONDITION);
+    assertThat(response.value).isNull();
+  }
+
+  private static Collector callAsAccount(
+      WorldDraftTerminalReadGrpcService service, WorldDraftTerminalReadEvidence.Request request) {
+    Collector response = new Collector();
+    var context =
+        Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer("account-service", "test"));
+    var previous = context.attach();
+    try {
+      service.readWorldDraftTerminalOutcome(
+          net.firedevops.firemud.common.authoring.WorldDraftTerminalReadGrpcCodec.toRequest(
+              request),
+          response);
+    } finally {
+      context.detach(previous);
+    }
+    return response;
   }
 
   private static byte[] accountBinding() {

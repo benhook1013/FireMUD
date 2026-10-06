@@ -2,15 +2,24 @@ package integration.net.firedevops.firemud.accountservice.authordraft;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
+import net.firedevops.firemud.accountservice.authordraft.AccountDraftTerminalReconciliationService;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.Ordering;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.Settlement;
@@ -25,6 +34,10 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
+import net.firedevops.firemud.common.authoring.GameDesignDraftTerminalReadClient;
+import net.firedevops.firemud.common.authoring.GameDesignDraftTerminalReadEvidence;
+import net.firedevops.firemud.common.authoring.WorldDraftTerminalReadClient;
+import net.firedevops.firemud.common.authoring.WorldDraftTerminalReadEvidence;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -35,6 +48,7 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -49,6 +63,266 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 class DraftAuthorizationFencePostgresIntegrationTest {
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+
+  @Test
+  void twoOwnerConsumerPersistsWorldOnceAndRecoversMissingGameDesignOnRetry() {
+    Context context = context();
+    DraftAuthorizationFenceBinding binding = binding();
+    tx(context, () -> context.repository().reserve(binding));
+    tx(context, () -> context.repository().claimCommitOrder(binding));
+    SourceChange change = change(binding);
+    assertThat(tx(context, () -> context.repository().requestSourceChange(change))).isFalse();
+    OwnerReadback worldAbort =
+        ownerReadback(binding, Owner.WORLD, Outcome.DEFINITIVELY_ABORTED, new byte[] {31});
+    OwnerReadback gameDesignAbort =
+        ownerReadback(binding, Owner.GAME_DESIGN, Outcome.DEFINITIVELY_ABORTED, new byte[] {32});
+    GameDesignDraftTerminalReadClient gameDesignClient =
+        mock(GameDesignDraftTerminalReadClient.class);
+    WorldDraftTerminalReadClient worldClient = mock(WorldDraftTerminalReadClient.class);
+    when(gameDesignClient.read(any()))
+        .thenAnswer(
+            invocation -> {
+              assertOutsideOwnerTransaction();
+              var request = (GameDesignDraftTerminalReadEvidence.Request) invocation.getArgument(0);
+              assertThat(request.originalAccountBinding())
+                  .containsExactly(binding.canonicalBytes());
+              return new GameDesignDraftTerminalReadEvidence(request, Optional.empty());
+            })
+        .thenAnswer(
+            invocation -> {
+              assertOutsideOwnerTransaction();
+              var request = (GameDesignDraftTerminalReadEvidence.Request) invocation.getArgument(0);
+              assertThat(request.originalAccountBinding())
+                  .containsExactly(binding.canonicalBytes());
+              return new GameDesignDraftTerminalReadEvidence(request, Optional.of(gameDesignAbort));
+            });
+    when(worldClient.read(any()))
+        .thenAnswer(
+            invocation -> {
+              assertOutsideOwnerTransaction();
+              var request = (WorldDraftTerminalReadEvidence.Request) invocation.getArgument(0);
+              assertThat(request.originalAccountBinding())
+                  .containsExactly(binding.canonicalBytes());
+              return new WorldDraftTerminalReadEvidence(request, Optional.of(worldAbort));
+            });
+    var service =
+        new AccountDraftTerminalReconciliationService(
+            context.repository(),
+            context.transaction().getTransactionManager(),
+            gameDesignClient,
+            worldClient,
+            "firemud-test");
+
+    assertThat(service.reconcile(binding.operationId())).contains(Settlement.PENDING);
+    assertThat(tx(context, () -> context.repository().readOwnerResult(binding, Owner.WORLD)))
+        .get()
+        .satisfies(
+            stored -> assertThat(stored.readback()).containsExactly(worldAbort.canonicalBytes()));
+    assertThat(tx(context, () -> context.repository().readOwnerResult(binding, Owner.GAME_DESIGN)))
+        .isEmpty();
+    assertThat(tx(context, () -> context.repository().sourceMutationPermitted(change))).isFalse();
+
+    assertThat(service.reconcile(binding.operationId())).contains(Settlement.FAILED_NONPUBLICATION);
+    assertThat(tx(context, () -> context.repository().readOwnerResult(binding, Owner.WORLD)))
+        .get()
+        .satisfies(
+            stored -> assertThat(stored.readback()).containsExactly(worldAbort.canonicalBytes()));
+    assertThat(tx(context, () -> context.repository().readOwnerResult(binding, Owner.GAME_DESIGN)))
+        .get()
+        .satisfies(
+            stored ->
+                assertThat(stored.readback()).containsExactly(gameDesignAbort.canonicalBytes()));
+    assertThat(tx(context, () -> context.repository().sourceMutationPermitted(change))).isTrue();
+    verify(gameDesignClient, times(2)).read(any());
+    verify(worldClient).read(any());
+  }
+
+  @Test
+  void mixedCommitOrderPreservesOriginalWorldCommitAndTerminalConsumerRetry() {
+    Context context = context();
+    DraftAuthorizationFenceBinding binding = binding();
+    tx(context, () -> context.repository().reserve(binding));
+    tx(context, () -> context.repository().claimCommitOrder(binding));
+    SourceChange change = change(binding);
+    assertThat(tx(context, () -> context.repository().requestSourceChange(change))).isFalse();
+    OwnerReadback originalWorldCommit =
+        ownerReadback(binding, Owner.WORLD, Outcome.COMMITTED, new byte[] {41, 42});
+    OwnerReadback gameDesignAbort =
+        ownerReadback(binding, Owner.GAME_DESIGN, Outcome.DEFINITIVELY_ABORTED, new byte[] {43});
+    GameDesignDraftTerminalReadClient gameDesignClient =
+        mock(GameDesignDraftTerminalReadClient.class);
+    WorldDraftTerminalReadClient worldClient = mock(WorldDraftTerminalReadClient.class);
+    when(gameDesignClient.read(any()))
+        .thenAnswer(
+            invocation -> {
+              assertOutsideOwnerTransaction();
+              var request = (GameDesignDraftTerminalReadEvidence.Request) invocation.getArgument(0);
+              return new GameDesignDraftTerminalReadEvidence(request, Optional.of(gameDesignAbort));
+            });
+    when(worldClient.read(any()))
+        .thenAnswer(
+            invocation -> {
+              assertOutsideOwnerTransaction();
+              var request = (WorldDraftTerminalReadEvidence.Request) invocation.getArgument(0);
+              return worldEvidence(request, originalWorldCommit);
+            });
+    var service =
+        new AccountDraftTerminalReconciliationService(
+            context.repository(),
+            context.transaction().getTransactionManager(),
+            gameDesignClient,
+            worldClient,
+            "firemud-test");
+
+    assertThat(service.reconcile(binding.operationId())).contains(Settlement.FAILED_NONPUBLICATION);
+    assertThat(tx(context, () -> context.repository().readOwnerResult(binding, Owner.WORLD)))
+        .get()
+        .satisfies(
+            stored ->
+                assertThat(stored.readback())
+                    .containsExactly(originalWorldCommit.canonicalBytes()));
+    assertThat(tx(context, () -> context.repository().sourceMutationPermitted(change))).isTrue();
+    assertThat(service.reconcile(binding.operationId())).contains(Settlement.FAILED_NONPUBLICATION);
+    verify(gameDesignClient).read(any());
+    verify(worldClient).read(any());
+  }
+
+  @Test
+  void concurrentExactConsumerRetriesReturnTheSameOriginalSettlement() throws Exception {
+    Context context = context();
+    DraftAuthorizationFenceBinding binding = binding();
+    tx(context, () -> context.repository().reserve(binding));
+    tx(context, () -> context.repository().claimCommitOrder(binding));
+    OwnerReadback worldAbort =
+        ownerReadback(binding, Owner.WORLD, Outcome.DEFINITIVELY_ABORTED, new byte[] {51});
+    OwnerReadback gameDesignAbort =
+        ownerReadback(binding, Owner.GAME_DESIGN, Outcome.DEFINITIVELY_ABORTED, new byte[] {52});
+    CountDownLatch concurrentWorldReads = new CountDownLatch(2);
+    GameDesignDraftTerminalReadClient gameDesignClient =
+        mock(GameDesignDraftTerminalReadClient.class);
+    WorldDraftTerminalReadClient worldClient = mock(WorldDraftTerminalReadClient.class);
+    when(gameDesignClient.read(any()))
+        .thenAnswer(
+            invocation -> {
+              assertOutsideOwnerTransaction();
+              var request = (GameDesignDraftTerminalReadEvidence.Request) invocation.getArgument(0);
+              return new GameDesignDraftTerminalReadEvidence(request, Optional.of(gameDesignAbort));
+            });
+    when(worldClient.read(any()))
+        .thenAnswer(
+            invocation -> {
+              assertOutsideOwnerTransaction();
+              var request = (WorldDraftTerminalReadEvidence.Request) invocation.getArgument(0);
+              concurrentWorldReads.countDown();
+              await(concurrentWorldReads);
+              return new WorldDraftTerminalReadEvidence(request, Optional.of(worldAbort));
+            });
+    var service =
+        new AccountDraftTerminalReconciliationService(
+            context.repository(),
+            context.transaction().getTransactionManager(),
+            gameDesignClient,
+            worldClient,
+            "firemud-test");
+
+    try (var executor = Executors.newFixedThreadPool(2)) {
+      var first = executor.submit(() -> reconcileAttempt(service, binding.operationId()));
+      var second = executor.submit(() -> reconcileAttempt(service, binding.operationId()));
+      List<ReconciliationAttempt> attempts =
+          List.of(first.get(15, TimeUnit.SECONDS), second.get(15, TimeUnit.SECONDS));
+      assertThat(attempts)
+          .allSatisfy(
+              attempt -> {
+                assertThat(attempt.failure()).isNull();
+                assertThat(attempt.settlement()).isEqualTo(Settlement.FAILED_NONPUBLICATION);
+              });
+    }
+    assertThat(tx(context, () -> context.repository().readOwnerResult(binding, Owner.WORLD)))
+        .get()
+        .satisfies(
+            stored -> assertThat(stored.readback()).containsExactly(worldAbort.canonicalBytes()));
+    assertThat(tx(context, () -> context.repository().readOwnerResult(binding, Owner.GAME_DESIGN)))
+        .get()
+        .satisfies(
+            stored ->
+                assertThat(stored.readback()).containsExactly(gameDesignAbort.canonicalBytes()));
+  }
+
+  @Test
+  void concurrentConflictingOwnerEvidenceRejectsRetryAndPreservesWinningBytes() throws Exception {
+    Context context = context();
+    DraftAuthorizationFenceBinding binding = binding();
+    tx(context, () -> context.repository().reserve(binding));
+    tx(context, () -> context.repository().claimCommitOrder(binding));
+    OwnerReadback gameDesignAbort =
+        ownerReadback(binding, Owner.GAME_DESIGN, Outcome.DEFINITIVELY_ABORTED, new byte[] {61});
+    CountDownLatch concurrentWorldReads = new CountDownLatch(2);
+    AtomicInteger resultSequence = new AtomicInteger();
+    Map<UUID, OwnerReadback> returnedWorldResults = new ConcurrentHashMap<>();
+    GameDesignDraftTerminalReadClient gameDesignClient =
+        mock(GameDesignDraftTerminalReadClient.class);
+    WorldDraftTerminalReadClient worldClient = mock(WorldDraftTerminalReadClient.class);
+    when(gameDesignClient.read(any()))
+        .thenAnswer(
+            invocation -> {
+              assertOutsideOwnerTransaction();
+              var request = (GameDesignDraftTerminalReadEvidence.Request) invocation.getArgument(0);
+              return new GameDesignDraftTerminalReadEvidence(request, Optional.of(gameDesignAbort));
+            });
+    when(worldClient.read(any()))
+        .thenAnswer(
+            invocation -> {
+              assertOutsideOwnerTransaction();
+              var request = (WorldDraftTerminalReadEvidence.Request) invocation.getArgument(0);
+              int resultNumber = resultSequence.incrementAndGet();
+              OwnerReadback worldAbort =
+                  ownerReadback(
+                      binding,
+                      Owner.WORLD,
+                      Outcome.DEFINITIVELY_ABORTED,
+                      new byte[] {(byte) (60 + resultNumber)});
+              returnedWorldResults.put(request.readRequestId(), worldAbort);
+              concurrentWorldReads.countDown();
+              await(concurrentWorldReads);
+              return new WorldDraftTerminalReadEvidence(request, Optional.of(worldAbort));
+            });
+    var service =
+        new AccountDraftTerminalReconciliationService(
+            context.repository(),
+            context.transaction().getTransactionManager(),
+            gameDesignClient,
+            worldClient,
+            "firemud-test");
+
+    List<ReconciliationAttempt> attempts;
+    try (var executor = Executors.newFixedThreadPool(2)) {
+      var first = executor.submit(() -> reconcileAttempt(service, binding.operationId()));
+      var second = executor.submit(() -> reconcileAttempt(service, binding.operationId()));
+      attempts = List.of(first.get(15, TimeUnit.SECONDS), second.get(15, TimeUnit.SECONDS));
+    }
+    List<ReconciliationAttempt> successes =
+        attempts.stream().filter(attempt -> attempt.failure() == null).toList();
+    List<ReconciliationAttempt> rejected =
+        attempts.stream().filter(attempt -> attempt.failure() != null).toList();
+    assertThat(successes).hasSize(1);
+    assertThat(successes.getFirst().settlement()).isEqualTo(Settlement.FAILED_NONPUBLICATION);
+    assertThat(rejected).hasSize(1);
+    assertThat(rejected.getFirst().failure())
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Concurrent owner recovery changed immutable evidence");
+    byte[] storedWorldReadback =
+        tx(context, () -> context.repository().readOwnerResult(binding, Owner.WORLD))
+            .orElseThrow()
+            .readback();
+    assertThat(returnedWorldResults.values())
+        .anySatisfy(
+            returned -> assertThat(returned.canonicalBytes()).containsExactly(storedWorldReadback));
+    assertThat(tx(context, () -> context.repository().readOwnerResult(binding, Owner.GAME_DESIGN)))
+        .get()
+        .satisfies(
+            stored ->
+                assertThat(stored.readback()).containsExactly(gameDesignAbort.canonicalBytes()));
+  }
 
   @Test
   void revokeBeforeCommitDeniesDelayedRequestsUntilBothDefinitiveAborts() {
@@ -809,22 +1083,51 @@ class DraftAuthorizationFencePostgresIntegrationTest {
       Owner owner,
       Outcome outcome,
       byte[] bytes) {
-    OwnerReadback readback =
-        new OwnerReadback(
-            owner,
-            outcome,
-            b.operationId(),
-            b.commitId(),
-            b.fenceId(),
-            b.inputDigest(),
-            b.canonicalBytes(),
-            bytes);
+    OwnerReadback readback = ownerReadback(b, owner, outcome, bytes);
     tx(
         context,
         () -> {
           context.repository().recordOwnerReadback(b, readback);
           return null;
         });
+  }
+
+  private static OwnerReadback ownerReadback(
+      DraftAuthorizationFenceBinding binding, Owner owner, Outcome outcome, byte[] result) {
+    return new OwnerReadback(
+        owner,
+        outcome,
+        binding.operationId(),
+        binding.commitId(),
+        binding.fenceId(),
+        binding.inputDigest(),
+        binding.canonicalBytes(),
+        result);
+  }
+
+  private static WorldDraftTerminalReadEvidence worldEvidence(
+      WorldDraftTerminalReadEvidence.Request request, OwnerReadback readback) {
+    if (readback.outcome() != Outcome.COMMITTED) {
+      return new WorldDraftTerminalReadEvidence(request, Optional.of(readback));
+    }
+    WorldDraftTerminalReadEvidence response = mock(WorldDraftTerminalReadEvidence.class);
+    when(response.request()).thenReturn(request);
+    when(response.ownerReadback()).thenReturn(Optional.of(readback));
+    return response;
+  }
+
+  private static void assertOutsideOwnerTransaction() {
+    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+    assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+  }
+
+  private static ReconciliationAttempt reconcileAttempt(
+      AccountDraftTerminalReconciliationService service, UUID operationId) {
+    try {
+      return new ReconciliationAttempt(service.reconcile(operationId).orElseThrow(), null);
+    } catch (RuntimeException failure) {
+      return new ReconciliationAttempt(null, failure);
+    }
   }
 
   private static <T> T tx(Context context, Supplier<T> work) {
@@ -846,4 +1149,6 @@ class DraftAuthorizationFencePostgresIntegrationTest {
       DSLContext dsl,
       DraftAuthorizationFenceRepository repository,
       TransactionTemplate transaction) {}
+
+  private record ReconciliationAttempt(Settlement settlement, RuntimeException failure) {}
 }

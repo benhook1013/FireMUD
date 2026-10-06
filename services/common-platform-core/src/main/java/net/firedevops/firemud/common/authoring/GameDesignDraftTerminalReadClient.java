@@ -14,19 +14,19 @@ import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
-import net.firedevops.firemud.worldmanagement.v1.WorldDraftTerminalReadServiceGrpc;
+import net.firedevops.firemud.gamedesign.v1.GameDesignDraftTerminalReadServiceGrpc;
 
-/** Explicit mTLS client for exact same-namespace World committed/definitive-abort readback. */
-public final class WorldDraftTerminalReadClient
+/** Explicit mTLS client for exact same-namespace Game Design terminal readback. */
+public final class GameDesignDraftTerminalReadClient
     extends AbstractReloadingBlockingGrpcClient<
-        WorldDraftTerminalReadServiceGrpc.WorldDraftTerminalReadServiceBlockingStub> {
+        GameDesignDraftTerminalReadServiceGrpc.GameDesignDraftTerminalReadServiceBlockingStub> {
   private static final long CALL_DEADLINE_SECONDS = 5L;
 
   private final String workloadNamespace;
   private volatile boolean initialized;
   private volatile boolean closed;
 
-  public WorldDraftTerminalReadClient(
+  public GameDesignDraftTerminalReadClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProperties,
       GrpcChannelFactory channelFactory,
@@ -35,7 +35,7 @@ public final class WorldDraftTerminalReadClient
         endpoints,
         requireFileBackedMtls(tlsProperties),
         channelFactory,
-        WorldDraftTerminalReadClient.class);
+        GameDesignDraftTerminalReadClient.class);
     if (!GrpcPeerIdentity.isValidNamespace(workloadNamespace)) {
       throw new IllegalArgumentException("Workload namespace must be one canonical DNS label");
     }
@@ -45,53 +45,54 @@ public final class WorldDraftTerminalReadClient
   /** Initializes only when the owning Account service explicitly starts this opt-in client. */
   public synchronized void init() throws SSLException, IOException {
     if (closed) {
-      throw new IllegalStateException("World terminal read client is closed");
+      throw new IllegalStateException("Game Design terminal read client is closed");
     }
     if (initialized) {
       return;
     }
     initReloadingClient();
     if (stub() == null) {
-      throw new IllegalStateException("World terminal read client has no gRPC stub");
+      throw new IllegalStateException("Game Design terminal read client has no gRPC stub");
     }
     initialized = true;
   }
 
-  /** Reads exact immutable World terminal evidence; no missing row is inferred as abort. */
-  public WorldDraftTerminalReadEvidence read(WorldDraftTerminalReadEvidence.Request request) {
+  /** Reads exact immutable Game Design terminal evidence; missing evidence stays UNKNOWN. */
+  public GameDesignDraftTerminalReadEvidence read(
+      GameDesignDraftTerminalReadEvidence.Request request) {
     Objects.requireNonNull(request, "request");
     if (!workloadNamespace.equals(request.targetNamespace())) {
       throw new IllegalArgumentException(
-          "World terminal read request must use the configured workload namespace");
+          "Game Design terminal read request must use the configured workload namespace");
     }
     var response =
         requireStub()
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
-            .readWorldDraftTerminalOutcome(WorldDraftTerminalReadGrpcCodec.toRequest(request));
+            .readGameDesignDraftTerminalOutcome(
+                GameDesignDraftTerminalReadGrpcCodec.toRequest(request));
     try {
-      return WorldDraftTerminalReadGrpcCodec.fromResponse(request, response);
+      return GameDesignDraftTerminalReadGrpcCodec.fromResponse(request, response);
     } catch (IllegalArgumentException exception) {
       throw new IllegalStateException(
-          "World returned invalid terminal readback evidence", exception);
+          "Game Design returned invalid terminal readback evidence", exception);
     }
   }
 
   @Override
   protected String configuredTarget(ServiceEndpointsProperties endpoints) {
-    return endpoints.getWorldManagementService();
+    return endpoints.getGameDesignService();
   }
 
   @Override
   protected String defaultTarget() {
-    return "world-management-service:6565";
+    return "game-design-service:6565";
   }
 
   @Override
-  protected WorldDraftTerminalReadServiceGrpc.WorldDraftTerminalReadServiceBlockingStub buildStub(
-      ManagedChannel channel) {
-    String expectedPeerUri =
-        "spiffe://firemud/ns/" + workloadNamespace + "/sa/world-management-service";
-    return WorldDraftTerminalReadServiceGrpc.newBlockingStub(channel)
+  protected GameDesignDraftTerminalReadServiceGrpc.GameDesignDraftTerminalReadServiceBlockingStub
+      buildStub(ManagedChannel channel) {
+    String expectedPeerUri = "spiffe://firemud/ns/" + workloadNamespace + "/sa/game-design-service";
+    return GameDesignDraftTerminalReadServiceGrpc.newBlockingStub(channel)
         .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expectedPeerUri))
         .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expectedPeerUri))
         .withCompression("gzip");
@@ -104,12 +105,12 @@ public final class WorldDraftTerminalReadClient
     super.close();
   }
 
-  private WorldDraftTerminalReadServiceGrpc.WorldDraftTerminalReadServiceBlockingStub
+  private GameDesignDraftTerminalReadServiceGrpc.GameDesignDraftTerminalReadServiceBlockingStub
       requireStub() {
     var currentStub = stub();
     if (closed || !initialized || currentStub == null) {
       throw new IllegalStateException(
-          "World terminal read client is not initialized and available");
+          "Game Design terminal read client is not initialized and available");
     }
     return currentStub;
   }
@@ -117,7 +118,7 @@ public final class WorldDraftTerminalReadClient
   private static CommonGrpcClientProperties requireFileBackedMtls(
       CommonGrpcClientProperties tlsProperties) {
     if (tlsProperties == null || tlsProperties.isPlaintext()) {
-      throw new IllegalArgumentException("World terminal read requires workload mTLS");
+      throw new IllegalArgumentException("Game Design terminal read requires workload mTLS");
     }
     requireReadableFile(tlsProperties.getCertChain(), "certificate chain");
     requireReadableFile(tlsProperties.getPrivateKey(), "private key");
@@ -128,23 +129,23 @@ public final class WorldDraftTerminalReadClient
   private static void requireReadableFile(String configuredPath, String label) {
     if (configuredPath == null || configuredPath.isBlank()) {
       throw new IllegalArgumentException(
-          "World terminal read requires file-backed certificate, key, and CA material");
+          "Game Design terminal read requires file-backed certificate, key, and CA material");
     }
     String pathText = configuredPath.trim();
     if (pathText.startsWith("classpath:")) {
       throw new IllegalArgumentException(
-          "World terminal read requires file-backed certificate, key, and CA material");
+          "Game Design terminal read requires file-backed certificate, key, and CA material");
     }
     Path path;
     try {
       path = Path.of(pathText);
     } catch (RuntimeException exception) {
       throw new IllegalArgumentException(
-          "World terminal read " + label + " must be a readable file-backed path", exception);
+          "Game Design terminal read " + label + " must be a readable file-backed path", exception);
     }
     if (!Files.isRegularFile(path) || !Files.isReadable(path)) {
       throw new IllegalArgumentException(
-          "World terminal read " + label + " must be an existing readable file");
+          "Game Design terminal read " + label + " must be an existing readable file");
     }
   }
 }

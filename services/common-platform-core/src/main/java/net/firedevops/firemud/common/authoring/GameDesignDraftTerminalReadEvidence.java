@@ -5,33 +5,31 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
-/**
- * Validated World terminal-read value; peer authentication is supplied only by transport guards.
- */
-public record WorldDraftTerminalReadEvidence(
+/** Validated Game Design terminal-read value; producer authentication comes only from transport. */
+public record GameDesignDraftTerminalReadEvidence(
     Request request, Optional<DraftAuthorizationFenceBinding.OwnerReadback> ownerReadback) {
-  public WorldDraftTerminalReadEvidence {
+  public GameDesignDraftTerminalReadEvidence {
     Objects.requireNonNull(request, "request");
     ownerReadback = Objects.requireNonNull(ownerReadback, "ownerReadback");
     ownerReadback.ifPresent(
         value -> {
-          if (value.owner() != DraftAuthorizationFenceBinding.Owner.WORLD
-              || (value.outcome() != DraftAuthorizationFenceBinding.Outcome.DEFINITIVELY_ABORTED
-                  && value.outcome() != DraftAuthorizationFenceBinding.Outcome.COMMITTED)) {
-            throw new IllegalArgumentException("World readback must be an exact terminal outcome");
+          if (value.owner() != DraftAuthorizationFenceBinding.Owner.GAME_DESIGN
+              || (value.outcome() != DraftAuthorizationFenceBinding.Outcome.COMMITTED
+                  && value.outcome()
+                      != DraftAuthorizationFenceBinding.Outcome.DEFINITIVELY_ABORTED)) {
+            throw new IllegalArgumentException(
+                "Game Design readback must be a committed or definitive-abort owner result");
           }
-          DraftAuthorizationFenceBinding binding = request.accountBinding();
-          value.requireBinding(binding);
-          if (!Arrays.equals(value.fullBinding(), request.originalAccountBinding())) {
-            throw new IllegalArgumentException("World readback differs from the original binding");
-          }
-          if (value.outcome() == DraftAuthorizationFenceBinding.Outcome.COMMITTED) {
-            WorldDraftTerminalReadGrpcCodec.requireCommittedResult(request, value);
+          value.requireBinding(request.accountBinding());
+          if (!Arrays.equals(value.fullBinding(), request.originalAccountBinding())
+              || value.result().length == 0) {
+            throw new IllegalArgumentException(
+                "Game Design readback differs from the original binding or lacks result bytes");
           }
         });
   }
 
-  /** The canonical original Account binding and a separate caller-owned fresh read identity. */
+  /** The canonical original Account binding and a separate fresh caller-owned read identity. */
   public record Request(
       int schemaVersion,
       String targetNamespace,
@@ -41,10 +39,10 @@ public record WorldDraftTerminalReadEvidence(
 
     public Request {
       if (schemaVersion != SCHEMA_VERSION) {
-        throw new IllegalArgumentException("Unsupported World terminal read schema version");
+        throw new IllegalArgumentException("Unsupported Game Design terminal read schema version");
       }
       if (!net.firedevops.firemud.common.grpc.GrpcPeerIdentity.isValidNamespace(targetNamespace)) {
-        throw new IllegalArgumentException("Canonical World workload namespace is required");
+        throw new IllegalArgumentException("Canonical Game Design workload namespace is required");
       }
       requireNonNil(readRequestId, "readRequestId");
       if (originalAccountBinding == null || originalAccountBinding.length == 0) {
@@ -57,13 +55,21 @@ public record WorldDraftTerminalReadEvidence(
           || readRequestId.equals(binding.requestId())
           || readRequestId.equals(binding.commitId())
           || readRequestId.equals(binding.fenceId())) {
-        throw new IllegalArgumentException("World terminal read requires a fresh request identity");
+        throw new IllegalArgumentException("Game Design terminal read requires a fresh identity");
       }
     }
 
     public static Request create(String targetNamespace, byte[] originalAccountBinding) {
-      return new Request(
-          SCHEMA_VERSION, targetNamespace, UUID.randomUUID(), originalAccountBinding);
+      DraftAuthorizationFenceBinding binding =
+          DraftAuthorizationFenceBinding.fromStored(originalAccountBinding);
+      UUID readRequestId;
+      do {
+        readRequestId = UUID.randomUUID();
+      } while (readRequestId.equals(binding.operationId())
+          || readRequestId.equals(binding.requestId())
+          || readRequestId.equals(binding.commitId())
+          || readRequestId.equals(binding.fenceId()));
+      return new Request(SCHEMA_VERSION, targetNamespace, readRequestId, originalAccountBinding);
     }
 
     @Override
