@@ -472,3 +472,7 @@ Entry format:
 - `2026-10-07`: Plain-SQL recovery cursors need PostgreSQL parameter-type proof
   - Context: #3021's Docker-free checks passed, but exact-source PostgreSQL CI37458361299 rejected the second Account recovery page because its `OffsetDateTime` cursor parameter arrived as varchar in a tuple comparison against `TIMESTAMPTZ`.
   - Outcome: the prepared query adds explicit timestamp and UUID casts while preserving the original keyset ordering and operation checks. Corrected execution remains required; compilation, mocked SQL and schema generation do not prove parameter binding. Include a non-initial-page case in the owning database proof.
+
+- `2026-10-07`: Do not feed truncated command captures into a mechanical patch
+  - Context: a source-stage preservation attempt read a large CI workflow through a bounded command capture. The truncation notice entered the proposed patch; `apply_patch` rejected it before modifying the isolated worktree.
+  - Outcome: use the bounded actual diff for tracked files, check captures for truncation before constructing a patch, and read complete content only for small new files. The retry preserved the source stage without changing the concurrently prepared carrier.
