@@ -13,7 +13,16 @@ import java.util.Base64;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.accountservice.client.OwnerApprovedAccountTenantAssociation;
+import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
+import net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2;
+import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.TenantProvenanceKind;
+import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -179,6 +188,16 @@ class ApprovedLegacyTenantAssociationIntegrationTest {
     var retainedEvidence = evidence(retainedLegacyId, retainedProjection);
     insertExpiredClaimAndPayload(retainedEvidence);
 
+    long referencedLegacyId = 89005;
+    long referencedAccountId = insertAccount("association-referenced");
+    Instant referencedCapture = Instant.now().minus(Duration.ofDays(31));
+    insertLegacySource(referencedAccountId, referencedLegacyId, referencedCapture);
+    var referencedProjection = sourceEvidence.projection(referencedLegacyId);
+    var referencedEvidence = evidence(referencedLegacyId, referencedProjection);
+    insertExpiredClaimAndPayload(referencedEvidence);
+    String referencedScopeId =
+        insertApprovedRetainedReferences(referencedAccountId, referencedEvidence);
+
     assertThat(associations.deleteExpiredApprovalPayloads(10)).isEqualTo(1);
     assertThat(
             dsl.fetchOne(
@@ -186,6 +205,24 @@ class ApprovedLegacyTenantAssociationIntegrationTest {
                     + "WHERE operation_id = ?",
                 retainedEvidence.operationId()))
         .isNull();
+
+    assertThat(
+            dsl.fetchOne(
+                "SELECT operation_id FROM account_approved_legacy_tenant_association_payload "
+                    + "WHERE operation_id = ?",
+                referencedEvidence.operationId()))
+        .isNotNull();
+    AccountConnectScopeRepository scopes = newConnectScopeRepository();
+    var scopeReadback =
+        transaction.execute(
+            status ->
+                scopes
+                    .findCanonicalEvidenceByTokenHash(
+                        AccountJoinDigest.tokenHash(referencedScopeId))
+                    .orElseThrow());
+    assertThat(scopeReadback.tenantProvenance().sourceOperationId())
+        .isEqualTo(referencedEvidence.operationId());
+    assertThat(scopeReadback.tenantProvenance().digest()).isEqualTo(MANIFEST_DIGEST);
 
     AccountTenantIdentityResolver resolver =
         new AccountTenantIdentityResolver(associations, NAMESPACE);
@@ -239,6 +276,101 @@ class ApprovedLegacyTenantAssociationIntegrationTest {
         .hasMessageContaining("future");
   }
 
+  @Test
+  void approvalPayloadReferenceInsertAndCleanupRaceCannotCommitDanglingEvidence() throws Exception {
+    long writerFirstLegacyId = 89201;
+    long writerFirstAccountId = insertAccount("association-writer-first");
+    insertLegacySource(
+        writerFirstAccountId, writerFirstLegacyId, Instant.now().minus(Duration.ofDays(31)));
+    var writerFirstEvidence =
+        evidence(writerFirstLegacyId, sourceEvidence.projection(writerFirstLegacyId));
+    insertExpiredClaimAndPayload(writerFirstEvidence);
+
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    CountDownLatch writerFirstInserted = new CountDownLatch(1);
+    CountDownLatch allowWriterFirstCommit = new CountDownLatch(1);
+    String writerFirstApplication =
+        "approval_writer_first_" + UUID.randomUUID().toString().replace("-", "");
+    try {
+      Future<?> writerFirst =
+          executor.submit(
+              () ->
+                  transaction.executeWithoutResult(
+                      status -> {
+                        setLocalApplicationName(writerFirstApplication);
+                        insertApprovedMembership(writerFirstAccountId, writerFirstEvidence);
+                        writerFirstInserted.countDown();
+                        awaitLatch(allowWriterFirstCommit, "writer-first Account reference");
+                      }));
+      assertThat(writerFirstInserted.await(5, TimeUnit.SECONDS)).isTrue();
+
+      assertThat(associations.deleteExpiredApprovalPayloads(1)).isZero();
+      allowWriterFirstCommit.countDown();
+      writerFirst.get(5, TimeUnit.SECONDS);
+      assertThat(payloadExists(writerFirstEvidence.operationId())).isTrue();
+      assertThat(membershipReferenceCount(writerFirstEvidence.operationId())).isEqualTo(1L);
+      assertThat(associations.deleteExpiredApprovalPayloads(1)).isZero();
+    } finally {
+      allowWriterFirstCommit.countDown();
+    }
+
+    long deleteFirstLegacyId = 89202;
+    long deleteFirstAccountId = insertAccount("association-delete-first");
+    insertLegacySource(
+        deleteFirstAccountId, deleteFirstLegacyId, Instant.now().minus(Duration.ofDays(31)));
+    var deleteFirstEvidence =
+        evidence(deleteFirstLegacyId, sourceEvidence.projection(deleteFirstLegacyId));
+    insertExpiredClaimAndPayload(deleteFirstEvidence);
+
+    CountDownLatch payloadDeletedInTransaction = new CountDownLatch(1);
+    CountDownLatch allowCleanupCommit = new CountDownLatch(1);
+    CountDownLatch writerStarted = new CountDownLatch(1);
+    String deleteFirstApplication =
+        "approval_delete_first_" + UUID.randomUUID().toString().replace("-", "");
+    Future<Integer> cleanup =
+        executor.submit(
+            () ->
+                transaction.execute(
+                    status -> {
+                      int removed = associations.deleteExpiredApprovalPayloads(1);
+                      payloadDeletedInTransaction.countDown();
+                      awaitLatch(allowCleanupCommit, "payload cleanup commit");
+                      return removed;
+                    }));
+    try {
+      assertThat(payloadDeletedInTransaction.await(5, TimeUnit.SECONDS)).isTrue();
+      Future<RuntimeException> writer =
+          executor.submit(
+              () -> {
+                try {
+                  transaction.executeWithoutResult(
+                      status -> {
+                        setLocalApplicationName(deleteFirstApplication);
+                        writerStarted.countDown();
+                        insertApprovedMembership(deleteFirstAccountId, deleteFirstEvidence);
+                      });
+                  return null;
+                } catch (RuntimeException failure) {
+                  return failure;
+                }
+              });
+      assertThat(writerStarted.await(5, TimeUnit.SECONDS)).isTrue();
+      assertThat(awaitTransactionLock(deleteFirstApplication)).isTrue();
+
+      allowCleanupCommit.countDown();
+      assertThat(cleanup.get(5, TimeUnit.SECONDS)).isEqualTo(1);
+      RuntimeException writeFailure = writer.get(5, TimeUnit.SECONDS);
+      assertThat(writeFailure).isNotNull();
+      assertThat(rootCauseMessage(writeFailure))
+          .contains("account_tenant_membership_approval_payload_fk");
+      assertThat(payloadExists(deleteFirstEvidence.operationId())).isFalse();
+      assertThat(membershipReferenceCount(deleteFirstEvidence.operationId())).isZero();
+    } finally {
+      allowCleanupCommit.countDown();
+      executor.shutdownNow();
+    }
+  }
+
   private long insertAccount(String username) {
     return Objects.requireNonNull(
             dsl.fetchOne(
@@ -247,6 +379,124 @@ class ApprovedLegacyTenantAssociationIntegrationTest {
                 username + "@example.test",
                 "test-hash"))
         .get(0, Long.class);
+  }
+
+  private String insertApprovedRetainedReferences(
+      long accountId, OwnerApprovedAccountTenantAssociation evidence) {
+    UUID accountUuid =
+        Objects.requireNonNull(
+                dsl.fetchOne("SELECT account_uuid FROM accounts WHERE id = ?", accountId))
+            .get(0, UUID.class);
+    String connectScopeId = "approval-retained-scope-" + UUID.randomUUID();
+    VerifiedTenantProvenance provenance =
+        new VerifiedTenantProvenance(
+            evidence.legacyAccountTenantId(),
+            TenantProvenanceKind.APPROVED_RETAINED,
+            evidence.operationId(),
+            evidence.manifestDigest());
+    CanonicalJoinScopeV2 scope =
+        new CanonicalJoinScopeV2(
+            connectScopeId,
+            accountUuid,
+            evidence.canonicalTenantId(),
+            UUID.randomUUID(),
+            "retained-tenant",
+            "world",
+            "private",
+            UUID.randomUUID(),
+            "SHARED",
+            UUID.randomUUID(),
+            1L,
+            1L,
+            Instant.now().minusSeconds(120).toString(),
+            Instant.now().minusSeconds(60).toString());
+    AccountConnectScopeRepository scopes = newConnectScopeRepository();
+    transaction.executeWithoutResult(
+        status -> {
+          insertApprovedMembership(accountId, evidence);
+          scopes.insertCanonical(accountId, scope, provenance);
+        });
+    return connectScopeId;
+  }
+
+  private AccountConnectScopeRepository newConnectScopeRepository() {
+    return new AccountConnectScopeRepository(
+        dsl,
+        new AccountTenantIdentityResolver(associations, NAMESPACE),
+        new FreshTenantIdentityAssociationRepository(dsl, NAMESPACE));
+  }
+
+  private void insertApprovedMembership(
+      long accountId, OwnerApprovedAccountTenantAssociation evidence) {
+    dsl.execute(
+        "INSERT INTO account_tenant_membership "
+            + "(account_id, tenant_id, tenant_uuid, tenant_provenance_kind, "
+            + "tenant_source_operation_id, tenant_provenance_digest, "
+            + "gameplay_admission_allowed, lifecycle_state, membership_version, "
+            + "membership_authority_generation, authority_provenance) "
+            + "VALUES (?, ?, ?, 'APPROVED_RETAINED', ?, ?, TRUE, 'ACTIVE', 1, 1, 'EXPLICIT_JOIN')",
+        accountId,
+        evidence.legacyAccountTenantId(),
+        evidence.canonicalTenantId(),
+        evidence.operationId(),
+        evidence.manifestDigest());
+  }
+
+  private boolean payloadExists(UUID operationId) {
+    return dsl.fetchOne(
+            "SELECT 1 FROM account_approved_legacy_tenant_association_payload WHERE operation_id = ?",
+            operationId)
+        != null;
+  }
+
+  private long membershipReferenceCount(UUID operationId) {
+    return Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT COUNT(*) FROM account_tenant_membership "
+                    + "WHERE approved_tenant_payload_operation_id = ?",
+                operationId))
+        .get(0, Long.class);
+  }
+
+  private void setLocalApplicationName(String applicationName) {
+    dsl.execute("SET LOCAL application_name = '" + applicationName + "'");
+  }
+
+  private boolean awaitTransactionLock(String applicationName) throws InterruptedException {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    while (System.nanoTime() < deadline) {
+      long waiting =
+          Objects.requireNonNull(
+                  dsl.fetchOne(
+                      "SELECT COUNT(*) FROM pg_stat_activity "
+                          + "WHERE application_name = ? AND wait_event_type = 'Lock'",
+                      applicationName))
+              .get(0, Long.class);
+      if (waiting > 0) {
+        return true;
+      }
+      Thread.sleep(25);
+    }
+    return false;
+  }
+
+  private static String rootCauseMessage(Throwable failure) {
+    Throwable cause = failure;
+    while (cause.getCause() != null) {
+      cause = cause.getCause();
+    }
+    return String.valueOf(cause.getMessage());
+  }
+
+  private static void awaitLatch(CountDownLatch latch, String operation) {
+    try {
+      if (!latch.await(5, TimeUnit.SECONDS)) {
+        throw new IllegalStateException("Timed out waiting for " + operation);
+      }
+    } catch (InterruptedException failure) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException("Interrupted while waiting for " + operation, failure);
+    }
   }
 
   private void insertLegacySource(long accountId, long legacyTenantId, Instant capturedAt) {

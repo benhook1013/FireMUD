@@ -16,17 +16,16 @@ import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.AuthorityScope;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.CompositeSnapshot;
-import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.ScopeKind;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.ScopeState;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Checkpoint;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Event;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.EventEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
-import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository.CurrentSourceEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository.IssuerAccountSourceSnapshot;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.CanonicalJoinOperationEvidence;
+import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.CanonicalJoinTerminalProof;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.PairAuthority;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.PairTransition;
@@ -37,7 +36,6 @@ import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipR
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository.RoleSnapshot;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
-import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.AuthorityTuple;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.MembershipEvent;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -161,23 +159,26 @@ public class AccountMembershipAuthorityEventProducer {
                         "Canonical first JOIN has no committed never-joined pair baseline"));
     requireExactPairScope(pair, accountUuid, tenantUuid, provenance);
 
-    CompositeSnapshot authority =
-        authorityGenerationRepository.readCompositeSnapshot(
-            ACCOUNT_JWT_ISSUER, accountUuid, List.of(tenantUuid), List.of(tenantUuid));
-    IssuerAccountSourceSnapshot sourceSnapshot =
-        sourceEvidenceRepository.readCurrentIssuerAccountSources(ACCOUNT_JWT_ISSUER, accountUuid);
-    requireGenesisAuthority(authority, accountUuid, tenantUuid, membership);
-    requireFreshIssuerAccountBaselines(sourceSnapshot, accountUuid);
-    requireNoPriorTenantHistory(tenantUuid);
-
     String streamKey = membershipStreamKey(accountUuid, tenantUuid);
     if (isPendingBaseline(pair)) {
+      if (!"PENDING".equals(operation.status())) {
+        throw new IllegalStateException(
+            "Committed canonical first JOIN has no positive pair/event readback");
+      }
+      CompositeSnapshot authority =
+          authorityGenerationRepository.readCompositeSnapshot(
+              ACCOUNT_JWT_ISSUER, accountUuid, List.of(tenantUuid), List.of(tenantUuid));
+      IssuerAccountSourceSnapshot sourceSnapshot =
+          sourceEvidenceRepository.readCurrentIssuerAccountSources(ACCOUNT_JWT_ISSUER, accountUuid);
+      requireCurrentAuthority(
+          authority, sourceSnapshot, account.getId(), accountUuid, tenantUuid, membership);
       if (authorityOutboxRepository.readCheckpoint(streamKey).isPresent()) {
         throw new IllegalStateException(
             "Canonical first JOIN cannot publish over retained membership-event history");
       }
       Checkpoint checkpoint =
-          appendFirstJoinEvent(streamKey, requestId, scope, membership, exactRoles, authority);
+          appendFirstJoinEvent(
+              streamKey, requestId, scope, membership, exactRoles, authority, sourceSnapshot);
       PairAuthority committed =
           pairAuthorityRepository.commitTransition(
               pair,
@@ -192,14 +193,13 @@ public class AccountMembershipAuthorityEventProducer {
     }
 
     requirePositiveFirstJoinPair(pair, membership);
+    if (!"COMMITTED".equals(operation.status())
+        || !"JOINED".equals(operation.outcome())
+        || operation.terminalProof() == null) {
+      throw new IllegalStateException("Positive first-JOIN pair has no committed operation proof");
+    }
     return readExactCommittedFirstJoin(
-        streamKey,
-        requestId,
-        scope,
-        membership,
-        exactRoles,
-        pair,
-        authority.issuanceFence().value());
+        streamKey, requestId, scope, membership, exactRoles, pair, operation);
   }
 
   private Checkpoint appendFirstJoinEvent(
@@ -208,7 +208,8 @@ public class AccountMembershipAuthorityEventProducer {
       CanonicalJoinScopeV2 scope,
       AccountTenantMembership membership,
       List<String> roles,
-      CompositeSnapshot authority) {
+      CompositeSnapshot authority,
+      IssuerAccountSourceSnapshot sourceSnapshot) {
     String eventId = eventIdForRequest(requestId);
     MembershipEvent[] candidate = new MembershipEvent[1];
     Event appended =
@@ -223,7 +224,14 @@ public class AccountMembershipAuthorityEventProducer {
               MembershipEvent event =
                   MembershipAuthorityEventV1Codec.seal(
                       membershipEventPreimage(
-                          scope, membership, roles, authority, eventId, requestId, sequence));
+                          scope,
+                          membership,
+                          roles,
+                          authority,
+                          sourceSnapshot,
+                          eventId,
+                          requestId,
+                          sequence));
               candidate[0] = event;
               return new EventEvidence(
                   event.eventId(), event.eventDigest(), event.canonicalJsonUtf8());
@@ -246,7 +254,6 @@ public class AccountMembershipAuthorityEventProducer {
       throw new IllegalStateException("Canonical first-JOIN event readback differs from append");
     }
     MembershipEvent verified = verifyStoredEvent(byRequest, scope, membership, roles, requestId);
-    requireInitialAuthorityTuple(verified, scope.tenantId());
     if (!verified.canonicalJson().equals(expected.canonicalJson())) {
       throw new IllegalStateException("Canonical first-JOIN codec readback differs from candidate");
     }
@@ -269,7 +276,7 @@ public class AccountMembershipAuthorityEventProducer {
       AccountTenantMembership membership,
       List<String> roles,
       PairAuthority pair,
-      long currentIssuanceFence) {
+      CanonicalJoinOperationEvidence operation) {
     Checkpoint checkpoint =
         authorityOutboxRepository
             .readCheckpoint(streamKey)
@@ -294,11 +301,18 @@ public class AccountMembershipAuthorityEventProducer {
     }
     requireCheckpointMatchesEvent(checkpoint, byRequest);
     MembershipEvent verified = verifyStoredEvent(byRequest, scope, membership, roles, requestId);
-    requireInitialAuthorityTuple(verified, scope.tenantId());
-    long committedFence = parsePositiveCanonicalDecimal(verified.issuanceFence(), "issuance fence");
-    if (committedFence > currentIssuanceFence
-        || !pair.eventId().equals(verified.eventId())
-        || !pair.eventDigest().equals(verified.eventDigest())) {
+    CanonicalJoinTerminalProof proof =
+        Objects.requireNonNull(
+            operation.terminalProof(), "committed JOIN terminal proof is required");
+    if (!pair.eventId().equals(verified.eventId())
+        || !pair.eventDigest().equals(verified.eventDigest())
+        || !proof.eventStreamKey().equals(streamKey)
+        || proof.eventSequence() != byRequest.outboxSequence()
+        || !proof.eventId().equals(verified.eventId())
+        || !proof.eventDigest().equals(verified.eventDigest())
+        || proof.membershipId() != Objects.requireNonNull(membership.getId())
+        || proof.membershipVersion() != membership.getMembershipVersion()
+        || proof.membershipAuthorityGeneration() != membership.getMembershipAuthorityGeneration()) {
       throw new IllegalStateException("Committed first-JOIN payload or pair linkage differs");
     }
     return checkpoint;
@@ -309,6 +323,7 @@ public class AccountMembershipAuthorityEventProducer {
       AccountTenantMembership membership,
       List<String> roles,
       CompositeSnapshot authority,
+      IssuerAccountSourceSnapshot sourceSnapshot,
       String eventId,
       String requestId,
       long sequence) {
@@ -326,6 +341,17 @@ public class AccountMembershipAuthorityEventProducer {
         "membershipAuthorityGeneration",
         Map.of(tenantUuid.toString(), decimal(member.generation())));
     authorityTuple.put("privateRealmGrantVersions", List.of());
+    sourceSnapshot
+        .account()
+        .accountSecurityCutoff()
+        .ifPresent(
+            cutoff ->
+                authorityTuple.put(
+                    "accountSecurityCutoff",
+                    Map.of(
+                        "accountAuthorityGeneration", cutoff.accountAuthorityGeneration(),
+                        "outboxStreamKey", cutoff.outboxStreamKey(),
+                        "outboxSequence", cutoff.outboxSequence())));
 
     Map<String, Object> event = new LinkedHashMap<>();
     event.put("schemaVersion", MembershipAuthorityEventV1Codec.SCHEMA_VERSION);
@@ -489,8 +515,10 @@ public class AccountMembershipAuthorityEventProducer {
     }
   }
 
-  private void requireGenesisAuthority(
+  private void requireCurrentAuthority(
       CompositeSnapshot snapshot,
+      IssuerAccountSourceSnapshot sourceSnapshot,
+      long accountRowId,
       UUID accountUuid,
       UUID tenantUuid,
       AccountTenantMembership membership) {
@@ -499,86 +527,39 @@ public class AccountMembershipAuthorityEventProducer {
     if (!AuthorityScope.issuer(ACCOUNT_JWT_ISSUER).equals(snapshot.issuer().scope())
         || !AuthorityScope.account(accountUuid).equals(snapshot.account().scope())
         || !AuthorityScope.tenant(tenantUuid).equals(tenant.scope())
-        || !AuthorityScope.membership(accountUuid, tenantUuid).equals(member.scope())
-        || snapshot.issuer().generation() != 1L
-        || snapshot.issuer().sourceVersion() != 1L
-        || snapshot.account().generation() != 1L
-        || snapshot.account().sourceVersion() != 1L
+        // Account currently has no tenant source-event readback for later tenant mutations. The
+        // exact fresh tenant association proves the original identity only, so do not accept a
+        // changed tenant authority generation until its owner source can prove that transition.
         || tenant.generation() != 1L
         || tenant.sourceVersion() != 1L
-        || member.generation() != 1L
-        || member.sourceVersion() != 1L
+        || !AuthorityScope.membership(accountUuid, tenantUuid).equals(member.scope())
         || member.generation() != membership.getMembershipAuthorityGeneration()
-        || snapshot.issuanceFence().value() != 1L
-        || snapshot.issuanceFence().sourceVersion() != 1L
         || !accountUuid.equals(snapshot.issuanceFence().accountId())
         || !snapshot.issuanceFence().equals(snapshot.account().issuanceFence())
-        || !snapshot.issuanceFence().equals(member.issuanceFence())) {
-      throw new IllegalStateException(
-          "Canonical first JOIN requires exact generation-one owner rows and current Account fence");
-    }
-  }
-
-  private void requireFreshIssuerAccountBaselines(
-      IssuerAccountSourceSnapshot snapshot, UUID accountUuid) {
-    requireFreshBaseline(snapshot.issuer(), AuthorityScope.issuer(ACCOUNT_JWT_ISSUER));
-    requireFreshBaseline(snapshot.account(), AuthorityScope.account(accountUuid));
-    if (!accountUuid.equals(snapshot.account().scope().accountId())
+        || !snapshot.issuanceFence().equals(member.issuanceFence())
+        || sourceSnapshot == null
+        || !AuthorityScope.issuer(ACCOUNT_JWT_ISSUER).equals(sourceSnapshot.issuer().scope())
+        || !AuthorityScope.account(accountUuid).equals(sourceSnapshot.account().scope())
+        || sourceSnapshot.issuer().generation() != snapshot.issuer().generation()
+        || sourceSnapshot.issuer().sourceVersion() != snapshot.issuer().sourceVersion()
+        || sourceSnapshot.account().generation() != snapshot.account().generation()
+        || sourceSnapshot.account().sourceVersion() != snapshot.account().sourceVersion()
+        || !snapshot.issuanceFence().equals(sourceSnapshot.issuanceFence())
+        || !snapshot.issuanceFence().equals(sourceSnapshot.account().issuanceFence())
+        || !"ISSUER_SCOPE_INSERT".equals(sourceSnapshot.issuer().initializationProvenance())
+        || sourceSnapshot.issuer().initializationTransactionId() <= 0L
+        || sourceSnapshot.issuer().accountRepositoryInsertTransactionId() != null
+        || !"ACCOUNT_REPOSITORY_INSERT".equals(sourceSnapshot.account().initializationProvenance())
         || !AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT
             .name()
-            .equals(snapshot.account().accountUuidProvenance())
-        || snapshot.account().accountSourceNumericId() == null
-        || snapshot.account().accountSourceNumericId() <= 0L
-        || snapshot.account().accountRepositoryInsertTransactionId() == null
-        || snapshot.account().accountRepositoryInsertTransactionId() <= 0L
-        || snapshot.account().initializationTransactionId()
-            != snapshot.account().accountRepositoryInsertTransactionId()
-        || snapshot.issuer().accountRepositoryInsertTransactionId() != null
-        || snapshot.issuanceFence().value() != 1L
-        || snapshot.issuanceFence().sourceVersion() != 1L) {
+            .equals(sourceSnapshot.account().accountUuidProvenance())
+        || sourceSnapshot.account().accountSourceNumericId() != accountRowId
+        || sourceSnapshot.account().accountRepositoryInsertTransactionId() == null
+        || sourceSnapshot.account().accountRepositoryInsertTransactionId() <= 0L
+        || sourceSnapshot.account().initializationTransactionId()
+            != sourceSnapshot.account().accountRepositoryInsertTransactionId()) {
       throw new IllegalStateException(
-          "Canonical first JOIN requires owner-proved fresh issuer and Account source baselines");
-    }
-  }
-
-  private static void requireFreshBaseline(
-      CurrentSourceEvidence source, AuthorityScope expectedScope) {
-    if (!expectedScope.equals(source.scope())
-        || source.generation() != 1L
-        || source.sourceVersion() != 1L
-        || source.checkpoint().sequence() != 0L
-        || source.checkpoint().sourceEventId().isPresent()
-        || source.checkpoint().sourceEventDigest().isPresent()
-        || source.accountSecurityCutoff().isPresent()
-        || source.initializationTransactionId() <= 0L
-        || (expectedScope.kind() == ScopeKind.ISSUER
-            && (source.issuanceFence() != null
-                || source.accountSourceNumericId() != null
-                || source.accountUuidProvenance() != null
-                || source.accountRepositoryInsertTransactionId() != null))
-        || (expectedScope.kind() == ScopeKind.ACCOUNT
-            && (source.issuanceFence() == null
-                || source.issuanceFence().value() != 1L
-                || source.issuanceFence().sourceVersion() != 1L
-                || source.accountSourceNumericId() == null
-                || source.accountSourceNumericId() <= 0L
-                || source.accountRepositoryInsertTransactionId() == null
-                || source.accountRepositoryInsertTransactionId() <= 0L
-                || source.initializationTransactionId()
-                    != source.accountRepositoryInsertTransactionId()))) {
-      throw new IllegalStateException(
-          "Canonical first JOIN requires exact owner-proved sequence-zero source baselines");
-    }
-  }
-
-  private void requireNoPriorTenantHistory(UUID tenantUuid) {
-    requireAbsentHistory(tenantStreamKey(tenantUuid));
-  }
-
-  private void requireAbsentHistory(String streamKey) {
-    if (authorityOutboxRepository.readCheckpoint(streamKey).isPresent()) {
-      throw new IllegalStateException(
-          "Canonical first JOIN cannot publish with prior issuer, Account, or tenant event history");
+          "Canonical first JOIN requires exact current Account, source, and tenant authority evidence");
     }
   }
 
@@ -660,23 +641,9 @@ public class AccountMembershipAuthorityEventProducer {
         || verified.callerBoundAuthorityInvalidated()
         || !verified.eventDigest().equals(event.eventDigest())) {
       throw new IllegalStateException(
-          "Stored first-JOIN event payload differs from Account sources");
+          "Stored first-JOIN event payload differs from its immutable membership sources");
     }
     return verified;
-  }
-
-  private static void requireInitialAuthorityTuple(MembershipEvent event, UUID tenantUuid) {
-    AuthorityTuple tuple = event.authorityTuple();
-    if (!"1".equals(tuple.issuerAuthGeneration())
-        || !"1".equals(tuple.accountAuthorityGeneration())
-        || !Map.of(tenantUuid.toString(), "1").equals(tuple.tenantAuthorityGeneration())
-        || !Map.of(tenantUuid.toString(), "1").equals(tuple.membershipAuthorityGeneration())
-        || !tuple.privateRealmGrantVersions().isEmpty()
-        || tuple.accountSecurityCutoff().isPresent()
-        || tuple.tenantBillingCutoff().isPresent()) {
-      throw new IllegalStateException(
-          "Committed first-JOIN event contains advanced or cutoff authority state");
-    }
   }
 
   private static void requireAppendedEvent(
@@ -726,10 +693,6 @@ public class AccountMembershipAuthorityEventProducer {
         + tenantUuid;
   }
 
-  private static String tenantStreamKey(UUID tenantUuid) {
-    return MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX + "tenant/" + tenantUuid;
-  }
-
   private static String eventIdForRequest(String requestId) {
     return UUID.nameUUIDFromBytes(
             (MembershipAuthorityEventV1Codec.SCHEMA_VERSION + ":" + requestId)
@@ -742,18 +705,6 @@ public class AccountMembershipAuthorityEventProducer {
       throw new IllegalStateException("Account authority event values must be positive");
     }
     return Long.toString(value);
-  }
-
-  private static long parsePositiveCanonicalDecimal(String value, String label) {
-    if (value == null || !value.matches("[1-9][0-9]*")) {
-      throw new IllegalStateException("Committed Account event has invalid " + label);
-    }
-    try {
-      return Long.parseLong(value);
-    } catch (NumberFormatException overflow) {
-      throw new IllegalStateException(
-          "Committed Account event " + label + " exceeds BIGINT", overflow);
-    }
   }
 
   private static void requireBoundedText(String value, String label, int maxCodePoints) {
