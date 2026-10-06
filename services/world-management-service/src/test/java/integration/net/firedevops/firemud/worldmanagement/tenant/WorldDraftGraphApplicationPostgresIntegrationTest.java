@@ -696,7 +696,14 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
 
   private WorldCanonicalInstancePreparationRepository preparationRepository() {
     return new WorldCanonicalInstancePreparationRepository(
-        dsl, manager, new WorldCanonicalInstanceAssociationRepository(dsl), frozenRepository());
+        dsl,
+        manager,
+        new WorldCanonicalInstanceAssociationRepository(
+            dsl,
+            new WorldCompleteLaunchBindingRepository(dsl),
+            new WorldAuthoredSourceIntakeRepository(dsl),
+            new WorldAuthoredVersionIdentityRepository(dsl)),
+        frozenRepository());
   }
 
   private WorldCanonicalInstancePreparationService preparationComponent(

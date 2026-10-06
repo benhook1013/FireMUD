@@ -995,6 +995,9 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.PublishedReleaseCanonicalIdentityIntegrationTest#repositoryNestedTransactionRollsBackWithOuterSpringPublisherTransaction()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.PublishedReleaseCanonicalIdentityIntegrationTest#deniesWrongTenantNilAndSubstitutedCallerOrDatabaseIdentityWithoutGrowingBundles()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.PublishedReleaseCanonicalIdentityIntegrationTest#bundleIdentityIsImmutableRetainedNullCannotBeBackfilledAndMetadataCannotBeDeleted()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.PublishedReleaseCanonicalIdentityIntegrationTest#selectorV2RetainsCompleteOriginalEvidenceAndExactlyReplaysWithoutReplacingRelease()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.PublishedReleaseCanonicalIdentityIntegrationTest#concurrentExactSelectorRetriesCommitOneImmutableBundle()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.PublishedReleaseCanonicalIdentityIntegrationTest#sqlGuardRejectsMissingInjectedAndMismatchedSelectorBindingsWithoutAnyRelease()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepositoryIntegrationTest#v37LeavesRetainedVersionTupleAndXminUnchangedAndDeniesItsUnmappedIdentity()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepositoryIntegrationTest#freezesOnlyExactMappedBytesAndRetriesFromCommittedSnapshotAfterNewAssetAndServiceRestart()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepositoryIntegrationTest#durableHeaderDistinguishesProvedEmptySelectionFromMissingSnapshot()' \
@@ -2216,6 +2219,11 @@ jobs:
           bash dev-tools/validation/inspect-test-results.sh \
             --strict \
             --require-suite net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#releaseSelectorMaterializesItsOriginalRoomAndExactlyRetriesWithSeparateRuntimeMapping()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#releaseSelectorRejectsChangedFrozenRequestAndSqlSubstitutionWithoutRuntimeWrites()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#inertV1PreparationRetainsOriginalBytesAndCannotGainSelectorOnRetry()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#selectorPreparationLateFenceLossRollsBackSelectorRuntimeAndAssociationTogether()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#v41MaterializedV1HistoryRemainsByteExactAndRetryableAfterV42WithoutSelectorPromotion()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#publishedSelectorJoinsExactFrozenCheckpointToOriginalAppliedWithoutWrites()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#permissionUnverifiedGraphAndFrozenHistoryCannotSupplyPublishedSelector()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#freshApplicationRetainsCompleteExactGraphAndOriginalAccountReadbackAndRetriesAfterFreeze()' \
@@ -2368,6 +2376,7 @@ jobs:
             --strict \
             --require-suite net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstancePreparationPostgresIntegrationTest \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstancePreparationPostgresIntegrationTest#v35PreservesReservedTenantDenialAndDoesNotExposePrepareFunctionToPublic()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstancePreparationPostgresIntegrationTest#selectorGuardPreservesInertV1ShapeAndDeniesPromotionOrMissingV2BeforeAllocation()' \
             world-management-service
 
       - name: Capture World legacy preparation PostgreSQL XML

@@ -142,11 +142,12 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
     assertThat(retainedTuple(fixture.dsl(), retainedBundleId)).isEqualTo(retainedTupleBefore);
     assertThat(bundleXmin(fixture.dsl(), retainedBundleId)).isEqualTo(retainedXminBefore);
     assertThat(
-            fixture
-                .dsl()
-                .fetchOne(
-                    "SELECT world_published_start_location_evidence_json FROM published_release_bundle WHERE id = ?",
-                    retainedBundleId)
+            Objects.requireNonNull(
+                    fixture
+                        .dsl()
+                        .fetchOne(
+                            "SELECT world_published_start_location_evidence_json FROM published_release_bundle WHERE id = ?",
+                            retainedBundleId))
                 .get(0))
         .isNull();
     PublishedReleaseBundle retained =
