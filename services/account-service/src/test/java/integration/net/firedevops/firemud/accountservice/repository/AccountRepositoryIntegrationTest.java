@@ -1612,7 +1612,8 @@ class AccountRepositoryIntegrationTest {
         "(to_jsonb(a) - 'account_uuid' - 'account_uuid_provenance' "
             + "- 'account_uuid_source_numeric_id' - 'account_repository_insert_transaction_id')::text";
     String membershipProjection =
-        "(to_jsonb(m) - 'tenant_uuid' - 'tenant_provenance_kind' "
+        "(to_jsonb(m) - 'approved_tenant_payload_operation_id' - 'tenant_uuid' "
+            + "- 'tenant_provenance_kind' "
             + "- 'tenant_source_operation_id' - 'tenant_provenance_digest')::text";
     String joinOperationProjection =
         "(to_jsonb(j) - 'operation_representation_version' - 'scope_digest_version' "
@@ -1663,6 +1664,13 @@ class AccountRepositoryIntegrationTest {
                     + ".account_tenant_membership m WHERE account_id = ?",
                 firstAccountId))
         .isEqualTo(membershipBefore);
+    assertThat(
+            dsl.fetchValue(
+                "SELECT approved_tenant_payload_operation_id FROM "
+                    + schema
+                    + ".account_tenant_membership WHERE account_id = ?",
+                firstAccountId))
+        .isNull();
     assertThat(
             jsonRow(
                 "SELECT "
