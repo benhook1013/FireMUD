@@ -9,6 +9,9 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -153,6 +156,80 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
     WorldDraftTerminalOutcome replay = terminalService().recordDefinitiveAbort(topologyOperation);
     assertThat(replay.canonicalBytes()).containsExactly(original.canonicalBytes());
     assertThat(replay.recordedAt()).isEqualTo(original.recordedAt());
+  }
+
+  @Test
+  void v37FunctionReplacementPreservesCommittedAbortEvidenceAndBlocksDelayedWrites() {
+    Fixture f = fixture(true);
+    WorldDraftRegionCommitPlan priorRegion = regionPlan(f, UUID.randomUUID(), UUID.randomUUID());
+    regionComponent().store(priorRegion);
+    assertThat(regionEpochs(f)).containsExactly(1L, 1L);
+
+    WorldDraftRegionCommitPlan abortedRegion =
+        regionPlan(f, UUID.randomUUID(), UUID.randomUUID(), 1L);
+    WorldDraftTerminalOperation regionOperation = operation(f, abortedRegion.binding());
+    WorldDraftTerminalOutcome regionAbort =
+        terminalService().recordDefinitiveAbort(regionOperation);
+    assertThat(regionAbort.observedEpochs())
+        .extracting(WorldDraftTerminalOutcome.ObservedEpoch::epoch)
+        .containsOnly("1");
+
+    WorldDraftTopologyCommitPlan abortedTopology =
+        topologyPlan(f, UUID.randomUUID(), UUID.randomUUID());
+    WorldDraftTerminalOperation topologyOperation = operation(f, abortedTopology.binding());
+    WorldDraftTerminalOutcome topologyAbort =
+        terminalService().recordDefinitiveAbort(topologyOperation);
+    assertThat(topologyAbort.observedEpochs())
+        .extracting(WorldDraftTerminalOutcome.ObservedEpoch::epoch)
+        .containsOnly("0");
+
+    List<String> retainedBefore =
+        List.of(
+            retainedTerminalSourceFenceAndEpochSnapshot(regionOperation),
+            retainedTerminalSourceFenceAndEpochSnapshot(topologyOperation));
+    long guardFunctionOid = worldAbortedAttemptGuardFunctionOid();
+    assertThat(worldAbortedAttemptGuardTriggerCount()).isEqualTo(4L);
+    assertThat(worldAbortedAttemptGuardHasPublicExecute()).isFalse();
+
+    // Controlled function-replacement proof against live retained rows, not a full Flyway upgrade.
+    replaceV36TerminalGuardWithV37();
+
+    assertThat(worldAbortedAttemptGuardFunctionOid()).isEqualTo(guardFunctionOid);
+    assertThat(worldAbortedAttemptGuardTriggerCount()).isEqualTo(4L);
+    assertThat(worldAbortedAttemptGuardHasPublicExecute()).isFalse();
+    assertThat(
+            List.of(
+                retainedTerminalSourceFenceAndEpochSnapshot(regionOperation),
+                retainedTerminalSourceFenceAndEpochSnapshot(topologyOperation)))
+        .containsExactlyElementsOf(retainedBefore);
+    WorldDraftTerminalOutcome regionReadback =
+        terminalService().readDefinitiveAbort(regionOperation).orElseThrow();
+    assertThat(regionReadback.canonicalBytes()).containsExactly(regionAbort.canonicalBytes());
+    assertThat(regionReadback.observedEpochs())
+        .containsExactlyElementsOf(regionAbort.observedEpochs());
+    WorldDraftTerminalOutcome topologyReadback =
+        terminalService().readDefinitiveAbort(topologyOperation).orElseThrow();
+    assertThat(topologyReadback.canonicalBytes()).containsExactly(topologyAbort.canonicalBytes());
+    assertThat(topologyReadback.observedEpochs())
+        .containsExactlyElementsOf(topologyAbort.observedEpochs());
+
+    assertThatThrownBy(() -> topologyComponent().store(abortedTopology))
+        .isInstanceOf(RuntimeException.class)
+        .hasMessageContaining("no-commit");
+    assertThatThrownBy(() -> regionComponent().store(abortedRegion))
+        .isInstanceOf(RuntimeException.class)
+        .hasMessageContaining("no-commit");
+    assertRawRegionFunctionDenied(f, abortedRegion);
+    assertThat(count("world_topology_draft_commit", abortedTopology.binding().requestId()))
+        .isZero();
+    assertThat(count("world_region_draft_commit", abortedRegion.binding().requestId())).isZero();
+    assertThat(regionName(f.seededRegion())).isEqualTo("committed");
+    assertThat(regionEpochs(f)).containsExactly(1L, 1L);
+    assertThat(
+            List.of(
+                retainedTerminalSourceFenceAndEpochSnapshot(regionOperation),
+                retainedTerminalSourceFenceAndEpochSnapshot(topologyOperation)))
+        .containsExactlyElementsOf(retainedBefore);
   }
 
   @Test
@@ -593,6 +670,11 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
   }
 
   private WorldDraftRegionCommitPlan regionPlan(Fixture f, UUID request, UUID commit) {
+    return regionPlan(f, request, commit, 0L);
+  }
+
+  private WorldDraftRegionCommitPlan regionPlan(
+      Fixture f, UUID request, UUID commit, long expectedEpoch) {
     long region = f.seededRegion();
     UUID revisionId = UUID.randomUUID();
     WorldDesignMutationRevision mutation =
@@ -604,8 +686,8 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
             .setOperation(WorldDesignMutationOperation.WORLD_DESIGN_MUTATION_OPERATION_UPSERT)
             .setScopeType(WorldDesignScopeType.WORLD_DESIGN_SCOPE_TYPE_REGION_SUBTREE)
             .setScopeId(Long.toString(region))
-            .setExpectedDraftRevisionEpoch(0)
-            .setExpectedDraftScopeRevisionEpoch(0)
+            .setExpectedDraftRevisionEpoch(expectedEpoch)
+            .setExpectedDraftScopeRevisionEpoch(expectedEpoch)
             .setRegion(
                 RegionDesignMutation.newBuilder()
                     .setName("committed")
@@ -623,14 +705,14 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
                 Long.toString(region),
                 "AGGREGATE",
                 Long.toString(region),
-                "0"),
+                Long.toString(expectedEpoch)),
             new AffectedUnit(
                 Owner.WORLD_MANAGEMENT,
                 "REGION",
                 Long.toString(region),
                 "REGION_SUBTREE",
                 Long.toString(region),
-                "0"));
+                Long.toString(expectedEpoch)));
     DraftCommitBinding binding = draftBinding(f, request, commit, mutation, revisionId, worldUnits);
     return WorldDraftRegionCommitPlan.create(binding, f.owner());
   }
@@ -804,6 +886,179 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
             dsl.fetchOne("SELECT count(*) FROM " + table + " WHERE request_id = ?", requestId),
             "count query must return a row");
     return Objects.requireNonNull(result.get(0, Long.class), "count query must return a value");
+  }
+
+  private List<Long> regionEpochs(Fixture f) {
+    var aggregateRow =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT draft_revision_epoch FROM world_design_aggregate_epoch "
+                    + "WHERE tenant_id = ? AND version_id = ? "
+                    + "AND aggregate_type = 'REGION' AND aggregate_id = ?",
+                f.intake().localTenantKey(),
+                f.version().localVersionKey(),
+                f.seededRegion()),
+            "aggregate epoch row must exist");
+    long aggregateEpoch =
+        Objects.requireNonNull(aggregateRow.get(0, Long.class), "aggregate epoch value must exist");
+    var scopeRow =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT draft_scope_revision_epoch FROM world_design_scope_epoch "
+                    + "WHERE tenant_id = ? AND version_id = ? "
+                    + "AND scope_type = 'REGION_SUBTREE' AND scope_id = ?",
+                f.intake().localTenantKey(),
+                f.version().localVersionKey(),
+                Long.toString(f.seededRegion())),
+            "scope epoch row must exist");
+    long scopeEpoch =
+        Objects.requireNonNull(scopeRow.get(0, Long.class), "scope epoch value must exist");
+    return List.of(aggregateEpoch, scopeEpoch);
+  }
+
+  private String retainedTerminalSourceFenceAndEpochSnapshot(
+      WorldDraftTerminalOperation operation) {
+    String snapshot =
+        Objects.requireNonNull(
+                dsl.fetchOne(
+                    """
+                    SELECT jsonb_build_object(
+                        'intake', to_jsonb(intake),
+                        'identity', to_jsonb(version_identity),
+                        'owner', to_jsonb(owner_row),
+                        'terminal', (to_jsonb(terminal) - 'account_binding_bytes' - 'outcome_bytes')
+                            || jsonb_build_object(
+                                'account_binding_bytes_hex',
+                                encode(terminal.account_binding_bytes, 'hex'),
+                                'outcome_bytes_hex', encode(terminal.outcome_bytes, 'hex')
+                            ),
+                        'aggregate_epochs', COALESCE((
+                            SELECT jsonb_agg(
+                                to_jsonb(epoch) ORDER BY epoch.aggregate_type, epoch.aggregate_id
+                            )
+                            FROM world_design_aggregate_epoch epoch
+                            WHERE epoch.tenant_id = terminal.local_tenant_key
+                              AND epoch.version_id = terminal.local_version_key
+                        ), '[]'::jsonb),
+                        'scope_epochs', COALESCE((
+                            SELECT jsonb_agg(
+                                to_jsonb(epoch) ORDER BY epoch.scope_type, epoch.scope_id
+                            )
+                            FROM world_design_scope_epoch epoch
+                            WHERE epoch.tenant_id = terminal.local_tenant_key
+                              AND epoch.version_id = terminal.local_version_key
+                        ), '[]'::jsonb)
+                    )::text
+                    FROM world_draft_terminal_outcome terminal
+                    JOIN world_authored_version_identity version_identity
+                      ON version_identity.operation_id = terminal.version_identity_operation_id
+                    JOIN world_authored_source_intake intake
+                      ON intake.operation_id = version_identity.intake_operation_id
+                    JOIN world_design_publication_fence_owner owner_row
+                      ON owner_row.target_namespace = terminal.target_namespace
+                     AND owner_row.canonical_tenant_id = terminal.canonical_tenant_id
+                     AND owner_row.local_tenant_key = terminal.local_tenant_key
+                     AND owner_row.version_id = terminal.local_version_key
+                    WHERE terminal.operation_id = ?
+                    """,
+                    operation.operationId()),
+                "retained World source/fence/outcome rows must exist")
+            .get(0, String.class);
+    return Objects.requireNonNull(
+        snapshot, "retained World source/fence/outcome snapshot must exist");
+  }
+
+  private void replaceV36TerminalGuardWithV37() {
+    String serviceSchema =
+        Objects.requireNonNull(
+                dsl.fetchOne("SELECT current_schema()"), "World service schema row must exist")
+            .get(0, String.class);
+    Objects.requireNonNull(serviceSchema, "World service schema must be selected");
+    String v36Function =
+        migrationFunction(
+                "db/migration/V36__world_draft_terminal_outcomes.sql",
+                "CREATE FUNCTION world_reject_aborted_draft_attempt()")
+            .replaceFirst("^CREATE FUNCTION", "CREATE OR REPLACE FUNCTION")
+            .replace("${serviceSchema}", serviceSchema);
+    String v37Function =
+        migrationFunction(
+                "db/migration/V37__world_draft_terminal_guard_namespace.sql",
+                "CREATE OR REPLACE FUNCTION world_reject_aborted_draft_attempt()")
+            .replace("${serviceSchema}", serviceSchema);
+
+    // PostgreSQL DDL is transactional: a failed V37 replacement rolls back the V36 body too.
+    ownerTransaction()
+        .executeWithoutResult(
+            status -> {
+              dsl.execute(v36Function);
+              dsl.execute(v37Function);
+              dsl.execute(
+                  "REVOKE ALL ON FUNCTION world_reject_aborted_draft_attempt() FROM PUBLIC");
+            });
+  }
+
+  private String migrationFunction(String resourceName, String declaration) {
+    try (InputStream resource =
+        WorldDraftTerminalOutcomePostgresIntegrationTest.class
+            .getClassLoader()
+            .getResourceAsStream(resourceName)) {
+      if (resource == null) {
+        throw new IllegalStateException("World migration resource is missing: " + resourceName);
+      }
+      String migration = new String(resource.readAllBytes(), StandardCharsets.UTF_8);
+      int start = migration.indexOf(declaration);
+      int end = start < 0 ? -1 : migration.indexOf("$$;", start);
+      if (start < 0 || end < 0) {
+        throw new IllegalStateException("World migration function is missing: " + declaration);
+      }
+      return migration.substring(start, end + "$$;".length());
+    } catch (IOException exception) {
+      throw new IllegalStateException("Unable to read World migration: " + resourceName, exception);
+    }
+  }
+
+  private long worldAbortedAttemptGuardFunctionOid() {
+    return Objects.requireNonNull(
+        Objects.requireNonNull(
+                dsl.fetchOne(
+                    "SELECT 'world_reject_aborted_draft_attempt()'::regprocedure::oid::bigint"),
+                "World aborted-attempt guard function row must exist")
+            .get(0, Long.class),
+        "World aborted-attempt guard function must exist");
+  }
+
+  private long worldAbortedAttemptGuardTriggerCount() {
+    return Objects.requireNonNull(
+        Objects.requireNonNull(
+                dsl.fetchOne(
+                    "SELECT count(*) FROM pg_trigger "
+                        + "WHERE tgfoid = 'world_reject_aborted_draft_attempt()'::regprocedure "
+                        + "AND NOT tgisinternal"),
+                "World aborted-attempt guard trigger-count row must exist")
+            .get(0, Long.class),
+        "World aborted-attempt guard trigger count must exist");
+  }
+
+  private boolean worldAbortedAttemptGuardHasPublicExecute() {
+    return Objects.requireNonNull(
+        Objects.requireNonNull(
+                dsl.fetchOne(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM pg_proc function_row
+                        CROSS JOIN LATERAL aclexplode(
+                            COALESCE(function_row.proacl, acldefault('f', function_row.proowner))
+                        ) acl_entry
+                        WHERE function_row.oid =
+                            'world_reject_aborted_draft_attempt()'::regprocedure
+                          AND acl_entry.grantee = 0
+                          AND acl_entry.privilege_type = 'EXECUTE'
+                    )
+                    """),
+                "World aborted-attempt guard ACL row must exist")
+            .get(0, Boolean.class),
+        "World aborted-attempt guard ACL must be readable");
   }
 
   private String regionName(long regionId) {

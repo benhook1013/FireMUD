@@ -2169,6 +2169,7 @@ jobs:
             --strict \
             --require-suite integration.net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOutcomePostgresIntegrationTest \
             --require-case 'integration.net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOutcomePostgresIntegrationTest#abortBlocksDelayedTopologyAndRawRegionWritesAndExactRetrySurvivesFreeze()' \
+            --require-case 'integration.net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOutcomePostgresIntegrationTest#v37FunctionReplacementPreservesCommittedAbortEvidenceAndBlocksDelayedWrites()' \
             --require-case 'integration.net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOutcomePostgresIntegrationTest#retainedUnverifiedTopologyOrRegionOutputCannotBeRelabeledAsAborted()' \
             --require-case 'integration.net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOutcomePostgresIntegrationTest#topologyCommitAndAbortSerializeToExactlyOneImmutableTerminalResult()' \
             --require-case 'integration.net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOutcomePostgresIntegrationTest#rawRegionCommitAndAbortSerializeOnTheSameV25Row()' \
