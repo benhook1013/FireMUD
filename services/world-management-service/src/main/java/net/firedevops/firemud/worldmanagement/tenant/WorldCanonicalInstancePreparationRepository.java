@@ -13,6 +13,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
+import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
 import net.firedevops.firemud.common.world.RoomTemplateRef;
 import net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalFrozenTopology.Request;
@@ -435,6 +438,137 @@ public final class WorldCanonicalInstancePreparationRepository {
       throw new InvalidPreparationEvidenceException(
           "Canonical preparation V27 Version/source evidence differs from its original immutable row");
     }
+    requireExactPublishedTerminal(input);
+  }
+
+  /** A fresh preparation consumes only the exact retained PUBLISHED terminal release. */
+  private void requireExactPublishedTerminal(Input input) {
+    var source = input.topologyPlan().sourceBinding();
+    var release = input.completeLaunchBinding().evidence().releaseAttestation();
+    var selector = release.worldStartLocationEvidence();
+    if (selector == null) {
+      throw new InvalidPreparationEvidenceException(
+          "Fresh canonical preparation requires the complete published World selector terminal");
+    }
+    Record row =
+        dsl.fetchOne(
+            "SELECT * " + "FROM world_design_publication_terminal WHERE publication_fence=?",
+            source.freeze().publicationFence());
+    if (row == null || !"PUBLISHED".equals(required(row, "outcome", String.class))) {
+      throw new InvalidPreparationEvidenceException(
+          "Fresh canonical preparation requires an exact PUBLISHED World owner terminal");
+    }
+    byte[] terminalBytes = required(row, "terminal_evidence_bytes", byte[].class);
+    String terminalDigest = required(row, "terminal_evidence_digest", String.class);
+    if (!digest(terminalBytes).substring("sha256:".length()).equals(terminalDigest)) {
+      throw new InvalidPreparationEvidenceException(
+          "Retained Game Design terminal evidence digest differs from its immutable bytes");
+    }
+    final GameDesignPublicationTerminalEvidence terminal;
+    try {
+      terminal = GameDesignPublicationTerminalEvidence.fromStored(terminalBytes);
+    } catch (IllegalArgumentException invalid) {
+      throw new InvalidPreparationEvidenceException(
+          "Retained Game Design terminal evidence is not canonical", invalid);
+    }
+    var terminalRequest = new WorldPublicationTerminal.Request(terminal);
+    var worldRequest = selector.request();
+    if (terminal.outcome() != GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED
+        || !worldRequest.publicationFence().equals(required(row, "publication_fence", UUID.class))
+        || !worldRequest.targetNamespace().equals(required(row, "target_namespace", String.class))
+        || !worldRequest
+            .canonicalTenantId()
+            .equals(required(row, "canonical_tenant_id", UUID.class))
+        || !worldRequest
+            .canonicalVersionId()
+            .equals(required(row, "canonical_version_id", UUID.class))
+        || !worldRequest
+            .publicationRequestId()
+            .equals(required(row, "publication_request_id", String.class))
+        || !worldRequest.requestDigest().equals(required(row, "request_digest", String.class))
+        || !worldRequest
+            .publishWorkflowId()
+            .equals(required(row, "publish_workflow_id", String.class))
+        || worldRequest.versionStateEpoch()
+            != required(row, "freeze_version_state_epoch", Long.class)
+        || !worldRequest.appliedCommitId().equals(required(row, "applied_commit_id", String.class))
+        || !worldRequest.contentDigest().equals(required(row, "content_digest", String.class))
+        || worldRequest.digestSchemaVersion()
+            != required(row, "digest_schema_version", Integer.class)
+        || !terminalRequest
+            .releaseBundleRef()
+            .equals(required(row, "published_release_bundle_ref", String.class))
+        || !terminalRequest
+            .releaseBundleDigest()
+            .equals(required(row, "published_release_bundle_digest", String.class))
+        || !Objects.equals(
+            terminalRequest.publicationVersionStateEpoch(),
+            required(row, "publication_version_state_epoch", Long.class))
+        || !Arrays.equals(
+            terminalRequest.operationBytes(), required(row, "operation_bytes", byte[].class))
+        || !Arrays.equals(
+            terminalRequest.worldEvidenceBytes(),
+            required(row, "world_evidence_bytes", byte[].class))
+        || !Arrays.equals(
+            terminalRequest.releaseContentBytes(),
+            required(row, "release_content_bytes", byte[].class))
+        || !Arrays.equals(terminal.worldEvidence().canonicalBytes(), selector.canonicalBytes())) {
+      throw new InvalidPreparationEvidenceException(
+          "Retained terminal differs from the complete original World selector evidence");
+    }
+    requireExactPublishedRelease(terminal, release);
+  }
+
+  private static void requireExactPublishedRelease(
+      GameDesignPublicationTerminalEvidence terminal,
+      AuthoredWorldReleaseAttestationEvidence release) {
+    var bundle = terminal.releaseContent();
+    if (release.schemaVersion() != AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION
+        || !bundle.canonicalTenantId().equals(release.canonicalTenantId())
+        || !bundle.canonicalVersionId().equals(release.canonicalVersionId())
+        || !bundle.publishedReleaseBundleRef().equals(release.publishedReleaseBundleRef())
+        || terminal.publicationVersionStateEpoch() != release.versionStateEpoch()
+        || !bundle.publishWorkflowId().equals(release.publishWorkflowId())
+        || !bundle
+            .publishWorkflowId()
+            .equals(terminal.worldEvidence().request().publishWorkflowId())
+        || !terminal.worldEvidence().request().appliedCommitId().equals(release.commitId())
+        || !bundle.manifestHash().equals(release.manifestHash())
+        || bundle.manifestSchemaVersion() != release.manifestSchemaVersion()
+        || !bundle.requiredManifestAssetKeys().equals(release.requiredManifestAssetKeys())
+        || !bundle.artifactDigests().equals(release.artifactDigests())
+        || !bundle.commandDefinitions().equals(release.commandDefinitions())
+        || !bundle.generationConfigRevision().equals(release.generationConfigRevision())
+        || !matchesPublishedParticipants(
+            bundle.participantDigests(), release.participantDigests())) {
+      throw new InvalidPreparationEvidenceException(
+          "Retained terminal ReleaseContent differs from the exact immutable launch release binding");
+    }
+  }
+
+  private static boolean matchesPublishedParticipants(
+      java.util.List<GameDesignPublicationTerminalEvidence.Participant> terminal,
+      java.util.List<AuthoredWorldReleaseAttestationEvidence.Participant> release) {
+    if (terminal.size() != AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().size()
+        || release.size() != terminal.size()) return false;
+    for (int index = 0; index < terminal.size(); index++) {
+      var actual = terminal.get(index);
+      var expected = release.get(index);
+      if (!actual.participantKey().equals(expected.participantKey())
+          || !actual.scopeValue().equals(expected.scopeValue())
+          || !Objects.equals(
+              actual.baseVersionId(),
+              expected.baseVersionIdPresent() ? expected.baseVersionId() : null)
+          || !actual.appliedCommitId().equals(expected.appliedCommitId())
+          || !actual.contentDigest().equals(expected.contentDigest())
+          || actual.digestSchemaVersion() != expected.digestSchemaVersion()
+          || !Objects.equals(
+              actual.abilitySchemaDigest(),
+              expected.abilitySchemaDigestPresent() ? expected.abilitySchemaDigest() : null)
+          || actual.errorCode() != null && !actual.errorCode().isEmpty()
+          || actual.errorMessage() != null) return false;
+    }
+    return true;
   }
 
   static String inputJson(Input input) {

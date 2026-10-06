@@ -2248,6 +2248,9 @@ jobs:
           bash dev-tools/validation/inspect-test-results.sh \
             --strict \
             --require-suite net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#publishedTerminalUsesExactOwnerEvidenceRetriesAndRejectsChangedReleaseContent()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#rawTerminalReceiptCannotCommitWithoutMatchingOwnerPhaseCas()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#onlyPositiveNoPublicationEvidenceCanSealWorldAsAbortedAndCannotPrepare()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#lifecycleReadFollowsCurrentWorldEpochAndReturnsExactCanonicalServiceEcho()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#canonicalActivationCommitsOneOwnerCasAndReplaysItsImmutableResultAfterLaterLifecycleMove()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#canonicalActivationStoresStaleFailedOutcomeAndFreshLifecycleReadRemainsCurrent()' \
@@ -2320,11 +2323,19 @@ jobs:
         run: |
           bash dev-tools/validation/inspect-test-results.sh \
             --strict \
-            --require-suite net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest \
-            --require-case 'net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#noPublicationReceiptReplaysAfterLostResponseAndExcludesDelayedFinalizerAndRawInsert()' \
-            --require-case 'net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#publishedReceiptCannotBeDemotedByStaleFailureAndRetainsOriginalFreezeEpoch()' \
-            --require-case 'net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#failedAtomicCommitLeavesAttemptOperationVersionAndReleasePendingForExactRetry()' \
-            --require-case 'net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#noPublicationSerializesAgainstAnAlreadyScheduledLatePublisher()' \
+            --require-suite integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#authenticatedTerminalReadDispatchesActualStoredPublishedAndNoPublicationEvidence()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#physicalMtlsTerminalReadRecoversActualPublishedAndNoPublicationOwnerSealsAndRejectsWrongPeers(Path)' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#authenticatedTerminalReadReturnsUnknownOnlyForAbsentOrPendingOperation()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#retainedV50TerminalReadFailsPreconditionWithoutBackfillingEvidenceOrEpoch()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#noPublicationReceiptReplaysAfterLostResponseAndExcludesDelayedFinalizerAndRawInsert()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#terminalEvidenceKeepsOriginalCommittedEpochAfterLaterVersionTransition()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#terminalExtensionRefusesRawEpochDigestBytesAndReleaseContentSubstitution()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#originalSealRejectsForgedCommittedEpochAndPreservesPendingOwnerRows()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#publicationSealEpochMustRemainTheActualVersionEpochThroughCommit()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#publishedReceiptCannotBeDemotedByStaleFailureAndRetainsOriginalFreezeEpoch()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#failedAtomicCommitLeavesAttemptOperationVersionAndReleasePendingForExactRetry()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#noPublicationSerializesAgainstAnAlreadyScheduledLatePublisher()' \
             game-design-service
 
       - name: Capture World authored-graph snapshot PostgreSQL XML

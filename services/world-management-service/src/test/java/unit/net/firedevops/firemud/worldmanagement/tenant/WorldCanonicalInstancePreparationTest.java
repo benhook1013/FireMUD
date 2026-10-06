@@ -263,7 +263,7 @@ class WorldCanonicalInstancePreparationTest {
     assertThatThrownBy(
             () -> new WorldCanonicalInstancePreparationService(repository).prepare(input))
         .isInstanceOf(WorldCanonicalInstancePreparationService.PreparationDeniedException.class)
-        .hasMessageContaining("no authenticated source/release and Account commit verifier");
+        .hasMessageContaining("no authenticated source/release terminal verifier");
 
     verifyNoInteractions(repository);
   }
