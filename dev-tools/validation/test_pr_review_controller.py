@@ -316,7 +316,7 @@ class ControllerTests(unittest.TestCase):
             patch.object(controller, "_target", side_effect=expire_during_selection),
             self.assertRaisesRegex(
                 ControllerError,
-                r"Hosted preflight deadline exceeded \(phase=runnable_check, .*budget=120s\)",
+                r"Hosted preflight deadline exceeded \(phase=target_selection, .*budget=120s\)",
             ),
         ):
             controller.run_hosted()

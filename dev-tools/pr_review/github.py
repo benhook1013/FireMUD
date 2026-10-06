@@ -71,6 +71,7 @@ class HostedPreflightBudget:
         self._phase_started_at = now
 
     def set_phase(self, phase: str, *, completed: int = 0, total: int | None = None) -> None:
+        self.remaining_seconds()
         now = time.monotonic()
         self._close_phase(now)
         self.current_phase = phase

@@ -18,6 +18,23 @@ from pr_review import github
 
 
 class GithubPaginationTests(unittest.TestCase):
+    def test_expired_phase_transition_preserves_previous_nonzero_progress(self):
+        with patch.object(github.time, "monotonic", return_value=0) as monotonic:
+            budget = github.HostedPreflightBudget(timeout_seconds=10)
+            budget.set_phase("manual_trigger_verification", completed=2, total=3)
+            monotonic.return_value = 11
+            with self.assertRaises(github.HostedPreflightDeadlineExceeded) as raised:
+                budget.set_phase("selected_pr_final_identity", completed=0, total=1)
+
+        error = raised.exception
+        self.assertEqual(error.phase, "manual_trigger_verification")
+        self.assertEqual((error.completed, error.total), (2, 3))
+        self.assertEqual(error.elapsed_seconds, 11)
+        self.assertEqual(error.budget_seconds, 10)
+        self.assertEqual(budget.current_phase, "manual_trigger_verification")
+        self.assertEqual((budget.completed, budget.total), (2, 3))
+        self.assertNotIn("manual_trigger_verification", budget.phase_progress)
+
     @staticmethod
     def _file_input_payload(*, thread_page_info=None):
         thread = {"id": "thread-1", "comments": {"nodes": []}}
