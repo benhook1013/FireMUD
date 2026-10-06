@@ -66,6 +66,8 @@ const SHARED_FILES = new Set([
   "gradle.properties",
   "gradlew",
   "gradlew.bat",
+  "dev-tools/validation/run-locked-gradle.sh",
+  "dev-tools/validation/gradle-run-supervisor.py",
 ]);
 
 function isDocumentation(file) {
@@ -99,7 +101,8 @@ function isLightweightEligible(file) {
   return (
     (isDocumentation(file) || isValidationPython(file)) &&
     file !== "dev-tools/docs/generate-erd.sh" &&
-    !isRuntimeAuthority(file)
+    !isRuntimeAuthority(file) &&
+    !SHARED_FILES.has(file)
   );
 }
 

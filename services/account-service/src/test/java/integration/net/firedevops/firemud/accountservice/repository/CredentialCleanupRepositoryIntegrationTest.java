@@ -58,7 +58,9 @@ class CredentialCleanupRepositoryIntegrationTest {
 
   @BeforeEach
   void cleanTables() {
-    dsl.execute("TRUNCATE TABLE accounts RESTART IDENTITY CASCADE");
+    dsl.execute(
+        "TRUNCATE TABLE password_reset_token, email_verification_token, "
+            + "account_email_login_challenge RESTART IDENTITY");
   }
 
   @Test

@@ -419,6 +419,29 @@ class ApprovedLegacyTenantAssociationIntegrationTest {
     return connectScopeId;
   }
 
+  @Test
+  void retainedPayloadReferenceIndexesArePartialOnGeneratedOperationColumns() {
+    var indexes =
+        dsl.fetch(
+            "SELECT indexname, indexdef FROM pg_indexes "
+                + "WHERE schemaname = current_schema() AND indexname IN (?, ?)",
+            "account_tenant_membership_approved_payload_operation_idx",
+            "account_connect_scope_records_approved_payload_operation_idx");
+
+    assertThat(indexes)
+        .extracting(record -> record.get("indexname", String.class))
+        .containsExactlyInAnyOrder(
+            "account_tenant_membership_approved_payload_operation_idx",
+            "account_connect_scope_records_approved_payload_operation_idx");
+    assertThat(indexes)
+        .extracting(record -> record.get("indexdef", String.class))
+        .allSatisfy(
+            definition -> {
+              assertThat(definition).contains("(approved_tenant_payload_operation_id)");
+              assertThat(definition).contains("approved_tenant_payload_operation_id IS NOT NULL");
+            });
+  }
+
   private AccountConnectScopeRepository newConnectScopeRepository() {
     return new AccountConnectScopeRepository(
         dsl,
@@ -562,31 +585,45 @@ class ApprovedLegacyTenantAssociationIntegrationTest {
   }
 
   private void insertExpiredClaimAndPayload(OwnerApprovedAccountTenantAssociation evidence) {
-    dsl.execute(
-        "ALTER TABLE account_approved_legacy_tenant_associations "
-            + "DISABLE TRIGGER account_approved_tenant_claim_capture_window");
-    dsl.execute(
-        "ALTER TABLE account_approved_legacy_tenant_association_payload "
-            + "DISABLE TRIGGER account_approved_tenant_payload_immutable_expiry");
-    dsl.execute(
-        "INSERT INTO account_approved_legacy_tenant_associations "
-            + "(legacy_tenant_id, canonical_tenant_id, source_legacy_game_tenant_id, "
-            + "source_game_row_id, operation_id, target_namespace, source_captured_at) "
-            + "VALUES (?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP WITH TIME ZONE))",
-        evidence.legacyAccountTenantId(),
-        evidence.canonicalTenantId(),
-        evidence.sourceLegacyGameTenantId(),
-        evidence.sourceGameRowId(),
-        evidence.operationId(),
-        evidence.targetNamespace(),
-        evidence.sourceCapturedAt());
-    insertPayload(evidence);
-    dsl.execute(
-        "ALTER TABLE account_approved_legacy_tenant_associations "
-            + "ENABLE TRIGGER account_approved_tenant_claim_capture_window");
-    dsl.execute(
-        "ALTER TABLE account_approved_legacy_tenant_association_payload "
-            + "ENABLE TRIGGER account_approved_tenant_payload_immutable_expiry");
+    boolean claimCaptureWindowDisabled = false;
+    boolean payloadExpiryGuardDisabled = false;
+    try {
+      dsl.execute(
+          "ALTER TABLE account_approved_legacy_tenant_associations "
+              + "DISABLE TRIGGER account_approved_tenant_claim_capture_window");
+      claimCaptureWindowDisabled = true;
+      try {
+        dsl.execute(
+            "ALTER TABLE account_approved_legacy_tenant_association_payload "
+                + "DISABLE TRIGGER account_approved_tenant_payload_immutable_expiry");
+        payloadExpiryGuardDisabled = true;
+        dsl.execute(
+            "INSERT INTO account_approved_legacy_tenant_associations "
+                + "(legacy_tenant_id, canonical_tenant_id, source_legacy_game_tenant_id, "
+                + "source_game_row_id, operation_id, target_namespace, source_captured_at) "
+                + "VALUES (?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP WITH TIME ZONE))",
+            evidence.legacyAccountTenantId(),
+            evidence.canonicalTenantId(),
+            evidence.sourceLegacyGameTenantId(),
+            evidence.sourceGameRowId(),
+            evidence.operationId(),
+            evidence.targetNamespace(),
+            evidence.sourceCapturedAt());
+        insertPayload(evidence);
+      } finally {
+        if (payloadExpiryGuardDisabled) {
+          dsl.execute(
+              "ALTER TABLE account_approved_legacy_tenant_association_payload "
+                  + "ENABLE TRIGGER account_approved_tenant_payload_immutable_expiry");
+        }
+      }
+    } finally {
+      if (claimCaptureWindowDisabled) {
+        dsl.execute(
+            "ALTER TABLE account_approved_legacy_tenant_associations "
+                + "ENABLE TRIGGER account_approved_tenant_claim_capture_window");
+      }
+    }
   }
 
   private void insertPayload(OwnerApprovedAccountTenantAssociation evidence) {
@@ -595,7 +632,7 @@ class ApprovedLegacyTenantAssociationIntegrationTest {
             + "(operation_id, account_evidence_digest, manifest_digest, signer_key_id, "
             + "approved_by, approval_reference, signed_at, manifest_signature, "
             + "operation_entry_count, manifest_schema_version) "
-            + "VALUES (?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP WITH TIME ZONE), ?, ?, ?)",
+            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         evidence.operationId(),
         evidence.accountEvidenceDigest(),
         evidence.manifestDigest(),

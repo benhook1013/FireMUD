@@ -16,6 +16,7 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRe
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.CanonicalJoinOperationConflictException;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.PairAuthority;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.TenantProvenanceKind;
@@ -64,12 +65,8 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
   @Test
   void commitsExactEventAndPairAndReplaysOnlyTheSameCallerOperation() {
     Fixture fixture = newFixture();
-    AccountAuthorityOutboxRepository.Checkpoint first = fixture.writeAndPublish();
-    AccountAuthorityOutboxRepository.Checkpoint replay =
-        fixture.inTransaction(
-            () ->
-                fixture.producer.publishCanonicalFirstJoinMembershipChange(
-                    fixture.scope, fixture.requestId, fixture.callerBinding));
+    var first = fixture.commitFirstJoin();
+    var replay = fixture.commitFirstJoin();
 
     String stream = fixture.membershipStream();
     AccountAuthorityOutboxRepository.Event event =
@@ -85,7 +82,7 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
                     .readForUpdate(fixture.account.getAccountUuid(), fixture.tenantUuid)
                     .orElseThrow());
 
-    assertThat(first.outboxSequence()).isEqualTo(1L);
+    assertThat(first.eventSequence()).isEqualTo(1L);
     assertThat(replay).isEqualTo(first);
     assertThat(decoded.requestId()).isEqualTo(fixture.requestId);
     assertThat(decoded.accountId()).isEqualTo(fixture.account.getAccountUuid().toString());
@@ -104,15 +101,17 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
     assertThat(pair.eventDigest()).isEqualTo(decoded.eventDigest());
     assertThat(fixture.count("account_authority_outbox_events", "outbox_stream_key", stream))
         .isEqualTo(1L);
+    assertThat(fixture.count("account_audit_outbox", "audit_event_id", first.auditEventId()))
+        .isEqualTo(1L);
 
     assertThatThrownBy(
             () ->
                 fixture.inTransaction(
                     () ->
-                        fixture.producer.publishCanonicalFirstJoinMembershipChange(
+                        fixture.terminalCoordinator.commitCanonicalFirstJoin(
                             fixture.scope, fixture.requestId, "another-caller")))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("request, caller, scope, or available policy");
+        .isInstanceOf(CanonicalJoinOperationConflictException.class)
+        .hasMessage("Canonical JOIN intent conflicts");
     assertThat(fixture.count("account_authority_outbox_events", "outbox_stream_key", stream))
         .isEqualTo(1L);
     assertThat(fixture.count("account_tenant_membership", "tenant_uuid", fixture.tenantUuid))
@@ -187,7 +186,7 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
                     () ->
                         fixture.terminalCoordinator.commitCanonicalFirstJoin(
                             fixture.scope, fixture.requestId, "another-caller")))
-        .isInstanceOf(IllegalStateException.class);
+        .isInstanceOf(CanonicalJoinOperationConflictException.class);
     assertThat(fixture.count("account_authority_outbox_events", "outbox_stream_key", stream))
         .isEqualTo(1L);
     assertThat(fixture.count("account_audit_outbox", "audit_event_id", proof.auditEventId()))

@@ -925,20 +925,23 @@ class AccountRepositoryIntegrationTest {
   }
 
   @ParameterizedTest
-  @EnumSource(
-      value = AccountLifecycleState.class,
-      names = {"SECURITY_LOCKED", "DEACTIVATED_PENDING_DELETE", "DELETED"})
-  void genericUpdatePreservesProtectedLifecycleState(AccountLifecycleState lifecycleState) {
+  @EnumSource(AccountLifecycleState.class)
+  void genericUpdatePreservesPersistedLifecycleState(AccountLifecycleState lifecycleState) {
     Account persisted = account("original", "original@example.com", lifecycleState);
     Account saved = saveInTransaction(persisted);
 
-    Account staleUpdate = account("updated", "updated@example.com", AccountLifecycleState.ACTIVE);
+    AccountLifecycleState requestedLifecycleState =
+        lifecycleState == AccountLifecycleState.ACTIVE
+            ? AccountLifecycleState.SECURITY_LOCKED
+            : AccountLifecycleState.ACTIVE;
+    Account staleUpdate = account("updated", "updated@example.com", requestedLifecycleState);
     staleUpdate.setId(saved.getId());
     saveInTransaction(staleUpdate);
 
     Account loaded = repository.findById(saved.getId()).orElseThrow();
     assertThat(loaded.getUsername()).isEqualTo("updated");
     assertThat(loaded.getLifecycleState()).isEqualTo(lifecycleState);
+    assertThat(staleUpdate.getLifecycleState()).isEqualTo(lifecycleState);
   }
 
   @Test
@@ -1609,7 +1612,8 @@ class AccountRepositoryIntegrationTest {
         "(to_jsonb(a) - 'account_uuid' - 'account_uuid_provenance' "
             + "- 'account_uuid_source_numeric_id' - 'account_repository_insert_transaction_id')::text";
     String membershipProjection =
-        "(to_jsonb(m) - 'tenant_uuid' - 'tenant_provenance_kind' "
+        "(to_jsonb(m) - 'approved_tenant_payload_operation_id' - 'tenant_uuid' "
+            + "- 'tenant_provenance_kind' "
             + "- 'tenant_source_operation_id' - 'tenant_provenance_digest')::text";
     String joinOperationProjection =
         "(to_jsonb(j) - 'operation_representation_version' - 'scope_digest_version' "
@@ -1620,7 +1624,8 @@ class AccountRepositoryIntegrationTest {
             + "- 'join_audit_event_id' - 'join_audit_payload_digest' "
             + "- 'join_audit_occurred_at')::text";
     String connectScopeProjection =
-        "(to_jsonb(s) - 'scope_digest_version' - 'account_uuid' - 'tenant_uuid' "
+        "(to_jsonb(s) - 'scope_digest_version' - 'approved_tenant_payload_operation_id' "
+            + "- 'account_uuid' - 'tenant_uuid' "
             + "- 'tenant_slug' - 'playable_state_namespace_uuid' - 'game_instance_uuid' "
             + "- 'tenant_provenance_kind' - 'tenant_provenance_legacy_tenant_id' "
             + "- 'tenant_source_operation_id' - 'tenant_provenance_digest')::text";
@@ -1660,6 +1665,13 @@ class AccountRepositoryIntegrationTest {
                     + ".account_tenant_membership m WHERE account_id = ?",
                 firstAccountId))
         .isEqualTo(membershipBefore);
+    assertThat(
+            dsl.fetchValue(
+                "SELECT approved_tenant_payload_operation_id FROM "
+                    + schema
+                    + ".account_tenant_membership WHERE account_id = ?",
+                firstAccountId))
+        .isNull();
     assertThat(
             jsonRow(
                 "SELECT "

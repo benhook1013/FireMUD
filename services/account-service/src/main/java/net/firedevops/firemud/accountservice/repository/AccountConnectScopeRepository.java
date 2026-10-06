@@ -222,7 +222,7 @@ public class AccountConnectScopeRepository {
   /** Resolves v2 only from a bearer whose exact immutable owner evidence is persisted. */
   @Transactional(propagation = Propagation.MANDATORY)
   public Optional<CanonicalJoinScopeV2> findCanonical(String connectScopeId) {
-    requireOwnerTransaction();
+    requireWritableOwnerTransaction();
     requireCanonicalDependencies();
     Objects.requireNonNull(connectScopeId, "Connect scope bearer is required");
     if (connectScopeId.isBlank()) {
