@@ -3,20 +3,75 @@ package net.firedevops.firemud.gamedesign.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.util.UUID;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
+import net.firedevops.firemud.gamedesign.service.impl.PublishedWorldSelectorFixtures;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.ObjectMapper;
 
 class PublishedReleaseBundleRepositoryTest {
   private static final UUID TENANT_UUID = UUID.fromString("11111111-1111-4111-8111-111111111111");
   private static final UUID VERSION_UUID = UUID.fromString("22222222-2222-4222-8222-222222222222");
   private static final UUID OTHER_UUID = UUID.fromString("33333333-3333-4333-8333-333333333333");
   private static final String MANIFEST_HASH = "sha256:" + "a".repeat(64);
+
+  @Test
+  void selectorEvidenceRequiresExactSourceAndReadbackPreservesOriginalBytes() throws Exception {
+    try (Fixture fixture = fixture()) {
+      insertGame(fixture.dsl(), 7L, "tenant-key", TENANT_UUID, 7L, "tenant-key", "NEW_GAME_ROW");
+      insertVersion(
+          fixture.dsl(),
+          17L,
+          "tenant-key",
+          TENANT_UUID,
+          VERSION_UUID,
+          7L,
+          "tenant-key",
+          "NEW_GAME_ROW");
+      var evidence =
+          PublishedWorldSelectorFixtures.evidence(
+              new TargetProof(
+                  TENANT_UUID, VERSION_UUID, 17L, "tenant-key", 7L, "tenant-key", "NEW_GAME_ROW"));
+      PublishedReleaseBundle requested = bundle("tenant-key", 17L);
+      requested.setAttestationSchemaVersion("v2");
+      requested.setPublishWorkflowId(evidence.request().publishWorkflowId());
+      assertThatThrownBy(() -> fixture.repository().save(requested))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("mandatory");
+      requested.setWorldPublishedStartLocationEvidenceJson(
+          new String(evidence.canonicalBytes(), StandardCharsets.UTF_8));
+      requested.setPublishWorkflowId("other-workflow");
+      assertThatThrownBy(() -> fixture.repository().save(requested))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("source/workflow");
+      requested.setPublishWorkflowId(evidence.request().publishWorkflowId());
+      requested.setParticipantDigestsJson(
+          new ObjectMapper()
+              .writeValueAsString(PublishedWorldSelectorFixtures.participants(17L, evidence)));
+      var saved = fixture.repository().save(requested);
+      assertThat(saved.getWorldPublishedStartLocationEvidenceJson())
+          .isEqualTo(requested.getWorldPublishedStartLocationEvidenceJson());
+      assertThat(
+              new PublishedReleaseBundleRepository(fixture.dsl())
+                  .findByTenantIdAndVersionId("tenant-key", 17L)
+                  .orElseThrow())
+          .usingRecursiveComparison()
+          .isEqualTo(saved);
+      assertThat(fixture.repository().save(requested)).usingRecursiveComparison().isEqualTo(saved);
+      requested.setParticipantDigestsJson("[]");
+      assertThatThrownBy(() -> fixture.repository().save(requested))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("IDEMPOTENCY_CONFLICT");
+      assertThat(fixture.bundleCount()).isEqualTo(1);
+    }
+  }
 
   @Test
   void newBundleUsesExactPersistedVersionAndGameIdentityAndReadsItBack() throws Exception {
@@ -156,6 +211,7 @@ class PublishedReleaseBundleRepositoryTest {
             + "required_manifest_asset_keys_json CLOB NOT NULL, "
             + "participant_digests_json CLOB NOT NULL, command_definitions_json CLOB NOT NULL, "
             + "manifest_schema_version INT, artifact_digests_json CLOB, "
+            + "world_published_start_location_evidence_json CLOB, "
             + "script_only BOOLEAN NOT NULL, script_patch_version VARCHAR(100), "
             + "published_at TIMESTAMP NOT NULL)");
     return new Fixture(connection, dsl, new PublishedReleaseBundleRepository(dsl));

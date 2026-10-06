@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -18,12 +19,14 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Stream;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
+import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection.PublishIntent;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepository;
@@ -87,6 +90,258 @@ class VersionPublishCommandServiceImplTest {
   @Mock private AuthoredDraftPublishSelectionRepository authoredSelections;
 
   private VersionPublishCommandServiceImpl service;
+
+  @Test
+  void selectorV2CommittedReadbackReconcilesAndExactlyReplaysWithoutCreatingAnotherRelease()
+      throws Exception {
+    // Original Account/APPLIED and freeze fields are stipulated component fixtures, not a live
+    // authenticated freeze/permission producer or authorization to enable new publication.
+    SelectorReadback fixture = selectorReadback();
+    PublishAttempt attempt =
+        selectedAttempt(
+            PublishAttemptStatus.PENDING,
+            10L,
+            1,
+            fixture.selected().request(),
+            fixture.selected().selection());
+    stubSelectorReadback(fixture, attempt);
+    var first = service.reconcileFullVersionPublish(fixture.selected().request());
+    assertEquals("SUCCEEDED", first.status());
+    verify(publishAttemptService)
+        .markFullVersionSucceeded(fixture.selected().request().publishWorkflowId());
+    attempt.setStatus(PublishAttemptStatus.SUCCEEDED);
+    var retry = service.reconcileFullVersionPublish(fixture.selected().request());
+    assertEquals(first, retry);
+    verify(assetExportService, never()).exportAssets(any(String.class), any(Integer.class));
+    verify(publishedReleaseBundleService, never())
+        .createFullVersionBundle(any(), any(), any(), any(), any());
+    verify(publishedReleaseBundleService, never())
+        .createFullVersionBundle(any(), any(), any(), any(), any(), any());
+    verify(versionRepository, never()).save(any());
+  }
+
+  @Test
+  void selectorV2ReadbackRejectsAnotherOriginalSelectedBindingEvenWithSameCommitUuid()
+      throws Exception {
+    SelectorReadback fixture = selectorReadback();
+    var original = fixture.selected().selection().selectedCommit();
+    var changed =
+        DraftCommitBinding.create(
+            original.target(),
+            original.requestId(),
+            original.commitId(),
+            "changed-original-base",
+            original.revisions(),
+            original.affectedUnits());
+    SelectedRequest selected = selectOriginalForReadback(changed, "5");
+    PublishAttempt attempt =
+        selectedAttempt(
+            PublishAttemptStatus.PENDING, 10L, 1, selected.request(), selected.selection());
+    SelectorReadback substituted =
+        new SelectorReadback(selected, fixture.evidence(), fixture.bundle(), fixture.version());
+    stubSelectorReadback(substituted, attempt);
+    assertThrows(
+        VersionPublishCommandServiceImpl.PendingReconciliationException.class,
+        () -> service.reconcileFullVersionPublish(selected.request()));
+    verify(publishAttemptService, never()).markFullVersionSucceeded(any());
+    verify(assetExportService, never()).exportAssets(any(String.class), any(Integer.class));
+  }
+
+  @ParameterizedTest
+  @EnumSource(value = SelectorSubstitution.class)
+  void selectorV2ReadbackRejectsChangedPublicationRequestOrHistoricalEpoch(
+      SelectorSubstitution substitution) throws Exception {
+    SelectorReadback fixture = selectorReadback();
+    var original = fixture.evidence().request();
+    var changedRequest =
+        new WorldPublishedStartLocationEvidence.Request(
+            original.targetNamespace(),
+            original.canonicalTenantId(),
+            original.canonicalVersionId(),
+            original.intakeRequestId(),
+            original.publicationFence(),
+            substitution == SelectorSubstitution.REQUEST
+                ? "another-request"
+                : original.publicationRequestId(),
+            original.requestDigest(),
+            substitution == SelectorSubstitution.EPOCH ? 6L : original.versionStateEpoch(),
+            original.publishWorkflowId(),
+            original.appliedCommitId(),
+            original.contentDigest(),
+            original.digestSchemaVersion(),
+            original.worldAffectedTuples());
+    var changed =
+        new WorldPublishedStartLocationEvidence(
+            changedRequest,
+            fixture.evidence().selectorReceiptBytes(),
+            fixture.evidence().originalAccountBindingBytes(),
+            fixture.evidence().appliedResultBytes());
+    SelectorReadback substituted =
+        new SelectorReadback(
+            fixture.selected(),
+            changed,
+            selectorBundle(fixture.selected(), changed),
+            fixture.version());
+    PublishAttempt attempt =
+        selectedAttempt(
+            PublishAttemptStatus.PENDING,
+            10L,
+            1,
+            fixture.selected().request(),
+            fixture.selected().selection());
+    stubSelectorReadback(substituted, attempt);
+    assertThrows(
+        VersionPublishCommandServiceImpl.PendingReconciliationException.class,
+        () -> service.reconcileFullVersionPublish(fixture.selected().request()));
+    verify(publishAttemptService, never()).markFullVersionSucceeded(any());
+  }
+
+  private enum SelectorSubstitution {
+    REQUEST,
+    EPOCH
+  }
+
+  private SelectorReadback selectorReadback() throws Exception {
+    var target =
+        new TargetProof(
+            UUID.fromString("67d7b75b-42d1-4ac6-9572-684c5e633cda"),
+            UUID.fromString("c472ebd1-56d8-49df-b8fa-85963dd940f8"),
+            10L,
+            "tenant-1",
+            1L,
+            "tenant-1",
+            "NEW_GAME_ROW");
+    var original = PublishedWorldSelectorFixtures.evidence(target);
+    var account = DraftAuthorizationFenceBinding.fromStored(original.originalAccountBindingBytes());
+    var draft =
+        DraftCommitBinding.fromStored(
+            new String(account.gameDesignBinding(), StandardCharsets.UTF_8), account.inputDigest());
+    var selected = selectOriginalForReadback(draft, "5");
+    var r = original.request();
+    var request =
+        new WorldPublishedStartLocationEvidence.Request(
+            r.targetNamespace(),
+            r.canonicalTenantId(),
+            r.canonicalVersionId(),
+            r.intakeRequestId(),
+            r.publicationFence(),
+            selected.request().publishRequestId(),
+            r.requestDigest(),
+            5L,
+            selected.request().publishWorkflowId(),
+            r.appliedCommitId(),
+            r.contentDigest(),
+            r.digestSchemaVersion(),
+            r.worldAffectedTuples());
+    var evidence =
+        new WorldPublishedStartLocationEvidence(
+            request,
+            original.selectorReceiptBytes(),
+            original.originalAccountBindingBytes(),
+            original.appliedResultBytes());
+    var version = new Version();
+    version.setId(10L);
+    version.setTenantId("tenant-1");
+    version.setVersionNumber(1);
+    version.setVersionState(VersionLifecycleState.PUBLISHED);
+    version.setVersionStateEpoch(6L);
+    version.setCanonicalTenantId(target.canonicalTenantId());
+    version.setCanonicalVersionId(target.canonicalVersionId());
+    return new SelectorReadback(selected, evidence, selectorBundle(selected, evidence), version);
+  }
+
+  private SelectedRequest selectOriginalForReadback(DraftCommitBinding draft, String epoch) {
+    var target = draft.target();
+    var intent =
+        new PublishIntent(
+            target.canonicalTenantId(),
+            target.canonicalVersionId(),
+            "workflow-1",
+            epoch,
+            "notes",
+            draft.requestId(),
+            draft.commitId(),
+            draft.digest());
+    var fence =
+        new VisibilityFence(
+            target,
+            draft.requestId(),
+            draft.commitId(),
+            draft.digest(),
+            "[]",
+            OffsetDateTime.now(ZoneOffset.UTC));
+    var selected =
+        AuthoredDraftPublishSelection.capture(
+            intent, target, new PublicationEvidence(draft, fence));
+    var snapshot = new SelectionSnapshot(selected, OffsetDateTime.now(ZoneOffset.UTC));
+    when(authoredSelections.readByPublishRequest(target.canonicalTenantId(), "workflow-1"))
+        .thenReturn(Optional.of(snapshot));
+    var request =
+        new PublishWorkflowRequest(
+            "tenant-1", "notes", "workflow-1", selectedWorkflowId("workflow-1"), intent);
+    return new SelectedRequest(selected, intent, snapshot, request);
+  }
+
+  private PublishedReleaseBundleDto selectorBundle(
+      SelectedRequest selected, WorldPublishedStartLocationEvidence evidence) {
+    return new PublishedReleaseBundleDto(
+        1L,
+        "tenant-1",
+        10L,
+        1,
+        "v2",
+        selected.request().publishWorkflowId(),
+        MANIFEST_HASH,
+        List.of(),
+        PublishedWorldSelectorFixtures.participants(10L, evidence),
+        List.of(),
+        "generation-revision",
+        false,
+        null,
+        LocalDateTime.now(),
+        evidence.request().canonicalTenantId(),
+        evidence.request().canonicalVersionId(),
+        "opaque-owner-release",
+        1,
+        List.of(),
+        evidence);
+  }
+
+  private void stubSelectorReadback(SelectorReadback fixture, PublishAttempt attempt) {
+    var workflow = fixture.selected().request().publishWorkflowId();
+    var game = new Game();
+    game.setTenantId("tenant-1");
+    when(gameRepository.findByTenantIdForUpdate("tenant-1")).thenReturn(game);
+    when(publishAttemptRepository.findByPublishWorkflowId(workflow))
+        .thenReturn(Optional.of(attempt));
+    when(versionRepository.findByTenantIdAndId("tenant-1", 10L))
+        .thenReturn(Optional.of(fixture.version()));
+    when(publishedReleaseBundleService.findPublishedReleaseBundle("tenant-1", 10L))
+        .thenReturn(Optional.of(fixture.bundle()));
+    when(versionAssetArtifactService.findState("tenant-1", 10L))
+        .thenReturn(
+            Optional.of(
+                new VersionAssetArtifactStateDto(
+                    "tenant-1",
+                    10L,
+                    1,
+                    "PUBLISHED",
+                    4L,
+                    MANIFEST_HASH,
+                    workflow,
+                    null,
+                    null,
+                    LocalDateTime.now(),
+                    List.of())));
+    when(versionAssetArtifactService.getExportCandidate("tenant-1", 10L))
+        .thenReturn(emptyManifest());
+  }
+
+  private record SelectorReadback(
+      SelectedRequest selected,
+      WorldPublishedStartLocationEvidence evidence,
+      PublishedReleaseBundleDto bundle,
+      Version version) {}
 
   @BeforeEach
   void setup() {

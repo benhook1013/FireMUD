@@ -135,27 +135,53 @@ public class CompleteLaunchBindingServiceImpl implements CompleteLaunchBindingSe
     List<AuthoredWorldReleaseAttestationEvidence.Artifact> artifacts =
         requireManifestAndArtifactEvidence(bundle);
 
-    AuthoredWorldReleaseAttestationEvidence releaseAttestation =
-        AuthoredWorldReleaseAttestationEvidence.create(
-            descriptor.targetNamespace(),
-            descriptor.resultDigest(),
-            source.canonicalTenantId(),
-            canonicalVersion.getCanonicalVersionId(),
-            source.worldSlug(),
-            source.operationId(),
-            source.evidenceDigest(),
-            descriptor.launchDescriptorId(),
-            descriptor.publishedReleaseBundleRef(),
-            descriptor.versionStateEpoch(),
-            bundle.publishWorkflowId(),
-            commitId,
-            participants,
-            bundle.manifestHash(),
-            bundle.manifestSchemaVersion(),
-            bundle.requiredManifestAssetKeys(),
-            artifacts,
-            bundle.commandDefinitions(),
-            bundle.generationConfigRevision());
+    AuthoredWorldReleaseAttestationEvidence releaseAttestation;
+    if ("v2".equals(bundle.attestationSchemaVersion())) {
+      releaseAttestation =
+          AuthoredWorldReleaseAttestationEvidence.create(
+              descriptor.targetNamespace(),
+              descriptor.resultDigest(),
+              source.canonicalTenantId(),
+              canonicalVersion.getCanonicalVersionId(),
+              source.worldSlug(),
+              source.operationId(),
+              source.evidenceDigest(),
+              descriptor.launchDescriptorId(),
+              descriptor.publishedReleaseBundleRef(),
+              descriptor.versionStateEpoch(),
+              bundle.publishWorkflowId(),
+              commitId,
+              participants,
+              bundle.manifestHash(),
+              bundle.manifestSchemaVersion(),
+              bundle.requiredManifestAssetKeys(),
+              artifacts,
+              bundle.commandDefinitions(),
+              bundle.generationConfigRevision(),
+              bundle.worldPublishedStartLocationEvidence());
+    } else {
+      releaseAttestation =
+          AuthoredWorldReleaseAttestationEvidence.create(
+              descriptor.targetNamespace(),
+              descriptor.resultDigest(),
+              source.canonicalTenantId(),
+              canonicalVersion.getCanonicalVersionId(),
+              source.worldSlug(),
+              source.operationId(),
+              source.evidenceDigest(),
+              descriptor.launchDescriptorId(),
+              descriptor.publishedReleaseBundleRef(),
+              descriptor.versionStateEpoch(),
+              bundle.publishWorkflowId(),
+              commitId,
+              participants,
+              bundle.manifestHash(),
+              bundle.manifestSchemaVersion(),
+              bundle.requiredManifestAssetKeys(),
+              artifacts,
+              bundle.commandDefinitions(),
+              bundle.generationConfigRevision());
+    }
     releaseAttestation.requireValid(descriptor);
     return new CompleteLaunchBindingDto(descriptor, releaseAttestation);
   }
@@ -247,7 +273,10 @@ public class CompleteLaunchBindingServiceImpl implements CompleteLaunchBindingSe
         || snapshotCanonicalVersionId == null
         || NIL_UUID.equals(snapshotCanonicalVersionId)
         || !Objects.equals(snapshotCanonicalVersionId, bundle.canonicalVersionId())
-        || !"v1".equals(bundle.attestationSchemaVersion())
+        || !("v1".equals(bundle.attestationSchemaVersion())
+                && bundle.worldPublishedStartLocationEvidence() == null
+            || "v2".equals(bundle.attestationSchemaVersion())
+                && bundle.worldPublishedStartLocationEvidence() != null)
         || !Objects.equals(bundle.id(), descriptor.releaseBundleId())
         || !Objects.equals(bundle.versionId(), descriptor.versionId())
         || !Objects.equals(bundle.tenantId(), source.sourceGameTenantKey())

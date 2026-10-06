@@ -5,6 +5,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -12,6 +13,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import net.firedevops.firemud.common.world.RoomTemplateRef;
+import net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalFrozenTopology.Request;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstancePreparation.Input;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstancePreparation.Result;
@@ -218,6 +221,58 @@ public final class WorldCanonicalInstancePreparationRepository {
       throw new InvalidPreparationEvidenceException(
           "Canonical World preparation readback omitted or added a selected topology family row");
     }
+    var selector =
+        input.completeLaunchBinding().evidence().releaseAttestation().worldStartLocationEvidence();
+    RoomTemplateRef startLocation = null;
+    Long runtimeRoomInstanceId = null;
+    if (selector != null) {
+      requireExactOriginalSelector(input, graphBytes);
+      var receipt = WorldDraftStartLocationEvidence.fromStored(selector.selectorReceiptBytes());
+      Record selected =
+          dsl.fetchOne(
+              "SELECT s.*, m.runtime_room_instance_id AS mapped_room_instance_id, "
+                  + "r.room_instance_id AS actual_room_instance_id,r.tenant_id AS room_tenant_key,r.game_instance_id AS room_game_instance_key "
+                  + "FROM world_canonical_preparation_start_location s "
+                  + "JOIN world_canonical_instance_topology_identity m ON m.world_instance_id=s.world_instance_id "
+                  + "AND m.canonical_game_instance_id=s.canonical_game_instance_id AND m.family='ROOM' "
+                  + "AND m.template_id=s.room_template_id JOIN room_instance r ON r.id=m.runtime_row_id "
+                  + "WHERE s.canonical_game_instance_id=?",
+              input.canonicalGameInstanceId());
+      if (selected == null
+          || !Arrays.equals(
+              selector.canonicalBytes(), required(selected, "evidence_bytes", byte[].class))
+          || !receipt
+              .startLocation()
+              .tenantId()
+              .equals(required(selected, "canonical_tenant_id", java.util.UUID.class))
+          || !receipt
+              .startLocation()
+              .versionId()
+              .equals(required(selected, "canonical_version_id", java.util.UUID.class))
+          || !receipt
+              .startLocation()
+              .roomTemplateId()
+              .equals(required(selected, "room_template_id", java.util.UUID.class))
+          || !receipt.receiptDigest().equals(required(selected, "receipt_digest", String.class))
+          || !receipt.graphDigest().equals(required(selected, "graph_digest", String.class))
+          || !Objects.equals(
+              required(selected, "runtime_room_instance_id", Long.class),
+              required(selected, "mapped_room_instance_id", Long.class))
+          || !Objects.equals(
+              required(selected, "runtime_room_instance_id", Long.class),
+              required(selected, "actual_room_instance_id", Long.class))
+          || required(selected, "room_tenant_key", Long.class)
+              != input.versionIdentity().sourceIntakeReceipt().localTenantKey()
+          || !Objects.equals(
+              required(selected, "room_game_instance_key", Long.class),
+              required(row, "private_game_instance_key", Long.class))
+          || required(selected, "world_instance_id", Long.class) != association.worldInstanceId()) {
+        throw new InvalidPreparationEvidenceException(
+            "Canonical preparation lost exact original selector or runtime ROOM mapping");
+      }
+      startLocation = receipt.startLocation();
+      runtimeRoomInstanceId = required(selected, "runtime_room_instance_id", Long.class);
+    }
     return Optional.of(
         new Result(
             association,
@@ -228,7 +283,9 @@ public final class WorldCanonicalInstancePreparationRepository {
             zones,
             rooms,
             exits,
-            required(row, "storage_status", String.class)));
+            required(row, "storage_status", String.class),
+            startLocation,
+            runtimeRoomInstanceId));
   }
 
   private void requireExactFrozenSource(Input input) {
@@ -256,6 +313,43 @@ public final class WorldCanonicalInstancePreparationRepository {
     WorldCanonicalInstancePreparation.requireGenerationFree(reconstructed);
     WorldCanonicalInstancePreparation.requireExactReleaseGraph(
         input.completeLaunchBinding().evidence().releaseAttestation(), reconstructed);
+    requireExactOriginalSelector(input, frozen.graphBytes());
+  }
+
+  /** Exact immutable Account/APPLIED/receipt readback; no mutable remote owner read. */
+  private void requireExactOriginalSelector(Input input, byte[] graphBytes) {
+    var evidence =
+        input.completeLaunchBinding().evidence().releaseAttestation().worldStartLocationEvidence();
+    if (evidence == null) return;
+    var receipt = WorldDraftStartLocationEvidence.fromStored(evidence.selectorReceiptBytes());
+    Record original =
+        dsl.fetchOne(
+            "SELECT s.receipt_bytes,s.account_binding_bytes,s.graph_digest,a.result_bytes,g.graph_bytes "
+                + "FROM world_draft_start_location_receipt s JOIN world_draft_graph_application a "
+                + "ON a.operation_id=s.operation_id AND a.request_id=s.request_id AND a.commit_id=s.commit_id "
+                + "AND a.authorization_fence_id=s.authorization_fence_id "
+                + "JOIN world_topology_draft_commit g ON g.request_id=s.request_id AND g.commit_id=s.commit_id "
+                + "WHERE s.operation_id=? AND s.target_namespace=? AND s.canonical_tenant_id=? "
+                + "AND s.canonical_version_id=? AND s.room_template_id=?",
+            receipt.operationId(),
+            receipt.targetNamespace(),
+            receipt.startLocation().tenantId(),
+            receipt.startLocation().versionId(),
+            receipt.startLocation().roomTemplateId());
+    if (original == null
+        || !Arrays.equals(
+            evidence.selectorReceiptBytes(), required(original, "receipt_bytes", byte[].class))
+        || !Arrays.equals(
+            evidence.originalAccountBindingBytes(),
+            required(original, "account_binding_bytes", byte[].class))
+        || !Arrays.equals(
+            evidence.appliedResultBytes(), required(original, "result_bytes", byte[].class))
+        || !Arrays.equals(graphBytes, required(original, "graph_bytes", byte[].class))
+        || !receipt.graphDigest().equals(digest(graphBytes))
+        || !receipt.graphDigest().equals(required(original, "graph_digest", String.class))) {
+      throw new InvalidPreparationEvidenceException(
+          "Canonical preparation selector differs from original World Account/APPLIED/graph receipt");
+    }
   }
 
   /**
@@ -274,6 +368,7 @@ public final class WorldCanonicalInstancePreparationRepository {
         && retainedPlan.ownerBinding().equals(suppliedPlan.ownerBinding())
         && retainedGraph.tenantId().equals(suppliedGraph.tenantId())
         && retainedGraph.versionId().equals(suppliedGraph.versionId())
+        && retainedGraph.freshGraphDeclaration().equals(suppliedGraph.freshGraphDeclaration())
         && retainedGraph.nodes().equals(suppliedGraph.nodes());
   }
 
@@ -356,7 +451,8 @@ public final class WorldCanonicalInstancePreparationRepository {
 
     Map<String, Object> root =
         object(
-            "schemaVersion", 1,
+            "schemaVersion",
+                launch.evidence().releaseAttestation().worldStartLocationEvidence() == null ? 1 : 2,
             "identity",
                 object(
                     "canonicalGameInstanceId", evidence.canonicalGameInstanceId().toString(),
@@ -474,6 +570,12 @@ public final class WorldCanonicalInstancePreparationRepository {
                     "exitCount", topology.roomExits().size(),
                     "generationRuleCount", topology.generationRules().size(),
                     "spawnBindingCount", topology.spawnBindings().size()));
+    var selector = launch.evidence().releaseAttestation().worldStartLocationEvidence();
+    if (selector != null) {
+      root.put(
+          "worldStartLocationEvidenceBase64",
+          Base64.getEncoder().encodeToString(selector.canonicalBytes()));
+    }
     try {
       return JSON.writeValueAsString(root);
     } catch (JacksonException exception) {

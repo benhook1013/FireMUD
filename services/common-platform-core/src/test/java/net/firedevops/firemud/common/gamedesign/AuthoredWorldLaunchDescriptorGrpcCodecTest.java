@@ -15,6 +15,44 @@ import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.Test;
 
 class AuthoredWorldLaunchDescriptorGrpcCodecTest {
+  @Test
+  void v2CompleteReadPreservesWorldEvidenceAndDeniesOmittedMalformedAndSubstitutedBytes()
+      throws Exception {
+    var selector = AuthoredWorldReleaseAttestationSelectorTest.selectorEvidence();
+    var authored = AuthoredWorldReleaseAttestationSelectorTest.descriptor(selector);
+    var release = AuthoredWorldReleaseAttestationSelectorTest.release(authored, selector);
+    var request = completeRequest(authored);
+    var response = completeResponse(request, authored, release);
+    assertThat(AuthoredWorldLaunchDescriptorGrpcCodec.fromCompleteResponse(request, response))
+        .isEqualTo(new CompleteLaunchBindingEvidence(authored, release));
+    for (var invalid :
+        List.of(
+            response.getReleaseAttestation().toBuilder().clearWorldStartLocationEvidence().build(),
+            response.getReleaseAttestation().toBuilder().setSchemaVersion(1).build(),
+            response.getReleaseAttestation().toBuilder()
+                .setWorldStartLocationEvidence(com.google.protobuf.ByteString.EMPTY)
+                .build(),
+            response.getReleaseAttestation().toBuilder()
+                .setWorldStartLocationEvidence(com.google.protobuf.ByteString.copyFromUtf8("{} "))
+                .build())) {
+      assertThatThrownBy(
+              () ->
+                  AuthoredWorldLaunchDescriptorGrpcCodec.fromCompleteResponse(
+                      request, response.toBuilder().setReleaseAttestation(invalid).build()))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+    assertThatThrownBy(
+            () ->
+                AuthoredWorldLaunchDescriptorGrpcCodec.fromCompleteResponse(
+                    request,
+                    response.toBuilder()
+                        .setReleaseAttestation(
+                            response.getReleaseAttestation().toBuilder()
+                                .setUnknownFields(unknownFields()))
+                        .build()))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
   private static final UUID TENANT_ID = UUID.fromString("12345678-1234-4234-8234-123456789abc");
   private static final UUID SOURCE_OPERATION_ID =
       UUID.fromString("22345678-1234-4234-8234-123456789abc");

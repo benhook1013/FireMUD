@@ -2,10 +2,12 @@ package net.firedevops.firemud.gamedesign.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.LocalDateTime;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection.PublishIntent;
@@ -537,7 +539,7 @@ public class VersionPublishCommandServiceImpl {
           "published release evidence is incomplete; readback/reconciliation is required");
     }
     VersionDto versionDto = versionMapper.toDto(readback.version());
-    PublishedReleaseBundleContract.requireSupportedSchemaForRead(readback.bundle());
+    PublishedReleaseBundleContract.requireSupportedSchemaForPublicationRead(readback.bundle());
     assertSelectedCommit(request, readback.bundle().participantDigests());
     publishGateService.assertGatePassed(versionDto, readback.bundle().participantDigests());
     recordedParticipantDigestService.assertMatchesRecordedDigests(
@@ -744,7 +746,7 @@ public class VersionPublishCommandServiceImpl {
       return PublicationReadback.partial();
     }
     try {
-      PublishedReleaseBundleContract.requireSupportedSchemaForRead(bundle);
+      PublishedReleaseBundleContract.requireSupportedSchemaForPublicationRead(bundle);
       requireExactBundleEvidence(request, attempt, version.get(), bundle);
       requireExactArtifactEvidence(request, attempt, bundle, artifact);
     } catch (RuntimeException ex) {
@@ -803,7 +805,12 @@ public class VersionPublishCommandServiceImpl {
     requireExactCommittedBundleIdentity(request, attempt, bundle);
     if (!Objects.equals(version.getTenantId(), bundle.tenantId())
         || version.getVersionNumber() != bundle.versionNumber()
-        || version.isScriptOnly()) {
+        || version.isScriptOnly()
+        || (PublishedReleaseBundleContract.SELECTOR_ATTESTATION_SCHEMA_VERSION.equals(
+                bundle.attestationSchemaVersion())
+            && (!Objects.equals(version.getCanonicalTenantId(), bundle.canonicalTenantId())
+                || !Objects.equals(
+                    version.getCanonicalVersionId(), bundle.canonicalVersionId())))) {
       throw new IllegalStateException("PUBLISH_ATTEMPT_BUNDLE_SCOPE_MISMATCH");
     }
   }
@@ -817,6 +824,39 @@ public class VersionPublishCommandServiceImpl {
         || bundle.scriptOnly()
         || bundle.scriptPatchVersion() != null) {
       throw new IllegalStateException("PUBLISH_ATTEMPT_BUNDLE_SCOPE_MISMATCH");
+    }
+    if (PublishedReleaseBundleContract.SELECTOR_ATTESTATION_SCHEMA_VERSION.equals(
+        bundle.attestationSchemaVersion())) {
+      PublishedReleaseBundleContract.requireSupportedSchemaForPublicationRead(bundle);
+      requireExactSelectedWorldEvidence(request, bundle);
+    }
+  }
+
+  private void requireExactSelectedWorldEvidence(
+      PublishWorkflowRequest request, PublishedReleaseBundleDto bundle) {
+    // The stored owner payload is historical readback. It does not reconstruct a missing current
+    // owner freeze/Account permission producer or authorize another publication.
+    AuthoredDraftPublishSelection selected = requireSelectedIntent(request);
+    var evidence = bundle.worldPublishedStartLocationEvidence();
+    var worldRequest = evidence.request();
+    var account = DraftAuthorizationFenceBinding.fromStored(evidence.originalAccountBindingBytes());
+    byte[] originalDraft = account.gameDesignBinding();
+    if (!Arrays.equals(originalDraft, selected.selectedCommit().canonicalBytes())
+        || !Arrays.equals(account.normalizedInput(), originalDraft)
+        || !selected.intent().selectedCommitDigest().equals(account.inputDigest())
+        || !selected.intent().selectedCommitRequestId().equals(account.requestId())
+        || !selected.intent().selectedCommitId().equals(account.commitId())
+        || !selected.target().canonicalTenantId().equals(worldRequest.canonicalTenantId())
+        || !selected.target().canonicalVersionId().equals(worldRequest.canonicalVersionId())
+        || !selected.target().canonicalTenantId().equals(bundle.canonicalTenantId())
+        || !selected.target().canonicalVersionId().equals(bundle.canonicalVersionId())
+        || !selected.intent().publishRequestId().equals(worldRequest.publicationRequestId())
+        || !request.publishWorkflowId().equals(worldRequest.publishWorkflowId())
+        || !selected
+            .intent()
+            .expectedVersionStateEpoch()
+            .equals(Long.toString(worldRequest.versionStateEpoch()))) {
+      throw new IllegalStateException("PUBLISH_ATTEMPT_WORLD_SELECTION_MISMATCH");
     }
   }
 

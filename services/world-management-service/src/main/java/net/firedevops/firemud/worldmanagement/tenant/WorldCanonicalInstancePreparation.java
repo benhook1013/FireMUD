@@ -3,6 +3,9 @@ package net.firedevops.firemud.worldmanagement.tenant;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
+import net.firedevops.firemud.common.world.RoomTemplateRef;
+import net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence;
+import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 
 /**
  * Typed input and storage result for the owner-private canonical instance materialization cut.
@@ -81,7 +84,9 @@ public final class WorldCanonicalInstancePreparation {
       int zoneCount,
       int roomCount,
       int exitCount,
-      String storageStatus) {
+      String storageStatus,
+      RoomTemplateRef startLocation,
+      Long runtimeRoomInstanceId) {
     public Result {
       Objects.requireNonNull(association, "association");
       Objects.requireNonNull(captureId, "captureId");
@@ -94,6 +99,35 @@ public final class WorldCanonicalInstancePreparation {
       if (!"MATERIALIZED_UNVERIFIED".equals(storageStatus)) {
         throw new IllegalArgumentException("Unsupported canonical preparation result status");
       }
+      if ((startLocation == null) != (runtimeRoomInstanceId == null)
+          || runtimeRoomInstanceId != null && runtimeRoomInstanceId <= 0) {
+        throw new IllegalArgumentException(
+            "Canonical selector and runtime mapping must be complete together");
+      }
+    }
+
+    public Result(
+        WorldCanonicalInstanceAssociation association,
+        UUID captureId,
+        String graphSha256,
+        String inputDigest,
+        int regionCount,
+        int zoneCount,
+        int roomCount,
+        int exitCount,
+        String storageStatus) {
+      this(
+          association,
+          captureId,
+          graphSha256,
+          inputDigest,
+          regionCount,
+          zoneCount,
+          roomCount,
+          exitCount,
+          storageStatus,
+          null,
+          null);
     }
   }
 
@@ -156,6 +190,67 @@ public final class WorldCanonicalInstancePreparation {
     }
     // The freeze observes the Draft epoch; the descriptor attests the later published Version
     // epoch. Those distinct lifecycle observations must not be treated as an equality join.
+    requireExactSelector(release, topologyPlan);
+  }
+
+  /** V1 remains inert history; v2 must carry the complete original selector and frozen request. */
+  static void requireExactSelector(
+      AuthoredWorldReleaseAttestationEvidence release,
+      WorldCanonicalInstanceTopologyPlan topologyPlan) {
+    if (release.schemaVersion() == AuthoredWorldReleaseAttestationEvidence.SCHEMA_VERSION) return;
+    var selector =
+        Objects.requireNonNull(release.worldStartLocationEvidence(), "World selector evidence");
+    var freeze = topologyPlan.sourceBinding().freeze();
+    var expected =
+        new WorldPublishedStartLocationEvidence.Request(
+            freeze.targetNamespace(),
+            freeze.canonicalTenantId(),
+            freeze.canonicalVersionId(),
+            freeze.intakeRequestId(),
+            freeze.publicationFence(),
+            freeze.publicationRequestId(),
+            freeze.requestDigest(),
+            freeze.versionStateEpoch(),
+            freeze.publishWorkflowId(),
+            freeze.appliedCommitId(),
+            freeze.contentDigest(),
+            freeze.digestSchemaVersion(),
+            freeze.suppliedOwnedAffectedTuples().stream()
+                .map(
+                    tuple ->
+                        new WorldPublishedStartLocationEvidence.OwnedAffectedTuple(
+                            tuple.owner(),
+                            tuple.aggregateType(),
+                            tuple.aggregateId(),
+                            tuple.scopeType(),
+                            tuple.scopeId(),
+                            tuple.expectedEpoch()))
+                .toList());
+    var receipt = WorldDraftStartLocationEvidence.fromStored(selector.selectorReceiptBytes());
+    var declaration =
+        topologyPlan
+            .sourceBinding()
+            .plan()
+            .graph()
+            .freshGraphDeclaration()
+            .orElseThrow(
+                () ->
+                    new IllegalArgumentException(
+                        "Selected World graph has no original fresh declaration"));
+    if (!selector.request().equals(expected)
+        || !declaration.startLocation().equals(receipt.startLocation())
+        || !receipt.bindingDigest().equals(topologyPlan.sourceBinding().plan().binding().digest())
+        || topologyPlan.rooms().stream()
+                .filter(
+                    room ->
+                        room.identity()
+                            .templateId()
+                            .equals(receipt.startLocation().roomTemplateId()))
+                .count()
+            != 1) {
+      throw new IllegalArgumentException(
+          "Release selector differs from the exact frozen request, declaration or ROOM");
+    }
   }
 
   static int entryCount(Input input, EntryType family) {

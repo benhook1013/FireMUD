@@ -35,6 +35,56 @@ import org.mockito.MockitoAnnotations;
 import org.springframework.test.util.ReflectionTestUtils;
 
 class CompleteLaunchBindingServiceImplTest {
+  @Test
+  void selectorReleaseIsAssembledFromImmutableLocalBundleWithoutMutableOwnerReads()
+      throws Exception {
+    var selector =
+        PublishedWorldSelectorFixtures.evidence(
+            new net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof(
+                CANONICAL_TENANT_ID,
+                CANONICAL_VERSION_ID,
+                VERSION_ID,
+                PRIVATE_TENANT_KEY,
+                source.sourceGameRowId(),
+                source.sourceGameTenantKey(),
+                source.provenanceKind()));
+    var selected =
+        new PublishedReleaseBundleDto(
+            bundle.id(),
+            bundle.tenantId(),
+            bundle.versionId(),
+            bundle.versionNumber(),
+            "v2",
+            selector.request().publishWorkflowId(),
+            bundle.manifestHash(),
+            bundle.requiredManifestAssetKeys(),
+            PublishedWorldSelectorFixtures.participants(VERSION_ID, selector),
+            bundle.commandDefinitions(),
+            bundle.generationConfigRevision(),
+            bundle.scriptOnly(),
+            bundle.scriptPatchVersion(),
+            bundle.publishedAt(),
+            bundle.canonicalTenantId(),
+            bundle.canonicalVersionId(),
+            bundle.publishedReleaseBundleRef(),
+            bundle.manifestSchemaVersion(),
+            bundle.artifactDigests(),
+            selector);
+    givenBundle(selected);
+    var result =
+        service.getCompleteLaunchBinding(
+            READ_REQUEST_ID,
+            CANONICAL_TENANT_ID,
+            WORLD_SLUG,
+            CONTROL_PLANE_REQUEST_ID,
+            descriptor.requestDigest(),
+            descriptor.resultDigest());
+    assertEquals(2, result.releaseAttestation().schemaVersion());
+    assertEquals(selector, result.releaseAttestation().worldStartLocationEvidence());
+    result.releaseAttestation().requireValid(descriptor);
+    verifyReadOnlyCallsOnly();
+  }
+
   private static final String NAMESPACE = "test";
   private static final UUID READ_REQUEST_ID =
       UUID.fromString("72345678-1234-4234-8234-123456789abc");

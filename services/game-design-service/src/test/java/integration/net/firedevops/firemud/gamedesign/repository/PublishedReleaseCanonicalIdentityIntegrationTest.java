@@ -3,10 +3,14 @@ package integration.net.firedevops.firemud.gamedesign.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.config.PostgresProperties;
+import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.entity.Version;
@@ -14,6 +18,7 @@ import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
+import net.firedevops.firemud.gamedesign.service.impl.PublishedWorldSelectorFixtures;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
@@ -33,6 +38,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import tools.jackson.databind.ObjectMapper;
 
 @Testcontainers(disabledWithoutDocker = true)
 class PublishedReleaseCanonicalIdentityIntegrationTest {
@@ -132,6 +138,17 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
               assertThat(row.get(MANIFEST_SCHEMA_VERSION)).isNull();
               assertThat(row.get(ARTIFACT_DIGESTS_JSON)).isNull();
             });
+    migrate(fixture.dataSource(), fixture.schema(), null);
+    assertThat(retainedTuple(fixture.dsl(), retainedBundleId)).isEqualTo(retainedTupleBefore);
+    assertThat(bundleXmin(fixture.dsl(), retainedBundleId)).isEqualTo(retainedXminBefore);
+    assertThat(
+            fixture
+                .dsl()
+                .fetchOne(
+                    "SELECT world_published_start_location_evidence_json FROM published_release_bundle WHERE id = ?",
+                    retainedBundleId)
+                .get(0))
+        .isNull();
     PublishedReleaseBundle retained =
         fixture
             .releaseBundleRepository()
@@ -157,7 +174,7 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
 
   @Test
   void normalSavePersistsExactVersionAndVerifiedGameIdentityAndReadsBackWithinTransaction() {
-    Fixture fixture = fixture(V38);
+    Fixture fixture = fixture(null);
     Game owner = saveGame(fixture, "fresh-release-source");
     Game other = saveGame(fixture, "other-release-source");
     Version version = saveVersion(fixture, owner);
@@ -210,7 +227,7 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
 
   @Test
   void repositoryNestedTransactionRollsBackWithOuterSpringPublisherTransaction() {
-    Fixture fixture = fixture(V38);
+    Fixture fixture = fixture(null);
     Game owner = saveGame(fixture, "outer-release-rollback-owner");
     Version version = saveVersion(fixture, owner);
     String versionXminBefore = versionXmin(fixture.dsl(), version.getId());
@@ -280,7 +297,7 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
 
   @Test
   void deniesWrongTenantNilAndSubstitutedCallerOrDatabaseIdentityWithoutGrowingBundles() {
-    Fixture fixture = fixture(V38);
+    Fixture fixture = fixture(null);
     Game owner = saveGame(fixture, "denied-release-owner");
     Game other = saveGame(fixture, "denied-release-other");
     Version version = saveVersion(fixture, owner);
@@ -408,6 +425,9 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
             });
 
     Version mappedVersion = saveVersion(fixture, game);
+    migrate(fixture.dataSource(), fixture.schema(), null);
+    assertThat(retainedTuple(fixture.dsl(), retainedBundleId)).isEqualTo(retainedTupleBeforeV38);
+    assertThat(bundleXmin(fixture.dsl(), retainedBundleId)).isEqualTo(retainedXminBeforeV38);
     PublishedReleaseBundle mapped =
         fixture.releaseBundleRepository().save(bundle(game.getTenantId(), mappedVersion.getId()));
     Map<String, Object> mappedTupleBefore = releaseBundleTuple(fixture.dsl(), mapped.getId());
@@ -547,6 +567,203 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("metadata cannot be truncated");
     assertThat(bundleCount(fixture.dsl())).isEqualTo(2);
+  }
+
+  @Test
+  void selectorV2RetainsCompleteOriginalEvidenceAndExactlyReplaysWithoutReplacingRelease()
+      throws Exception {
+    Fixture fixture = fixture(null);
+    Game owner = saveGame(fixture, "selector-release-source");
+    Version version = saveVersion(fixture, owner);
+    WorldPublishedStartLocationEvidence evidence = selectorEvidence(version);
+    PublishedReleaseBundle requested = selectorBundle(version, evidence);
+    PublishedReleaseBundle saved = fixture.releaseBundleRepository().save(requested);
+    String beforeXmin = bundleXmin(fixture.dsl(), saved.getId());
+    String original = new String(evidence.canonicalBytes(), StandardCharsets.UTF_8);
+    assertThat(saved.getWorldPublishedStartLocationEvidenceJson()).isEqualTo(original);
+    PublishedReleaseBundle independent =
+        new PublishedReleaseBundleRepository(fixture.dsl())
+            .findByTenantIdAndVersionId(owner.getTenantId(), version.getId())
+            .orElseThrow();
+    assertThat(
+            WorldPublishedStartLocationEvidence.fromStored(
+                    independent
+                        .getWorldPublishedStartLocationEvidenceJson()
+                        .getBytes(StandardCharsets.UTF_8))
+                .canonicalBytes())
+        .containsExactly(evidence.canonicalBytes());
+    assertThat(fixture.releaseBundleRepository().save(selectorBundle(version, evidence)))
+        .usingRecursiveComparison()
+        .isEqualTo(saved);
+    assertThat(bundleXmin(fixture.dsl(), saved.getId())).isEqualTo(beforeXmin);
+
+    PublishedReleaseBundle changed = selectorBundle(version, evidence);
+    changed.setGenerationConfigRevision("changed-generation");
+    assertThatThrownBy(() -> fixture.releaseBundleRepository().save(changed))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("IDEMPOTENCY_CONFLICT");
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .dsl()
+                    .execute(
+                        "UPDATE published_release_bundle SET world_published_start_location_evidence_json = NULL WHERE id = ?",
+                        saved.getId()))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("immutable");
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .dsl()
+                    .execute("DELETE FROM published_release_bundle WHERE id = ?", saved.getId()))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("retained");
+    assertThat(bundleXmin(fixture.dsl(), saved.getId())).isEqualTo(beforeXmin);
+    assertThat(bundleCount(fixture.dsl())).isEqualTo(1);
+  }
+
+  @Test
+  void concurrentExactSelectorRetriesCommitOneImmutableBundle() throws Exception {
+    Fixture fixture = fixture(null);
+    Game owner = saveGame(fixture, "selector-concurrent-source");
+    Version version = saveVersion(fixture, owner);
+    var evidence = selectorEvidence(version);
+    var start = new java.util.concurrent.CountDownLatch(1);
+    try (var executor = java.util.concurrent.Executors.newFixedThreadPool(2)) {
+      java.util.concurrent.Callable<PublishedReleaseBundle> save =
+          () -> {
+            start.await();
+            return new PublishedReleaseBundleRepository(fixture.dsl())
+                .save(selectorBundle(version, evidence));
+          };
+      var first = executor.submit(save);
+      var second = executor.submit(save);
+      start.countDown();
+      var one = first.get(20, java.util.concurrent.TimeUnit.SECONDS);
+      var two = second.get(20, java.util.concurrent.TimeUnit.SECONDS);
+      assertThat(two).usingRecursiveComparison().isEqualTo(one);
+      assertThat(bundleCount(fixture.dsl())).isEqualTo(1);
+    }
+  }
+
+  @Test
+  void sqlGuardRejectsMissingInjectedAndMismatchedSelectorBindingsWithoutAnyRelease()
+      throws Exception {
+    Fixture fixture = fixture(null);
+    Game owner = saveGame(fixture, "selector-denial-source");
+    Version version = saveVersion(fixture, owner);
+    WorldPublishedStartLocationEvidence evidence = selectorEvidence(version);
+    var json = new ObjectMapper();
+    String original = new String(evidence.canonicalBytes(), StandardCharsets.UTF_8);
+    String participants =
+        json.writeValueAsString(
+            PublishedWorldSelectorFixtures.participants(version.getId(), evidence));
+    assertThatThrownBy(() -> insertRawSelector(fixture, version, "v2", null, participants))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(() -> insertRawSelector(fixture, version, "v1", original, participants))
+        .isInstanceOf(DataAccessException.class);
+    for (String field :
+        List.of(
+            "canonicalTenantId",
+            "canonicalVersionId",
+            "publishWorkflowId",
+            "appliedCommitId",
+            "contentDigest",
+            "digestSchemaVersion",
+            "intakeRequestId")) {
+      var root = (tools.jackson.databind.node.ObjectNode) json.readTree(original);
+      var request = (tools.jackson.databind.node.ObjectNode) root.get("request");
+      if (field.equals("digestSchemaVersion")) request.put(field, 2);
+      else
+        request.put(
+            field,
+            field.endsWith("Id") || field.equals("publicationFence")
+                ? UUID.randomUUID().toString()
+                : "changed");
+      assertThatThrownBy(
+              () ->
+                  insertRawSelector(
+                      fixture, version, "v2", json.writeValueAsString(root), participants))
+          .isInstanceOf(DataAccessException.class);
+    }
+    for (String field :
+        List.of(
+            "selectorReceiptBytesBase64",
+            "originalAccountBindingBytesBase64",
+            "appliedResultBytesBase64")) {
+      var root = (tools.jackson.databind.node.ObjectNode) json.readTree(original);
+      root.remove(field);
+      assertThatThrownBy(
+              () ->
+                  insertRawSelector(
+                      fixture, version, "v2", json.writeValueAsString(root), participants))
+          .isInstanceOf(DataAccessException.class);
+    }
+    assertThatThrownBy(() -> insertRawSelector(fixture, version, "v2", original, "[]"))
+        .isInstanceOf(DataAccessException.class);
+    var changedParticipants = (tools.jackson.databind.node.ArrayNode) json.readTree(participants);
+    ((tools.jackson.databind.node.ObjectNode) changedParticipants.get(0))
+        .put("contentDigest", "c".repeat(64));
+    assertThatThrownBy(
+            () ->
+                insertRawSelector(
+                    fixture, version, "v2", original, json.writeValueAsString(changedParticipants)))
+        .isInstanceOf(DataAccessException.class);
+    assertThat(bundleCount(fixture.dsl())).isZero();
+    insertRawSelector(fixture, version, "v2", original, participants);
+    assertThat(
+            new PublishedReleaseBundleRepository(fixture.dsl())
+                .findByTenantIdAndVersionId(version.getTenantId(), version.getId())
+                .orElseThrow()
+                .getWorldPublishedStartLocationEvidenceJson())
+        .isEqualTo(original);
+  }
+
+  private WorldPublishedStartLocationEvidence selectorEvidence(Version version) throws Exception {
+    return PublishedWorldSelectorFixtures.evidence(
+        new TargetProof(
+            version.getCanonicalTenantId(),
+            version.getCanonicalVersionId(),
+            version.getId(),
+            version.getTenantId(),
+            version.getIdentitySourceGameRowId(),
+            version.getIdentitySourceGameTenantKey(),
+            version.getIdentitySourceProvenanceKind()));
+  }
+
+  private PublishedReleaseBundle selectorBundle(
+      Version version, WorldPublishedStartLocationEvidence evidence) {
+    PublishedReleaseBundle bundle = bundle(version.getTenantId(), version.getId());
+    bundle.setAttestationSchemaVersion("v2");
+    bundle.setPublishWorkflowId(evidence.request().publishWorkflowId());
+    bundle.setParticipantDigestsJson(
+        new ObjectMapper()
+            .writeValueAsString(
+                PublishedWorldSelectorFixtures.participants(version.getId(), evidence)));
+    bundle.setWorldPublishedStartLocationEvidenceJson(
+        new String(evidence.canonicalBytes(), StandardCharsets.UTF_8));
+    return bundle;
+  }
+
+  private void insertRawSelector(
+      Fixture fixture, Version version, String schema, String evidence, String participants) {
+    fixture
+        .dsl()
+        .execute(
+            "INSERT INTO published_release_bundle (tenant_id, version_id, version_number, "
+                + "canonical_tenant_id, canonical_version_id, published_release_bundle_ref, attestation_schema_version, "
+                + "publish_workflow_id, manifest_hash, manifest_schema_version, artifact_digests_json, "
+                + "required_manifest_asset_keys_json, participant_digests_json, command_definitions_json, script_only, "
+                + "world_published_start_location_evidence_json) VALUES (?, ?, 1, ?, ?, ?, ?, 'publish-workflow', ?, 1, '[]', '[]', ?, '[]', FALSE, ?)",
+            version.getTenantId(),
+            version.getId(),
+            version.getCanonicalTenantId(),
+            version.getCanonicalVersionId(),
+            UUID.randomUUID().toString(),
+            schema,
+            MANIFEST_HASH,
+            participants,
+            evidence);
   }
 
   private Fixture fixture(MigrationVersion target) {

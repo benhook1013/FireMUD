@@ -113,7 +113,9 @@ class AuthoredDraftPublishSelectionRepositoryIntegrationTest {
     Map<String, List<Map<String, Object>>> coordinatorBeforeLatest =
         retainedCoordinatorRows(retained);
     migrate(retained.dataSource(), retained.schema(), null);
-    assertThat(retainedCoordinatorRows(retained)).isEqualTo(coordinatorBeforeLatest);
+    assertThat(retainedCoordinatorRows(retained))
+        .usingRecursiveComparison()
+        .isEqualTo(coordinatorBeforeLatest);
     assertThat(
             retained.dsl().fetchCount(DSL.table(DSL.name("game_design_draft_terminal_operation"))))
         .isZero();
@@ -186,7 +188,9 @@ class AuthoredDraftPublishSelectionRepositoryIntegrationTest {
     Map<String, List<Map<String, Object>>> coordinatorBeforeLatest =
         retainedCoordinatorRows(retained);
     migrate(retained.dataSource(), retained.schema(), null);
-    assertThat(retainedCoordinatorRows(retained)).isEqualTo(coordinatorBeforeLatest);
+    assertThat(retainedCoordinatorRows(retained))
+        .usingRecursiveComparison()
+        .isEqualTo(coordinatorBeforeLatest);
 
     assertThat(
             retained.dsl().fetchCount(DSL.table(DSL.name("game_design_draft_terminal_operation"))))
@@ -205,8 +209,6 @@ class AuthoredDraftPublishSelectionRepositoryIntegrationTest {
     DraftCommitBinding firstCommit = binding(first.target(), UUID.randomUUID(), UUID.randomUUID());
     DraftCommitBinding secondCommit =
         binding(second.target(), UUID.randomUUID(), UUID.randomUUID());
-    retained.synchronize(firstCommit);
-    retained.synchronize(secondCommit);
     PublishIntent firstIntent = intent(first, firstCommit, "first retained history");
     PublishIntent secondIntent =
         sameRequestIntent(second, secondCommit, firstIntent.publishRequestId());

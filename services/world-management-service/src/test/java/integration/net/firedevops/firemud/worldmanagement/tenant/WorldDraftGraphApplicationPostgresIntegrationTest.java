@@ -20,9 +20,13 @@ import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateEvidence;
+import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.v1.WorldDesignMutationRevision;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
@@ -103,6 +107,12 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   @Autowired private WorldAuthoredSourceIntakeRepository intakeRepository;
   @Autowired private WorldDesignPublicationFenceRepository fence;
   @Autowired private ObjectMapper mapper;
+  @Autowired private WorldAuthoredGraphSnapshotRepository snapshots;
+
+  @Autowired
+  private net.firedevops.firemud.worldmanagement.service.WorldDraftDesignDigestService
+      digestService;
+
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
 
   @MockitoBean(enforceOverride = true)
@@ -111,6 +121,805 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   @MockitoBean private GameDesignClient gameDesignClient;
   @MockitoBean private GameSessionClient gameSessionClient;
   @MockitoBean private EntityManagementClient entityManagementClient;
+
+  @Test
+  void releaseSelectorMaterializesItsOriginalRoomAndExactlyRetriesWithSeparateRuntimeMapping() {
+    Fixture f = fixture();
+    var original = application(generationFreePlan(f));
+    var lastRoom =
+        original.plan().graph().nodes().stream()
+            .filter(
+                node ->
+                    node.mutation().getAggregateType()
+                        == WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM)
+            .map(node -> node.templateId())
+            .toList()
+            .getLast();
+    var application = withStartRoom(original, lastRoom);
+    appliedComponent().apply(application);
+    var frozen = capture(application.plan());
+    var selector =
+        publishedEvidence(
+            publishedSelectors().readCommitted(frozen.request().freeze()).orElseThrow());
+    var input = preparationInput(f, frozen, selector);
+    var repository = preparationRepository();
+    var service = preparationComponent(repository);
+    var result = service.prepare(input);
+    assertThat(result.startLocation().roomTemplateId()).isEqualTo(lastRoom);
+    assertThat(result.runtimeRoomInstanceId()).isPositive();
+    assertThat(result.storageStatus()).isEqualTo("MATERIALIZED_UNVERIFIED");
+    assertThat(result.startLocation().roomTemplateId())
+        .isNotEqualTo(input.topologyPlan().rooms().getFirst().identity().templateId());
+    var mapped =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT m.template_id,r.room_instance_id FROM world_canonical_instance_topology_identity m "
+                    + "JOIN room_instance r ON r.id=m.runtime_row_id WHERE m.world_instance_id=? AND m.family='ROOM' AND m.template_id=?",
+                result.association().worldInstanceId(),
+                lastRoom));
+    assertThat(mapped.get("room_instance_id", Long.class))
+        .isEqualTo(result.runtimeRoomInstanceId());
+    byte[] before = preparationRows(input.canonicalGameInstanceId());
+    assertThat(preparationComponent(preparationRepository()).prepare(input)).isEqualTo(result);
+    assertThat(preparationRepository().readOwnerPreparation(input)).contains(result);
+    assertThat(preparationRows(input.canonicalGameInstanceId())).containsExactly(before);
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE world_canonical_preparation_start_location SET runtime_room_instance_id=runtime_room_instance_id+1 WHERE canonical_game_instance_id=?",
+                    input.canonicalGameInstanceId()))
+        .hasMessageContaining("immutable and retained");
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "DELETE FROM world_canonical_preparation_start_location WHERE canonical_game_instance_id=?",
+                    input.canonicalGameInstanceId()))
+        .hasMessageContaining("immutable and retained");
+    assertOrigin();
+  }
+
+  @Test
+  void releaseSelectorRejectsChangedFrozenRequestAndSqlSubstitutionWithoutRuntimeWrites() {
+    Fixture f = fixture();
+    var application = application(generationFreePlan(f));
+    appliedComponent().apply(application);
+    var frozen = capture(application.plan());
+    var selector =
+        publishedEvidence(
+            publishedSelectors().readCommitted(frozen.request().freeze()).orElseThrow());
+    var selected = selector.request();
+    var changed =
+        new WorldPublishedStartLocationEvidence(
+            new WorldPublishedStartLocationEvidence.Request(
+                selected.targetNamespace(),
+                selected.canonicalTenantId(),
+                selected.canonicalVersionId(),
+                selected.intakeRequestId(),
+                UUID.randomUUID(),
+                selected.publicationRequestId(),
+                selected.requestDigest(),
+                selected.versionStateEpoch(),
+                selected.publishWorkflowId(),
+                selected.appliedCommitId(),
+                selected.contentDigest(),
+                selected.digestSchemaVersion(),
+                selected.worldAffectedTuples()),
+            selector.selectorReceiptBytes(),
+            selector.originalAccountBindingBytes(),
+            selector.appliedResultBytes());
+    assertThatThrownBy(() -> preparationInput(f, frozen, changed))
+        .hasMessageContaining("exact frozen request");
+    var input = preparationInput(f, frozen, selector);
+    var encoded =
+        (tools.jackson.databind.node.ObjectNode)
+            mapper.readTree(WorldCanonicalInstancePreparationRepository.inputJson(input));
+    encoded.put(
+        "worldStartLocationEvidenceBase64",
+        java.util.Base64.getEncoder().encodeToString(changed.canonicalBytes()));
+    String substituted = mapper.writeValueAsString(encoded);
+    assertThatThrownBy(
+            () ->
+                ownerTransaction()
+                    .execute(
+                        status ->
+                            dsl.fetchOne(
+                                "SELECT * FROM world_prepare_canonical_instance(?,?)",
+                                substituted,
+                                WorldDraftGraphAppliedResult.digest(
+                                    substituted.getBytes(StandardCharsets.UTF_8)))))
+        .hasMessageContaining("complete frozen request");
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT count(*) FROM world_instance WHERE tenant_id=?",
+                        f.intake().localTenantKey()))
+                .get(0, Long.class))
+        .isZero();
+    assertThat(preparationRepository().readOwnerPreparation(input)).isEmpty();
+    assertOrigin();
+  }
+
+  @Test
+  void inertV1PreparationRetainsOriginalBytesAndCannotGainSelectorOnRetry() {
+    Fixture f = fixture();
+    var application = application(generationFreePlan(f));
+    appliedComponent().apply(application);
+    var frozen = capture(application.plan());
+    var input = preparationInput(f, frozen, null);
+    var repository = preparationRepository();
+    var first = preparationComponent(repository).prepare(input);
+    assertThat(first.startLocation()).isNull();
+    assertThat(first.runtimeRoomInstanceId()).isNull();
+    byte[] before = preparationRows(input.canonicalGameInstanceId());
+    assertThat(preparationComponent(preparationRepository()).prepare(input)).isEqualTo(first);
+    assertThat(preparationRows(input.canonicalGameInstanceId())).containsExactly(before);
+    assertThat(WorldCanonicalInstancePreparationRepository.inputJson(input))
+        .doesNotContain("worldStartLocationEvidence");
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT count(*) FROM world_canonical_preparation_start_location WHERE canonical_game_instance_id=?",
+                        input.canonicalGameInstanceId()))
+                .get(0, Long.class))
+        .isZero();
+    // A new direct selector write cannot reinterpret the existing V1 preparation.
+    var receipt =
+        appliedRepository()
+            .readCommitted(application)
+            .orElseThrow()
+            .startLocationReceipt()
+            .orElseThrow();
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "INSERT INTO world_canonical_preparation_start_location (canonical_game_instance_id,world_instance_id,canonical_tenant_id,canonical_version_id,room_template_id,"
+                        + "runtime_room_instance_id,receipt_digest,graph_digest,evidence_bytes) VALUES (?,?,?,?,?,1,?,?,?)",
+                    input.canonicalGameInstanceId(),
+                    first.association().worldInstanceId(),
+                    receipt.startLocation().tenantId(),
+                    receipt.startLocation().versionId(),
+                    receipt.startLocation().roomTemplateId(),
+                    receipt.receiptDigest(),
+                    receipt.graphDigest(),
+                    receipt.canonicalBytes()))
+        .isInstanceOf(RuntimeException.class);
+    assertThat(preparationRows(input.canonicalGameInstanceId())).containsExactly(before);
+    assertOrigin();
+  }
+
+  @Test
+  void selectorPreparationLateFenceLossRollsBackSelectorRuntimeAndAssociationTogether() {
+    Fixture f = fixture();
+    var application = application(generationFreePlan(f));
+    appliedComponent().apply(application);
+    var frozen = capture(application.plan());
+    var selector =
+        publishedEvidence(
+            publishedSelectors().readCommitted(frozen.request().freeze()).orElseThrow());
+    var input = preparationInput(f, frozen, selector);
+    var component =
+        new WorldCanonicalInstancePreparationService(
+            preparationRepository(),
+            ignored ->
+                new WorldCanonicalInstancePreparationService.HeldCommitAuthority() {
+                  private int calls;
+
+                  public void requireHeld() {
+                    calls++;
+                    if (calls == 3) {
+                      assertThat(TransactionSynchronizationManager.isActualTransactionActive())
+                          .isTrue();
+                      assertThat(
+                              Objects.requireNonNull(
+                                      dsl.fetchOne(
+                                          "SELECT count(*) FROM world_canonical_preparation_start_location WHERE canonical_game_instance_id=?",
+                                          input.canonicalGameInstanceId()))
+                                  .get(0, Long.class))
+                          .isEqualTo(1L);
+                      throw new IllegalStateException("stipulated late Account fence loss");
+                    }
+                  }
+
+                  public void close() {}
+                });
+    assertThatThrownBy(() -> component.prepare(input))
+        .hasMessageContaining("late Account fence loss");
+    for (String table :
+        List.of(
+            "world_instance",
+            "world_canonical_instance_association",
+            "world_canonical_instance_preparation",
+            "world_canonical_preparation_start_location")) {
+      assertThat(
+              Objects.requireNonNull(
+                      dsl.fetchOne(
+                          "SELECT count(*) FROM " + table + " WHERE canonical_game_instance_id=?",
+                          input.canonicalGameInstanceId()))
+                  .get(0, Long.class))
+          .isZero();
+    }
+    assertThat(appliedRepository().readCommitted(application).orElseThrow().canonicalBytes())
+        .containsExactly(selector.appliedResultBytes());
+    assertOrigin();
+  }
+
+  private WorldDraftTopologyCommitPlan generationFreePlan(Fixture f) {
+    var original = plan(f);
+    var binding = original.binding();
+    List<DraftCommitBinding.RevisionPayload> revisions = new ArrayList<>();
+    for (var revision : binding.revisions()) {
+      if (revision.owner() != Owner.WORLD_MANAGEMENT) {
+        revisions.add(
+            new DraftCommitBinding.RevisionPayload(
+                Integer.toString(revisions.size()),
+                revision.revisionId(),
+                revision.owner(),
+                revision.payload()));
+        continue;
+      }
+      try {
+        var value = WorldDesignMutationRevision.newBuilder();
+        JsonFormat.parser().merge(revision.payload(), value);
+        if (value.hasGenerationRule() || value.hasWorldEntitySpawnBinding()) continue;
+        if (value.hasRegion())
+          value.setRegion(
+              value.getRegion().toBuilder()
+                  .clearGenerationSeed()
+                  .clearGeneratorType()
+                  .clearGeneratorParams());
+        if (value.hasFreshGraphDeclaration()) {
+          var declaration = value.getFreshGraphDeclaration().toBuilder();
+          for (int index = 0; index < declaration.getFamilyCountsCount(); index++) {
+            var family = declaration.getFamilyCounts(index).getFamily();
+            if (family == WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_GENERATION_RULE
+                || family
+                    == WorldDesignAggregateType
+                        .WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING) {
+              declaration.setFamilyCounts(
+                  index, declaration.getFamilyCounts(index).toBuilder().setCount(0));
+            }
+          }
+          value.setFreshGraphDeclaration(declaration);
+        }
+        revisions.add(
+            new DraftCommitBinding.RevisionPayload(
+                Integer.toString(revisions.size()),
+                revision.revisionId(),
+                revision.owner(),
+                JsonFormat.printer().print(value)));
+      } catch (InvalidProtocolBufferException failure) {
+        throw new IllegalStateException(failure);
+      }
+    }
+    return WorldDraftTopologyCommitPlan.create(
+        DraftCommitBinding.create(
+            binding.target(),
+            binding.requestId(),
+            binding.commitId(),
+            binding.baseCommitId(),
+            revisions,
+            binding.affectedUnits().stream()
+                .filter(
+                    unit ->
+                        !unit.aggregateType().equals("GENERATION_RULE")
+                            && !unit.aggregateType().equals("WORLD_ENTITY_SPAWN_BINDING"))
+                .toList()),
+        original.ownerBinding());
+  }
+
+  @Test
+  void v41MaterializedV1HistoryRemainsByteExactAndRetryableAfterV42WithoutSelectorPromotion() {
+    String schema = "world_v41_preparation_" + UUID.randomUUID().toString().replace("-", "");
+    Flyway.configure()
+        .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
+        .schemas(schema)
+        .defaultSchema(schema)
+        .table("flyway_schema_history_world_management_service")
+        .placeholders(Map.of("serviceSchema", schema))
+        .locations("classpath:db/migration")
+        .target(MigrationVersion.fromVersion("41"))
+        .load()
+        .migrate();
+    DriverManagerDataSource dataSource = new DriverManagerDataSource();
+    dataSource.setUrl(postgres.getJdbcUrl());
+    dataSource.setUsername(postgres.getUsername());
+    dataSource.setPassword(postgres.getPassword());
+    dataSource.setSchema(schema);
+    // Reuse exactly the same actual producer/preparation fixture against the historical schema.
+    var historical = new WorldDraftGraphApplicationPostgresIntegrationTest();
+    historical.dsl =
+        DSL.using(
+            new TransactionAwareDataSourceProxy(dataSource),
+            SQLDialect.POSTGRES,
+            new org.jooq.conf.Settings().withRenderSchema(false));
+    historical.manager = new DataSourceTransactionManager(dataSource);
+    historical.intakeRepository = proxiedIntakeRepository(historical.dsl, historical.manager);
+    historical.fence =
+        new WorldDesignPublicationFenceRepository(historical.dsl, historical.intakeRepository);
+    historical.mapper = mapper;
+    historical.snapshots = new WorldAuthoredGraphSnapshotRepository(historical.dsl);
+    historical.digestService =
+        new net.firedevops.firemud.worldmanagement.service.impl.WorldDraftDesignDigestServiceImpl(
+            new net.firedevops.firemud.worldmanagement.repository.RegionRepository(historical.dsl),
+            new net.firedevops.firemud.worldmanagement.repository.ZoneRepository(historical.dsl),
+            new net.firedevops.firemud.worldmanagement.repository.RoomRepository(historical.dsl),
+            new net.firedevops.firemud.worldmanagement.repository.RoomExitRepository(
+                historical.dsl),
+            new net.firedevops.firemud.worldmanagement.repository.GenerationRuleRepository(
+                historical.dsl),
+            new net.firedevops.firemud.worldmanagement.repository.WorldEntitySpawnBindingRepository(
+                historical.dsl),
+            mapper);
+    Fixture f = historical.fixture();
+    var application = historical.application(historical.generationFreePlan(f));
+    var applied = historical.appliedComponent().apply(application);
+    var frozen = historical.capture(application.plan());
+    var input = historical.preparationInput(f, frozen, null);
+    var first = historical.preparationComponent(historical.preparationRepository()).prepare(input);
+    Map<String, String> before = historical.preparationHistoryRows();
+    byte[] originalApplied = applied.canonicalBytes();
+    Flyway.configure()
+        .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
+        .schemas(schema)
+        .defaultSchema(schema)
+        .table("flyway_schema_history_world_management_service")
+        .placeholders(Map.of("serviceSchema", schema))
+        .locations("classpath:db/migration")
+        .load()
+        .migrate();
+    assertThat(historical.preparationHistoryRows()).isEqualTo(before);
+    assertThat(historical.preparationComponent(historical.preparationRepository()).prepare(input))
+        .isEqualTo(first);
+    assertThat(historical.preparationHistoryRows()).isEqualTo(before);
+    assertThat(
+            historical
+                .appliedRepository()
+                .readCommitted(application)
+                .orElseThrow()
+                .canonicalBytes())
+        .containsExactly(originalApplied);
+    assertThat(first.startLocation()).isNull();
+    assertThat(first.runtimeRoomInstanceId()).isNull();
+    assertThat(
+            Objects.requireNonNull(
+                    historical.dsl.fetchOne(
+                        "SELECT count(*) FROM world_canonical_preparation_start_location"))
+                .get(0, Long.class))
+        .isZero();
+    historical.assertOrigin();
+  }
+
+  private Map<String, String> preparationHistoryRows() {
+    Map<String, String> result = new LinkedHashMap<>();
+    for (String table :
+        List.of(
+            "world_authored_source_intake",
+            "world_authored_version_identity",
+            "world_complete_launch_binding",
+            "world_topology_draft_commit",
+            "world_draft_graph_application",
+            "world_draft_start_location_receipt",
+            "world_canonical_frozen_topology",
+            "world_instance",
+            "region_instance",
+            "zone_instance",
+            "room_instance",
+            "room_instance_exit",
+            "world_canonical_instance_topology_identity",
+            "world_canonical_instance_preparation",
+            "world_canonical_instance_association")) {
+      result.put(
+          table,
+          Objects.requireNonNull(
+                  dsl.fetchOne(
+                      "SELECT coalesce(jsonb_agg(value ORDER BY value::text),'[]'::jsonb)::text "
+                          + "FROM (SELECT to_jsonb(t) AS value FROM "
+                          + table
+                          + " t) rows"))
+              .get(0, String.class));
+    }
+    return result;
+  }
+
+  private WorldPublishedStartLocationEvidence publishedEvidence(
+      WorldPublishedStartLocationSource source) {
+    var freeze = source.frozenTopology().request().freeze();
+    return new WorldPublishedStartLocationEvidence(
+        new WorldPublishedStartLocationEvidence.Request(
+            freeze.targetNamespace(),
+            freeze.canonicalTenantId(),
+            freeze.canonicalVersionId(),
+            freeze.intakeRequestId(),
+            freeze.publicationFence(),
+            freeze.publicationRequestId(),
+            freeze.requestDigest(),
+            freeze.versionStateEpoch(),
+            freeze.publishWorkflowId(),
+            freeze.appliedCommitId(),
+            freeze.contentDigest(),
+            freeze.digestSchemaVersion(),
+            freeze.suppliedOwnedAffectedTuples().stream()
+                .map(
+                    tuple ->
+                        new WorldPublishedStartLocationEvidence.OwnedAffectedTuple(
+                            tuple.owner(),
+                            tuple.aggregateType(),
+                            tuple.aggregateId(),
+                            tuple.scopeType(),
+                            tuple.scopeId(),
+                            tuple.expectedEpoch()))
+                .toList()),
+        source.selectorReceipt().canonicalBytes(),
+        source.appliedResult().application().operation().accountBindingBytes(),
+        source.appliedResult().canonicalBytes());
+  }
+
+  private WorldCanonicalInstancePreparation.Input preparationInput(
+      Fixture f,
+      WorldCanonicalFrozenTopology frozen,
+      WorldPublishedStartLocationEvidence selector) {
+    var source = f.intake().source();
+    String control = "prepare-" + UUID.randomUUID();
+    var descriptor =
+        AuthoredWorldLaunchDescriptorEvidence.create(
+            new AuthoredWorldLaunchDescriptorEvidence.Request(
+                NAMESPACE,
+                control,
+                source.canonicalTenantId(),
+                source.worldSlug(),
+                source.operationId(),
+                source.evidenceDigest(),
+                71L,
+                false,
+                null,
+                false,
+                null,
+                false,
+                null,
+                false,
+                null),
+            "ld-" + UUID.randomUUID(),
+            GAME_DESIGN_VERSION,
+            false,
+            null,
+            "{}",
+            "generation-free",
+            2L,
+            97L,
+            "release-" + UUID.randomUUID(),
+            false,
+            null);
+    var freeze = frozen.request().freeze();
+    var participants =
+        AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
+            .map(
+                owner ->
+                    new AuthoredWorldReleaseAttestationEvidence.Participant(
+                        owner,
+                        Long.toString(GAME_DESIGN_VERSION),
+                        false,
+                        null,
+                        freeze.appliedCommitId(),
+                        "WORLD_MANAGEMENT".equals(owner) ? freeze.contentDigest() : "a".repeat(64),
+                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                            owner),
+                        "GAME_LOGIC".equals(owner),
+                        "GAME_LOGIC".equals(owner) ? "sha256:" + "b".repeat(64) : null))
+            .toList();
+    AuthoredWorldReleaseAttestationEvidence release =
+        selector == null
+            ? AuthoredWorldReleaseAttestationEvidence.create(
+                NAMESPACE,
+                descriptor.resultDigest(),
+                source.canonicalTenantId(),
+                f.version().canonicalVersionId(),
+                source.worldSlug(),
+                source.operationId(),
+                source.evidenceDigest(),
+                descriptor.launchDescriptorId(),
+                descriptor.publishedReleaseBundleRef(),
+                descriptor.versionStateEpoch(),
+                freeze.publishWorkflowId(),
+                freeze.appliedCommitId(),
+                participants,
+                "sha256:" + "c".repeat(64),
+                1,
+                List.of(),
+                List.of(),
+                List.of("LOOK"),
+                descriptor.generationConfigRevision())
+            : AuthoredWorldReleaseAttestationEvidence.create(
+                NAMESPACE,
+                descriptor.resultDigest(),
+                source.canonicalTenantId(),
+                f.version().canonicalVersionId(),
+                source.worldSlug(),
+                source.operationId(),
+                source.evidenceDigest(),
+                descriptor.launchDescriptorId(),
+                descriptor.publishedReleaseBundleRef(),
+                descriptor.versionStateEpoch(),
+                freeze.publishWorkflowId(),
+                freeze.appliedCommitId(),
+                participants,
+                "sha256:" + "c".repeat(64),
+                1,
+                List.of(),
+                List.of(),
+                List.of("LOOK"),
+                descriptor.generationConfigRevision(),
+                selector);
+    var evidence = new CompleteLaunchBindingEvidence(descriptor, release);
+    var launch =
+        Objects.requireNonNull(
+            ownerTransaction()
+                .execute(
+                    status ->
+                        new WorldCompleteLaunchBindingRepository(dsl)
+                            .acceptFresh(NAMESPACE, f.intake(), evidence)));
+    UUID instance = UUID.randomUUID();
+    UUID read = UUID.randomUUID();
+    var request =
+        new WorldCanonicalInstanceAssociation.GameSessionReadRequest(
+            read,
+            NAMESPACE,
+            source.canonicalTenantId(),
+            source.worldSlug(),
+            instance,
+            control,
+            descriptor.launchDescriptorId(),
+            descriptor.requestDigest(),
+            descriptor.resultDigest(),
+            release.evidenceDigest());
+    var response =
+        new WorldCanonicalInstanceAssociation.GameSessionReadEvidence(
+            read,
+            NAMESPACE,
+            source.canonicalTenantId(),
+            source.worldSlug(),
+            instance,
+            control,
+            descriptor.launchDescriptorId(),
+            descriptor.requestDigest(),
+            descriptor.resultDigest(),
+            release.evidenceDigest(),
+            UUID.randomUUID(),
+            "SHARED",
+            true,
+            "PREPARING",
+            1L,
+            descriptor,
+            release);
+    return new WorldCanonicalInstancePreparation.Input(
+        request, response, launch, f.version(), WorldCanonicalInstanceTopologyPlan.create(frozen));
+  }
+
+  private WorldCanonicalInstancePreparationRepository preparationRepository() {
+    return new WorldCanonicalInstancePreparationRepository(
+        dsl, manager, new WorldCanonicalInstanceAssociationRepository(dsl), frozenRepository());
+  }
+
+  private WorldCanonicalInstancePreparationService preparationComponent(
+      WorldCanonicalInstancePreparationRepository repository) {
+    // Stipulated local verifier only: no production producer, currentness, lifecycle or admission
+    // claim.
+    return new WorldCanonicalInstancePreparationService(
+        repository,
+        input ->
+            new WorldCanonicalInstancePreparationService.HeldCommitAuthority() {
+              private boolean open = true;
+
+              public void requireHeld() {
+                if (!open) throw new IllegalStateException("closed fixture authority");
+              }
+
+              public void close() {
+                open = false;
+              }
+            });
+  }
+
+  private byte[] preparationRows(UUID instance) {
+    return Objects.requireNonNull(
+        Objects.requireNonNull(
+                dsl.fetchOne(
+                    "SELECT convert_to(jsonb_build_object('preparation',to_jsonb(p),'selector',to_jsonb(s))::text,'UTF8') "
+                        + "FROM world_canonical_instance_preparation p LEFT JOIN world_canonical_preparation_start_location s USING(canonical_game_instance_id) WHERE p.canonical_game_instance_id=?",
+                    instance))
+            .get(0, byte[].class));
+  }
+
+  @Test
+  void publishedSelectorJoinsExactFrozenCheckpointToOriginalAppliedWithoutWrites() {
+    Fixture f = fixture();
+    var application = application(f);
+    var applied = appliedComponent().apply(application);
+    var capture = capture(application.plan());
+    var request = capture.request().freeze();
+    var source = publishedSelectors().readCommitted(request).orElseThrow();
+    assertThat(source.selectorReceipt()).isEqualTo(applied.startLocationReceipt().orElseThrow());
+    assertThat(source.appliedResult().canonicalBytes()).containsExactly(applied.canonicalBytes());
+    assertThat(source.frozenTopology().resultBytes()).containsExactly(capture.resultBytes());
+    assertThat(source.frozenTopology().status()).isEqualTo("CAPTURED_UNVERIFIED");
+    assertThat(source.appliedResult().application().operation().accountBindingBytes())
+        .containsExactly(application.operation().accountBindingBytes());
+    var another = application(fixture());
+    var anotherResult = appliedComponent().apply(another);
+    var substitutedApplications =
+        org.mockito.Mockito.mock(WorldDraftGraphApplicationRepository.class);
+    org.mockito.Mockito.when(
+            substitutedApplications.readCommitted(
+                org.mockito.ArgumentMatchers.eq(NAMESPACE),
+                org.mockito.ArgumentMatchers.any(byte[].class)))
+        .thenReturn(java.util.Optional.of(anotherResult));
+    assertThatThrownBy(
+            () ->
+                new WorldPublishedStartLocationRepository(
+                        dsl, frozenRepository(), substitutedApplications)
+                    .readCommitted(request))
+        .hasMessageContaining("differs from original frozen application");
+    // A plausible result for a distinct Account operation on the same plan is also substitution.
+    org.mockito.Mockito.when(
+            substitutedApplications.readCommitted(
+                org.mockito.ArgumentMatchers.eq(NAMESPACE),
+                org.mockito.ArgumentMatchers.any(byte[].class)))
+        .thenReturn(
+            java.util.Optional.of(
+                WorldDraftGraphAppliedResult.create(
+                    changedAccountApplication(application), applied.graphBytes())));
+    assertThatThrownBy(
+            () ->
+                new WorldPublishedStartLocationRepository(
+                        dsl, frozenRepository(), substitutedApplications)
+                    .readCommitted(request))
+        .hasMessageContaining("differs from original frozen application");
+    byte[] before = retainedApplicationBytes(application);
+    assertThat(publishedSelectors().readCommitted(request).orElseThrow().selectorReceipt())
+        .isEqualTo(source.selectorReceipt());
+    assertThat(retainedApplicationBytes(application)).containsExactly(before);
+    assertThat(count(f, "world_draft_graph_application")).isEqualTo(1);
+    assertThat(count(f, "world_draft_start_location_receipt")).isEqualTo(1);
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT count(*) FROM world_canonical_frozen_topology WHERE publication_fence=?",
+                        request.publicationFence()))
+                .get(0, Long.class))
+        .isEqualTo(1L);
+    assertThatThrownBy(
+            () ->
+                publishedSelectors()
+                    .readCommitted(
+                        changedSelection(request, "changed-request", request.contentDigest())))
+        .hasMessageContaining("canonical full-version workflow identity");
+    assertThatThrownBy(
+            () ->
+                publishedSelectors()
+                    .readCommitted(
+                        changedSelection(request, request.publicationRequestId(), "c".repeat(64))))
+        .hasMessageContaining("changed complete input or checkpoint");
+    assertThatThrownBy(
+            () -> ownerTransaction().execute(status -> publishedSelectors().readCommitted(request)))
+        .hasMessageContaining("no caller transaction");
+    assertOrigin();
+  }
+
+  @Test
+  void permissionUnverifiedGraphAndFrozenHistoryCannotSupplyPublishedSelector() {
+    var plan = plan(fixture());
+    component().store(plan);
+    var capture = capture(plan);
+    assertThat(frozenRepository().readCommitted(capture.request().freeze())).isPresent();
+    assertThatThrownBy(() -> publishedSelectors().readCommitted(capture.request().freeze()))
+        .hasMessageContaining("lacks original APPLIED application");
+    assertOrigin();
+  }
+
+  private byte[] retainedApplicationBytes(WorldDraftGraphApplication application) {
+    return Objects.requireNonNull(
+        Objects.requireNonNull(
+                dsl.fetchOne(
+                    "SELECT convert_to(to_jsonb(a)::text,'UTF8') FROM world_draft_graph_application a WHERE operation_id=?",
+                    application.operation().operationId()))
+            .get(0, byte[].class));
+  }
+
+  private WorldAuthoredGraphSnapshot.CaptureRequest changedSelection(
+      WorldAuthoredGraphSnapshot.CaptureRequest request, String publicationRequest, String digest) {
+    return new WorldAuthoredGraphSnapshot.CaptureRequest(
+        request.targetNamespace(),
+        request.canonicalTenantId(),
+        request.canonicalVersionId(),
+        request.intakeRequestId(),
+        request.publicationFence(),
+        publicationRequest,
+        request.requestDigest(),
+        request.versionStateEpoch(),
+        request.publishWorkflowId(),
+        request.appliedCommitId(),
+        digest,
+        request.digestSchemaVersion(),
+        request.suppliedOwnedAffectedTuples());
+  }
+
+  private WorldCanonicalFrozenTopologyRepository frozenRepository() {
+    return new WorldCanonicalFrozenTopologyRepository(dsl, snapshots, repository(), digestService);
+  }
+
+  private WorldPublishedStartLocationRepository publishedSelectors() {
+    return new WorldPublishedStartLocationRepository(dsl, frozenRepository(), appliedRepository());
+  }
+
+  private WorldCanonicalFrozenTopology capture(WorldDraftTopologyCommitPlan plan) {
+    var owner = plan.ownerBinding();
+    String publicationRequest = "selector-" + UUID.randomUUID();
+    var evidence =
+        new WorldDesignPublicationFenceEvidence(
+            owner.targetNamespace(),
+            owner.canonicalTenantId(),
+            owner.canonicalVersionId(),
+            owner.versionIdentityOperationId(),
+            owner.gameDesignVersionId(),
+            owner.intakeRequestId(),
+            owner.intakeOperationId(),
+            owner.intakeRequestDigest(),
+            owner.sourceOperationId(),
+            owner.sourceEvidenceDigest(),
+            owner.intakeReceiptDigest(),
+            publicationRequest,
+            "a".repeat(64),
+            1,
+            "publish:" + owner.canonicalTenantId() + ":publish-request:" + publicationRequest);
+    var attempt =
+        Objects.requireNonNull(
+            ownerTransaction()
+                .execute(
+                    status ->
+                        fence.claimFreeze(
+                            evidence,
+                            () -> {
+                              var identity =
+                                  Objects.requireNonNull(
+                                      dsl.fetchOne(
+                                          "SELECT local_tenant_key,local_version_key FROM world_authored_version_identity WHERE operation_id=?",
+                                          owner.versionIdentityOperationId()));
+                              var digest =
+                                  digestService.getDraftDesignDigest(
+                                      identity.get("local_tenant_key", Long.class).toString(),
+                                      identity.get("local_version_key", Long.class).toString());
+                              return new WorldDesignPublicationFenceEvidence.Checkpoint(
+                                  plan.binding().commitId().toString(), digest.contentDigest(), 3);
+                            })));
+    var tuples =
+        plan.binding().affectedUnits(Owner.WORLD_MANAGEMENT).stream()
+            .map(
+                unit ->
+                    new WorldAuthoredGraphSnapshot.OwnedAffectedTuple(
+                        unit.owner().name(),
+                        unit.aggregateType(),
+                        unit.aggregateId(),
+                        unit.scopeType(),
+                        unit.scopeId(),
+                        unit.expectedEpoch()))
+            .toList();
+    var request =
+        new WorldAuthoredGraphSnapshot.CaptureRequest(
+            owner.targetNamespace(),
+            owner.canonicalTenantId(),
+            owner.canonicalVersionId(),
+            owner.intakeRequestId(),
+            attempt.publicationFence(),
+            publicationRequest,
+            evidence.requestDigest(),
+            evidence.versionStateEpoch(),
+            evidence.publishWorkflowId(),
+            attempt.checkpoint().appliedCommitId(),
+            attempt.checkpoint().contentDigest(),
+            attempt.checkpoint().digestSchemaVersion(),
+            tuples);
+    return new WorldCanonicalFrozenTopologyService(frozenRepository(), manager)
+        .capture(new WorldCanonicalFrozenTopology.Request(plan, request));
+  }
 
   @Test
   void freshApplicationRetainsCompleteExactGraphAndOriginalAccountReadbackAndRetriesAfterFreeze() {
@@ -486,7 +1295,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     assertThat(component().store(priorPlan).status()).isEqualTo("STORED_PERMISSION_UNVERIFIED");
 
     assertThatThrownBy(() -> appliedComponent().apply(application))
-        .hasMessageContaining("extra or missing actual");
+        .hasMessageContaining("Fresh World topology conflicts with retained region");
     assertThat(appliedRepository().readCommitted(application)).isEmpty();
     assertThat(count(f, "world_authored_topology_identity")).isEqualTo(4);
     assertThat(count(f, "world_draft_start_location_receipt")).isZero();
@@ -582,6 +1391,53 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     assertThat(exact.canonicalBytes()).containsExactly(legacyResult.canonicalBytes());
     assertThat(exact.graphBytes()).containsExactly(legacyResult.graphBytes());
     assertThat(exact.startLocationReceipt()).isEmpty();
+    // Negative source-reader proof uses real retained v1 APPLIED bytes, with a stipulated frozen
+    // selection only. This is not positive capture or publication-checkpoint proof for v1 history.
+    var historicalFreeze =
+        new WorldAuthoredGraphSnapshot.CaptureRequest(
+            NAMESPACE,
+            historicalPlan.ownerBinding().canonicalTenantId(),
+            historicalPlan.ownerBinding().canonicalVersionId(),
+            historicalPlan.ownerBinding().intakeRequestId(),
+            UUID.randomUUID(),
+            "historical-selector-denial",
+            "a".repeat(64),
+            1,
+            "publish:"
+                + historicalPlan.ownerBinding().canonicalTenantId()
+                + ":publish-request:historical-selector-denial",
+            historicalPlan.binding().commitId().toString(),
+            "b".repeat(64),
+            3,
+            historicalPlan.binding().affectedUnits(Owner.WORLD_MANAGEMENT).stream()
+                .map(
+                    unit ->
+                        new WorldAuthoredGraphSnapshot.OwnedAffectedTuple(
+                            unit.owner().name(),
+                            unit.aggregateType(),
+                            unit.aggregateId(),
+                            unit.scopeType(),
+                            unit.scopeId(),
+                            unit.expectedEpoch()))
+                .toList());
+    var historicalSelection =
+        new WorldCanonicalFrozenTopology(
+            UUID.randomUUID(),
+            new WorldCanonicalFrozenTopology.Request(historicalPlan, historicalFreeze),
+            f.version(),
+            new WorldCanonicalAuthoredGraphReader().read(historicalPlan, exact.graphBytes()),
+            exact.graphBytes(),
+            new byte[0],
+            new byte[0]);
+    var stipulatedFrozen = org.mockito.Mockito.mock(WorldCanonicalFrozenTopologyRepository.class);
+    org.mockito.Mockito.when(stipulatedFrozen.readCommitted(historicalFreeze))
+        .thenReturn(java.util.Optional.of(historicalSelection));
+    assertThatThrownBy(
+            () ->
+                new WorldPublishedStartLocationRepository(
+                        retainedDsl, stipulatedFrozen, retainedApplications)
+                    .readCommitted(historicalFreeze))
+        .hasMessageContaining("lacks original selector receipt");
     assertThat(
             retainedApplications
                 .readCommitted(NAMESPACE, historicalApplication.operation().accountBindingBytes())

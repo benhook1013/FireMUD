@@ -38,6 +38,55 @@ import org.testcontainers.junit.jupiter.Testcontainers;
     classes = WorldManagementServiceApplication.class,
     properties = "spring.grpc.server.port=0")
 class WorldCanonicalInstancePreparationPostgresIntegrationTest {
+  @Test
+  void selectorGuardPreservesInertV1ShapeAndDeniesPromotionOrMissingV2BeforeAllocation() {
+    long before =
+        Objects.requireNonNull(dsl.fetchOne("SELECT count(*) FROM world_instance"))
+            .get(0, Long.class);
+    UUID absentCapture = UUID.randomUUID();
+    dsl.fetchOne(
+        "SELECT world_require_preparation_start_location(?::jsonb,?::jsonb,?)",
+        "{\"schemaVersion\":1}",
+        "{\"schemaVersion\":1}",
+        absentCapture);
+    for (String input :
+        java.util.List.of(
+            "{\"schemaVersion\":2}",
+            "{\"schemaVersion\":1,\"worldStartLocationEvidenceBase64\":\"e30=\"}")) {
+      assertThatThrownBy(
+              () ->
+                  dsl.fetchOne(
+                      "SELECT world_require_preparation_start_location(?::jsonb,?::jsonb,?)",
+                      input,
+                      "{\"schemaVersion\":1}",
+                      absentCapture))
+          .isInstanceOf(DataIntegrityViolationException.class);
+    }
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "INSERT INTO world_canonical_preparation_start_location (canonical_game_instance_id,world_instance_id,"
+                        + "canonical_tenant_id,canonical_version_id,room_template_id,runtime_room_instance_id,receipt_digest,graph_digest,evidence_bytes) "
+                        + "VALUES (?,1,?,?,?,1,?,?,?)",
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    "sha256:" + "a".repeat(64),
+                    "sha256:" + "b".repeat(64),
+                    new byte[] {1}))
+        .isInstanceOf(RuntimeException.class);
+    assertThat(
+            Objects.requireNonNull(dsl.fetchOne("SELECT count(*) FROM world_instance"))
+                .get(0, Long.class))
+        .isEqualTo(before);
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne("SELECT count(*) FROM world_canonical_preparation_start_location"))
+                .get(0, Long.class))
+        .isZero();
+  }
+
   private static final String NAMESPACE = "firemud";
 
   @Container

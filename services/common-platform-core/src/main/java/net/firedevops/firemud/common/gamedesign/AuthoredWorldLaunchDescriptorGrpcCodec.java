@@ -1,10 +1,12 @@
 package net.firedevops.firemud.common.gamedesign;
 
+import com.google.protobuf.ByteString;
 import com.google.protobuf.Message;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.regex.Pattern;
+import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.v1.GetCompleteLaunchBindingResponse;
 import net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorRequest;
 import net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorResponse;
@@ -203,6 +205,10 @@ public final class AuthoredWorldLaunchDescriptorGrpcCodec {
             .addAllCommandDefinitions(evidence.commandDefinitions())
             .setGenerationConfigRevision(evidence.generationConfigRevision())
             .setEvidenceDigest(evidence.evidenceDigest());
+    if (evidence.worldStartLocationEvidence() != null) {
+      builder.setWorldStartLocationEvidence(
+          ByteString.copyFrom(evidence.worldStartLocationEvidence().canonicalBytes()));
+    }
     for (AuthoredWorldReleaseAttestationEvidence.Participant participant :
         evidence.participantDigests()) {
       ParticipantDigest.Builder participantBuilder =
@@ -386,7 +392,11 @@ public final class AuthoredWorldLaunchDescriptorGrpcCodec {
           artifacts,
           wire.getCommandDefinitionsList(),
           wire.getGenerationConfigRevision(),
-          wire.getEvidenceDigest());
+          wire.getEvidenceDigest(),
+          wire.hasWorldStartLocationEvidence()
+              ? WorldPublishedStartLocationEvidence.fromStored(
+                  wire.getWorldStartLocationEvidence().toByteArray())
+              : null);
     } catch (IllegalArgumentException exception) {
       throw new IllegalArgumentException("Release-attestation evidence is invalid", exception);
     }
