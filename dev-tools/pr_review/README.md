@@ -185,6 +185,6 @@ validation.
 The local status report is atomically replaced, restricted to mode `0600`, and
 keeps the latest attempt, the last successful artifact time/name/digest/size,
 and the most recent failure time. It never contains database contents, key
-material, or remote command output. A failed invocation exits nonzero. The
+material, or remote command output. A failed invocation exits nonzero. Console failures include only trusted static phase and failure labels (such as `phase=readback failure=timeout`) and numeric nonzero exit codes; remote output, exception messages, paths and payloads remain suppressed. A failed best-effort cleanup is reported separately while the original failure remains authoritative. The local report format and 120-second per-command deadline are unchanged. The
 report path must be on durable local storage if it is expected to survive host
 loss.
