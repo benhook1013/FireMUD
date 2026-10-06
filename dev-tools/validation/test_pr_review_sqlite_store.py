@@ -1,10 +1,13 @@
 import concurrent.futures
 import dataclasses
+import fcntl
 import hashlib
 import json
 import sqlite3
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -14,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).parents[1]))
 from pr_review.sqlite_review_records import SqliteReviewRecords
 from pr_review.sqlite_store import SQLITE_SCHEMA_VERSION, WRITER_BUILD, SqliteStateStore
 from pr_review.state import (
+    ControllerStateStore,
     FindingRoute,
     Judgment,
     LegacyEvidenceTransition,
@@ -22,6 +26,7 @@ from pr_review.state import (
     ReviewState,
     StackReconciliationDecision,
     StateError,
+    StateLockTimeout,
     StateStore,
     SummaryFindingDisposition,
 )
@@ -32,6 +37,165 @@ class SqliteStateStoreTest(unittest.TestCase):
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary_directory.cleanup)
         self.root = Path(self.temporary_directory.name)
+
+    def _controller_sqlite_store(self) -> tuple[ControllerStateStore, SqliteStateStore, ReviewState]:
+        path = self.root / "controller-state.json"
+        initial = ReviewState(ordered_prs=(42,))
+        path.write_text(json.dumps(initial.to_dict()), encoding="utf-8")
+        store = SqliteStateStore.migrate_legacy_json(path, path.with_suffix(".sqlite3"))
+        return ControllerStateStore(path), store, initial
+
+    def _assert_lock_available(self, path: Path) -> None:
+        with path.open("a+") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+    def test_controller_update_deadline_bounds_sqlite_file_lock_and_releases_outer_lock(self) -> None:
+        controller_store, sqlite_store, initial = self._controller_sqlite_store()
+        with sqlite_store._lock_path.open("a+") as held_lock:
+            fcntl.flock(held_lock.fileno(), fcntl.LOCK_EX)
+            started = time.monotonic()
+            try:
+                with self.assertRaisesRegex(StateLockTimeout, "SQLite review-state file lock"):
+                    controller_store.update(
+                        lambda state: ReviewState(ordered_prs=state.ordered_prs + (43,)),
+                        lock_deadline=started + 0.05,
+                    )
+            finally:
+                fcntl.flock(held_lock.fileno(), fcntl.LOCK_UN)
+
+        self.assertLess(time.monotonic() - started, 1)
+        self.assertEqual(sqlite_store.load(), initial)
+        self._assert_lock_available(controller_store.lock_path)
+        self._assert_lock_available(sqlite_store._lock_path)
+        controller_store.update(lambda state: ReviewState(ordered_prs=state.ordered_prs + (43,)))
+        self.assertEqual(sqlite_store.load().ordered_prs, (42, 43))
+
+    def test_controller_update_deadline_bounds_sqlite_begin_immediate_and_releases_outer_lock(self) -> None:
+        controller_store, sqlite_store, initial = self._controller_sqlite_store()
+        writer = sqlite3.connect(sqlite_store.path, isolation_level=None)
+        try:
+            writer.execute("BEGIN IMMEDIATE")
+            started = time.monotonic()
+            with self.assertRaisesRegex(StateLockTimeout, "SQLite review-state transaction lock"):
+                controller_store.update(
+                    lambda state: ReviewState(ordered_prs=state.ordered_prs + (43,)),
+                    lock_deadline=started + 0.05,
+                )
+            self.assertLess(time.monotonic() - started, 1)
+            self.assertEqual(sqlite_store.load(), initial)
+            self._assert_lock_available(controller_store.lock_path)
+            self._assert_lock_available(sqlite_store._lock_path)
+        finally:
+            writer.rollback()
+            writer.close()
+
+        controller_store.update(lambda state: ReviewState(ordered_prs=state.ordered_prs + (43,)))
+        self.assertEqual(sqlite_store.load().ordered_prs, (42, 43))
+
+    def test_controller_reads_bound_sqlite_status_and_load_to_deadline(self) -> None:
+        controller_store, sqlite_store, initial = self._controller_sqlite_store()
+        with sqlite3.connect(sqlite_store.path, isolation_level=None) as writer:
+            writer.execute("BEGIN EXCLUSIVE")
+            started = time.monotonic()
+            with self.assertRaisesRegex(StateLockTimeout, "SQLite review-state status lock"):
+                sqlite_store.status(deadline=started + 0.05)
+            self.assertLess(time.monotonic() - started, 1)
+
+            started = time.monotonic()
+            with self.assertRaisesRegex(StateLockTimeout, "SQLite review-state status lock"):
+                controller_store.load(deadline=started + 0.05)
+            self.assertLess(time.monotonic() - started, 1)
+            writer.rollback()
+
+        self.assertEqual(controller_store.load(), initial)
+        self.assertTrue(sqlite_store.status()["compatible"])
+
+    def test_compatibility_reads_refresh_remaining_deadline_after_lock_reacquisition(self) -> None:
+        _, sqlite_store, _ = self._controller_sqlite_store()
+        started = time.monotonic()
+        deadline = started + 0.4
+        connection = sqlite_store._connect_read_only(deadline=deadline)
+        holder_acquired = threading.Event()
+        release_holder = threading.Event()
+        contender: sqlite3.Connection | None = None
+        original_query = sqlite_store._compatibility_query
+
+        def hold_exclusive_lock() -> None:
+            writer = sqlite3.connect(sqlite_store.path, isolation_level=None)
+            try:
+                writer.execute("BEGIN EXCLUSIVE")
+                holder_acquired.set()
+                release_holder.wait(0.25)
+                writer.rollback()
+            finally:
+                writer.close()
+
+        def reacquire_before_next_read(conn, statement, *, deadline):
+            nonlocal contender
+            if statement.startswith("SELECT"):
+                contender = sqlite3.connect(sqlite_store.path, isolation_level=None)
+                contender.execute("BEGIN EXCLUSIVE")
+            return original_query(conn, statement, deadline=deadline)
+
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                holder = executor.submit(hold_exclusive_lock)
+                self.assertTrue(holder_acquired.wait(1))
+                with (
+                    patch.object(sqlite_store, "_compatibility_query", side_effect=reacquire_before_next_read),
+                    self.assertRaisesRegex(StateLockTimeout, "SQLite review-state transaction lock"),
+                ):
+                    sqlite_store._require_compatible(connection, deadline=deadline)
+                self.assertLess(time.monotonic() - started, 0.5)
+                release_holder.set()
+                holder.result(timeout=1)
+        finally:
+            release_holder.set()
+            if contender is not None:
+                contender.rollback()
+                contender.close()
+            connection.close()
+
+    def test_completed_admission_allows_bounded_sqlite_commit_after_preflight_deadline(self) -> None:
+        sqlite_store = SqliteStateStore(self.root / "state.sqlite3")
+        sqlite_store.update(lambda _: ReviewState(ordered_prs=(42,)))
+        reservation = self.root / "trigger.json"
+        started = time.monotonic()
+        deadline = started + 0.03
+        budget_active = [True]
+
+        def reserve_after_budget_completion(state: ReviewState) -> ReviewState:
+            budget_active[0] = False
+            reservation.write_text("durable reservation", encoding="utf-8")
+            time.sleep(0.05)
+            return ReviewState(ordered_prs=state.ordered_prs + (43,))
+
+        sqlite_store.update(
+            reserve_after_budget_completion,
+            deadline=deadline,
+            deadline_active=lambda: budget_active[0],
+        )
+
+        self.assertGreater(time.monotonic(), deadline)
+        self.assertEqual(reservation.read_text(encoding="utf-8"), "durable reservation")
+        self.assertEqual(sqlite_store.load().ordered_prs, (42, 43))
+
+    def test_expired_mutator_without_admission_completion_still_rolls_back(self) -> None:
+        sqlite_store = SqliteStateStore(self.root / "state.sqlite3")
+        sqlite_store.update(lambda _: ReviewState(ordered_prs=(42,)))
+        started = time.monotonic()
+        deadline = started + 0.03
+
+        def slow_mutation(state: ReviewState) -> ReviewState:
+            time.sleep(0.05)
+            return ReviewState(ordered_prs=state.ordered_prs + (43,))
+
+        with self.assertRaisesRegex(StateLockTimeout, "SQLite review-state transaction lock"):
+            sqlite_store.update(slow_mutation, deadline=deadline, deadline_active=lambda: True)
+
+        self.assertGreater(time.monotonic(), deadline)
+        self.assertEqual(sqlite_store.load().ordered_prs, (42,))
 
     @staticmethod
     def representative_state() -> ReviewState:

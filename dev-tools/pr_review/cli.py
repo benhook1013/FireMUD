@@ -1815,7 +1815,11 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
-        result, exit_status = _dispatch(args)
+        if args.command == "run" and args.run_command == "hosted":
+            with github.hosted_preflight_budget():
+                result, exit_status = _dispatch(args)
+        else:
+            result, exit_status = _dispatch(args)
         print(_render(result, args.command in {"records", "wait"} or getattr(args, "as_json", False)))
         return exit_status
     except (CliError, ValueError) as error:
