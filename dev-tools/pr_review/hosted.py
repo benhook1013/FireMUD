@@ -52,8 +52,10 @@ RATE_LIMIT_PATTERN = re.compile(
     re.IGNORECASE,
 )
 WRAPPED_RATE_LIMIT_REPLY_PATTERN = re.compile(
+    r"(?:[ \t]*\r?\n)*(?:(?:<!-- This is an auto-generated reply by CodeRabbit -->"
+    r"|<!-- CodeRabbit review command invocation:[^>]* -->)[ \t]*\r?\n(?:[ \t]*\r?\n)*)*"
     r"<details\b[^>]*>\s*<summary\b[^>]*>[^<]*\bAction\s+not\s+completed\b[^<]*</summary>"
-    r"\s*Review\s+rate\s+limited\.?\s*</details>",
+    r"\s*Review\s+rate\s+limited\.?\s*</details>[ \t]*(?:\r?\n[ \t]*)*",
     re.IGNORECASE,
 )
 EXACT_SHA = re.compile(r"^[0-9a-fA-F]{40}$")
@@ -1405,7 +1407,7 @@ def _is_rate_limited_reply(body: str, cooldown: datetime | None) -> bool:
         REVIEW_LIMIT_MARKER in body
         or cooldown is not None
         or body.strip().lower().startswith("review rate limited")
-        or WRAPPED_RATE_LIMIT_REPLY_PATTERN.search(_without_fenced_code(_unquoted(body))) is not None
+        or WRAPPED_RATE_LIMIT_REPLY_PATTERN.fullmatch(_without_fenced_code(_unquoted(body))) is not None
     )
 
 

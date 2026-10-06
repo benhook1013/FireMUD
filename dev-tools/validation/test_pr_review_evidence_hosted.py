@@ -1960,15 +1960,29 @@ class HostedEvidenceTests(unittest.TestCase):
             f"{finding_prefix}{quoted_block}\nThe quoted example is documentation only.",
             "2026-09-23T00:03:00Z",
         )
+        inline = comment(
+            13,
+            "coderabbitai[bot]",
+            f"{finding_prefix}`{wrapped.replace(chr(10), ' ')}`\nThe inline example is documentation only.",
+            "2026-09-23T00:04:00Z",
+        )
+        indented_block = "\n".join(f"    {line}" for line in wrapped.splitlines())
+        indented = comment(
+            14,
+            "coderabbitai[bot]",
+            f"{finding_prefix}{indented_block}\nThe indented example is documentation only.",
+            "2026-09-23T00:05:00Z",
+        )
 
-        for response in (fenced, quoted):
+        for response in (fenced, quoted, inline, indented):
             state = hosted.trigger_state(REPO, PR, review_payload([trigger, response]), trigger_record())
 
-            if response is fenced:
-                self.assertIn("<details>", hosted._unquoted(response["body"]))
-            else:
+            if response is quoted:
                 self.assertNotIn("<details>", hosted._unquoted(response["body"]))
-            self.assertNotIn("<details>", hosted._without_fenced_code(hosted._unquoted(response["body"])))
+            else:
+                self.assertIn("<details>", hosted._unquoted(response["body"]))
+            if response is fenced:
+                self.assertNotIn("<details>", hosted._without_fenced_code(hosted._unquoted(response["body"])))
             self.assertEqual(hosted.public_response_state(response, "createdAt", {}), "completed")
             self.assertEqual(state.state, "completed")
             self.assertEqual(state.response_id, response["databaseId"])
