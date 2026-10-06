@@ -295,6 +295,26 @@ def _git_output(
     return result.stdout.strip()
 
 
+def _check_cleanup_result(result: subprocess.CompletedProcess[str], operation: str) -> None:
+    if result.returncode == 0:
+        return
+    stderr = (result.stderr or "").strip()
+    detail = f": {stderr}" if stderr else ""
+    raise ReviewRunnerError(f"CLI {operation} cleanup failed with exit status {result.returncode}{detail}")
+
+
+def _add_exception_note(error: Exception, note: str) -> None:
+    add_note = getattr(error, "add_note", None)
+    if callable(add_note):
+        add_note(note)
+        return
+    notes = getattr(error, "__notes__", None)
+    if notes is None:
+        notes = []
+        error.__notes__ = notes
+    notes.append(note)
+
+
 def _sha(value: str, label: str) -> str:
     if len(value) != 40 or any(character not in "0123456789abcdefABCDEF" for character in value):
         raise ReviewRunnerError(f"{label} must be a full 40-character commit SHA")
@@ -1130,7 +1150,7 @@ def run_cli_review(
                 temp_root = Path(tempfile.mkdtemp(prefix="firemud-pr-review-"))
             except Exception as primary_error:
                 try:
-                    _git(
+                    cleanup_result = _git(
                         runner,
                         source_root,
                         "update-ref",
@@ -1140,17 +1160,10 @@ def run_cli_review(
                         timeout=git_timeout_seconds,
                         enforce_preflight_budget=False,
                     )
+                    _check_cleanup_result(cleanup_result, "pinned-ref")
                 except (OSError, subprocess.SubprocessError, ReviewRunnerError) as cleanup_error:
-                    add_note = getattr(primary_error, "add_note", None)
                     note = f"CLI pinned-ref cleanup also failed: {cleanup_error}"
-                    if callable(add_note):
-                        add_note(note)
-                    else:
-                        notes = getattr(primary_error, "__notes__", None)
-                        if notes is None:
-                            notes = []
-                            primary_error.__notes__ = notes
-                        notes.append(note)
+                    _add_exception_note(primary_error, note)
                 if temp_root is not None:
                     shutil.rmtree(temp_root, ignore_errors=True)
                 raise
@@ -1472,10 +1485,11 @@ def run_cli_review(
                 )
             finally:
                 primary_error = sys.exc_info()[1]
+                had_primary_error = primary_error is not None
                 cleanup_errors: list[Exception] = []
                 if candidate_worktree is not None:
                     try:
-                        _git(
+                        cleanup_result = _git(
                             runner,
                             source_root,
                             "worktree",
@@ -1486,10 +1500,11 @@ def run_cli_review(
                             timeout=git_timeout_seconds,
                             enforce_preflight_budget=False,
                         )
+                        _check_cleanup_result(cleanup_result, "worktree")
                     except Exception as error:  # noqa: BLE001 - attempt pinned-ref cleanup even after any worktree failure
                         cleanup_errors.append(error)
                 try:
-                    _git(
+                    cleanup_result = _git(
                         runner,
                         source_root,
                         "update-ref",
@@ -1499,17 +1514,18 @@ def run_cli_review(
                         timeout=git_timeout_seconds,
                         enforce_preflight_budget=False,
                     )
+                    _check_cleanup_result(cleanup_result, "pinned-ref")
                 except Exception as error:  # noqa: BLE001 - preserve primary failure while recording all cleanup failures
                     cleanup_errors.append(error)
                 if temp_root is not None:
                     shutil.rmtree(temp_root, ignore_errors=True)
                 if cleanup_errors:
-                    if primary_error is None:
-                        raise cleanup_errors[0]
-                    add_note = getattr(primary_error, "add_note", None)
-                    if callable(add_note):
-                        for cleanup_error in cleanup_errors:
-                            add_note(f"CLI candidate cleanup also failed: {cleanup_error}")
+                    if not had_primary_error:
+                        primary_error = cleanup_errors.pop(0)
+                    for cleanup_error in cleanup_errors:
+                        _add_exception_note(primary_error, f"CLI candidate cleanup also failed: {cleanup_error}")
+                    if not had_primary_error:
+                        raise primary_error
         except Exception as error:
             with github_api.without_hosted_preflight_budget():
                 if capture_dir.exists():

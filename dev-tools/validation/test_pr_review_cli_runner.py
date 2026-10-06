@@ -529,7 +529,7 @@ class CliReviewRunnerTests(unittest.TestCase):
             def cleanup_fails(runner, source_root, *args, **kwargs):
                 if args[:2] == ("update-ref", "-d"):
                     cleanup_calls.append(kwargs)
-                    raise OSError("pinned ref is busy")
+                    return CompletedProcess(args, 1, "", "pinned ref is busy\n")
                 return original_git(runner, source_root, *args, **kwargs)
 
             def expire_context_setup(*_args, **_kwargs):
@@ -552,10 +552,107 @@ class CliReviewRunnerTests(unittest.TestCase):
             self.assertEqual(cleanup_calls[0]["timeout"], cli_runner.GIT_TIMEOUT_SECONDS)
             self.assertTrue(
                 any(
-                    "CLI pinned-ref cleanup also failed: pinned ref is busy" in note
+                    "CLI pinned-ref cleanup also failed: CLI pinned-ref cleanup failed with exit status 1: pinned ref is busy"
+                    in note
                     for note in getattr(raised.exception, "__notes__", [])
                 )
             )
+
+    def test_nonzero_candidate_cleanup_reports_both_failures_and_preserves_completed_capture(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / ".git" / "firemud" / "records.sqlite3"
+            database.parent.mkdir(parents=True)
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            output = (
+                '{"type":"start","reviewType":"full"}\n'
+                '{"type":"complete","status":"review_completed",'
+                '"findings":0,"reviewedFiles":["src/Representative.java"]}\n'
+            )
+            commands = FakeCommands(root, review_output=output)
+            commands.records = records
+            cleanup_operations = []
+            original_run = commands.run
+
+            def fail_cleanup(args, **kwargs):
+                if args[0] == "git" and "-C" in args:
+                    git_args = args[args.index("-C") + 2 :]
+                    if git_args[:2] == ["worktree", "remove"]:
+                        cleanup_operations.append("worktree")
+                        return CompletedProcess(args, 1, "", "worktree is busy\n")
+                    if git_args[:2] == ["update-ref", "-d"]:
+                        cleanup_operations.append("pinned-ref")
+                        return CompletedProcess(args, 1, "", "pinned ref is busy\n")
+                return original_run(args, **kwargs)
+
+            commands.run = fail_cleanup
+
+            with self.assertRaisesRegex(ReviewRunnerError, "CLI worktree cleanup failed with exit status 1") as raised:
+                run_cli_review(
+                    target(),
+                    github=FakeGitHub(),
+                    source_root=root,
+                    runner=commands,
+                    records=records,
+                )
+
+            self.assertEqual(cleanup_operations, ["worktree", "pinned-ref"])
+            self.assertTrue(
+                any(
+                    "CLI candidate cleanup also failed: CLI pinned-ref cleanup failed with exit status 1: pinned ref is busy"
+                    in note
+                    for note in getattr(raised.exception, "__notes__", [])
+                )
+            )
+            attempts = records.attempt_history(42)
+            self.assertEqual(len(attempts), 1)
+            self.assertEqual(attempts[0]["state"], "completed")
+            run_id = attempts[0]["attempt_id"]
+            capture_dir = root / ".git" / "firemud" / "pr-review" / "runs" / run_id
+            self.assertTrue((capture_dir / "capture-complete").is_file())
+            self.assertEqual((capture_dir / "stdout").read_text(encoding="utf-8"), output)
+            self.assertEqual((capture_dir / "exit-status").read_text(encoding="utf-8"), "0\n")
+            self.assertEqual(records.history(42)["runs"][0]["run_id"], run_id)
+
+    def test_preflight_error_remains_primary_when_candidate_cleanup_returns_nonzero(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            commands = FakeCommands(root)
+            cleanup_operations = []
+            original_run = commands.run
+
+            def fail_cleanup(args, **kwargs):
+                if args[0] == "git" and "-C" in args:
+                    git_args = args[args.index("-C") + 2 :]
+                    if git_args[:2] == ["worktree", "remove"]:
+                        cleanup_operations.append("worktree")
+                        return CompletedProcess(args, 1, "", "worktree is busy\n")
+                    if git_args[:2] == ["update-ref", "-d"]:
+                        cleanup_operations.append("pinned-ref")
+                        return CompletedProcess(args, 1, "", "pinned ref is busy\n")
+                return original_run(args, **kwargs)
+
+            commands.run = fail_cleanup
+
+            with (
+                patch.object(
+                    cli_runner,
+                    "_verify_target_still_current",
+                    side_effect=ReviewRunnerError("target changed during preflight"),
+                ),
+                self.assertRaisesRegex(ReviewRunnerError, "target changed during preflight") as raised,
+            ):
+                run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands)
+
+            self.assertEqual(cleanup_operations, ["worktree", "pinned-ref"])
+            notes = getattr(raised.exception, "__notes__", [])
+            self.assertTrue(any("CLI worktree cleanup failed with exit status 1: worktree is busy" in note for note in notes))
+            self.assertTrue(any("CLI pinned-ref cleanup failed with exit status 1: pinned ref is busy" in note for note in notes))
+            self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
 
     def test_selection_retry_failure_preserves_the_original_cli_budget_and_capture(self):
         with tempfile.TemporaryDirectory() as directory:

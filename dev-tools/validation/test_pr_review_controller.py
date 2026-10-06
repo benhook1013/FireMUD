@@ -7369,27 +7369,94 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(controller.git.merge_base_calls, [(BASE, values[1].head)])
         self.assertEqual(controller.git.patch_identity_calls, [(BASE, values[1].head)])
 
-    def test_cli_run_batches_fresh_identity_for_the_entire_configured_stack(self):
-        values, heads = _stacked_prs(3)
-        evidence = CountingEvidence()
-        controller = self.make(values, evidence, heads=heads)
-        controller.set_stack(list(values))
-        batch_calls = []
-        selected = []
+    def test_budgeted_runs_batch_fresh_identity_for_the_entire_configured_stack(self):
+        for channel in ("hosted", "cli"):
+            with self.subTest(channel=channel):
+                values, heads = _stacked_prs(3)
+                evidence = CountingEvidence()
+                controller = self.make(values, evidence, heads=heads)
+                controller.set_stack(list(values))
+                batch_calls = []
+                selected = []
 
-        def fetch(numbers):
-            batch_calls.append(tuple(numbers))
-            return {number: _batch_identity(values[number]) for number in numbers}
+                def fetch(numbers, batch_calls=batch_calls, values=values):
+                    batch_calls.append(tuple(numbers))
+                    return {number: _batch_identity(values[number]) for number in numbers}
 
-        controller.github.batch_pull_requests = fetch
-        controller.cli_adapter = lambda target, **_kwargs: selected.append(target.snapshot.number) or "prepared"
+                controller.github.batch_pull_requests = fetch
+                setattr(
+                    controller,
+                    f"{channel}_adapter",
+                    lambda target, selected=selected, **_kwargs: selected.append(target.snapshot.number) or "prepared",
+                )
+                with patch.object(controller.github, "pull_request", side_effect=AssertionError("selection must use its fresh batch")):
+                    result = getattr(controller, f"run_{channel}")()
 
-        result = controller.run_cli()
+                self.assertEqual(result, "prepared")
+                self.assertEqual(batch_calls, [(1, 2, 3)])
+                self.assertEqual(selected, [1])
+                self.assertEqual(
+                    set(evidence.history_reads),
+                    {(number, name) for number in values for name in ("hosted", "cli")},
+                )
 
-        self.assertEqual(result, "prepared")
-        self.assertEqual(batch_calls, [(1, 2, 3)])
-        self.assertEqual(selected, [1])
-        self.assertEqual({number for number, _channel in evidence.history_reads}, {1, 2, 3})
+    def test_hosted_reselection_refreshes_the_batch_under_the_original_budget(self):
+        for retry_error in (_SelectionChanged, StaleReviewTarget, HostedAdmissionBusy):
+            with self.subTest(retry_error=retry_error.__name__):
+                values, heads = _stacked_prs(1)
+                controller = self.make(values, heads=heads)
+                controller.set_stack(list(values))
+                batch_budgets = []
+                targets = []
+
+                def fetch(numbers, batch_budgets=batch_budgets, values=values):
+                    batch_budgets.append(github.active_hosted_preflight_budget())
+                    return {number: _batch_identity(values[number]) for number in numbers}
+
+                def adapter(target, targets=targets, retry_error=retry_error, **_kwargs):
+                    targets.append(target)
+                    if len(targets) == 1:
+                        raise retry_error("fresh selection required")
+                    return "prepared"
+
+                controller.github.batch_pull_requests = fetch
+                controller.hosted_adapter = adapter
+                with github.hosted_preflight_budget(timeout_seconds=30) as budget, patch("pr_review.controller.time.sleep"):
+                    self.assertEqual(controller.run_hosted(expected_pr=1), "prepared")
+                self.assertEqual(batch_budgets, [budget, budget])
+                self.assertEqual(len(targets), 2)
+
+    def test_budgeted_identity_batches_report_chunk_progress_and_share_expiry(self):
+        values, _heads = _stacked_prs(26)
+        for channel in ("Hosted", "CLI"):
+            for expire in (False, True):
+                with self.subTest(channel=channel, expire=expire):
+                    calls = []
+                    with github.activate_hosted_preflight_budget(30, preflight_name=channel) as budget:
+                        budget.set_phase("target_identity_batch", total=2)
+
+                        def query(_query, _variables, calls=calls, expire=expire):
+                            calls.append(budget.request_timeout(30))
+                            if len(calls) == 2:
+                                self.assertEqual(budget.completed, 1)
+                                if expire:
+                                    budget.deadline = time.monotonic() - 1
+                                    budget.remaining_seconds()
+                            numbers = range(1, 26) if len(calls) == 1 else (26,)
+                            return {"data": {"repository": {f"pr_{number}": _batch_identity(values[number]) for number in numbers}}}
+
+                        with patch.object(github, "run_gh_query", side_effect=query):
+                            if expire:
+                                with self.assertRaisesRegex(
+                                    github.HostedPreflightDeadlineExceeded,
+                                    f"{channel} preflight deadline exceeded.*completed=1/2",
+                                ):
+                                    github.fetch_pr_identity_batch("owner/repo", tuple(values))
+                            else:
+                                self.assertEqual(set(github.fetch_pr_identity_batch("owner/repo", tuple(values))), set(values))
+                                self.assertEqual(budget.completed, 2)
+                    self.assertEqual(len(calls), 2)
+                    self.assertLessEqual(calls[1], calls[0])
 
     def test_cli_selection_change_reselects_with_the_same_active_budget(self):
         controller = self.make({1: pr(1, HEAD_1)}, heads={"develop": BASE, "feature-1": HEAD_1})
@@ -7471,15 +7538,35 @@ class ControllerTests(unittest.TestCase):
         self.assertTrue(budget.active)
         self.assertLessEqual(budget.deadline, time.monotonic())
 
-    def test_cli_run_fails_closed_when_a_batched_stack_identity_is_missing(self):
-        values, heads = _stacked_prs(2)
-        controller = self.make(values, heads=heads)
-        controller.set_stack(list(values))
-        controller.github.batch_pull_requests = lambda _numbers: {1: _batch_identity(values[1])}
-        controller.cli_adapter = lambda *_args, **_kwargs: self.fail("incomplete stack identity must not run CLI")
-
-        with self.assertRaisesRegex(ControllerError, "fresh live identity is incomplete"):
-            controller.run_cli()
+    def test_budgeted_runs_fail_closed_when_batched_stack_identity_is_incomplete(self):
+        for channel in ("hosted", "cli"):
+            for malformed in ("missing", "null", "extra", "number", "files"):
+                with self.subTest(channel=channel, malformed=malformed):
+                    values, heads = _stacked_prs(2)
+                    controller = self.make(values, heads=heads)
+                    controller.set_stack(list(values))
+                    identities = {number: _batch_identity(value) for number, value in values.items()}
+                    if malformed == "missing":
+                        identities.pop(2)
+                    elif malformed == "null":
+                        identities[2] = None
+                    elif malformed == "extra":
+                        identities[3] = _batch_identity(values[1])
+                    elif malformed == "number":
+                        identities[2]["number"] = True
+                    else:
+                        identities[2]["changedFiles"] = -1
+                    controller.github.batch_pull_requests = lambda _numbers, identities=identities: identities
+                    setattr(
+                        controller,
+                        f"{channel}_adapter",
+                        lambda *_args, **_kwargs: self.fail("incomplete stack identity must not reach admission"),
+                    )
+                    with self.assertRaisesRegex(
+                        ControllerError,
+                        f"fresh live identity is incomplete for the configured {channel.upper()} review stack",
+                    ):
+                        getattr(controller, f"run_{channel}")()
 
     def test_live_identity_batch_includes_the_file_count_used_by_cli_runner_validation(self):
         values, _heads = _stacked_prs(1)

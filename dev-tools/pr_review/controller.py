@@ -4353,8 +4353,7 @@ class ReviewController:
                 cache_request_history(allocation.pr, allocation.channel)
         live_identities = None
         use_current_batch = (
-            selected == policy.Channel.CLI
-            and github.active_hosted_preflight_budget() is not None
+            github.active_hosted_preflight_budget() is not None
             and callable(getattr(self._require_github(), "batch_pull_requests", None))
         )
         if use_current_batch:
@@ -4377,7 +4376,9 @@ class ReviewController:
                     for pr in state.ordered_prs
                 )
             ):
-                raise ControllerError("fresh live identity is incomplete for the configured CLI review stack")
+                raise ControllerError(
+                    f"fresh live identity is incomplete for the configured {selected.value.upper()} review stack"
+                )
             if budget is not None:
                 budget.set_phase("target_reconciliation", total=1)
         live, reconciliation = self._reconciliation(
