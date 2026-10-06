@@ -157,6 +157,12 @@ with tempfile.TemporaryDirectory(prefix="preview-cleanup-proof-contract-") as tm
     assert result.returncode != 0
     result,_=scenario("secret-read-allowed",runner={"MOCK_GET_SECRETS":"yes"})
     assert result.returncode != 0
+    result,_=scenario("open-pr",delete={"MOCK_PR_STATE":"open"})
+    assert result.returncode != 0, "an open PR was accepted"
+    result,_=scenario("foreign-head-repository",delete={"MOCK_HEAD_REPOSITORY":"attacker/FireMUD"})
+    assert result.returncode != 0, "a foreign PR head repository was accepted"
+    result,_=scenario("foreign-base-repository",delete={"MOCK_BASE_REPOSITORY":"attacker/FireMUD"})
+    assert result.returncode != 0, "a foreign PR base repository was accepted"
     result,_=scenario("wrong-head",delete={"MOCK_HEAD_SHA":"b"*40})
     assert result.returncode != 0
     result,_=scenario("missing-marker",delete={"MOCK_PROOF_MARKER":"false"})
