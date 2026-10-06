@@ -1621,6 +1621,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
         java.time.Duration.ofSeconds(10),
         transportSessionId,
         "testsecretkeytestsecretkeytest1234",
+        ACCOUNT_UUID,
         connectClaims);
   }
 
