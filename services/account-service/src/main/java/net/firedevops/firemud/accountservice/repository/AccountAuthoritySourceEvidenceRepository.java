@@ -110,6 +110,14 @@ public class AccountAuthoritySourceEvidenceRepository {
     requireAccountReadback(proof.accountUuid(), proof.accountId(), proof.after());
 
     AuthorityScope scope = AuthorityScope.account(proof.accountUuid());
+    // Retained pre-V40 Accounts have no owner-proven baseline. Diagnose only that absence
+    // before the generation read, without enrolling the Account or catching unrelated failures.
+    if (dsl.fetchOne(
+            "SELECT outbox_stream_key FROM " + SOURCE_TABLE + " WHERE outbox_stream_key = ?",
+            streamKey(scope))
+        == null) {
+      throw new SourceEvidenceUnavailableException();
+    }
     ScopeState current = generations.read(scope);
     // AccountRepository has already applied this exact update in the surrounding transaction.
     // Validate the event head against the immutable repository-captured before image here; normal

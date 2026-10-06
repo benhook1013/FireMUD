@@ -2423,6 +2423,7 @@ class ReviewRecordsCliTest(unittest.TestCase):
             "FakeController",
             (),
             {
+                "repository": "owner/repo",
                 "store": SqliteStateStore(self.database),
                 "status_for_pr": lambda self, pr: {
                     "prs": [
@@ -2455,13 +2456,14 @@ class ReviewRecordsCliTest(unittest.TestCase):
         output = io.StringIO()
         with (
             patch.object(cli, "default_controller", return_value=controller),
-            patch.object(cli.status_module, "status", return_value=base_report.copy()),
+            patch.object(cli.status_module, "status", return_value=base_report.copy()) as status_call,
             patch.object(cli, "state_path", return_value=cutover_state_path),
             patch.object(cli, "_records_database_path", return_value=self.database),
             contextlib.redirect_stdout(output),
         ):
             status = cli.main(["status", "--pr", "2879", "--json"])
         self.assertEqual(status, 0)
+        self.assertEqual(status_call.call_args.kwargs["repo"], controller.repository)
         report = json.loads(output.getvalue())
         self.assertEqual(report["incoming_routes"], [legacy_route])
         self.assertEqual(len(report["incoming_record_routes"]), 1)
@@ -2480,6 +2482,7 @@ class ReviewRecordsCliTest(unittest.TestCase):
                     "allocations": {}, "incoming_routes": [], "routes_out": [],
                 }
                 controller = type("FakeController", (), {
+                    "repository": "owner/repo",
                     "status_for_pr": lambda self, pr, row=item: {"prs": [row]},
                 })()
                 identity = {"headRefOid": "a" * 40, "baseRefName": "develop", "baseRefOid": "b" * 40}
@@ -2490,11 +2493,12 @@ class ReviewRecordsCliTest(unittest.TestCase):
                 output = io.StringIO()
                 with (
                     patch.object(cli, "default_controller", return_value=controller),
-                    patch.object(cli.status_module, "status", return_value=base_report),
+                    patch.object(cli.status_module, "status", return_value=base_report) as status_call,
                     patch.object(cli, "_read_record_incoming_routes", return_value=([], {"status": "available"})),
                     contextlib.redirect_stdout(output),
                 ):
                     self.assertEqual(cli.main(["status", "--pr", "42", "--json"]), 0)
+                self.assertEqual(status_call.call_args.kwargs["repo"], controller.repository)
                 report = json.loads(output.getvalue())
                 self.assertEqual(any("between status snapshots" in reason for reason in report["reasons"]),
                                  changed_field is not None)

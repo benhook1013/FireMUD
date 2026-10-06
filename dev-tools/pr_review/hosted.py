@@ -51,6 +51,13 @@ RATE_LIMIT_PATTERN = re.compile(
     r"(?:next|more)\s+(?:included\s+)?reviews?\s+(?:will\s+be\s+)?available\s+in\s*:?\s*(\d+)\s+(seconds?|minutes?|hours?)",
     re.IGNORECASE,
 )
+WRAPPED_RATE_LIMIT_REPLY_PATTERN = re.compile(
+    r"(?:[ \t]*\r?\n)*(?:(?:<!-- This is an auto-generated reply by CodeRabbit -->"
+    r"|<!-- CodeRabbit review command invocation:[^>]* -->)[ \t]*\r?\n(?:[ \t]*\r?\n)*)*"
+    r"<details\b[^>]*>\s*<summary\b[^>]*>[^<]*\bAction\s+not\s+completed\b[^<]*</summary>"
+    r"\s*Review\s+rate\s+limited\.?\s*</details>[ \t]*(?:\r?\n[ \t]*)*",
+    re.IGNORECASE,
+)
 EXACT_SHA = re.compile(r"^[0-9a-fA-F]{40}$")
 COMPLETE_FILE_COVERAGE_PATTERNS = (
     re.compile(
@@ -90,9 +97,7 @@ POSITIVE_FINDING_COUNT_PATTERNS = (
         re.IGNORECASE,
     ),
     re.compile(r"\b0*[1-9]\d*\s+(?:actionable\s+)?(?:comments?|findings?|issues?)\b", re.IGNORECASE),
-    re.compile(
-        r"\b(?:findings?|issues?)\s+(?:posted|generated|found)\s*[:=\-]?\s*0*[1-9]\d*\b", re.IGNORECASE
-    ),
+    re.compile(r"\b(?:findings?|issues?)\s+(?:posted|generated|found)\s*[:=\-]?\s*0*[1-9]\d*\b", re.IGNORECASE),
 )
 INCOMPLETE_FILE_COVERAGE = re.compile(
     r"\b(?:\d+\s*(?:of|/)\s*\d+\s+)?(?:changed\s+)?files?\b.{0,100}"
@@ -477,7 +482,10 @@ def unresolved_preceding_full_trigger(
     for item in comments:
         if not isinstance(item, dict):
             raise TypeError("public command history contains a malformed comment")
-        if is_coderabbit_login(_comment_author_login(item)) or normalize_command(item.get("body") or "") != FULL_COMMAND:
+        if (
+            is_coderabbit_login(_comment_author_login(item))
+            or normalize_command(item.get("body") or "") != FULL_COMMAND
+        ):
             continue
         identity = immutable_database_id(item)
         created = parse_timestamp(item.get("createdAt"))
@@ -608,9 +616,7 @@ def unresolved_preceding_full_trigger(
             ):
                 return False
             response_items = [
-                item
-                for item in (*comments, *reviews)
-                if immutable_database_id(item) == state.response_id
+                item for item in (*comments, *reviews) if immutable_database_id(item) == state.response_id
             ]
             if len(response_items) != 1:
                 return False
@@ -652,8 +658,10 @@ def unresolved_preceding_full_trigger(
         if any(active_at > response_at for active_at in active_events):
             return False
         response_body = response.get("body")
-        if response_state == "failed" and isinstance(response_body, str) and (
-            provider_file_ceiling_skip(response_body) or _summary_has_explicit_incompleteness(response_body)
+        if (
+            response_state == "failed"
+            and isinstance(response_body, str)
+            and (provider_file_ceiling_skip(response_body) or _summary_has_explicit_incompleteness(response_body))
         ):
             return False
         terminal_at = parse_timestamp(
@@ -673,15 +681,16 @@ def unresolved_preceding_full_trigger(
         if record.get("status") == "retired":
             retirement = record.get("retirement")
             if not isinstance(retirement, dict) or retirement.get("observed_live_state") not in {
-                "completed", "rate_limited", "noop", "failed"
+                "completed",
+                "rate_limited",
+                "noop",
+                "failed",
             }:
                 return True
             continue
         state = trigger_state(repo, pr_number, payload, record, path)
         response_at = parse_timestamp(state.response_created_at)
-        response_comments = [
-            item for item in comments if immutable_database_id(item) == state.response_id
-        ]
+        response_comments = [item for item in comments if immutable_database_id(item) == state.response_id]
         if len(response_comments) == 1:
             terminal_at = parse_timestamp(response_comments[0].get("updatedAt"))
         else:
@@ -692,9 +701,7 @@ def unresolved_preceding_full_trigger(
                 else []
             )
             terminal_at = (
-                parse_timestamp(response_reviews[0].get("submittedAt"))
-                if len(response_reviews) == 1
-                else None
+                parse_timestamp(response_reviews[0].get("submittedAt")) if len(response_reviews) == 1 else None
             )
         if state.terminal is not True or response_at is None or terminal_at is None or terminal_at >= end:
             return True
@@ -721,7 +728,10 @@ def _unresolved_retired_predecessor(
             continue
         retirement = record.get("retirement")
         if not isinstance(retirement, dict) or retirement.get("observed_live_state") not in {
-            "completed", "rate_limited", "noop", "failed"
+            "completed",
+            "rate_limited",
+            "noop",
+            "failed",
         }:
             return True
     return False
@@ -751,9 +761,8 @@ def public_response_state(
         return None
 
     created = parse_timestamp(item.get("createdAt"))
-    if REVIEW_LIMIT_MARKER in body or (created is not None and _rate_limit(body, created) is not None) or body.strip().lower().startswith(
-        "review rate limited"
-    ):
+    cooldown = _rate_limit(body, created) if created is not None else None
+    if _is_rate_limited_reply(body, cooldown):
         return "rate_limited"
     if provider_file_ceiling_skip(body):
         return "failed"
@@ -885,25 +894,15 @@ def adopt_manual_completed_trigger(
         if state.state != "completed" or state.attributed is not True or state.response_id is None:
             raise ValueError(f"manual request lacks a unique completed review: {state.state}")
         trigger_at = parse_timestamp(created)
-        response_reviews = [
-            item
-            for item in reviews
-            if immutable_database_id(item) == state.response_id
-        ]
-        response_comments = [
-            item
-            for item in comments
-            if immutable_database_id(item) == state.response_id
-        ]
+        response_reviews = [item for item in reviews if immutable_database_id(item) == state.response_id]
+        response_comments = [item for item in comments if immutable_database_id(item) == state.response_id]
         if (
             not response_reviews
             and len(response_comments) == 1
             and isinstance(response_comments[0].get("body"), str)
             and _is_finished_action_response(response_comments[0]["body"], allow_action_wrapper=True)
         ):
-            exact_zero_summary = _zero_finding_summary(
-                payload, head_sha, trigger_at, state.response_id, None
-            )
+            exact_zero_summary = _zero_finding_summary(payload, head_sha, trigger_at, state.response_id, None)
             if (
                 exact_zero_summary is None
                 or (_scope_head(exact_zero_summary.get("body", "")) or "").casefold() != head_sha.casefold()
@@ -912,9 +911,7 @@ def adopt_manual_completed_trigger(
                     payload, head_sha, trigger_at, state.response_id
                 )
             if exact_zero_summary is None:
-                raise ValueError(
-                    "finished-reply-only zero result lacks exact public proof of the reviewed head"
-                )
+                raise ValueError("finished-reply-only zero result lacks exact public proof of the reviewed head")
         later_commands = [
             timestamp
             for item in comments
@@ -1284,16 +1281,8 @@ def _matching_prepost_audit(path: Path, record: dict[str, Any], expected: dict[s
         or not isinstance(archived_recovery, dict)
         or not isinstance(archived_recovery.get("live_head_sha"), str)
         or not EXACT_SHA.fullmatch(archived_recovery["live_head_sha"])
-        or {
-            key: value
-            for key, value in archived_recovery.items()
-            if key not in {"at", "reason", "live_head_sha"}
-        }
-        != {
-            key: value
-            for key, value in expected_recovery.items()
-            if key not in {"at", "reason", "live_head_sha"}
-        }
+        or {key: value for key, value in archived_recovery.items() if key not in {"at", "reason", "live_head_sha"}}
+        != {key: value for key, value in expected_recovery.items() if key not in {"at", "reason", "live_head_sha"}}
         or parse_timestamp(archived_recovery.get("at")) is None
         or not isinstance(archived_recovery.get("reason"), str)
         or not archived_recovery["reason"]
@@ -1367,6 +1356,28 @@ def _unquoted(body: str) -> str:
     return "\n".join(line for line in body.splitlines() if not line.lstrip().startswith(">"))
 
 
+def _without_fenced_code(body: str) -> str:
+    visible: list[str] = []
+    fence: tuple[str, int] | None = None
+    for line in body.splitlines():
+        if fence is not None:
+            marker, minimum_length = fence
+            closing = re.fullmatch(rf" {{0,3}}{re.escape(marker)}{{{minimum_length},}}[ \t]*", line)
+            if closing:
+                fence = None
+            continue
+        if line.lstrip().startswith(">"):
+            continue
+        opening = re.match(r" {0,3}(`{3,}|~{3,})(.*)$", line)
+        if opening:
+            marker, info = opening.groups()
+            if marker[0] != "`" or "`" not in info:
+                fence = (marker[0], len(marker))
+                continue
+        visible.append(line)
+    return "\n".join(visible)
+
+
 def _scope_head(body: str) -> str | None:
     match = re.search(
         r"Reviewing files that changed from the base of the PR and between\s+`?([0-9a-f]{6,40})`?\s+and\s+`?([0-9a-f]{6,40})`?",
@@ -1388,6 +1399,15 @@ def _rate_limit(body: str, created: datetime) -> datetime | None:
     amount, unit = int(match.group(1)), match.group(2).lower()
     return created + timedelta(
         **({"seconds" if unit.startswith("second") else "minutes" if unit.startswith("minute") else "hours": amount})
+    )
+
+
+def _is_rate_limited_reply(body: str, cooldown: datetime | None) -> bool:
+    return (
+        REVIEW_LIMIT_MARKER in body
+        or cooldown is not None
+        or body.strip().lower().startswith("review rate limited")
+        or WRAPPED_RATE_LIMIT_REPLY_PATTERN.fullmatch(_without_fenced_code(_unquoted(body))) is not None
     )
 
 
@@ -1477,7 +1497,9 @@ def _summary_proves_complete_zero_findings(body: str) -> bool:
     text = _unquoted(body)
     if any(pattern.search(text) for pattern in POSITIVE_FINDING_COUNT_PATTERNS):
         return False
-    return _summary_proves_complete_file_coverage(text) and any(pattern.search(text) for pattern in ZERO_FINDING_PATTERNS)
+    return _summary_proves_complete_file_coverage(text) and any(
+        pattern.search(text) for pattern in ZERO_FINDING_PATTERNS
+    )
 
 
 def _reviewed_label_counts(text: str) -> set[int]:
@@ -1496,10 +1518,7 @@ def _summary_has_explicit_incomplete_coverage(body: str) -> bool:
 
     selected_counts = {int(match.group(1)) for match in FILE_SELECTED_COUNT.finditer(text)}
     reviewed_counts = _reviewed_label_counts(text)
-    if (
-        len(selected_counts) == len(reviewed_counts) == 1
-        and next(iter(reviewed_counts)) < next(iter(selected_counts))
-    ):
+    if len(selected_counts) == len(reviewed_counts) == 1 and next(iter(reviewed_counts)) < next(iter(selected_counts)):
         return True
 
     ratios = [tuple(map(int, match.groups())) for match in FILE_REVIEWED_RATIO.finditer(text)]
@@ -1862,8 +1881,7 @@ def _summary_has_explicit_incompleteness(body: str) -> bool:
         return True
     text_without_explicit_zero_omissions = FILE_NOT_REVIEWED_COUNT.sub(" ", text)
     return any(
-        _has_explicit_file_omission(sentence)
-        or _has_explicit_incomplete_file_coverage(sentence)
+        _has_explicit_file_omission(sentence) or _has_explicit_incomplete_file_coverage(sentence)
         for sentence in re.split(r"[.!?\n]+", text_without_explicit_zero_omissions)
     )
 
@@ -1958,11 +1976,7 @@ def _provider_format_terminal_summary(
         connections[name] = nodes
 
     comments = connections["comments"]
-    if (
-        isinstance(response_id, bool)
-        or not isinstance(response_id, int)
-        or response_id <= 0
-    ):
+    if isinstance(response_id, bool) or not isinstance(response_id, int) or response_id <= 0:
         return None
     response_matches = [item for item in comments if immutable_database_id(item) == response_id]
     if len(response_matches) != 1:
@@ -2018,11 +2032,7 @@ def _provider_format_terminal_summary(
             or updated <= after
             or (not require_incomplete_coverage and updated > response_updated)
             or (before is not None and updated >= before)
-            or (
-                created >= response_at
-                if require_incomplete_coverage
-                else created > response_updated
-            )
+            or (created >= response_at if require_incomplete_coverage else created > response_updated)
             or _rate_limit(body, updated) is not None
         ):
             continue
@@ -2372,11 +2382,7 @@ def trigger_state(
         body = item.get("body") or ""
         cooldown = _rate_limit(body, created)
         # Rate-limit evidence is classified before all other prose in a reply.
-        if (
-            REVIEW_LIMIT_MARKER in body
-            or cooldown is not None
-            or body.strip().lower().startswith("review rate limited")
-        ):
+        if _is_rate_limited_reply(body, cooldown):
             candidates.append((created, "rate_limited", item, cooldown))
         elif provider_file_ceiling_skip(body):
             candidates.append((created, "failed", item, None))
@@ -2402,13 +2408,16 @@ def trigger_state(
                 )
             if zero_summary is not None:
                 state = "completed"
-            elif provider_format_incomplete_coverage_summary(
-                payload,
-                record["head_sha"],
-                trigger_dt,
-                immutable_database_id(item),
-                next_dt,
-            ) is not None:
+            elif (
+                provider_format_incomplete_coverage_summary(
+                    payload,
+                    record["head_sha"],
+                    trigger_dt,
+                    immutable_database_id(item),
+                    next_dt,
+                )
+                is not None
+            ):
                 state = "failed_incomplete_coverage"
             elif finished_reply_without_findings(
                 payload,
@@ -2816,10 +2825,12 @@ def retire_stuck_trigger_after_head_advance(
             "noop",
             "failed",
         }
-        retire_after_later_trigger = (
-            state.state == "ambiguous" and state.reason == LATER_TRIGGER_AMBIGUITY_REASON
-        )
-        if state.state not in {"active", "awaiting_response"} and not terminal_boundary_changed and not retire_after_later_trigger:
+        retire_after_later_trigger = state.state == "ambiguous" and state.reason == LATER_TRIGGER_AMBIGUITY_REASON
+        if (
+            state.state not in {"active", "awaiting_response"}
+            and not terminal_boundary_changed
+            and not retire_after_later_trigger
+        ):
             raise ValueError(f"cannot retire stuck trigger in live state {state.state}")
 
         current = load_trigger_record(record_path, repo, pr_number)

@@ -13,6 +13,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import javax.sql.DataSource;
 import net.firedevops.firemud.accountservice.entity.Account;
@@ -46,6 +47,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 class AccountFirstJoinAuthorityStorageIntegrationTest {
   private static final String SCHEMA_PREFIX = "first_join_authority_storage_proof";
+  private static final long CONCURRENCY_TIMEOUT_SECONDS = 30L;
   private static final AccountPostgresIntegrationFixture postgres =
       new AccountPostgresIntegrationFixture();
   private final Set<String> schemas = ConcurrentHashMap.newKeySet();
@@ -555,9 +557,14 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
       var second =
           executor.submit(
               () -> concurrentAppend(repository, transaction, concurrentStream, ready, start));
-      ready.await();
+      assertThat(ready.await(CONCURRENCY_TIMEOUT_SECONDS, TimeUnit.SECONDS))
+          .as("both concurrent append workers become ready")
+          .isTrue();
       start.countDown();
-      List<Event> events = List.of(first.get(), second.get());
+      List<Event> events =
+          List.of(
+              first.get(CONCURRENCY_TIMEOUT_SECONDS, TimeUnit.SECONDS),
+              second.get(CONCURRENCY_TIMEOUT_SECONDS, TimeUnit.SECONDS));
 
       assertThat(events).allMatch(event -> event.outboxSequence() == 1L);
       assertThat(events).extracting(Event::eventId).containsOnly("event-1");
@@ -806,7 +813,9 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
 
   private void await(CountDownLatch latch) {
     try {
-      latch.await();
+      if (!latch.await(CONCURRENCY_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+        throw new IllegalStateException("Authority outbox concurrency proof timed out at latch");
+      }
     } catch (InterruptedException interrupted) {
       Thread.currentThread().interrupt();
       throw new IllegalStateException(

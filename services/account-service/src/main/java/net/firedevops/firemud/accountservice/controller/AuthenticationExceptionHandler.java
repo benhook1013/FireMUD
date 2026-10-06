@@ -14,6 +14,18 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
  */
 @RestControllerAdvice
 public class AuthenticationExceptionHandler {
+  /** Source writes roll back before MVC translates this exact owner denial. */
+  @ExceptionHandler(
+      net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository
+          .SourceEvidenceUnavailableException.class)
+  public ResponseEntity<ApiResponse<ErrorDetail>> handleAccountSourceUnavailable(
+      net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository
+              .SourceEvidenceUnavailableException
+          ex) {
+    return handleAuthenticationException(
+        new AuthenticationException("AUTH_UNAVAILABLE", "Account authority is unavailable"));
+  }
+
   private static final java.util.Set<String> FORBIDDEN_CODES =
       java.util.Set.of(
           "CONNECT_TOKEN_REJECTED",
