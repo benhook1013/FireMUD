@@ -17,8 +17,8 @@ spec:
       expression: request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-preview-namespace-manager'
   validations:
     - expression: >-
-        (request.operation == 'DELETE' ? request.name : object.metadata.name) == 'dev' ||
-        (request.operation == 'DELETE' ? request.name : object.metadata.name).matches('^pr-[1-9][0-9]{0,50}$')
+        (request.operation == 'DELETE' ? oldObject.metadata.name : object.metadata.name) == 'dev' ||
+        (request.operation == 'DELETE' ? oldObject.metadata.name : object.metadata.name).matches('^pr-[1-9][0-9]{0,50}$')
       message: the trusted namespace manager may change only dev or canonical pr-N runtime namespaces
       reason: Forbidden
 ---
@@ -46,10 +46,12 @@ spec:
         scope: Namespaced
   matchConditions:
     - name: trusted-data-plane-bindings
+      # DELETECOLLECTION preserves each stored object but omits request.name.
+      # Match and authorize that object's name for both DELETE forms.
       expression: >-
         request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-preview-namespace-manager' ||
         (request.operation == 'DELETE' ?
-          request.name in ['firemud-preview-runtime', 'firemud-standalone-certificate-writer'] :
+          oldObject.metadata.name in ['firemud-preview-runtime', 'firemud-standalone-certificate-writer'] :
           (object.roleRef.kind == 'ClusterRole' &&
            object.roleRef.name in ['firemud-preview-runtime', 'firemud-standalone-certificate-writer']) ||
           (has(object.subjects) && object.subjects.exists(subject,
@@ -67,11 +69,11 @@ spec:
         (request.userInfo.username == 'system:serviceaccount:kube-system:namespace-controller' &&
          request.operation == 'DELETE' &&
          (request.namespace == 'dev' || request.namespace.matches('^pr-[1-9][0-9]{0,50}$')) &&
-         request.name in ['firemud-preview-runtime', 'firemud-standalone-certificate-writer']) ||
+         oldObject.metadata.name in ['firemud-preview-runtime', 'firemud-standalone-certificate-writer']) ||
         (request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-preview-namespace-manager' &&
          (request.namespace == 'dev' || request.namespace.matches('^pr-[1-9][0-9]{0,50}$')) &&
          (request.operation == 'DELETE' ?
-           request.name in ['firemud-preview-runtime', 'firemud-standalone-certificate-writer'] :
+           oldObject.metadata.name in ['firemud-preview-runtime', 'firemud-standalone-certificate-writer'] :
            (object.metadata.name in ['firemud-preview-runtime', 'firemud-standalone-certificate-writer'] &&
             object.roleRef.apiGroup == 'rbac.authorization.k8s.io' &&
             object.roleRef.kind == 'ClusterRole' &&

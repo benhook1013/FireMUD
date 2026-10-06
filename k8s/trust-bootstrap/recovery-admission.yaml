@@ -14,18 +14,19 @@ spec:
         scope: Namespaced
   matchConditions:
     - name: reserved-ca-secret-or-recovery-caller
+      # Collection deletion still supplies the individual stored Secret.
       expression: >-
         request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-preview-ca-recovery' ||
-        (request.operation == 'DELETE' ? request.name : object.metadata.name) == 'firemud-grpc-ca'
+        (request.operation == 'DELETE' ? oldObject.metadata.name : object.metadata.name) == 'firemud-grpc-ca'
   validations:
     - expression: >-
         request.userInfo.groups.exists(group, group == 'system:masters') ||
         (request.namespace in ['firemud-system', 'cert-manager'] &&
-         (request.operation == 'DELETE' ? request.name : object.metadata.name) == 'firemud-grpc-ca' &&
+         (request.operation == 'DELETE' ? oldObject.metadata.name : object.metadata.name) == 'firemud-grpc-ca' &&
          request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-preview-ca-recovery' &&
          request.operation in ['CREATE', 'UPDATE'] && request.subResource == '') ||
         (request.operation == 'DELETE' && request.subResource == '' &&
-         request.name == 'firemud-grpc-ca' &&
+         oldObject.metadata.name == 'firemud-grpc-ca' &&
          (request.namespace == 'dev' || request.namespace.matches('^pr-[1-9][0-9]{0,50}$')) &&
          (request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-preview-runtime' ||
           request.userInfo.username == 'system:serviceaccount:kube-system:namespace-controller'))

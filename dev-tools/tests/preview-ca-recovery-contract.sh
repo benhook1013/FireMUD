@@ -9,6 +9,7 @@ python3 - <<'PY'
 import base64
 import importlib.util
 import json
+import re
 from pathlib import Path
 
 import yaml
@@ -169,7 +170,7 @@ normalized_authorization = " ".join(authorization_expression.split())
 recovery_write_clause = " ".join(
     """
     (request.namespace in ['firemud-system', 'cert-manager'] &&
-     (request.operation == 'DELETE' ? request.name : object.metadata.name) == 'firemud-grpc-ca' &&
+     (request.operation == 'DELETE' ? oldObject.metadata.name : object.metadata.name) == 'firemud-grpc-ca' &&
      request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-preview-ca-recovery' &&
      request.operation in ['CREATE', 'UPDATE'] && request.subResource == '')
     """.split()
@@ -177,7 +178,7 @@ recovery_write_clause = " ".join(
 runtime_gc_delete_clause = " ".join(
     """
     (request.operation == 'DELETE' && request.subResource == '' &&
-     request.name == 'firemud-grpc-ca' &&
+     oldObject.metadata.name == 'firemud-grpc-ca' &&
      (request.namespace == 'dev' || request.namespace.matches('^pr-[1-9][0-9]{0,50}$')) &&
      (request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-preview-runtime' ||
       request.userInfo.username == 'system:serviceaccount:kube-system:namespace-controller'))
@@ -186,11 +187,33 @@ runtime_gc_delete_clause = " ".join(
 assert recovery_write_clause in normalized_authorization
 assert runtime_gc_delete_clause in normalized_authorization
 operator_clause = "request.userInfo.groups.exists(group, group == 'system:masters')"
-assert normalized_authorization == " || ".join(
-    (operator_clause, recovery_write_clause, runtime_gc_delete_clause)
-)
+def check_ca_delete_authorization(expression):
+    assert " ".join(expression.split()) == " || ".join(
+        (operator_clause, recovery_write_clause, runtime_gc_delete_clause)
+    )
+
+
+check_ca_delete_authorization(authorization_expression)
+# Exact caller/name/runtime-namespace clauses retain denial for both protected
+# CA copies. Absence of request.name proves name independence structurally,
+# including omitted/empty collection names; this is not CEL execution proof.
+assert not re.search(r"\brequest\.name\b", match_expression + authorization_expression)
+for old, new in (
+    ("oldObject.metadata.name", "request.name"),
+    ("system:serviceaccount:kube-system:namespace-controller", "system:serviceaccount:untrusted:controller"),
+    ("request.namespace == 'dev'", "request.namespace == 'firemud-system'"),
+    ("request.namespace == 'dev'", "request.namespace == 'cert-manager'"),
+    ("oldObject.metadata.name == 'firemud-grpc-ca'", "oldObject.metadata.name == 'other-secret'"),
+):
+    mutation = authorization_expression.replace(old, new)
+    try:
+        check_ca_delete_authorization(mutation)
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError(f"CA Secret DELETE contract accepted mutation: {old}")
 assert "request.namespace == 'kube-system'" not in normalized_authorization
-assert "request.operation == 'DELETE' ? request.name : object.metadata.name" in match_expression
+assert "request.operation == 'DELETE' ? oldObject.metadata.name : object.metadata.name" in match_expression
 assert "request.operation == 'DELETE' ||" in shape_expression
 assert "request.namespace in ['firemud-system', 'cert-manager']" in shape_expression
 assert "object.type == (request.namespace == 'firemud-system' ? 'Opaque' : 'kubernetes.io/tls')" in shape_expression

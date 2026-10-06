@@ -7,6 +7,8 @@ deployment_admission="$repo_root/k8s/trust-bootstrap/deployment-admission.yaml"
 
 python3 - "$repo_root" "$deployment_rbac" "$deployment_admission" <<'PY'
 import sys
+import copy
+import re
 from pathlib import Path
 
 import yaml
@@ -175,6 +177,43 @@ for needle in (
     "system:serviceaccount:kube-system:namespace-controller",
 ):
     assert needle in binding_expression, f"missing RoleBinding guard: {needle}"
+
+binding_policy = policies["firemud-trust-runtime-binding-boundary"]
+gc_delete_clause = " ".join("""
+    (request.userInfo.username == 'system:serviceaccount:kube-system:namespace-controller' &&
+     request.operation == 'DELETE' &&
+     (request.namespace == 'dev' || request.namespace.matches('^pr-[1-9][0-9]{0,50}$')) &&
+     oldObject.metadata.name in ['firemud-preview-runtime', 'firemud-standalone-certificate-writer'])
+""".split())
+
+
+def check_binding_delete_contract(policy):
+    match = " ".join(policy["spec"]["matchConditions"][0]["expression"].split())
+    authorization = " ".join(policy["spec"]["validations"][0]["expression"].split())
+    # Name independence is structural proof of named/unnamed request parity;
+    # these fixtures do not execute Kubernetes CEL or establish live GC proof.
+    assert not re.search(r"\brequest\.name\b", match + authorization)
+    assert "(request.operation == 'DELETE' ? oldObject.metadata.name in " in match
+    assert gc_delete_clause in authorization
+    assert "(request.operation == 'DELETE' ? oldObject.metadata.name in " in authorization
+
+
+check_binding_delete_contract(binding_policy)
+assert "request.operation == 'DELETE' ? oldObject.metadata.name : object.metadata.name" in namespace_expression
+for old, new in (
+    ("oldObject.metadata.name", "request.name"),
+    ("system:serviceaccount:kube-system:namespace-controller", "system:serviceaccount:untrusted:controller"),
+    ("request.namespace == 'dev'", "request.namespace == 'kube-system'"),
+    ("'firemud-preview-runtime'", "'unexpected-binding'"),
+):
+    mutation = copy.deepcopy(binding_policy)
+    mutation["spec"]["validations"][0]["expression"] = mutation["spec"]["validations"][0]["expression"].replace(old, new)
+    try:
+        check_binding_delete_contract(mutation)
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError(f"RoleBinding DELETE contract accepted mutation: {old}")
 
 print("trust-bootstrap RBAC contract: PASS")
 PY
