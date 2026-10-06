@@ -52,6 +52,116 @@ class AccountControlUiCurrentSourcePostgresIntegrationTest {
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
   @Test
+  void unsignedInitialObservationReadsExactExistingAccountSourcesAndFenceWithoutEnrollment() {
+    Fixture fixture = fixture(true);
+    var accountBefore =
+        fixture
+            .dsl()
+            .fetchOne("SELECT * FROM accounts WHERE account_uuid = ?", fixture.accountId());
+    var rolesBefore =
+        fixture
+            .dsl()
+            .fetchOne(
+                "SELECT * FROM account_global_role_sources WHERE account_uuid = ?",
+                fixture.accountId());
+    assertThat(accountBefore).isNotNull();
+    assertThat(rolesBefore).isNotNull();
+    assertThat(accountBefore.get("account_uuid", UUID.class)).isEqualTo(fixture.accountId());
+    assertThat(accountBefore.get("account_uuid_source_numeric_id", Long.class))
+        .isEqualTo(accountBefore.get("id", Long.class));
+    assertThat(accountBefore.get("account_uuid_provenance", String.class))
+        .isEqualTo("ACCOUNT_REPOSITORY_INSERT");
+    assertThat(rolesBefore.get("account_uuid_source_numeric_id", Long.class))
+        .isEqualTo(accountBefore.get("account_uuid_source_numeric_id", Long.class));
+    assertThat(rolesBefore.get("account_uuid_provenance", String.class))
+        .isEqualTo(accountBefore.get("account_uuid_provenance", String.class));
+    Long generationCount = count(fixture.dsl(), "account_authority_generations");
+    Long fenceCount = count(fixture.dsl(), "account_authority_issuance_fences");
+    var observation =
+        fixture.tx().execute(status -> fixture.source().readUnscopedCurrent(fixture.accountId()));
+    assertThat(observation).isNotNull();
+    assertThat(observation.accountId()).isEqualTo(fixture.accountId());
+    assertThat(observation.authority().issuer().scope()).isEqualTo(AuthorityScope.issuer(ISSUER));
+    assertThat(observation.authority().issuer().generation()).isEqualTo(1L);
+    assertThat(observation.authority().issuer().sourceVersion()).isEqualTo(1L);
+    assertThat(observation.authority().account().scope())
+        .isEqualTo(AuthorityScope.account(fixture.accountId()));
+    assertThat(observation.authority().account().generation()).isEqualTo(1L);
+    assertThat(observation.authority().account().sourceVersion()).isEqualTo(1L);
+    assertThat(observation.authority().tenants()).isEmpty();
+    assertThat(observation.authority().memberships()).isEmpty();
+    assertThat(observation.authority().issuanceFence().accountId()).isEqualTo(fixture.accountId());
+    assertThat(observation.authority().issuanceFence().value()).isEqualTo(1L);
+    assertThat(observation.authority().issuanceFence().sourceVersion()).isEqualTo(1L);
+    assertThat(observation.accountSource().sourceState())
+        .isEqualTo(observation.authority().account());
+    assertThat(observation.accountSource().outboxStreamKey())
+        .isEqualTo("account:auth-authority:v1:account/" + fixture.accountId());
+    assertThat(observation.accountSource().outboxSequence()).isZero();
+    assertThat(observation.accountSource().latestEvent()).isEmpty();
+    assertThat(observation.issuerSource().issuerAuthGeneration()).isEqualTo(1L);
+    assertThat(observation.issuerSource().sourceVersion()).isEqualTo(1L);
+    assertThat(observation.issuerSource().outboxSequence()).isZero();
+    assertThat(observation.issuerSource().latestEvent()).isEmpty();
+    assertThat(observation.globalRoleSourceVersion()).isEqualTo(1L);
+    assertThat(observation.toString()).contains("non-authorizing");
+    assertThat(
+            fixture
+                .dsl()
+                .fetchOne("SELECT * FROM accounts WHERE account_uuid = ?", fixture.accountId()))
+        .isEqualTo(accountBefore);
+    assertThat(
+            fixture
+                .dsl()
+                .fetchOne(
+                    "SELECT * FROM account_global_role_sources WHERE account_uuid = ?",
+                    fixture.accountId()))
+        .isEqualTo(rolesBefore);
+    assertThat(count(fixture.dsl(), "account_authority_generations")).isEqualTo(generationCount);
+    assertThat(count(fixture.dsl(), "account_authority_issuance_fences")).isEqualTo(fenceCount);
+    assertThat(count(fixture.dsl(), "account_authority_outbox_events")).isZero();
+  }
+
+  @Test
+  void unsignedObservationRetainsAdvancedIssuerEventAndSignedInspectionStillChecksCorrespondence()
+      throws Exception {
+    Fixture fixture = fixture(true);
+    var event = fixture.issuer().advance(ISSUER, UUID.randomUUID(), 1L, 1L);
+    var observation =
+        fixture.tx().execute(status -> fixture.source().readUnscopedCurrent(fixture.accountId()));
+    assertThat(observation).isNotNull();
+    assertThat(observation.issuerSource().issuerAuthGeneration()).isEqualTo(2L);
+    assertThat(observation.issuerSource().sourceVersion()).isEqualTo(2L);
+    assertThat(observation.issuerSource().outboxSequence()).isEqualTo(1L);
+    var retained = observation.issuerSource().latestEvent().orElseThrow();
+    assertThat(retained.canonicalJsonUtf8()).isEqualTo(event.canonicalJsonUtf8());
+    assertThat(retained.eventId()).isEqualTo(event.eventId());
+    assertThat(retained.eventDigest()).isEqualTo(event.eventDigest());
+    var exact = candidate(fixture.accountId(), 2L);
+    var exactObservation =
+        fixture.tx().execute(status -> fixture.source().inspectUnscopedCurrent(exact));
+    assertThat(exactObservation).isNotNull();
+    var prior = candidate(fixture.accountId());
+    assertThatThrownBy(
+            () -> fixture.tx().execute(status -> fixture.source().inspectUnscopedCurrent(prior)))
+        .isInstanceOf(IllegalStateException.class);
+    for (long[] changed :
+        java.util.List.of(
+            new long[] {2L, 1L, 1L, 1L},
+            new long[] {1L, 2L, 1L, 1L},
+            new long[] {1L, 1L, 2L, 1L},
+            new long[] {1L, 1L, 1L, 2L})) {
+      var mismatch =
+          candidate(fixture.accountId(), 2L, changed[0], changed[1], changed[2], changed[3]);
+      assertThatThrownBy(
+              () ->
+                  fixture.tx().execute(status -> fixture.source().inspectUnscopedCurrent(mismatch)))
+          .isInstanceOf(IllegalStateException.class);
+    }
+    assertThat(count(fixture.dsl(), "account_authority_outbox_events")).isEqualTo(1L);
+  }
+
+  @Test
   void currentFreshSourceIsObservedAtOneOwnerTransactionWithoutEnrollmentOrMutation()
       throws Exception {
     Fixture fixture = fixture(true);
@@ -107,6 +217,13 @@ class AccountControlUiCurrentSourcePostgresIntegrationTest {
             () ->
                 fixture
                     .tx()
+                    .execute(status -> fixture.source().readUnscopedCurrent(fixture.accountId())))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("sequence-zero");
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .tx()
                     .execute(status -> fixture.source().inspectUnscopedCurrent(matchingCounters)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("sequence-zero");
@@ -154,6 +271,13 @@ class AccountControlUiCurrentSourcePostgresIntegrationTest {
             () ->
                 fixture
                     .tx()
+                    .execute(status -> fixture.source().readUnscopedCurrent(fixture.accountId())))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("contradict");
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .tx()
                     .execute(status -> fixture.source().inspectUnscopedCurrent(matchingCounters)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("contradict");
@@ -164,6 +288,12 @@ class AccountControlUiCurrentSourcePostgresIntegrationTest {
   void missingAuthorityFailsWithoutInventingAnInitialGeneration() throws Exception {
     Fixture fixture = fixture(false);
     var candidate = candidate(fixture.accountId());
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .tx()
+                    .execute(status -> fixture.source().readUnscopedCurrent(fixture.accountId())))
+        .isInstanceOf(IllegalStateException.class);
     assertThatThrownBy(
             () ->
                 fixture.tx().execute(status -> fixture.source().inspectUnscopedCurrent(candidate)))
@@ -177,10 +307,17 @@ class AccountControlUiCurrentSourcePostgresIntegrationTest {
   void absentOwnerTransactionAndReadOnlyTransactionCannotProduceObservation() throws Exception {
     Fixture fixture = fixture(true);
     var candidate = candidate(fixture.accountId());
+    assertThatThrownBy(() -> fixture.source().readUnscopedCurrent(fixture.accountId()))
+        .isInstanceOf(IllegalStateException.class);
     assertThatThrownBy(() -> fixture.source().inspectUnscopedCurrent(candidate))
         .isInstanceOf(IllegalStateException.class);
     TransactionTemplate readOnly = new TransactionTemplate(fixture.tx().getTransactionManager());
     readOnly.setReadOnly(true);
+    assertThatThrownBy(
+            () ->
+                readOnly.execute(
+                    status -> fixture.source().readUnscopedCurrent(fixture.accountId())))
+        .isInstanceOf(IllegalStateException.class);
     assertThatThrownBy(
             () -> readOnly.execute(status -> fixture.source().inspectUnscopedCurrent(candidate)))
         .isInstanceOf(IllegalStateException.class);
@@ -262,13 +399,26 @@ class AccountControlUiCurrentSourcePostgresIntegrationTest {
   }
 
   private static InspectedToken candidate(UUID accountId, long issuerVersion) throws Exception {
+    return candidate(accountId, issuerVersion, 1L, 1L, 1L, 1L);
+  }
+
+  private static InspectedToken candidate(
+      UUID accountId,
+      long issuerVersion,
+      long issuanceFence,
+      long accountGeneration,
+      long accountSourceVersion,
+      long issuanceFenceSourceVersion)
+      throws Exception {
     var crypto =
         new AccountControlUiTokenFixture(
             Clock.fixed(AccountControlUiTokenFixture.NOW, ZoneOffset.UTC));
     var claims = crypto.claims(accountId);
+    claims.put("issuanceFence", Long.toString(issuanceFence));
     @SuppressWarnings("unchecked")
     var tuple = new java.util.LinkedHashMap<>((Map<String, Object>) claims.get("authorityTuple"));
     tuple.put("issuerAuthGeneration", Long.toString(issuerVersion));
+    tuple.put("accountAuthorityGeneration", Long.toString(accountGeneration));
     claims.put("authorityTuple", tuple);
     String token = crypto.sign(claims);
     var registry = crypto.registry(token, claims);
@@ -278,9 +428,9 @@ class AccountControlUiCurrentSourcePostgresIntegrationTest {
             "issuerSourceVersion",
             issuerVersion,
             "accountSourceVersion",
-            1L,
+            accountSourceVersion,
             "issuanceFenceSourceVersion",
-            1L));
+            issuanceFenceSourceVersion));
     return crypto
         .checks()
         .inspect(
