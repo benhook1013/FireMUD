@@ -24,6 +24,7 @@ sys.path.insert(0, str(ROOT / "dev-tools"))
 
 from pr_review import cli_runner, evidence, github, hosted, sqlite_provider_imports, stack
 from pr_review.cli import _parser
+from pr_review.cli_runner import StaleReviewTargetError
 from pr_review.controller import (
     HOSTED_ACTIVE_RESPONSE_REASON,
     HOSTED_CLI_OVERLAP_HOLD_REASON,
@@ -35,10 +36,11 @@ from pr_review.controller import (
     ReviewController,
     StaleReviewTarget,
     WrongStackTarget,
+    _SelectionChanged,
     compact_result,
     json_result,
 )
-from pr_review.git_merge import test_merge_tree
+from pr_review.git_merge import TestMergeError, test_merge_tree
 from pr_review.patch_identity import patch_diff_args
 from pr_review.policy import (
     Channel,
@@ -116,6 +118,8 @@ class FakeGit:
     def __init__(self, heads=None):
         self.heads = {"develop": BASE, **(heads or {})}
         self.remote_heads_calls = 0
+        self.merge_base_calls = []
+        self.patch_identity_calls = []
         self.test_merge_calls = []
         self.test_merge_error = None
 
@@ -133,9 +137,11 @@ class FakeGit:
         return True
 
     def merge_base(self, left, right):
+        self.merge_base_calls.append((left, right))
         return BASE
 
     def patch_identity(self, merge_base, head):
+        self.patch_identity_calls.append((merge_base, head))
         return f"patch-{head[:4]}"
 
     def test_merge_tree(self, base, head):
@@ -257,6 +263,7 @@ def _batch_identity(item):
         "mergedAt": "2026-09-26T00:00:00Z" if item.merged else None,
         "baseRefName": item.base_ref,
         "baseRefOid": item.base_tip,
+        "changedFiles": item.changed_files,
         "headRefName": item.head_ref,
         "headRefOid": item.head,
         "mergeable": item.mergeable,
@@ -322,6 +329,28 @@ class ControllerTests(unittest.TestCase):
             controller.run_hosted()
 
         self.assertEqual(observed_phases, ["target_selection"])
+        self.assertEqual(adapter_calls, [])
+
+    def test_cli_preflight_deadline_covers_target_selection_before_adapter(self):
+        controller = self.make({})
+        adapter_calls = []
+        controller.cli_adapter = lambda *args, **kwargs: adapter_calls.append((args, kwargs))
+
+        def stall_selection(*_args, **_kwargs):
+            budget = github.active_hosted_preflight_budget()
+            self.assertIsNotNone(budget)
+            budget.deadline = budget.started_at - 1
+            raise OSError("selection read failed after the deadline")
+
+        with (
+            patch.object(controller, "_target", side_effect=stall_selection),
+            self.assertRaisesRegex(
+                ControllerError,
+                r"CLI preflight deadline exceeded \(phase=target_selection, .*completed=0/1, budget=120s\)",
+            ),
+        ):
+            controller.run_cli()
+
         self.assertEqual(adapter_calls, [])
 
     def test_held_state_database_during_target_selection_keeps_preflight_diagnostics(self):
@@ -6240,6 +6269,60 @@ class ControllerTests(unittest.TestCase):
             )
         )
 
+    def test_fallback_worktree_cleanup_failure_preserves_deadline_and_fails_when_sole_error(self):
+        for cleanup_mode in ("raises", "times_out", "nonzero"):
+            for primary_deadline in (True, False):
+                with self.subTest(cleanup=cleanup_mode, primary_deadline=primary_deadline), tempfile.TemporaryDirectory() as directory:
+                    deadline = github.HostedPreflightDeadlineExceeded(
+                        "test_merge", 121, 120, 0, 1, "Hosted"
+                    )
+
+                    def run(
+                        args,
+                        *,
+                        check,
+                        text,
+                        timeout,
+                        cleanup_mode=cleanup_mode,
+                        primary_deadline=primary_deadline,
+                        deadline=deadline,
+                    ):
+                        command = args[args.index("-C") + 2 :]
+                        if command[:2] == ["merge-tree", "--write-tree"]:
+                            return CompletedProcess(args, 129, "", "unsupported option")
+                        if command[:2] == ["worktree", "add"]:
+                            return CompletedProcess(args, 0, "", "")
+                        if command[:2] == ["worktree", "remove"]:
+                            if cleanup_mode == "raises":
+                                raise OSError("worktree metadata is busy")
+                            if cleanup_mode == "times_out":
+                                raise subprocess.TimeoutExpired(args, timeout)
+                            return CompletedProcess(args, 1, "", "worktree is busy")
+                        if "merge" in command and primary_deadline:
+                            raise deadline
+                        if command == ["write-tree"]:
+                            return CompletedProcess(args, 0, "9" * 40 + "\n", "")
+                        if command[:2] == ["cat-file", "-t"]:
+                            return CompletedProcess(args, 0, "tree\n", "")
+                        return CompletedProcess(args, 0, "", "")
+
+                    if primary_deadline:
+                        with self.assertRaises(github.HostedPreflightDeadlineExceeded) as raised:
+                            test_merge_tree(directory, BASE, HEAD_1, run=run, timeout_seconds=9)
+                        self.assertIs(raised.exception, deadline)
+                        self.assertTrue(
+                            any(
+                                "Fallback test-merge worktree cleanup also failed" in note
+                                for note in getattr(deadline, "__notes__", [])
+                            )
+                        )
+                    else:
+                        with self.assertRaisesRegex(
+                            TestMergeError, "could not clean up the isolated test-merge worktree"
+                        ) as raised:
+                            test_merge_tree(directory, BASE, HEAD_1, run=run, timeout_seconds=9)
+                        self.assertIsNotNone(raised.exception.__cause__)
+
     def test_test_merge_falls_back_without_lfs_smudge_when_merge_tree_is_unavailable(self):
         tree = "9" * 40
         calls = []
@@ -7275,7 +7358,227 @@ class ControllerTests(unittest.TestCase):
         self.assertTrue(all(pr_number <= 6 for pr_number, _ in evidence.history_reads))
         self.assertEqual(report["scope"], "selected PR and configured ancestors")
 
-    def test_review_action_preflights_do_not_use_overview_batch_or_tail_scope(self):
+    def test_target_selection_reuses_the_exact_anchor_computed_by_reconciliation(self):
+        values, heads = _stacked_prs(1)
+        controller = self.make(values, heads=heads)
+        controller.set_stack([1])
+
+        target = controller.resolve_cli_target()
+
+        self.assertEqual(target.snapshot.number, 1)
+        self.assertEqual(controller.git.merge_base_calls, [(BASE, values[1].head)])
+        self.assertEqual(controller.git.patch_identity_calls, [(BASE, values[1].head)])
+
+    def test_budgeted_runs_batch_fresh_identity_for_the_entire_configured_stack(self):
+        for channel in ("hosted", "cli"):
+            with self.subTest(channel=channel):
+                values, heads = _stacked_prs(3)
+                evidence = CountingEvidence()
+                controller = self.make(values, evidence, heads=heads)
+                controller.set_stack(list(values))
+                batch_calls = []
+                selected = []
+
+                def fetch(numbers, batch_calls=batch_calls, values=values):
+                    batch_calls.append(tuple(numbers))
+                    return {number: _batch_identity(values[number]) for number in numbers}
+
+                controller.github.batch_pull_requests = fetch
+                setattr(
+                    controller,
+                    f"{channel}_adapter",
+                    lambda target, selected=selected, **_kwargs: selected.append(target.snapshot.number) or "prepared",
+                )
+                with patch.object(controller.github, "pull_request", side_effect=AssertionError("selection must use its fresh batch")):
+                    result = getattr(controller, f"run_{channel}")()
+
+                self.assertEqual(result, "prepared")
+                self.assertEqual(batch_calls, [(1, 2, 3)])
+                self.assertEqual(selected, [1])
+                self.assertEqual(
+                    set(evidence.history_reads),
+                    {(number, name) for number in values for name in ("hosted", "cli")},
+                )
+
+    def test_hosted_reselection_refreshes_the_batch_under_the_original_budget(self):
+        for retry_error in (_SelectionChanged, StaleReviewTarget, HostedAdmissionBusy):
+            with self.subTest(retry_error=retry_error.__name__):
+                values, heads = _stacked_prs(1)
+                controller = self.make(values, heads=heads)
+                controller.set_stack(list(values))
+                batch_budgets = []
+                targets = []
+
+                def fetch(numbers, batch_budgets=batch_budgets, values=values):
+                    batch_budgets.append(github.active_hosted_preflight_budget())
+                    return {number: _batch_identity(values[number]) for number in numbers}
+
+                def adapter(target, targets=targets, retry_error=retry_error, **_kwargs):
+                    targets.append(target)
+                    if len(targets) == 1:
+                        raise retry_error("fresh selection required")
+                    return "prepared"
+
+                controller.github.batch_pull_requests = fetch
+                controller.hosted_adapter = adapter
+                with github.hosted_preflight_budget(timeout_seconds=30) as budget, patch("pr_review.controller.time.sleep"):
+                    self.assertEqual(controller.run_hosted(expected_pr=1), "prepared")
+                self.assertEqual(batch_budgets, [budget, budget])
+                self.assertEqual(len(targets), 2)
+
+    def test_budgeted_identity_batches_report_chunk_progress_and_share_expiry(self):
+        values, _heads = _stacked_prs(26)
+        for channel in ("Hosted", "CLI"):
+            for expire in (False, True):
+                with self.subTest(channel=channel, expire=expire):
+                    calls = []
+                    with github.activate_hosted_preflight_budget(30, preflight_name=channel) as budget:
+                        budget.set_phase("target_identity_batch", total=2)
+
+                        def query(_query, _variables, calls=calls, expire=expire):
+                            calls.append(budget.request_timeout(30))
+                            if len(calls) == 2:
+                                self.assertEqual(budget.completed, 1)
+                                if expire:
+                                    budget.deadline = time.monotonic() - 1
+                                    budget.remaining_seconds()
+                            numbers = range(1, 26) if len(calls) == 1 else (26,)
+                            return {"data": {"repository": {f"pr_{number}": _batch_identity(values[number]) for number in numbers}}}
+
+                        with patch.object(github, "run_gh_query", side_effect=query):
+                            if expire:
+                                with self.assertRaisesRegex(
+                                    github.HostedPreflightDeadlineExceeded,
+                                    f"{channel} preflight deadline exceeded.*completed=1/2",
+                                ):
+                                    github.fetch_pr_identity_batch("owner/repo", tuple(values))
+                            else:
+                                self.assertEqual(set(github.fetch_pr_identity_batch("owner/repo", tuple(values))), set(values))
+                                self.assertEqual(budget.completed, 2)
+                    self.assertEqual(len(calls), 2)
+                    self.assertLessEqual(calls[1], calls[0])
+
+    def test_cli_selection_change_reselects_with_the_same_active_budget(self):
+        controller = self.make({1: pr(1, HEAD_1)}, heads={"develop": BASE, "feature-1": HEAD_1})
+        controller.set_stack([1])
+        adapter_targets = []
+
+        def adapter(target, **_kwargs):
+            adapter_targets.append(target)
+            self.assertIs(github.active_hosted_preflight_budget(), budget)
+            if len(adapter_targets) == 1:
+                raise _SelectionChanged("selection changed during admission")
+            return target
+
+        controller.cli_adapter = adapter
+        with github.cli_preflight_budget(timeout_seconds=30) as budget:
+            result = controller.run_cli(expected_pr=1)
+
+        self.assertIs(result, adapter_targets[-1])
+        self.assertEqual(len(adapter_targets), 2)
+        self.assertTrue(budget.active)
+
+    def test_stale_default_base_reselects_cli_target(self):
+        advanced_base = "9" * 40
+        values = {1: pr(1, HEAD_1)}
+        controller = self.make(values, heads={"develop": BASE, "feature-1": HEAD_1})
+        controller.set_stack([1])
+        selected_targets = []
+
+        def adapter(target, **_kwargs):
+            selected_targets.append(target)
+            if len(selected_targets) == 1:
+                controller.git.heads["develop"] = advanced_base
+                controller.github.values[1] = pr(1, HEAD_1, base_tip=advanced_base)
+                raise StaleReviewTargetError("default base advanced after CLI target selection")
+            return target
+
+        controller.cli_adapter = adapter
+
+        result = controller.run_cli(expected_pr=1)
+
+        self.assertIs(result, selected_targets[-1])
+        self.assertEqual(len(selected_targets), 2)
+        self.assertEqual(selected_targets[0].parent.head_sha, BASE)
+        self.assertEqual(selected_targets[1].parent.head_sha, advanced_base)
+        self.assertTrue(selected_targets[1].default_base_front)
+
+    def test_cli_deadline_expiring_during_reselection_prevents_another_runner_start(self):
+        controller = self.make({1: pr(1, HEAD_1)}, heads={"develop": BASE, "feature-1": HEAD_1})
+        controller.set_stack([1])
+        runner_starts = []
+        target_reads = []
+
+        def adapter(_target, **_kwargs):
+            runner_starts.append("started")
+            raise _SelectionChanged("selection changed during admission")
+
+        controller.cli_adapter = adapter
+        original_target = controller._target
+
+        def expire_on_reselection(*args, **kwargs):
+            target_reads.append("selected")
+            if len(target_reads) == 2:
+                budget.deadline = time.monotonic() - 1
+                budget.remaining_seconds()
+            return original_target(*args, **kwargs)
+
+        with (
+            github.cli_preflight_budget(timeout_seconds=30) as budget,
+            patch.object(controller, "_target", side_effect=expire_on_reselection),
+            self.assertRaisesRegex(
+                ControllerError,
+                r"CLI preflight deadline exceeded \(phase=target_reselection, .*completed=0/1, budget=30s\)",
+            ),
+        ):
+            controller.run_cli(expected_pr=1)
+
+        self.assertEqual(target_reads, ["selected", "selected"])
+        self.assertEqual(runner_starts, ["started"])
+        self.assertTrue(budget.active)
+        self.assertLessEqual(budget.deadline, time.monotonic())
+
+    def test_budgeted_runs_fail_closed_when_batched_stack_identity_is_incomplete(self):
+        for channel in ("hosted", "cli"):
+            for malformed in ("missing", "null", "extra", "number", "files"):
+                with self.subTest(channel=channel, malformed=malformed):
+                    values, heads = _stacked_prs(2)
+                    controller = self.make(values, heads=heads)
+                    controller.set_stack(list(values))
+                    identities = {number: _batch_identity(value) for number, value in values.items()}
+                    if malformed == "missing":
+                        identities.pop(2)
+                    elif malformed == "null":
+                        identities[2] = None
+                    elif malformed == "extra":
+                        identities[3] = _batch_identity(values[1])
+                    elif malformed == "number":
+                        identities[2]["number"] = True
+                    else:
+                        identities[2]["changedFiles"] = -1
+                    controller.github.batch_pull_requests = lambda _numbers, identities=identities: identities
+                    setattr(
+                        controller,
+                        f"{channel}_adapter",
+                        lambda *_args, **_kwargs: self.fail("incomplete stack identity must not reach admission"),
+                    )
+                    with self.assertRaisesRegex(
+                        ControllerError,
+                        f"fresh live identity is incomplete for the configured {channel.upper()} review stack",
+                    ):
+                        getattr(controller, f"run_{channel}")()
+
+    def test_live_identity_batch_includes_the_file_count_used_by_cli_runner_validation(self):
+        values, _heads = _stacked_prs(1)
+        payload = {"data": {"repository": {"pr_1": _batch_identity(values[1])}}}
+
+        with patch.object(github, "run_gh_query", return_value=payload) as query:
+            result = github.fetch_pr_identity_batch("owner/repo", (1,))
+
+        self.assertEqual(result[1]["changedFiles"], values[1].changed_files)
+        self.assertIn("changedFiles", query.call_args.args[0])
+
+    def test_hosted_review_action_preflight_does_not_use_overview_batch_or_tail_scope(self):
         values, heads = _stacked_prs(3)
         evidence = CountingEvidence()
         controller = self.make(values, evidence, heads=heads)
