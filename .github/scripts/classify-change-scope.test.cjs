@@ -138,6 +138,8 @@ test("workflow and Gradle wrapper changes force all module validation", () => {
     ".github/scripts/classify-change-scope.cjs",
     "gradlew",
     "gradlew.bat",
+    "dev-tools/validation/run-locked-gradle.sh",
+    "dev-tools/validation/gradle-run-supervisor.py",
   ]) {
     const result = classifyChangeScope([path]);
     assert.equal(result.runAll, true, path);

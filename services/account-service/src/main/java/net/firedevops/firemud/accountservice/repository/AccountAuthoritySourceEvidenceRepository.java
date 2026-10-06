@@ -332,16 +332,6 @@ public class AccountAuthoritySourceEvidenceRepository {
     if (stream == null || nonnegative(stream, "last_sequence") != sequence) {
       throw new SourceEvidenceUnavailableException();
     }
-    Record eventCountRow =
-        dsl.fetchOne(
-            "SELECT count(*) AS event_count FROM account_authority_outbox_events "
-                + "WHERE outbox_stream_key = ?",
-            key);
-    Long eventCount = eventCountRow == null ? null : eventCountRow.get("event_count", Long.class);
-    if (eventCount == null || eventCount != sequence) {
-      throw new SourceEvidenceUnavailableException();
-    }
-
     SourceCheckpoint checkpoint;
     Optional<AccountAuthoritySourceEventV1Codec.AccountSecurityCutoff> cutoff = Optional.empty();
     SourceEvent latest = null;
@@ -357,7 +347,7 @@ public class AccountAuthoritySourceEvidenceRepository {
       }
       checkpoint = new SourceCheckpoint(key, 0L, Optional.empty(), Optional.empty());
     } else {
-      latest = verifyEventHistory(scope, key, sequence, authority, fence);
+      latest = verifyLatestEvent(scope, key, sequence, authority, fence);
       if (!latest.eventId().equals(source.get("last_event_id", String.class))
           || !latest.eventDigest().equals(source.get("last_event_digest", String.class))) {
         throw new SourceEvidenceUnavailableException();
@@ -407,54 +397,53 @@ public class AccountAuthoritySourceEvidenceRepository {
         source.get("account_repository_insert_transaction_id", Long.class));
   }
 
-  private SourceEvent verifyEventHistory(
+  private SourceEvent verifyLatestEvent(
       AuthorityScope scope,
       String streamKey,
       long sequence,
       ScopeState authority,
       IssuanceFence fence) {
-    SourceEvent latest = null;
-    for (long current = 1L; current <= sequence; current++) {
-      Event stored =
-          outbox
-              .findEvent(streamKey, current)
-              .orElseThrow(() -> new SourceEvidenceUnavailableException());
-      final SourceEvent event;
-      try {
-        event =
-            AccountAuthoritySourceEventV1Codec.verify(
-                new String(stored.payload(), StandardCharsets.UTF_8));
-      } catch (RuntimeException malformed) {
-        throw new SourceEvidenceUnavailableException();
-      }
-      if (!stored.eventId().equals(event.eventId())
-          || !stored.requestId().equals(event.requestId())
-          || !stored.outboxStreamKey().equals(event.outboxStreamKey())
-          || stored.outboxSequence() != Long.parseLong(event.outboxSequence())
-          || !stored.eventDigest().equals(event.eventDigest())
-          || (scope.kind() == ScopeKind.ISSUER && !(event instanceof IssuerEvent))
-          || (scope.kind() == ScopeKind.ACCOUNT && !(event instanceof AccountEvent))) {
-        throw new SourceEvidenceUnavailableException();
-      }
-      if (event instanceof IssuerEvent issuer
-          && (!issuer.issuerId().equals(scope.issuerId())
-              || Long.parseLong(issuer.issuerAuthGeneration()) != current + 1L
-              || Long.parseLong(issuer.sourceVersion()) != current + 1L)) {
-        throw new SourceEvidenceUnavailableException();
-      }
-      if (event instanceof AccountEvent account
-          && (!account.accountId().equals(scope.accountId().toString())
-              || Long.parseLong(account.accountAuthorityGeneration()) != current + 1L
-              || Long.parseLong(account.sourceVersion()) != current + 1L
-              || Long.parseLong(account.issuanceFence()) != current + 1L
-              || Long.parseLong(account.issuanceFenceSourceVersion()) != current + 1L)) {
-        throw new SourceEvidenceUnavailableException();
-      }
-      latest = event;
+    // V38/V40 enforce immutable events, contiguous stream advances, and committed head/history
+    // consistency. The read path therefore verifies the exact current event rather than replaying
+    // an ever-growing retained history.
+    Event stored =
+        outbox
+            .findEvent(streamKey, sequence)
+            .orElseThrow(() -> new SourceEvidenceUnavailableException());
+    final SourceEvent latest;
+    try {
+      latest =
+          AccountAuthoritySourceEventV1Codec.verify(
+              new String(stored.payload(), StandardCharsets.UTF_8));
+    } catch (RuntimeException malformed) {
+      throw new SourceEvidenceUnavailableException();
     }
-    if (latest == null
-        || Long.parseLong(latest.outboxSequence()) != sequence
-        || authority.generation() != sequence + 1L
+    if (!stored.eventId().equals(latest.eventId())
+        || !stored.requestId().equals(latest.requestId())
+        || !stored.outboxStreamKey().equals(latest.outboxStreamKey())
+        || stored.outboxSequence() != Long.parseLong(latest.outboxSequence())
+        || !stored.eventDigest().equals(latest.eventDigest())
+        || (scope.kind() == ScopeKind.ISSUER && !(latest instanceof IssuerEvent))
+        || (scope.kind() == ScopeKind.ACCOUNT && !(latest instanceof AccountEvent))) {
+      throw new SourceEvidenceUnavailableException();
+    }
+    if (latest instanceof IssuerEvent issuer
+        && (!issuer.issuerId().equals(scope.issuerId())
+            || Long.parseLong(issuer.outboxSequence()) != sequence
+            || Long.parseLong(issuer.issuerAuthGeneration()) != sequence + 1L
+            || Long.parseLong(issuer.sourceVersion()) != sequence + 1L)) {
+      throw new SourceEvidenceUnavailableException();
+    }
+    if (latest instanceof AccountEvent account
+        && (!account.accountId().equals(scope.accountId().toString())
+            || Long.parseLong(account.outboxSequence()) != sequence
+            || Long.parseLong(account.accountAuthorityGeneration()) != sequence + 1L
+            || Long.parseLong(account.sourceVersion()) != sequence + 1L
+            || Long.parseLong(account.issuanceFence()) != sequence + 1L
+            || Long.parseLong(account.issuanceFenceSourceVersion()) != sequence + 1L)) {
+      throw new SourceEvidenceUnavailableException();
+    }
+    if (authority.generation() != sequence + 1L
         || authority.sourceVersion() != sequence + 1L
         || (scope.kind() == ScopeKind.ACCOUNT
             && (fence == null

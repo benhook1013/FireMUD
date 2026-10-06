@@ -5645,7 +5645,7 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void deleteAccountRemovesAccountOwnedRowsAfterTerminalSubscriptions() {
+  void deleteAccountRemainsUnavailableAfterTerminalSubscriptionsWithoutChildWrites() {
     Account account = new Account();
     account.setId(2L);
     Subscription subscription = new Subscription();
@@ -5656,17 +5656,22 @@ class AccountServiceImplTest {
     when(accountRepository.findById(2L)).thenReturn(Optional.of(account));
     when(subscriptionRepository.findByAccountId(2L)).thenReturn(java.util.List.of(subscription));
 
-    service.deleteAccount(2L);
+    AccountLifecycleException ex =
+        assertThrows(AccountLifecycleException.class, () -> service.deleteAccount(2L));
+    assertEquals("ACCOUNT_DELETE_UNAVAILABLE", ex.getCode());
 
-    org.mockito.Mockito.verify(emailVerificationTokenRepository).deleteByAccountId(2L);
-    org.mockito.Mockito.verify(passwordResetTokenRepository).deleteByAccountId(2L);
-    org.mockito.Mockito.verify(accountRealmAccessGrantRepository).deleteByAccountId(2L);
-    org.mockito.Mockito.verify(externalAccountRepository).deleteByAccountId(2L);
-    org.mockito.Mockito.verify(paymentTransactionRepository).deleteByAccountId(2L);
-    org.mockito.Mockito.verify(subscriptionRepository).deleteByAccountId(2L);
-    org.mockito.Mockito.verify(profileRepository).deleteByAccountId(2L);
-    org.mockito.Mockito.verify(accountTenantMembershipRepository).deleteByAccountId(2L);
-    org.mockito.Mockito.verify(accountRepository).delete(account);
+    org.mockito.Mockito.verifyNoInteractions(
+        emailVerificationTokenRepository,
+        passwordResetTokenRepository,
+        accountRealmAccessGrantRepository,
+        externalAccountRepository,
+        paymentTransactionRepository,
+        profileRepository,
+        accountTenantMembershipRepository);
+    org.mockito.Mockito.verify(subscriptionRepository).findByAccountId(2L);
+    org.mockito.Mockito.verify(subscriptionRepository, org.mockito.Mockito.never())
+        .deleteByAccountId(2L);
+    org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never()).delete(account);
   }
 
   @Test

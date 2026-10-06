@@ -16,6 +16,7 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRe
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.CanonicalJoinOperationConflictException;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.PairAuthority;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.TenantProvenanceKind;
@@ -111,7 +112,7 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
                     () ->
                         fixture.producer.publishCanonicalFirstJoinMembershipChange(
                             fixture.scope, fixture.requestId, "another-caller")))
-        .isInstanceOf(IllegalStateException.class)
+        .isInstanceOf(CanonicalJoinOperationConflictException.class)
         .hasMessageContaining("request, caller, scope, or available policy");
     assertThat(fixture.count("account_authority_outbox_events", "outbox_stream_key", stream))
         .isEqualTo(1L);
@@ -187,7 +188,7 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
                     () ->
                         fixture.terminalCoordinator.commitCanonicalFirstJoin(
                             fixture.scope, fixture.requestId, "another-caller")))
-        .isInstanceOf(IllegalStateException.class);
+        .isInstanceOf(CanonicalJoinOperationConflictException.class);
     assertThat(fixture.count("account_authority_outbox_events", "outbox_stream_key", stream))
         .isEqualTo(1L);
     assertThat(fixture.count("account_audit_outbox", "audit_event_id", proof.auditEventId()))
