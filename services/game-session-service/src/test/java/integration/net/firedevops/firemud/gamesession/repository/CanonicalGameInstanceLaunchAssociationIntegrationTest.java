@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorClient;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
@@ -319,11 +320,15 @@ class CanonicalGameInstanceLaunchAssociationIntegrationTest {
       assertThatThrownBy(() -> transaction.execute(status -> instances.save(instance)))
           .hasRootCauseMessage(
               "Fresh Game Session instance requires one exact complete launch association");
-      assertThat(
+      Record gameInstanceCountRow =
+          Objects.requireNonNull(
               dsl.fetchOne(
-                      "SELECT count(*) FROM game_instances WHERE tenant_id = ?",
-                      tenant.legacyGameSessionTenantId())
-                  .get(0, Long.class))
+                  "SELECT count(*) FROM game_instances WHERE tenant_id = ?",
+                  tenant.legacyGameSessionTenantId()),
+              "game instance count query must return one row");
+      assertThat(
+              Objects.requireNonNull(
+                  gameInstanceCountRow.get(0, Long.class), "game instance count must be present"))
           .isZero();
 
       GameInstance legacy = new GameInstance();

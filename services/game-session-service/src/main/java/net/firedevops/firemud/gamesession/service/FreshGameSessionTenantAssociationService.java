@@ -1,6 +1,5 @@
 package net.firedevops.firemud.gamesession.service;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
@@ -15,11 +14,6 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * Explicit, non-bean boundary for exact authenticated fresh Game Design identity and its Game
  * Session-owned local association. This is identity ownership only, not admission authority.
  */
-@SuppressFBWarnings(
-    value = "CT_CONSTRUCTOR_THROW",
-    justification =
-        "Trusted collaborators and namespace are validated before use; construction performs no"
-            + " I/O, and this owner path is intentionally not a Spring bean.")
 public final class FreshGameSessionTenantAssociationService {
   private static final UUID NIL_UUID = new UUID(0L, 0L);
 

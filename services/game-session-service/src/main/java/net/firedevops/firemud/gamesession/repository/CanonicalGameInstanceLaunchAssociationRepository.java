@@ -1,6 +1,5 @@
 package net.firedevops.firemud.gamesession.repository;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -19,11 +18,6 @@ import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
 /** Explicit Game Session owner persistence for the exact launch-to-instance binding. */
-@SuppressFBWarnings(
-    value = "CT_CONSTRUCTOR_THROW",
-    justification =
-        "The explicit owner boundary validates trusted collaborators and performs no I/O while"
-            + " constructing; it is deliberately not a Spring bean.")
 public final class CanonicalGameInstanceLaunchAssociationRepository {
   private static final UUID NIL_UUID = new UUID(0L, 0L);
   private static final ObjectMapper JSON = new ObjectMapper();

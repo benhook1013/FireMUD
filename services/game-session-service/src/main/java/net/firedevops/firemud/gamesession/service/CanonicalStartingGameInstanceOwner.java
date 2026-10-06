@@ -1,6 +1,5 @@
 package net.firedevops.firemud.gamesession.service;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -29,11 +28,6 @@ import org.springframework.transaction.support.TransactionTemplate;
  * Explicit non-bean producer for a source-qualified Game Session STARTING row and its immutable
  * launch association. It does not authorize the acting Account, call World, or admit gameplay.
  */
-@SuppressFBWarnings(
-    value = "CT_CONSTRUCTOR_THROW",
-    justification =
-        "Trusted owner collaborators and namespace are validated before use; construction performs"
-            + " no I/O and deliberately does not activate the launch path.")
 public final class CanonicalStartingGameInstanceOwner {
   private static final String STARTING = "STARTING";
   private static final String RUN_OWNED_LAUNCH_DIGEST_SCHEMA =
