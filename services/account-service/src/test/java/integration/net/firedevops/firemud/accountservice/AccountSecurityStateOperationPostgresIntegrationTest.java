@@ -77,11 +77,13 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
     assertThat(actualSource.initializationTransactionId())
         .isEqualTo(actualSource.accountRepositoryInsertTransactionId());
     assertThat(
-            fixture
-                .dsl()
-                .fetchOne(
-                    "SELECT last_sequence FROM account_authority_outbox_streams WHERE outbox_stream_key = ?",
-                    stream(seed.account().getAccountUuid()))
+            Objects.requireNonNull(
+                    fixture
+                        .dsl()
+                        .fetchOne(
+                            "SELECT last_sequence FROM account_authority_outbox_streams WHERE outbox_stream_key = ?",
+                            stream(seed.account().getAccountUuid())),
+                    "Expected persisted Account authority outbox stream row")
                 .get(0, Long.class))
         .isZero();
     Pending pending = pending(fixture, seed, state(false), state(true), 0L, new byte[0]);
@@ -146,10 +148,13 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
       assertThat(tx(fixture, () -> fixture.generations().read(seed.source().scope())))
           .isEqualTo(seed.source());
       assertThat(
-              fixture
-                  .dsl()
-                  .fetchOne(
-                      "SELECT email_verified FROM accounts WHERE id = ?", seed.account().getId())
+              Objects.requireNonNull(
+                      fixture
+                          .dsl()
+                          .fetchOne(
+                              "SELECT email_verified FROM accounts WHERE id = ?",
+                              seed.account().getId()),
+                      "Expected persisted Account row after rejected security-state operation")
                   .get(0, Boolean.class))
           .isFalse();
     }
@@ -182,10 +187,13 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
             });
     assertThat(saved.getRole()).isEqualTo("player");
     assertThat(
-            fixture
-                .dsl()
-                .fetchOne(
-                    "SELECT role FROM accounts WHERE account_uuid = ?", saved.getAccountUuid())
+            Objects.requireNonNull(
+                    fixture
+                        .dsl()
+                        .fetchOne(
+                            "SELECT role FROM accounts WHERE account_uuid = ?",
+                            saved.getAccountUuid()),
+                    "Expected persisted Account role row")
                 .get("role", String.class))
         .isEqualTo("player");
 
@@ -677,10 +685,13 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
         .isInstanceOf(RuntimeException.class);
     assertThat(missing.dsl().fetchCount(DSL.table("account_authority_outbox_events"))).isZero();
     assertThat(
-            missing
-                .dsl()
-                .fetchOne(
-                    "SELECT email_verified FROM accounts WHERE id = ?", seed.account().getId())
+            Objects.requireNonNull(
+                    missing
+                        .dsl()
+                        .fetchOne(
+                            "SELECT email_verified FROM accounts WHERE id = ?",
+                            seed.account().getId()),
+                    "Expected persisted Account row after missing-receipt rejection")
                 .get(0, Boolean.class))
         .isFalse();
 
@@ -698,10 +709,13 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
                         other.account().getId()))
         .isInstanceOf(RuntimeException.class);
     assertThat(
-            changed
-                .dsl()
-                .fetchOne(
-                    "SELECT email_verified FROM accounts WHERE id = ?", other.account().getId())
+            Objects.requireNonNull(
+                    changed
+                        .dsl()
+                        .fetchOne(
+                            "SELECT email_verified FROM accounts WHERE id = ?",
+                            other.account().getId()),
+                    "Expected persisted Account row after rejected poststate change")
                 .get(0, Boolean.class))
         .isTrue();
     tx(

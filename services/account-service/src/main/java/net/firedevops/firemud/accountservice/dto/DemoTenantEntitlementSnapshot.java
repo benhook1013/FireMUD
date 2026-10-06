@@ -1,5 +1,6 @@
 package net.firedevops.firemud.accountservice.dto;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.regex.Pattern;
@@ -34,6 +35,10 @@ public record DemoTenantEntitlementSnapshot(
   private static final UUID NIL_UUID = new UUID(0L, 0L);
   private static final Pattern EVENT_DIGEST = Pattern.compile("sha256:[0-9a-f]{64}");
 
+  @SuppressFBWarnings(
+      value = "NP_LOAD_OF_KNOWN_NULL_VALUE",
+      justification =
+          "NON_PAID_DEMO requires null subscriptionStatus; the compact record constructor implicitly stores that validated null.")
   public DemoTenantEntitlementSnapshot {
     if (canonicalTenantId == null || NIL_UUID.equals(canonicalTenantId)) {
       throw new IllegalArgumentException("Canonical tenant UUID is required");
