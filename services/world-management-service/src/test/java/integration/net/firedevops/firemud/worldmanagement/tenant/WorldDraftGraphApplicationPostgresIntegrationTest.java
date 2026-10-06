@@ -6,9 +6,18 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.util.JsonFormat;
 import io.grpc.Context;
+import io.grpc.Server;
+import io.grpc.ServerInterceptors;
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
+import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
+import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
+import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
+import io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder;
 import io.grpc.stub.StreamObserver;
+import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.OffsetDateTime;
@@ -30,6 +39,7 @@ import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
+import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorClient;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
@@ -43,7 +53,10 @@ import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvi
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalReadEvidence;
 import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationClient;
 import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadEvidence;
+import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
+import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
 import net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding;
@@ -51,6 +64,7 @@ import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.common.world.CanonicalWorldInstancePreparationClient;
 import net.firedevops.firemud.common.world.CanonicalWorldInstancePreparationGrpcCodec;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleGrpcCodec;
@@ -90,6 +104,7 @@ import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.mockito.Mockito;
 import org.springframework.aop.framework.ProxyFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -123,7 +138,13 @@ import tools.jackson.databind.ObjectMapper;
     properties = "spring.grpc.server.port=0")
 class WorldDraftGraphApplicationPostgresIntegrationTest {
   private static final String NAMESPACE = "firemud";
+  private static final String GAME_SESSION_WORKLOAD_URI =
+      "spiffe://firemud/ns/firemud/sa/game-session-service";
+  private static final String WRONG_WORKLOAD_URI =
+      "spiffe://firemud/ns/firemud/sa/game-design-service";
   private static final long GAME_DESIGN_VERSION = 9_000_000_000_000_001L;
+
+  @TempDir Path temporaryDirectory;
 
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
@@ -294,7 +315,8 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   }
 
   @Test
-  void authenticatedPreparationAdapterBindsFreshLaunchAndReadsActualPreparingLifecycle() {
+  void authenticatedPreparationAdapterBindsFreshLaunchAndReadsActualPreparingLifecycle()
+      throws Exception {
     Fixture f = fixture();
     var original = application(generationFreePlan(f));
     var selectedRoom =
@@ -372,158 +394,195 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
                 ownerRequest.canonicalTenantId(),
                 ownerRequest.controlPlaneRequestId()))
         .isZero();
-    var firstRequest = CanonicalWorldInstancePreparationGrpcCodec.toRequest(ownerRequest);
-    var firstResponse = invokePreparationAsGameSession(adapter, firstRequest);
-    assertThat(firstResponse.getRequest()).isEqualTo(firstRequest);
-    assertThat(
-            completeLaunchBindingCount(
-                ownerRequest.targetNamespace(),
-                ownerRequest.canonicalTenantId(),
-                ownerRequest.controlPlaneRequestId()))
-        .isEqualTo(1L);
+    var preparationPki = WorldPreparationTestWorkloadPki.create(temporaryDirectory);
+    Server transport = startPreparationTransport(adapter, preparationPki);
+    try {
+      var allocationsBeforeWrongPeer =
+          canonicalPreparationAllocationRows(f, ownerRequest.gameInstanceUuid());
+      var expectedFirstLifecycleRequest =
+          lifecycleReadRequest(ownerRequest, evidence, isolatedOwners.playableStateNamespaceId());
+      try (var wrongPeerClient =
+          preparationClient(transport, preparationPki.clientProperties(WRONG_WORKLOAD_URI))) {
+        wrongPeerClient.init();
+        assertThatThrownBy(
+                () -> wrongPeerClient.prepare(ownerRequest, expectedFirstLifecycleRequest))
+            .isInstanceOf(StatusRuntimeException.class)
+            .satisfies(
+                failure ->
+                    assertThat(((StatusRuntimeException) failure).getStatus().getCode())
+                        .isEqualTo(Status.Code.PERMISSION_DENIED));
+      }
+      assertThat(
+              completeLaunchBindingCount(
+                  ownerRequest.targetNamespace(),
+                  ownerRequest.canonicalTenantId(),
+                  ownerRequest.controlPlaneRequestId()))
+          .isZero();
+      assertThat(canonicalPreparationAllocationRows(f, ownerRequest.gameInstanceUuid()))
+          .isEqualTo(allocationsBeforeWrongPeer);
 
-    var actualInput = isolatedOwners.service().assemble(stableSelector);
-    assertThat(actualInput.gameSessionReadEvidence().currentGameSessionStatus())
-        .isEqualTo("STARTING");
-    assertThat(actualInput.topologyPlan().sourceBinding().freeze())
-        .isEqualTo(frozen.request().freeze());
-    var firstLifecycleRequest = lifecycleReadRequest(firstRequest, actualInput);
-    var firstActualLifecycle = lifecycleRepository.read(firstLifecycleRequest).orElseThrow();
-    var firstLifecycle =
-        CanonicalWorldInstancePreparationGrpcCodec.fromResponse(
-            ownerRequest, firstLifecycleRequest, firstResponse);
-    assertThat(firstLifecycle).isEqualTo(firstActualLifecycle);
-    assertThat(firstLifecycle.lifecycleStatus()).isEqualTo("PREPARING");
-    assertThat(firstLifecycle.lifecycleEpoch()).isEqualTo(1L);
-    assertThat(firstLifecycle.launchBinding()).isEqualTo(evidence);
-    assertThat(firstLifecycle.captureId()).isEqualTo(frozen.captureId());
-    assertThat(firstLifecycle.startLocation().roomTemplateId()).isEqualTo(selectedRoom);
-    assertThat(firstLifecycle.startLocation().roomTemplateId())
-        .isNotEqualTo(actualInput.topologyPlan().rooms().getFirst().identity().templateId());
-    assertThat(firstLifecycle.runtimeRoomInstanceId()).isPositive();
-    assertThat(verifierInvocations).hasValue(1);
+      try (var client =
+          preparationClient(
+              transport, preparationPki.clientProperties(GAME_SESSION_WORKLOAD_URI))) {
+        client.init();
+        var firstLifecycle = client.prepare(ownerRequest, expectedFirstLifecycleRequest);
+        assertThat(
+                completeLaunchBindingCount(
+                    ownerRequest.targetNamespace(),
+                    ownerRequest.canonicalTenantId(),
+                    ownerRequest.controlPlaneRequestId()))
+            .isEqualTo(1L);
 
-    var selectedRoomPlan =
-        actualInput.topologyPlan().rooms().stream()
-            .filter(room -> room.identity().templateId().equals(selectedRoom))
-            .findFirst()
-            .orElseThrow();
-    var selectedZonePlan =
-        actualInput.topologyPlan().zones().stream()
-            .filter(zone -> zone.identity().equals(selectedRoomPlan.zone()))
-            .findFirst()
-            .orElseThrow();
-    var materializedRegion =
-        materializedOperationalRegionRow(
-            ownerRequest.gameInstanceUuid(),
-            selectedZonePlan.region().templateId(),
-            selectedRoomPlan.zone().templateId(),
-            selectedRoom);
-    UUID operationalRegionId = materializedRegion.get("operational_region_id", UUID.class);
-    UUID canonicalRegionInstanceId =
-        materializedRegion.get("canonical_region_instance_id", UUID.class);
-    assertThat(operationalRegionId).isNotNull().isNotEqualTo(new UUID(0L, 0L));
-    assertThat(operationalRegionId).isNotEqualTo(canonicalRegionInstanceId);
-    assertThat(materializedRegion.get("canonical_runtime_identity", UUID.class))
-        .isEqualTo(canonicalRegionInstanceId);
-    assertThat(materializedRegion.get("region_tenant_id", Long.class))
-        .isEqualTo(materializedRegion.get("room_tenant_id", Long.class));
-    assertThat(materializedRegion.get("region_game_instance_id", Long.class))
-        .isEqualTo(materializedRegion.get("room_game_instance_id", Long.class));
-    assertThat(materializedRegion.get("region_row_id", Long.class))
-        .isEqualTo(materializedRegion.get("room_region_instance_id", Long.class));
-    assertThat(materializedRegion.get("region_row_id", Long.class))
-        .isEqualTo(materializedRegion.get("zone_region_instance_id", Long.class));
-    assertThat(materializedRegion.get("zone_row_id", Long.class))
-        .isEqualTo(materializedRegion.get("room_zone_instance_id", Long.class));
-    String retainedOperationalRegionRow = materializedRegion.get("region_row_json", String.class);
+        var actualInput = isolatedOwners.service().assemble(stableSelector);
+        assertThat(actualInput.gameSessionReadEvidence().currentGameSessionStatus())
+            .isEqualTo("STARTING");
+        assertThat(actualInput.topologyPlan().sourceBinding().freeze())
+            .isEqualTo(frozen.request().freeze());
+        var firstLifecycleRequest =
+            lifecycleReadRequest(
+                CanonicalWorldInstancePreparationGrpcCodec.toRequest(ownerRequest), actualInput);
+        assertThat(firstLifecycleRequest).isEqualTo(expectedFirstLifecycleRequest);
+        var firstActualLifecycle = lifecycleRepository.read(firstLifecycleRequest).orElseThrow();
+        assertThat(firstLifecycle).isEqualTo(firstActualLifecycle);
+        assertThat(firstLifecycle.lifecycleStatus()).isEqualTo("PREPARING");
+        assertThat(firstLifecycle.lifecycleEpoch()).isEqualTo(1L);
+        assertThat(firstLifecycle.launchBinding()).isEqualTo(evidence);
+        assertThat(firstLifecycle.captureId()).isEqualTo(frozen.captureId());
+        assertThat(firstLifecycle.startLocation().roomTemplateId()).isEqualTo(selectedRoom);
+        assertThat(firstLifecycle.startLocation().roomTemplateId())
+            .isNotEqualTo(actualInput.topologyPlan().rooms().getFirst().identity().templateId());
+        assertThat(firstLifecycle.runtimeRoomInstanceId()).isPositive();
+        assertThat(verifierInvocations).hasValue(1);
 
-    var mappedRoom =
-        Objects.requireNonNull(
-            dsl.fetchOne(
-                "SELECT r.room_instance_row_id AS room_instance_id FROM world_canonical_instance_topology_identity m "
-                    + "JOIN room_instance r ON r.id=m.runtime_row_id WHERE m.canonical_game_instance_id=? AND m.family='ROOM' AND m.template_id=?",
+        var selectedRoomPlan =
+            actualInput.topologyPlan().rooms().stream()
+                .filter(room -> room.identity().templateId().equals(selectedRoom))
+                .findFirst()
+                .orElseThrow();
+        var selectedZonePlan =
+            actualInput.topologyPlan().zones().stream()
+                .filter(zone -> zone.identity().equals(selectedRoomPlan.zone()))
+                .findFirst()
+                .orElseThrow();
+        var materializedRegion =
+            materializedOperationalRegionRow(
                 ownerRequest.gameInstanceUuid(),
-                selectedRoom));
-    assertThat(mappedRoom.get("room_instance_id", Long.class))
-        .isEqualTo(firstLifecycle.runtimeRoomInstanceId());
+                selectedZonePlan.region().templateId(),
+                selectedRoomPlan.zone().templateId(),
+                selectedRoom);
+        UUID operationalRegionId = materializedRegion.get("operational_region_id", UUID.class);
+        UUID canonicalRegionInstanceId =
+            materializedRegion.get("canonical_region_instance_id", UUID.class);
+        assertThat(operationalRegionId).isNotNull().isNotEqualTo(new UUID(0L, 0L));
+        assertThat(operationalRegionId).isNotEqualTo(canonicalRegionInstanceId);
+        assertThat(materializedRegion.get("canonical_runtime_identity", UUID.class))
+            .isEqualTo(canonicalRegionInstanceId);
+        assertThat(materializedRegion.get("region_tenant_id", Long.class))
+            .isEqualTo(materializedRegion.get("room_tenant_id", Long.class));
+        assertThat(materializedRegion.get("region_game_instance_id", Long.class))
+            .isEqualTo(materializedRegion.get("room_game_instance_id", Long.class));
+        assertThat(materializedRegion.get("region_row_id", Long.class))
+            .isEqualTo(materializedRegion.get("room_region_instance_id", Long.class));
+        assertThat(materializedRegion.get("region_row_id", Long.class))
+            .isEqualTo(materializedRegion.get("zone_region_instance_id", Long.class));
+        assertThat(materializedRegion.get("zone_row_id", Long.class))
+            .isEqualTo(materializedRegion.get("room_zone_instance_id", Long.class));
+        String retainedOperationalRegionRow =
+            materializedRegion.get("region_row_json", String.class);
 
-    var retainedSourceRows = retainedPreparationSourceRows(f, actualInput, frozen);
-    byte[] retainedPreparationRows = preparationRows(ownerRequest.gameInstanceUuid());
-    String retainedLifecycleRow =
-        retainedJson(
-            "SELECT to_jsonb(wi)::text FROM world_instance wi WHERE canonical_game_instance_id=?",
-            ownerRequest.gameInstanceUuid());
-    var retryRequest =
-        new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(
-            UUID.randomUUID(),
-            ownerRequest.targetNamespace(),
-            ownerRequest.canonicalTenantId(),
-            ownerRequest.worldSlug(),
-            ownerRequest.gameInstanceUuid(),
-            ownerRequest.controlPlaneRequestId(),
-            ownerRequest.launchDescriptorId(),
-            ownerRequest.expectedDescriptorRequestDigest(),
-            ownerRequest.expectedDescriptorResultDigest(),
-            ownerRequest.expectedReleaseAttestationEvidenceDigest());
-    var retryTransportRequest = CanonicalWorldInstancePreparationGrpcCodec.toRequest(retryRequest);
-    var retryResponse = invokePreparationAsGameSession(adapter, retryTransportRequest);
-    var retryInput = isolatedOwners.service().assemble(stableSelector);
-    var retryLifecycleRequest = lifecycleReadRequest(retryTransportRequest, retryInput);
-    var retryActualLifecycle = lifecycleRepository.read(retryLifecycleRequest).orElseThrow();
-    var retryLifecycle =
-        CanonicalWorldInstancePreparationGrpcCodec.fromResponse(
-            retryRequest, retryLifecycleRequest, retryResponse);
-    var retriedOperationalRegion =
-        materializedOperationalRegionRow(
-            ownerRequest.gameInstanceUuid(),
-            selectedZonePlan.region().templateId(),
-            selectedRoomPlan.zone().templateId(),
-            selectedRoom);
-    assertThat(retryResponse.getRequest()).isEqualTo(retryTransportRequest);
-    assertThat(retryLifecycle).isEqualTo(retryActualLifecycle);
-    assertThat(retryLifecycle.lifecycleStatus()).isEqualTo("PREPARING");
-    assertThat(retryLifecycle.lifecycleEpoch()).isEqualTo(1L);
-    assertThat(retryLifecycle.runtimeRoomInstanceId())
-        .isEqualTo(firstLifecycle.runtimeRoomInstanceId());
-    assertThat(retryLifecycle.launchBinding()).isEqualTo(firstLifecycle.launchBinding());
-    assertThat(retryLifecycle.captureId()).isEqualTo(firstLifecycle.captureId());
-    assertThat(retryLifecycle.graphSha256()).isEqualTo(firstLifecycle.graphSha256());
-    assertThat(retryLifecycle.preparationInputDigest())
-        .isEqualTo(firstLifecycle.preparationInputDigest());
-    assertThat(retryLifecycle.startLocation()).isEqualTo(firstLifecycle.startLocation());
-    assertThat(retriedOperationalRegion.get("operational_region_id", UUID.class))
-        .isEqualTo(operationalRegionId);
-    assertThat(retriedOperationalRegion.get("canonical_region_instance_id", UUID.class))
-        .isEqualTo(canonicalRegionInstanceId);
-    assertThat(retriedOperationalRegion.get("region_row_json", String.class))
-        .isEqualTo(retainedOperationalRegionRow);
-    assertThat(verifierInvocations).hasValue(2);
-    assertThat(preparationRows(ownerRequest.gameInstanceUuid()))
-        .containsExactly(retainedPreparationRows);
-    assertThat(retainedPreparationSourceRows(f, retryInput, frozen)).isEqualTo(retainedSourceRows);
-    assertThat(retainedApplicationBytes(application)).containsExactly(originalAppliedRows);
-    assertThat(
-            publishedSelectors()
-                .readCommitted(frozen.request().freeze())
-                .map(this::publishedEvidence)
-                .orElseThrow()
-                .canonicalBytes())
-        .containsExactly(originalSelectorBytes);
-    assertThat(
+        var mappedRoom =
+            Objects.requireNonNull(
+                dsl.fetchOne(
+                    "SELECT r.room_instance_row_id AS room_instance_id FROM world_canonical_instance_topology_identity m "
+                        + "JOIN room_instance r ON r.id=m.runtime_row_id WHERE m.canonical_game_instance_id=? AND m.family='ROOM' AND m.template_id=?",
+                    ownerRequest.gameInstanceUuid(),
+                    selectedRoom));
+        assertThat(mappedRoom.get("room_instance_id", Long.class))
+            .isEqualTo(firstLifecycle.runtimeRoomInstanceId());
+
+        var retainedSourceRows = retainedPreparationSourceRows(f, actualInput, frozen);
+        byte[] retainedPreparationRows = preparationRows(ownerRequest.gameInstanceUuid());
+        String retainedLifecycleRow =
             retainedJson(
                 "SELECT to_jsonb(wi)::text FROM world_instance wi WHERE canonical_game_instance_id=?",
-                ownerRequest.gameInstanceUuid()))
-        .isEqualTo(retainedLifecycleRow);
-    assertThat(
-            completeLaunchBindingCount(
+                ownerRequest.gameInstanceUuid());
+        var retryRequest =
+            new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(
+                UUID.randomUUID(),
                 ownerRequest.targetNamespace(),
                 ownerRequest.canonicalTenantId(),
-                ownerRequest.controlPlaneRequestId()))
-        .isEqualTo(1L);
-    assertThat(publicationOwnerPhase(publicationFence)).isEqualTo("PUBLISHED");
-    assertThat(publicationTerminalBytes(publicationFence)).containsExactly(originalTerminalBytes);
-    assertOrigin();
+                ownerRequest.worldSlug(),
+                ownerRequest.gameInstanceUuid(),
+                ownerRequest.controlPlaneRequestId(),
+                ownerRequest.launchDescriptorId(),
+                ownerRequest.expectedDescriptorRequestDigest(),
+                ownerRequest.expectedDescriptorResultDigest(),
+                ownerRequest.expectedReleaseAttestationEvidenceDigest());
+        var expectedRetryLifecycleRequest =
+            lifecycleReadRequest(retryRequest, evidence, isolatedOwners.playableStateNamespaceId());
+        var retryLifecycle = client.prepare(retryRequest, expectedRetryLifecycleRequest);
+        var retryInput = isolatedOwners.service().assemble(stableSelector);
+        var retryLifecycleRequest =
+            lifecycleReadRequest(
+                CanonicalWorldInstancePreparationGrpcCodec.toRequest(retryRequest), retryInput);
+        assertThat(retryLifecycleRequest).isEqualTo(expectedRetryLifecycleRequest);
+        var retryActualLifecycle = lifecycleRepository.read(retryLifecycleRequest).orElseThrow();
+        var retriedOperationalRegion =
+            materializedOperationalRegionRow(
+                ownerRequest.gameInstanceUuid(),
+                selectedZonePlan.region().templateId(),
+                selectedRoomPlan.zone().templateId(),
+                selectedRoom);
+        assertThat(retryLifecycle).isEqualTo(retryActualLifecycle);
+        assertThat(retryLifecycle.lifecycleStatus()).isEqualTo("PREPARING");
+        assertThat(retryLifecycle.lifecycleEpoch()).isEqualTo(1L);
+        assertThat(retryLifecycle.runtimeRoomInstanceId())
+            .isEqualTo(firstLifecycle.runtimeRoomInstanceId());
+        assertThat(retryLifecycle.launchBinding()).isEqualTo(firstLifecycle.launchBinding());
+        assertThat(retryLifecycle.captureId()).isEqualTo(firstLifecycle.captureId());
+        assertThat(retryLifecycle.graphSha256()).isEqualTo(firstLifecycle.graphSha256());
+        assertThat(retryLifecycle.preparationInputDigest())
+            .isEqualTo(firstLifecycle.preparationInputDigest());
+        assertThat(retryLifecycle.startLocation()).isEqualTo(firstLifecycle.startLocation());
+        assertThat(retriedOperationalRegion.get("operational_region_id", UUID.class))
+            .isEqualTo(operationalRegionId);
+        assertThat(retriedOperationalRegion.get("canonical_region_instance_id", UUID.class))
+            .isEqualTo(canonicalRegionInstanceId);
+        assertThat(retriedOperationalRegion.get("region_row_json", String.class))
+            .isEqualTo(retainedOperationalRegionRow);
+        assertThat(verifierInvocations).hasValue(2);
+        assertThat(preparationRows(ownerRequest.gameInstanceUuid()))
+            .containsExactly(retainedPreparationRows);
+        assertThat(retainedPreparationSourceRows(f, retryInput, frozen))
+            .isEqualTo(retainedSourceRows);
+        assertThat(retainedApplicationBytes(application)).containsExactly(originalAppliedRows);
+        assertThat(
+                publishedSelectors()
+                    .readCommitted(frozen.request().freeze())
+                    .map(this::publishedEvidence)
+                    .orElseThrow()
+                    .canonicalBytes())
+            .containsExactly(originalSelectorBytes);
+        assertThat(
+                retainedJson(
+                    "SELECT to_jsonb(wi)::text FROM world_instance wi WHERE canonical_game_instance_id=?",
+                    ownerRequest.gameInstanceUuid()))
+            .isEqualTo(retainedLifecycleRow);
+        assertThat(
+                completeLaunchBindingCount(
+                    ownerRequest.targetNamespace(),
+                    ownerRequest.canonicalTenantId(),
+                    ownerRequest.controlPlaneRequestId()))
+            .isEqualTo(1L);
+        assertThat(publicationOwnerPhase(publicationFence)).isEqualTo("PUBLISHED");
+        assertThat(publicationTerminalBytes(publicationFence))
+            .containsExactly(originalTerminalBytes);
+        assertOrigin();
+      }
+    } finally {
+      transport.shutdownNow();
+      assertThat(transport.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
+    }
   }
 
   @Test
@@ -2428,6 +2487,53 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
         descriptor.requestDigest(),
         descriptor.resultDigest(),
         release.evidenceDigest());
+  }
+
+  private static WorldCanonicalInstanceLifecycleEvidence.Request lifecycleReadRequest(
+      CanonicalGameInstanceLaunchAssociationReadEvidence.Request selector,
+      CompleteLaunchBindingEvidence evidence,
+      UUID playableStateNamespaceId) {
+    var release = evidence.releaseAttestation();
+    return new WorldCanonicalInstanceLifecycleEvidence.Request(
+        WorldCanonicalInstanceLifecycleEvidence.Request.SCHEMA_VERSION,
+        selector.readRequestId(),
+        selector.targetNamespace(),
+        selector.canonicalTenantId(),
+        selector.worldSlug(),
+        selector.gameInstanceUuid(),
+        playableStateNamespaceId,
+        RealmEntryPolicy.StateScope.SHARED.name(),
+        true,
+        selector.controlPlaneRequestId(),
+        release.canonicalVersionId(),
+        selector.expectedDescriptorRequestDigest(),
+        selector.expectedDescriptorResultDigest(),
+        selector.expectedReleaseAttestationEvidenceDigest());
+  }
+
+  private static Server startPreparationTransport(
+      WorldCanonicalInstancePreparationGrpcService adapter, WorldPreparationTestWorkloadPki pki)
+      throws Exception {
+    return NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
+        .sslContext(
+            GrpcSslContexts.configure(
+                    SslContextBuilder.forServer(
+                        pki.worldServerCertificate().toFile(),
+                        pki.worldServerPrivateKey().toFile()))
+                .trustManager(pki.caCertificate().toFile())
+                .clientAuth(ClientAuth.REQUIRE)
+                .build())
+        .addService(ServerInterceptors.intercept(adapter, new GrpcPeerIdentityInterceptor()))
+        .build()
+        .start();
+  }
+
+  private static CanonicalWorldInstancePreparationClient preparationClient(
+      Server server, CommonGrpcClientProperties tlsProperties) {
+    var endpoints = new ServiceEndpointsProperties();
+    endpoints.setWorldManagementService("localhost:" + server.getPort());
+    return new CanonicalWorldInstancePreparationClient(
+        endpoints, tlsProperties, new GrpcChannelFactory(), NAMESPACE);
   }
 
   private static WorldCanonicalInstanceLifecycleEvidence.Request lifecycleReadRequest(
