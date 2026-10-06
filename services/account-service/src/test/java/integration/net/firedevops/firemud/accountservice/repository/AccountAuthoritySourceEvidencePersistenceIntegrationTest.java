@@ -21,6 +21,7 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEv
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec;
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec.AccountEvent;
+import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec.IssuerEvent;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -423,6 +424,227 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
     }
   }
 
+  @Test
+  void concurrentCompositeReadersShareIssuerRowWhileIssuerAdvanceWaitsForTheirSnapshot()
+      throws Exception {
+    TestContext context = newTestContext();
+    DSLContext dsl = context.dsl();
+    TransactionTemplate transaction = context.transaction();
+    AccountAuthorityGenerationRepository generations =
+        new AccountAuthorityGenerationRepository(dsl);
+    AccountAuthorityOutboxRepository outbox = new AccountAuthorityOutboxRepository(dsl);
+    AccountAuthoritySourceEvidenceRepository sources =
+        new AccountAuthoritySourceEvidenceRepository(dsl, generations, outbox);
+    AccountRepository accounts = new AccountRepository(dsl);
+    Account first = account("shared-issuer-lock-a-" + UUID.randomUUID());
+    Account second = account("shared-issuer-lock-b-" + UUID.randomUUID());
+    transaction.executeWithoutResult(status -> accounts.save(first));
+    transaction.executeWithoutResult(status -> accounts.save(second));
+
+    CountDownLatch readersReady = new CountDownLatch(2);
+    CountDownLatch releaseReaders = new CountDownLatch(1);
+    CountDownLatch writerStarted = new CountDownLatch(1);
+    CompletableFuture<Integer> firstReaderPid = new CompletableFuture<>();
+    CompletableFuture<Integer> secondReaderPid = new CompletableFuture<>();
+    CompletableFuture<Integer> writerPid = new CompletableFuture<>();
+    ExecutorService executor = Executors.newFixedThreadPool(3);
+    Future<AccountAuthorityGenerationRepository.CompositeSnapshot> firstReader =
+        executor.submit(
+            () ->
+                transaction.execute(
+                    status -> {
+                      firstReaderPid.complete(
+                          Objects.requireNonNull(dsl.fetchOne("SELECT pg_backend_pid()"))
+                              .get(0, Integer.class));
+                      var snapshot =
+                          generations.readCompositeSnapshot(
+                              ISSUER,
+                              first.getAccountUuid(),
+                              java.util.List.of(),
+                              java.util.List.of());
+                      readersReady.countDown();
+                      await(releaseReaders, "Shared issuer readers were not released");
+                      return snapshot;
+                    }));
+    Future<AccountAuthorityGenerationRepository.CompositeSnapshot> secondReader =
+        executor.submit(
+            () ->
+                transaction.execute(
+                    status -> {
+                      secondReaderPid.complete(
+                          Objects.requireNonNull(dsl.fetchOne("SELECT pg_backend_pid()"))
+                              .get(0, Integer.class));
+                      var snapshot =
+                          generations.readCompositeSnapshot(
+                              ISSUER,
+                              second.getAccountUuid(),
+                              java.util.List.of(),
+                              java.util.List.of());
+                      readersReady.countDown();
+                      await(releaseReaders, "Shared issuer readers were not released");
+                      return snapshot;
+                    }));
+    Future<?> issuerWriter =
+        executor.submit(
+            () -> {
+              await(readersReady, "Both shared issuer readers did not acquire their snapshot");
+              transaction.executeWithoutResult(
+                  status -> {
+                    writerPid.complete(
+                        Objects.requireNonNull(dsl.fetchOne("SELECT pg_backend_pid()"))
+                            .get(0, Integer.class));
+                    writerStarted.countDown();
+                    sources.appendIssuerAuthorityChange(
+                        ISSUER, "SIGNER_COMPROMISE", "shared-reader-" + UUID.randomUUID());
+                  });
+            });
+
+    try {
+      assertThat(readersReady.await(30, TimeUnit.SECONDS)).isTrue();
+      Integer firstPid = firstReaderPid.get(5, TimeUnit.SECONDS);
+      Integer secondPid = secondReaderPid.get(5, TimeUnit.SECONDS);
+      assertThat(writerStarted.await(30, TimeUnit.SECONDS)).isTrue();
+      Integer writingPid = writerPid.get(5, TimeUnit.SECONDS);
+      awaitLockWait(dsl, writingPid, firstPid, secondPid);
+
+      releaseReaders.countDown();
+      assertThat(firstReader.get(45, TimeUnit.SECONDS).issuer().generation()).isEqualTo(1L);
+      assertThat(secondReader.get(45, TimeUnit.SECONDS).issuer().generation()).isEqualTo(1L);
+      issuerWriter.get(45, TimeUnit.SECONDS);
+      var readback =
+          transaction.execute(
+              status -> sources.readCurrentIssuerAccountSources(ISSUER, first.getAccountUuid()));
+      assertThat(readback.issuer().generation()).isEqualTo(2L);
+      assertThat(readback.issuer().sourceVersion()).isEqualTo(2L);
+      assertThat(readback.issuer().checkpoint().sequence()).isEqualTo(1L);
+    } finally {
+      releaseReaders.countDown();
+      executor.shutdown();
+      if (!executor.awaitTermination(15, TimeUnit.SECONDS)) {
+        executor.shutdownNow();
+        assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+      }
+    }
+  }
+
+  @Test
+  void concurrentIssuerWritersSerializeBeforeReadingAndAppendingSourceState() throws Exception {
+    TestContext context = newTestContext();
+    DSLContext dsl = context.dsl();
+    TransactionTemplate transaction = context.transaction();
+    AccountAuthorityGenerationRepository generations =
+        new AccountAuthorityGenerationRepository(dsl);
+    AccountAuthorityOutboxRepository outbox = new AccountAuthorityOutboxRepository(dsl);
+    AccountAuthoritySourceEvidenceRepository sources =
+        new AccountAuthoritySourceEvidenceRepository(dsl, generations, outbox);
+    AccountRepository accounts = new AccountRepository(dsl);
+    Account account = account("issuer-writer-lock-" + UUID.randomUUID());
+    transaction.executeWithoutResult(status -> accounts.save(account));
+
+    CountDownLatch firstWriterLocked = new CountDownLatch(1);
+    CountDownLatch secondWriterStarted = new CountDownLatch(1);
+    CountDownLatch firstWriterAppended = new CountDownLatch(1);
+    CountDownLatch allowFirstWriterCommit = new CountDownLatch(1);
+    CompletableFuture<Integer> firstWriterPid = new CompletableFuture<>();
+    CompletableFuture<Integer> secondWriterPid = new CompletableFuture<>();
+    String firstRequestId = "issuer-writer-one-" + UUID.randomUUID();
+    String secondRequestId = "issuer-writer-two-" + UUID.randomUUID();
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    Future<?> firstWriter =
+        executor.submit(
+            () ->
+                transaction.executeWithoutResult(
+                    status -> {
+                      firstWriterPid.complete(
+                          Objects.requireNonNull(dsl.fetchOne("SELECT pg_backend_pid()"))
+                              .get(0, Integer.class));
+                      var issuerRow =
+                          dsl.fetchOne(
+                              "SELECT generation FROM account_authority_generations "
+                                  + "WHERE scope_kind = 'ISSUER' AND issuer_id = ? FOR UPDATE",
+                              ISSUER);
+                      assertThat(issuerRow).isNotNull();
+                      firstWriterLocked.countDown();
+                      await(secondWriterStarted, "Second issuer writer did not start");
+                      sources.appendIssuerAuthorityChange(
+                          ISSUER, "SIGNER_COMPROMISE", firstRequestId);
+                      firstWriterAppended.countDown();
+                      await(allowFirstWriterCommit, "First issuer writer was not released");
+                    }));
+    Future<?> secondWriter =
+        executor.submit(
+            () -> {
+              await(firstWriterLocked, "First issuer writer did not acquire issuer row");
+              transaction.executeWithoutResult(
+                  status -> {
+                    secondWriterPid.complete(
+                        Objects.requireNonNull(dsl.fetchOne("SELECT pg_backend_pid()"))
+                            .get(0, Integer.class));
+                    secondWriterStarted.countDown();
+                    sources.appendIssuerAuthorityChange(
+                        ISSUER, "SIGNER_COMPROMISE", secondRequestId);
+                  });
+            });
+
+    try {
+      assertThat(firstWriterLocked.await(30, TimeUnit.SECONDS)).isTrue();
+      Integer firstPid = firstWriterPid.get(30, TimeUnit.SECONDS);
+      assertThat(secondWriterStarted.await(30, TimeUnit.SECONDS)).isTrue();
+      Integer secondPid = secondWriterPid.get(30, TimeUnit.SECONDS);
+      awaitLockWait(dsl, secondPid, firstPid);
+      assertThat(firstWriterAppended.await(30, TimeUnit.SECONDS)).isTrue();
+
+      allowFirstWriterCommit.countDown();
+      firstWriter.get(60, TimeUnit.SECONDS);
+      secondWriter.get(60, TimeUnit.SECONDS);
+
+      var readback =
+          transaction.execute(
+              status -> sources.readCurrentIssuerAccountSources(ISSUER, account.getAccountUuid()));
+      assertThat(readback.issuer().generation()).isEqualTo(3L);
+      assertThat(readback.issuer().sourceVersion()).isEqualTo(3L);
+      assertThat(readback.issuer().checkpoint().sequence()).isEqualTo(2L);
+      var firstEvent =
+          (IssuerEvent)
+              AccountAuthoritySourceEventV1Codec.verify(
+                  new String(
+                      transaction.execute(
+                          status ->
+                              outbox
+                                  .findEvent(readback.issuer().checkpoint().outboxStreamKey(), 1L)
+                                  .orElseThrow()
+                                  .payload()),
+                      StandardCharsets.UTF_8));
+      var secondEvent =
+          (IssuerEvent)
+              AccountAuthoritySourceEventV1Codec.verify(
+                  new String(
+                      transaction.execute(
+                          status ->
+                              outbox
+                                  .findEvent(readback.issuer().checkpoint().outboxStreamKey(), 2L)
+                                  .orElseThrow()
+                                  .payload()),
+                      StandardCharsets.UTF_8));
+      assertThat(firstEvent.requestId()).isEqualTo(firstRequestId);
+      assertThat(firstEvent.issuerAuthGeneration()).isEqualTo("2");
+      assertThat(firstEvent.sourceVersion()).isEqualTo("2");
+      assertThat(firstEvent.outboxSequence()).isEqualTo("1");
+      assertThat(secondEvent.requestId()).isEqualTo(secondRequestId);
+      assertThat(secondEvent.issuerAuthGeneration()).isEqualTo("3");
+      assertThat(secondEvent.sourceVersion()).isEqualTo("3");
+      assertThat(secondEvent.outboxSequence()).isEqualTo("2");
+      assertThat(firstEvent.eventId()).isNotEqualTo(secondEvent.eventId());
+    } finally {
+      allowFirstWriterCommit.countDown();
+      executor.shutdown();
+      if (!executor.awaitTermination(30, TimeUnit.SECONDS)) {
+        executor.shutdownNow();
+        assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+      }
+    }
+  }
+
   private static void await(CountDownLatch latch, String failureMessage) {
     try {
       if (!latch.await(30, TimeUnit.SECONDS)) throw new IllegalStateException(failureMessage);
@@ -432,24 +654,51 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
     }
   }
 
-  private static void awaitLockWait(DSLContext dsl, Integer readerPid, Integer writerPid)
+  private static void awaitLockWait(DSLContext dsl, Integer waitingPid, Integer... blockerPids)
       throws InterruptedException {
-    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+    if (blockerPids.length == 0) {
+      throw new IllegalArgumentException("At least one expected blocker PID is required");
+    }
+    String expectedBlockerPredicates =
+        java.util.stream.IntStream.range(0, blockerPids.length)
+            .mapToObj(index -> "? = ANY(pg_blocking_pids(pid))")
+            .collect(java.util.stream.Collectors.joining(" OR "));
+    Object[] bindings = new Object[blockerPids.length + 1];
+    System.arraycopy(blockerPids, 0, bindings, 0, blockerPids.length);
+    bindings[blockerPids.length] = waitingPid;
+
+    String lastWaitEventType = "<no pg_stat_activity row observed>";
+    String lastWaitEvent = "<no pg_stat_activity row observed>";
+    String lastBlockingPids = "<no pg_stat_activity row observed>";
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
     while (System.nanoTime() < deadline) {
       var activity =
           dsl.fetchOne(
-              "SELECT wait_event_type, ? = ANY(pg_blocking_pids(pid)) AS blocked_by_writer "
+              "SELECT wait_event_type, wait_event, "
+                  + "COALESCE(NULLIF(array_to_string(pg_blocking_pids(pid), ','), ''), '{}') "
+                  + "AS blocking_pids, ("
+                  + expectedBlockerPredicates
+                  + ") AS blocked_by_expected "
                   + "FROM pg_stat_activity WHERE pid = ?",
-              writerPid,
-              readerPid);
-      String waitEventType = activity == null ? null : activity.get(0, String.class);
-      Boolean blockedByWriter =
-          activity == null ? null : activity.get("blocked_by_writer", Boolean.class);
-      if ("Lock".equals(waitEventType) && Boolean.TRUE.equals(blockedByWriter)) return;
+              bindings);
+      if (activity != null) {
+        lastWaitEventType = activity.get("wait_event_type", String.class);
+        lastWaitEvent = activity.get("wait_event", String.class);
+        lastBlockingPids = activity.get("blocking_pids", String.class);
+        Boolean blockedByExpected = activity.get("blocked_by_expected", Boolean.class);
+        if ("Lock".equals(lastWaitEventType) && Boolean.TRUE.equals(blockedByExpected)) return;
+      }
       Thread.sleep(25L);
     }
     throw new AssertionError(
-        "Authority snapshot did not wait on the Account writer backend " + writerPid);
+        "Issuer authority writer did not wait on expected backend(s) "
+            + java.util.Arrays.toString(blockerPids)
+            + "; last wait_event_type="
+            + lastWaitEventType
+            + ", wait_event="
+            + lastWaitEvent
+            + ", blocking_pids="
+            + lastBlockingPids);
   }
 
   private TestContext newTestContext() {

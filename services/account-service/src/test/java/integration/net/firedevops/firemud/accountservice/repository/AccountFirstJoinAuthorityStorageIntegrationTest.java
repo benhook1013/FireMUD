@@ -164,11 +164,10 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
             "authority-storage-" + UUID.randomUUID() + "@example.test",
             "test-hash",
             "platformAdmin");
-    Account account =
-        accounts
-            .findByAccountUuid(Objects.requireNonNull(accountRow).get("account_uuid", UUID.class))
-            .orElseThrow();
-    long accountId = Objects.requireNonNull(account.getId());
+    // Read only the columns owned by this historical migration boundary. The generated
+    // current AccountRepository includes later columns that do not exist before V38.
+    UUID accountUuid = Objects.requireNonNull(accountRow).get("account_uuid", UUID.class);
+    long accountId = accountRow.get("id", Long.class);
     long retainedTenantId = 7101L;
     long retainedMembershipId =
         Objects.requireNonNull(
@@ -182,6 +181,10 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
                     retainedTenantId)
                 .fetchOne(0, Long.class));
     migrateToLatest(context);
+
+    Account account = accounts.findByAccountUuid(accountUuid).orElseThrow();
+    assertThat(account.getId()).isEqualTo(accountId);
+    assertThat(account.getAccountUuid()).isEqualTo(accountUuid);
 
     org.jooq.Record retainedReadback =
         dsl.fetchOne(

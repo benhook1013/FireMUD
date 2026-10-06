@@ -87,7 +87,8 @@ class AccountAuthoritySourceEventV1CodecTest {
   void rejectsZeroLeadingNegativeAndOutOfRangeCounters() {
     for (String invalid : List.of("0", "01", "-1", "9223372036854775808")) {
       assertThatThrownBy(() -> accountEvent(invalid, "1"))
-          .isInstanceOf(IllegalArgumentException.class);
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("must be a positive canonical decimal string in the owner range");
     }
   }
 

@@ -195,7 +195,9 @@ public class AccountAuthoritySourceEvidenceRepository {
   public CurrentSourceEvidence appendIssuerAuthorityChange(
       String exactIssuerId, String mutationKind, String requestId) {
     AuthorityScope scope = AuthorityScope.issuer(exactIssuerId);
-    ScopeState current = generations.read(scope);
+    // Composite source readers take FOR SHARE on this row. Lock exclusively before reading the
+    // generation so concurrent issuer writers serialize without a pair of SHARE-to-UPDATE upgrades.
+    ScopeState current = generations.readIssuerStateForSourceMutation(scope);
     CurrentSourceEvidence before = readCurrentSource(scope, current);
     ScopeState advanced = generations.advanceForSourceEvidence(current, null);
     String streamKey = streamKey(scope);
