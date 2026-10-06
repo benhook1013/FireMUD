@@ -438,7 +438,8 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   }
 
   @Test
-  void lifecycleReadPreservesPreparingStateAndDeniesLegacyNumericFailureWithExactCanonicalServiceEcho() {
+  void
+      lifecycleReadPreservesPreparingStateAndDeniesLegacyNumericFailureWithExactCanonicalServiceEcho() {
     Fixture f = fixture();
     var original = application(generationFreePlan(f));
     var roomTemplateId =
