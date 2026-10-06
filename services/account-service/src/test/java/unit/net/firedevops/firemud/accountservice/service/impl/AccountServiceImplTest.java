@@ -5398,6 +5398,14 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void revokeRealmAccessUsesDurableRepositoryRevocation() {
+    service.revokeRealmAccess(11L, 7L, "demo", "preview");
+
+    org.mockito.Mockito.verify(accountRealmAccessGrantRepository)
+        .revokeByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(11L, 7L, "demo", "preview");
+  }
+
+  @Test
   void getRealmAccessGrantForRuntimeReturnsGrantState() {
     Account account = new Account();
     account.setId(11L);
@@ -5412,6 +5420,55 @@ class AccountServiceImplTest {
 
     assertTrue(result.granted());
     assertEquals(4L, result.grantVersion());
+  }
+
+  @Test
+  void getRealmAccessGrantForRuntimeDoesNotAuthorizeRetainedRevocationTombstone() {
+    Account account = new Account();
+    account.setId(11L);
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    AccountRealmAccessGrant revoked = new AccountRealmAccessGrant();
+    revoked.setGrantVersion(7L);
+    revoked.setGranted(false);
+    when(accountRealmAccessGrantRepository.findByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
+            11L, 7L, "demo", "preview"))
+        .thenReturn(Optional.of(revoked));
+
+    var result = service.getRealmAccessGrantForRuntime(11L, 7L, "demo", "preview", "req-grant-2");
+
+    assertFalse(result.granted());
+    assertEquals(7L, result.grantVersion());
+  }
+
+  @Test
+  void grantRealmAccessReactivatesRetainedTombstoneAndAdvancesItsVersion() {
+    Account account = new Account();
+    account.setId(11L);
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    AccountRealmAccessGrant revoked = new AccountRealmAccessGrant();
+    revoked.setId(19L);
+    revoked.setAccount(account);
+    revoked.setTenantId(7L);
+    revoked.setWorldSlug("demo");
+    revoked.setRealmSlug("preview");
+    revoked.setGrantVersion(7L);
+    revoked.setGranted(false);
+    when(accountRealmAccessGrantRepository.findByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
+            11L, 7L, "demo", "preview"))
+        .thenReturn(Optional.of(revoked));
+    when(accountRealmAccessGrantRepository.save(
+            org.mockito.ArgumentMatchers.any(AccountRealmAccessGrant.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    var result =
+        service.grantRealmAccess(
+            new RealmAccessGrantRequest(
+                11L, 7L, "demo", "preview", "operator", "regrant", "req-grant-3"));
+
+    assertTrue(result.granted());
+    assertEquals(8L, result.grantVersion());
+    assertTrue(revoked.isGranted());
+    org.mockito.Mockito.verify(accountRealmAccessGrantRepository).save(revoked);
   }
 
   @Test
@@ -5588,7 +5645,7 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void deleteAccountRemovesAccountOwnedRowsAfterTerminalSubscriptions() {
+  void deleteAccountRemainsUnavailableAfterTerminalSubscriptionsWithoutChildWrites() {
     Account account = new Account();
     account.setId(2L);
     Subscription subscription = new Subscription();
@@ -5599,17 +5656,22 @@ class AccountServiceImplTest {
     when(accountRepository.findById(2L)).thenReturn(Optional.of(account));
     when(subscriptionRepository.findByAccountId(2L)).thenReturn(java.util.List.of(subscription));
 
-    service.deleteAccount(2L);
+    AccountLifecycleException ex =
+        assertThrows(AccountLifecycleException.class, () -> service.deleteAccount(2L));
+    assertEquals("ACCOUNT_DELETE_UNAVAILABLE", ex.getCode());
 
-    org.mockito.Mockito.verify(emailVerificationTokenRepository).deleteByAccountId(2L);
-    org.mockito.Mockito.verify(passwordResetTokenRepository).deleteByAccountId(2L);
-    org.mockito.Mockito.verify(accountRealmAccessGrantRepository).deleteByAccountId(2L);
-    org.mockito.Mockito.verify(externalAccountRepository).deleteByAccountId(2L);
-    org.mockito.Mockito.verify(paymentTransactionRepository).deleteByAccountId(2L);
-    org.mockito.Mockito.verify(subscriptionRepository).deleteByAccountId(2L);
-    org.mockito.Mockito.verify(profileRepository).deleteByAccountId(2L);
-    org.mockito.Mockito.verify(accountTenantMembershipRepository).deleteByAccountId(2L);
-    org.mockito.Mockito.verify(accountRepository).delete(account);
+    org.mockito.Mockito.verifyNoInteractions(
+        emailVerificationTokenRepository,
+        passwordResetTokenRepository,
+        accountRealmAccessGrantRepository,
+        externalAccountRepository,
+        paymentTransactionRepository,
+        profileRepository,
+        accountTenantMembershipRepository);
+    org.mockito.Mockito.verify(subscriptionRepository).findByAccountId(2L);
+    org.mockito.Mockito.verify(subscriptionRepository, org.mockito.Mockito.never())
+        .deleteByAccountId(2L);
+    org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never()).delete(account);
   }
 
   @Test
@@ -5629,6 +5691,33 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.eq("Password Reset"),
             org.mockito.ArgumentMatchers.anyString());
     org.mockito.Mockito.verifyNoInteractions(notificationService);
+  }
+
+  @Test
+  void missingRetainedSourceDeniesPasswordResetBeforeTokenConsumption() {
+    var account = new Account();
+    account.setId(2L);
+    account.setPasswordHash("original-password-hash");
+    var token = new net.firedevops.firemud.accountservice.entity.PasswordResetToken();
+    token.setAccount(account);
+    token.setToken("retained-reset-token");
+    token.setExpiresAt(java.time.LocalDateTime.now().plusMinutes(10));
+    when(passwordResetTokenRepository.findByToken(token.getToken())).thenReturn(Optional.of(token));
+    org.mockito.Mockito.doThrow(
+            new net.firedevops.firemud.accountservice.repository
+                .AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException())
+        .when(accountRepository)
+        .save(account);
+    assertThrows(
+        net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository
+            .SourceEvidenceUnavailableException.class,
+        () ->
+            service.completePasswordReset(
+                new net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest(
+                    token.getToken(), "new-password")));
+    org.mockito.Mockito.verify(passwordResetTokenRepository, org.mockito.Mockito.never())
+        .delete(token);
+    org.mockito.Mockito.verify(accountRepository).save(account);
   }
 
   @Test

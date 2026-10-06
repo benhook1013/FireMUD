@@ -123,29 +123,36 @@ class TenantIdentityGrpcServiceTest {
 
   @Test
   void rejectsMalformedAndOpenRequestsBeforeOwnerRead() {
-    for (ResolveFreshTenantCreationRequest request :
+    for (ResolveFreshTenantCreationRequest malformed :
         new ResolveFreshTenantCreationRequest[] {
           request("22222222-2222-4222-8222-22222222222", REQUEST_DIGEST),
           request("00000000-0000-0000-0000-000000000000", REQUEST_DIGEST),
-          request("22222222-2222-4222-8222-22222222222z", REQUEST_DIGEST),
+          request("22222222-2222-4222-8222-222222222222z", REQUEST_DIGEST),
           request(REQUEST_ID.toString(), "SHA256:" + "a".repeat(64)),
           request(REQUEST_ID.toString(), "sha256:short"),
           requestWithUnknownField()
         }) {
-      assertThat(status(call(request, ACCOUNT_URI))).isEqualTo(Status.Code.INVALID_ARGUMENT);
+      assertThat(status(call(malformed, ACCOUNT_URI))).isEqualTo(Status.Code.INVALID_ARGUMENT);
     }
     verifyNoInteractions(repository);
   }
 
   @Test
   void missingOrMismatchedOwnerEvidenceFailsClosed() {
+    String wrongRequestDigest = "sha256:" + "b".repeat(64);
     when(repository.read(REQUEST_ID, "test"))
         .thenReturn(Optional.empty())
-        .thenReturn(Optional.of(evidence("test", "sha256:" + "b".repeat(64))));
+        .thenReturn(Optional.of(evidence("test", wrongRequestDigest)))
+        .thenReturn(Optional.of(evidence("other", REQUEST_DIGEST)));
+
     assertThat(status(call(request(REQUEST_ID.toString(), REQUEST_DIGEST), ACCOUNT_URI)))
         .isEqualTo(Status.Code.NOT_FOUND);
-    assertThat(status(call(request(REQUEST_ID.toString(), REQUEST_DIGEST), ACCOUNT_URI)))
-        .isEqualTo(Status.Code.FAILED_PRECONDITION);
+    Observer digestMismatch = call(request(REQUEST_ID.toString(), REQUEST_DIGEST), ACCOUNT_URI);
+    assertThat(status(digestMismatch)).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    assertThat(digestMismatch.response).isNull();
+    Observer namespaceMismatch = call(request(REQUEST_ID.toString(), REQUEST_DIGEST), ACCOUNT_URI);
+    assertThat(status(namespaceMismatch)).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    assertThat(namespaceMismatch.response).isNull();
   }
 
   @Test

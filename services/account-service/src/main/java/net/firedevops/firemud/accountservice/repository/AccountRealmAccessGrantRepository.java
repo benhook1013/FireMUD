@@ -5,6 +5,7 @@ import static net.firedevops.firemud.accountservice.jooq.Tables.ACCOUNT_REALM_AC
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.Optional;
+import java.util.UUID;
 import net.firedevops.firemud.accountservice.entity.AccountRealmAccessGrant;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -44,19 +45,22 @@ public class AccountRealmAccessGrantRepository {
             .eq(accountId)
             .and(ACCOUNT_REALM_ACCESS_GRANT.TENANT_ID.eq(tenantId))
             .and(ACCOUNT_REALM_ACCESS_GRANT.WORLD_SLUG.eq(worldSlug))
-            .and(ACCOUNT_REALM_ACCESS_GRANT.REALM_SLUG.eq(realmSlug)));
+            .and(ACCOUNT_REALM_ACCESS_GRANT.REALM_SLUG.eq(realmSlug))
+            .and(ACCOUNT_REALM_ACCESS_GRANT.GRANTED.isTrue()));
   }
 
   public AccountRealmAccessGrant save(AccountRealmAccessGrant entity) {
     Long accountId = entity.getAccount() == null ? null : entity.getAccount().getId();
     if (entity.getId() == null) {
-      Long id =
+      var inserted =
           dsl.insertInto(ACCOUNT_REALM_ACCESS_GRANT)
               .set(ACCOUNT_REALM_ACCESS_GRANT.ACCOUNT_ID, accountId)
               .set(ACCOUNT_REALM_ACCESS_GRANT.TENANT_ID, entity.getTenantId())
               .set(ACCOUNT_REALM_ACCESS_GRANT.WORLD_SLUG, entity.getWorldSlug())
               .set(ACCOUNT_REALM_ACCESS_GRANT.REALM_SLUG, entity.getRealmSlug())
               .set(ACCOUNT_REALM_ACCESS_GRANT.GRANT_VERSION, entity.getGrantVersion())
+              .set(ACCOUNT_REALM_ACCESS_GRANT.GRANTED, entity.isGranted())
+              .set(ACCOUNT_REALM_ACCESS_GRANT.GRANT_AUTHORITY_GENERATION, UUID.randomUUID())
               .set(ACCOUNT_REALM_ACCESS_GRANT.GRANTED_BY, entity.getGrantedBy())
               .set(ACCOUNT_REALM_ACCESS_GRANT.GRANT_REASON, entity.getGrantReason())
               .set(
@@ -65,18 +69,33 @@ public class AccountRealmAccessGrantRepository {
               .set(
                   ACCOUNT_REALM_ACCESS_GRANT.UPDATED_AT,
                   JooqAccountRepositorySupport.toOffsetDateTime(entity.getUpdatedAt()))
-              .returningResult(ACCOUNT_REALM_ACCESS_GRANT.ID)
-              .fetchOne(ACCOUNT_REALM_ACCESS_GRANT.ID);
-      entity.setId(id);
+              .returningResult(
+                  ACCOUNT_REALM_ACCESS_GRANT.ID,
+                  ACCOUNT_REALM_ACCESS_GRANT.GRANT_VERSION,
+                  ACCOUNT_REALM_ACCESS_GRANT.GRANT_AUTHORITY_GENERATION)
+              .fetchOne();
+      if (inserted == null) {
+        throw new IllegalStateException("Realm grant insert did not return its authority state");
+      }
+      entity.setId(inserted.get(ACCOUNT_REALM_ACCESS_GRANT.ID));
+      entity.setGrantVersion(inserted.get(ACCOUNT_REALM_ACCESS_GRANT.GRANT_VERSION));
+      entity.setGrantAuthorityGeneration(
+          inserted.get(ACCOUNT_REALM_ACCESS_GRANT.GRANT_AUTHORITY_GENERATION));
       return entity;
     }
-    int updated =
+    UUID observedGeneration = entity.getGrantAuthorityGeneration();
+    if (observedGeneration == null) {
+      throw new IllegalStateException(
+          "Realm grant update requires an observed grant-authority generation");
+    }
+    var updated =
         dsl.update(ACCOUNT_REALM_ACCESS_GRANT)
             .set(ACCOUNT_REALM_ACCESS_GRANT.ACCOUNT_ID, accountId)
             .set(ACCOUNT_REALM_ACCESS_GRANT.TENANT_ID, entity.getTenantId())
             .set(ACCOUNT_REALM_ACCESS_GRANT.WORLD_SLUG, entity.getWorldSlug())
             .set(ACCOUNT_REALM_ACCESS_GRANT.REALM_SLUG, entity.getRealmSlug())
             .set(ACCOUNT_REALM_ACCESS_GRANT.GRANT_VERSION, entity.getGrantVersion())
+            .set(ACCOUNT_REALM_ACCESS_GRANT.GRANTED, entity.isGranted())
             .set(ACCOUNT_REALM_ACCESS_GRANT.GRANTED_BY, entity.getGrantedBy())
             .set(ACCOUNT_REALM_ACCESS_GRANT.GRANT_REASON, entity.getGrantReason())
             .set(
@@ -85,24 +104,38 @@ public class AccountRealmAccessGrantRepository {
             .set(
                 ACCOUNT_REALM_ACCESS_GRANT.UPDATED_AT,
                 JooqAccountRepositorySupport.toOffsetDateTime(entity.getUpdatedAt()))
-            .where(ACCOUNT_REALM_ACCESS_GRANT.ID.eq(entity.getId()))
-            .execute();
-    if (updated != 1) {
+            .where(
+                ACCOUNT_REALM_ACCESS_GRANT
+                    .ID
+                    .eq(entity.getId())
+                    .and(
+                        ACCOUNT_REALM_ACCESS_GRANT.GRANT_AUTHORITY_GENERATION.eq(
+                            observedGeneration)))
+            .returningResult(
+                ACCOUNT_REALM_ACCESS_GRANT.GRANT_VERSION,
+                ACCOUNT_REALM_ACCESS_GRANT.GRANT_AUTHORITY_GENERATION)
+            .fetchOne();
+    if (updated == null) {
       throw JooqAccountRepositorySupport.staleWrite("account_realm_access_grant", entity.getId());
     }
+    entity.setGrantVersion(updated.get(ACCOUNT_REALM_ACCESS_GRANT.GRANT_VERSION));
+    entity.setGrantAuthorityGeneration(
+        updated.get(ACCOUNT_REALM_ACCESS_GRANT.GRANT_AUTHORITY_GENERATION));
     return entity;
   }
 
-  public void deleteByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
+  public void revokeByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
       Long accountId, Long tenantId, String worldSlug, String realmSlug) {
-    dsl.deleteFrom(ACCOUNT_REALM_ACCESS_GRANT)
+    dsl.update(ACCOUNT_REALM_ACCESS_GRANT)
+        .set(ACCOUNT_REALM_ACCESS_GRANT.GRANTED, false)
         .where(
             ACCOUNT_REALM_ACCESS_GRANT
                 .ACCOUNT_ID
                 .eq(accountId)
                 .and(ACCOUNT_REALM_ACCESS_GRANT.TENANT_ID.eq(tenantId))
                 .and(ACCOUNT_REALM_ACCESS_GRANT.WORLD_SLUG.eq(worldSlug))
-                .and(ACCOUNT_REALM_ACCESS_GRANT.REALM_SLUG.eq(realmSlug)))
+                .and(ACCOUNT_REALM_ACCESS_GRANT.REALM_SLUG.eq(realmSlug))
+                .and(ACCOUNT_REALM_ACCESS_GRANT.GRANTED.isTrue()))
         .execute();
   }
 
@@ -120,6 +153,8 @@ public class AccountRealmAccessGrantRepository {
             ACCOUNT_REALM_ACCESS_GRANT.WORLD_SLUG,
             ACCOUNT_REALM_ACCESS_GRANT.REALM_SLUG,
             ACCOUNT_REALM_ACCESS_GRANT.GRANT_VERSION,
+            ACCOUNT_REALM_ACCESS_GRANT.GRANTED,
+            ACCOUNT_REALM_ACCESS_GRANT.GRANT_AUTHORITY_GENERATION,
             ACCOUNT_REALM_ACCESS_GRANT.GRANTED_BY,
             ACCOUNT_REALM_ACCESS_GRANT.GRANT_REASON,
             ACCOUNT_REALM_ACCESS_GRANT.CREATED_AT,
@@ -152,6 +187,9 @@ public class AccountRealmAccessGrantRepository {
     grant.setWorldSlug(record.get(ACCOUNT_REALM_ACCESS_GRANT.WORLD_SLUG));
     grant.setRealmSlug(record.get(ACCOUNT_REALM_ACCESS_GRANT.REALM_SLUG));
     grant.setGrantVersion(record.get(ACCOUNT_REALM_ACCESS_GRANT.GRANT_VERSION));
+    grant.setGranted(Boolean.TRUE.equals(record.get(ACCOUNT_REALM_ACCESS_GRANT.GRANTED)));
+    grant.setGrantAuthorityGeneration(
+        record.get(ACCOUNT_REALM_ACCESS_GRANT.GRANT_AUTHORITY_GENERATION));
     grant.setGrantedBy(record.get(ACCOUNT_REALM_ACCESS_GRANT.GRANTED_BY));
     grant.setGrantReason(record.get(ACCOUNT_REALM_ACCESS_GRANT.GRANT_REASON));
     grant.setCreatedAt(

@@ -13,6 +13,7 @@ import java.util.Locale;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.accountservice.dto.AccountAuditEnvelope;
+import net.firedevops.firemud.accountservice.dto.AccountAuditTenantIdentity;
 import net.firedevops.firemud.accountservice.jooq.tables.records.AccountAuditOutboxRecord;
 import org.jooq.DSLContext;
 import org.jooq.RecordContext;
@@ -78,11 +79,13 @@ class AccountAuditOutboxRepositoryTest {
     String sql = executedSql.get();
     int where = sql.indexOf("where");
     int orderBy = sql.indexOf("order by");
+    int tenantIdentityFilter = sql.indexOf("tenant_identity_version", where);
     int retryOrder = sql.indexOf("next_attempt_at", orderBy);
     int createdOrder = sql.indexOf("created_at", retryOrder);
     int eventOrder = sql.indexOf("audit_event_id", createdOrder);
     assertThat(sql.substring(where, orderBy))
-        .contains("delivery_status", "next_attempt_at", "<=", "=");
+        .contains("delivery_status", "tenant_identity_version", "next_attempt_at", "<=", "=");
+    assertThat(tenantIdentityFilter).isGreaterThan(where).isLessThan(orderBy);
     assertThat(retryOrder).isGreaterThan(orderBy);
     assertThat(createdOrder).isGreaterThan(retryOrder);
     assertThat(eventOrder).isGreaterThan(createdOrder);
@@ -129,6 +132,43 @@ class AccountAuditOutboxRepositoryTest {
     LocalDateTime expectedUtc = LocalDateTime.ofInstant(envelope.occurredAt(), ZoneOffset.UTC);
     assertThat(storedOccurredAt.get()).isEqualTo(expectedUtc);
     assertThat(storedNextAttemptAt.get()).isEqualTo(expectedUtc);
+  }
+
+  @Test
+  void canonicalTenantAuditEnvelopeRetainsTypedUuidIdentityAndExactPayloadDigest() {
+    UUID tenantUuid = UUID.fromString("f4df3b0a-5fc6-4f86-9efc-0f053103b200");
+    String payload = "{\"requestId\":\"request-1\"}";
+    AccountAuditEnvelope envelope =
+        new AccountAuditEnvelope(
+            EVENT_ID,
+            "tenant",
+            AccountAuditTenantIdentity.canonicalTenantV2(tenantUuid.toString()),
+            "account-service",
+            "ACCOUNT_JOINED_PUBLIC_PRODUCTION",
+            Instant.parse("2026-10-04T00:00:00Z"),
+            1,
+            1,
+            net.firedevops.firemud.accountservice.dto.AccountAuditDigest.ofPayload(payload),
+            payload);
+
+    assertThat(envelope.tenantIdentityVersion()).isEqualTo(2);
+    assertThat(envelope.tenantId()).isNull();
+    assertThat(envelope.tenantUuid()).isEqualTo(tenantUuid);
+    assertThat(envelope.payload()).isEqualTo(payload);
+  }
+
+  @Test
+  void canonicalTenantAuditIdentityRejectsNilAndNoncanonicalUuidForms() {
+    assertThatThrownBy(
+            () ->
+                AccountAuditTenantIdentity.canonicalTenantV2(
+                    "00000000-0000-0000-0000-000000000000"))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                AccountAuditTenantIdentity.canonicalTenantV2(
+                    "F4DF3B0A-5FC6-4F86-9EFC-0F053103B200"))
+        .isInstanceOf(IllegalArgumentException.class);
   }
 
   @Test

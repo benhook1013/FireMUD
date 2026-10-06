@@ -2,6 +2,7 @@ package net.firedevops.firemud.accountservice.service;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
 import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
 import org.slf4j.Logger;
@@ -9,7 +10,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
-/** At-least-once delivery of Account's immutable audit outbox envelopes. */
+/** Bounded delivery for retained V1 Account audit envelopes through Logging & Admin receipts. */
 @Component
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
@@ -25,7 +26,9 @@ public class AccountAuditDeliveryJob {
     this.loggingAdminClient = loggingAdminClient;
   }
 
-  @Scheduled(fixedDelayString = "${firemud.account.audit-delivery-delay-ms:5000}")
+  @Scheduled(
+      fixedDelayString = "${firemud.account.audit.delivery.interval-ms:60000}",
+      timeUnit = TimeUnit.MILLISECONDS)
   public void deliverPending() {
     Instant capturedNow = Instant.now();
     for (var envelope : outbox.pending(50, capturedNow)) {
