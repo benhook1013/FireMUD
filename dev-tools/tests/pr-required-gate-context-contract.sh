@@ -294,6 +294,17 @@ if job_id not in expected_job_if or job_id not in result_step_names:
         "add it to expected_job_if and result_step_names"
     )
 
+preserve_steps = [step for step in job["steps"] if step.get("name") == "Preserve successful required gate on metadata-only edit"]
+deferred_steps = [step for step in job["steps"] if step.get("name") == "Report dependency-deferred required gate"]
+if len(preserve_steps) != 1 or preserve_steps[0].get("id") != "preserved_gate":
+    raise SystemExit(f"{workflow} must bind the preservation output")
+if "assessment-mode" in preserve_steps[0].get("with", {}):
+    raise SystemExit(f"{workflow} must retain ordinary polling during passive rollout")
+if len(deferred_steps) != 1 or deferred_steps[0].get("if") != "${{ steps.preserved_gate.outputs.assessment == 'dependency-deferred' }}":
+    raise SystemExit(f"{workflow} must fail distinctly for dependency deferral")
+if "exit 1" not in deferred_steps[0].get("run", ""):
+    raise SystemExit(f"{workflow} deferral must never report success")
+
 if job.get("if") != expected_job_if[job_id]:
     raise SystemExit(
         f"{workflow} {gate} must retain its exact job if condition: "
@@ -1836,5 +1847,266 @@ grep -Fxq 'Required-gate preservation requires a valid pull request head SHA; re
   echo "required-gate action did not report the exact empty-head guard message" >&2
   exit 1
 }
+
+# Exercise one assessment through the same predecessor fixtures as polling.
+for assessment_scenario in no-prior pending-predecessor queued-null-started-at multiple-metadata no-local-workflow-file fork-empty-association; do
+  assessment_file="$tmp_dir/assessment-$assessment_scenario"
+  assessment_count="$tmp_dir/assessment-count-$assessment_scenario"
+  PRESERVATION_MODE=assess GITHUB_OUTPUT="$assessment_file" \
+    run_action "$assessment_count" none "$assessment_scenario"
+  [[ "$(<"$assessment_count")" == 1 ]] || {
+    echo "one assessment polled again for $assessment_scenario" >&2
+    exit 1
+  }
+  case "$assessment_scenario" in
+    no-local-workflow-file|fork-empty-association) expected_assessment=success ;;
+    *) expected_assessment=dependency-deferred ;;
+  esac
+  [[ "$(<"$assessment_file")" == "assessment=$expected_assessment" ]] || {
+    echo "incorrect one-assessment result for $assessment_scenario" >&2
+    exit 1
+  }
+done
+for assessment_scenario in failed-predecessor newer-failure-over-success wrong-run-repository empty-wrong-base; do
+  assessment_file="$tmp_dir/rejected-assessment-$assessment_scenario"
+  if PRESERVATION_MODE=assess GITHUB_OUTPUT="$assessment_file" \
+    run_action "$tmp_dir/rejected-assessment-count-$assessment_scenario" none "$assessment_scenario"; then
+    echo "one assessment accepted invalid original proof: $assessment_scenario" >&2
+    exit 1
+  fi
+  [[ ! -s "$assessment_file" ]] || {
+    echo "invalid original proof was converted into dependency deferral" >&2
+    exit 1
+  }
+done
+if PRESERVATION_MODE=assess GITHUB_OUTPUT="$tmp_dir/api-assessment" \
+  run_action "$tmp_dir/api-assessment-count" transient failure-retry; then
+  echo "one assessment accepted an API failure" >&2
+  exit 1
+fi
+[[ "$(<"$tmp_dir/api-assessment-count")" == 1 ]] || {
+  echo "one assessment retried an API failure" >&2
+  exit 1
+}
+
+RESOLVER="$ROOT_DIR/.github/actions/preserve-required-gate/resolve-deferred-gate.sh"
+python3 - "$ROOT_DIR" <<'PY'
+from pathlib import Path
+import sys
+import yaml
+
+root = Path(sys.argv[1])
+workflow = yaml.load((root / ".github/workflows/resolve-required-gates.yml").read_text(), Loader=yaml.BaseLoader)
+action = yaml.load((root / ".github/actions/preserve-required-gate/action.yml").read_text(), Loader=yaml.BaseLoader)
+assert action["inputs"]["assessment-mode"]["default"] == "poll"
+assert action["outputs"]["assessment"]["value"] == "${{ steps.preserve.outputs.assessment }}"
+assert workflow["on"]["workflow_run"]["types"] == ["completed"]
+assert set(workflow["on"]["workflow_run"]["workflows"]) == {
+    "CI — Validation", "Security Gate", "CodeQL Analysis", "License Gate", "PR Smoke Gate",
+}
+assert workflow["concurrency"] == {
+    "group": "required-gate-resolution-${{ github.event.workflow_run.workflow_id }}-${{ github.event.workflow_run.head_sha }}",
+    "cancel-in-progress": "false",
+}
+job = workflow["jobs"]["resolve"]
+assert job["if"] == "${{ false && github.event.workflow_run.event == 'pull_request' }}"
+assert job["env"]["REQUIRED_GATE_PROOF_ALLOWLIST"] == "[]"
+assert job["permissions"] == {"contents": "read", "checks": "read", "pull-requests": "read", "actions": "write"}
+checkouts = [step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@")]
+assert len(checkouts) == 1 and checkouts[0]["with"] == {"ref": "${{ github.sha }}", "persist-credentials": "false"}
+preflight = next(step for step in job["steps"] if step["name"] == "Preflight deferred gate resolution")
+admission = next(step for step in job["steps"] if step["name"] == "Admit deferred gate reruns")
+assert preflight["id"] == "preflight" and preflight["run"].endswith(" preflight")
+assert admission["if"] == "${{ steps.preflight.outputs.eligible == 'true' }}" and admission["run"].endswith(" admit")
+PY
+
+mkdir "$tmp_dir/resolver-bin"
+cat >"$tmp_dir/resolver-bin/gh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${GITHUB_EVENT_NAME:-}" == pull_request ]]; then
+  exec "${MOCK_ORIGINAL_GH:?}" "$@"
+fi
+python3 - "$@" <<'PY'
+import json
+import os
+from pathlib import Path
+import sys
+
+args = sys.argv[1:]
+state_path = Path(os.environ["RESOLVER_STATE"])
+state = json.loads(state_path.read_text())
+method = args[args.index("--method") + 1]
+endpoint = next(arg for arg in args if arg.startswith("/repos/"))
+scenario = state["scenario"]
+head, base = "a" * 40, "b" * 40
+title = f"CI — Validation pr-123 base-{base} head-{head}"
+repository = "other-owner/firemud" if scenario == "fork-empty" else "example/firemud"
+# The existing fork predecessor fixture is run 200. Keep its resolver target
+# distinct so the shared selector correctly excludes only the target itself.
+target_id = 300 if scenario == "fork-empty" else 200
+result = None
+exit_status = 0
+state.setdefault("calls", []).append(f"{method} {endpoint}")
+
+def run(run_id):
+    return {"id": run_id, "workflow_id": 42, "name": "CI — Validation", "path": ".github/workflows/ci.yml",
+            "created_at": "2026-07-30T01:00:00Z" if run_id == 100 else "2026-07-30T02:00:00Z",
+            "display_title": title, "head_sha": head, "head_branch": "proof-branch",
+            "repository": {"full_name": "example/firemud"}, "head_repository": {"full_name": repository},
+            "event": "pull_request", "status": "completed", "conclusion": "failure" if run_id == target_id else "success",
+            "run_attempt": state.get("attempt", 1), "pull_requests": [] if scenario == "fork-empty" else [{"number": 123}]}
+
+if method == "POST":
+    assert endpoint.endswith("/actions/jobs/2000/rerun"), endpoint
+    state["posts"] = state.get("posts", 0) + 1
+    if scenario == "ambiguous-post":
+        state["ambiguous_admission"] = True
+        exit_status = 1
+        print("simulated connection lost after admission", file=sys.stderr)
+    else:
+        state["attempt"] = 2
+elif endpoint.endswith("/actions/workflows/resolve-required-gates.yml"):
+    result = {"id": 777, "name": "Resolve Required Gates", "path": ".github/workflows/resolve-required-gates.yml"}
+elif endpoint.endswith("/actions/workflows/resolve-required-gates.yml/runs"):
+    assert "--paginate" not in args and "--slurp" not in args
+    assert "created=>=2026-07-30T01:00:00Z" in args and "per_page=20" in args
+    def resolver_run(run_id):
+        return {"id": run_id, "workflow_id": 777, "name": "Resolve Required Gates",
+                "path": ".github/workflows/resolve-required-gates.yml", "event": "workflow_run",
+                "repository": {"full_name": "example/firemud"},
+                "display_title": f"Resolve Required Gates workflow-42 head-{head} source-100"}
+    runs = [resolver_run(9000)]
+    if scenario.startswith("prior-") or state.get("ambiguous_admission"):
+        runs.append(resolver_run(9001))
+    result = {"total_count": 21 if scenario == "prior-oversized" else len(runs) + (1 if scenario == "prior-incomplete" else 0), "workflow_runs": runs}
+elif endpoint.endswith("/actions/runs/9001/jobs"):
+    assert "--paginate" not in args and "--slurp" not in args and "per_page=20" in args
+    if scenario == "prior-unavailable":
+        exit_status = 1
+    else:
+        conclusion = "skipped" if scenario in {"prior-noop", "prior-cancelled-between-steps"} else "failure"
+        if scenario == "prior-cancelled-admission":
+            conclusion = "cancelled"
+        steps = [{"name": "Preflight deferred gate resolution", "status": "completed", "conclusion": "success"},
+                 {"name": "Admit deferred gate reruns", "status": "completed", "conclusion": conclusion}]
+        if scenario == "prior-missing-step":
+            steps.pop()
+        result = {"total_count": 1, "jobs": [{"id": 90010, "run_id": 9001, "name": "Resolve deferred metadata gate",
+                             "status": "completed", "conclusion": "cancelled" if scenario.startswith("prior-cancelled") else "failure",
+                             "steps": steps}]}
+elif endpoint.endswith("/actions/workflows/ci.yml"):
+    result = {"id": 42, "name": "CI — Validation", "path": ".github/workflows/ci.yml"}
+elif endpoint.endswith("/actions/workflows/ci.yml/runs"):
+    assert "--paginate" not in args and "--slurp" not in args
+    assert "head_sha=" + head in args and "event=pull_request" in args and "per_page=20" in args
+    result = {"total_count": 21 if scenario == "source-oversized" else 2, "workflow_runs": [run(100), run(target_id)]}
+elif endpoint.endswith("/pulls/123"):
+    state["pr_reads"] = state.get("pr_reads", 0) + 1
+    result = {"number": 123, "state": "open", "base": {"sha": base, "ref": "develop", "repo": {"full_name": "example/firemud"}},
+              "head": {"sha": "c" * 40 if scenario == "stale-pr" else head, "ref": "proof-branch", "repo": {"full_name": repository}}}
+    if state["pr_reads"] >= 2 and scenario == "fresh-base-branch":
+        result["base"]["ref"] = "main"
+    elif state["pr_reads"] >= 2 and scenario == "fresh-head-repository":
+        result["head"]["repo"]["full_name"] = "other-owner/firemud"
+elif endpoint.endswith(f"/actions/runs/{target_id}/attempts/1/jobs"):
+    assert "--paginate" in args and "--slurp" in args
+    steps = [{"name": "Preserve successful required gate on metadata-only edit", "status": "completed", "conclusion": "success"}]
+    if scenario != "ordinary-failure":
+        steps.append({"name": "Report dependency-deferred required gate", "status": "completed", "conclusion": "failure"})
+    result = [{"jobs": [{"id": 2000, "run_id": target_id, "head_sha": head, "status": "completed", "conclusion": "failure",
+                         "name": "Validation Gate", "steps": steps}]}]
+elif endpoint.endswith(f"/actions/runs/{target_id}"):
+    state["target_reads"] = state.get("target_reads", 0) + 1
+    result = run(target_id)
+    if scenario == "consumed":
+        result["run_attempt"] = 2
+    elif scenario == "fresh-changed" and state["target_reads"] >= 2:
+        result["status"] = "queued"
+    elif scenario == "wrong-tuple":
+        result["display_title"] = title.replace(base, "c" * 40)
+    elif scenario == "wrong-association":
+        result["pull_requests"] = [{"number": 456}]
+    elif scenario == "malformed-path":
+        result["path"] += "@"
+elif endpoint.endswith("/actions/runs/100"):
+    result = run(100)
+else:
+    raise AssertionError(endpoint)
+state_path.write_text(json.dumps(state))
+if result is not None:
+    print(json.dumps(result))
+sys.exit(exit_status)
+PY
+EOF
+chmod +x "$tmp_dir/resolver-bin/gh"
+
+run_resolver() {
+  local scenario="$1" source_id="${2:-100}" original_scenario="${3:-no-local-workflow-file}"
+  local phase="${4:-admit}"
+  local event_file="$tmp_dir/resolver-event-$scenario"
+  printf '{"action":"completed","workflow_run":{"id":%s,"workflow_id":42,"head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","event":"pull_request"}}\n' \
+    "$source_id" >"$event_file"
+  PATH="$tmp_dir/resolver-bin:$PATH" MOCK_ORIGINAL_GH="$tmp_dir/gh" \
+    RESOLVER_STATE="$tmp_dir/resolver-state-$scenario" \
+    REQUIRED_GATE_PROOF_ALLOWLIST='[{"pr":123,"head_branch":"proof-branch"}]' \
+    GITHUB_EVENT_NAME=workflow_run GITHUB_EVENT_PATH="$event_file" GITHUB_RUN_ID=9000 \
+    GITHUB_OUTPUT="$tmp_dir/resolver-output-$scenario" \
+    GITHUB_REPOSITORY=example/firemud GH_TOKEN=test-token \
+    GH_RETRY_COUNT_FILE="$tmp_dir/resolver-proof-count-$scenario" GH_SCENARIO="$original_scenario" \
+    GH_FAILURE_MODE=none bash "$RESOLVER" "$phase"
+}
+resolver_posts() {
+  jq -r '.posts // 0' "$tmp_dir/resolver-state-$1"
+}
+for scenario in success metadata-last metadata-first consumed fresh-changed fresh-base-branch fresh-head-repository ordinary-failure stale-pr wrong-tuple wrong-association malformed-path fork-empty ambiguous-post original-failure preflight prior-noop prior-cancelled-between-steps prior-cancelled-admission prior-ambiguous prior-unavailable prior-incomplete prior-missing-step prior-oversized source-oversized; do
+  printf '{"scenario":"%s"}\n' "$scenario" >"$tmp_dir/resolver-state-$scenario"
+done
+# A passive deployment must not even invoke the CLI.
+REQUIRED_GATE_PROOF_ALLOWLIST='[]' PATH="$tmp_dir/resolver-bin:$PATH" bash "$RESOLVER"
+run_resolver success
+run_resolver success
+[[ "$(resolver_posts success)" == 1 ]] || { echo "duplicate completion replayed a targeted rerun" >&2; exit 1; }
+run_resolver metadata-last 200
+[[ "$(resolver_posts metadata-last)" == 1 ]] || { echo "metadata completion after original success was not resolved" >&2; exit 1; }
+run_resolver metadata-first 200 pending-predecessor
+[[ "$(resolver_posts metadata-first)" == 0 ]] || { echo "pending original admitted a rerun" >&2; exit 1; }
+run_resolver metadata-first 100 pending-predecessor
+[[ "$(resolver_posts metadata-first)" == 1 ]] || { echo "later original completion did not resolve metadata deferral" >&2; exit 1; }
+for scenario in consumed fresh-changed fresh-base-branch fresh-head-repository ordinary-failure stale-pr wrong-tuple wrong-association malformed-path; do
+  run_resolver "$scenario"
+  [[ "$(resolver_posts "$scenario")" == 0 ]] || { echo "resolver reran rejected target: $scenario" >&2; exit 1; }
+done
+run_resolver fork-empty 100 fork-empty-association
+[[ "$(resolver_posts fork-empty)" == 1 ]] || { echo "resolver lost fork/empty-association attribution" >&2; exit 1; }
+if run_resolver ambiguous-post; then
+  echo "ambiguous rerun POST did not fail closed" >&2
+  exit 1
+fi
+[[ "$(resolver_posts ambiguous-post)" == 1 ]] || { echo "ambiguous POST was replayed" >&2; exit 1; }
+if run_resolver ambiguous-post; then
+  echo "a prior ambiguous admission with a still-visible attempt 1 did not require recovery" >&2
+  exit 1
+fi
+[[ "$(resolver_posts ambiguous-post)" == 1 ]] || { echo "later completion replayed an ambiguous POST" >&2; exit 1; }
+run_resolver preflight 100 no-local-workflow-file preflight
+[[ "$(resolver_posts preflight)" == 0 && "$(<"$tmp_dir/resolver-output-preflight")" == 'eligible=true' ]] || {
+  echo "preflight performed admission or lost native eligibility output" >&2; exit 1;
+}
+for scenario in prior-noop prior-cancelled-between-steps; do
+  run_resolver "$scenario"
+  [[ "$(resolver_posts "$scenario")" == 1 ]] || { echo "clean skipped admission blocked resolution" >&2; exit 1; }
+done
+for scenario in prior-ambiguous prior-cancelled-admission prior-unavailable prior-incomplete prior-missing-step prior-oversized source-oversized; do
+  if run_resolver "$scenario"; then
+    echo "unproved prior admission did not require recovery: $scenario" >&2; exit 1
+  fi
+  [[ "$(resolver_posts "$scenario")" == 0 ]] || { echo "unproved prior admission was replayed" >&2; exit 1; }
+done
+if run_resolver original-failure 100 failed-predecessor; then
+  echo "resolver accepted failed original proof" >&2
+  exit 1
+fi
+[[ "$(resolver_posts original-failure)" == 0 ]] || { echo "failed original admitted a rerun" >&2; exit 1; }
 
 echo "PR required-gate context contract checks passed"

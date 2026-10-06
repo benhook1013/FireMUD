@@ -253,6 +253,7 @@ jobs:
           persist-credentials: false
 
       - name: Preserve successful required gate on metadata-only edit
+        id: preserved_gate
         if: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null }}
         uses: ./.github/actions/preserve-required-gate
         with:
@@ -260,6 +261,12 @@ jobs:
           workflow-name: License Gate
           workflow-file: license-scan.yml
           workflow-path: .github/workflows/license-scan.yml
+
+      - name: Report dependency-deferred required gate
+        if: ${{ steps.preserved_gate.outputs.assessment == 'dependency-deferred' }}
+        run: |
+          echo "Original required-gate proof is pending; dependency-deferred failure." >&2
+          exit 1
 
       - name: Verify ORT results
         if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
