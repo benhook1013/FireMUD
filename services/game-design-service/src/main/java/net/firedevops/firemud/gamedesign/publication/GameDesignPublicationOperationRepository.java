@@ -148,7 +148,11 @@ public final class GameDesignPublicationOperationRepository {
     DraftAuthorizationFenceBinding.frame(out, "game-design-publication-owner-readback/v1");
     DraftAuthorizationFenceBinding.frame(out, operation.canonicalBytes());
     DraftAuthorizationFenceBinding.frame(out, outcome);
-    DraftAuthorizationFenceBinding.frame(out, evidence == null ? "" : evidence);
+    if (evidence == null) {
+      DraftAuthorizationFenceBinding.frame(out, new byte[0]);
+    } else {
+      DraftAuthorizationFenceBinding.frame(out, evidence);
+    }
     return out.toByteArray();
   }
 

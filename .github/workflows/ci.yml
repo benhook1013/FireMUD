@@ -962,6 +962,7 @@ jobs:
             --tests integration.net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepositoryIntegrationTest \
             --tests integration.net.firedevops.firemud.gamedesign.service.impl.VersionAssetExportCandidateServiceIntegrationTest \
             --tests net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactRepositoryIntegrationTest \
+            --tests integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest \
             -PfullCheck --no-build-cache --no-configuration-cache
           bash dev-tools/validation/inspect-test-results.sh \
             --strict \
@@ -973,6 +974,7 @@ jobs:
             --require-suite integration.net.firedevops.firemud.gamedesign.service.impl.VersionAssetExportCandidateServiceIntegrationTest \
             --require-suite net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactRepositoryIntegrationTest \
             --require-suite net.firedevops.firemud.gamedesign.service.EntityDigestBaselineMigrationIntegrationTest \
+            --require-suite integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest \
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest#appliesAuditedAssociationForFreshAndRetainedGameSources()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest#versionLockRepositoryUsesConfiguredIsolatedOwnerSchema()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest#concurrentExactFirstWritersReturnOneImmutableReceipt()' \
@@ -1015,7 +1017,18 @@ jobs:
             --require-case 'net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactRepositoryIntegrationTest#saveAndFindRoundTripTimestampFields()' \
             --require-case 'net.firedevops.firemud.gamedesign.service.EntityDigestBaselineMigrationIntegrationTest#exactRetryReadsCommittedEvidenceWithoutCallingEntityAgain()' \
             --require-case 'net.firedevops.firemud.gamedesign.service.EntityDigestBaselineMigrationIntegrationTest#databaseMigrationRolesHaveOnlyTheirDirectTablePrivileges()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#noPublicationReceiptReplaysAfterLostResponseAndExcludesDelayedFinalizerAndRawInsert()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#publishedReceiptCannotBeDemotedByStaleFailureAndRetainsOriginalFreezeEpoch()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#failedAtomicCommitLeavesAttemptOperationVersionAndReleasePendingForExactRetry()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#noPublicationSerializesAgainstAnAlreadyScheduledLatePublisher()' \
             game-design-service
+
+      - name: Preserve Game Design publication operation XML before later selectors
+        if: ${{ always() && matrix.module == 'game-design-service' }}
+        run: |
+          preserved_results=services/game-design-service/build/publication-operation-proof/services/game-design-service/build/test-results/integrationTest
+          mkdir -p "$preserved_results"
+          cp services/game-design-service/build/test-results/integrationTest/TEST-*GameDesignPublicationOperationPostgresIntegrationTest.xml "$preserved_results/"
 
       - name: Verify Game Design fresh tenant creation PostgreSQL proof
         if: ${{ !cancelled() && matrix.module == 'game-design-service' }}
@@ -2307,7 +2320,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: game-design-publication-operation-postgresql-proof-${{ github.sha }}-${{ github.run_attempt }}
-          path: services/game-design-service/build/test-results/integrationTest/TEST-*GameDesignPublicationOperationPostgresIntegrationTest.xml
+          path: services/game-design-service/build/publication-operation-proof/services/game-design-service/build/test-results/integrationTest/TEST-*GameDesignPublicationOperationPostgresIntegrationTest.xml
           if-no-files-found: error
           retention-days: 7
 
@@ -2316,6 +2329,7 @@ jobs:
         run: |
           bash dev-tools/validation/inspect-test-results.sh \
             --strict \
+            --root services/game-design-service/build/publication-operation-proof \
             --require-suite integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest \
             --require-case 'integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#noPublicationReceiptReplaysAfterLostResponseAndExcludesDelayedFinalizerAndRawInsert()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#publishedReceiptCannotBeDemotedByStaleFailureAndRetainsOriginalFreezeEpoch()' \
