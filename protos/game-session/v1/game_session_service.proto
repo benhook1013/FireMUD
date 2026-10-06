@@ -41,6 +41,10 @@ service GameSessionControlPlaneService {
   // Read exact durable owner proof for a World-owned initial-admission hold.
   rpc GetInitialAdmissionBindProof(GetInitialAdmissionBindProofRequest)
       returns (GetInitialAdmissionBindProofResponse);
+  // Read the exact Game Session-owned STARTING launch association for World composition.
+  rpc GetCanonicalGameInstanceLaunchAssociation(
+      GetCanonicalGameInstanceLaunchAssociationRequest)
+      returns (GetCanonicalGameInstanceLaunchAssociationResponse);
   rpc ValidateBuiltInCommandAlias(ValidateBuiltInCommandAliasRequest)
       returns (ValidateBuiltInCommandAliasResponse);
   rpc ListAdmissionPointers(ListAdmissionPointersRequest)
@@ -498,6 +502,42 @@ message GetInitialAdmissionBindProofResponse {
   string pointer_audit_request_digest = 18;
   bool future_commit_prevented = 19;
   shared.v1.ErrorDetail error = 20;
+}
+
+// A transport retry has a separate read identity and cannot create a new launch operation.
+message GetCanonicalGameInstanceLaunchAssociationRequest {
+  string read_request_id = 1;
+  string target_namespace = 2;
+  string canonical_tenant_id = 3;
+  string world_slug = 4;
+  string game_instance_uuid = 5;
+  string control_plane_request_id = 6;
+  string launch_descriptor_id = 7;
+  string expected_descriptor_request_digest = 8;
+  string expected_descriptor_result_digest = 9;
+  string expected_release_attestation_evidence_digest = 10;
+}
+
+message GetCanonicalGameInstanceLaunchAssociationResponse {
+  string read_request_id = 1;
+  string target_namespace = 2;
+  string canonical_tenant_id = 3;
+  string world_slug = 4;
+  string game_instance_uuid = 5;
+  string control_plane_request_id = 6;
+  string launch_descriptor_id = 7;
+  string descriptor_request_digest = 8;
+  string descriptor_result_digest = 9;
+  string release_attestation_evidence_digest = 10;
+  string playable_state_namespace_id = 11;
+  string playable_state_scope = 12;
+  // Current Game Session row projection only; World lifecycle authority remains separate.
+  string current_game_instance_status = 13;
+  int64 current_row_version = 14;
+  gamedesign.v1.LaunchDescriptor launch_descriptor = 15;
+  gamedesign.v1.AuthoredWorldReleaseAttestationEvidence release_attestation = 16;
+  shared.v1.ErrorDetail error = 17;
+  bool public_production = 18;
 }
 
 message GetGameplayCommandStatusRequest {

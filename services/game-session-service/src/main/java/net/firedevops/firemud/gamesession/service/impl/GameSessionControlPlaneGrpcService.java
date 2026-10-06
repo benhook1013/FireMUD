@@ -18,6 +18,8 @@ import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
+import net.firedevops.firemud.gamesession.service.CanonicalGameInstanceLaunchAssociationReadRequest;
+import net.firedevops.firemud.gamesession.service.CanonicalGameInstanceLaunchAssociationReadService;
 import net.firedevops.firemud.gamesession.service.InitialAdmissionBindHoldBinding;
 import net.firedevops.firemud.gamesession.service.InitialAdmissionBindOwnerProof;
 import net.firedevops.firemud.gamesession.service.InitialAdmissionBindOwnerProofReader;
@@ -27,6 +29,8 @@ import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentRes
 import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverRequest;
 import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverResponse;
 import net.firedevops.firemud.gamesession.v1.GameSessionControlPlaneServiceGrpc;
+import net.firedevops.firemud.gamesession.v1.GetCanonicalGameInstanceLaunchAssociationRequest;
+import net.firedevops.firemud.gamesession.v1.GetCanonicalGameInstanceLaunchAssociationResponse;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateRequest;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
 import net.firedevops.firemud.gamesession.v1.GetGameSessionPinConvergenceRequest;
@@ -84,6 +88,7 @@ import net.firedevops.firemud.gamesession.v1.ValidateInstanceCutoverCompatibilit
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessResourceFailureException;
@@ -112,6 +117,10 @@ public final class GameSessionControlPlaneGrpcService
   private final MeterRegistry meterRegistry;
   private InitialAdmissionBindOwnerProofReader initialAdmissionBindOwnerProofReader;
   private InitialAdmissionBindOwnerReadWorkloadGuard initialAdmissionBindOwnerReadWorkloadGuard;
+  private CanonicalGameInstanceLaunchAssociationReadService
+      canonicalGameInstanceLaunchAssociationReadService;
+  private CanonicalGameInstanceLaunchAssociationReadWorkloadGuard
+      canonicalGameInstanceLaunchAssociationReadWorkloadGuard;
 
   private static final Pattern SHA_256 = Pattern.compile("[0-9a-f]{64}");
 
@@ -143,6 +152,16 @@ public final class GameSessionControlPlaneGrpcService
     this.initialAdmissionBindOwnerProofReader = proofReader;
     this.initialAdmissionBindOwnerReadWorkloadGuard =
         new InitialAdmissionBindOwnerReadWorkloadGuard(workloadNamespace);
+  }
+
+  @Autowired
+  public void configureCanonicalGameInstanceLaunchAssociationOwnerReadBoundary(
+      ObjectProvider<CanonicalGameInstanceLaunchAssociationReadService> ownerReadServiceProvider,
+      @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace) {
+    this.canonicalGameInstanceLaunchAssociationReadService =
+        ownerReadServiceProvider.getIfAvailable();
+    this.canonicalGameInstanceLaunchAssociationReadWorkloadGuard =
+        new CanonicalGameInstanceLaunchAssociationReadWorkloadGuard(workloadNamespace);
   }
 
   private long parseTenantId(String tenantId) {
@@ -283,6 +302,94 @@ public final class GameSessionControlPlaneGrpcService
     }
     responseObserver.onNext(response.build());
     responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "gamesessionGrpc.controlPlane.getCanonicalGameInstanceLaunchAssociation")
+  public void getCanonicalGameInstanceLaunchAssociation(
+      GetCanonicalGameInstanceLaunchAssociationRequest request,
+      StreamObserver<GetCanonicalGameInstanceLaunchAssociationResponse> responseObserver) {
+    if (request == null) {
+      responseObserver.onNext(
+          GetCanonicalGameInstanceLaunchAssociationResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, "INVALID_ARGUMENT", "Invalid owner-read request"))
+              .build());
+      responseObserver.onCompleted();
+      return;
+    }
+    try {
+      if (canonicalGameInstanceLaunchAssociationReadWorkloadGuard == null) {
+        throw new AdminAuthorizationException("Canonical owner-read boundary is not configured");
+      }
+      canonicalGameInstanceLaunchAssociationReadWorkloadGuard
+          .requireWorldManagementOwnerReadCaller();
+    } catch (AdminAuthorizationException exception) {
+      responseObserver.onNext(
+          GetCanonicalGameInstanceLaunchAssociationResponse.newBuilder()
+              .setError(authorizationError("GetCanonicalGameInstanceLaunchAssociation", exception))
+              .build());
+      responseObserver.onCompleted();
+      return;
+    }
+
+    CanonicalGameInstanceLaunchAssociationReadRequest target;
+    try {
+      target = CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromWire(request);
+      canonicalGameInstanceLaunchAssociationReadWorkloadGuard.requireConfiguredTargetNamespace(
+          target.targetNamespace());
+    } catch (AdminAuthorizationException exception) {
+      responseObserver.onNext(
+          GetCanonicalGameInstanceLaunchAssociationResponse.newBuilder()
+              .setError(authorizationError("GetCanonicalGameInstanceLaunchAssociation", exception))
+              .build());
+      responseObserver.onCompleted();
+      return;
+    } catch (IllegalArgumentException exception) {
+      responseObserver.onNext(
+          GetCanonicalGameInstanceLaunchAssociationResponse.newBuilder()
+              .setError(
+                  invalidArgumentError("GetCanonicalGameInstanceLaunchAssociation", exception))
+              .build());
+      responseObserver.onCompleted();
+      return;
+    }
+
+    if (canonicalGameInstanceLaunchAssociationReadService == null) {
+      responseObserver.onNext(
+          GetCanonicalGameInstanceLaunchAssociationResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      "UNAVAILABLE",
+                      "Canonical owner-read authority is unavailable"))
+              .build());
+      responseObserver.onCompleted();
+      return;
+    }
+    try {
+      var association = canonicalGameInstanceLaunchAssociationReadService.read(target);
+      responseObserver.onNext(
+          CanonicalGameInstanceLaunchAssociationReadGrpcCodec.toWire(request, association));
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException exception) {
+      responseObserver.onNext(
+          GetCanonicalGameInstanceLaunchAssociationResponse.newBuilder()
+              .setError(
+                  invalidArgumentError("GetCanonicalGameInstanceLaunchAssociation", exception))
+              .build());
+      responseObserver.onCompleted();
+    } catch (Exception exception) {
+      logger.error("GetCanonicalGameInstanceLaunchAssociation failed", exception);
+      responseObserver.onNext(
+          GetCanonicalGameInstanceLaunchAssociationResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, "UNAVAILABLE", "Canonical owner association is unavailable"))
+              .build());
+      responseObserver.onCompleted();
+    }
   }
 
   private GetInitialAdmissionBindProofResponse.Builder echoInitialAdmissionBindTuple(

@@ -6,7 +6,9 @@ import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorClient;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec.GetRequest;
+import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.gamesession.dto.CanonicalLaunchPreparationSnapshot;
 import net.firedevops.firemud.gamesession.dto.CanonicalRealmCatalogSnapshot;
@@ -150,6 +152,53 @@ public class GameSessionCanonicalLaunchPreparationService {
     return exact;
   }
 
+  /**
+   * Reads the complete authenticated Game Design binding for one exact committed preparation. This
+   * is a non-admitting evidence read: it neither creates nor advances a game instance.
+   */
+  public CompleteLaunchBindingEvidence readCompleteBinding(
+      CanonicalLaunchPreparationSnapshot snapshot) {
+    Objects.requireNonNull(snapshot, "snapshot");
+    requireNoAmbientTransaction();
+    snapshot.requireValid();
+    if (!workloadNamespace.equals(snapshot.request().targetNamespace())) {
+      throw new SecurityException("Launch preparation namespace does not match this workload");
+    }
+
+    CanonicalLaunchPreparationSnapshot committed =
+        preparationRepository
+            .readByControlPlaneRequestId(
+                workloadNamespace, snapshot.request().controlPlaneRequestId())
+            .orElseThrow(
+                () ->
+                    new InvalidLaunchPreparationEvidenceException(
+                        "Committed launch preparation is missing before complete binding read"));
+    committed.requireValid();
+    if (!snapshot.equals(committed)) {
+      throw new InvalidLaunchPreparationEvidenceException(
+          "Committed launch preparation changed before complete binding read");
+    }
+
+    AuthoredWorldLaunchDescriptorEvidence descriptor = snapshot.launchDescriptorEvidence();
+    GetRequest readSelector =
+        new GetRequest(randomNonNilUuid(), descriptor.request(), descriptor.resultDigest());
+    CompleteLaunchBindingEvidence binding =
+        descriptorClient.getComplete(
+            AuthoredWorldLaunchDescriptorGrpcCodec.toGetRequest(readSelector));
+    if (binding == null) {
+      throw new InvalidLaunchPreparationEvidenceException(
+          "Game Design returned no complete launch binding");
+    }
+    binding.descriptor().requireValid();
+    binding.releaseAttestation().requireValid(binding.descriptor());
+    if (!descriptor.equals(binding.descriptor())
+        || !workloadNamespace.equals(binding.descriptor().targetNamespace())) {
+      throw new InvalidLaunchPreparationEvidenceException(
+          "Complete Game Design binding differs from the committed launch descriptor");
+    }
+    return binding;
+  }
+
   private static void requireCatalogBinding(
       CreateCanonicalLaunchPreparationRequest request, CanonicalRealmCatalogSnapshot catalog) {
     if (!request.targetNamespace().equals(catalog.targetNamespace())
@@ -185,5 +234,13 @@ public class GameSessionCanonicalLaunchPreparationService {
       throw new IllegalStateException(
           "Canonical launch preparation cannot enter from an ambient transaction");
     }
+  }
+
+  private static UUID randomNonNilUuid() {
+    UUID value;
+    do {
+      value = UUID.randomUUID();
+    } while (new UUID(0L, 0L).equals(value));
+    return value;
   }
 }
