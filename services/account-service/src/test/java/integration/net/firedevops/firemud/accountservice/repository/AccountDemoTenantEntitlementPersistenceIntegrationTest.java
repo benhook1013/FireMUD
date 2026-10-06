@@ -62,6 +62,54 @@ class AccountDemoTenantEntitlementPersistenceIntegrationTest {
   }
 
   @Test
+  void sequenceZeroTenantAuthorityHeadCannotCommit() {
+    TestContext context = newTestContext();
+    FreshTenantIdentityAssociationRepository identityRepository =
+        new FreshTenantIdentityAssociationRepository(context.dsl(), TEST_NAMESPACE);
+    AccountAuthorityGenerationRepository generationRepository =
+        new AccountAuthorityGenerationRepository(context.dsl());
+    AccountTenantEntitlementOutboxRepository billingOutbox =
+        new AccountTenantEntitlementOutboxRepository(context.dsl());
+    AccountTenantAuthorityEventRepository tenantAuthorityEvents =
+        new AccountTenantAuthorityEventRepository(
+            context.dsl(),
+            new AccountAuthorityOutboxRepository(context.dsl()),
+            billingOutbox,
+            identityRepository,
+            generationRepository);
+    UUID tenantId = UUID.fromString("88888888-8888-4888-8888-888888888888");
+    UUID requestId = UUID.fromString("88888888-8888-4888-8888-888888888889");
+    FreshTenantCreationEvidence source = evidence(tenantId, 805L);
+    inTransaction(
+        context.transaction(),
+        () -> {
+          identityRepository.importVerified(source);
+          generationRepository.initializeTenantIfAbsent(tenantId);
+          return null;
+        });
+
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    context.transaction(),
+                    () -> {
+                      tenantAuthorityEvents.establishFirstEventSource(
+                          tenantId,
+                          requestId,
+                          source,
+                          generationRepository.read(
+                              AccountAuthorityGenerationRepository.AuthorityScope.tenant(tenantId)));
+                      context
+                          .dsl()
+                          .execute(
+                              "SET CONSTRAINTS account_tenant_authority_stream_consistency IMMEDIATE");
+                      return null;
+                    }))
+        .hasRootCauseMessage(
+            "ERROR: Tenant authority outbox head lacks an Account-owned source checkpoint");
+  }
+
+  @Test
   void exactFreshUuidReplayConflictQuotasAndGenerationChangeAreTransactionallyFenced() {
     TestContext context = newTestContext();
     FreshTenantIdentityAssociationRepository identityRepository =

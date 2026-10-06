@@ -18,6 +18,7 @@ import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFence
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.SourceChange;
 import net.firedevops.firemud.accountservice.dto.AccountSecurityStateMutationRequest;
 import net.firedevops.firemud.accountservice.entity.Account;
+import net.firedevops.firemud.accountservice.entity.AccountLoginAuthModes;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.AuthorityScope;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.ScopeState;
@@ -776,7 +777,8 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
               .execute(
                   "UPDATE accounts SET email_verified = ?, login_auth_modes = ?, lifecycle_state = ? WHERE account_uuid = ?",
                   pending.request().desiredState().emailVerified(),
-                  String.join(",", pending.request().desiredState().loginAuthModes()),
+                  AccountLoginAuthModes.normalize(
+                      String.join(",", pending.request().desiredState().loginAuthModes())),
                   pending
                       .request()
                       .desiredState()
