@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -55,7 +56,12 @@ class GameLogicRuleInputManifestPostgresIntegrationTest {
     dataSource.setURL(POSTGRES.getJdbcUrl());
     dataSource.setUser(POSTGRES.getUsername());
     dataSource.setPassword(POSTGRES.getPassword());
-    Flyway.configure().dataSource(dataSource).locations("classpath:db/migration").load().migrate();
+    Flyway.configure()
+        .dataSource(dataSource)
+        .placeholders(Map.of("serviceSchema", "public"))
+        .locations("classpath:db/migration")
+        .load()
+        .migrate();
     transactionManager = new DataSourceTransactionManager(dataSource);
     dsl = DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
     repository = new GameLogicRuleInputManifestRepository(dsl, transactionManager);
