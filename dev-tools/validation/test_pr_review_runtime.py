@@ -3394,6 +3394,126 @@ class RuntimeTest(unittest.TestCase):
                 42, Path(directory)
             )
 
+    def test_off_queue_manual_rate_limit_retains_repository_cooldown_before_post(self) -> None:
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        target = ReviewTarget(snapshot, EffectiveParent("develop", BASE), patch_identity=PATCH, merge_base=BASE)
+        for headed in (False, True):
+            for reset in ("future", "expired", "unknown"):
+                with self.subTest(headed=headed, reset=reset), tempfile.TemporaryDirectory() as directory:
+                    response_at = now - timedelta(minutes=1 if reset != "expired" else 60)
+                    command_at = response_at - timedelta(minutes=2)
+                    manual = {
+                        "databaseId": 901, "author": {"login": "maintainer"}, "body": hosted.FULL_COMMAND,
+                        "createdAt": command_at.isoformat(), "url": "https://example.test/comments/901",
+                    }
+                    response = {
+                        "databaseId": 902, "author": {"login": "coderabbitai[bot]"},
+                        "body": "Review rate limited" if reset == "unknown" else
+                                "Review rate limited; next reviews available in 30 minutes",
+                        "createdAt": response_at.isoformat(), "updatedAt": response_at.isoformat(),
+                    }
+                    reviews = [{
+                        "databaseId": 903, "author": {"login": "coderabbitai[bot]"},
+                        "body": "<!-- walkthrough_start -->\nActionable comments posted: 0",
+                        "state": "COMMENTED", "commit": {"oid": "d" * 40},
+                        "submittedAt": (command_at + timedelta(minutes=1)).isoformat(),
+                    }] if headed else []
+                    other_payload = self._payload([manual, response], reviews, head="d" * 40)
+                    other_payload["data"]["repository"]["pullRequest"]["number"] = 99
+
+                    def api_endpoint(endpoint, manual=manual, response=response):
+                        if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
+                            return [{"number": 42, "state": "open"}, {"number": 99, "state": "open"}]
+                        if endpoint == "repos/owner/repo/issues/99/comments?per_page=100":
+                            return [self._rest_issue_comment(manual), self._rest_issue_comment(response)]
+                        raise AssertionError(endpoint)
+
+                    reservations = []
+                    posts = []
+
+                    def admit(reserve, reservations=reservations):
+                        reservations.append("reserved")
+                        reserve()
+
+                    def post(args, posts=posts, **_kwargs):
+                        posts.append(args)
+                        return CompletedProcess(args, 0, json.dumps({
+                            "id": 999, "created_at": now.isoformat(), "html_url": "https://example.test/999",
+                            "body": hosted.FULL_COMMAND, "user": {"login": "maintainer"},
+                        }), "")
+
+                    common = Path(directory)
+                    path = hosted.default_trigger_record_path("owner/repo", 42, common)
+                    live = LiveGitHub("owner/repo")
+                    with (
+                        patch.object(live, "pull_request", return_value=snapshot),
+                        patch.object(live, "branch_head", return_value=BASE),
+                        patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
+                        patch.object(github, "fetch_pull_request", side_effect=lambda _repo, number, other_payload=other_payload:
+                                     other_payload if number == 99 else self._payload()),
+                        patch.object(evidence, "git_common_dir", return_value=common),
+                        patch.object(HostedRunner, "_authenticated_login", return_value="maintainer"),
+                        patch("pr_review.runtime.subprocess.run", side_effect=post),
+                    ):
+                        runner = HostedRunner("owner/repo", live)
+                        if reset == "expired":
+                            result = runner(target, expect_pr=42, admit=admit)
+                            self.assertEqual(result["status"], "posted")
+                            self.assertEqual(reservations, ["reserved"])
+                            self.assertEqual(len(posts), 1)
+                            self.assertTrue(path.exists())
+                        else:
+                            with self.assertRaisesRegex(ControllerError, "Hosted repository cooldown remains unresolved on PR #99"):
+                                runner(target, expect_pr=42, admit=admit)
+                            self.assertEqual(reservations, [])
+                            self.assertEqual(posts, [])
+                            self.assertFalse(path.exists())
+
+    def test_manual_repository_cooldown_ignores_rate_limit_prose_from_other_authors(self) -> None:
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        for headed in (False, True):
+            with self.subTest(headed=headed), tempfile.TemporaryDirectory() as directory:
+                manual = {
+                    "databaseId": 901, "author": {"login": "maintainer"}, "body": hosted.FULL_COMMAND,
+                    "createdAt": (now - timedelta(minutes=2)).isoformat(), "url": "https://example.test/901",
+                }
+                spoof = {
+                    "databaseId": 902, "author": {"login": "arbitrary-user"},
+                    "body": "Review rate limited; next reviews available in 30 minutes",
+                    "createdAt": (now - timedelta(seconds=10)).isoformat(),
+                    "updatedAt": (now - timedelta(seconds=10)).isoformat(),
+                }
+                completed_at = (now - timedelta(minutes=1)).isoformat()
+                terminal = {
+                    "databaseId": 903, "author": {"login": "coderabbitai[bot]"},
+                    "body": hosted.NOOP_MARKER, "createdAt": completed_at, "updatedAt": completed_at,
+                }
+                review = {
+                    "databaseId": 904, "author": {"login": "coderabbitai[bot]"},
+                    "body": "<!-- walkthrough_start -->\nActionable comments posted: 0",
+                    "state": "COMMENTED", "submittedAt": completed_at, "commit": {"oid": "d" * 40},
+                }
+                comments = [manual, spoof] if headed else [manual, terminal, spoof]
+                other_payload = self._payload(comments, [review] if headed else [], head="d" * 40)
+                other_payload["data"]["repository"]["pullRequest"]["number"] = 99
+
+                def api_endpoint(endpoint, comments=comments):
+                    if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
+                        return [{"number": 42, "state": "open"}, {"number": 99, "state": "open"}]
+                    if endpoint == "repos/owner/repo/issues/99/comments?per_page=100":
+                        return [self._rest_issue_comment(item) for item in comments]
+                    raise AssertionError(endpoint)
+
+                with (
+                    patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
+                    patch.object(github, "fetch_pull_request", return_value=other_payload),
+                    patch.object(evidence, "git_common_dir", return_value=Path(directory)),
+                ):
+                    HostedRunner("owner/repo", LiveGitHub("owner/repo"))._assert_no_other_active_reservations(
+                        42, Path(directory)
+                    )
+
     def test_hosted_global_scan_releases_slot_for_headless_terminal_manual_status(self) -> None:
         terminal_responses = (
             "Review rate limited; next reviews available in 30 minutes",

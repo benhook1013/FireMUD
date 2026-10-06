@@ -2459,7 +2459,13 @@ class HostedRunner:
                 terminal_ids.append(response_id)
             else:
                 return False
-        return len(terminal_ids) == 1 and terminal_ids[0] == state.response_id and not active
+        if len(terminal_ids) != 1 or terminal_ids[0] != state.response_id or active:
+            return False
+        if state.state == "rate_limited":
+            reset = hosted.parse_timestamp(state.cooldown_until)
+            if reset is None or reset > datetime.now(timezone.utc):
+                raise ControllerError(f"Hosted repository cooldown remains unresolved on PR #{pr}")
+        return True
 
     @staticmethod
     def _normalize_rest_issue_comments(pr: int, comments: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
@@ -2901,6 +2907,10 @@ class HostedRunner:
                 or state.reason == "CodeRabbit finished after explicitly reporting incomplete file coverage"
             ):
                 raise ControllerError(f"another manual Hosted request is unresolved for PR #{other_pr}: {state.state}")
+            if state.state == "rate_limited":
+                reset = hosted.parse_timestamp(state.cooldown_until)
+                if reset is None or reset > datetime.now(timezone.utc):
+                    raise ControllerError(f"Hosted repository cooldown remains unresolved on PR #{other_pr}")
             budget.set_completed(verified_count)
 
     def __call__(
