@@ -113,7 +113,8 @@ public class PublishAttemptServiceImpl implements PublishAttemptService {
   private void recordParticipantDigestsInCurrentTransaction(
       String publishWorkflowId, List<PublishParticipantDigestDto> participantDigests) {
     PublishAttempt attempt = requireAttempt(publishWorkflowId);
-    if (attempt.getStatus() != PublishAttemptStatus.PENDING) throw new IllegalStateException("Publish attempt is terminal");
+    if (attempt.getStatus() != PublishAttemptStatus.PENDING)
+      throw new IllegalStateException("Publish attempt is terminal");
     participantDigestRepository.deleteByPublishAttemptId(attempt.getId());
     participantDigests.forEach(
         digest -> participantDigestRepository.save(toEntity(attempt.getId(), digest)));
@@ -134,7 +135,8 @@ public class PublishAttemptServiceImpl implements PublishAttemptService {
   private void markSucceededInCurrentTransaction(String publishWorkflowId) {
     PublishAttempt attempt = requireAttempt(publishWorkflowId);
     if (attempt.getStatus() == PublishAttemptStatus.SUCCEEDED) return;
-    if (attempt.getStatus() != PublishAttemptStatus.PENDING) throw new IllegalStateException("Publish attempt is terminal");
+    if (attempt.getStatus() != PublishAttemptStatus.PENDING)
+      throw new IllegalStateException("Publish attempt is terminal");
     attempt.setStatus(PublishAttemptStatus.SUCCEEDED);
     attempt.setFailureCode(null);
     attempt.setFailureMessage(null);
@@ -162,7 +164,8 @@ public class PublishAttemptServiceImpl implements PublishAttemptService {
     if (attempt.getStatus() == PublishAttemptStatus.FAILED
         && Objects.equals(attempt.getFailureCode(), failureCode)
         && Objects.equals(attempt.getFailureMessage(), failureMessage)) return;
-    if (attempt.getStatus() != PublishAttemptStatus.PENDING) throw new IllegalStateException("Publish attempt is terminal");
+    if (attempt.getStatus() != PublishAttemptStatus.PENDING)
+      throw new IllegalStateException("Publish attempt is terminal");
     attempt.setStatus(PublishAttemptStatus.FAILED);
     attempt.setFailureCode(failureCode);
     attempt.setFailureMessage(failureMessage);

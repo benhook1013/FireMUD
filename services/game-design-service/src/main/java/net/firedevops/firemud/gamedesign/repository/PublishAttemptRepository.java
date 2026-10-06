@@ -68,18 +68,32 @@ public class PublishAttemptRepository {
     Optional<PublishAttempt> initial = findByPublishWorkflowId(workflow);
     if (initial.isEmpty()) return initial;
     dsl.fetchOne("SELECT id FROM game WHERE tenant_id = ? FOR UPDATE", initial.get().getTenantId());
-    return Optional.ofNullable(dsl.selectFrom(PUBLISH_ATTEMPT_TABLE)
-        .where(PUBLISH_WORKFLOW_ID.eq(workflow)).forUpdate().fetchOne(this::toEntity));
+    return Optional.ofNullable(
+        dsl.selectFrom(PUBLISH_ATTEMPT_TABLE)
+            .where(PUBLISH_WORKFLOW_ID.eq(workflow))
+            .forUpdate()
+            .fetchOne(this::toEntity));
   }
 
-  public net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence requirePublicationPending(PublishAttempt attempt) {
-    return new GameDesignPublicationOperationRepository(dsl).requirePending(attempt.getTenantId(),
-        attempt.getPublishWorkflowId(), attempt.getVersionId(), attempt.getRequestDigest()).world();
+  public net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence
+      requirePublicationPending(PublishAttempt attempt) {
+    return new GameDesignPublicationOperationRepository(dsl)
+        .requirePending(
+            attempt.getTenantId(),
+            attempt.getPublishWorkflowId(),
+            attempt.getVersionId(),
+            attempt.getRequestDigest())
+        .world();
   }
 
   public void sealPublication(PublishAttempt attempt, boolean published) {
-    new GameDesignPublicationOperationRepository(dsl).seal(attempt.getTenantId(),
-        attempt.getPublishWorkflowId(), attempt.getVersionId(), attempt.getRequestDigest(), published);
+    new GameDesignPublicationOperationRepository(dsl)
+        .seal(
+            attempt.getTenantId(),
+            attempt.getPublishWorkflowId(),
+            attempt.getVersionId(),
+            attempt.getRequestDigest(),
+            published);
   }
 
   public void requirePublishedOperation(PublishAttempt attempt) {
@@ -91,8 +105,10 @@ public class PublishAttemptRepository {
   }
 
   private void requireTerminalOperation(PublishAttempt attempt, String outcome) {
-    var result = new GameDesignPublicationOperationRepository(dsl).read(attempt.getPublishWorkflowId())
-        .orElseThrow(() -> new IllegalStateException("PUBLICATION_OPERATION_UNAVAILABLE"));
+    var result =
+        new GameDesignPublicationOperationRepository(dsl)
+            .read(attempt.getPublishWorkflowId())
+            .orElseThrow(() -> new IllegalStateException("PUBLICATION_OPERATION_UNAVAILABLE"));
     if (!outcome.equals(result.outcome())
         || !result.operation().selectionDigest().equals(attempt.getRequestDigest())
         || result.operation().versionId() != attempt.getVersionId()
@@ -179,24 +195,27 @@ public class PublishAttemptRepository {
       }
       return toEntity(record);
     }
-    int changed = dsl.update(PUBLISH_ATTEMPT_TABLE)
-        .set(TENANT_ID, attempt.getTenantId())
-        .set(PUBLISH_WORKFLOW_ID, attempt.getPublishWorkflowId())
-        .set(PUBLISH_TYPE, attempt.getPublishType().name())
-        .set(STATUS, attempt.getStatus().name())
-        .set(REVISION, Math.addExact(attempt.getRevision(), 1L))
-        .set(VERSION_ID, attempt.getVersionId())
-        .set(VERSION_NUMBER, attempt.getVersionNumber())
-        .set(SCRIPT_PATCH_VERSION, attempt.getScriptPatchVersion())
-        .set(BASE_VERSION_ID, attempt.getBaseVersionId())
-        .set(REQUEST_DIGEST, attempt.getRequestDigest())
-        .set(FAILURE_CODE, attempt.getFailureCode())
-        .set(FAILURE_MESSAGE, attempt.getFailureMessage())
-        .set(CREATED_AT, JooqPersistenceSupport.toTimestamp(createdAt))
-        .set(COMPLETED_AT, JooqPersistenceSupport.toTimestamp(attempt.getCompletedAt()))
-        .where(ID.eq(attempt.getId()).and(REVISION.eq(attempt.getRevision()))
-            .and(STATUS.eq(PublishAttemptStatus.PENDING.name())))
-        .execute();
+    int changed =
+        dsl.update(PUBLISH_ATTEMPT_TABLE)
+            .set(TENANT_ID, attempt.getTenantId())
+            .set(PUBLISH_WORKFLOW_ID, attempt.getPublishWorkflowId())
+            .set(PUBLISH_TYPE, attempt.getPublishType().name())
+            .set(STATUS, attempt.getStatus().name())
+            .set(REVISION, Math.addExact(attempt.getRevision(), 1L))
+            .set(VERSION_ID, attempt.getVersionId())
+            .set(VERSION_NUMBER, attempt.getVersionNumber())
+            .set(SCRIPT_PATCH_VERSION, attempt.getScriptPatchVersion())
+            .set(BASE_VERSION_ID, attempt.getBaseVersionId())
+            .set(REQUEST_DIGEST, attempt.getRequestDigest())
+            .set(FAILURE_CODE, attempt.getFailureCode())
+            .set(FAILURE_MESSAGE, attempt.getFailureMessage())
+            .set(CREATED_AT, JooqPersistenceSupport.toTimestamp(createdAt))
+            .set(COMPLETED_AT, JooqPersistenceSupport.toTimestamp(attempt.getCompletedAt()))
+            .where(
+                ID.eq(attempt.getId())
+                    .and(REVISION.eq(attempt.getRevision()))
+                    .and(STATUS.eq(PublishAttemptStatus.PENDING.name())))
+            .execute();
     if (changed != 1) throw new IllegalStateException("PUBLISH_ATTEMPT_CAS_CONFLICT");
     return findByPublishWorkflowId(attempt.getPublishWorkflowId()).orElseThrow();
   }

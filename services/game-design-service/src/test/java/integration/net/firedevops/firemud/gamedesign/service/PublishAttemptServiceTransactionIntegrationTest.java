@@ -12,19 +12,12 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
-import net.firedevops.firemud.common.authoring.DraftCommitBinding;
-import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
-import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
-import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
-import net.firedevops.firemud.common.temporal.FiremudWorkflowIds;
 import net.firedevops.firemud.gamedesign.GameDesignServiceApplication;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection.PublishIntent;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepository;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepository.SelectionSnapshot;
-import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository.PublicationEvidence;
-import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository.VisibilityFence;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.Game;
@@ -49,7 +42,6 @@ import net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactReposito
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionTemplateRemapSetRepository;
 import net.firedevops.firemud.gamedesign.service.impl.PublishAttemptServiceImpl;
-import net.firedevops.firemud.gamedesign.service.impl.TemporalVersionPublishWorkflow;
 import net.firedevops.firemud.gamedesign.service.impl.VersionPublishCommandServiceImpl;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
@@ -378,8 +370,8 @@ class PublishAttemptServiceTransactionIntegrationTest {
         .thenAnswer(
             invocation -> {
               VersionDto version = invocation.getArgument(0);
-              return net.firedevops.firemud.gamedesign.service.impl.PublishedWorldSelectorFixtures.participants(
-                  version.id(), fixture.operation().world());
+              return net.firedevops.firemud.gamedesign.service.impl.PublishedWorldSelectorFixtures
+                  .participants(version.id(), fixture.operation().world());
             });
     Mockito.when(assetExportService.exportAssets(tenantId, 1))
         .thenAnswer(
@@ -515,8 +507,8 @@ class PublishAttemptServiceTransactionIntegrationTest {
               VersionDto candidate = invocation.getArgument(0);
               candidateVersionId.set(candidate.id());
               candidateVersionNumber.set(candidate.versionNumber());
-              return net.firedevops.firemud.gamedesign.service.impl.PublishedWorldSelectorFixtures.participants(
-                  candidate.id(), fixture.operation().world());
+              return net.firedevops.firemud.gamedesign.service.impl.PublishedWorldSelectorFixtures
+                  .participants(candidate.id(), fixture.operation().world());
             });
     Mockito.doAnswer(
             invocation -> {
@@ -698,14 +690,19 @@ class PublishAttemptServiceTransactionIntegrationTest {
             game.getId(),
             game.getTenantId(),
             "NEW_GAME_ROW");
-    var operation = publishAttemptService.executeFullVersionTransaction(() -> {
-      try {
-        return net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup.retain(
-            dsl, target, savedVersion.getVersionStateEpoch(), notes);
-      } catch (Exception failure) { throw new IllegalStateException(failure); }
-    });
+    var operation =
+        publishAttemptService.executeFullVersionTransaction(
+            () -> {
+              try {
+                return net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup.retain(
+                    dsl, target, savedVersion.getVersionStateEpoch(), notes);
+              } catch (Exception failure) {
+                throw new IllegalStateException(failure);
+              }
+            });
     var retained = operation.account().input().selection();
-    AuthoredDraftPublishSelection selection = AuthoredDraftPublishSelection.fromStored(retained.canonicalJson(), retained.digest());
+    AuthoredDraftPublishSelection selection =
+        AuthoredDraftPublishSelection.fromStored(retained.canonicalJson(), retained.digest());
     String publishRequestId = selection.intent().publishRequestId();
     Mockito.when(
             authoredSelectionRepository.readByPublishRequest(
@@ -715,7 +712,13 @@ class PublishAttemptServiceTransactionIntegrationTest {
 
     String workflowId = operation.workflowId();
     return new SelectedDraftFixture(
-        game.getTenantId(), notes, publishRequestId, workflowId, savedVersion, selection, operation);
+        game.getTenantId(),
+        notes,
+        publishRequestId,
+        workflowId,
+        savedVersion,
+        selection,
+        operation);
   }
 
   private Object invokeSelectedPublicationMechanics(SelectedDraftFixture fixture) {

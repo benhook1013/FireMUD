@@ -347,7 +347,9 @@ class VersionPublishCommandServiceImplTest {
   void setup() {
     MockitoAnnotations.openMocks(this);
     when(publishAttemptRepository.findByPublishWorkflowIdForUpdate(any(String.class)))
-        .thenAnswer(invocation -> publishAttemptRepository.findByPublishWorkflowId(invocation.getArgument(0)));
+        .thenAnswer(
+            invocation ->
+                publishAttemptRepository.findByPublishWorkflowId(invocation.getArgument(0)));
     when(publishedReleaseBundleService.findPublishedReleaseBundle(
             any(String.class), any(Long.class)))
         .thenReturn(Optional.empty());

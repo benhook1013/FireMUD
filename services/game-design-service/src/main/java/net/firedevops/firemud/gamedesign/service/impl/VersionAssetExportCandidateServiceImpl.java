@@ -15,15 +15,15 @@ import java.util.Set;
 import java.util.UUID;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.entity.VersionAssetArtifact;
+import net.firedevops.firemud.gamedesign.model.PublishAttemptStatus;
 import net.firedevops.firemud.gamedesign.model.VersionAssetArtifactState;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
+import net.firedevops.firemud.gamedesign.repository.GameRepository;
+import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository.AssetSelection;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository.ExportSnapshot;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
-import net.firedevops.firemud.gamedesign.repository.GameRepository;
-import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
-import net.firedevops.firemud.gamedesign.model.PublishAttemptStatus;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
 import net.firedevops.firemud.gamedesign.service.PublishedArtifactDigest;
 import net.firedevops.firemud.gamedesign.service.VersionAssetExportCandidateService;
@@ -122,11 +122,15 @@ public final class VersionAssetExportCandidateServiceImpl
     if (initiallyFound.getId() == null || initiallyFound.getId() <= 0) {
       throw new IllegalStateException(CANDIDATE_CONFLICT);
     }
-    var initialArtifact = artifactRepository.findByTenantIdAndVersionId(tenantId, initiallyFound.getId())
-        .orElseThrow(() -> new IllegalStateException(CANDIDATE_NOT_FOUND));
-    var attempt = attemptRepository.findByPublishWorkflowIdForUpdate(initialArtifact.getLastWorkflowId());
+    var initialArtifact =
+        artifactRepository
+            .findByTenantIdAndVersionId(tenantId, initiallyFound.getId())
+            .orElseThrow(() -> new IllegalStateException(CANDIDATE_NOT_FOUND));
+    var attempt =
+        attemptRepository.findByPublishWorkflowIdForUpdate(initialArtifact.getLastWorkflowId());
     // Standalone private candidate recording is not publication authority. If an actual selected
-    // attempt exists, its immutable operation must still be open before any new candidate admission.
+    // attempt exists, its immutable operation must still be open before any new candidate
+    // admission.
     if (attempt.isPresent()) {
       var current = attempt.get();
       if (!Objects.equals(current.getTenantId(), tenantId)

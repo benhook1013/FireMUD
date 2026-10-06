@@ -5,22 +5,22 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
-import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
-import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
-import java.util.Map;
-import tools.jackson.databind.ObjectMapper;
+import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection.PublishIntent;
 import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository.PublicationEvidence;
 import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository.VisibilityFence;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.ObjectMapper;
 
 class AuthoredDraftPublishSelectionTest {
   private static final String LARGE_COUNTER = "900719925474099312345678901234567890";
@@ -74,29 +74,68 @@ class AuthoredDraftPublishSelectionTest {
     assertThat(restored.fenceResultVectorJson()).isEqualTo(fence.resultVectorJson());
     assertThat(restored.fenceCreatedAt()).isEqualTo("2026-10-05T00:00:00Z");
     // Independent original V43 object layout. Extraction must preserve its exact bytes/digest.
-    byte[] legacy = Rfc8785CanonicalJson.canonicalizeUtf8(new ObjectMapper().writeValueAsString(
-        Map.of("schemaVersion", "1",
-            "intent", Map.of("canonicalTenantId", intent.canonicalTenantId().toString(),
-                "canonicalVersionId", intent.canonicalVersionId().toString(),
-                "publishRequestId", intent.publishRequestId(),
-                "expectedVersionStateEpoch", intent.expectedVersionStateEpoch(),
-                "notes", intent.notes(), "selectedCommitRequestId", intent.selectedCommitRequestId().toString(),
-                "selectedCommitId", intent.selectedCommitId().toString(),
-                "selectedCommitDigest", intent.selectedCommitDigest()),
-            "target", Map.of("canonicalTenantId", target.canonicalTenantId().toString(),
-                "canonicalVersionId", target.canonicalVersionId().toString(),
-                "gameDesignVersionRowId", Long.toString(target.gameDesignVersionRowId()),
-                "gameDesignVersionTenantKey", target.gameDesignVersionTenantKey(),
-                "sourceGameRowId", Long.toString(target.sourceGameRowId()),
-                "sourceGameTenantKey", target.sourceGameTenantKey(),
-                "sourceProvenanceKind", target.sourceProvenanceKind()),
-            "selectedCommitBindingJson", binding.canonicalJson(), "selectedCommitDigest", binding.digest(),
-            "synchronizedFence", Map.of("requestId", fence.requestId().toString(),
-                "commitId", fence.commitId().toString(), "inputDigest", fence.inputDigest(),
-                "resultVectorJson", fence.resultVectorJson(), "createdAt", "2026-10-05T00:00:00Z"))));
+    byte[] legacy =
+        Rfc8785CanonicalJson.canonicalizeUtf8(
+            new ObjectMapper()
+                .writeValueAsString(
+                    Map.of(
+                        "schemaVersion",
+                        "1",
+                        "intent",
+                        Map.of(
+                            "canonicalTenantId",
+                            intent.canonicalTenantId().toString(),
+                            "canonicalVersionId",
+                            intent.canonicalVersionId().toString(),
+                            "publishRequestId",
+                            intent.publishRequestId(),
+                            "expectedVersionStateEpoch",
+                            intent.expectedVersionStateEpoch(),
+                            "notes",
+                            intent.notes(),
+                            "selectedCommitRequestId",
+                            intent.selectedCommitRequestId().toString(),
+                            "selectedCommitId",
+                            intent.selectedCommitId().toString(),
+                            "selectedCommitDigest",
+                            intent.selectedCommitDigest()),
+                        "target",
+                        Map.of(
+                            "canonicalTenantId",
+                            target.canonicalTenantId().toString(),
+                            "canonicalVersionId",
+                            target.canonicalVersionId().toString(),
+                            "gameDesignVersionRowId",
+                            Long.toString(target.gameDesignVersionRowId()),
+                            "gameDesignVersionTenantKey",
+                            target.gameDesignVersionTenantKey(),
+                            "sourceGameRowId",
+                            Long.toString(target.sourceGameRowId()),
+                            "sourceGameTenantKey",
+                            target.sourceGameTenantKey(),
+                            "sourceProvenanceKind",
+                            target.sourceProvenanceKind()),
+                        "selectedCommitBindingJson",
+                        binding.canonicalJson(),
+                        "selectedCommitDigest",
+                        binding.digest(),
+                        "synchronizedFence",
+                        Map.of(
+                            "requestId",
+                            fence.requestId().toString(),
+                            "commitId",
+                            fence.commitId().toString(),
+                            "inputDigest",
+                            fence.inputDigest(),
+                            "resultVectorJson",
+                            fence.resultVectorJson(),
+                            "createdAt",
+                            "2026-10-05T00:00:00Z"))));
     assertThat(selection.canonicalBytes()).containsExactly(legacy);
     assertThat(selection.digest()).isEqualTo(DraftAuthorizationFenceBinding.digest(legacy));
-    var shared = AuthoredDraftPublishSelectionBinding.fromStored(selection.canonicalJson(), selection.digest());
+    var shared =
+        AuthoredDraftPublishSelectionBinding.fromStored(
+            selection.canonicalJson(), selection.digest());
     assertThat(shared.canonicalBytes()).containsExactly(legacy);
   }
 

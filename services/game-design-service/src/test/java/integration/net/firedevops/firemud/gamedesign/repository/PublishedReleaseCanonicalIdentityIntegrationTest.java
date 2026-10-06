@@ -580,9 +580,17 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
     var operation = selectorOperation(fixture, version);
     WorldPublishedStartLocationEvidence evidence = operation.world();
     PublishedReleaseBundle requested = selectorBundle(version, evidence);
-    PublishedReleaseBundle saved = fixture.transactionTemplate().execute(status ->
-        net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup.commitStorage(
-            fixture.dsl(), fixture.versionRepository(), operation, () -> fixture.releaseBundleRepository().save(requested)));
+    PublishedReleaseBundle saved =
+        fixture
+            .transactionTemplate()
+            .execute(
+                status ->
+                    net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup
+                        .commitStorage(
+                            fixture.dsl(),
+                            fixture.versionRepository(),
+                            operation,
+                            () -> fixture.releaseBundleRepository().save(requested)));
     String beforeXmin = bundleXmin(fixture.dsl(), saved.getId());
     String original = new String(evidence.canonicalBytes(), StandardCharsets.UTF_8);
     assertThat(saved.getWorldPublishedStartLocationEvidenceJson()).isEqualTo(original);
@@ -639,10 +647,18 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
       java.util.concurrent.Callable<PublishedReleaseBundle> save =
           () -> {
             start.await();
-            return fixture.transactionTemplate().execute(status ->
-                net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup.commitStorage(
-                    fixture.dsl(), fixture.versionRepository(), operation, () -> new PublishedReleaseBundleRepository(fixture.dsl())
-                        .save(selectorBundle(version, evidence))));
+            return fixture
+                .transactionTemplate()
+                .execute(
+                    status ->
+                        net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup
+                            .commitStorage(
+                                fixture.dsl(),
+                                fixture.versionRepository(),
+                                operation,
+                                () ->
+                                    new PublishedReleaseBundleRepository(fixture.dsl())
+                                        .save(selectorBundle(version, evidence))));
           };
       var first = executor.submit(save);
       var second = executor.submit(save);
@@ -740,12 +756,21 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
                     fixture, version, "v2", original, json.writeValueAsString(changedParticipants)))
         .isInstanceOf(DataAccessException.class);
     assertThat(bundleCount(fixture.dsl())).isZero();
-    fixture.transactionTemplate().executeWithoutResult(status ->
-        net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup.commitStorage(
-            fixture.dsl(), fixture.versionRepository(), operation, () -> {
-              insertRawSelector(fixture, version, "v2", original, participants);
-              return fixture.releaseBundleRepository().findByTenantIdAndVersionId(version.getTenantId(), version.getId()).orElseThrow();
-            }));
+    fixture
+        .transactionTemplate()
+        .executeWithoutResult(
+            status ->
+                net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup.commitStorage(
+                    fixture.dsl(),
+                    fixture.versionRepository(),
+                    operation,
+                    () -> {
+                      insertRawSelector(fixture, version, "v2", original, participants);
+                      return fixture
+                          .releaseBundleRepository()
+                          .findByTenantIdAndVersionId(version.getTenantId(), version.getId())
+                          .orElseThrow();
+                    }));
     assertThat(
             new PublishedReleaseBundleRepository(fixture.dsl())
                 .findByTenantIdAndVersionId(version.getTenantId(), version.getId())
@@ -766,16 +791,32 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
             version.getIdentitySourceProvenanceKind()));
   }
 
-  /** ISOLATED upstream sources/freeze; synchronized selection and terminal GD rows are actual DB writes. */
-  private net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperation selectorOperation(
-      Fixture fixture, Version version) {
-    var target = new TargetProof(version.getCanonicalTenantId(), version.getCanonicalVersionId(), version.getId(), version.getTenantId(),
-        version.getIdentitySourceGameRowId(), version.getIdentitySourceGameTenantKey(), version.getIdentitySourceProvenanceKind());
-    return fixture.transactionTemplate().execute(status -> {
-      try {
-        return net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup.retain(fixture.dsl(), target, version.getVersionStateEpoch());
-      } catch (Exception failure) { throw new IllegalStateException(failure); }
-    });
+  /**
+   * ISOLATED upstream sources/freeze; synchronized selection and terminal GD rows are actual DB
+   * writes.
+   */
+  private net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperation
+      selectorOperation(Fixture fixture, Version version) {
+    var target =
+        new TargetProof(
+            version.getCanonicalTenantId(),
+            version.getCanonicalVersionId(),
+            version.getId(),
+            version.getTenantId(),
+            version.getIdentitySourceGameRowId(),
+            version.getIdentitySourceGameTenantKey(),
+            version.getIdentitySourceProvenanceKind());
+    return fixture
+        .transactionTemplate()
+        .execute(
+            status -> {
+              try {
+                return net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup.retain(
+                    fixture.dsl(), target, version.getVersionStateEpoch());
+              } catch (Exception failure) {
+                throw new IllegalStateException(failure);
+              }
+            });
   }
 
   private PublishedReleaseBundle selectorBundle(
@@ -794,6 +835,17 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
 
   private void insertRawSelector(
       Fixture fixture, Version version, String schema, String evidence, String participants) {
+    var operationRow =
+        fixture
+            .dsl()
+            .fetchOne(
+                "SELECT publish_workflow_id FROM game_design_publication_operation WHERE tenant_id = ? AND version_id = ?",
+                version.getTenantId(),
+                version.getId());
+    if (operationRow == null) {
+      throw new IllegalStateException(
+          "Selected publication operation row is absent for release selector fixture");
+    }
     fixture
         .dsl()
         .execute(
@@ -808,7 +860,7 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
             version.getCanonicalVersionId(),
             UUID.randomUUID().toString(),
             schema,
-            fixture.dsl().fetchOne("SELECT publish_workflow_id FROM game_design_publication_operation WHERE tenant_id = ? AND version_id = ?", version.getTenantId(), version.getId()).get(0, String.class),
+            operationRow.get(0, String.class),
             MANIFEST_HASH,
             GENERATION_CONFIG_REVISION,
             participants,
@@ -825,7 +877,8 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
   private Fixture fixtureFromMigratedSchema(String schema, DriverManagerDataSource dataSource) {
     DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
     TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
-    transactionTemplate.setIsolationLevel(org.springframework.transaction.TransactionDefinition.ISOLATION_READ_COMMITTED);
+    transactionTemplate.setIsolationLevel(
+        org.springframework.transaction.TransactionDefinition.ISOLATION_READ_COMMITTED);
     DefaultConfiguration jooqConfiguration = new DefaultConfiguration();
     jooqConfiguration.set(SQLDialect.POSTGRES);
     jooqConfiguration.set(

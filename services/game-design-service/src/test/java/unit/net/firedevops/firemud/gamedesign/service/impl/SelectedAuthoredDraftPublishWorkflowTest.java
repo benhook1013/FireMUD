@@ -18,6 +18,7 @@ import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection.PublishIntent;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepository;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepository.SelectionSnapshot;
+import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.PublishAttempt;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.mapper.VersionMapper;
@@ -66,6 +67,7 @@ class SelectedAuthoredDraftPublishWorkflowTest {
     when(f.versions.findByTenantIdAndIdForUpdate(request.tenantId(), 47L))
         .thenReturn(Optional.of(version));
     when(f.versions.findByTenantIdAndId(request.tenantId(), 47L)).thenReturn(Optional.of(version));
+    when(f.games.findByTenantIdForUpdate(request.tenantId())).thenReturn(mock(Game.class));
     PublishAttempt attempt = new PublishAttempt();
     attempt.setTenantId(request.tenantId());
     attempt.setVersionId(47L);
@@ -120,6 +122,7 @@ class SelectedAuthoredDraftPublishWorkflowTest {
     final AuthoredDraftPublishSelectionRepository selections =
         mock(AuthoredDraftPublishSelectionRepository.class);
     final VersionRepository versions = mock(VersionRepository.class);
+    final GameRepository games = mock(GameRepository.class);
     final PublishAttemptRepository attempts = mock(PublishAttemptRepository.class);
     final PublishAttemptService attemptService = mock(PublishAttemptService.class);
     final PublishGateService gate = mock(PublishGateService.class);
@@ -152,7 +155,7 @@ class SelectedAuthoredDraftPublishWorkflowTest {
       command =
           new VersionPublishCommandServiceImpl(
               versions,
-              mock(GameRepository.class),
+              games,
               attempts,
               Mappers.getMapper(VersionMapper.class),
               exports,
