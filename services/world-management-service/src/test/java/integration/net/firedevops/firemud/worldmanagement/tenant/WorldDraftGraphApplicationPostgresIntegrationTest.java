@@ -178,7 +178,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     var mapped =
         Objects.requireNonNull(
             dsl.fetchOne(
-                "SELECT m.template_id,r.room_instance_id FROM world_canonical_instance_topology_identity m "
+                "SELECT m.template_id,r.room_instance_row_id AS room_instance_id FROM world_canonical_instance_topology_identity m "
                     + "JOIN room_instance r ON r.id=m.runtime_row_id WHERE m.world_instance_id=? AND m.family='ROOM' AND m.template_id=?",
                 result.association().worldInstanceId(),
                 lastRoom));

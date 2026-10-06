@@ -47,6 +47,8 @@ class VersionAssetExportCandidateServiceImplTest {
       UUID.fromString("8b0c1a0f-b8c9-4c4b-9021-381f57699002");
 
   @Mock private VersionRepository versionRepository;
+  @Mock private net.firedevops.firemud.gamedesign.repository.GameRepository gameRepository;
+  @Mock private net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository attemptRepository;
   @Mock private VersionAssetArtifactRepository artifactRepository;
   @Mock private VersionAssetPublicationService publicationService;
   @Mock private PlatformTransactionManager transactionManager;
@@ -59,6 +61,8 @@ class VersionAssetExportCandidateServiceImplTest {
 
   @BeforeEach
   void setUp() {
+    lenient().when(gameRepository.findByTenantIdForUpdate(TENANT_ID))
+        .thenReturn(new net.firedevops.firemud.gamedesign.entity.Game());
     TransactionStatus transactionStatus = new SimpleTransactionStatus();
     when(transactionManager.getTransaction(any(TransactionDefinition.class)))
         .thenReturn(transactionStatus);
@@ -94,6 +98,8 @@ class VersionAssetExportCandidateServiceImplTest {
     service =
         new VersionAssetExportCandidateServiceImpl(
             versionRepository,
+            gameRepository,
+            attemptRepository,
             artifactRepository,
             publicationService,
             transactionManager,

@@ -346,6 +346,8 @@ class VersionPublishCommandServiceImplTest {
   @BeforeEach
   void setup() {
     MockitoAnnotations.openMocks(this);
+    when(publishAttemptRepository.findByPublishWorkflowIdForUpdate(any(String.class)))
+        .thenAnswer(invocation -> publishAttemptRepository.findByPublishWorkflowId(invocation.getArgument(0)));
     when(publishedReleaseBundleService.findPublishedReleaseBundle(
             any(String.class), any(Long.class)))
         .thenReturn(Optional.empty());
@@ -461,7 +463,8 @@ class VersionPublishCommandServiceImplTest {
             any(String.class),
             any(ExportedAssetManifest.class),
             any(String.class),
-            any(List.class)))
+            any(List.class),
+            org.mockito.ArgumentMatchers.nullable(WorldPublishedStartLocationEvidence.class)))
         .thenReturn(
             new PublishedReleaseBundleDto(
                 1L,
@@ -573,6 +576,8 @@ class VersionPublishCommandServiceImplTest {
         .recordFullVersionParticipantDigests(any(String.class), any(List.class));
     verify(publishedReleaseBundleService, never())
         .createFullVersionBundle(any(), any(), any(), any(), any());
+    verify(publishedReleaseBundleService, never())
+        .createFullVersionBundle(any(), any(), any(), any(), any(), any());
     verify(assetExportService, never()).exportAssets(any(String.class), any(Integer.class));
   }
 
@@ -634,6 +639,8 @@ class VersionPublishCommandServiceImplTest {
     verify(assetExportService, never()).exportAssets(any(String.class), any(Integer.class));
     verify(publishedReleaseBundleService, never())
         .createFullVersionBundle(any(), any(), any(), any(), any());
+    verify(publishedReleaseBundleService, never())
+        .createFullVersionBundle(any(), any(), any(), any(), any(), any());
   }
 
   @Test
@@ -692,7 +699,8 @@ class VersionPublishCommandServiceImplTest {
             any(String.class),
             any(ExportedAssetManifest.class),
             any(String.class),
-            any(List.class));
+            any(List.class),
+            org.mockito.ArgumentMatchers.nullable(WorldPublishedStartLocationEvidence.class));
 
     assertThrows(
         IllegalStateException.class,
@@ -1318,7 +1326,8 @@ class VersionPublishCommandServiceImplTest {
             any(String.class),
             any(ExportedAssetManifest.class),
             any(String.class),
-            any(List.class)))
+            any(List.class),
+            org.mockito.ArgumentMatchers.nullable(WorldPublishedStartLocationEvidence.class)))
         .thenReturn(bundle);
     when(publishedReleaseBundleService.findPublishedReleaseBundle("tenant-1", 10L))
         .thenReturn(Optional.empty());

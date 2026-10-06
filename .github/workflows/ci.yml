@@ -2204,6 +2204,35 @@ jobs:
             --require-case 'net.firedevops.firemud.gamedesign.draft.GameDesignDraftTerminalOutcomePostgresIntegrationTest#migrationDoesNotInventAccountOutcomesForRetainedStatusOnlyRows()' \
             game-design-service
 
+      - name: Capture Account publication participation PostgreSQL raw XML
+        if: ${{ always() && matrix.module == 'account-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: account-publication-participation-postgresql-proof-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: services/account-service/build/test-results/integrationTest/TEST-*PublicationAuthorizationFencePostgresIntegrationTest.xml
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Verify Account publication participation PostgreSQL execution
+        if: ${{ !cancelled() && matrix.module == 'account-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFencePostgresIntegrationTest \
+            --require-case 'net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFencePostgresIntegrationTest#exactReserveOrderAndRestartReadbackPreserveOriginalBytes()' \
+            --require-case 'net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFencePostgresIntegrationTest#changedRequestCaptureActorOrAllocatedIdentityCannotReplaceOriginal()' \
+            --require-case 'net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFencePostgresIntegrationTest#sourceChangeRevokesReservedPublicationButCannotCommitOrAbortWithoutItsOwnTerminalContract()' \
+            --require-case 'net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFencePostgresIntegrationTest#publicationOrderRemainsUnresolvedAfterOriginalDraftTerminalResults()' \
+            --require-case 'net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFencePostgresIntegrationTest#waitingChangeDeniesNewReservationAndUnrelatedScopeStillProceeds()' \
+            --require-case 'net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFencePostgresIntegrationTest#concurrentPublicationClaimAndSourceChangeChooseOneDurableOrder()' \
+            --require-case 'net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFencePostgresIntegrationTest#rawSqlCannotReplaceOriginalSourceBindingOrOrderOrTruncateEvidence()' \
+            --require-case 'net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFencePostgresIntegrationTest#failedOwnerTransactionRollsBackReservationAndParticipation()' \
+            --require-case 'net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFencePostgresIntegrationTest#concurrentExactReservationReturnsOneImmutableOperation()' \
+            --require-case 'net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFencePostgresIntegrationTest#rawSqlCannotReserveIncompleteSourceParticipationOrSubstituteRequestIdentity()' \
+            --require-case 'net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFencePostgresIntegrationTest#sqlPreservesJavaSourceLockOrderingForSupplementaryUnicodeScopes()' \
+            --require-case 'net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFencePostgresIntegrationTest#missingCurrentSchemaFailsClosedAndUpgradePreservesOriginalDraftEvidence()' \
+            account-service
+
       - name: Capture World Account-bound graph application PostgreSQL raw XML
         if: ${{ always() && matrix.module == 'world-management-service' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -2272,6 +2301,27 @@ jobs:
           path: services/game-design-service/build/test-results/integrationTest/TEST-*AuthoredDraftPublishSelectionRepositoryIntegrationTest.xml
           if-no-files-found: error
           retention-days: 7
+
+      - name: Capture Game Design publication operation PostgreSQL XML
+        if: ${{ always() && matrix.module == 'game-design-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: game-design-publication-operation-postgresql-proof-${{ github.sha }}-${{ github.run_attempt }}
+          path: services/game-design-service/build/test-results/integrationTest/TEST-*GameDesignPublicationOperationPostgresIntegrationTest.xml
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Verify Game Design publication operation PostgreSQL proof
+        if: ${{ !cancelled() && matrix.module == 'game-design-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest \
+            --require-case 'net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#noPublicationReceiptReplaysAfterLostResponseAndExcludesDelayedFinalizerAndRawInsert()' \
+            --require-case 'net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#publishedReceiptCannotBeDemotedByStaleFailureAndRetainsOriginalFreezeEpoch()' \
+            --require-case 'net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#failedAtomicCommitLeavesAttemptOperationVersionAndReleasePendingForExactRetry()' \
+            --require-case 'net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#noPublicationSerializesAgainstAnAlreadyScheduledLatePublisher()' \
+            game-design-service
 
       - name: Capture World authored-graph snapshot PostgreSQL XML
         if: ${{ always() && matrix.module == 'world-management-service' }}

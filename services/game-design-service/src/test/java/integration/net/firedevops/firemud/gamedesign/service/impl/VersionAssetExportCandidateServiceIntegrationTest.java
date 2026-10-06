@@ -96,6 +96,7 @@ class VersionAssetExportCandidateServiceIntegrationTest {
         .contains("artifacts/sha256/", "manifests/sha256/", candidate.manifestHash());
     VersionAssetExportCandidateServiceImpl restartedService =
         candidateService(
+            fixture.dsl(),
             fixture.versionRepository(),
             fixture.artifactRepository(),
             fixture.publicationService(),
@@ -222,6 +223,7 @@ class VersionAssetExportCandidateServiceIntegrationTest {
     migrate(fixture.dataSource(), fixture.schema(), V38);
     VersionAssetExportCandidateServiceImpl candidateService =
         candidateService(
+            fixture.dsl(),
             fixture.versionRepository(),
             fixture.artifactRepository(),
             fixture.publicationService(),
@@ -442,16 +444,19 @@ class VersionAssetExportCandidateServiceIntegrationTest {
         publicationService,
         artifactRepository,
         candidateService(
-            versionRepository, artifactRepository, publicationService, transactionManager));
+            dsl, versionRepository, artifactRepository, publicationService, transactionManager));
   }
 
   private VersionAssetExportCandidateServiceImpl candidateService(
+      DSLContext dsl,
       VersionRepository versionRepository,
       VersionAssetArtifactRepository artifactRepository,
       VersionAssetPublicationServiceImpl publicationService,
       PlatformTransactionManager transactionManager) {
     return new VersionAssetExportCandidateServiceImpl(
         versionRepository,
+        new GameRepository(dsl),
+        new net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository(dsl),
         artifactRepository,
         publicationService,
         transactionManager,

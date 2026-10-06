@@ -21,6 +21,9 @@ import net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactReposito
 import net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository.AssetSelection;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository.ExportSnapshot;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
+import net.firedevops.firemud.gamedesign.repository.GameRepository;
+import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
+import net.firedevops.firemud.gamedesign.model.PublishAttemptStatus;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
 import net.firedevops.firemud.gamedesign.service.PublishedArtifactDigest;
 import net.firedevops.firemud.gamedesign.service.VersionAssetExportCandidateService;
@@ -43,6 +46,8 @@ public final class VersionAssetExportCandidateServiceImpl
   private static final String MANIFEST_USAGE_KEY = "manifest.json";
   private static final String BINARY_ARTIFACT_KIND = "BINARY";
   private final VersionRepository versionRepository;
+  private final GameRepository gameRepository;
+  private final PublishAttemptRepository attemptRepository;
   private final VersionAssetArtifactRepository artifactRepository;
   private final VersionAssetPublicationService publicationService;
   private final ObjectMapper objectMapper;
@@ -51,11 +56,15 @@ public final class VersionAssetExportCandidateServiceImpl
 
   public VersionAssetExportCandidateServiceImpl(
       VersionRepository versionRepository,
+      GameRepository gameRepository,
+      PublishAttemptRepository attemptRepository,
       VersionAssetArtifactRepository artifactRepository,
       VersionAssetPublicationService publicationService,
       PlatformTransactionManager transactionManager,
       ObjectMapper objectMapper) {
     this.versionRepository = Objects.requireNonNull(versionRepository, "versionRepository");
+    this.gameRepository = Objects.requireNonNull(gameRepository, "gameRepository");
+    this.attemptRepository = Objects.requireNonNull(attemptRepository, "attemptRepository");
     this.artifactRepository = Objects.requireNonNull(artifactRepository, "artifactRepository");
     this.publicationService = Objects.requireNonNull(publicationService, "publicationService");
     this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
@@ -103,12 +112,29 @@ public final class VersionAssetExportCandidateServiceImpl
 
   private ExportedAssetManifest recordInOwnerTransaction(
       String tenantId, int versionNumber, ExportedAssetManifest requested) {
+    if (gameRepository.findByTenantIdForUpdate(tenantId) == null) {
+      throw new IllegalStateException(CANDIDATE_NOT_FOUND);
+    }
     Version initiallyFound =
         versionRepository
             .findByTenantIdAndVersionNumber(tenantId, versionNumber)
             .orElseThrow(() -> new IllegalStateException(CANDIDATE_NOT_FOUND));
     if (initiallyFound.getId() == null || initiallyFound.getId() <= 0) {
       throw new IllegalStateException(CANDIDATE_CONFLICT);
+    }
+    var initialArtifact = artifactRepository.findByTenantIdAndVersionId(tenantId, initiallyFound.getId())
+        .orElseThrow(() -> new IllegalStateException(CANDIDATE_NOT_FOUND));
+    var attempt = attemptRepository.findByPublishWorkflowIdForUpdate(initialArtifact.getLastWorkflowId());
+    // Standalone private candidate recording is not publication authority. If an actual selected
+    // attempt exists, its immutable operation must still be open before any new candidate admission.
+    if (attempt.isPresent()) {
+      var current = attempt.get();
+      if (!Objects.equals(current.getTenantId(), tenantId)
+          || !Objects.equals(current.getVersionId(), initiallyFound.getId())
+          || current.getStatus() != PublishAttemptStatus.PENDING) {
+        throw new IllegalStateException(CANDIDATE_CONFLICT);
+      }
+      if (current.getRequestDigest() != null) attemptRepository.requirePublicationPending(current);
     }
     Version version =
         versionRepository

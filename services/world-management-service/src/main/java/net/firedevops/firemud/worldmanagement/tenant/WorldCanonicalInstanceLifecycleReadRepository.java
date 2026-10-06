@@ -10,6 +10,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.world.RoomTemplateRef;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence;
@@ -297,8 +298,7 @@ public final class WorldCanonicalInstanceLifecycleReadRepository {
     requireText(source, "receiptDigest", binding.sourceIntakeReceipt().receiptDigest());
     requireText(source, "requestDigest", binding.sourceIntakeReceipt().requestDigest());
     requireInteger(source, "localTenantKey", binding.sourceIntakeReceipt().localTenantKey());
-    requireText(
-        source, "sourceEvidence", writeClosedEvidenceJson(binding.sourceIntakeReceipt().source()));
+    requireSourceEvidenceObject(source, binding.sourceIntakeReceipt().source());
 
     JsonNode topology = requiredObject(input, "topology");
     requireText(topology, "captureId", captureId.toString());
@@ -505,6 +505,38 @@ public final class WorldCanonicalInstanceLifecycleReadRepository {
     Set<String> actual = new java.util.HashSet<>();
     value.propertyNames().forEach(actual::add);
     if (!actual.equals(expected)) throw invalid(label + " has missing or unsupported fields");
+  }
+
+  private static void requireSourceEvidenceObject(
+      JsonNode retained, AuthoredWorldSourceEvidence evidence) {
+    JsonNode actual = requiredObject(retained, "sourceEvidence");
+    Set<String> fields =
+        Set.of(
+            "schemaVersion",
+            "registrationRequestId",
+            "sourceOperationId",
+            "requestDigest",
+            "canonicalTenantId",
+            "tenantSlug",
+            "worldSlug",
+            "worldDisplayName",
+            "sourceGameRowId",
+            "sourceGameTenantKey",
+            "provenanceKind",
+            "evidenceDigest");
+    requireFields(actual, fields, "Retained World source evidence");
+    requireInteger(actual, "schemaVersion", evidence.schemaVersion());
+    requireText(actual, "registrationRequestId", evidence.registrationRequestId().toString());
+    requireText(actual, "sourceOperationId", evidence.operationId().toString());
+    requireText(actual, "requestDigest", evidence.requestDigest());
+    requireText(actual, "canonicalTenantId", evidence.canonicalTenantId().toString());
+    requireText(actual, "tenantSlug", evidence.tenantSlug());
+    requireText(actual, "worldSlug", evidence.worldSlug());
+    requireText(actual, "worldDisplayName", evidence.worldDisplayName());
+    requireInteger(actual, "sourceGameRowId", evidence.sourceGameRowId());
+    requireText(actual, "sourceGameTenantKey", evidence.sourceGameTenantKey());
+    requireText(actual, "provenanceKind", evidence.provenanceKind());
+    requireText(actual, "evidenceDigest", evidence.evidenceDigest());
   }
 
   private static JsonNode requiredObject(JsonNode parent, String field) {

@@ -44,6 +44,7 @@ import tools.jackson.databind.ObjectMapper;
 class PublishedReleaseCanonicalIdentityIntegrationTest {
   private static final String MANIFEST_HASH = "sha256:" + "a".repeat(64);
   private static final String OTHER_MANIFEST_HASH = "sha256:" + "b".repeat(64);
+  private static final String GENERATION_CONFIG_REVISION = "generation-1";
   private static final String FLYWAY_TABLE = "flyway_schema_history_game_design_service";
   private static final MigrationVersion V35 = MigrationVersion.fromVersion("35");
   private static final MigrationVersion V35_1 = MigrationVersion.fromVersion("35.1");
@@ -576,9 +577,12 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
     Fixture fixture = fixture(null);
     Game owner = saveGame(fixture, "selector-release-source");
     Version version = saveVersion(fixture, owner);
-    WorldPublishedStartLocationEvidence evidence = selectorEvidence(version);
+    var operation = selectorOperation(fixture, version);
+    WorldPublishedStartLocationEvidence evidence = operation.world();
     PublishedReleaseBundle requested = selectorBundle(version, evidence);
-    PublishedReleaseBundle saved = fixture.releaseBundleRepository().save(requested);
+    PublishedReleaseBundle saved = fixture.transactionTemplate().execute(status ->
+        net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup.commitStorage(
+            fixture.dsl(), fixture.versionRepository(), operation, () -> fixture.releaseBundleRepository().save(requested)));
     String beforeXmin = bundleXmin(fixture.dsl(), saved.getId());
     String original = new String(evidence.canonicalBytes(), StandardCharsets.UTF_8);
     assertThat(saved.getWorldPublishedStartLocationEvidenceJson()).isEqualTo(original);
@@ -628,14 +632,17 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
     Fixture fixture = fixture(null);
     Game owner = saveGame(fixture, "selector-concurrent-source");
     Version version = saveVersion(fixture, owner);
-    var evidence = selectorEvidence(version);
+    var operation = selectorOperation(fixture, version);
+    var evidence = operation.world();
     var start = new java.util.concurrent.CountDownLatch(1);
     try (var executor = java.util.concurrent.Executors.newFixedThreadPool(2)) {
       java.util.concurrent.Callable<PublishedReleaseBundle> save =
           () -> {
             start.await();
-            return new PublishedReleaseBundleRepository(fixture.dsl())
-                .save(selectorBundle(version, evidence));
+            return fixture.transactionTemplate().execute(status ->
+                net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup.commitStorage(
+                    fixture.dsl(), fixture.versionRepository(), operation, () -> new PublishedReleaseBundleRepository(fixture.dsl())
+                        .save(selectorBundle(version, evidence))));
           };
       var first = executor.submit(save);
       var second = executor.submit(save);
@@ -653,7 +660,8 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
     Fixture fixture = fixture(null);
     Game owner = saveGame(fixture, "selector-denial-source");
     Version version = saveVersion(fixture, owner);
-    WorldPublishedStartLocationEvidence evidence = selectorEvidence(version);
+    var operation = selectorOperation(fixture, version);
+    WorldPublishedStartLocationEvidence evidence = operation.world();
     var json = new ObjectMapper();
     String original = new String(evidence.canonicalBytes(), StandardCharsets.UTF_8);
     String participants =
@@ -732,7 +740,12 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
                     fixture, version, "v2", original, json.writeValueAsString(changedParticipants)))
         .isInstanceOf(DataAccessException.class);
     assertThat(bundleCount(fixture.dsl())).isZero();
-    insertRawSelector(fixture, version, "v2", original, participants);
+    fixture.transactionTemplate().executeWithoutResult(status ->
+        net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup.commitStorage(
+            fixture.dsl(), fixture.versionRepository(), operation, () -> {
+              insertRawSelector(fixture, version, "v2", original, participants);
+              return fixture.releaseBundleRepository().findByTenantIdAndVersionId(version.getTenantId(), version.getId()).orElseThrow();
+            }));
     assertThat(
             new PublishedReleaseBundleRepository(fixture.dsl())
                 .findByTenantIdAndVersionId(version.getTenantId(), version.getId())
@@ -751,6 +764,18 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
             version.getIdentitySourceGameRowId(),
             version.getIdentitySourceGameTenantKey(),
             version.getIdentitySourceProvenanceKind()));
+  }
+
+  /** ISOLATED upstream sources/freeze; synchronized selection and terminal GD rows are actual DB writes. */
+  private net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperation selectorOperation(
+      Fixture fixture, Version version) {
+    var target = new TargetProof(version.getCanonicalTenantId(), version.getCanonicalVersionId(), version.getId(), version.getTenantId(),
+        version.getIdentitySourceGameRowId(), version.getIdentitySourceGameTenantKey(), version.getIdentitySourceProvenanceKind());
+    return fixture.transactionTemplate().execute(status -> {
+      try {
+        return net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup.retain(fixture.dsl(), target, version.getVersionStateEpoch());
+      } catch (Exception failure) { throw new IllegalStateException(failure); }
+    });
   }
 
   private PublishedReleaseBundle selectorBundle(
@@ -774,16 +799,18 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
         .execute(
             "INSERT INTO published_release_bundle (tenant_id, version_id, version_number, "
                 + "canonical_tenant_id, canonical_version_id, published_release_bundle_ref, attestation_schema_version, "
-                + "publish_workflow_id, manifest_hash, manifest_schema_version, artifact_digests_json, "
+                + "publish_workflow_id, manifest_hash, generation_config_revision, manifest_schema_version, artifact_digests_json, "
                 + "required_manifest_asset_keys_json, participant_digests_json, command_definitions_json, script_only, "
-                + "world_published_start_location_evidence_json) VALUES (?, ?, 1, ?, ?, ?, ?, 'publish-workflow', ?, 1, '[]', '[]', ?, '[]', FALSE, ?)",
+                + "world_published_start_location_evidence_json) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, 1, '[]', '[]', ?, '[]', FALSE, ?)",
             version.getTenantId(),
             version.getId(),
             version.getCanonicalTenantId(),
             version.getCanonicalVersionId(),
             UUID.randomUUID().toString(),
             schema,
+            fixture.dsl().fetchOne("SELECT publish_workflow_id FROM game_design_publication_operation WHERE tenant_id = ? AND version_id = ?", version.getTenantId(), version.getId()).get(0, String.class),
             MANIFEST_HASH,
+            GENERATION_CONFIG_REVISION,
             participants,
             evidence);
   }
@@ -798,6 +825,7 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
   private Fixture fixtureFromMigratedSchema(String schema, DriverManagerDataSource dataSource) {
     DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
     TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
+    transactionTemplate.setIsolationLevel(org.springframework.transaction.TransactionDefinition.ISOLATION_READ_COMMITTED);
     DefaultConfiguration jooqConfiguration = new DefaultConfiguration();
     jooqConfiguration.set(SQLDialect.POSTGRES);
     jooqConfiguration.set(
@@ -897,7 +925,7 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
     bundle.setManifestHash(MANIFEST_HASH);
     bundle.setManifestSchemaVersion(1);
     bundle.setArtifactDigestsJson("[]");
-    bundle.setGenerationConfigRevision("generation-1");
+    bundle.setGenerationConfigRevision(GENERATION_CONFIG_REVISION);
     bundle.setRequiredManifestAssetKeysJson("[]");
     bundle.setParticipantDigestsJson("[]");
     bundle.setCommandDefinitionsJson("[]");
