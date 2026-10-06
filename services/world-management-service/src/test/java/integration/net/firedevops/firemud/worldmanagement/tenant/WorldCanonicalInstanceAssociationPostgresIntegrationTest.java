@@ -1231,8 +1231,12 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
     var checkpoint = frozen.sourceBinding().freeze();
     var selector =
         publishedEvidence(
-            publishedSelectors().readCommitted(checkpoint).orElseThrow(
-                () -> new IllegalStateException("Synthetic APPLIED-v2 selector was not retained")));
+            publishedSelectors()
+                .readCommitted(checkpoint)
+                .orElseThrow(
+                    () ->
+                        new IllegalStateException(
+                            "Synthetic APPLIED-v2 selector was not retained")));
     CompleteLaunchBindingEvidence evidence =
         completeEvidence(
             source.source(),
@@ -1587,8 +1591,7 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
       WorldCanonicalInstancePreparation.Input input) {
     var release = input.completeLaunchBinding().evidence().releaseAttestation();
     var world = Objects.requireNonNull(release.worldStartLocationEvidence());
-    if (release.versionStateEpoch()
-        != Math.addExact(world.request().versionStateEpoch(), 1L)) {
+    if (release.versionStateEpoch() != Math.addExact(world.request().versionStateEpoch(), 1L)) {
       throw new IllegalStateException(
           "Isolated PUBLISHED terminal must retain the next publication epoch after its World freeze");
     }
@@ -1630,8 +1633,7 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
         release.versionStateEpoch());
   }
 
-  private ReleaseContent isolatedReleaseContent(
-      WorldCanonicalInstancePreparation.Input input) {
+  private ReleaseContent isolatedReleaseContent(WorldCanonicalInstancePreparation.Input input) {
     var release = input.completeLaunchBinding().evidence().releaseAttestation();
     var world = Objects.requireNonNull(release.worldStartLocationEvidence());
     var participants =
@@ -1668,8 +1670,7 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
         world);
   }
 
-  private void completeIsolatedPublicationTerminal(
-      WorldCanonicalInstancePreparation.Input input) {
+  private void completeIsolatedPublicationTerminal(WorldCanonicalInstancePreparation.Input input) {
     var evidence = isolatedTerminalEvidence(input);
     GameDesignPublicationTerminalEvidence retained =
         publicationTerminalComponent(evidence)
@@ -1712,64 +1713,64 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
     List<WorldDesignMutationRevision> mutations =
         new ArrayList<>(
             List.of(
-            mutation(
-                    commitId,
-                    regionId,
-                    WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION,
-                    regionId)
-                .setRegion(
-                    RegionDesignMutation.newBuilder()
-                        .setName("synthetic region")
-                        .setWeather("rain")
-                        .setShardId(7)
-                        .setGenerationSeed(9001)
-                        .setGeneratorType("synthetic")
-                        .setGeneratorParams("{}"))
-                .build(),
-            mutation(
-                    commitId,
-                    zoneId,
-                    WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ZONE,
-                    regionId)
-                .setZone(
-                    ZoneDesignMutation.newBuilder()
-                        .setName("synthetic zone")
-                        .setRegionId(regionId.toString()))
-                .build(),
-            mutation(
-                    commitId,
-                    destinationRoomId,
-                    WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM,
-                    regionId)
-                .setRoom(
-                    RoomDesignMutation.newBuilder()
-                        .setName("synthetic destination")
-                        .setZoneId(zoneId.toString())
-                        .setDescription("synthetic destination room"))
-                .build(),
-            mutation(
-                    commitId,
-                    roomId,
-                    WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM,
-                    regionId)
-                .setRoom(
-                    RoomDesignMutation.newBuilder()
-                        .setName("synthetic room")
-                        .setZoneId(zoneId.toString())
-                        .setDescription("synthetic materialization proof"))
-                .build(),
-            mutation(
-                    commitId,
-                    UUID.randomUUID(),
-                    WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM_EXIT,
-                    regionId)
-                .setRoomExit(
-                    RoomExitDesignMutation.newBuilder()
-                        .setFromRoomId(roomId.toString())
-                        .setToRoomId(destinationRoomId.toString())
-                        .setDirection("EAST")
-                        .setCost(3))
-                .build()));
+                mutation(
+                        commitId,
+                        regionId,
+                        WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION,
+                        regionId)
+                    .setRegion(
+                        RegionDesignMutation.newBuilder()
+                            .setName("synthetic region")
+                            .setWeather("rain")
+                            .setShardId(7)
+                            .setGenerationSeed(9001)
+                            .setGeneratorType("synthetic")
+                            .setGeneratorParams("{}"))
+                    .build(),
+                mutation(
+                        commitId,
+                        zoneId,
+                        WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ZONE,
+                        regionId)
+                    .setZone(
+                        ZoneDesignMutation.newBuilder()
+                            .setName("synthetic zone")
+                            .setRegionId(regionId.toString()))
+                    .build(),
+                mutation(
+                        commitId,
+                        destinationRoomId,
+                        WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM,
+                        regionId)
+                    .setRoom(
+                        RoomDesignMutation.newBuilder()
+                            .setName("synthetic destination")
+                            .setZoneId(zoneId.toString())
+                            .setDescription("synthetic destination room"))
+                    .build(),
+                mutation(
+                        commitId,
+                        roomId,
+                        WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM,
+                        regionId)
+                    .setRoom(
+                        RoomDesignMutation.newBuilder()
+                            .setName("synthetic room")
+                            .setZoneId(zoneId.toString())
+                            .setDescription("synthetic materialization proof"))
+                    .build(),
+                mutation(
+                        commitId,
+                        UUID.randomUUID(),
+                        WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM_EXIT,
+                        regionId)
+                    .setRoomExit(
+                        RoomExitDesignMutation.newBuilder()
+                            .setFromRoomId(roomId.toString())
+                            .setToRoomId(destinationRoomId.toString())
+                            .setDirection("EAST")
+                            .setCost(3))
+                    .build()));
     WorldFreshGraphDeclaration declaration =
         WorldFreshGraphDeclaration.newBuilder()
             .setTenantId(fixture.versionIdentity().canonicalTenantId().toString())
@@ -1780,8 +1781,7 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
                     .setVersionId(fixture.versionIdentity().canonicalVersionId().toString())
                     .setRoomTemplateId(roomId.toString()))
             .addFamilyCounts(
-                familyCount(
-                    mutations, WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION))
+                familyCount(mutations, WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION))
             .addFamilyCounts(
                 familyCount(mutations, WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ZONE))
             .addFamilyCounts(
@@ -1791,14 +1791,16 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
                     mutations, WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM_EXIT))
             .addFamilyCounts(
                 familyCount(
-                    mutations, WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_GENERATION_RULE))
+                    mutations,
+                    WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_GENERATION_RULE))
             .addFamilyCounts(
                 familyCount(
                     mutations,
                     WorldDesignAggregateType
                         .WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING))
             .build();
-    mutations.set(0, mutations.getFirst().toBuilder().setFreshGraphDeclaration(declaration).build());
+    mutations.set(
+        0, mutations.getFirst().toBuilder().setFreshGraphDeclaration(declaration).build());
     List<DraftCommitBinding.RevisionPayload> revisions = new java.util.ArrayList<>();
     List<AffectedUnit> units = new java.util.ArrayList<>();
     revisions.add(

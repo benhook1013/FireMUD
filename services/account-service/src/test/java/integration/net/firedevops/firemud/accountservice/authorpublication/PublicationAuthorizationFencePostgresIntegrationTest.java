@@ -1001,8 +1001,7 @@ class PublicationAuthorizationFencePostgresIntegrationTest {
         .hasStackTraceContaining("account_publication_authorization_owner_results");
     assertThat(context.dsl().fetchCount(DSL.table("account_draft_authorization_source_changes")))
         .isZero();
-    assertThat(
-            context.dsl().fetchCount(DSL.table("account_draft_authorization_changed_scopes")))
+    assertThat(context.dsl().fetchCount(DSL.table("account_draft_authorization_changed_scopes")))
         .isZero();
     var orderedBeforeHistory = tx(context, () -> context.publication().read(binding));
     assertThat(orderedBeforeHistory.ordering()).isEqualTo(Ordering.PUBLICATION_ORDER);
