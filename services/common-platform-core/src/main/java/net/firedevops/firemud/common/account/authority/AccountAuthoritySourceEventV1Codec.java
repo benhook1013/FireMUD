@@ -176,12 +176,20 @@ public final class AccountAuthoritySourceEventV1Codec {
     object.put("sourceVersion", event.sourceVersion());
     object.put("issuanceFence", event.issuanceFence());
     object.put("issuanceFenceSourceVersion", event.issuanceFenceSourceVersion());
-    var mutations = object.putArray("mutationKinds");
-    event.mutationKinds().forEach(mutations::add);
+    if (event.mutationKinds() == null) {
+      object.putNull("mutationKinds");
+    } else {
+      var mutations = object.putArray("mutationKinds");
+      event.mutationKinds().forEach(mutations::add);
+    }
     ObjectNode accountState = object.putObject("accountState");
     accountState.put("emailVerified", event.accountState().emailVerified());
-    var modes = accountState.putArray("loginAuthModes");
-    event.accountState().loginAuthModes().forEach(modes::add);
+    if (event.accountState().loginAuthModes() == null) {
+      accountState.putNull("loginAuthModes");
+    } else {
+      var modes = accountState.putArray("loginAuthModes");
+      event.accountState().loginAuthModes().forEach(modes::add);
+    }
     accountState.put("globalRole", event.accountState().globalRole());
     accountState.put("lifecycleState", event.accountState().lifecycleState());
     ObjectNode cutoff = object.putObject("accountSecurityCutoff");

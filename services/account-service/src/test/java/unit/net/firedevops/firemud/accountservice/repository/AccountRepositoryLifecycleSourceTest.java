@@ -83,7 +83,7 @@ class AccountRepositoryLifecycleSourceTest {
     account.setEmail(EMAIL);
     account.setPasswordHash(PASSWORD_HASH);
     account.setRole("player");
-    account.setLifecycleState(AccountLifecycleState.ACTIVE);
+    account.setLifecycleState(AccountLifecycleState.SECURITY_LOCKED);
     return account;
   }
 

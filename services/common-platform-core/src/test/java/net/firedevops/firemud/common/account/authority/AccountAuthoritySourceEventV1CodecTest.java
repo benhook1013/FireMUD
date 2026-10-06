@@ -69,6 +69,50 @@ class AccountAuthoritySourceEventV1CodecTest {
   }
 
   @Test
+  void accountEventRejectsNullMutationKindsAsAnInvalidRequiredArray() {
+    var event =
+        new AccountAuthoritySourceEventV1Codec.AccountPreimage(
+            "event-1",
+            "request-1",
+            ACCOUNT_STREAM,
+            "8",
+            ACCOUNT_ID,
+            "9",
+            "9",
+            "9",
+            "9",
+            null,
+            state("player"));
+
+    assertThatThrownBy(() -> AccountAuthoritySourceEventV1Codec.sealAccount(event))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("mutationKinds")
+        .hasMessageContaining("required array");
+  }
+
+  @Test
+  void accountEventRejectsNullLoginAuthModesAsAnInvalidRequiredArray() {
+    var event =
+        new AccountAuthoritySourceEventV1Codec.AccountPreimage(
+            "event-1",
+            "request-1",
+            ACCOUNT_STREAM,
+            "8",
+            ACCOUNT_ID,
+            "9",
+            "9",
+            "9",
+            "9",
+            List.of("PASSWORD_RESET"),
+            new AccountAuthoritySourceEventV1Codec.AccountState(true, null, "player", "ACTIVE"));
+
+    assertThatThrownBy(() -> AccountAuthoritySourceEventV1Codec.sealAccount(event))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("accountState.loginAuthModes")
+        .hasMessageContaining("required array");
+  }
+
+  @Test
   void accountEventAcceptsAnExplicitNullGlobalRole() {
     var expected = accountEvent("9", "8", null);
 

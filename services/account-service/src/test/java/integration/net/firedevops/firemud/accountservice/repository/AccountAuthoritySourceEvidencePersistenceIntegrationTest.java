@@ -296,14 +296,21 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
     assertThat(rolledBackEvent).isEmpty();
     Account lifecycleUpdate = accounts.findByAccountUuid(account.getAccountUuid()).orElseThrow();
     lifecycleUpdate.setLifecycleState(AccountLifecycleState.SECURITY_LOCKED);
-    transaction.executeWithoutResult(status -> accounts.save(lifecycleUpdate));
+    assertThatThrownBy(
+            () -> transaction.executeWithoutResult(status -> accounts.save(lifecycleUpdate)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("lifecycle changes are unavailable");
     var afterLifecycleUpdate =
         transaction.execute(
             status -> sources.readCurrentIssuerAccountSources(ISSUER, account.getAccountUuid()));
-    assertThat(
-            accounts.findByAccountUuid(account.getAccountUuid()).orElseThrow().getLifecycleState())
+    Account persistedAfterLifecycleRejection =
+        accounts.findByAccountUuid(account.getAccountUuid()).orElseThrow();
+    assertThat(persistedAfterLifecycleRejection.getLifecycleState())
         .isEqualTo(AccountLifecycleState.ACTIVE);
-    assertThat(lifecycleUpdate.getLifecycleState()).isEqualTo(AccountLifecycleState.ACTIVE);
+    assertThat(persistedAfterLifecycleRejection.getPasswordHash())
+        .isEqualTo(account.getPasswordHash());
+    assertThat(lifecycleUpdate.getLifecycleState())
+        .isEqualTo(AccountLifecycleState.SECURITY_LOCKED);
     assertThat(afterLifecycleUpdate.account().generation()).isEqualTo(3L);
     assertThat(afterLifecycleUpdate.account().issuanceFence().value()).isEqualTo(3L);
     assertThat(afterLifecycleUpdate.account().checkpoint().sequence()).isEqualTo(2L);
