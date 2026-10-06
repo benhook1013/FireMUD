@@ -196,6 +196,8 @@ public class AccountServiceImpl implements AccountService {
       AccountAuthorityOutboxRepository accountAuthorityOutboxRepository,
       AccountPasswordResetOperationRepository passwordResetOperationRepository,
       AccountLogoutAllOperationRepository logoutAllOperationRepository,
+      net.firedevops.firemud.accountservice.repository.AccountSecurityStateOperationRepository
+          securityStateOperationRepository,
       AccountAuditOutboxRepository accountAuditOutboxRepository,
       AccountConnectScopeRepository accountConnectScopeRepository,
       AccountJoinOperationRepository accountJoinOperationRepository,
@@ -231,7 +233,8 @@ public class AccountServiceImpl implements AccountService {
         new AccountAuthoritySourceEventReadback(
             accountAuthorityOutboxRepository,
             passwordResetOperationRepository,
-            logoutAllOperationRepository);
+            logoutAllOperationRepository,
+            securityStateOperationRepository);
     this.accountAuditOutboxRepository = accountAuditOutboxRepository;
     this.accountConnectScopeRepository = accountConnectScopeRepository;
     this.accountJoinOperationRepository = accountJoinOperationRepository;

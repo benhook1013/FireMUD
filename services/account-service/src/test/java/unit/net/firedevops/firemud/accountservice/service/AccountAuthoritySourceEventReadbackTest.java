@@ -50,7 +50,13 @@ class AccountAuthoritySourceEventReadbackTest {
         mock(AccountPasswordResetOperationRepository.class);
     AccountLogoutAllOperationRepository logouts = mock(AccountLogoutAllOperationRepository.class);
     AccountAuthoritySourceEventReadback readback =
-        new AccountAuthoritySourceEventReadback(outbox, resets, logouts);
+        new AccountAuthoritySourceEventReadback(
+            outbox,
+            resets,
+            logouts,
+            org.mockito.Mockito.mock(
+                net.firedevops.firemud.accountservice.repository
+                    .AccountSecurityStateOperationRepository.class));
     when(outbox.readCheckpoint("account:auth-authority:v1:account/" + ACCOUNT_UUID))
         .thenReturn(Optional.empty());
     boolean previouslyActive = TransactionSynchronizationManager.isActualTransactionActive();
@@ -81,7 +87,10 @@ class AccountAuthoritySourceEventReadbackTest {
         new AccountAuthoritySourceEventReadback(
             outbox,
             mock(AccountPasswordResetOperationRepository.class),
-            mock(AccountLogoutAllOperationRepository.class));
+            mock(AccountLogoutAllOperationRepository.class),
+            org.mockito.Mockito.mock(
+                net.firedevops.firemud.accountservice.repository
+                    .AccountSecurityStateOperationRepository.class));
     when(outbox.readCheckpoint("account:auth-authority:v1:account/" + ACCOUNT_UUID))
         .thenReturn(Optional.empty());
     boolean previouslyActive = TransactionSynchronizationManager.isActualTransactionActive();
@@ -112,7 +121,13 @@ class AccountAuthoritySourceEventReadbackTest {
         mock(AccountPasswordResetOperationRepository.class);
     AccountLogoutAllOperationRepository logouts = mock(AccountLogoutAllOperationRepository.class);
     AccountAuthoritySourceEventReadback readback =
-        new AccountAuthoritySourceEventReadback(outbox, resets, logouts);
+        new AccountAuthoritySourceEventReadback(
+            outbox,
+            resets,
+            logouts,
+            org.mockito.Mockito.mock(
+                net.firedevops.firemud.accountservice.repository
+                    .AccountSecurityStateOperationRepository.class));
     String streamKey = "account:auth-authority:v1:account/" + ACCOUNT_UUID;
     when(outbox.readCheckpoint(streamKey))
         .thenReturn(
@@ -139,7 +154,13 @@ class AccountAuthoritySourceEventReadbackTest {
         mock(AccountPasswordResetOperationRepository.class);
     AccountLogoutAllOperationRepository logouts = mock(AccountLogoutAllOperationRepository.class);
     AccountAuthoritySourceEventReadback readback =
-        new AccountAuthoritySourceEventReadback(outbox, resets, logouts);
+        new AccountAuthoritySourceEventReadback(
+            outbox,
+            resets,
+            logouts,
+            org.mockito.Mockito.mock(
+                net.firedevops.firemud.accountservice.repository
+                    .AccountSecurityStateOperationRepository.class));
     Account account = account();
     account.setPasswordHash("a-later-password-verifier");
     Event retained = passwordResetEvent(ACCOUNT_UUID, 1L, 2L, 2L, "a".repeat(64));
@@ -164,7 +185,13 @@ class AccountAuthoritySourceEventReadbackTest {
         mock(AccountPasswordResetOperationRepository.class);
     AccountLogoutAllOperationRepository logouts = mock(AccountLogoutAllOperationRepository.class);
     AccountAuthoritySourceEventReadback readback =
-        new AccountAuthoritySourceEventReadback(outbox, resets, logouts);
+        new AccountAuthoritySourceEventReadback(
+            outbox,
+            resets,
+            logouts,
+            org.mockito.Mockito.mock(
+                net.firedevops.firemud.accountservice.repository
+                    .AccountSecurityStateOperationRepository.class));
     Account account = account();
     account.setPasswordHash("a-later-password-verifier");
     Event latest = passwordResetEvent(ACCOUNT_UUID, 1L, 2L, 2L, "b".repeat(64));
@@ -188,7 +215,13 @@ class AccountAuthoritySourceEventReadbackTest {
         mock(AccountPasswordResetOperationRepository.class);
     AccountLogoutAllOperationRepository logouts = mock(AccountLogoutAllOperationRepository.class);
     AccountAuthoritySourceEventReadback readback =
-        new AccountAuthoritySourceEventReadback(outbox, resets, logouts);
+        new AccountAuthoritySourceEventReadback(
+            outbox,
+            resets,
+            logouts,
+            org.mockito.Mockito.mock(
+                net.firedevops.firemud.accountservice.repository
+                    .AccountSecurityStateOperationRepository.class));
     Event retained =
         logoutAllEvent(
             ACCOUNT_UUID, UUID.fromString("a980fa44-619e-4ca4-8ad6-75b0538a66a3"), 1L, 2L, 2L);
@@ -212,7 +245,13 @@ class AccountAuthoritySourceEventReadbackTest {
         mock(AccountPasswordResetOperationRepository.class);
     AccountLogoutAllOperationRepository logouts = mock(AccountLogoutAllOperationRepository.class);
     AccountAuthoritySourceEventReadback readback =
-        new AccountAuthoritySourceEventReadback(outbox, resets, logouts);
+        new AccountAuthoritySourceEventReadback(
+            outbox,
+            resets,
+            logouts,
+            org.mockito.Mockito.mock(
+                net.firedevops.firemud.accountservice.repository
+                    .AccountSecurityStateOperationRepository.class));
     Event valid = passwordResetEvent(ACCOUNT_UUID, 1L, 2L, 2L, "e".repeat(64));
     String streamKey = "account:auth-authority:v1:account/" + ACCOUNT_UUID;
     when(outbox.readCheckpoint(streamKey))
@@ -234,7 +273,7 @@ class AccountAuthoritySourceEventReadbackTest {
                 readback.requireRetainedEvent(
                     account(), changedBytes, accountState(3L, 3L, 8L, 7L)))
         .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("not a valid declared");
+        .hasMessageContaining("Account source event is invalid");
 
     Event changedDigest =
         new Event(
@@ -264,7 +303,7 @@ class AccountAuthoritySourceEventReadbackTest {
                 readback.requireRetainedEvent(
                     account(), unsupportedSchema, accountState(3L, 3L, 8L, 7L)))
         .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("not a valid declared");
+        .hasMessageContaining("schema is missing");
 
     Event wrongAccount =
         passwordResetEvent(
@@ -393,13 +432,19 @@ class AccountAuthoritySourceEventReadbackTest {
   }
 
   @Test
-  void structurallyValidSecurityStateCannotPassOwnerCurrentOrHistoricalReceiptReadback() {
+  void structurallyValidSecurityStateWithoutReceiptCannotPassOwnerReadback() {
     AccountAuthorityOutboxRepository outbox = mock(AccountAuthorityOutboxRepository.class);
     AccountPasswordResetOperationRepository resets =
         mock(AccountPasswordResetOperationRepository.class);
     AccountLogoutAllOperationRepository logouts = mock(AccountLogoutAllOperationRepository.class);
     AccountAuthoritySourceEventReadback readback =
-        new AccountAuthoritySourceEventReadback(outbox, resets, logouts);
+        new AccountAuthoritySourceEventReadback(
+            outbox,
+            resets,
+            logouts,
+            org.mockito.Mockito.mock(
+                net.firedevops.firemud.accountservice.repository
+                    .AccountSecurityStateOperationRepository.class));
     Event event = securityStateEvent(ACCOUNT_UUID, 1L, "2", "2");
     assertThat(structuralSnapshot(event, 2L, 2L).latestEvent()).contains(event);
     when(outbox.readCheckpoint(event.outboxStreamKey()))
@@ -410,11 +455,11 @@ class AccountAuthoritySourceEventReadbackTest {
 
     assertThatThrownBy(() -> readback.requireCurrentLatest(account(), accountState(2L, 2L, 2L, 2L)))
         .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("not a valid declared password-reset or logout-all event");
+        .hasMessageContaining("no immutable operation receipt");
     assertThatThrownBy(
             () -> readback.requireRetainedEvent(account(), event, accountState(3L, 3L, 3L, 3L)))
         .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("not a valid declared password-reset or logout-all event");
+        .hasMessageContaining("no immutable operation receipt");
     verifyNoInteractions(resets, logouts);
   }
 

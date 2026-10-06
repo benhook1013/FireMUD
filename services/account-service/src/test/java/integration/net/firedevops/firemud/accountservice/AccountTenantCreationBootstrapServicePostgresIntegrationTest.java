@@ -451,6 +451,8 @@ class AccountTenantCreationBootstrapServicePostgresIntegrationTest {
             outbox,
             passwordResets,
             logoutAll,
+            new net.firedevops.firemud.accountservice.repository
+                .AccountSecurityStateOperationRepository(txDsl),
             transitionReceipts,
             memberships,
             roles,

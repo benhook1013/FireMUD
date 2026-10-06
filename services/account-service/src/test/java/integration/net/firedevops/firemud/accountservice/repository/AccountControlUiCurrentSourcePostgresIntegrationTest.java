@@ -218,7 +218,9 @@ class AccountControlUiCurrentSourcePostgresIntegrationTest {
         new AccountAuthoritySourceEventReadback(
             outbox,
             new AccountPasswordResetOperationRepository(dsl),
-            new AccountLogoutAllOperationRepository(dsl));
+            new AccountLogoutAllOperationRepository(dsl),
+            new net.firedevops.firemud.accountservice.repository
+                .AccountSecurityStateOperationRepository(dsl));
     var source =
         new AccountControlUiCurrentSourceRepository(
             dsl,

@@ -2562,7 +2562,9 @@ class AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest {
         new AccountAuthoritySourceEventReadback(
             authorityOutboxRepository,
             passwordResetOperationRepository,
-            logoutAllOperationRepository),
+            logoutAllOperationRepository,
+            new net.firedevops.firemud.accountservice.repository
+                .AccountSecurityStateOperationRepository(dsl)),
         dsl,
         transactionManager);
   }

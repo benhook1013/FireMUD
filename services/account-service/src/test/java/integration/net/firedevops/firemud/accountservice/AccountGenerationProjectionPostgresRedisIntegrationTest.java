@@ -661,7 +661,11 @@ class AccountGenerationProjectionPostgresRedisIntegrationTest {
 
   private AccountAuthoritySourceEventReadback sourceReadback(Fixture fixture) {
     return new AccountAuthoritySourceEventReadback(
-        fixture.outbox(), fixture.resetOperations(), fixture.logoutOperations());
+        fixture.outbox(),
+        fixture.resetOperations(),
+        fixture.logoutOperations(),
+        new net.firedevops.firemud.accountservice.repository
+            .AccountSecurityStateOperationRepository(fixture.transactionDsl()));
   }
 
   private RedisAccountGenerationProjectionStore store(AccountAuthoritySourceReader reader) {
@@ -695,6 +699,8 @@ class AccountGenerationProjectionPostgresRedisIntegrationTest {
             fixture.outbox(),
             fixture.resetOperations(),
             fixture.logoutOperations(),
+            new net.firedevops.firemud.accountservice.repository
+                .AccountSecurityStateOperationRepository(fixture.transactionDsl()),
             null,
             null,
             null,

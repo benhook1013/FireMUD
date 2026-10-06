@@ -112,6 +112,8 @@ public class AccountMembershipAuthorityEventProducer {
       AccountAuthorityOutboxRepository authorityOutboxRepository,
       AccountPasswordResetOperationRepository passwordResetOperationRepository,
       AccountLogoutAllOperationRepository logoutAllOperationRepository,
+      net.firedevops.firemud.accountservice.repository.AccountSecurityStateOperationRepository
+          securityStateOperationRepository,
       AccountMembershipTransitionReceiptRepository transitionReceiptRepository,
       AccountTenantMembershipRepository membershipRepository,
       AccountTenantMembershipRoleSnapshotRepository roleSnapshotRepository,
@@ -128,7 +130,8 @@ public class AccountMembershipAuthorityEventProducer {
         new AccountAuthoritySourceEventReadback(
             authorityOutboxRepository,
             passwordResetOperationRepository,
-            logoutAllOperationRepository);
+            logoutAllOperationRepository,
+            securityStateOperationRepository);
     this.transitionReceiptRepository = transitionReceiptRepository;
     this.membershipRepository = membershipRepository;
     this.roleSnapshotRepository = roleSnapshotRepository;

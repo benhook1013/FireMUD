@@ -280,6 +280,9 @@ class AccountServiceImplTest {
             accountAuthorityOutboxRepository,
             passwordResetOperationRepository,
             logoutAllOperationRepository,
+            org.mockito.Mockito.mock(
+                net.firedevops.firemud.accountservice.repository
+                    .AccountSecurityStateOperationRepository.class),
             accountAuditOutboxRepository,
             accountConnectScopeRepository,
             accountJoinOperationRepository,
@@ -3158,6 +3161,9 @@ class AccountServiceImplTest {
             accountAuthorityOutboxRepository,
             passwordResetOperationRepository,
             logoutAllOperationRepository,
+            org.mockito.Mockito.mock(
+                net.firedevops.firemud.accountservice.repository
+                    .AccountSecurityStateOperationRepository.class),
             accountAuditOutboxRepository,
             accountConnectScopeRepository,
             accountJoinOperationRepository,

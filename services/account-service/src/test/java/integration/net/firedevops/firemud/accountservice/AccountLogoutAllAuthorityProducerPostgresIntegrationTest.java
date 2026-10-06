@@ -1547,7 +1547,11 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
   private AccountAuthoritySourceEventReadback sourceReadback(
       Fixture fixture, AccountAuthorityOutboxRepository outbox) {
     return new AccountAuthoritySourceEventReadback(
-        outbox, fixture.passwordResetOperations(), fixture.logoutOperations());
+        outbox,
+        fixture.passwordResetOperations(),
+        fixture.logoutOperations(),
+        new net.firedevops.firemud.accountservice.repository
+            .AccountSecurityStateOperationRepository(fixture.transactionDsl()));
   }
 
   private void reset(Fixture fixture, Seed seed, String password) {
@@ -1562,6 +1566,8 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
             fixture.outbox(),
             fixture.passwordResetOperations(),
             fixture.logoutOperations(),
+            new net.firedevops.firemud.accountservice.repository
+                .AccountSecurityStateOperationRepository(fixture.transactionDsl()),
             null,
             null,
             null,

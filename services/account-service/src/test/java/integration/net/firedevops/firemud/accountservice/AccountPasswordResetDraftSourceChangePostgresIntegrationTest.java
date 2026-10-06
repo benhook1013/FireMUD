@@ -446,7 +446,12 @@ class AccountPasswordResetDraftSourceChangePostgresIntegrationTest {
     AccountPasswordResetDraftSourceChangeRepository pendingResets =
         new AccountPasswordResetDraftSourceChangeRepository(transactionDsl);
     AccountAuthoritySourceEventReadback sourceReadback =
-        new AccountAuthoritySourceEventReadback(outbox, operations, logoutAll);
+        new AccountAuthoritySourceEventReadback(
+            outbox,
+            operations,
+            logoutAll,
+            new net.firedevops.firemud.accountservice.repository
+                .AccountSecurityStateOperationRepository(transactionDsl));
     Path manifest = temporaryDirectory.resolve(UUID.randomUUID() + ".manifest.v1");
     writeKeyRing(manifest);
     return new Fixture(
