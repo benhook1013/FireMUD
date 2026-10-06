@@ -71,6 +71,7 @@ public class TextCommandParser {
           case WORLDS ->
               new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("WORLDS", true));
           case REALMS -> parseRealms(tokens);
+          case JOIN -> parseJoin(tokens);
           case CHARS -> parseChars(tokens);
           case LOGOUT -> new ParsedCommandData(List.of(), new TextCommandPayload.None());
           case AFK -> parseAfk(tokens);
@@ -147,6 +148,15 @@ public class TextCommandParser {
         && TextCommandPayload.fromLegacy(TextCommandType.REALMS, args)
             instanceof TextCommandPayload.RealmBrowseRequest browseRequest) {
       return new ParsedCommandData(args, browseRequest);
+    }
+    return new ParsedCommandData(args, new TextCommandPayload.Tokens(args));
+  }
+
+  private ParsedCommandData parseJoin(String[] tokens) {
+    List<String> args = parseRemainingTokens(tokens);
+    if (TextCommandPayload.fromLegacy(TextCommandType.JOIN, args)
+        instanceof TextCommandPayload.JoinRequest joinRequest) {
+      return new ParsedCommandData(args, joinRequest);
     }
     return new ParsedCommandData(args, new TextCommandPayload.Tokens(args));
   }

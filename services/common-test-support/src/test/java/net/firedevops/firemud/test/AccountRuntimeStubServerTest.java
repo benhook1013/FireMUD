@@ -4,15 +4,75 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.GetProfileRequest;
+import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeRequest;
+import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
 import net.firedevops.firemud.account.v1.UpdateProfileRequest;
 import net.firedevops.firemud.common.account.AccountProfileJson;
 import org.junit.jupiter.api.Test;
 
 class AccountRuntimeStubServerTest {
+  @Test
+  void runtimeAuthorityResponsesUseCurrentInjectedClockTime() throws Exception {
+    Instant firstEvaluation = Instant.parse("2026-03-30T00:00:00Z");
+    Instant nextEvaluation = firstEvaluation.plusSeconds(1);
+    MutableClock clock = new MutableClock(firstEvaluation, ZoneOffset.UTC);
+    try (AccountRuntimeStubServer server = new AccountRuntimeStubServer(0, clock)) {
+      server.mapAccountId("demo@example.com", 7L);
+      ManagedChannel channel =
+          ManagedChannelBuilder.forAddress("localhost", server.port()).usePlaintext().build();
+      try {
+        AccountServiceGrpc.AccountServiceBlockingStub stub =
+            AccountServiceGrpc.newBlockingStub(channel);
+        var membershipRequest =
+            GetTenantMembershipForRuntimeRequest.newBuilder()
+                .setAccountId(AccountRuntimeStubServer.accountUuidForTestFixture(7L))
+                .setTenantId("1")
+                .setRequestId("request-1")
+                .build();
+        var grantRequest =
+            GetRealmAccessGrantForRuntimeRequest.newBuilder()
+                .setAccountId(AccountRuntimeStubServer.accountUuidForTestFixture(7L))
+                .setTenantId("1")
+                .setWorldSlug("world")
+                .setRealmSlug("realm")
+                .setRequestId("request-1")
+                .build();
+        var entitlementsRequest =
+            GetTenantEntitlementsForRuntimeRequest.newBuilder()
+                .setTenantId("1")
+                .setRequestId("request-1")
+                .build();
+
+        assertThat(stub.getTenantMembershipForRuntime(membershipRequest).getEvaluatedAt())
+            .isEqualTo(firstEvaluation.toString());
+        assertThat(stub.getRealmAccessGrantForRuntime(grantRequest).getEvaluatedAt())
+            .isEqualTo(firstEvaluation.toString());
+        assertThat(stub.getTenantEntitlementsForRuntime(entitlementsRequest).getEvaluatedAt())
+            .isEqualTo(firstEvaluation.toString());
+
+        clock.setInstant(nextEvaluation);
+
+        assertThat(stub.getTenantMembershipForRuntime(membershipRequest).getEvaluatedAt())
+            .isEqualTo(nextEvaluation.toString());
+        assertThat(stub.getRealmAccessGrantForRuntime(grantRequest).getEvaluatedAt())
+            .isEqualTo(nextEvaluation.toString());
+        assertThat(stub.getTenantEntitlementsForRuntime(entitlementsRequest).getEvaluatedAt())
+            .isEqualTo(nextEvaluation.toString());
+      } finally {
+        channel.shutdownNow();
+      }
+    }
+  }
+
   @Test
   void authenticationCanonicalizesMappedEmailAndMissingMembershipDeniesAdmission()
       throws Exception {
@@ -38,7 +98,7 @@ class AccountRuntimeStubServerTest {
         var membership =
             stub.getTenantMembershipForRuntime(
                 GetTenantMembershipForRuntimeRequest.newBuilder()
-                    .setAccountId("7")
+                    .setAccountId(AccountRuntimeStubServer.accountUuidForTestFixture(7L))
                     .setTenantId("1")
                     .setRequestId("request-1")
                     .build());
@@ -201,5 +261,38 @@ class AccountRuntimeStubServerTest {
   private static String authenticate(AccountServiceGrpc.AccountServiceBlockingStub stub) {
     return stub.authenticate(AuthenticateRequest.newBuilder().setEmail("demo@example.com").build())
         .getAccountId();
+  }
+
+  private static final class MutableClock extends Clock {
+    private final AtomicReference<Instant> instant;
+    private final ZoneId zone;
+
+    private MutableClock(Instant instant, ZoneId zone) {
+      this(new AtomicReference<>(instant), zone);
+    }
+
+    private MutableClock(AtomicReference<Instant> instant, ZoneId zone) {
+      this.instant = instant;
+      this.zone = zone;
+    }
+
+    private void setInstant(Instant instant) {
+      this.instant.set(instant);
+    }
+
+    @Override
+    public ZoneId getZone() {
+      return zone;
+    }
+
+    @Override
+    public Clock withZone(ZoneId zone) {
+      return new MutableClock(instant, zone);
+    }
+
+    @Override
+    public Instant instant() {
+      return instant.get();
+    }
   }
 }

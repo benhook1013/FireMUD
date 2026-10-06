@@ -6,6 +6,7 @@ import java.util.Locale;
 public enum TextCommandType {
   WORLDS,
   REALMS,
+  JOIN,
   CHARS,
   LOGIN,
   LOGOUT,
@@ -45,6 +46,7 @@ public enum TextCommandType {
     return switch (normalized) {
       case "WORLDS" -> WORLDS;
       case "REALMS" -> REALMS;
+      case "JOIN" -> JOIN;
       case "CHARS" -> CHARS;
       case "LOGIN", "LOGON" -> LOGIN;
       case "LOGOUT", "LOGOFF", "QUIT" -> LOGOUT;

@@ -184,13 +184,15 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
                 assertThat(client.readLineContaining("ERROR JOIN_REQUIRED"))
                     .contains("ERROR JOIN_REQUIRED")
                     .contains(
-                        "Membership is required before PLAY; joining this world is not available yet."))) {
+                        "Membership is required before PLAY. "
+                            + "Run REALMS <world> first, then JOIN <world>."))) {
       assertThat(scenario.responses())
           .anyMatch(response -> response.contains("ERROR JOIN_REQUIRED"))
           .anyMatch(
               response ->
                   response.contains(
-                      "Membership is required before PLAY; joining this world is not available yet."));
+                      "Membership is required before PLAY. "
+                          + "Run REALMS <world> first, then JOIN <world>."));
     }
   }
 
@@ -402,7 +404,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   }
 
   @Test
-  void telnetItemLoopStillSucceedsAfterWebSocketLogoutOnSharedRuntime() throws Exception {
+  void telnetItemLoopStillSucceedsAfterRejectedWebSocketLogoutOnSharedRuntime() throws Exception {
     ensureTestServicesStarted();
 
     try (GameplayWebSocketDriver webSocketClient = openReadyGatewayWebSocketClient("gateway-1")) {
@@ -460,9 +462,9 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       webSocketClient.send("LOGOUT");
       assertThat(
               webSocketClient.awaitResponseMatching(
-                  response -> response.contains("OK LOGOUT") && response.contains("Logged out."),
-                  "logout response"))
-          .contains("OK LOGOUT");
+                  response -> response.contains("LOGOUT_UNAVAILABLE"),
+                  "fail-closed logout response"))
+          .contains("LOGOUT_UNAVAILABLE");
     }
 
     try (GameplayTelnetDriver telnetClient = openReadyTelnetClient()) {

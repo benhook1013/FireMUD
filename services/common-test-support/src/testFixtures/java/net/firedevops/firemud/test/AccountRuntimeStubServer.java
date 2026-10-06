@@ -5,6 +5,7 @@ import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.stub.StreamObserver;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -41,7 +42,6 @@ import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 /** Shared fake Account runtime authority for cross-service gameplay tests. */
 public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountServiceImplBase
     implements AutoCloseable {
-  private static final String EVALUATED_AT = "2026-03-30T00:00:00Z";
   private static final Set<String> IMPLEMENTED_RUNTIME_METHODS =
       Set.of(
           "Ping",
@@ -53,6 +53,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
           "JoinPublicProductionMembership");
 
   private final Server server;
+  private final Clock clock;
   private final List<AuthenticateRequest> authenticateRequests = new CopyOnWriteArrayList<>();
   private final AtomicBoolean membershipExists = new AtomicBoolean(true);
   private final AtomicBoolean gameplayAdmissionAllowed = new AtomicBoolean(true);
@@ -67,6 +68,11 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
   private final Map<String, StubConnectScope> connectScopesById = new ConcurrentHashMap<>();
 
   public AccountRuntimeStubServer(int port) throws IOException {
+    this(port, Clock.systemUTC());
+  }
+
+  public AccountRuntimeStubServer(int port, Clock clock) throws IOException {
+    this.clock = java.util.Objects.requireNonNull(clock, "clock");
     this.server = NettyServerBuilder.forPort(port).addService(this).build().start();
   }
 
@@ -191,7 +197,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
             .setMembershipVersion(exists ? 1L : 0L)
             .setMembershipLifecycleState(exists ? "ACTIVE" : "MISSING")
             .setMembershipAuthorityGeneration(exists ? 1L : 0L)
-            .setEvaluatedAt(EVALUATED_AT)
+            .setEvaluatedAt(clock.instant().toString())
             .build());
     responseObserver.onCompleted();
   }
@@ -208,7 +214,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
             .setRealmSlug(request.getRealmSlug())
             .setGranted(realmAccessGranted.get())
             .setGrantVersion(1L)
-            .setEvaluatedAt(EVALUATED_AT)
+            .setEvaluatedAt(clock.instant().toString())
             .build());
     responseObserver.onCompleted();
   }
@@ -224,7 +230,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
             .setAllowPublicJoin(allowPublicJoin.get())
             .setEntitlementVersion(1L)
             .setTenantBillingSequence(1L)
-            .setEvaluatedAt(EVALUATED_AT)
+            .setEvaluatedAt(clock.instant().toString())
             .build());
     responseObserver.onCompleted();
   }
@@ -234,7 +240,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
       IssueDirectTextConnectScopeRequest request,
       StreamObserver<IssueDirectTextConnectScopeResponse> responseObserver) {
     PlayerExecutionContext caller = request.getPlayerContext();
-    if (caller.getAccountId().isBlank()
+    if (resolveRegisteredAccountId(caller.getAccountId()) == null
         || caller.getTenantId().isBlank()
         || caller.getRealmId().isBlank()
         || caller.getRequestId().isBlank()
@@ -308,7 +314,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     if (request.getConnectScopeId().isBlank()
         || request.getRequestId().isBlank()
         || !request.getRequestId().equals(caller.getRequestId())
-        || caller.getAccountId().isBlank()
+        || resolveRegisteredAccountId(caller.getAccountId()) == null
         || caller.getTenantId().isBlank()
         || caller.getSessionId().isBlank()
         || scope == null

@@ -17,6 +17,7 @@ import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 import org.junit.jupiter.api.Test;
 
 class AccountRuntimeStubServerCompatibilityTest {
+  private static final String ACCOUNT_ID = AccountRuntimeStubServer.accountUuidForTestFixture(7L);
   private static final String REALM_ID = "8a1df0f1-1b57-465e-9c4b-bb34f8153d31";
   private static final String NAMESPACE_ID = "2ea958e0-13a2-41d0-9c39-59a96cf31412";
   private static final Set<String> NON_RUNTIME_METHODS =
@@ -67,6 +68,7 @@ class AccountRuntimeStubServerCompatibilityTest {
   void runtimeMembershipLifecycleRemainsSeparateFromAdmissionAndJoinDoesNotGrantRealmAccess()
       throws Exception {
     try (AccountRuntimeStubServer server = new AccountRuntimeStubServer(0)) {
+      server.mapAccountId("demo@example.com", 7L);
       ManagedChannel channel =
           ManagedChannelBuilder.forAddress("localhost", server.port()).usePlaintext().build();
       try {
@@ -75,14 +77,14 @@ class AccountRuntimeStubServerCompatibilityTest {
 
         server.denyGameplayAdmission();
         var existingButNonAdmitting =
-            stub.getTenantMembershipForRuntime(membershipRequest("7", "11"));
+            stub.getTenantMembershipForRuntime(membershipRequest(ACCOUNT_ID, "11"));
         assertThat(existingButNonAdmitting.getMembershipExists()).isTrue();
         assertThat(existingButNonAdmitting.getGameplayAdmissionAllowed()).isFalse();
         assertThat(existingButNonAdmitting.getMembershipLifecycleState()).isEqualTo("ACTIVE");
         assertThat(existingButNonAdmitting.getMembershipAuthorityGeneration()).isEqualTo(1L);
 
         server.setMembershipExists(false);
-        var missing = stub.getTenantMembershipForRuntime(membershipRequest("7", "11"));
+        var missing = stub.getTenantMembershipForRuntime(membershipRequest(ACCOUNT_ID, "11"));
         assertThat(missing.getMembershipExists()).isFalse();
         assertThat(missing.getGameplayAdmissionAllowed()).isFalse();
         assertThat(missing.getMembershipLifecycleState()).isEqualTo("MISSING");
@@ -91,7 +93,7 @@ class AccountRuntimeStubServerCompatibilityTest {
         server.setRealmAccessGranted(false);
         PlayerExecutionContext caller =
             PlayerExecutionContext.newBuilder()
-                .setAccountId("7")
+                .setAccountId(ACCOUNT_ID)
                 .setTenantId("11")
                 .setRealmId(REALM_ID)
                 .setGameInstanceId("33")
@@ -125,7 +127,7 @@ class AccountRuntimeStubServerCompatibilityTest {
                     .build());
         assertThat(join.getSuccess()).isTrue();
 
-        var afterJoin = stub.getTenantMembershipForRuntime(membershipRequest("7", "11"));
+        var afterJoin = stub.getTenantMembershipForRuntime(membershipRequest(ACCOUNT_ID, "11"));
         assertThat(afterJoin.getMembershipExists()).isTrue();
         assertThat(afterJoin.getGameplayAdmissionAllowed()).isTrue();
         assertThat(afterJoin.getMembershipLifecycleState()).isEqualTo("ACTIVE");
@@ -134,7 +136,7 @@ class AccountRuntimeStubServerCompatibilityTest {
         var realmGrant =
             stub.getRealmAccessGrantForRuntime(
                 GetRealmAccessGrantForRuntimeRequest.newBuilder()
-                    .setAccountId("7")
+                    .setAccountId(ACCOUNT_ID)
                     .setTenantId("11")
                     .setWorldSlug("demo")
                     .setRealmSlug("live")
@@ -149,6 +151,7 @@ class AccountRuntimeStubServerCompatibilityTest {
   @Test
   void directTextConnectScopeRejectsNoncanonicalIdsAndBlankContextRequestId() throws Exception {
     try (AccountRuntimeStubServer server = new AccountRuntimeStubServer(0)) {
+      server.mapAccountId("demo@example.com", 7L);
       ManagedChannel channel =
           ManagedChannelBuilder.forAddress("localhost", server.port()).usePlaintext().build();
       try {
@@ -190,6 +193,7 @@ class AccountRuntimeStubServerCompatibilityTest {
   @Test
   void joinRequiresCallerSessionAndResetClearsRetainedScopes() throws Exception {
     try (AccountRuntimeStubServer server = new AccountRuntimeStubServer(0)) {
+      server.mapAccountId("demo@example.com", 7L);
       ManagedChannel channel =
           ManagedChannelBuilder.forAddress("localhost", server.port()).usePlaintext().build();
       try {
@@ -227,7 +231,7 @@ class AccountRuntimeStubServerCompatibilityTest {
   private static IssueDirectTextConnectScopeRequest validConnectScopeRequest() {
     PlayerExecutionContext caller =
         PlayerExecutionContext.newBuilder()
-            .setAccountId("7")
+            .setAccountId(ACCOUNT_ID)
             .setTenantId("11")
             .setRealmId(REALM_ID)
             .setGameInstanceId("33")
