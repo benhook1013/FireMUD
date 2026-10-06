@@ -195,8 +195,8 @@ class Supervisor:
         self.wait_seconds = positive_env("FIREMUD_LOCK_GRADLE_WAIT_SECONDS", 300)
         self.run_seconds = positive_env("FIREMUD_LOCK_GRADLE_RUN_SECONDS", 7200) if self.local else None
         self.grace_seconds = positive_env("FIREMUD_LOCK_GRADLE_CANCEL_SECONDS", 30) if self.local else 30
-        self.wrapper_start = identity(args.wrapper_pid)
-        if self.wrapper_start is None:
+        self.wrapper_start = args.wrapper_start
+        if not self.wrapper_start.isdecimal() or not alive(args.wrapper_pid, self.wrapper_start):
             raise ValueError("Gradle wrapper process is no longer alive")
         self.deadline = time.monotonic() + self.wait_seconds
 
@@ -220,7 +220,7 @@ class Supervisor:
                 self.fail("invalid graceful cancellation request")
 
     def wrapper_gone(self):
-        return not alive(self.args.wrapper_pid, self.wrapper_start[0])
+        return not alive(self.args.wrapper_pid, self.wrapper_start)
 
     def fail(self, error):
         if not self.failed:
@@ -406,6 +406,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", required=True)
     parser.add_argument("--wrapper-pid", required=True, type=int)
+    parser.add_argument("--wrapper-start", required=True)
     parser.add_argument("--cancel-fd", required=True, type=int)
     parser.add_argument("--lock", action="append", default=[])
     parser.add_argument("command", nargs=argparse.REMAINDER)

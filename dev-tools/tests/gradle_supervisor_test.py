@@ -263,7 +263,7 @@ time.sleep(float(os.environ.get('FIXTURE_SLEEP', '60')))
 
     def test_signalling_retained_handle_never_uses_recycled_pid(self):
         process = SUPERVISOR.OwnedProcess(900000003, "old-start", 700)
-        args = SimpleNamespace(root=str(self.root), wrapper_pid=os.getpid(), command=["fixture"], lock=[])
+        args = SimpleNamespace(root=str(self.root), wrapper_pid=os.getpid(), wrapper_start=SUPERVISOR.identity(os.getpid())[0], command=["fixture"], lock=[])
         with mock.patch.dict(os.environ, {"CI": "false"}):
             supervisor = SUPERVISOR.Supervisor(args)
         supervisor.owned[process.pid] = process
@@ -287,9 +287,21 @@ time.sleep(float(os.environ.get('FIXTURE_SLEEP', '60')))
             self.assertEqual(process.wait(timeout=5), 128 + sig)
             self.assertFalse(self.running(pid))
 
+    def test_replaced_wrapper_before_initialization_cannot_launch(self):
+        args = SimpleNamespace(root=str(self.root), wrapper_pid=900000004, wrapper_start="123",
+                               command=["fixture"], lock=[])
+        with mock.patch.dict(os.environ, {"CI": "false"}), \
+             mock.patch.object(SUPERVISOR, "identity", return_value=("456", "S")), \
+             mock.patch.object(SUPERVISOR.fcntl, "flock") as flock, \
+             mock.patch.object(SUPERVISOR.subprocess, "Popen") as launch, \
+             self.assertRaisesRegex(ValueError, "wrapper process is no longer alive"):
+            SUPERVISOR.Supervisor(args)
+        flock.assert_not_called()
+        launch.assert_not_called()
+
     def test_bound_channel_cancels_during_acquisition(self):
         reader, writer = os.pipe()
-        args = SimpleNamespace(root=str(self.root), wrapper_pid=os.getpid(), command=["fixture"],
+        args = SimpleNamespace(root=str(self.root), wrapper_pid=os.getpid(), wrapper_start=SUPERVISOR.identity(os.getpid())[0], command=["fixture"],
                                lock=[], cancel_fd=reader)
         try:
             with mock.patch.dict(os.environ, {"CI": "false"}):
@@ -334,7 +346,7 @@ time.sleep(float(os.environ.get('FIXTURE_SLEEP', '60')))
         child = SimpleNamespace(pid=client_pid, poll=lambda: 0)
         state = {"scans": 0, "worker_alive": True, "cancelled": False}
         env = {"CI": "false", "FIREMUD_LOCK_GRADLE_RESOURCE_DIR": str(self.resource)}
-        args = SimpleNamespace(root=str(self.root), wrapper_pid=os.getpid(), command=["fixture"], lock=[])
+        args = SimpleNamespace(root=str(self.root), wrapper_pid=os.getpid(), wrapper_start=SUPERVISOR.identity(os.getpid())[0], command=["fixture"], lock=[])
         with mock.patch.dict(os.environ, env):
             supervisor = SUPERVISOR.Supervisor(args)
 

@@ -149,7 +149,13 @@ exec {cancel_fd}<>"$cancel_directory/request"
 rm -- "$cancel_directory/request"
 rmdir -- "$cancel_directory"
 
-supervisor_args=(--root "$ROOT_DIR" --wrapper-pid "$$" --cancel-fd "$cancel_fd")
+# Supply this Bash process's original start identity before Python can launch.
+wrapper_stat="$(<"/proc/$$/stat")"
+wrapper_fields="${wrapper_stat##*) }"
+read -r -a wrapper_identity_fields <<<"$wrapper_fields"
+wrapper_started="${wrapper_identity_fields[19]}"
+[[ "$wrapper_started" =~ ^[0-9]+$ ]] || exit 1
+supervisor_args=(--root "$ROOT_DIR" --wrapper-pid "$$" --wrapper-start "$wrapper_started" --cancel-fd "$cancel_fd")
 for idx in "${!actual_lock_targets[@]}"; do
   supervisor_args+=(--lock "${lock_modes[idx]}=${actual_lock_targets[idx]}")
 done
