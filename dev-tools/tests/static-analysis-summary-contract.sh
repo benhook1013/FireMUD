@@ -84,6 +84,7 @@ let currentBaseSha = baseSha;
 let pullRequestReads = 0;
 let changeBaseDuringRun = false;
 let deleteStatus = null;
+let existingBody = "### Static Analysis Summary\nold";
 const calls = { paginate: [], deleted: [], updated: [], created: [] };
 const codeqlListWorkflowRuns = async () => undefined;
 const checksListForRef = async () => undefined;
@@ -234,7 +235,7 @@ const github = {
         {
           id: 2,
           user: { login: "github-actions[bot]" },
-          body: "### Static Analysis Summary\nold",
+          body: existingBody,
           created_at: "2026-09-19T00:00:00Z",
           updated_at: "2026-09-21T00:00:00Z",
         },
@@ -281,6 +282,7 @@ run(github, context, core).then(async () => {
   if (calls.created.length !== 0) throw new Error("existing bot summary should be updated");
   if (!calls.updated[0].body.includes("❌ Static analysis checks failed")) throw new Error("new failure was masked by the older success");
   if (!calls.updated[0].body.includes("CodeQL gate: `failure`")) throw new Error("latest CodeQL gate result was not selected");
+  const canonicalBody = calls.updated[0].body;
   context.payload.workflow_run.name = "Forged workflow name";
   await run(github, context, core);
   if (calls.paginate.length !== 4 || calls.updated.length !== 1 || calls.deleted.length !== 1) {
@@ -324,7 +326,7 @@ run(github, context, core).then(async () => {
           calls.created.length = 0;
           context.payload.workflow_run.name = `CodeQL Analysis pr-42 base-${baseSha} head-${headSha}`;
           deleteStatus = 404;
-          return run(github, context, core).then(() => {
+          return run(github, context, core).then(async () => {
             if (calls.deleted.length !== 1 || calls.deleted[0] !== 3) {
               throw new Error("HTTP 404 duplicate deletion must be ignored after the delete attempt");
             }
@@ -332,11 +334,43 @@ run(github, context, core).then(async () => {
             calls.deleted.length = 0;
             calls.updated.length = 0;
             calls.created.length = 0;
+            existingBody = canonicalBody;
+            deleteStatus = null;
+            await run(github, context, core);
+            if (calls.updated.length || calls.created.length) throw new Error("identical static summaries must not write comments");
+            if (calls.deleted.length !== 1 || calls.deleted[0] !== 3) throw new Error("unchanged static summaries still remove duplicates");
+            existingBody = "### Static Analysis Summary\nold";
+            calls.paginate.length = 0;
+            calls.deleted.length = 0;
             deleteStatus = 500;
             return run(github, context, core).then(
               () => { throw new Error("non-404 duplicate deletion errors must propagate"); },
-              (error) => {
+              async (error) => {
                 if (error?.status !== 500) throw error;
+                deleteStatus = null;
+                calls.paginate.length = 0;
+                calls.updated.length = 0;
+                calls.deleted.length = 0;
+                const originalPaginate = github.paginate;
+                github.paginate = async (method, input) => {
+                  const rows = await originalPaginate(method, input);
+                  return method === commentsList ? rows : rows.map((row) => ({ ...row, status: "in_progress", conclusion: null }));
+                };
+                const originalTimeout = global.setTimeout;
+                const delays = [];
+                global.setTimeout = (callback, delay) => { delays.push(delay); queueMicrotask(callback); };
+                try {
+                  await run(github, context, core);
+                } finally {
+                  global.setTimeout = originalTimeout;
+                  github.paginate = originalPaginate;
+                }
+                if (delays.length !== 10 || delays.some((delay) => delay !== 30000)) throw new Error("static polling must retain the five-minute budget with ten 30-second waits");
+                for (const method of [codeqlListWorkflowRuns, checksListForRef]) {
+                  const expected = method === codeqlListWorkflowRuns ? 22 : 11;
+                  if (calls.paginate.filter((call) => call.method === method).length !== expected) throw new Error("static polling must refresh both producers and checks every round");
+                }
+                if (calls.paginate.length !== 34 || !calls.updated[0]?.body.includes("still running")) throw new Error("bounded pending polling must still publish an honest pending summary");
                 console.log("static analysis summary behavioral contract passed");
               },
             );

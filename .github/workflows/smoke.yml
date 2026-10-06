@@ -271,13 +271,13 @@ jobs:
               }
             };
 
-            if (existing) {
+            if (existing && existing.body !== body) {
               await github.rest.issues.updateComment({
                 ...context.repo,
                 comment_id: existing.id,
                 body
               });
-            } else {
+            } else if (!existing) {
               await github.rest.issues.createComment({
                 ...context.repo,
                 issue_number: context.issue.number,
@@ -427,13 +427,13 @@ jobs:
               }
             };
 
-            if (existing) {
+            if (existing && existing.body !== body) {
               await github.rest.issues.updateComment({
                 ...context.repo,
                 comment_id: existing.id,
                 body
               });
-            } else {
+            } else if (!existing) {
               await github.rest.issues.createComment({
                 ...context.repo,
                 issue_number: context.issue.number,
@@ -523,8 +523,9 @@ jobs:
             const prerequisiteAndQueueAllowanceMinutes = 45;
             const timeoutMs = (producerTimeoutMinutes + prerequisiteAndQueueAllowanceMinutes) * 60 * 1000;
             const cancelledReplacementTimeoutMs = 5 * 60 * 1000;
-            const sleepMs = 15000;
-            const pullRequestCheckInterval = 4;
+            const sleepMs = 30000;
+            const snapshotSleepMs = 15000;
+            const pullRequestCheckInterval = 2;
             const retryableStatuses = new Set([408, 425, 429, 500, 502, 503, 504]);
             let pollIteration = 0;
             let identityDiagnostic = "current PR identity has not been resolved";
@@ -537,18 +538,41 @@ jobs:
                   return await operation();
                 } catch (error) {
                   const status = error?.status ?? error?.response?.status;
-                  const retryable = status == null || retryableStatuses.has(status);
-                  if (!retryable || attempt === maxAttempts) {
+                  const headers = error?.response?.headers ?? {};
+                  const reset = String(headers["x-ratelimit-reset"] ?? "");
+                  const resetSeconds = Number(reset);
+                  const quotaExhausted = status === 403 &&
+                    String(headers["x-ratelimit-remaining"]) === "0" &&
+                    /^[0-9]+$/.test(reset) && Number.isSafeInteger(resetSeconds) && resetSeconds > 0;
+                  const delayMs = quotaExhausted
+                    ? Math.max(1000, resetSeconds * 1000 - Date.now() + 1000)
+                    : retryDelayMs;
+                  const remainingMs = timeoutMs - (Date.now() - started);
+                  const retryable = quotaExhausted || status == null || retryableStatuses.has(status);
+                  if (!retryable || attempt === maxAttempts || delayMs >= remainingMs) {
                     throw error;
                   }
                   core.warning(
-                    `${label} failed transiently (status=${status ?? "network"}); retrying in ${retryDelayMs}ms`
+                    `${label} failed transiently (status=${status ?? "network"}); retrying in ${delayMs}ms`
                   );
-                  await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+                  await new Promise((resolve) => setTimeout(resolve, delayMs));
                   retryDelayMs *= 2;
                 }
               }
               throw new Error(`${label} retry loop exited unexpectedly`);
+            }
+
+            // Commit objects are immutable; mutable PR/base reads stay fresh.
+            const immutableCommits = new Map();
+            async function immutableCommit(ref, label) {
+              if (!immutableCommits.has(ref)) {
+                const { data } = await withTransientGitHubRetry(label, () =>
+                  github.rest.repos.getCommit({ owner, repo, ref })
+                );
+                if (data.sha !== ref) throw new Error("GitHub returned a different commit OID");
+                immutableCommits.set(ref, data);
+              }
+              return immutableCommits.get(ref);
             }
 
             function isObsoletePullRequest(pullRequest) {
@@ -656,14 +680,7 @@ jobs:
                   throw new Error("GitHub supplied an invalid event base or test-merge SHA");
                 }
 
-                const { data: mergeCommit } = await withTransientGitHubRetry(
-                  "event test-merge lookup",
-                  () => github.rest.repos.getCommit({
-                    owner,
-                    repo,
-                    ref: eventMergeSha,
-                  })
-                );
+                const mergeCommit = await immutableCommit(eventMergeSha, "event test-merge lookup");
                 const parents = mergeCommit.parents ?? [];
                 if (
                   mergeCommit.sha === eventMergeSha &&
@@ -700,14 +717,7 @@ jobs:
                 ) {
                   throw new Error("GitHub returned an invalid current base or test-merge SHA");
                 }
-                const { data: currentMergeCommit } = await withTransientGitHubRetry(
-                  "current test-merge lookup",
-                  () => github.rest.repos.getCommit({
-                    owner,
-                    repo,
-                    ref: currentMergeSha,
-                  })
-                );
+                const currentMergeCommit = await immutableCommit(currentMergeSha, "current test-merge lookup");
                 const currentParents = currentMergeCommit.parents ?? [];
                 if (
                   currentMergeCommit.sha !== currentMergeSha ||
@@ -920,7 +930,7 @@ jobs:
                     );
                     await new Promise((resolve) => setTimeout(
                       resolve,
-                      Math.min(sleepMs, remainingBeforeSnapshotSleepMs)
+                      Math.min(snapshotSleepMs, remainingBeforeSnapshotSleepMs)
                     ));
                     continue;
                   }

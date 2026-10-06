@@ -1246,7 +1246,7 @@ require_contains "$smoke_path" 'run_id: matching.id'
 require_contains "$smoke_path" 'completedJobSnapshotAttempt < maxCompletedJobSnapshotRetries'
 require_contains "$smoke_path" 'const remainingBeforeSnapshotSleepMs = timeoutMs - (Date.now() - started);'
 require_contains "$smoke_path" 'if (remainingBeforeSnapshotSleepMs <= 0) {'
-require_contains "$smoke_path" 'Math.min(sleepMs, remainingBeforeSnapshotSleepMs)'
+require_contains "$smoke_path" 'Math.min(snapshotSleepMs, remainingBeforeSnapshotSleepMs)'
 require_contains "$smoke_path" 'did not expose a terminal PR Full-Stack Smoke job and smoke step '
 require_contains "$smoke_path" "Runtime images run \${matching.id} succeeded, but PR Full-Stack Smoke job did not complete successfully:"
 require_contains "$smoke_path" 'Stopping obsolete failed full-smoke gate for'
@@ -1598,6 +1598,62 @@ for line in lines[start + 1 :]:
 script_path.write_text(textwrap.dedent("\n".join(body)) + "\n", encoding="utf-8")
 PY
 
+# Exercise the checked-in retry/cache functions without live GitHub requests.
+node - "$smoke_gate_script" <<'NODE'
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const source = fs.readFileSync(process.argv[2], "utf8").split("function isObsoletePullRequest(")[0];
+const context = { repo: { owner: "owner", repo: "repo" }, sha: "c".repeat(40), payload: {
+  pull_request: { number: 42, head: { sha: "a".repeat(40) }, base: { ref: "develop", sha: "b".repeat(40) } },
+} };
+let now = 100000;
+const delays = [];
+const realNow = Date.now;
+const realTimeout = global.setTimeout;
+Date.now = () => now;
+global.setTimeout = (callback, delay) => { delays.push(delay); now += delay; queueMicrotask(callback); };
+const make = (getCommit = async ({ ref }) => ({ data: { sha: ref, parents: [] } })) =>
+  new Function("github", "context", "core", `${source}; return { withTransientGitHubRetry, immutableCommit };`)(
+    { rest: { repos: { getCommit } } }, context, { warning: () => {} }
+  );
+const quota = (reset, remaining = "0") => ({ status: 403, response: { headers: {
+  "x-ratelimit-remaining": remaining, "x-ratelimit-reset": reset,
+} } });
+(async () => {
+  let calls = 0;
+  const inside = make();
+  const error = quota(String(Math.floor(now / 1000) + 60));
+  assert.equal(await inside.withTransientGitHubRetry("quota", async () => {
+    if (++calls === 1) throw error;
+    return "recovered";
+  }), "recovered");
+  assert.equal(calls, 2);
+  assert.deepEqual(delays, [61000], "confirmed exhaustion must wait until after reset");
+  for (const error of [quota(String(Math.floor(now / 1000) + 5400)), quota("bad"), quota("999", "1"), { status: 403 }]) {
+    const helper = make();
+    let attempts = 0;
+    const waits = delays.length;
+    await assert.rejects(helper.withTransientGitHubRetry("refused", async () => { attempts++; throw error; }), (caught) => caught === error);
+    assert.equal(attempts, 1, "invalid/nonquota or beyond-budget 403 must fail immediately");
+    assert.equal(delays.length, waits, "refused 403 must not sleep or hammer the API");
+  }
+  const requested = [];
+  const cache = make(async ({ ref }) => { requested.push(ref); return { data: { sha: ref, parents: [] } }; });
+  const first = "d".repeat(40), second = "e".repeat(40);
+  assert.equal(await cache.immutableCommit(first, "first"), await cache.immutableCommit(first, "cached"));
+  await cache.immutableCommit(second, "changed OID");
+  assert.deepEqual(requested, [first, second], "only immutable evidence for the exact OID may be reused");
+  let badCalls = 0;
+  const bad = make(async () => { badCalls++; return { data: { sha: second, parents: [] } }; });
+  for (let i = 0; i < 2; i++) await assert.rejects(bad.immutableCommit(first, "wrong OID"), /different commit OID/);
+  assert.equal(badCalls, 2, "invalid immutable evidence must not enter the cache");
+  console.log("Smoke quota deadline and immutable OID cache contract passed");
+})().catch((error) => { console.error(error); process.exitCode = 1; }).finally(() => {
+  Date.now = realNow;
+  global.setTimeout = realTimeout;
+});
+NODE
+
 node - "$smoke_gate_script" <<'NODE'
 const fs = require("node:fs");
 const script = fs.readFileSync(process.argv[2], "utf8");
@@ -1830,15 +1886,16 @@ check("skipped", true, "credential-free full-stack smoke step did not pass")
       status: "completed",
       conclusion: "cancelled",
     };
-    const startedAt = fakeNow;
+    let recancelledAt = null;
     let cancellationWaits = 0;
     availableRuns = [eventRun];
     onSmokeSleep = () => {
       cancellationWaits += 1;
-      if (cancellationWaits === 20) {
+      if (cancellationWaits === 8) {
         eventRun.status = "in_progress";
         eventRun.conclusion = null;
-      } else if (cancellationWaits === 21) {
+      } else if (cancellationWaits === 9) {
+        recancelledAt = fakeNow;
         eventRun.status = "completed";
         eventRun.conclusion = "cancelled";
       }
@@ -1849,7 +1906,7 @@ check("skipped", true, "credential-free full-stack smoke step did not pass")
       "Cancelled runtime-images run 605 has no exact repository_dispatch replacement"
     ).then(() => {
       onSmokeSleep = null;
-      if (cancellationWaits < 40 || fakeNow - startedAt < 10 * 60 * 1000) {
+      if (recancelledAt === null || fakeNow - recancelledAt < 5 * 60 * 1000) {
         throw new Error(
           "a cancelled run that becomes active and is cancelled again must receive a fresh five-minute replacement window"
         );
@@ -2126,6 +2183,11 @@ async function checkSummary(jobName, script) {
     `${jobName} must update the oldest bot summary before deleting later duplicates`,
   );
   assert.deepEqual(calls.creates, [], `${jobName} must not create another summary`);
+  comments.find((comment) => comment.id === 100).body = calls.bodies.at(-1);
+  calls.operations.length = 0;
+  await run(github, context, core);
+  assert.deepEqual(calls.operations, ["delete:101"], `${jobName} must skip identical PATCH while removing duplicates`);
+  assert.deepEqual(calls.creates, [], `${jobName} must retain the unchanged canonical comment`);
   process.env.CHANGES_RESULT = "failure";
   process.env.SMOKE_GATE_RESULT = "failure";
   await run(github, context, core);
