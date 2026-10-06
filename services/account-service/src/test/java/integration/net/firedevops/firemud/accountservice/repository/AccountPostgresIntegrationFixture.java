@@ -90,7 +90,7 @@ public final class AccountPostgresIntegrationFixture {
     return dataSource;
   }
 
-  private static String validateLoopbackJdbcUrl(String jdbcUrl) {
+  static String validateLoopbackJdbcUrl(String jdbcUrl) {
     final URI uri;
     try {
       if (!jdbcUrl.startsWith("jdbc:")) {
@@ -102,7 +102,7 @@ public final class AccountPostgresIntegrationFixture {
           JDBC_URL_ENV + " must use a credential-free loopback PostgreSQL URL without options");
     }
     String host = uri.getHost();
-    boolean loopbackHost = "127.0.0.1".equals(host) || "::1".equals(host);
+    boolean loopbackHost = "127.0.0.1".equals(host) || "::1".equals(host) || "[::1]".equals(host);
     if (!"postgresql".equals(uri.getScheme())
         || !loopbackHost
         || uri.getPort() < 1

@@ -150,71 +150,50 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
     assertThat(latest.canonicalJson()).doesNotContain("changed-password-hash-not-for-event");
 
     Account rollbackAttempt = accounts.findByAccountUuid(account.getAccountUuid()).orElseThrow();
-    rollbackAttempt.setLifecycleState(AccountLifecycleState.SECURITY_LOCKED);
+    rollbackAttempt.setPasswordHash("rollback-only-password-hash");
     assertThatThrownBy(
             () ->
                 transaction.executeWithoutResult(
                     status -> {
                       accounts.save(rollbackAttempt);
-                      throw new IllegalStateException("force lifecycle evidence rollback");
+                      throw new IllegalStateException("force Account source event rollback");
                     }))
         .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("force lifecycle evidence rollback");
-    var afterLifecycleRollback =
+        .hasMessageContaining("force Account source event rollback");
+    var afterRollback =
         transaction.execute(
             status -> sources.readCurrentIssuerAccountSources(ISSUER, account.getAccountUuid()));
     assertThat(
             accounts.findByAccountUuid(account.getAccountUuid()).orElseThrow().getLifecycleState())
         .isEqualTo(AccountLifecycleState.ACTIVE);
-    assertThat(afterLifecycleRollback.account().generation()).isEqualTo(3L);
-    assertThat(afterLifecycleRollback.account().issuanceFence().value()).isEqualTo(3L);
-    assertThat(afterLifecycleRollback.account().checkpoint().sequence()).isEqualTo(2L);
-    assertThat(
-            afterLifecycleRollback.account().accountSecurityCutoff().orElseThrow().outboxSequence())
+    assertThat(afterRollback.account().generation()).isEqualTo(3L);
+    assertThat(afterRollback.account().issuanceFence().value()).isEqualTo(3L);
+    assertThat(afterRollback.account().checkpoint().sequence()).isEqualTo(2L);
+    assertThat(afterRollback.account().accountSecurityCutoff().orElseThrow().outboxSequence())
         .isEqualTo("2");
     Optional<AccountAuthorityOutboxRepository.Event> rolledBackEvent =
         transaction.execute(
             status -> outbox.findEvent(changed.account().checkpoint().outboxStreamKey(), 3L));
     assertThat(rolledBackEvent).isEmpty();
-    Account lockedAccount = accounts.findByAccountUuid(account.getAccountUuid()).orElseThrow();
-    lockedAccount.setLifecycleState(AccountLifecycleState.SECURITY_LOCKED);
-    transaction.executeWithoutResult(status -> accounts.save(lockedAccount));
-    var lockedSnapshot =
+    Account lifecycleUpdate = accounts.findByAccountUuid(account.getAccountUuid()).orElseThrow();
+    lifecycleUpdate.setLifecycleState(AccountLifecycleState.SECURITY_LOCKED);
+    transaction.executeWithoutResult(status -> accounts.save(lifecycleUpdate));
+    var afterLifecycleUpdate =
         transaction.execute(
             status -> sources.readCurrentIssuerAccountSources(ISSUER, account.getAccountUuid()));
     assertThat(
             accounts.findByAccountUuid(account.getAccountUuid()).orElseThrow().getLifecycleState())
-        .isEqualTo(AccountLifecycleState.SECURITY_LOCKED);
-    assertThat(lockedSnapshot.account().generation()).isEqualTo(4L);
-    assertThat(lockedSnapshot.account().sourceVersion()).isEqualTo(4L);
-    assertThat(lockedSnapshot.account().issuanceFence().value()).isEqualTo(4L);
-    assertThat(lockedSnapshot.account().issuanceFence().sourceVersion()).isEqualTo(4L);
-    assertThat(lockedSnapshot.account().checkpoint().sequence()).isEqualTo(3L);
-    assertThat(
-            lockedSnapshot
-                .account()
-                .accountSecurityCutoff()
-                .orElseThrow()
-                .accountAuthorityGeneration())
-        .isEqualTo("4");
-    assertThat(lockedSnapshot.account().accountSecurityCutoff().orElseThrow().outboxStreamKey())
-        .isEqualTo("account:auth-authority:v1:account/" + account.getAccountUuid());
-    assertThat(lockedSnapshot.account().accountSecurityCutoff().orElseThrow().outboxSequence())
-        .isEqualTo("3");
-    AccountEvent lifecycleEvent =
-        (AccountEvent)
-            AccountAuthoritySourceEventV1Codec.verify(
-                new String(
-                    transaction.execute(
-                        status ->
-                            outbox
-                                .findEvent(
-                                    lockedSnapshot.account().checkpoint().outboxStreamKey(), 3L)
-                                .orElseThrow()
-                                .payload()),
-                    StandardCharsets.UTF_8));
-    assertThat(lifecycleEvent.mutationKinds()).containsExactly("LIFECYCLE_STATE_CHANGED");
-    assertThat(lifecycleEvent.accountState().lifecycleState()).isEqualTo("SECURITY_LOCKED");
+        .isEqualTo(AccountLifecycleState.ACTIVE);
+    assertThat(lifecycleUpdate.getLifecycleState()).isEqualTo(AccountLifecycleState.ACTIVE);
+    assertThat(afterLifecycleUpdate.account().generation()).isEqualTo(3L);
+    assertThat(afterLifecycleUpdate.account().issuanceFence().value()).isEqualTo(3L);
+    assertThat(afterLifecycleUpdate.account().checkpoint().sequence()).isEqualTo(2L);
+    var absentLifecycleEvent =
+        transaction.execute(
+            status ->
+                outbox.findEvent(
+                    afterLifecycleUpdate.account().checkpoint().outboxStreamKey(), 3L));
+    assertThat(absentLifecycleEvent).isEmpty();
 
     assertThatThrownBy(() -> accounts.delete(account))
         .isInstanceOf(IllegalStateException.class)
@@ -228,6 +207,49 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
                             account.getAccountUuid())))
         .isInstanceOf(DataAccessException.class);
     assertThat(accounts.findByAccountUuid(account.getAccountUuid())).isPresent();
+  }
+
+  @Test
+  void freshAccountWithNullGlobalRoleCanCommitSecurityMutationSourceEvent() {
+    TestContext context = newTestContext();
+    DSLContext dsl = context.dsl();
+    TransactionTemplate transaction = context.transaction();
+    AccountAuthorityGenerationRepository generations =
+        new AccountAuthorityGenerationRepository(dsl);
+    AccountAuthorityOutboxRepository outbox = new AccountAuthorityOutboxRepository(dsl);
+    AccountAuthoritySourceEvidenceRepository sources =
+        new AccountAuthoritySourceEvidenceRepository(dsl, generations, outbox);
+    AccountRepository accounts = new AccountRepository(dsl);
+    Account account = account("null-role-source-evidence-" + UUID.randomUUID());
+    account.setRole(null);
+
+    transaction.executeWithoutResult(status -> accounts.save(account));
+    var baseline =
+        transaction.execute(
+            status -> sources.readCurrentIssuerAccountSources(ISSUER, account.getAccountUuid()));
+    assertThat(baseline.account().checkpoint().sequence()).isZero();
+
+    account.setPasswordHash("changed-null-role-account-password-hash");
+    transaction.executeWithoutResult(status -> accounts.save(account));
+    var changed =
+        transaction.execute(
+            status -> sources.readCurrentIssuerAccountSources(ISSUER, account.getAccountUuid()));
+    assertThat(changed.account().checkpoint().sequence()).isEqualTo(1L);
+    AccountAuthorityOutboxRepository.Event storedEvent =
+        transaction.execute(
+            status ->
+                outbox
+                    .findEvent(changed.account().checkpoint().outboxStreamKey(), 1L)
+                    .orElseThrow());
+    AccountEvent event =
+        (AccountEvent)
+            AccountAuthoritySourceEventV1Codec.verify(
+                new String(storedEvent.payload(), StandardCharsets.UTF_8));
+
+    assertThat(event.mutationKinds()).containsExactly("PASSWORD_RESET");
+    assertThat(event.accountState().globalRole()).isNull();
+    assertThat(event.canonicalJson()).contains("\"globalRole\":null");
+    assertThat(event.canonicalJson()).doesNotContain("changed-null-role-account-password-hash");
   }
 
   @Test

@@ -925,20 +925,23 @@ class AccountRepositoryIntegrationTest {
   }
 
   @ParameterizedTest
-  @EnumSource(
-      value = AccountLifecycleState.class,
-      names = {"SECURITY_LOCKED", "DEACTIVATED_PENDING_DELETE", "DELETED"})
-  void genericUpdatePreservesProtectedLifecycleState(AccountLifecycleState lifecycleState) {
+  @EnumSource(AccountLifecycleState.class)
+  void genericUpdatePreservesPersistedLifecycleState(AccountLifecycleState lifecycleState) {
     Account persisted = account("original", "original@example.com", lifecycleState);
     Account saved = saveInTransaction(persisted);
 
-    Account staleUpdate = account("updated", "updated@example.com", AccountLifecycleState.ACTIVE);
+    AccountLifecycleState requestedLifecycleState =
+        lifecycleState == AccountLifecycleState.ACTIVE
+            ? AccountLifecycleState.SECURITY_LOCKED
+            : AccountLifecycleState.ACTIVE;
+    Account staleUpdate = account("updated", "updated@example.com", requestedLifecycleState);
     staleUpdate.setId(saved.getId());
     saveInTransaction(staleUpdate);
 
     Account loaded = repository.findById(saved.getId()).orElseThrow();
     assertThat(loaded.getUsername()).isEqualTo("updated");
     assertThat(loaded.getLifecycleState()).isEqualTo(lifecycleState);
+    assertThat(staleUpdate.getLifecycleState()).isEqualTo(lifecycleState);
   }
 
   @Test
