@@ -4,6 +4,7 @@ import net.firedevops.firemud.entitymanagement.v1.Character;
 import net.firedevops.firemud.entitymanagement.v1.EntityType;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
 import net.firedevops.firemud.entitymanagement.v1.RoomEntity;
+import net.firedevops.firemud.test.AccountRuntimeStubServer;
 
 public final class ChatTestFixtures {
   public static final String ROOM_ID = "R-1021";
@@ -57,7 +58,7 @@ public final class ChatTestFixtures {
       return Character.newBuilder()
           .setId(PLAYER_EMBERLINE)
           .setTenantId("1")
-          .setAccountId("7")
+          .setAccountId(AccountRuntimeStubServer.accountUuidForTestFixture(7L))
           .setName("Emberline")
           .build();
     }
@@ -65,7 +66,7 @@ public final class ChatTestFixtures {
       return Character.newBuilder()
           .setId(PLAYER_SORA)
           .setTenantId("1")
-          .setAccountId("8")
+          .setAccountId(AccountRuntimeStubServer.accountUuidForTestFixture(8L))
           .setName("Sora")
           .build();
     }
@@ -73,7 +74,7 @@ public final class ChatTestFixtures {
       return Character.newBuilder()
           .setId(PLAYER_NYX)
           .setTenantId("1")
-          .setAccountId("9")
+          .setAccountId(AccountRuntimeStubServer.accountUuidForTestFixture(9L))
           .setName("Nyx")
           .build();
     }

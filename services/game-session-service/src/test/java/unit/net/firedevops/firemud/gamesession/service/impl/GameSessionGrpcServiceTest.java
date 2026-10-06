@@ -64,6 +64,9 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 class GameSessionGrpcServiceTest {
+  private static final String VIEWER_ACCOUNT_ID = "00000000-0000-4000-8000-000000000002";
+  private static final String TARGET_ACCOUNT_ID = "00000000-0000-4000-8000-000000000007";
+
   @AfterEach
   void tearDown() {
     SessionContext.clear();
@@ -92,6 +95,28 @@ class GameSessionGrpcServiceTest {
         tickService,
         meterRegistry,
         ipConnectionLimiter);
+  }
+
+  private static QueryAccountPresenceResponse captureAccountPresenceResponse(
+      GameSessionGrpcService service, QueryAccountPresenceRequest request) {
+    AtomicReference<QueryAccountPresenceResponse> ref = new AtomicReference<>();
+    service.queryAccountPresence(
+        request,
+        new StreamObserver<>() {
+          @Override
+          public void onNext(QueryAccountPresenceResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+    return ref.get();
   }
 
   private static GameSessionGrpcService newService(
@@ -247,12 +272,14 @@ class GameSessionGrpcServiceTest {
     TickService tickService = Mockito.mock(TickService.class);
     IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    SessionContext.setContext("42", List.of(), Map.of());
-    Mockito.when(accountPresenceQueryService.queryAccountPresence(1L, "42", List.of("7")))
+    SessionContext.setContext(VIEWER_ACCOUNT_ID, List.of(), Map.of());
+    Mockito.when(
+            accountPresenceQueryService.queryAccountPresence(
+                1L, VIEWER_ACCOUNT_ID, List.of(TARGET_ACCOUNT_ID)))
         .thenReturn(
             List.of(
                 new AccountPresenceSnapshot(
-                    "7",
+                    TARGET_ACCOUNT_ID,
                     true,
                     9L,
                     "ISOLATED",
@@ -279,48 +306,35 @@ class GameSessionGrpcServiceTest {
             meterRegistry,
             ipLimiter);
 
-    AtomicReference<QueryAccountPresenceResponse> ref = new AtomicReference<>();
-    service.queryAccountPresence(
-        QueryAccountPresenceRequest.newBuilder()
-            .setTenantId("1")
-            .setViewerAccountId("42")
-            .addAccountIds("7")
-            .build(),
-        new StreamObserver<>() {
-          @Override
-          public void onNext(QueryAccountPresenceResponse value) {
-            ref.set(value);
-          }
+    QueryAccountPresenceResponse response =
+        captureAccountPresenceResponse(
+            service,
+            QueryAccountPresenceRequest.newBuilder()
+                .setTenantId("1")
+                .setViewerAccountId(VIEWER_ACCOUNT_ID)
+                .addAccountIds(TARGET_ACCOUNT_ID)
+                .build());
 
-          @Override
-          public void onError(Throwable t) {
-            fail(t);
-          }
-
-          @Override
-          public void onCompleted() {}
-        });
-
-    assertEquals(1, ref.get().getPresencesCount());
-    assertEquals("7", ref.get().getPresences(0).getAccountId());
-    assertEquals(true, ref.get().getPresences(0).getOnline());
-    assertEquals("demo", ref.get().getPresences(0).getWorldSlug());
-    assertEquals("Demo World", ref.get().getPresences(0).getWorldDisplayName());
-    assertEquals(17L, ref.get().getPresences(0).getPointerVersion());
-    assertEquals("production", ref.get().getPresences(0).getRealmSlug());
-    assertEquals("Live Realm", ref.get().getPresences(0).getRealmDisplayName());
-    assertEquals("Ben", ref.get().getPresences(0).getCharacterName());
+    assertEquals(1, response.getPresencesCount());
+    assertEquals(TARGET_ACCOUNT_ID, response.getPresences(0).getAccountId());
+    assertEquals(true, response.getPresences(0).getOnline());
+    assertEquals("demo", response.getPresences(0).getWorldSlug());
+    assertEquals("Demo World", response.getPresences(0).getWorldDisplayName());
+    assertEquals(17L, response.getPresences(0).getPointerVersion());
+    assertEquals("production", response.getPresences(0).getRealmSlug());
+    assertEquals("Live Realm", response.getPresences(0).getRealmDisplayName());
+    assertEquals("Ben", response.getPresences(0).getCharacterName());
     assertEquals(
         Instant.parse("2026-04-11T06:15:30Z").toEpochMilli(),
-        ref.get().getPresences(0).getLastSeenAtMs());
+        response.getPresences(0).getLastSeenAtMs());
     assertEquals(
         net.firedevops.firemud.gamesession.v1.AccountRecentPresenceDisposition
             .ACCOUNT_RECENT_PRESENCE_DISPOSITION_TRANSPORT_LOSS,
-        ref.get().getPresences(0).getRecentDisposition());
+        response.getPresences(0).getRecentDisposition());
   }
 
   @Test
-  void queryAccountPresenceRejectsMalformedAccountId() {
+  void queryAccountPresenceRejectsMalformedAndLegacyAccountIdsBeforeCallingPresenceService() {
     PingService pingService = Mockito.mock(PingService.class);
     GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
     FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
@@ -331,7 +345,7 @@ class GameSessionGrpcServiceTest {
     TickService tickService = Mockito.mock(TickService.class);
     IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    SessionContext.setContext("42", List.of(), Map.of());
+    SessionContext.setContext(VIEWER_ACCOUNT_ID, List.of(), Map.of());
     GameSessionGrpcService service =
         newService(
             pingService,
@@ -344,35 +358,30 @@ class GameSessionGrpcServiceTest {
             meterRegistry,
             ipLimiter);
 
-    AtomicReference<QueryAccountPresenceResponse> ref = new AtomicReference<>();
-    service.queryAccountPresence(
-        QueryAccountPresenceRequest.newBuilder()
-            .setTenantId("1")
-            .setViewerAccountId("42")
-            .addAccountIds("abc")
-            .build(),
-        new StreamObserver<>() {
-          @Override
-          public void onNext(QueryAccountPresenceResponse value) {
-            ref.set(value);
-          }
-
-          @Override
-          public void onError(Throwable t) {
-            fail(t);
-          }
-
-          @Override
-          public void onCompleted() {}
-        });
-
-    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
-    assertEquals("accountId must be a number", ref.get().getError().getMessage());
+    for (String invalidAccountId :
+        List.of(
+            "abc",
+            "42",
+            "00000000-0000-0000-0000-000000000000",
+            "00000000-0000-4000-8000-00000000000A",
+            " " + TARGET_ACCOUNT_ID)) {
+      QueryAccountPresenceResponse response =
+          captureAccountPresenceResponse(
+              service,
+              QueryAccountPresenceRequest.newBuilder()
+                  .setTenantId("1")
+                  .setViewerAccountId(VIEWER_ACCOUNT_ID)
+                  .addAccountIds(invalidAccountId)
+                  .build());
+      assertEquals("INVALID_ARGUMENT", response.getError().getCode());
+      assertEquals(
+          "accountId must be a canonical non-nil Account UUID", response.getError().getMessage());
+    }
     Mockito.verifyNoInteractions(accountPresenceQueryService);
   }
 
   @Test
-  void queryAccountPresenceRejectsZeroAccountId() {
+  void queryAccountPresenceRejectsMalformedViewerAccountIdsBeforeCallingPresenceService() {
     PingService pingService = Mockito.mock(PingService.class);
     GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
     FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
@@ -383,7 +392,7 @@ class GameSessionGrpcServiceTest {
     TickService tickService = Mockito.mock(TickService.class);
     IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    SessionContext.setContext("42", List.of(), Map.of());
+    SessionContext.setContext(VIEWER_ACCOUNT_ID, List.of(), Map.of());
     GameSessionGrpcService service =
         newService(
             pingService,
@@ -396,30 +405,25 @@ class GameSessionGrpcServiceTest {
             meterRegistry,
             ipLimiter);
 
-    AtomicReference<QueryAccountPresenceResponse> ref = new AtomicReference<>();
-    service.queryAccountPresence(
-        QueryAccountPresenceRequest.newBuilder()
-            .setTenantId("1")
-            .setViewerAccountId("42")
-            .addAccountIds("0")
-            .build(),
-        new StreamObserver<>() {
-          @Override
-          public void onNext(QueryAccountPresenceResponse value) {
-            ref.set(value);
-          }
-
-          @Override
-          public void onError(Throwable t) {
-            fail(t);
-          }
-
-          @Override
-          public void onCompleted() {}
-        });
-
-    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
-    assertEquals("accountId must be positive", ref.get().getError().getMessage());
+    for (String invalidViewerAccountId :
+        List.of(
+            "42",
+            "00000000-0000-0000-0000-000000000000",
+            "00000000-0000-4000-8000-00000000000A",
+            " " + VIEWER_ACCOUNT_ID)) {
+      QueryAccountPresenceResponse response =
+          captureAccountPresenceResponse(
+              service,
+              QueryAccountPresenceRequest.newBuilder()
+                  .setTenantId("1")
+                  .setViewerAccountId(invalidViewerAccountId)
+                  .addAccountIds(TARGET_ACCOUNT_ID)
+                  .build());
+      assertEquals("INVALID_ARGUMENT", response.getError().getCode());
+      assertEquals(
+          "viewerAccountId must be a canonical non-nil Account UUID",
+          response.getError().getMessage());
+    }
     Mockito.verifyNoInteractions(accountPresenceQueryService);
   }
 
@@ -435,7 +439,7 @@ class GameSessionGrpcServiceTest {
     TickService tickService = Mockito.mock(TickService.class);
     IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    SessionContext.setContext("42", List.of(), Map.of());
+    SessionContext.setContext(VIEWER_ACCOUNT_ID, List.of(), Map.of());
     GameSessionGrpcService service =
         newService(
             pingService,
@@ -449,9 +453,11 @@ class GameSessionGrpcServiceTest {
             ipLimiter);
 
     QueryAccountPresenceRequest.Builder request =
-        QueryAccountPresenceRequest.newBuilder().setTenantId("1").setViewerAccountId("42");
+        QueryAccountPresenceRequest.newBuilder()
+            .setTenantId("1")
+            .setViewerAccountId(VIEWER_ACCOUNT_ID);
     for (int index = 0; index < 101; index++) {
-      request.addAccountIds(index == 100 ? "not-a-number" : Long.toString(index + 1L));
+      request.addAccountIds(index == 100 ? "not-a-number" : TARGET_ACCOUNT_ID);
     }
 
     AtomicReference<QueryAccountPresenceResponse> ref = new AtomicReference<>();

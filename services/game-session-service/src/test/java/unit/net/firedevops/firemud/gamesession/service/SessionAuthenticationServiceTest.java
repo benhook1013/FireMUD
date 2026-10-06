@@ -17,6 +17,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
 class SessionAuthenticationServiceTest {
+  private static final String ACCOUNT_UUID = "b8d093f7-cb70-40ed-9fac-3c82d4bf28f1";
   private final SessionContextService sessionContextService =
       Mockito.mock(SessionContextService.class);
   private final GameplayAdmissionPointerAuthorityService pointerAuthorityService =
@@ -45,7 +46,7 @@ class SessionAuthenticationServiceTest {
         new SessionContext(
             41L,
             22L,
-            "123",
+            ACCOUNT_UUID,
             "demo@example.com",
             7001L,
             "Emberline",
@@ -66,13 +67,13 @@ class SessionAuthenticationServiceTest {
     Optional<SessionContext> resolved = service.resolveSessionContext("41");
 
     assertTrue(resolved.isPresent());
-    assertEquals("123", resolved.orElseThrow().accountId());
+    assertEquals(ACCOUNT_UUID, resolved.orElseThrow().accountId());
     assertEquals(0L, resolved.orElseThrow().gameInstanceId());
     assertEquals(0L, resolved.orElseThrow().characterId());
     ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
     verify(sessionContextService).save(captor.capture());
     verify(gameplayPresenceLifecycleService).clearGameplayBinding(stale, "STALE_ADMISSION_POINTER");
-    assertEquals("123", captor.getValue().accountId());
+    assertEquals(ACCOUNT_UUID, captor.getValue().accountId());
     assertEquals(0L, captor.getValue().gameInstanceId());
     assertEquals(0L, captor.getValue().pointerVersion());
   }
@@ -81,7 +82,7 @@ class SessionAuthenticationServiceTest {
   void resolveSessionContextClearsGameplayBindingWhenRoutingBundleIsIncomplete() {
     SessionContext incomplete =
         new SessionContext(
-            41L, 22L, "123", "demo@example.com", 7001L, "Emberline", 1L, "R-1", "jwt");
+            41L, 22L, ACCOUNT_UUID, "demo@example.com", 7001L, "Emberline", 1L, "R-1", "jwt");
     when(sessionContextService.findBySessionId(41L)).thenReturn(Optional.of(incomplete));
     when(sessionContextService.findByTenantAndSessionId(22L, 41L))
         .thenReturn(Optional.of(incomplete));
@@ -89,7 +90,7 @@ class SessionAuthenticationServiceTest {
     Optional<SessionContext> resolved = service.resolveSessionContext("41");
 
     assertTrue(resolved.isPresent());
-    assertEquals("123", resolved.orElseThrow().accountId());
+    assertEquals(ACCOUNT_UUID, resolved.orElseThrow().accountId());
     assertEquals(0L, resolved.orElseThrow().gameInstanceId());
     verify(sessionContextService).save(Mockito.any(SessionContext.class));
     verify(gameplayPresenceLifecycleService)
@@ -102,7 +103,7 @@ class SessionAuthenticationServiceTest {
         new SessionContext(
             41L,
             22L,
-            "123",
+            ACCOUNT_UUID,
             "demo@example.com",
             7001L,
             "Emberline",
@@ -139,7 +140,7 @@ class SessionAuthenticationServiceTest {
         new SessionContext(
             41L,
             22L,
-            "123",
+            ACCOUNT_UUID,
             "demo@example.com",
             7001L,
             "Emberline",
@@ -172,7 +173,7 @@ class SessionAuthenticationServiceTest {
         new SessionContext(
             41L,
             22L,
-            "123",
+            ACCOUNT_UUID,
             "demo@example.com",
             7001L,
             "Emberline",
@@ -192,7 +193,7 @@ class SessionAuthenticationServiceTest {
     Optional<SessionContext> resolved = service.resolveUnverifiedSessionContext(22L, 41L);
 
     assertTrue(resolved.isPresent());
-    assertEquals("123", resolved.orElseThrow().accountId());
+    assertEquals(ACCOUNT_UUID, resolved.orElseThrow().accountId());
     assertEquals(0L, resolved.orElseThrow().gameInstanceId());
     verify(sessionContextService).save(Mockito.any(SessionContext.class));
     verify(gameplayPresenceLifecycleService).clearGameplayBinding(stale, "STALE_ADMISSION_POINTER");
@@ -204,7 +205,7 @@ class SessionAuthenticationServiceTest {
         new SessionContext(
             41L,
             22L,
-            "123",
+            ACCOUNT_UUID,
             "demo@example.com",
             7001L,
             "Emberline",
@@ -260,7 +261,7 @@ class SessionAuthenticationServiceTest {
         new SessionContext(
             41L,
             22L,
-            "123",
+            ACCOUNT_UUID,
             "demo@example.com",
             7001L,
             "Emberline",
@@ -292,7 +293,7 @@ class SessionAuthenticationServiceTest {
         new SessionContext(
             41L,
             22L,
-            "123",
+            ACCOUNT_UUID,
             "demo@example.com",
             7001L,
             "Emberline",

@@ -11,6 +11,7 @@ import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountRequest
 import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.test.ChatTestFixtures;
+import net.firedevops.firemud.test.AccountRuntimeStubServer;
 import org.junit.jupiter.api.Test;
 
 class EntityManagementStubServerTest {
@@ -26,9 +27,9 @@ class EntityManagementStubServerTest {
 
         for (FixtureCharacter fixture :
             List.of(
-                new FixtureCharacter("7", "Emberline"),
-                new FixtureCharacter("8", "Sora"),
-                new FixtureCharacter("9", "Nyx"))) {
+                new FixtureCharacter(accountUuid(7L), "Emberline"),
+                new FixtureCharacter(accountUuid(8L), "Sora"),
+                new FixtureCharacter(accountUuid(9L), "Nyx"))) {
           ListCharactersByAccountResponse response =
               listCharacters(
                   stub, "1", fixture.accountId(), PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
@@ -48,14 +49,14 @@ class EntityManagementStubServerTest {
         Character.newBuilder()
             .setId("101")
             .setTenantId("1")
-            .setAccountId("101")
+            .setAccountId(accountUuid(101L))
             .setName("player-1")
             .build();
     Character secondPlayer =
         Character.newBuilder()
             .setId("102")
             .setTenantId("1")
-            .setAccountId("102")
+            .setAccountId(accountUuid(102L))
             .setName("player-2")
             .build();
 
@@ -68,15 +69,27 @@ class EntityManagementStubServerTest {
             EntityManagementServiceGrpc.newBlockingStub(channel);
 
         assertThat(
-                listCharacters(stub, "1", "101", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                listCharacters(
+                        stub,
+                        "1",
+                        accountUuid(101L),
+                        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                     .getCharactersList())
             .containsExactly(sharedCharacter(firstPlayer));
         assertThat(
-                listCharacters(stub, "1", "102", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                listCharacters(
+                        stub,
+                        "1",
+                        accountUuid(102L),
+                        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                     .getCharactersList())
             .containsExactly(sharedCharacter(secondPlayer));
         assertThat(
-                listCharacters(stub, "2", "101", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                listCharacters(
+                        stub,
+                        "2",
+                        accountUuid(101L),
+                        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                     .getCharactersList())
             .isEmpty();
       } finally {
@@ -95,11 +108,16 @@ class EntityManagementStubServerTest {
             EntityManagementServiceGrpc.newBlockingStub(channel);
 
         assertThat(
-                listCharacters(stub, "2", "7", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                listCharacters(
+                        stub, "2", accountUuid(7L), PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                     .getCharactersList())
             .isEmpty();
         assertThat(
-                listCharacters(stub, "1", "999", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                listCharacters(
+                        stub,
+                        "1",
+                        accountUuid(999L),
+                        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                     .getCharactersList())
             .isEmpty();
       } finally {
@@ -118,11 +136,19 @@ class EntityManagementStubServerTest {
             EntityManagementServiceGrpc.newBlockingStub(channel);
 
         assertThat(
-                listCharacters(stub, "1", "7", PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED)
+                listCharacters(
+                        stub,
+                        "1",
+                        accountUuid(7L),
+                        PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED)
                     .getCharactersList())
             .isEmpty();
         assertThat(
-                listCharacters(stub, "1", "7", PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED)
+                listCharacters(
+                        stub,
+                        "1",
+                        accountUuid(7L),
+                        PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED)
                     .getCharactersList())
             .isEmpty();
       } finally {
@@ -153,6 +179,10 @@ class EntityManagementStubServerTest {
     return character.toBuilder()
         .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
         .build();
+  }
+
+  private static String accountUuid(long accountRowId) {
+    return AccountRuntimeStubServer.accountUuidForTestFixture(accountRowId);
   }
 
   private record FixtureCharacter(String accountId, String name) {}

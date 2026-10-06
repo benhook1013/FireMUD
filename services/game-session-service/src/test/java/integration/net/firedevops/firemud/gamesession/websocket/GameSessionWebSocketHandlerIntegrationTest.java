@@ -119,6 +119,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @ActiveProfiles("test")
 @Import({NoGrpcServerTestConfiguration.class, InMemorySessionContextTestConfiguration.class})
 class GameSessionWebSocketHandlerIntegrationTest {
+  private static final String ACCOUNT_UUID = "5e1340f8-99c8-49fa-a4fe-5fc9d2075621";
 
   // Runtime target 2 belongs to the sandbox route in this fixture.
   private static final long CUTOVER_GAME_INSTANCE_ID = 3L;
@@ -244,7 +245,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
               return members == null ? java.util.Set.of() : new java.util.LinkedHashSet<>(members);
             });
     when(moderationPolicyClient.evaluateGameplayAdmission(
-            org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong()))
+            org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyString()))
         .thenReturn(
             net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyResponse.newBuilder()
                 .setAllowed(true)
@@ -261,11 +262,11 @@ class GameSessionWebSocketHandlerIntegrationTest {
         .thenReturn(
             AuthenticateResponse.newBuilder()
                 .setAuthToken("stub-token")
-                .setAccountId("123")
+                .setAccountId(ACCOUNT_UUID)
                 .build());
     org.mockito.Mockito.doReturn(
             GetTenantMembershipForRuntimeResponse.newBuilder()
-                .setAccountId("123")
+                .setAccountId(ACCOUNT_UUID)
                 .setTenantId("22")
                 .setMembershipExists(true)
                 .setGameplayAdmissionAllowed(true)
@@ -295,7 +296,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
                     net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
                         .setId("123")
                         .setTenantId("22")
-                        .setAccountId("123")
+                        .setAccountId(ACCOUNT_UUID)
                         .setName("Emberline")
                         .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                         .setLevel(12)
@@ -304,7 +305,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
                     net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
                         .setId("456")
                         .setTenantId("22")
-                        .setAccountId("123")
+                        .setAccountId(ACCOUNT_UUID)
                         .setName("Sora")
                         .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                         .setLevel(7)
@@ -312,7 +313,10 @@ class GameSessionWebSocketHandlerIntegrationTest {
                 .build())
         .when(entityManagementClient)
         .listCharactersByAccount(
-            eq("22"), eq("123"), eq("1"), eq(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
+            eq("22"),
+            eq(ACCOUNT_UUID),
+            eq("1"),
+            eq(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
     when(commandService.enqueue(
             org.mockito.ArgumentMatchers.anyString(), eq("PLAY demo Emberline"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());
@@ -656,8 +660,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
     GameplayAsyncAssertions.assertPresenceCountEventually(
         gameplayPresenceService, 22L, 1L, 0, java.time.Duration.ofSeconds(5));
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L)).isPresent();
-    assertThat(accountRecentPresenceService.findByAccountIds(22L, List.of("123")))
-        .containsKey("123");
+    assertThat(accountRecentPresenceService.findByAccountIds(22L, List.of(ACCOUNT_UUID)))
+        .containsKey(ACCOUNT_UUID);
 
     List<String> secondPayloads;
     try (GameplayWebSocketDriver client = openAdmittedGameplayDriver("42")) {
@@ -822,7 +826,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(payloads).anyMatch(payload -> json(payload).path("outputs").isArray());
     verify(accountClient)
         .getTenantMembershipForRuntime(
-            eq("123"), eq("22"), org.mockito.ArgumentMatchers.anyString());
+            eq(ACCOUNT_UUID), eq("22"), org.mockito.ArgumentMatchers.anyString());
     verify(accountClient)
         .getTenantEntitlementsForRuntime(eq("22"), org.mockito.ArgumentMatchers.anyString());
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 1L))
@@ -866,7 +870,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
     verify(commandService, never()).enqueue("41", "REALMS demo", false);
     verify(commandService, never()).enqueue("41", "CHARS demo", false);
     verify(entityManagementClient)
-        .listCharactersByAccount("22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+        .listCharactersByAccount(
+            "22", ACCOUNT_UUID, "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
   }
 
   @Test
@@ -957,7 +962,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
         .isEqualTo("ALLOW_NEW");
     assertThat(charsResult.path("outputs").get(0).path("payload").path("characters")).hasSize(2);
     verify(entityManagementClient)
-        .listCharactersByAccount("22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+        .listCharactersByAccount(
+            "22", ACCOUNT_UUID, "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
   }
 
   @Test
@@ -1108,8 +1114,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
     verify(screenBufferService, never()).clear(22L, 1L, 123L);
     GameplayAsyncAssertions.assertPresenceCountEventually(
         gameplayPresenceService, 22L, 1L, 0, java.time.Duration.ofSeconds(5));
-    assertThat(accountRecentPresenceService.findByAccountIds(22L, List.of("123")))
-        .containsKey("123");
+    assertThat(accountRecentPresenceService.findByAccountIds(22L, List.of(ACCOUNT_UUID)))
+        .containsKey(ACCOUNT_UUID);
 
     java.util.List<String> secondPayloads;
     try (GameplayWebSocketDriver client =
@@ -1204,7 +1210,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
                 net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
                     .setId("789")
                     .setTenantId("22")
-                    .setAccountId("123")
+                    .setAccountId(ACCOUNT_UUID)
                     .setName("CutoverArrival")
                     .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                     .setLevel(1)
@@ -1214,7 +1220,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
         .when(entityManagementClient)
         .listCharactersByAccount(
             "22",
-            "123",
+            ACCOUNT_UUID,
             Long.toString(CUTOVER_GAME_INSTANCE_ID),
             PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
 
@@ -1247,7 +1253,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     org.mockito.Mockito.verify(entityManagementClient)
         .listCharactersByAccount(
             "22",
-            "123",
+            ACCOUNT_UUID,
             Long.toString(CUTOVER_GAME_INSTANCE_ID),
             PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
   }
@@ -1306,7 +1312,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L))
         .hasValueSatisfying(
             context -> {
-              assertThat(context.accountId()).isEqualTo("123");
+              assertThat(context.accountId()).isEqualTo(ACCOUNT_UUID);
               assertThat(context.gameInstanceId()).isZero();
               assertThat(context.characterId()).isZero();
               assertThat(context.bootstrapGameInstanceId()).isEqualTo(2L);
@@ -1474,7 +1480,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 2L))
         .hasValueSatisfying(
             context -> {
-              assertThat(context.accountId()).isEqualTo("123");
+              assertThat(context.accountId()).isEqualTo(ACCOUNT_UUID);
               assertThat(context.gameInstanceId()).isZero();
               assertThat(context.characterId()).isZero();
               assertThat(context.bootstrapGameInstanceId()).isEqualTo(2L);
@@ -1567,7 +1573,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 2L))
         .hasValueSatisfying(
             context -> {
-              assertThat(context.accountId()).isEqualTo("123");
+              assertThat(context.accountId()).isEqualTo(ACCOUNT_UUID);
               assertThat(context.gameInstanceId()).isZero();
               assertThat(context.characterId()).isZero();
               assertThat(context.bootstrapGameInstanceId()).isEqualTo(1L);
@@ -1615,6 +1621,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
         java.time.Duration.ofSeconds(10),
         transportSessionId,
         "testsecretkeytestsecretkeytest1234",
+        ACCOUNT_UUID,
         connectClaims);
   }
 
@@ -1626,7 +1633,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
       String suffix) {
     return java.util.Map.of(
         "accountId",
-        "123",
+        ACCOUNT_UUID,
         "tenantId",
         "22",
         "worldSlug",

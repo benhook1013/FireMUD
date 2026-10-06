@@ -164,7 +164,7 @@ class AccountApplicationIntegrationTest {
             "operator", java.util.Map.of("globalRoles", java.util.List.of("platformAdmin")));
     HttpRequest request =
         HttpRequest.newBuilder(
-                URI.create("http://localhost:" + port + "/accounts/not-a-number/export"))
+                URI.create("http://localhost:" + port + "/accounts/not-a-uuid/export"))
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
             .GET()
             .build();
@@ -173,7 +173,8 @@ class AccountApplicationIntegrationTest {
 
     assertThat(response.statusCode()).isEqualTo(400);
     assertThat(response.body()).contains("\"code\":\"INVALID_ARGUMENT\"");
-    assertThat(response.body()).contains("\"message\":\"accountId must be numeric\"");
+    assertThat(response.body())
+        .contains("\"message\":\"accountId must be a canonical non-nil UUID\"");
   }
 
   @Test
@@ -199,9 +200,10 @@ class AccountApplicationIntegrationTest {
 
   @Test
   void updateProfileRejectsZeroTenantIdWithInvalidArgumentEnvelope() throws Exception {
-    String token = jwtUtil.generateToken("2", java.util.Map.of("accountId", "2"));
+    String accountUuid = "b8d093f7-cb70-40ed-9fac-3c82d4bf28f1";
+    String token = jwtUtil.generateToken(accountUuid, java.util.Map.of("accountId", accountUuid));
     HttpRequest request =
-        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/profiles/2"))
+        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/profiles/" + accountUuid))
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
             .header(HttpHeaders.CONTENT_TYPE, "application/json")
             .PUT(

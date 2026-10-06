@@ -1,6 +1,7 @@
 package net.firedevops.firemud.common.security;
 
 import io.jsonwebtoken.Claims;
+import java.util.UUID;
 import org.springframework.util.StringUtils;
 
 /** Shared helpers for canonical JWT claim extraction and normalization. */
@@ -42,10 +43,36 @@ public final class JwtClaims {
     return claimedAccountId;
   }
 
+  public static String requireCanonicalAccountUuid(Object value, String claimName) {
+    if (!(value instanceof String text)
+        || !StringUtils.hasText(text)
+        || !text.equals(text.trim())) {
+      throw new IllegalArgumentException("Malformed claim: " + claimName);
+    }
+    try {
+      UUID accountUuid = UUID.fromString(text);
+      if (!accountUuid.toString().equals(text) || accountUuid.equals(new UUID(0L, 0L))) {
+        throw new IllegalArgumentException("Invalid claim: " + claimName);
+      }
+      return text;
+    } catch (IllegalArgumentException ex) {
+      throw new IllegalArgumentException("Malformed claim: " + claimName, ex);
+    }
+  }
+
+  public static String requireSignedGameplayAccountUuid(Claims claims, String mismatchMessage) {
+    String subjectAccountUuid = requireCanonicalAccountUuid(claims.getSubject(), "sub");
+    String claimedAccountUuid = requireCanonicalAccountUuid(claims.get("accountId"), "accountId");
+    if (!subjectAccountUuid.equals(claimedAccountUuid)) {
+      throw new IllegalArgumentException(mismatchMessage);
+    }
+    return claimedAccountUuid;
+  }
+
   public static SignedGameplayRoutingClaims requireSignedGameplayRoutingClaims(
       Claims claims, String accountMismatchMessage) {
     return new SignedGameplayRoutingClaims(
-        requireSignedActorAccountId(claims, accountMismatchMessage),
+        requireSignedGameplayAccountUuid(claims, accountMismatchMessage),
         requireLong(claims.get("tenantId"), "tenantId", false),
         requireText(claims.get("worldSlug"), "worldSlug"),
         requireText(claims.get("realmSlug"), "realmSlug"),
@@ -80,7 +107,7 @@ public final class JwtClaims {
   }
 
   public record SignedGameplayRoutingClaims(
-      long accountId,
+      String accountId,
       long tenantId,
       String worldSlug,
       String realmSlug,

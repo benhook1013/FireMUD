@@ -4,7 +4,6 @@ import java.io.Serializable;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
-import org.springframework.util.StringUtils;
 
 /** Represents persisted login context stored in Redis for a session. */
 public record SessionContext(
@@ -284,7 +283,7 @@ public record SessionContext(
   }
 
   public boolean hasAccountIdentity() {
-    return StringUtils.hasText(accountId);
+    return AccountIds.isCanonicalNonNilUuid(accountId);
   }
 
   public boolean hasGameplayBinding() {

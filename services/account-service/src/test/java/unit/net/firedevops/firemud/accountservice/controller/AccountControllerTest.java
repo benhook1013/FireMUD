@@ -52,6 +52,7 @@ import tools.jackson.databind.ObjectMapper;
       "firemud.auth.http.public-routes[1].path-pattern=/accounts/"
     })
 class AccountControllerTest {
+  private static final String ACCOUNT_UUID = "4cae05e8-7a6b-4b14-9d44-665e3eec450b";
 
   @Autowired private MockMvc mockMvc;
   private final ObjectMapper objectMapper = new ObjectMapper();
@@ -117,9 +118,13 @@ class AccountControllerTest {
   @Test
   void deleteAccountAllowsScopedTenantAdmin() throws Exception {
     String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    when(accountService.resolveAccountStorageId(java.util.UUID.fromString(ACCOUNT_UUID)))
+        .thenReturn(42L);
 
     mockMvc
-        .perform(delete("/accounts/42").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .perform(
+            delete("/accounts/" + ACCOUNT_UUID)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"));
   }
@@ -130,7 +135,9 @@ class AccountControllerTest {
         jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("7", List.of("tenantAdmin"))));
 
     mockMvc
-        .perform(delete("/accounts/42").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .perform(
+            delete("/accounts/" + ACCOUNT_UUID)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isForbidden())
         .andExpect(jsonPath("$.error.code").value("PERMISSION_DENIED"))
         .andExpect(jsonPath("$.error.message").value("Account access required"));
@@ -143,10 +150,14 @@ class AccountControllerTest {
             "4cae05e8-7a6b-4b14-9d44-665e3eec450b", "demo", "demo@example.com", "player", true);
     when(accountService.exportAccountData(42L))
         .thenReturn(new AccountDataExportDto(account, List.of()));
-    String token = jwtUtil.generateToken("42", Map.of("accountId", "42"));
+    when(accountService.resolveAccountStorageId(java.util.UUID.fromString(ACCOUNT_UUID)))
+        .thenReturn(42L);
+    String token = jwtUtil.generateToken(ACCOUNT_UUID, Map.of("accountId", ACCOUNT_UUID));
 
     mockMvc
-        .perform(get("/accounts/42/export").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .perform(
+            get("/accounts/" + ACCOUNT_UUID + "/export")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"));
   }
@@ -158,12 +169,14 @@ class AccountControllerTest {
             "4cae05e8-7a6b-4b14-9d44-665e3eec450b", "demo", "demo@example.com", "player", true);
     when(accountService.exportTenantData(7L, 42L))
         .thenReturn(new TenantDataExportDto(7L, account, null));
+    when(accountService.resolveAccountStorageId(java.util.UUID.fromString(ACCOUNT_UUID)))
+        .thenReturn(42L);
     String token =
         jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("7", List.of("moderator"))));
 
     mockMvc
         .perform(
-            get("/accounts/42/tenant-export")
+            get("/accounts/" + ACCOUNT_UUID + "/tenant-export")
                 .param("tenantId", "7")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
@@ -176,11 +189,10 @@ class AccountControllerTest {
 
     mockMvc
         .perform(
-            get("/accounts/not-a-number/export")
-                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+            get("/accounts/not-a-uuid/export").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
-        .andExpect(jsonPath("$.error.message").value("accountId must be numeric"));
+        .andExpect(jsonPath("$.error.message").value("accountId must be a canonical non-nil UUID"));
 
     verifyNoInteractions(accountService);
   }
@@ -191,7 +203,7 @@ class AccountControllerTest {
 
     mockMvc
         .perform(
-            get("/accounts/42/tenant-export")
+            get("/accounts/" + ACCOUNT_UUID + "/tenant-export")
                 .param("tenantId", "0")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isBadRequest())
@@ -203,11 +215,13 @@ class AccountControllerTest {
 
   @Test
   void deleteAccountAllowsCurrentAccountWithoutPrivilegedTenantRole() throws Exception {
-    String token = jwtUtil.generateToken("42", Map.of("accountId", "42"));
+    when(accountService.resolveAccountStorageId(java.util.UUID.fromString(ACCOUNT_UUID)))
+        .thenReturn(42L);
+    String token = jwtUtil.generateToken(ACCOUNT_UUID, Map.of("accountId", ACCOUNT_UUID));
 
     mockMvc
         .perform(
-            delete("/accounts/42")
+            delete("/accounts/" + ACCOUNT_UUID)
                 .param("tenantId", "7")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
@@ -215,14 +229,14 @@ class AccountControllerTest {
   }
 
   @Test
-  void deleteAccountRejectsZeroAccountIdBeforeDispatch() throws Exception {
+  void deleteAccountRejectsNumericAccountIdBeforeDispatch() throws Exception {
     String token = jwtUtil.generateToken("1", Map.of("accountId", "1"));
 
     mockMvc
         .perform(delete("/accounts/0").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
-        .andExpect(jsonPath("$.error.message").value("accountId must be positive"));
+        .andExpect(jsonPath("$.error.message").value("accountId must be a canonical non-nil UUID"));
 
     verifyNoInteractions(accountService);
   }
@@ -248,18 +262,20 @@ class AccountControllerTest {
     AccountLoginAuthModesDto modes =
         new AccountLoginAuthModesDto(java.util.Set.of(AccountLoginAuthMode.EMAIL_OTP));
     when(accountService.getLoginAuthModes(42L)).thenReturn(modes);
-    String token = jwtUtil.generateToken("42", Map.of("accountId", "42"));
+    when(accountService.resolveAccountStorageId(java.util.UUID.fromString(ACCOUNT_UUID)))
+        .thenReturn(42L);
+    String token = jwtUtil.generateToken(ACCOUNT_UUID, Map.of("accountId", ACCOUNT_UUID));
 
     mockMvc
         .perform(
-            get("/accounts/42/login-auth-modes")
+            get("/accounts/" + ACCOUNT_UUID + "/login-auth-modes")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.loginAuthModes[0]").value("EMAIL_OTP"));
 
     mockMvc
         .perform(
-            put("/accounts/42/login-auth-modes")
+            put("/accounts/" + ACCOUNT_UUID + "/login-auth-modes")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"loginAuthModes\":[\"EMAIL_OTP\"]}")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
@@ -281,7 +297,7 @@ class AccountControllerTest {
 
     mockMvc
         .perform(
-            put("/accounts/42/login-auth-modes")
+            put("/accounts/" + ACCOUNT_UUID + "/login-auth-modes")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"loginAuthModes\":[\"PASSWORD\"]}")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
@@ -293,11 +309,11 @@ class AccountControllerTest {
 
   @Test
   void updateLoginAuthModesRejectsEmptySetBeforeDispatch() throws Exception {
-    String token = jwtUtil.generateToken("42", Map.of("accountId", "42"));
+    String token = jwtUtil.generateToken(ACCOUNT_UUID, Map.of("accountId", ACCOUNT_UUID));
 
     mockMvc
         .perform(
-            put("/accounts/42/login-auth-modes")
+            put("/accounts/" + ACCOUNT_UUID + "/login-auth-modes")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"loginAuthModes\":[]}")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))

@@ -114,14 +114,19 @@ components:
       type: object
       properties:
         accountId:
-          type: integer
+          type: string
+          format: uuid
+          description: Canonical non-nil Account UUID read back from the authenticated source row; never the numeric database primary key.
         authToken:
           type: string
+      required: [accountId, authToken]
     PlayerBootstrapResult:
       type: object
       properties:
         accountId:
-          type: integer
+          type: string
+          format: uuid
+          description: Canonical non-nil Account UUID; never the private numeric database primary key.
         bootstrapToken:
           type: string
         issuedAt:
@@ -630,7 +635,8 @@ paths:
           in: path
           required: true
           schema:
-            type: integer
+            type: string
+            format: uuid
       responses:
         '200':
           description: Exported data
@@ -646,6 +652,7 @@ paths:
           required: true
           schema:
             type: string
+            format: uuid
       responses:
         '200':
           description: Allowed login mechanisms
@@ -666,6 +673,7 @@ paths:
           required: true
           schema:
             type: string
+            format: uuid
       requestBody:
         required: true
         content:
@@ -688,7 +696,8 @@ paths:
           in: path
           required: true
           schema:
-            type: integer
+            type: string
+            format: uuid
         - name: tenantId
           in: query
           required: true
@@ -708,7 +717,8 @@ paths:
           in: path
           required: true
           schema:
-            type: integer
+            type: string
+            format: uuid
       responses:
         '200':
           description: Deletion success
@@ -723,7 +733,8 @@ paths:
           in: path
           required: true
           schema:
-            type: integer
+            type: string
+            format: uuid
         - name: tenantId
           in: query
           required: true
@@ -746,7 +757,8 @@ paths:
           in: path
           required: true
           schema:
-            type: integer
+            type: string
+            format: uuid
       requestBody:
         required: true
         content:

@@ -30,10 +30,15 @@ public final class RedisFirstPartyConnectContextRegistry
 
   @Override
   public void register(long sessionId, FirstPartyConnectContext connectContext) {
+    if (connectContext == null || !connectContext.hasCompleteRoutingScope()) {
+      throw new IllegalArgumentException("first-party connect context must be complete");
+    }
     String key = key(sessionId);
     try {
       Object retained = valueOperations().get(key);
-      if (retained != null && !(retained instanceof FirstPartyConnectContext)) {
+      if (retained != null
+          && (!(retained instanceof FirstPartyConnectContext retainedContext)
+              || !retainedContext.hasCompleteRoutingScope())) {
         throw new IllegalStateException(
             "Retained first-party connect context is incompatible and cannot be replaced");
       }
@@ -46,22 +51,28 @@ public final class RedisFirstPartyConnectContextRegistry
 
   @Override
   public Optional<FirstPartyConnectContext> find(long sessionId) {
-    try {
-      return Optional.ofNullable((FirstPartyConnectContext) valueOperations().get(key(sessionId)));
-    } catch (SerializationException | ClassCastException ex) {
+    Object retained = valueOperations().get(key(sessionId));
+    if (retained == null) {
       return Optional.empty();
     }
+    if (!(retained instanceof FirstPartyConnectContext context)) {
+      throw new ClassCastException(
+          "Retained first-party connect context has an incompatible value type");
+    }
+    return Optional.of(context);
   }
 
   @Override
   public void unregister(long sessionId) {
     String key = key(sessionId);
+    Object retained;
     try {
-      if (valueOperations().get(key) instanceof FirstPartyConnectContext) {
-        redisTemplate.delete(key);
-      }
+      retained = valueOperations().get(key);
     } catch (SerializationException | ClassCastException ex) {
-      // Retain unreadable evidence instead of treating it as an absent context.
+      return;
+    }
+    if (retained instanceof FirstPartyConnectContext context && context.hasCompleteRoutingScope()) {
+      redisTemplate.delete(key);
     }
   }
 
