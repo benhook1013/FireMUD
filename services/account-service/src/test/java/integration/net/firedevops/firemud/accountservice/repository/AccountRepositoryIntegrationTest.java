@@ -926,22 +926,118 @@ class AccountRepositoryIntegrationTest {
 
   @ParameterizedTest
   @EnumSource(AccountLifecycleState.class)
-  void genericUpdatePreservesPersistedLifecycleState(AccountLifecycleState lifecycleState) {
+  void genericUpdateRejectsLifecycleChangeWithoutMutatingAccountOrAuthorityEvidence(
+      AccountLifecycleState lifecycleState) {
     Account persisted = account("original", "original@example.com", lifecycleState);
+    persisted.setPasswordHash("original-password-hash");
     Account saved = saveInTransaction(persisted);
+    UUID accountUuid = saved.getAccountUuid();
 
     AccountLifecycleState requestedLifecycleState =
         lifecycleState == AccountLifecycleState.ACTIVE
             ? AccountLifecycleState.SECURITY_LOCKED
             : AccountLifecycleState.ACTIVE;
     Account staleUpdate = account("updated", "updated@example.com", requestedLifecycleState);
+    staleUpdate.setPasswordHash("updated-password-hash");
     staleUpdate.setId(saved.getId());
-    saveInTransaction(staleUpdate);
+
+    String accountBefore =
+        jsonRow(
+            "SELECT jsonb_build_object('username', username, 'email', email, "
+                + "'password_hash', password_hash, 'lifecycle_state', lifecycle_state)::text "
+                + "FROM accounts WHERE id = ?",
+            saved.getId());
+    String generationBefore =
+        jsonRow(
+            "SELECT to_jsonb(generation_row)::text FROM account_authority_generations "
+                + "AS generation_row WHERE scope_kind = 'ACCOUNT' AND account_uuid = ?",
+            accountUuid);
+    String fenceBefore =
+        jsonRow(
+            "SELECT to_jsonb(fence_row)::text FROM account_authority_issuance_fences "
+                + "AS fence_row WHERE account_uuid = ?",
+            accountUuid);
+    String checkpointBefore =
+        jsonRow(
+            "SELECT to_jsonb(source_row)::text FROM account_authority_source_records "
+                + "AS source_row WHERE scope_kind = 'ACCOUNT' AND account_uuid = ?",
+            accountUuid);
+    String outboxStreamBefore =
+        jsonRow(
+            "SELECT to_jsonb(stream_row)::text FROM account_authority_outbox_streams "
+                + "AS stream_row WHERE outbox_stream_key = ?",
+            "account:auth-authority:v1:account/" + accountUuid);
+    String outboxEventsBefore =
+        jsonRow(
+            "SELECT COALESCE(jsonb_agg(to_jsonb(event_row) ORDER BY outbox_sequence), "
+                + "'[]'::jsonb)::text FROM account_authority_outbox_events AS event_row "
+                + "WHERE outbox_stream_key = ?",
+            "account:auth-authority:v1:account/" + accountUuid);
+
+    assertThatThrownBy(() -> saveInTransaction(staleUpdate))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Account lifecycle changes are unavailable through generic Account saves");
+
+    assertThat(
+            jsonRow(
+                "SELECT jsonb_build_object('username', username, 'email', email, "
+                    + "'password_hash', password_hash, 'lifecycle_state', lifecycle_state)::text "
+                    + "FROM accounts WHERE id = ?",
+                saved.getId()))
+        .isEqualTo(accountBefore);
+    assertThat(
+            jsonRow(
+                "SELECT to_jsonb(generation_row)::text FROM account_authority_generations "
+                    + "AS generation_row WHERE scope_kind = 'ACCOUNT' AND account_uuid = ?",
+                accountUuid))
+        .isEqualTo(generationBefore);
+    assertThat(
+            jsonRow(
+                "SELECT to_jsonb(fence_row)::text FROM account_authority_issuance_fences "
+                    + "AS fence_row WHERE account_uuid = ?",
+                accountUuid))
+        .isEqualTo(fenceBefore);
+    assertThat(
+            jsonRow(
+                "SELECT to_jsonb(source_row)::text FROM account_authority_source_records "
+                    + "AS source_row WHERE scope_kind = 'ACCOUNT' AND account_uuid = ?",
+                accountUuid))
+        .isEqualTo(checkpointBefore);
+    assertThat(
+            jsonRow(
+                "SELECT to_jsonb(stream_row)::text FROM account_authority_outbox_streams "
+                    + "AS stream_row WHERE outbox_stream_key = ?",
+                "account:auth-authority:v1:account/" + accountUuid))
+        .isEqualTo(outboxStreamBefore);
+    assertThat(
+            jsonRow(
+                "SELECT COALESCE(jsonb_agg(to_jsonb(event_row) ORDER BY outbox_sequence), "
+                    + "'[]'::jsonb)::text FROM account_authority_outbox_events AS event_row "
+                    + "WHERE outbox_stream_key = ?",
+                "account:auth-authority:v1:account/" + accountUuid))
+        .isEqualTo(outboxEventsBefore);
+  }
+
+  @ParameterizedTest
+  @EnumSource(AccountLifecycleState.class)
+  void genericUpdateAllowsOrdinaryChangesWhenLifecycleMatches(
+      AccountLifecycleState lifecycleState) {
+    Account persisted = account("original", "original@example.com", lifecycleState);
+    Account saved = saveInTransaction(persisted);
+    UUID accountUuid = saved.getAccountUuid();
+
+    Account ordinaryUpdate = account("updated", " Updated@Example.COM ", lifecycleState);
+    ordinaryUpdate.setPasswordHash("updated-password-hash");
+    ordinaryUpdate.setId(saved.getId());
+    Account updated = saveInTransaction(ordinaryUpdate);
 
     Account loaded = repository.findById(saved.getId()).orElseThrow();
     assertThat(loaded.getUsername()).isEqualTo("updated");
+    assertThat(loaded.getEmail()).isEqualTo("updated@example.com");
+    assertThat(loaded.getPasswordHash()).isEqualTo("updated-password-hash");
     assertThat(loaded.getLifecycleState()).isEqualTo(lifecycleState);
-    assertThat(staleUpdate.getLifecycleState()).isEqualTo(lifecycleState);
+    assertThat(updated.getAccountUuid()).isEqualTo(accountUuid);
+    assertThat(updated.getLifecycleState()).isEqualTo(lifecycleState);
   }
 
   @Test

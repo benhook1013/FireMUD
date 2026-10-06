@@ -115,6 +115,12 @@ public class AccountRepository {
             && !expectedSourceNumericId.equals(before.getAccountUuidSourceNumericId()))) {
       throw JooqAccountRepositorySupport.staleWrite("accounts", entity.getId());
     }
+    AccountLifecycleState storedLifecycleState =
+        AccountLifecycleState.fromStorageValue(before.getLifecycleState());
+    if (entity.getLifecycleState() != null && entity.getLifecycleState() != storedLifecycleState) {
+      throw new IllegalStateException(
+          "Account lifecycle changes are unavailable through generic Account saves");
+    }
     AccountAuthorityState beforeState = authorityState(before);
     var update =
         dsl.update(ACCOUNTS)

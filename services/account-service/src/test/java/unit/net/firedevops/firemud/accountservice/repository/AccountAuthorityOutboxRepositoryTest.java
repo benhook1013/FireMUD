@@ -262,6 +262,56 @@ class AccountAuthorityOutboxRepositoryTest {
   }
 
   @Test
+  void emptyZeroSequenceStreamHasNoPositiveCheckpoint() {
+    String streamKey = "account:auth-authority:v1:membership/account-a/tenant-a";
+    Record stream = streamRecord(0L);
+    when(dsl.fetchOne(anyString(), any(Object[].class)))
+        .thenAnswer(
+            invocation ->
+                invocation.<String>getArgument(0).startsWith("SELECT last_sequence")
+                    ? stream
+                    : null);
+
+    assertThat(repository.readCheckpoint(streamKey)).isEmpty();
+    verify(dsl)
+        .fetchOne(
+            startsWith("SELECT outbox_sequence FROM account_authority_outbox_events"),
+            any(Object[].class));
+  }
+
+  @Test
+  void zeroSequenceStreamWithAnyEventEvidenceIsCorrupt() {
+    String streamKey = "account:auth-authority:v1:membership/account-a/tenant-a";
+    Record stream = streamRecord(0L);
+    Record event = mock(Record.class);
+    when(dsl.fetchOne(anyString(), any(Object[].class)))
+        .thenAnswer(
+            invocation ->
+                invocation.<String>getArgument(0).startsWith("SELECT last_sequence")
+                    ? stream
+                    : event);
+
+    assertThatThrownBy(() -> repository.readCheckpoint(streamKey))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("zero checkpoint has event evidence");
+  }
+
+  @Test
+  void negativeSequenceHeadIsRejectedBeforeEventEvidenceCanBePromoted() {
+    String streamKey = "account:auth-authority:v1:membership/account-a/tenant-a";
+    Record negativeStream = streamRecord(-1L);
+    when(dsl.fetchOne(anyString(), any(Object[].class))).thenReturn(negativeStream);
+
+    assertThatThrownBy(() -> repository.readCheckpoint(streamKey))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("last_sequence");
+    verify(dsl, never())
+        .fetchOne(
+            startsWith("SELECT outbox_sequence FROM account_authority_outbox_events"),
+            any(Object[].class));
+  }
+
+  @Test
   void requestReadbackFindsAnExactHistoricalEventInItsStream() {
     String streamKey = "account:auth-authority:v1:membership/account-a/tenant-a";
     Record event = mock(Record.class);

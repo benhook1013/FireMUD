@@ -65,7 +65,7 @@ Record an accepted source finding's verified fix with `records source resolve --
 
 New Hosted imports preserve separately fingerprinted findings bundled into one inline comment, retaining their common comment/thread identity. Existing finalized comment-grouped records remain immutable; report a historical multiplicity mismatch rather than silently rewriting counts or importing a duplicate provider round.
 
-Allocation finding-clearance audits distinguish an attributable terminal Hosted rate limit from unresolved findings, retaining its exact proof after cooldown expiry. The Hosted selector still enforces the cooldown. CLI may overlap an already-posted Hosted review only when the fresh audit proves the same published head and complete stack anchor; unknown reservations, mismatched identities, pending findings, and unpublished corrections remain held.
+Allocation finding-clearance audits distinguish an attributable terminal Hosted rate limit from unresolved findings, retaining its exact proof after cooldown expiry or when the reset is explicitly unknown. The Hosted selector still enforces the cooldown, including unknown resets; terminal execution does not grant review credit or further Hosted quota. CLI may overlap an already-posted Hosted review only when the fresh audit proves the same published head and complete stack anchor; unknown reservations, mismatched identities, pending findings, and unpublished corrections remain held.
 
 Hosted and CLI preflight briefly serialize on admission locks. A busy Hosted admission is retried through bounded fresh target selection; if contention persists, the command reports admission contention without treating the lock as proof of an active provider request. A lock refusal occurs before the Hosted reservation and POST.
 
@@ -107,6 +107,8 @@ Receiving owners use `records route decide` and `records route resolve` (or `rec
 ## Read-only status diagnostics
 
 `status --pr <number>` compares published PR identity (head, base branch name and retained GitHub `baseRefOid`) across its reads. Controller rows expose that retained base identity as `pr_base_oid`; `parent_head` separately identifies the current effective parent tip. A retained base differing from that tip can still require `PARENT_MOVED` reconciliation, but does not by itself mean the PR changed between status snapshots. Actual identity or remote-branch changes remain uncertain, and review request preflight and reconciliation requirements are unchanged.
+
+Standalone `status --pr <number>` shares one 120-second monotonic GitHub read budget across controller construction, selected-PR evidence, stack evidence, and final report preparation, including `--full-scan`. Subprocess reads use the remaining budget rather than restarting it for each call; expiry reports a `PR status deadline exceeded` diagnostic with phase and progress instead of publishing an incomplete report. This bounds failure when supported reads stall; it does not eliminate upstream latency or interrupt uninterruptible filesystem or kernel operations.
 
 CI output separates the GitHub status rollup from the observed failed and pending check inventory. Required-context authority determines whether an observed failure is required or optional; unavailable authority stays unknown rather than labelling every failure optional. Conflicting rollup and inventory observations remain visible without changing required-gate readiness policy.
 
@@ -183,6 +185,6 @@ validation.
 The local status report is atomically replaced, restricted to mode `0600`, and
 keeps the latest attempt, the last successful artifact time/name/digest/size,
 and the most recent failure time. It never contains database contents, key
-material, or remote command output. A failed invocation exits nonzero. The
+material, or remote command output. A failed invocation exits nonzero. Console failures include only trusted static phase and failure labels (such as `phase=readback failure=timeout`) and numeric nonzero exit codes; remote output, exception messages, paths and payloads remain suppressed. A failed best-effort cleanup is reported separately while the original failure remains authoritative. The local report format and 120-second per-command deadline are unchanged. The
 report path must be on durable local storage if it is expected to survive host
 loss.

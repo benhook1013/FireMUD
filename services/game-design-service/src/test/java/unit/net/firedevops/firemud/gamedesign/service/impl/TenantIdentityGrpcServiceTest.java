@@ -140,12 +140,10 @@ class TenantIdentityGrpcServiceTest {
   @Test
   void missingOrMismatchedOwnerEvidenceFailsClosed() {
     String wrongRequestDigest = "sha256:" + "b".repeat(64);
-    String otherNamespaceDigest =
-        GameTenantCreationDigest.requestDigest("other", REQUEST_ID, SOURCE_KEY, NAME, null);
     when(repository.read(REQUEST_ID, "test"))
         .thenReturn(Optional.empty())
         .thenReturn(Optional.of(evidence("test", wrongRequestDigest)))
-        .thenReturn(Optional.of(evidence("other", otherNamespaceDigest)));
+        .thenReturn(Optional.of(evidence("other", REQUEST_DIGEST)));
 
     assertThat(status(call(request(REQUEST_ID.toString(), REQUEST_DIGEST), ACCOUNT_URI)))
         .isEqualTo(Status.Code.NOT_FOUND);

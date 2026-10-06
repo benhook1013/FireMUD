@@ -176,12 +176,20 @@ public final class AccountAuthoritySourceEventV1Codec {
     object.put("sourceVersion", event.sourceVersion());
     object.put("issuanceFence", event.issuanceFence());
     object.put("issuanceFenceSourceVersion", event.issuanceFenceSourceVersion());
-    var mutations = object.putArray("mutationKinds");
-    event.mutationKinds().forEach(mutations::add);
+    if (event.mutationKinds() == null) {
+      object.putNull("mutationKinds");
+    } else {
+      var mutations = object.putArray("mutationKinds");
+      event.mutationKinds().forEach(mutations::add);
+    }
     ObjectNode accountState = object.putObject("accountState");
     accountState.put("emailVerified", event.accountState().emailVerified());
-    var modes = accountState.putArray("loginAuthModes");
-    event.accountState().loginAuthModes().forEach(modes::add);
+    if (event.accountState().loginAuthModes() == null) {
+      accountState.putNull("loginAuthModes");
+    } else {
+      var modes = accountState.putArray("loginAuthModes");
+      event.accountState().loginAuthModes().forEach(modes::add);
+    }
     accountState.put("globalRole", event.accountState().globalRole());
     accountState.put("lifecycleState", event.accountState().lifecycleState());
     ObjectNode cutoff = object.putObject("accountSecurityCutoff");
@@ -365,9 +373,13 @@ public final class AccountAuthoritySourceEventV1Codec {
 
   private static String canonicalUuid(ObjectNode object, String field) {
     String value = text(object, field);
-    if (!UUID_PATTERN.matcher(value).matches()
-        || !UUID.fromString(value).toString().equals(value)) {
-      throw invalid(field, "must be a canonical lowercase UUID");
+    if (!UUID_PATTERN.matcher(value).matches()) {
+      throw invalid(field, "must be a canonical lowercase non-nil UUID");
+    }
+    UUID uuid = UUID.fromString(value);
+    if (!uuid.toString().equals(value)
+        || uuid.getMostSignificantBits() == 0L && uuid.getLeastSignificantBits() == 0L) {
+      throw invalid(field, "must be a canonical lowercase non-nil UUID");
     }
     return value;
   }

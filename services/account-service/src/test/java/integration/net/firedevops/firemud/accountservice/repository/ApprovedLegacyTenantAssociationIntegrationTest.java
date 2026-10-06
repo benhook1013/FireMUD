@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
-import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -31,6 +30,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
@@ -38,14 +38,14 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class ApprovedLegacyTenantAssociationIntegrationTest {
-  private static final String MIGRATION_LOCATION =
-      "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize();
+  private static final String SCHEMA_PREFIX = "approved_legacy_association_";
   private static final String NAMESPACE = "firemud";
   private static final String MANIFEST_DIGEST = "sha256:" + "b".repeat(64);
 
   private final AccountPostgresIntegrationFixture postgres =
       new AccountPostgresIntegrationFixture();
 
+  private String schema;
   private DriverManagerDataSource dataSource;
   private DSLContext dsl;
   private TransactionTemplate transaction;
@@ -55,14 +55,14 @@ class ApprovedLegacyTenantAssociationIntegrationTest {
   @BeforeAll
   void migrate() {
     postgres.start();
-    String schema = "approved_legacy_association_" + UUID.randomUUID().toString().replace("-", "");
+    schema = SCHEMA_PREFIX + UUID.randomUUID().toString().replace("-", "");
     dataSource = postgres.dataSource(schema);
     Flyway.configure()
         .dataSource(dataSource)
         .schemas(schema)
         .defaultSchema(schema)
         .placeholders(Map.of("serviceSchema", schema))
-        .locations(MIGRATION_LOCATION)
+        .locations("classpath:db/migration")
         .load()
         .migrate();
     dsl = DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
@@ -73,7 +73,23 @@ class ApprovedLegacyTenantAssociationIntegrationTest {
 
   @AfterAll
   void stopPostgres() {
-    postgres.stop();
+    try {
+      dropOwnedSchema();
+    } finally {
+      postgres.stop();
+    }
+  }
+
+  private void dropOwnedSchema() {
+    if (schema == null) {
+      return;
+    }
+    if (!schema.startsWith(SCHEMA_PREFIX) || !schema.matches("[a-z][a-z0-9_]{0,62}")) {
+      throw new IllegalStateException("Refusing to clean an unowned PostgreSQL schema");
+    }
+    new JdbcTemplate(postgres.dataSource())
+        .execute("DROP SCHEMA IF EXISTS \"" + schema + "\" CASCADE");
+    schema = null;
   }
 
   @Test
