@@ -57,10 +57,7 @@ class DraftSynchronizedVisibilityEvidenceTest {
     assertThatThrownBy(
             () ->
                 new DraftSynchronizedVisibilityEvidence(
-                    request(),
-                    binding,
-                    "APPLYING",
-                    fence(binding, vector)))
+                    request(), binding, "APPLYING", fence(binding, vector)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("not bound");
     assertThatThrownBy(
@@ -100,7 +97,8 @@ class DraftSynchronizedVisibilityEvidenceTest {
   }
 
   private static TargetProof target() {
-    return new TargetProof(TENANT_ID, VERSION_ID, 19L, "tenant-key", 42L, "tenant-key", "NEW_GAME_ROW");
+    return new TargetProof(
+        TENANT_ID, VERSION_ID, 19L, "tenant-key", 42L, "tenant-key", "NEW_GAME_ROW");
   }
 
   private static DraftCommitBinding binding() {
@@ -110,16 +108,13 @@ class DraftSynchronizedVisibilityEvidenceTest {
         COMMIT_ID,
         "base-source-1",
         List.of(
-            new RevisionPayload("0", uuid("66666666-6666-4666-8666-666666666666"), Owner.WORLD_MANAGEMENT, "{}"),
-            new RevisionPayload("1", uuid("77777777-7777-4777-8777-777777777777"), Owner.ENTITY_MANAGEMENT, "{}")),
+            new RevisionPayload(
+                "0", uuid("66666666-6666-4666-8666-666666666666"), Owner.WORLD_MANAGEMENT, "{}"),
+            new RevisionPayload(
+                "1", uuid("77777777-7777-4777-8777-777777777777"), Owner.ENTITY_MANAGEMENT, "{}")),
         List.of(
             new AffectedUnit(
-                Owner.WORLD_MANAGEMENT,
-                "WORLD_TEMPLATE",
-                "world-1",
-                "ROOM_SCOPE",
-                "room-1",
-                "0"),
+                Owner.WORLD_MANAGEMENT, "WORLD_TEMPLATE", "world-1", "ROOM_SCOPE", "room-1", "0"),
             new AffectedUnit(
                 Owner.ENTITY_MANAGEMENT,
                 "ENTITY_TEMPLATE",
@@ -139,14 +134,20 @@ class DraftSynchronizedVisibilityEvidenceTest {
       epoch.put("scopeType", unit.scopeType());
       epoch.put("scopeId", unit.scopeId());
       epoch.put("expectedEpoch", unit.expectedEpoch());
-      epoch.put("resultingEpoch", new java.math.BigInteger(unit.expectedEpoch()).add(java.math.BigInteger.ONE).toString());
+      epoch.put(
+          "resultingEpoch",
+          new java.math.BigInteger(unit.expectedEpoch()).add(java.math.BigInteger.ONE).toString());
       Map<String, Object> item = new LinkedHashMap<>();
       item.put("owner", owner.name());
       item.put("status", "APPLIED");
       item.put("commitId", COMMIT_ID.toString());
       item.put("bindingDigest", binding.digest());
-      item.put("resultIdentity", owner == Owner.WORLD_MANAGEMENT ? "world-result" : "entity-result");
-      item.put("resultBytesBase64", Base64.getEncoder().encodeToString("world-result-bytes".getBytes(StandardCharsets.UTF_8)));
+      item.put(
+          "resultIdentity", owner == Owner.WORLD_MANAGEMENT ? "world-result" : "entity-result");
+      item.put(
+          "resultBytesBase64",
+          Base64.getEncoder()
+              .encodeToString("world-result-bytes".getBytes(StandardCharsets.UTF_8)));
       item.put("appliedEpochs", List.of(epoch));
       vector.add(item);
     }

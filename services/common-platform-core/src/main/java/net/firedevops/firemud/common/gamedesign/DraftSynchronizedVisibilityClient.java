@@ -67,7 +67,8 @@ public final class DraftSynchronizedVisibilityClient
     var response =
         requireStub()
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
-            .readDraftSynchronizedVisibility(DraftSynchronizedVisibilityGrpcCodec.toRequest(request));
+            .readDraftSynchronizedVisibility(
+                DraftSynchronizedVisibilityGrpcCodec.toRequest(request));
     try {
       return DraftSynchronizedVisibilityGrpcCodec.fromResponse(request, response);
     } catch (IllegalArgumentException exception) {
@@ -89,8 +90,7 @@ public final class DraftSynchronizedVisibilityClient
   @Override
   protected DraftSynchronizedVisibilityServiceGrpc.DraftSynchronizedVisibilityServiceBlockingStub
       buildStub(ManagedChannel channel) {
-    String expectedPeerUri =
-        "spiffe://firemud/ns/" + workloadNamespace + "/sa/game-design-service";
+    String expectedPeerUri = "spiffe://firemud/ns/" + workloadNamespace + "/sa/game-design-service";
     return DraftSynchronizedVisibilityServiceGrpc.newBlockingStub(channel)
         .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expectedPeerUri))
         .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expectedPeerUri))

@@ -1,6 +1,5 @@
 package net.firedevops.firemud.worldmanagement.tenant;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -9,6 +8,7 @@ import static org.mockito.Mockito.when;
 
 import io.grpc.Status;
 import java.nio.charset.StandardCharsets;
+import java.time.OffsetDateTime;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -57,16 +57,20 @@ class WorldSynchronizedDraftTopologyReadServiceTest {
     DraftSynchronizedVisibilityClient client = mock(DraftSynchronizedVisibilityClient.class);
     WorldDraftTopologyCommitRepository repository = mock(WorldDraftTopologyCommitRepository.class);
     var request = request(READ_ID);
-    when(client.read(request)).thenReturn(evidence(request(uuid("88888888-8888-4888-8888-888888888888"))));
+    when(client.read(request))
+        .thenReturn(evidence(request(uuid("88888888-8888-4888-8888-888888888888"))));
 
-    assertThatThrownBy(() -> new WorldSynchronizedDraftTopologyReadService(client, repository).read(request))
+    assertThatThrownBy(
+            () -> new WorldSynchronizedDraftTopologyReadService(client, repository).read(request))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("changed the exact read target");
     verifyNoInteractions(repository);
 
     when(client.read(request))
-        .thenThrow(Status.UNAVAILABLE.withDescription("no synchronized fence").asRuntimeException());
-    assertThatThrownBy(() -> new WorldSynchronizedDraftTopologyReadService(client, repository).read(request))
+        .thenThrow(
+            Status.UNAVAILABLE.withDescription("no synchronized fence").asRuntimeException());
+    assertThatThrownBy(
+            () -> new WorldSynchronizedDraftTopologyReadService(client, repository).read(request))
         .isInstanceOf(io.grpc.StatusRuntimeException.class);
     verifyNoInteractions(repository);
   }
@@ -81,7 +85,10 @@ class WorldSynchronizedDraftTopologyReadServiceTest {
             "base-source-1",
             List.of(
                 new RevisionPayload(
-                    "0", uuid("66666666-6666-4666-8666-666666666666"), Owner.WORLD_MANAGEMENT, "{}")),
+                    "0",
+                    uuid("66666666-6666-4666-8666-666666666666"),
+                    Owner.WORLD_MANAGEMENT,
+                    "{}")),
             List.of(
                 new AffectedUnit(
                     Owner.WORLD_MANAGEMENT,
@@ -103,7 +110,9 @@ class WorldSynchronizedDraftTopologyReadServiceTest {
     owner.put("commitId", COMMIT_ID.toString());
     owner.put("bindingDigest", binding.digest());
     owner.put("resultIdentity", "world-result");
-    owner.put("resultBytesBase64", Base64.getEncoder().encodeToString("result".getBytes(StandardCharsets.UTF_8)));
+    owner.put(
+        "resultBytesBase64",
+        Base64.getEncoder().encodeToString("result".getBytes(StandardCharsets.UTF_8)));
     owner.put("appliedEpochs", List.of(epoch));
     String vector = canonical(new ObjectMapper().writeValueAsString(List.of(owner)));
     return new DraftSynchronizedVisibilityEvidence(

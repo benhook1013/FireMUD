@@ -23,23 +23,14 @@ import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.v1.WorldDesignMutationRevision;
-import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeRepository;
-import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeReceipt;
-import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredVersionIdentityReceipt;
-import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredVersionIdentityRepository;
-import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceEvidence.OwnerBinding;
-import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyCommitPlan;
-import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyCommitRepository;
-import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyCommitService;
-import net.firedevops.firemud.worldmanagement.tenant.WorldSynchronizedDraftTopologyReadService;
 import net.firedevops.firemud.worldmanagement.v1.RegionDesignMutation;
+import net.firedevops.firemud.worldmanagement.v1.RoomDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignAggregateType;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationOperation;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeMutationPolicy;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeType;
 import net.firedevops.firemud.worldmanagement.v1.ZoneDesignMutation;
-import net.firedevops.firemud.worldmanagement.v1.RoomDesignMutation;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -58,8 +49,8 @@ import tools.jackson.databind.ObjectMapper;
 
 /**
  * Real World PostgreSQL exact-binding graph selection. The synchronized GD evidence and the
- * component-store permission callback are explicit synthetic fixtures, not Account authorization
- * or proof of a registered creator/write path.
+ * component-store permission callback are explicit synthetic fixtures, not Account authorization or
+ * proof of a registered creator/write path.
  */
 @Testcontainers(disabledWithoutDocker = true)
 class WorldSynchronizedDraftTopologyReadPostgresIntegrationTest {
@@ -99,39 +90,32 @@ class WorldSynchronizedDraftTopologyReadPostgresIntegrationTest {
         new WorldDesignPublicationFenceRepository(dsl, intakeRepository);
     ObjectMapper mapper = new ObjectMapper();
     var repository = new WorldDraftTopologyCommitRepository(dsl, fence, mapper);
-    fixture =
-        new Fixture(
-            dsl,
-            transaction,
-            manager,
-            intakeRepository,
-            fence,
-            mapper,
-            repository);
+    fixture = new Fixture(dsl, transaction, manager, intakeRepository, fence, mapper, repository);
   }
 
   @Test
-  void deniesArbitraryAppliedFixtureBytesEvenWhenOriginalGraphIsRetained() {
+  void deniesArbitraryAppliedFixtureBytesEvenWhenOriginalGraphIsRetained() throws Exception {
     Seed seed = fixture.seed();
     WorldDraftTopologyCommitPlan plan = fixture.plan(seed, UUID.randomUUID(), UUID.randomUUID());
     WorldDraftTopologyCommitService writerFixture =
-        new WorldDraftTopologyCommitService(
-            fixture.repository(), fixture.manager(), ignored -> {});
+        new WorldDraftTopologyCommitService(fixture.repository(), fixture.manager(), ignored -> {});
     var stored = writerFixture.store(plan);
     assertThat(stored.status()).isEqualTo("STORED_PERMISSION_UNVERIFIED");
 
     // Simulate later unverified current content; synchronized normal reads must use retained bytes.
-    fixture.transaction().executeWithoutResult(
-        status -> {
-          fixture.dsl().execute("SET LOCAL session_replication_role='replica'");
-          fixture
-              .dsl()
-              .execute(
-                  "UPDATE room SET name='later-unverified-room' WHERE tenant_id=? AND version_id=?",
-                  seed.intake().localTenantKey(),
-                  seed.version().localVersionKey());
-          fixture.dsl().execute("SET LOCAL session_replication_role='origin'");
-        });
+    fixture
+        .transaction()
+        .executeWithoutResult(
+            status -> {
+              fixture.dsl().execute("SET LOCAL session_replication_role='replica'");
+              fixture
+                  .dsl()
+                  .execute(
+                      "UPDATE room SET name='later-unverified-room' WHERE tenant_id=? AND version_id=?",
+                      seed.intake().localTenantKey(),
+                      seed.version().localVersionKey());
+              fixture.dsl().execute("SET LOCAL session_replication_role='origin'");
+            });
     assertThat(
             fixture
                 .dsl()
@@ -158,12 +142,11 @@ class WorldSynchronizedDraftTopologyReadPostgresIntegrationTest {
   }
 
   @Test
-  void missingCanonicalOwnerOutputNeverFallsBackToMutableCurrentWorldGraph() {
+  void missingCanonicalOwnerOutputNeverFallsBackToMutableCurrentWorldGraph() throws Exception {
     Seed seed = fixture.seed();
     WorldDraftTopologyCommitPlan storedPlan =
         fixture.plan(seed, UUID.randomUUID(), UUID.randomUUID());
-    new WorldDraftTopologyCommitService(
-            fixture.repository(), fixture.manager(), ignored -> {})
+    new WorldDraftTopologyCommitService(fixture.repository(), fixture.manager(), ignored -> {})
         .store(storedPlan);
 
     var unretainedBinding =
@@ -209,7 +192,8 @@ class WorldSynchronizedDraftTopologyReadPostgresIntegrationTest {
     result.put("resultIdentity", "fixture-world-result");
     result.put(
         "resultBytesBase64",
-        Base64.getEncoder().encodeToString("fixture-world-result-bytes".getBytes(StandardCharsets.UTF_8)));
+        Base64.getEncoder()
+            .encodeToString("fixture-world-result-bytes".getBytes(StandardCharsets.UTF_8)));
     result.put("appliedEpochs", List.of(epoch));
     String vector = canonical(new ObjectMapper().writeValueAsString(List.of(result)));
     return new DraftSynchronizedVisibilityEvidence(
@@ -351,7 +335,7 @@ class WorldSynchronizedDraftTopologyReadPostgresIntegrationTest {
       return new Seed(source, intake, version, owner);
     }
 
-    WorldDraftTopologyCommitPlan plan(Seed seed, UUID requestId, UUID commitId) {
+    WorldDraftTopologyCommitPlan plan(Seed seed, UUID requestId, UUID commitId) throws Exception {
       UUID region = UUID.randomUUID();
       UUID zone = UUID.randomUUID();
       UUID room = UUID.randomUUID();
@@ -377,7 +361,10 @@ class WorldSynchronizedDraftTopologyReadPostgresIntegrationTest {
                       WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ZONE,
                       region)
                   .toBuilder()
-                  .setZone(ZoneDesignMutation.newBuilder().setName("zone").setRegionId(region.toString()))
+                  .setZone(
+                      ZoneDesignMutation.newBuilder()
+                          .setName("zone")
+                          .setRegionId(region.toString()))
                   .build(),
               mutation(
                       commitId,
@@ -386,14 +373,19 @@ class WorldSynchronizedDraftTopologyReadPostgresIntegrationTest {
                       WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM,
                       region)
                   .toBuilder()
-                  .setRoom(RoomDesignMutation.newBuilder().setName("original-room").setZoneId(zone.toString()))
+                  .setRoom(
+                      RoomDesignMutation.newBuilder()
+                          .setName("original-room")
+                          .setZoneId(zone.toString()))
                   .build());
       List<RevisionPayload> revisions = new java.util.ArrayList<>();
       List<AffectedUnit> units = new java.util.ArrayList<>();
       for (int index = 0; index < mutations.size(); index++) {
         WorldDesignMutationRevision value = mutations.get(index);
-        String aggregateType = value.getAggregateType().name().substring("WORLD_DESIGN_AGGREGATE_TYPE_".length());
-        String scopeType = value.getScopeType().name().substring("WORLD_DESIGN_SCOPE_TYPE_".length());
+        String aggregateType =
+            value.getAggregateType().name().substring("WORLD_DESIGN_AGGREGATE_TYPE_".length());
+        String scopeType =
+            value.getScopeType().name().substring("WORLD_DESIGN_SCOPE_TYPE_".length());
         revisions.add(
             new RevisionPayload(
                 Integer.toString(index),

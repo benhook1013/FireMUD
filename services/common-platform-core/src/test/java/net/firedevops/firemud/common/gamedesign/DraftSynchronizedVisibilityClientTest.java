@@ -92,17 +92,15 @@ class DraftSynchronizedVisibilityClientTest {
             "tenant-key",
             "NEW_GAME_ROW");
     return new DraftSynchronizedVisibilityEvidence.Request(
-        1,
-        namespace,
-        UUID.fromString("33333333-3333-4333-8333-333333333333"),
-        target);
+        1, namespace, UUID.fromString("33333333-3333-4333-8333-333333333333"), target);
   }
 
   private static CommonGrpcClientProperties tls(Path directory) throws Exception {
     CommonGrpcClientProperties tls = new CommonGrpcClientProperties();
     tls.setCertChain(Files.writeString(directory.resolve("client.crt"), "certificate").toString());
     tls.setPrivateKey(Files.writeString(directory.resolve("client.key"), "private key").toString());
-    tls.setCaCert(Files.writeString(directory.resolve("server-ca.crt"), "CA certificate").toString());
+    tls.setCaCert(
+        Files.writeString(directory.resolve("server-ca.crt"), "CA certificate").toString());
     return tls;
   }
 }

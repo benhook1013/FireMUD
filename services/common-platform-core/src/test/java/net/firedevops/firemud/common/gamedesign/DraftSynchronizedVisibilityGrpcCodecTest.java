@@ -33,11 +33,78 @@ class DraftSynchronizedVisibilityGrpcCodecTest {
     var evidence = evidence(binding());
     var response = DraftSynchronizedVisibilityGrpcCodec.toResponse(evidence);
 
-    assertThat(DraftSynchronizedVisibilityGrpcCodec.fromRequest(
-            DraftSynchronizedVisibilityGrpcCodec.toRequest(request)))
-        .isEqualTo(request);
-    assertThat(DraftSynchronizedVisibilityGrpcCodec.fromResponse(request, response))
-        .isEqualTo(evidence);
+    var decodedRequest =
+        DraftSynchronizedVisibilityGrpcCodec.fromRequest(
+            DraftSynchronizedVisibilityGrpcCodec.toRequest(request));
+    assertRequestValues(request, decodedRequest);
+
+    var decoded = DraftSynchronizedVisibilityGrpcCodec.fromResponse(request, response);
+    assertRequestValues(evidence.request(), decoded.request());
+    assertBindingValues(evidence.binding(), decoded.binding());
+    assertThat(decoded.workflowState()).isEqualTo(evidence.workflowState());
+    assertFenceValues(evidence.fence(), decoded.fence());
+    assertOwnerResultValues(evidence.appliedOwnerResults(), decoded.appliedOwnerResults());
+  }
+
+  private static void assertRequestValues(
+      DraftSynchronizedVisibilityEvidence.Request expected,
+      DraftSynchronizedVisibilityEvidence.Request actual) {
+    assertThat(actual.schemaVersion()).isEqualTo(expected.schemaVersion());
+    assertThat(actual.targetNamespace()).isEqualTo(expected.targetNamespace());
+    assertThat(actual.readRequestId()).isEqualTo(expected.readRequestId());
+    assertThat(actual.target()).isEqualTo(expected.target());
+  }
+
+  private static void assertBindingValues(DraftCommitBinding expected, DraftCommitBinding actual) {
+    assertThat(actual.target()).isEqualTo(expected.target());
+    assertThat(actual.requestId()).isEqualTo(expected.requestId());
+    assertThat(actual.commitId()).isEqualTo(expected.commitId());
+    assertThat(actual.baseCommitId()).isEqualTo(expected.baseCommitId());
+    assertThat(actual.revisions()).isEqualTo(expected.revisions());
+    assertThat(actual.affectedUnits()).isEqualTo(expected.affectedUnits());
+    assertThat(actual.requiredOwners()).isEqualTo(expected.requiredOwners());
+    assertThat(actual.canonicalJson()).isEqualTo(expected.canonicalJson());
+    assertThat(actual.canonicalBytes()).containsExactly(expected.canonicalBytes());
+    assertThat(actual.digest()).isEqualTo(expected.digest());
+  }
+
+  private static void assertFenceValues(
+      DraftSynchronizedVisibilityEvidence.Fence expected,
+      DraftSynchronizedVisibilityEvidence.Fence actual) {
+    assertThat(actual.requestId()).isEqualTo(expected.requestId());
+    assertThat(actual.commitId()).isEqualTo(expected.commitId());
+    assertThat(actual.inputDigest()).isEqualTo(expected.inputDigest());
+    assertThat(actual.resultVectorJson()).isEqualTo(expected.resultVectorJson());
+    assertThat(actual.createdAt()).isEqualTo(expected.createdAt());
+  }
+
+  private static void assertOwnerResultValues(
+      List<DraftSynchronizedVisibilityEvidence.AppliedOwnerResult> expected,
+      List<DraftSynchronizedVisibilityEvidence.AppliedOwnerResult> actual) {
+    assertThat(actual).hasSize(expected.size());
+    for (int index = 0; index < expected.size(); index++) {
+      var expectedOwner = expected.get(index);
+      var actualOwner = actual.get(index);
+      assertThat(actualOwner.owner()).isEqualTo(expectedOwner.owner());
+      assertThat(actualOwner.commitId()).isEqualTo(expectedOwner.commitId());
+      assertThat(actualOwner.bindingDigest()).isEqualTo(expectedOwner.bindingDigest());
+      assertThat(actualOwner.resultIdentity()).isEqualTo(expectedOwner.resultIdentity());
+      assertThat(actualOwner.resultBytes()).containsExactly(expectedOwner.resultBytes());
+
+      var expectedEpochs = expectedOwner.appliedEpochs();
+      var actualEpochs = actualOwner.appliedEpochs();
+      assertThat(actualEpochs).hasSize(expectedEpochs.size());
+      for (int epochIndex = 0; epochIndex < expectedEpochs.size(); epochIndex++) {
+        var expectedEpoch = expectedEpochs.get(epochIndex);
+        var actualEpoch = actualEpochs.get(epochIndex);
+        assertThat(actualEpoch.aggregateType()).isEqualTo(expectedEpoch.aggregateType());
+        assertThat(actualEpoch.aggregateId()).isEqualTo(expectedEpoch.aggregateId());
+        assertThat(actualEpoch.scopeType()).isEqualTo(expectedEpoch.scopeType());
+        assertThat(actualEpoch.scopeId()).isEqualTo(expectedEpoch.scopeId());
+        assertThat(actualEpoch.expectedEpoch()).isEqualTo(expectedEpoch.expectedEpoch());
+        assertThat(actualEpoch.resultingEpoch()).isEqualTo(expectedEpoch.resultingEpoch());
+      }
+    }
   }
 
   @Test
@@ -45,23 +112,33 @@ class DraftSynchronizedVisibilityGrpcCodecTest {
     var request = request();
     var response = DraftSynchronizedVisibilityGrpcCodec.toResponse(evidence(binding()));
 
-    assertInvalid(request, response.toBuilder().setReadRequestId(uuid("88888888-8888-4888-8888-888888888888").toString()).build());
+    assertInvalid(
+        request,
+        response.toBuilder()
+            .setReadRequestId(uuid("88888888-8888-4888-8888-888888888888").toString())
+            .build());
     assertInvalid(
         request,
         response.toBuilder()
             .setTarget(response.getTarget().toBuilder().setSourceGameRowId(43L))
             .build());
-    assertInvalid(request, response.toBuilder().setBindingDigest("sha256:" + "f".repeat(64)).build());
+    assertInvalid(
+        request, response.toBuilder().setBindingDigest("sha256:" + "f".repeat(64)).build());
     assertInvalid(request, response.toBuilder().setWorkflowState("APPLYING").build());
     assertInvalid(
         request,
         response.toBuilder()
-            .setFence(response.getFence().toBuilder().setCommitId(uuid("99999999-9999-4999-8999-999999999999").toString()))
+            .setFence(
+                response.getFence().toBuilder()
+                    .setCommitId(uuid("99999999-9999-4999-8999-999999999999").toString()))
             .build());
     assertInvalid(
         request,
         response.toBuilder()
-            .setFence(response.getFence().toBuilder().setResultVectorJson(response.getFence().getResultVectorJson().replace("APPLIED", "UNKNOWN")))
+            .setFence(
+                response.getFence().toBuilder()
+                    .setResultVectorJson(
+                        response.getFence().getResultVectorJson().replace("APPLIED", "UNKNOWN")))
             .build());
   }
 
@@ -116,14 +193,22 @@ class DraftSynchronizedVisibilityGrpcCodecTest {
   }
 
   private static TargetProof target() {
-    return new TargetProof(TENANT_ID, VERSION_ID, 19L, "tenant-key", 42L, "tenant-key", "NEW_GAME_ROW");
+    return new TargetProof(
+        TENANT_ID, VERSION_ID, 19L, "tenant-key", 42L, "tenant-key", "NEW_GAME_ROW");
   }
 
   private static DraftCommitBinding binding() {
     return DraftCommitBinding.create(
-        target(), REQUEST_ID, COMMIT_ID, "base-source-1",
-        List.of(new RevisionPayload("0", uuid("66666666-6666-4666-8666-666666666666"), Owner.WORLD_MANAGEMENT, "{}")),
-        List.of(new AffectedUnit(Owner.WORLD_MANAGEMENT, "WORLD_TEMPLATE", "world-1", "ROOM_SCOPE", "room-1", "0")));
+        target(),
+        REQUEST_ID,
+        COMMIT_ID,
+        "base-source-1",
+        List.of(
+            new RevisionPayload(
+                "0", uuid("66666666-6666-4666-8666-666666666666"), Owner.WORLD_MANAGEMENT, "{}")),
+        List.of(
+            new AffectedUnit(
+                Owner.WORLD_MANAGEMENT, "WORLD_TEMPLATE", "world-1", "ROOM_SCOPE", "room-1", "0")));
   }
 
   private static String resultVector(DraftCommitBinding binding) {
@@ -141,7 +226,9 @@ class DraftSynchronizedVisibilityGrpcCodecTest {
     item.put("commitId", COMMIT_ID.toString());
     item.put("bindingDigest", binding.digest());
     item.put("resultIdentity", "world-result");
-    item.put("resultBytesBase64", Base64.getEncoder().encodeToString("result".getBytes(StandardCharsets.UTF_8)));
+    item.put(
+        "resultBytesBase64",
+        Base64.getEncoder().encodeToString("result".getBytes(StandardCharsets.UTF_8)));
     item.put("appliedEpochs", List.of(epoch));
     return canonical(new ObjectMapper().writeValueAsString(List.of(item)));
   }

@@ -2106,6 +2106,44 @@ jobs:
           fi
           echo "::endgroup::"
 
+      - name: Verify Game Design synchronized visibility PostgreSQL proof
+        if: ${{ always() && matrix.module == 'game-design-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite net.firedevops.firemud.gamedesign.draft.DraftSynchronizedVisibilityPostgresIntegrationTest \
+            --require-case 'net.firedevops.firemud.gamedesign.draft.DraftSynchronizedVisibilityPostgresIntegrationTest#readsOldSynchronizedFenceAfterNewerPartialOwnerWorkAndDeniesUnfencedTarget()' \
+            --require-case 'net.firedevops.firemud.gamedesign.draft.DraftSynchronizedVisibilityPostgresIntegrationTest#noFenceAndPartialOnlyCommitAreUnavailable()' \
+            game-design-service
+
+      - name: Capture Game Design synchronized visibility PostgreSQL raw XML
+        if: ${{ always() && matrix.module == 'game-design-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: game-design-synchronized-visibility-postgresql-proof-${{ github.sha }}-${{ github.run_attempt }}
+          path: services/game-design-service/build/test-results/integrationTest/TEST-*DraftSynchronizedVisibilityPostgresIntegrationTest.xml
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Verify World synchronized topology selector PostgreSQL proof
+        if: ${{ always() && matrix.module == 'world-management-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite net.firedevops.firemud.worldmanagement.tenant.WorldSynchronizedDraftTopologyReadPostgresIntegrationTest \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldSynchronizedDraftTopologyReadPostgresIntegrationTest#deniesArbitraryAppliedFixtureBytesEvenWhenOriginalGraphIsRetained()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldSynchronizedDraftTopologyReadPostgresIntegrationTest#missingCanonicalOwnerOutputNeverFallsBackToMutableCurrentWorldGraph()' \
+            world-management-service
+
+      - name: Capture World synchronized topology selector PostgreSQL raw XML
+        if: ${{ always() && matrix.module == 'world-management-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: world-synchronized-topology-selector-postgresql-proof-${{ github.sha }}-${{ github.run_attempt }}
+          path: services/world-management-service/build/test-results/integrationTest/TEST-*WorldSynchronizedDraftTopologyReadPostgresIntegrationTest.xml
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Capture Account authored-draft publication PostgreSQL XML
         if: ${{ always() && matrix.module == 'account-service' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

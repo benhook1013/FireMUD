@@ -23,8 +23,7 @@ import org.springframework.dao.DataAccessException;
 
 /** Standalone, unregistered receiver for the exact durable synchronized Draft visibility fence. */
 public final class DraftSynchronizedVisibilityGrpcService
-    extends DraftSynchronizedVisibilityServiceGrpc
-        .DraftSynchronizedVisibilityServiceImplBase {
+    extends DraftSynchronizedVisibilityServiceGrpc.DraftSynchronizedVisibilityServiceImplBase {
   private final DraftCommitCoordinatorRepository coordinator;
   private final String workloadNamespace;
 

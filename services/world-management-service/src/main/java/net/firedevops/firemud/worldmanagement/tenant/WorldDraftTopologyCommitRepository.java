@@ -55,20 +55,20 @@ public class WorldDraftTopologyCommitRepository {
 
   /**
    * Selects the retained immutable graph for one exact synchronized binding. The separate Game
-   * Design evidence must prove this owner is APPLIED; this row's STORED_PERMISSION_UNVERIFIED
-   * label is never treated as APPLIED or as authorization. Unlike reconciliation readback, this
-   * path intentionally does not consult mutable current topology rows or epochs. Selection stays
-   * denied until the owner-result contract canonically binds an APPLIED result to this graph.
+   * Design evidence must prove this owner is APPLIED; this row's STORED_PERMISSION_UNVERIFIED label
+   * is never treated as APPLIED or as authorization. Unlike reconciliation readback, this path
+   * intentionally does not consult mutable current topology rows or epochs. Selection stays denied
+   * until the owner-result contract canonically binds an APPLIED result to this graph.
    */
   public Optional<WorldCanonicalAuthoredGraph> readSynchronized(
       DraftSynchronizedVisibilityEvidence evidence) {
     Objects.requireNonNull(evidence, "evidence");
     evidence.requireValid();
-    var applied =
-        evidence.appliedOwnerResult(DraftCommitBinding.Owner.WORLD_MANAGEMENT);
+    var applied = evidence.appliedOwnerResult(DraftCommitBinding.Owner.WORLD_MANAGEMENT);
     if (!applied.commitId().equals(evidence.binding().commitId())
         || !applied.bindingDigest().equals(evidence.binding().digest())) {
-      throw new ConflictException("World owner APPLIED evidence differs from the exact Draft binding");
+      throw new ConflictException(
+          "World owner APPLIED evidence differs from the exact Draft binding");
     }
     if (TransactionSynchronizationManager.isActualTransactionActive()) {
       throw new ConflictException(
@@ -229,75 +229,6 @@ public class WorldDraftTopologyCommitRepository {
       throw new ConflictException("World immutable topology payload, graph or result differs");
     }
     return new WorldDraftTopologyCommitEvidence(binding, o, graph, result);
-  }
-
-  private WorldCanonicalAuthoredGraph findSynchronized(
-      DraftCommitBinding requested, String requestedNamespace) {
-    List<Record> records =
-        dsl.resultQuery(
-                "SELECT c.*, to_jsonb(v)::text AS identity_json, "
-                    + "to_jsonb(i)::text AS intake_json FROM world_topology_draft_commit c "
-                    + "JOIN world_authored_version_identity v ON v.operation_id=c.version_identity_operation_id "
-                    + "JOIN world_authored_source_intake i ON i.operation_id=v.intake_operation_id "
-                    + "WHERE c.request_id=? OR c.commit_id=?",
-                requested.requestId(),
-                requested.commitId())
-            .fetch();
-    if (records.isEmpty()) {
-      return null;
-    }
-    if (records.size() != 1) {
-      throw new ConflictException("World synchronized request and commit select conflicting history");
-    }
-    Record row = records.getFirst();
-    DraftCommitBinding stored =
-        DraftCommitBinding.fromStored(
-            row.get("binding_json", String.class), row.get("binding_digest", String.class));
-    if (!stored.equals(requested)) {
-      throw new ConflictException("World retained graph does not match the full synchronized binding");
-    }
-
-    String ownerJson = row.get("owner_binding_json", String.class);
-    OwnerBinding ownerBinding = mapper.readValue(ownerJson, OwnerBinding.class);
-    if (!ownerJson.equals(mapper.writeValueAsString(ownerBinding))
-        || !requestedNamespace.equals(ownerBinding.targetNamespace())) {
-      throw new ConflictException(
-          "World retained owner source binding differs from exact JSON or read namespace");
-    }
-    WorldDraftTopologyCommitPlan plan;
-    try {
-      plan = WorldDraftTopologyCommitPlan.create(stored, ownerBinding);
-    } catch (IllegalArgumentException exception) {
-      throw new ConflictException("World retained graph has no valid exact typed binding");
-    }
-    WorldAuthoredVersionIdentityReceipt original =
-        verifyOriginalSource(
-            plan, row.get("identity_json", String.class), row.get("intake_json", String.class));
-    long tenant = original.sourceIntakeReceipt().localTenantKey();
-    long version = original.localVersionKey();
-    if (tenant <= 0
-        || version <= 0
-        || !Objects.equals(row.get("request_id", UUID.class), stored.requestId())
-        || !Objects.equals(row.get("commit_id", UUID.class), stored.commitId())
-        || !Objects.equals(row.get("target_namespace", String.class), ownerBinding.targetNamespace())
-        || !Objects.equals(row.get("canonical_tenant_id", UUID.class), stored.target().canonicalTenantId())
-        || !Objects.equals(row.get("canonical_version_id", UUID.class), stored.target().canonicalVersionId())
-        || !Objects.equals(row.get("local_tenant_key", Long.class), tenant)
-        || !Objects.equals(row.get("local_version_key", Long.class), version)
-        || !WorldDraftTopologyCommitEvidence.STATUS.equals(
-            row.get("storage_status", String.class))) {
-      throw new ConflictException("World immutable synchronized graph provenance is inconsistent");
-    }
-    byte[] graphBytes = row.get("graph_bytes", byte[].class);
-    byte[] resultBytes = row.get("result_bytes", byte[].class);
-    if (!sha256(graphBytes).equals(row.get("graph_sha256", String.class))) {
-      throw new ConflictException("World retained synchronized graph digest is inconsistent");
-    }
-    WorldCanonicalAuthoredGraph graph = verifyImmutableBytes(plan, graphBytes, resultBytes);
-    if (graph.localTenantKey() != tenant || graph.localVersionKey() != version) {
-      throw new ConflictException("World retained graph private selectors differ from source receipt");
-    }
-    return graph;
   }
 
   /** Reuses the original closed source and Version evidence validators for detached history. */

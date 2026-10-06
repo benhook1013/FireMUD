@@ -6,6 +6,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
@@ -49,7 +50,8 @@ class DraftSynchronizedVisibilityGrpcServiceTest {
   private static final UUID READ_ID = uuid("33333333-3333-4333-8333-333333333333");
   private static final UUID REQUEST_ID = uuid("44444444-4444-4444-8444-444444444444");
   private static final UUID COMMIT_ID = uuid("55555555-5555-4555-8555-555555555555");
-  private static final OffsetDateTime NOW = OffsetDateTime.of(2026, 10, 6, 0, 0, 0, 0, ZoneOffset.UTC);
+  private static final OffsetDateTime NOW =
+      OffsetDateTime.of(2026, 10, 6, 0, 0, 0, 0, ZoneOffset.UTC);
 
   @Test
   void exactSameNamespaceWorldPeerReceivesDurableCompleteFenceAndOwnerVector() {
@@ -67,7 +69,8 @@ class DraftSynchronizedVisibilityGrpcServiceTest {
 
     assertThat(observer.error).isNull();
     assertThat(observer.completed).isTrue();
-    assertThat(DraftSynchronizedVisibilityGrpcCodec.fromResponse(request(), observer.value).binding())
+    assertThat(
+            DraftSynchronizedVisibilityGrpcCodec.fromResponse(request(), observer.value).binding())
         .isEqualTo(binding);
     verify(coordinator).readVisibilityFence(binding.target());
     verify(coordinator).read(binding.target(), REQUEST_ID);
@@ -78,8 +81,7 @@ class DraftSynchronizedVisibilityGrpcServiceTest {
     DraftCommitCoordinatorRepository coordinator = mock(DraftCommitCoordinatorRepository.class);
     var handler = new DraftSynchronizedVisibilityGrpcService(coordinator, NAMESPACE);
     var malformed =
-        net.firedevops.firemud.gamedesign.v1.ReadDraftSynchronizedVisibilityRequest
-            .newBuilder()
+        net.firedevops.firemud.gamedesign.v1.ReadDraftSynchronizedVisibilityRequest.newBuilder()
             .setSchemaVersion(99)
             .build();
     TestObserver<ReadDraftSynchronizedVisibilityResponse> absent = new TestObserver<>();
@@ -101,9 +103,11 @@ class DraftSynchronizedVisibilityGrpcServiceTest {
     assertStatus(noFence, Status.Code.UNAVAILABLE);
 
     DraftCommitBinding binding = binding();
-    when(coordinator.readVisibilityFence(target())).thenReturn(Optional.of(fence(binding, vector(binding))));
+    when(coordinator.readVisibilityFence(target()))
+        .thenReturn(Optional.of(fence(binding, vector(binding))));
     when(coordinator.read(target(), REQUEST_ID))
-        .thenReturn(Optional.of(snapshot(binding, WorkflowState.APPLYING, OwnerStatus.IN_PROGRESS)));
+        .thenReturn(
+            Optional.of(snapshot(binding, WorkflowState.APPLYING, OwnerStatus.IN_PROGRESS)));
     TestObserver<ReadDraftSynchronizedVisibilityResponse> partial = new TestObserver<>();
     withPeer(peer(NAMESPACE), () -> handler.readDraftSynchronizedVisibility(valid, partial));
     assertStatus(partial, Status.Code.UNAVAILABLE);
@@ -114,16 +118,19 @@ class DraftSynchronizedVisibilityGrpcServiceTest {
     DraftCommitCoordinatorRepository coordinator = mock(DraftCommitCoordinatorRepository.class);
     DraftCommitBinding binding = binding();
     when(coordinator.readVisibilityFence(binding.target()))
-        .thenReturn(Optional.of(fence(binding, vector(binding).replace("world-result", "other-result"))));
+        .thenReturn(
+            Optional.of(fence(binding, vector(binding).replace("world-result", "other-result"))));
     when(coordinator.read(binding.target(), REQUEST_ID))
-        .thenReturn(Optional.of(snapshot(binding, WorkflowState.SYNCHRONIZED, OwnerStatus.APPLIED)));
+        .thenReturn(
+            Optional.of(snapshot(binding, WorkflowState.SYNCHRONIZED, OwnerStatus.APPLIED)));
     var handler = new DraftSynchronizedVisibilityGrpcService(coordinator, NAMESPACE);
     TestObserver<ReadDraftSynchronizedVisibilityResponse> observer = new TestObserver<>();
 
     withPeer(
         peer(NAMESPACE),
-        () -> handler.readDraftSynchronizedVisibility(
-            DraftSynchronizedVisibilityGrpcCodec.toRequest(request()), observer));
+        () ->
+            handler.readDraftSynchronizedVisibility(
+                DraftSynchronizedVisibilityGrpcCodec.toRequest(request()), observer));
 
     assertStatus(observer, Status.Code.UNAVAILABLE);
   }
@@ -133,9 +140,10 @@ class DraftSynchronizedVisibilityGrpcServiceTest {
     Map<Owner, OwnerState> owners = new EnumMap<>(Owner.class);
     for (Owner owner : binding.requiredOwners()) {
       OwnerOutcome outcome = outcome(binding, owner);
-      OwnerStatus current = owner == Owner.ENTITY_MANAGEMENT && status == OwnerStatus.IN_PROGRESS
-          ? OwnerStatus.IN_PROGRESS
-          : status;
+      OwnerStatus current =
+          owner == Owner.ENTITY_MANAGEMENT && status == OwnerStatus.IN_PROGRESS
+              ? OwnerStatus.IN_PROGRESS
+              : status;
       Optional<OwnerOutcome> optional =
           current == OwnerStatus.APPLIED ? Optional.of(outcome) : Optional.empty();
       owners.put(owner, new OwnerState(owner, current, optional, NOW, NOW));
@@ -187,11 +195,20 @@ class DraftSynchronizedVisibilityGrpcServiceTest {
         COMMIT_ID,
         "base-source-1",
         List.of(
-            new RevisionPayload("0", uuid("66666666-6666-4666-8666-666666666666"), Owner.WORLD_MANAGEMENT, "{}"),
-            new RevisionPayload("1", uuid("77777777-7777-4777-8777-777777777777"), Owner.ENTITY_MANAGEMENT, "{}")),
+            new RevisionPayload(
+                "0", uuid("66666666-6666-4666-8666-666666666666"), Owner.WORLD_MANAGEMENT, "{}"),
+            new RevisionPayload(
+                "1", uuid("77777777-7777-4777-8777-777777777777"), Owner.ENTITY_MANAGEMENT, "{}")),
         List.of(
-            new AffectedUnit(Owner.WORLD_MANAGEMENT, "WORLD_TEMPLATE", "world-1", "ROOM_SCOPE", "room-1", "0"),
-            new AffectedUnit(Owner.ENTITY_MANAGEMENT, "ENTITY_TEMPLATE", "entity-1", "ACTOR_SCOPE", "actor-1", "1")));
+            new AffectedUnit(
+                Owner.WORLD_MANAGEMENT, "WORLD_TEMPLATE", "world-1", "ROOM_SCOPE", "room-1", "0"),
+            new AffectedUnit(
+                Owner.ENTITY_MANAGEMENT,
+                "ENTITY_TEMPLATE",
+                "entity-1",
+                "ACTOR_SCOPE",
+                "actor-1",
+                "1")));
   }
 
   private static String vector(DraftCommitBinding binding) {
@@ -270,6 +287,10 @@ class DraftSynchronizedVisibilityGrpcServiceTest {
     }
 
     @Override
+    @SuppressFBWarnings(
+        value = "EI_EXPOSE_REP2",
+        justification =
+            "The test recorder retains the exact original throwable solely for assertion.")
     public void onError(Throwable failure) {
       error = failure;
     }

@@ -5,7 +5,9 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.gamedesign.DraftSynchronizedVisibilityClient;
 import net.firedevops.firemud.common.gamedesign.DraftSynchronizedVisibilityEvidence;
 
-/** Standalone, opt-in normal-read selector for the exact immutable World graph behind a GD fence. */
+/**
+ * Standalone, opt-in normal-read selector for the exact immutable World graph behind a GD fence.
+ */
 public final class WorldSynchronizedDraftTopologyReadService {
   private final DraftSynchronizedVisibilityClient visibilityClient;
   private final WorldDraftTopologyCommitRepository commitRepository;

@@ -2,6 +2,7 @@ package net.firedevops.firemud.common.gamedesign;
 
 import com.google.protobuf.Message;
 import com.google.protobuf.Timestamp;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Objects;
@@ -108,6 +109,13 @@ public final class DraftSynchronizedVisibilityGrpcCodec {
         throw new IllegalArgumentException("Synchronized fence timestamp is required");
       }
       requireNoUnknownFields(timestamp, "Timestamp");
+      if (timestamp.getSeconds() < -62135596800L
+          || timestamp.getSeconds() > 253402300799L
+          || timestamp.getNanos() < 0
+          || timestamp.getNanos() > 999999999) {
+        throw new IllegalArgumentException(
+            "Synchronized fence timestamp must be valid protobuf time");
+      }
       return new DraftSynchronizedVisibilityEvidence(
           request,
           binding,
@@ -117,7 +125,9 @@ public final class DraftSynchronizedVisibilityGrpcCodec {
               parseCanonicalNonNilUuid(response.getFence().getCommitId(), "fence commitId"),
               response.getFence().getInputDigest(),
               response.getFence().getResultVectorJson(),
-              OffsetDateTime.ofInstant(timestamp.toInstant(), ZoneOffset.UTC)));
+              OffsetDateTime.ofInstant(
+                  Instant.ofEpochSecond(timestamp.getSeconds(), timestamp.getNanos()),
+                  ZoneOffset.UTC)));
     } catch (RuntimeException exception) {
       throw new IllegalArgumentException(
           "Game Design synchronized visibility response is invalid", exception);

@@ -2,9 +2,9 @@ package net.firedevops.firemud.gamedesign.draft;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Context;
 import io.grpc.Status;
-import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -43,17 +43,17 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
  * Real Game Design PostgreSQL coordinator read through the standalone handler under a
- * fixture-provided verified peer context. Owner outcomes are fixture-seeded APPLIED rows only;
- * this is not physical-mTLS, Account-authorized World producer, normal creator-write, publication,
- * or activation proof.
+ * fixture-provided verified peer context. Owner outcomes are fixture-seeded APPLIED rows only; this
+ * is not physical-mTLS, Account-authorized World producer, normal creator-write, publication, or
+ * activation proof.
  */
 @Testcontainers(disabledWithoutDocker = true)
 class DraftSynchronizedVisibilityPostgresIntegrationTest {
   private static final String NAMESPACE = "draft-visibility-test";
   private static final String FLYWAY_TABLE = "flyway_schema_history_game_design_service";
+
   @Container
-  static final PostgreSQLContainer<?> POSTGRES =
-      new PostgreSQLContainer<>("postgres:16-alpine");
+  static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
 
   private static Fixture fixture;
 
@@ -96,13 +96,17 @@ class DraftSynchronizedVisibilityPostgresIntegrationTest {
         synchronizeFixtureBinding(synchronizedBinding);
 
     DraftCommitBinding laterBinding = binding(target, UUID.randomUUID(), UUID.randomUUID());
-    fixture.transaction().executeWithoutResult(
-        status -> {
-          fixture.coordinator().claim(laterBinding);
-          fixture.coordinator().claimApplicationSlot(laterBinding);
-          fixture.coordinator().markOwnerInProgress(laterBinding, Owner.WORLD_MANAGEMENT);
-          fixture.coordinator().recordOwnerOutcome(laterBinding, unknownWorldOutcome(laterBinding));
-        });
+    fixture
+        .transaction()
+        .executeWithoutResult(
+            status -> {
+              fixture.coordinator().claim(laterBinding);
+              fixture.coordinator().claimApplicationSlot(laterBinding);
+              fixture.coordinator().markOwnerInProgress(laterBinding, Owner.WORLD_MANAGEMENT);
+              fixture
+                  .coordinator()
+                  .recordOwnerOutcome(laterBinding, unknownWorldOutcome(laterBinding));
+            });
 
     DraftSynchronizedVisibilityEvidence.Request read = request(target);
     var observer = new TestObserver<ReadDraftSynchronizedVisibilityResponse>();
@@ -119,7 +123,12 @@ class DraftSynchronizedVisibilityPostgresIntegrationTest {
     assertThat(evidence.binding()).isEqualTo(synchronizedBinding);
     assertThat(evidence.binding().commitId()).isNotEqualTo(laterBinding.commitId());
     assertThat(evidence.appliedOwnerResults()).hasSize(synchronizedOutcomes.size());
-    assertThat(fixture.coordinator().read(target, laterBinding.requestId()).orElseThrow().workflowState())
+    assertThat(
+            fixture
+                .coordinator()
+                .read(target, laterBinding.requestId())
+                .orElseThrow()
+                .workflowState())
         .isEqualTo(DraftCommitCoordinatorRepository.WorkflowState.RECONCILIATION_REQUIRED);
   }
 
@@ -144,21 +153,25 @@ class DraftSynchronizedVisibilityPostgresIntegrationTest {
   private static List<DraftCommitCoordinatorRepository.OwnerOutcome> synchronizeFixtureBinding(
       DraftCommitBinding binding) {
     List<DraftCommitCoordinatorRepository.OwnerOutcome> outcomes = new ArrayList<>();
-    fixture.transaction().executeWithoutResult(
-        status -> {
-          fixture.coordinator().claim(binding);
-          fixture.coordinator().claimApplicationSlot(binding);
-          for (Owner owner : binding.requiredOwners()) {
-            fixture.coordinator().markOwnerInProgress(binding, owner);
-            var outcome = appliedOutcome(binding, owner);
-            outcomes.add(outcome);
-            fixture.coordinator().recordOwnerOutcome(binding, outcome);
-          }
-          fixture.coordinator().advanceVisibilityFence(
-              binding,
-              new DraftCommitCoordinatorRepository.CoordinatorProof(binding, outcomes));
-          fixture.coordinator().releaseApplicationSlot(binding);
-        });
+    fixture
+        .transaction()
+        .executeWithoutResult(
+            status -> {
+              fixture.coordinator().claim(binding);
+              fixture.coordinator().claimApplicationSlot(binding);
+              for (Owner owner : binding.requiredOwners()) {
+                fixture.coordinator().markOwnerInProgress(binding, owner);
+                var outcome = appliedOutcome(binding, owner);
+                outcomes.add(outcome);
+                fixture.coordinator().recordOwnerOutcome(binding, outcome);
+              }
+              fixture
+                  .coordinator()
+                  .advanceVisibilityFence(
+                      binding,
+                      new DraftCommitCoordinatorRepository.CoordinatorProof(binding, outcomes));
+              fixture.coordinator().releaseApplicationSlot(binding);
+            });
     return List.copyOf(outcomes);
   }
 
@@ -201,8 +214,7 @@ class DraftSynchronizedVisibilityPostgresIntegrationTest {
   }
 
   private static DraftSynchronizedVisibilityEvidence.Request request(TargetProof target) {
-    return new DraftSynchronizedVisibilityEvidence.Request(
-        1, NAMESPACE, UUID.randomUUID(), target);
+    return new DraftSynchronizedVisibilityEvidence.Request(1, NAMESPACE, UUID.randomUUID(), target);
   }
 
   private static DraftCommitBinding binding(TargetProof target, UUID requestId, UUID commitId) {
@@ -254,8 +266,7 @@ class DraftSynchronizedVisibilityPostgresIntegrationTest {
       Version version = new Version();
       version.setTenantId(savedGame.getTenantId());
       version.setVersionNumber(1);
-      version.setVersionState(
-          net.firedevops.firemud.gamedesign.model.VersionLifecycleState.DRAFT);
+      version.setVersionState(net.firedevops.firemud.gamedesign.model.VersionLifecycleState.DRAFT);
       version.setVersionStateEpoch(1L);
       Version savedVersion =
           Objects.requireNonNull(transaction.execute(status -> versions.save(version)));
@@ -281,6 +292,10 @@ class DraftSynchronizedVisibilityPostgresIntegrationTest {
     }
 
     @Override
+    @SuppressFBWarnings(
+        value = "EI_EXPOSE_REP2",
+        justification =
+            "The test recorder retains the exact original throwable solely for assertion.")
     public void onError(Throwable failure) {
       error = failure;
     }

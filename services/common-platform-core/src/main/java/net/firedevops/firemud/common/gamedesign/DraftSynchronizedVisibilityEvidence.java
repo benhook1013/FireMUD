@@ -198,7 +198,8 @@ public final class DraftSynchronizedVisibilityEvidence {
       canonical = Rfc8785CanonicalJson.canonicalizeUtf8(fence.resultVectorJson());
       vector = JSON.readTree(fence.resultVectorJson());
     } catch (IOException | RuntimeException exception) {
-      throw new IllegalArgumentException("Draft result vector is not valid canonical JSON", exception);
+      throw new IllegalArgumentException(
+          "Draft result vector is not valid canonical JSON", exception);
     }
     if (!java.util.Arrays.equals(supplied, canonical)) {
       throw new IllegalArgumentException("Draft result vector is not exact canonical JSON");
@@ -240,7 +241,8 @@ public final class DraftSynchronizedVisibilityEvidence {
       try {
         resultBytes = Base64.getDecoder().decode(bytesBase64);
       } catch (IllegalArgumentException exception) {
-        throw new IllegalArgumentException("Owner result bytes must be canonical Base64", exception);
+        throw new IllegalArgumentException(
+            "Owner result bytes must be canonical Base64", exception);
       }
       if (!Base64.getEncoder().encodeToString(resultBytes).equals(bytesBase64)) {
         throw new IllegalArgumentException("Owner result bytes must be canonical Base64");
@@ -288,8 +290,7 @@ public final class DraftSynchronizedVisibilityEvidence {
           || !unit.scopeType().equals(epoch.scopeType())
           || !unit.scopeId().equals(epoch.scopeId())
           || !unit.expectedEpoch().equals(epoch.expectedEpoch())
-          || new BigInteger(epoch.resultingEpoch())
-                  .compareTo(new BigInteger(epoch.expectedEpoch()))
+          || new BigInteger(epoch.resultingEpoch()).compareTo(new BigInteger(epoch.expectedEpoch()))
               <= 0) {
         throw new IllegalArgumentException(
             "Applied owner tuple differs from the complete bound epoch declaration");
@@ -320,7 +321,8 @@ public final class DraftSynchronizedVisibilityEvidence {
     try {
       return Enum.valueOf(type, text(node, field));
     } catch (IllegalArgumentException exception) {
-      throw new IllegalArgumentException("Draft owner result enum is unsupported: " + field, exception);
+      throw new IllegalArgumentException(
+          "Draft owner result enum is unsupported: " + field, exception);
     }
   }
 
