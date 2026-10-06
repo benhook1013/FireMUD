@@ -58,13 +58,20 @@ import net.firedevops.firemud.common.tenant.AuthoredWorldSourceClient;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceGrpcCodec;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import net.firedevops.firemud.common.tenant.FreshTenantCreatorDigest;
+import net.firedevops.firemud.common.tenant.FreshTenantCreatorEvidence;
+import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository;
+import net.firedevops.firemud.gamedesign.v1.FreshTenantCreatorQualificationEvidence;
 import net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreationRequest;
+import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreationResponse;
+import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreatorQualificationRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyAccountTenantAssociationRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyGameSessionTenantAssociationRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyGameTenantIdentityRequest;
@@ -96,17 +103,19 @@ import org.springframework.core.env.StandardEnvironment;
 import org.springframework.core.io.FileSystemResource;
 
 /**
- * Physical socket proof for Game Design's authored-world source read boundary.
+ * Physical socket proof for Game Design's authored-world source and creator-qualification reads.
  *
  * <p>The production gRPC service, peer-identity interceptor, JWT interceptor, and shared source
- * client run over ephemeral mTLS sockets. The owner repository is mocked and returns a complete,
- * digest-valid schema-v1 receipt; this suite does not prove source registration persistence, normal
- * source creation, World intake, local association, publication, or runtime activation.
+ * client run over ephemeral mTLS sockets. Owner repositories are mocked and return complete,
+ * digest-valid evidence; this suite does not prove persistence, Account caller authorization or
+ * membership bootstrap, World intake, local association, publication, or runtime activation.
  */
 class AuthoredWorldSourceMtlsTest {
   private static final String NAMESPACE = "test";
   private static final String SOURCE_METHOD =
       "gamedesign.v1.TenantIdentityService/ResolveAuthoredWorldSource";
+  private static final String CREATOR_QUALIFICATION_METHOD =
+      "gamedesign.v1.TenantIdentityService/ResolveFreshTenantCreatorQualification";
   private static final String AUTHORIZATION = "authorization";
   private static final String JWT_SECRET = "test-secret-key-test-secret-key-32-bytes";
   private static final UUID REGISTRATION_REQUEST_ID =
@@ -121,10 +130,24 @@ class AuthoredWorldSourceMtlsTest {
       Set.of(
           "gamedesign.v1.TenantIdentityService/ResolveLegacyAccountTenantAssociation",
           "gamedesign.v1.TenantIdentityService/ResolveFreshTenantCreation",
+          CREATOR_QUALIFICATION_METHOD,
           "gamedesign.v1.TenantIdentityService/ResolveRuntimeTenantIdentity",
           SOURCE_METHOD,
           "gamedesign.v1.TenantIdentityService/ResolveLegacyGameSessionTenantAssociation");
   private static final AuthoredWorldSourceEvidence SOURCE_EVIDENCE = sourceEvidence();
+  private static final UUID FRESH_CREATION_REQUEST_ID =
+      UUID.fromString("66666666-6666-4666-8666-666666666661");
+  private static final UUID FRESH_CREATION_OPERATION_ID =
+      UUID.fromString("66666666-6666-4666-8666-666666666662");
+  private static final UUID ACCOUNT_ID = UUID.fromString("66666666-6666-4666-8666-666666666663");
+  private static final UUID ACCOUNT_AUTHORIZATION_OPERATION_ID =
+      UUID.fromString("66666666-6666-4666-8666-666666666664");
+  private static final UUID CREATOR_READ_REQUEST_ID =
+      UUID.fromString("66666666-6666-4666-8666-666666666665");
+  private static final String ACCOUNT_AUTHORIZATION_DIGEST = "sha256:" + "c".repeat(64);
+  private static final FreshTenantCreationEvidence FRESH_CREATION_EVIDENCE =
+      freshTenantCreationEvidence();
+  private static final FreshTenantCreatorEvidence CREATOR_EVIDENCE = creatorEvidence(ACCOUNT_ID);
   private static final AuthoredWorldSourceGrpcCodec.ReadRequest READ_REQUEST =
       new AuthoredWorldSourceGrpcCodec.ReadRequest(
           NAMESPACE, READ_REQUEST_ID, SOURCE_OPERATION_ID, TENANT_ID, "harbor-world");
@@ -196,6 +219,12 @@ class AuthoredWorldSourceMtlsTest {
             issueLeaf(
                 caName,
                 caKeyPair.getPrivate(),
+                "cross-namespace-account-service",
+                "spiffe://firemud/ns/other-test/sa/account-service",
+                false),
+            issueLeaf(
+                caName,
+                caKeyPair.getPrivate(),
                 "trusted-certificate-without-workload-uri",
                 null,
                 false));
@@ -247,7 +276,7 @@ class AuthoredWorldSourceMtlsTest {
   void wrongServiceNamespaceAndSharedCertificatesAreDeniedBeforeOwnerRead() throws Exception {
     for (TestCertificate clientCertificate :
         List.of(
-            pki.wrongServiceCertificate(),
+            pki.accountServiceCertificate(),
             pki.wrongNamespaceCertificate(),
             pki.noWorkloadUriCertificate())) {
       ManagedChannel channel = channel(server, clientCertificate, jwtToken());
@@ -424,6 +453,11 @@ class AuthoredWorldSourceMtlsTest {
               stub.resolveLegacyGameSessionTenantAssociation(
                   ResolveLegacyGameSessionTenantAssociationRequest.getDefaultInstance()),
           Status.Code.PERMISSION_DENIED);
+      assertStatus(
+          () ->
+              stub.resolveFreshTenantCreatorQualification(
+                  ResolveFreshTenantCreatorQualificationRequest.getDefaultInstance()),
+          Status.Code.PERMISSION_DENIED);
     } finally {
       stopChannel(channel);
     }
@@ -432,6 +466,136 @@ class AuthoredWorldSourceMtlsTest {
         gameRepository,
         associationService,
         creationRepository,
+        authoredWorldRepository,
+        gameSessionAssociationRepository);
+  }
+
+  @Test
+  void exactSameNamespaceAccountPeerReadsCreatorQualificationOverPhysicalMtls() throws Exception {
+    when(creationRepository.readCreatorQualification(
+            FRESH_CREATION_REQUEST_ID,
+            NAMESPACE,
+            FRESH_CREATION_EVIDENCE.requestDigest(),
+            FRESH_CREATION_EVIDENCE.evidenceDigest(),
+            ACCOUNT_ID,
+            ACCOUNT_AUTHORIZATION_OPERATION_ID,
+            ACCOUNT_AUTHORIZATION_DIGEST,
+            CREATOR_EVIDENCE.evidenceDigest()))
+        .thenReturn(Optional.of(CREATOR_EVIDENCE));
+
+    ManagedChannel channel = channel(server, pki.accountServiceCertificate(), null);
+    try {
+      var response =
+          creatorStub(channel).resolveFreshTenantCreatorQualification(creatorReadRequest());
+
+      assertThat(response.getReadRequestId()).isEqualTo(CREATOR_READ_REQUEST_ID.toString());
+      assertThat(response.getCreationEvidence())
+          .isEqualTo(toCreationResponse(FRESH_CREATION_EVIDENCE));
+      assertThat(response.getCreatorQualification())
+          .isEqualTo(
+              FreshTenantCreatorQualificationEvidence.newBuilder()
+                  .setSchemaVersion(CREATOR_EVIDENCE.schemaVersion())
+                  .setInitiatingAccountId(ACCOUNT_ID.toString())
+                  .setAccountAuthorizationOperationId(ACCOUNT_AUTHORIZATION_OPERATION_ID.toString())
+                  .setAccountAuthorizationDigest(ACCOUNT_AUTHORIZATION_DIGEST)
+                  .setEvidenceDigest(CREATOR_EVIDENCE.evidenceDigest())
+                  .build());
+    } finally {
+      stopChannel(channel);
+    }
+
+    verify(creationRepository)
+        .readCreatorQualification(
+            FRESH_CREATION_REQUEST_ID,
+            NAMESPACE,
+            FRESH_CREATION_EVIDENCE.requestDigest(),
+            FRESH_CREATION_EVIDENCE.evidenceDigest(),
+            ACCOUNT_ID,
+            ACCOUNT_AUTHORIZATION_OPERATION_ID,
+            ACCOUNT_AUTHORIZATION_DIGEST,
+            CREATOR_EVIDENCE.evidenceDigest());
+    verifyNoInteractions(
+        gameRepository,
+        associationService,
+        authoredWorldRepository,
+        gameSessionAssociationRepository);
+  }
+
+  @Test
+  void worldCrossNamespaceAndMissingPeersCannotReadCreatorQualification() throws Exception {
+    for (TestCertificate clientCertificate :
+        List.of(pki.worldManagementCertificate(), pki.crossNamespaceAccountCertificate())) {
+      ManagedChannel channel = channel(server, clientCertificate, null);
+      try {
+        assertStatus(
+            () -> creatorStub(channel).resolveFreshTenantCreatorQualification(creatorReadRequest()),
+            Status.Code.PERMISSION_DENIED);
+      } finally {
+        stopChannel(channel);
+      }
+    }
+
+    ManagedChannel noPeerChannel = channel(server, null, null);
+    try {
+      assertTlsDenied(
+          () ->
+              creatorStub(noPeerChannel)
+                  .resolveFreshTenantCreatorQualification(creatorReadRequest()),
+          CREATOR_QUALIFICATION_METHOD);
+    } finally {
+      stopChannel(noPeerChannel);
+    }
+
+    verifyNoInteractions(creationRepository);
+  }
+
+  @Test
+  void changedInitiatingAccountBindingFailsClosedAfterPhysicalAccountAuthentication()
+      throws Exception {
+    UUID changedAccountId = UUID.fromString("77777777-7777-4777-8777-777777777777");
+    String changedExpectedCreatorDigest =
+        FreshTenantCreatorDigest.evidenceDigest(
+            1,
+            FRESH_CREATION_EVIDENCE,
+            changedAccountId,
+            ACCOUNT_AUTHORIZATION_OPERATION_ID,
+            ACCOUNT_AUTHORIZATION_DIGEST);
+    when(creationRepository.readCreatorQualification(
+            FRESH_CREATION_REQUEST_ID,
+            NAMESPACE,
+            FRESH_CREATION_EVIDENCE.requestDigest(),
+            FRESH_CREATION_EVIDENCE.evidenceDigest(),
+            changedAccountId,
+            ACCOUNT_AUTHORIZATION_OPERATION_ID,
+            ACCOUNT_AUTHORIZATION_DIGEST,
+            changedExpectedCreatorDigest))
+        .thenReturn(Optional.of(CREATOR_EVIDENCE));
+
+    ManagedChannel channel = channel(server, pki.accountServiceCertificate(), null);
+    try {
+      assertStatus(
+          () ->
+              creatorStub(channel)
+                  .resolveFreshTenantCreatorQualification(
+                      creatorReadRequest(changedAccountId, changedExpectedCreatorDigest)),
+          Status.Code.FAILED_PRECONDITION);
+    } finally {
+      stopChannel(channel);
+    }
+
+    verify(creationRepository)
+        .readCreatorQualification(
+            FRESH_CREATION_REQUEST_ID,
+            NAMESPACE,
+            FRESH_CREATION_EVIDENCE.requestDigest(),
+            FRESH_CREATION_EVIDENCE.evidenceDigest(),
+            changedAccountId,
+            ACCOUNT_AUTHORIZATION_OPERATION_ID,
+            ACCOUNT_AUTHORIZATION_DIGEST,
+            changedExpectedCreatorDigest);
+    verifyNoInteractions(
+        gameRepository,
+        associationService,
         authoredWorldRepository,
         gameSessionAssociationRepository);
   }
@@ -529,6 +693,46 @@ class AuthoredWorldSourceMtlsTest {
       ManagedChannel channel) {
     return TenantIdentityServiceGrpc.newBlockingStub(channel)
         .withDeadlineAfter(3, TimeUnit.SECONDS);
+  }
+
+  private static TenantIdentityServiceGrpc.TenantIdentityServiceBlockingStub creatorStub(
+      ManagedChannel channel) {
+    return TenantIdentityServiceGrpc.newBlockingStub(channel)
+        .withDeadlineAfter(3, TimeUnit.SECONDS);
+  }
+
+  private static ResolveFreshTenantCreatorQualificationRequest creatorReadRequest() {
+    return creatorReadRequest(ACCOUNT_ID, CREATOR_EVIDENCE.evidenceDigest());
+  }
+
+  private static ResolveFreshTenantCreatorQualificationRequest creatorReadRequest(
+      UUID initiatingAccountId, String expectedCreatorEvidenceDigest) {
+    return ResolveFreshTenantCreatorQualificationRequest.newBuilder()
+        .setReadRequestId(CREATOR_READ_REQUEST_ID.toString())
+        .setCreationRequestId(FRESH_CREATION_REQUEST_ID.toString())
+        .setExpectedRequestDigest(FRESH_CREATION_EVIDENCE.requestDigest())
+        .setExpectedEvidenceDigest(FRESH_CREATION_EVIDENCE.evidenceDigest())
+        .setInitiatingAccountId(initiatingAccountId.toString())
+        .setAccountAuthorizationOperationId(ACCOUNT_AUTHORIZATION_OPERATION_ID.toString())
+        .setAccountAuthorizationDigest(ACCOUNT_AUTHORIZATION_DIGEST)
+        .setExpectedCreatorEvidenceDigest(expectedCreatorEvidenceDigest)
+        .build();
+  }
+
+  private static ResolveFreshTenantCreationResponse toCreationResponse(
+      FreshTenantCreationEvidence evidence) {
+    return ResolveFreshTenantCreationResponse.newBuilder()
+        .setSchemaVersion(evidence.schemaVersion())
+        .setTargetNamespace(evidence.targetNamespace())
+        .setCreationRequestId(evidence.creationRequestId().toString())
+        .setOperationId(evidence.operationId().toString())
+        .setRequestDigest(evidence.requestDigest())
+        .setCanonicalTenantId(evidence.canonicalTenantId().toString())
+        .setSourceGameRowId(evidence.sourceGameRowId())
+        .setSourceGameTenantKey(evidence.sourceGameTenantKey())
+        .setProvenanceKind(evidence.provenanceKind())
+        .setEvidenceDigest(evidence.evidenceDigest())
+        .build();
   }
 
   private static ResolveAuthoredWorldSourceRequest wireReadRequest() {
@@ -728,6 +932,51 @@ class AuthoredWorldSourceMtlsTest {
         evidenceDigest);
   }
 
+  private static FreshTenantCreationEvidence freshTenantCreationEvidence() {
+    String sourceTenantKey = "fresh-game-tenant-17";
+    String requestDigest =
+        GameTenantCreationDigest.requestDigest(
+            NAMESPACE, FRESH_CREATION_REQUEST_ID, sourceTenantKey, "Fresh World", "Description");
+    String evidenceDigest =
+        GameTenantCreationDigest.evidenceDigest(
+            NAMESPACE,
+            FRESH_CREATION_REQUEST_ID,
+            FRESH_CREATION_OPERATION_ID,
+            requestDigest,
+            TENANT_ID,
+            17L,
+            sourceTenantKey,
+            "NEW_GAME_ROW");
+    return new FreshTenantCreationEvidence(
+        1,
+        NAMESPACE,
+        FRESH_CREATION_REQUEST_ID,
+        FRESH_CREATION_OPERATION_ID,
+        requestDigest,
+        TENANT_ID,
+        17L,
+        sourceTenantKey,
+        "NEW_GAME_ROW",
+        evidenceDigest);
+  }
+
+  private static FreshTenantCreatorEvidence creatorEvidence(UUID initiatingAccountId) {
+    String evidenceDigest =
+        FreshTenantCreatorDigest.evidenceDigest(
+            1,
+            FRESH_CREATION_EVIDENCE,
+            initiatingAccountId,
+            ACCOUNT_AUTHORIZATION_OPERATION_ID,
+            ACCOUNT_AUTHORIZATION_DIGEST);
+    return new FreshTenantCreatorEvidence(
+        1,
+        FRESH_CREATION_EVIDENCE,
+        initiatingAccountId,
+        ACCOUNT_AUTHORIZATION_OPERATION_ID,
+        ACCOUNT_AUTHORIZATION_DIGEST,
+        evidenceDigest);
+  }
+
   private static Path writePem(Path path, String label, byte[] encoded) throws IOException {
     String body = Base64.getMimeEncoder(64, new byte[] {'\n'}).encodeToString(encoded);
     return Files.writeString(
@@ -867,7 +1116,8 @@ class AuthoredWorldSourceMtlsTest {
       TestCertificate wrongServerNamespaceCertificate,
       TestCertificate worldManagementCertificate,
       TestCertificate gameSessionCertificate,
-      TestCertificate wrongServiceCertificate,
+      TestCertificate accountServiceCertificate,
       TestCertificate wrongNamespaceCertificate,
+      TestCertificate crossNamespaceAccountCertificate,
       TestCertificate noWorkloadUriCertificate) {}
 }

@@ -11,6 +11,7 @@ import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import net.firedevops.firemud.common.tenant.FreshTenantCreatorEvidence;
 import net.firedevops.firemud.common.tenant.GameSessionTenantAssociationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.common.tenant.RuntimeTenantIdentityEvidence;
@@ -20,11 +21,14 @@ import net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociation
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTenantIdentity;
 import net.firedevops.firemud.gamedesign.service.impl.TenantAssociationMigrationService.ApprovedAssociation;
+import net.firedevops.firemud.gamedesign.v1.FreshTenantCreatorQualificationEvidence;
 import net.firedevops.firemud.gamedesign.v1.GameSessionTenantAssociationManifestEvidence;
 import net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreationRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreationResponse;
+import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreatorQualificationRequest;
+import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreatorQualificationResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyAccountTenantAssociationRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyAccountTenantAssociationResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyGameSessionTenantAssociationRequest;
@@ -332,6 +336,150 @@ public class TenantIdentityGrpcService
             .setEvidenceDigest(receipt.evidenceDigest())
             .build());
     responseObserver.onCompleted();
+  }
+
+  @Override
+  public void resolveFreshTenantCreatorQualification(
+      ResolveFreshTenantCreatorQualificationRequest request,
+      StreamObserver<ResolveFreshTenantCreatorQualificationResponse> responseObserver) {
+    if (SessionContext.hasAuthenticatedCallerContext() || !isAccountPeer()) {
+      responseObserver.onError(
+          Status.PERMISSION_DENIED
+              .withDescription(
+                  "Verified Account workload identity without caller context is required")
+              .asRuntimeException());
+      return;
+    }
+
+    UUID readRequestId = parseCanonicalNonNilUuid(request.getReadRequestId());
+    UUID creationRequestId = parseCanonicalNonNilUuid(request.getCreationRequestId());
+    UUID initiatingAccountId = parseCanonicalNonNilUuid(request.getInitiatingAccountId());
+    UUID authorizationOperationId =
+        parseCanonicalNonNilUuid(request.getAccountAuthorizationOperationId());
+    String expectedRequestDigest = request.getExpectedRequestDigest();
+    String expectedCreationEvidenceDigest = request.getExpectedEvidenceDigest();
+    String expectedAuthorizationDigest = request.getAccountAuthorizationDigest();
+    String expectedCreatorEvidenceDigest = request.getExpectedCreatorEvidenceDigest();
+    if (readRequestId == null
+        || creationRequestId == null
+        || initiatingAccountId == null
+        || authorizationOperationId == null
+        || !isSha256Digest(expectedRequestDigest)
+        || !isSha256Digest(expectedCreationEvidenceDigest)
+        || !isSha256Digest(expectedAuthorizationDigest)
+        || !isSha256Digest(expectedCreatorEvidenceDigest)
+        || !request.getUnknownFields().asMap().isEmpty()) {
+      responseObserver.onError(
+          Status.INVALID_ARGUMENT
+              .withDescription("Canonical closed fresh tenant creator request is required")
+              .asRuntimeException());
+      return;
+    }
+
+    Optional<FreshTenantCreatorEvidence> resolved;
+    try {
+      resolved =
+          creationRepository.readCreatorQualification(
+              creationRequestId,
+              workloadNamespace,
+              expectedRequestDigest,
+              expectedCreationEvidenceDigest,
+              initiatingAccountId,
+              authorizationOperationId,
+              expectedAuthorizationDigest,
+              expectedCreatorEvidenceDigest);
+    } catch (GameTenantCreationRepository.InvalidCreationEvidenceException ex) {
+      responseObserver.onError(
+          Status.FAILED_PRECONDITION
+              .withDescription("Fresh tenant creator evidence is incomplete or inconsistent")
+              .asRuntimeException());
+      return;
+    } catch (TooManyRowsException ex) {
+      responseObserver.onError(
+          Status.FAILED_PRECONDITION
+              .withDescription("Fresh tenant creator evidence is ambiguous")
+              .asRuntimeException());
+      return;
+    } catch (DataAccessResourceFailureException ex) {
+      responseObserver.onError(
+          Status.UNAVAILABLE
+              .withDescription("Fresh tenant creator evidence is temporarily unavailable")
+              .asRuntimeException());
+      return;
+    } catch (DataAccessException ex) {
+      Status.Code code =
+          hasConnectionFailureSqlState(ex) ? Status.Code.UNAVAILABLE : Status.Code.INTERNAL;
+      responseObserver.onError(
+          Status.fromCode(code)
+              .withDescription("Fresh tenant creator evidence could not be read")
+              .asRuntimeException());
+      return;
+    } catch (RuntimeException ex) {
+      responseObserver.onError(
+          Status.INTERNAL
+              .withDescription("Fresh tenant creator evidence could not be read")
+              .asRuntimeException());
+      return;
+    }
+    if (resolved.isEmpty()) {
+      responseObserver.onError(
+          Status.NOT_FOUND
+              .withDescription("No qualified fresh tenant creator for the exact request")
+              .asRuntimeException());
+      return;
+    }
+
+    FreshTenantCreatorEvidence qualification = resolved.orElseThrow();
+    FreshTenantCreationEvidence source = qualification.creationEvidence();
+    boolean exactEvidence =
+        source.schemaVersion() == 1
+            && workloadNamespace.equals(source.targetNamespace())
+            && creationRequestId.equals(source.creationRequestId())
+            && expectedRequestDigest.equals(source.requestDigest())
+            && expectedCreationEvidenceDigest.equals(source.evidenceDigest())
+            && initiatingAccountId.equals(qualification.initiatingAccountId())
+            && authorizationOperationId.equals(qualification.accountAuthorizationOperationId())
+            && expectedAuthorizationDigest.equals(qualification.accountAuthorizationDigest())
+            && expectedCreatorEvidenceDigest.equals(qualification.evidenceDigest());
+    if (!exactEvidence) {
+      responseObserver.onError(
+          Status.FAILED_PRECONDITION
+              .withDescription("Fresh tenant creator readback does not match the exact request")
+              .asRuntimeException());
+      return;
+    }
+
+    responseObserver.onNext(
+        ResolveFreshTenantCreatorQualificationResponse.newBuilder()
+            .setReadRequestId(readRequestId.toString())
+            .setCreationEvidence(toCreationResponse(source))
+            .setCreatorQualification(
+                FreshTenantCreatorQualificationEvidence.newBuilder()
+                    .setSchemaVersion(qualification.schemaVersion())
+                    .setInitiatingAccountId(qualification.initiatingAccountId().toString())
+                    .setAccountAuthorizationOperationId(
+                        qualification.accountAuthorizationOperationId().toString())
+                    .setAccountAuthorizationDigest(qualification.accountAuthorizationDigest())
+                    .setEvidenceDigest(qualification.evidenceDigest())
+                    .build())
+            .build());
+    responseObserver.onCompleted();
+  }
+
+  private ResolveFreshTenantCreationResponse toCreationResponse(
+      FreshTenantCreationEvidence evidence) {
+    return ResolveFreshTenantCreationResponse.newBuilder()
+        .setSchemaVersion(evidence.schemaVersion())
+        .setTargetNamespace(evidence.targetNamespace())
+        .setCreationRequestId(evidence.creationRequestId().toString())
+        .setOperationId(evidence.operationId().toString())
+        .setRequestDigest(evidence.requestDigest())
+        .setCanonicalTenantId(evidence.canonicalTenantId().toString())
+        .setSourceGameRowId(evidence.sourceGameRowId())
+        .setSourceGameTenantKey(evidence.sourceGameTenantKey())
+        .setProvenanceKind(evidence.provenanceKind())
+        .setEvidenceDigest(evidence.evidenceDigest())
+        .build();
   }
 
   @Override

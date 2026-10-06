@@ -25,10 +25,11 @@ import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
 /**
- * Account-local AES-256-GCM for bounded credential-bearing response and pending-reset envelopes.
- * The mounted manifest is read for every operation so atomic rotation and key removal take effect
- * immediately. Callers must provide an Account-only mounted path and must read back the exact
- * durable operation/envelope before using a decrypt method for recovery.
+ * Account-local AES-256-GCM for bounded credential-bearing response, pending-reset, and targetless
+ * control-UI response envelopes. The mounted manifest is read for every operation so atomic
+ * rotation and key removal take effect immediately. Callers must provide an Account-only mounted
+ * path and must read back the exact durable operation/envelope before using a decrypt method for
+ * recovery.
  *
  * <p>Manifest v1 is strict ASCII (an ASCII subset of UTF-8), terminated by one LF:
  *
@@ -37,15 +38,17 @@ import javax.crypto.spec.SecretKeySpec;
  * activeKeyId=k2
  * key:k1:bare-login=&lt;43-character-unpadded-base64url&gt;
  * key:k1:connect-token=&lt;43-character-unpadded-base64url&gt;
+ * key:k1:control-ui-response=&lt;43-character-unpadded-base64url&gt;
  * key:k2:bare-login=&lt;43-character-unpadded-base64url&gt;
  * key:k2:connect-token=&lt;43-character-unpadded-base64url&gt;
  * key:k2:pending-reset=&lt;43-character-unpadded-base64url&gt;
+ * key:k2:control-ui-response=&lt;43-character-unpadded-base64url&gt;
  * </pre>
  *
- * Every key ID must have independent 32-byte connect-token and bare-LOGIN keys. A pending-reset key
- * is optional for retained IDs and is required only for pending-reset operations. The active ID is
- * used for new writes; retained older IDs are decrypt-only. No default key or classpath fallback
- * exists.
+ * Every key ID must have independent 32-byte connect-token and bare-LOGIN keys. Pending-reset and
+ * control-UI response keys are optional for retained IDs and unavailable purposes fail closed. The
+ * active ID is used for new writes; retained older IDs are decrypt-only. No default key or
+ * classpath fallback exists.
  */
 public final class AccountEnvelopeCrypto {
   public static final String KEY_RING_PATH_ENVIRONMENT_VARIABLE =
@@ -65,6 +68,8 @@ public final class AccountEnvelopeCrypto {
       "firemud-account-response-envelope/v1".getBytes(StandardCharsets.US_ASCII);
   private static final byte[] PENDING_RESET_AAD_DOMAIN =
       "firemud-account-pending-reset-envelope/v1".getBytes(StandardCharsets.US_ASCII);
+  private static final byte[] CONTROL_UI_RESPONSE_AAD_DOMAIN =
+      "firemud-account-control-ui-response-envelope/v1".getBytes(StandardCharsets.US_ASCII);
   private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
   private final Path manifestPath;
@@ -133,6 +138,26 @@ public final class AccountEnvelopeCrypto {
             pendingResetAssociatedData(formatVersion, keyId, purpose, binding));
   }
 
+  /** Encrypts the exact response for the targetless control-UI issuance recovery binding. */
+  public AccountEncryptedEnvelope encryptControlUiResponse(
+      AccountControlUiResponseEnvelopeBinding binding, byte[] responseBytes) {
+    Objects.requireNonNull(binding, "binding");
+    Objects.requireNonNull(responseBytes, "responseBytes");
+    if (responseBytes.length == 0
+        || responseBytes.length > AccountEncryptedEnvelope.MAX_PLAINTEXT_LENGTH_BYTES) {
+      throw failure(AccountEnvelopeCryptoException.Failure.INVALID_ENVELOPE);
+    }
+    if (!matchesControlUiResponseDigest(responseBytes, binding)) {
+      throw failure(AccountEnvelopeCryptoException.Failure.INVALID_ENVELOPE);
+    }
+
+    return encryptWithAssociatedData(
+        AccountEnvelopePurpose.CONTROL_UI_RESPONSE,
+        responseBytes,
+        (formatVersion, keyId, purpose) ->
+            controlUiResponseAssociatedData(formatVersion, keyId, purpose, binding));
+  }
+
   private AccountEncryptedEnvelope encryptWithAssociatedData(
       AccountEnvelopePurpose purpose,
       byte[] plaintext,
@@ -198,6 +223,27 @@ public final class AccountEnvelopeCrypto {
       throw failure(AccountEnvelopeCryptoException.Failure.AUTHENTICATION_FAILED);
     }
     return encodedArgon2Verifier;
+  }
+
+  /** Decrypts only under the exact original targetless control-UI issuance binding. */
+  public byte[] decryptControlUiResponse(
+      AccountEncryptedEnvelope envelope, AccountControlUiResponseEnvelopeBinding binding) {
+    Objects.requireNonNull(envelope, "envelope");
+    Objects.requireNonNull(binding, "binding");
+    if (envelope.purpose() != AccountEnvelopePurpose.CONTROL_UI_RESPONSE) {
+      throw failure(AccountEnvelopeCryptoException.Failure.PURPOSE_MISMATCH);
+    }
+
+    byte[] responseBytes =
+        decryptWithAssociatedData(
+            envelope,
+            (formatVersion, keyId, purpose) ->
+                controlUiResponseAssociatedData(formatVersion, keyId, purpose, binding));
+    if (!matchesControlUiResponseDigest(responseBytes, binding)) {
+      Arrays.fill(responseBytes, (byte) 0);
+      throw failure(AccountEnvelopeCryptoException.Failure.AUTHENTICATION_FAILED);
+    }
+    return responseBytes;
   }
 
   private byte[] decryptWithAssociatedData(
@@ -457,6 +503,60 @@ public final class AccountEnvelopeCrypto {
       return bytes.toByteArray();
     } catch (IOException exception) {
       throw failure(AccountEnvelopeCryptoException.Failure.CRYPTO_OPERATION_FAILED);
+    }
+  }
+
+  private static byte[] controlUiResponseAssociatedData(
+      int formatVersion,
+      String keyId,
+      AccountEnvelopePurpose purpose,
+      AccountControlUiResponseEnvelopeBinding binding) {
+    try {
+      ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+      DataOutputStream output = new DataOutputStream(bytes);
+      writeFrame(output, CONTROL_UI_RESPONSE_AAD_DOMAIN);
+      output.writeInt(formatVersion);
+      writeFrame(output, utf8(keyId));
+      writeFrame(output, utf8(purpose.manifestName()));
+      writeFrame(output, utf8(binding.accountId()));
+      writeFrame(output, utf8(binding.operationId()));
+      writeFrame(output, utf8(binding.requestId()));
+      writeFrame(output, utf8(binding.profile()));
+      writeFrame(output, utf8(binding.audience()));
+      writeFrame(output, binding.requestDigest());
+      writeFrame(output, utf8(binding.tokenHash()));
+      writeFrame(output, binding.responseDigest());
+      writeFrame(output, binding.authorityCaptureDigest());
+      writeFrame(output, binding.issuanceFenceDigest());
+      writeFrame(output, utf8(Long.toString(binding.issuedAt().getEpochSecond())));
+      writeFrame(output, utf8(Long.toString(binding.expiresAt().getEpochSecond())));
+      output.flush();
+      if (bytes.size() > MAX_AAD_FIELD_LENGTH_BYTES * 8) {
+        throw failure(AccountEnvelopeCryptoException.Failure.INVALID_ENVELOPE);
+      }
+      return bytes.toByteArray();
+    } catch (IOException exception) {
+      throw failure(AccountEnvelopeCryptoException.Failure.CRYPTO_OPERATION_FAILED);
+    }
+  }
+
+  private static boolean matchesControlUiResponseDigest(
+      byte[] responseBytes, AccountControlUiResponseEnvelopeBinding binding) {
+    byte[] calculatedDigest = null;
+    byte[] expectedDigest = null;
+    try {
+      calculatedDigest = MessageDigest.getInstance("SHA-256").digest(responseBytes);
+      expectedDigest = binding.responseDigest();
+      return MessageDigest.isEqual(calculatedDigest, expectedDigest);
+    } catch (GeneralSecurityException exception) {
+      throw failure(AccountEnvelopeCryptoException.Failure.CRYPTO_OPERATION_FAILED);
+    } finally {
+      if (calculatedDigest != null) {
+        Arrays.fill(calculatedDigest, (byte) 0);
+      }
+      if (expectedDigest != null) {
+        Arrays.fill(expectedDigest, (byte) 0);
+      }
     }
   }
 

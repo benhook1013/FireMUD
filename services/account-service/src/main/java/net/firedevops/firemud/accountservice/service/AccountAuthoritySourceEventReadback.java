@@ -1,5 +1,11 @@
 package net.firedevops.firemud.accountservice.service;
 
+import com.fasterxml.jackson.core.JsonFactory;
+import com.fasterxml.jackson.core.StreamReadFeature;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.IOException;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -24,6 +30,7 @@ import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOper
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository.PasswordResetReceipt;
 import net.firedevops.firemud.common.account.authority.AccountLogoutAllAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.AccountLogoutAllAuthorityEventV1Codec.AccountLogoutAllAuthorityEvent;
+import net.firedevops.firemud.common.account.authority.AccountSecurityStateAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.PasswordResetAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.PasswordResetAuthorityEventV1Codec.PasswordResetAuthorityEvent;
 
@@ -32,6 +39,10 @@ import net.firedevops.firemud.common.account.authority.PasswordResetAuthorityEve
  * It does not authenticate a caller or turn source evidence into recipient authority.
  */
 public final class AccountAuthoritySourceEventReadback {
+  private static final ObjectMapper SNAPSHOT_JSON =
+      new ObjectMapper(
+              JsonFactory.builder().enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build())
+          .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
   private static final String STREAM_PREFIX = "account:auth-authority:v1:account/";
   private static final String PASSWORD_RESET_REQUEST_ID_PREFIX =
       "account-password-reset-request-v1:";
@@ -349,7 +360,10 @@ public final class AccountAuthoritySourceEventReadback {
     }
   }
 
-  /** Reuses the closed schema validator for immutable source-result constructor invariants. */
+  /**
+   * Checks structural source-result invariants, without proving an immutable operation receipt.
+   * Security-state evidence remains unsupported by the owner current/historical receipt readers.
+   */
   static void requireEventMatchesSnapshot(
       Event event, UUID accountUuid, ScopeState current, boolean mustBeCurrentLatest) {
     if (accountUuid == null
@@ -359,7 +373,7 @@ public final class AccountAuthoritySourceEventReadback {
         || current.sourceVersion() <= 0L) {
       throw new IllegalStateException("Account source snapshot scope or counters are invalid");
     }
-    VerifiedSourceEvent verified = verifyEvent(event, accountUuid);
+    SnapshotCounters verified = verifySnapshotEvent(event, accountUuid);
     BigInteger eventGeneration = new BigInteger(verified.accountAuthorityGeneration());
     BigInteger eventSourceVersion = new BigInteger(verified.sourceVersion());
     BigInteger currentGeneration = BigInteger.valueOf(current.generation());
@@ -375,6 +389,47 @@ public final class AccountAuthoritySourceEventReadback {
           "Account source event counters contradict or lead the current snapshot");
     }
   }
+
+  private static SnapshotCounters verifySnapshotEvent(Event event, UUID accountUuid) {
+    if (event == null) {
+      throw new IllegalStateException("Account source event is missing");
+    }
+    String payload = new String(event.payload(), StandardCharsets.UTF_8);
+    final JsonNode tree;
+    try {
+      tree = SNAPSHOT_JSON.readTree(payload);
+    } catch (IOException exception) {
+      throw new IllegalStateException("Account source event snapshot JSON is malformed", exception);
+    }
+    if (tree == null || !tree.isObject() || !tree.path("schemaVersion").isTextual()) {
+      throw new IllegalStateException("Account source event snapshot schema is missing");
+    }
+    if (!AccountSecurityStateAuthorityEventV1Codec.SCHEMA_VERSION.equals(
+        tree.path("schemaVersion").textValue())) {
+      VerifiedSourceEvent original = verifyEvent(event, accountUuid);
+      return new SnapshotCounters(original.accountAuthorityGeneration(), original.sourceVersion());
+    }
+    final AccountSecurityStateAuthorityEventV1Codec.AccountSecurityStateAuthorityEvent security;
+    try {
+      security = AccountSecurityStateAuthorityEventV1Codec.verify(payload);
+    } catch (IllegalArgumentException exception) {
+      throw new IllegalStateException(
+          "Account security-state snapshot event is invalid", exception);
+    }
+    if (!MessageDigest.isEqual(event.payload(), security.canonicalJsonUtf8())
+        || !event.outboxStreamKey().equals(security.outboxStreamKey())
+        || !event.requestId().equals(security.requestId())
+        || !event.eventId().equals(security.eventId())
+        || !event.eventDigest().equals(security.eventDigest())
+        || !accountUuid.toString().equals(security.accountId())
+        || !Long.toString(event.outboxSequence()).equals(security.outboxSequence())) {
+      throw new IllegalStateException(
+          "Account security-state snapshot event readback is inconsistent");
+    }
+    return new SnapshotCounters(security.accountAuthorityGeneration(), security.sourceVersion());
+  }
+
+  private record SnapshotCounters(String accountAuthorityGeneration, String sourceVersion) {}
 
   private void requireReceiptNotAhead(
       long generation,

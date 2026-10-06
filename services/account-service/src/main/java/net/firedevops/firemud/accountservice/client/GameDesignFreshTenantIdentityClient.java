@@ -13,9 +13,13 @@ import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import net.firedevops.firemud.common.tenant.FreshTenantCreatorDigest;
+import net.firedevops.firemud.common.tenant.FreshTenantCreatorEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreationRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreationResponse;
+import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreatorQualificationRequest;
+import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreatorQualificationResponse;
 import net.firedevops.firemud.gamedesign.v1.TenantIdentityServiceGrpc;
 
 /** Caller-owned Account candidate for exact fresh-creation readback from Game Design. */
@@ -121,6 +125,123 @@ public final class GameDesignFreshTenantIdentityClient
           "Game Design fresh tenant evidence does not match the exact request");
     }
     return evidence;
+  }
+
+  /**
+   * Reads the immutable Account initiator qualification for one exact source receipt.
+   *
+   * <p>This candidate consumer validates transport evidence only. It does not capture or
+   * authenticate the initiating Account identity; the protected Account creation adapter remains
+   * responsible for supplying an authorized binding.
+   */
+  public FreshTenantCreatorEvidence resolveCreatorQualification(
+      UUID readRequestId,
+      FreshTenantCreationEvidence expectedCreationEvidence,
+      UUID initiatingAccountId,
+      UUID accountAuthorizationOperationId,
+      String accountAuthorizationDigest) {
+    if (readRequestId == null || NIL_UUID.equals(readRequestId)) {
+      throw new IllegalArgumentException("Canonical nonnil creator read request ID is required");
+    }
+    if (expectedCreationEvidence == null
+        || !workloadNamespace.equals(expectedCreationEvidence.targetNamespace())) {
+      throw new IllegalArgumentException(
+          "Exact fresh tenant source evidence for the configured namespace is required");
+    }
+    if (initiatingAccountId == null || NIL_UUID.equals(initiatingAccountId)) {
+      throw new IllegalArgumentException("Canonical nonnil initiating Account UUID is required");
+    }
+    if (accountAuthorizationOperationId == null
+        || NIL_UUID.equals(accountAuthorizationOperationId)) {
+      throw new IllegalArgumentException(
+          "Canonical nonnil Account authorization operation UUID is required");
+    }
+    if (!GameTenantCreationDigest.isDigest(accountAuthorizationDigest)) {
+      throw new IllegalArgumentException("Canonical Account authorization digest is required");
+    }
+    String expectedCreatorEvidenceDigest =
+        FreshTenantCreatorDigest.evidenceDigest(
+            1,
+            expectedCreationEvidence,
+            initiatingAccountId,
+            accountAuthorizationOperationId,
+            accountAuthorizationDigest);
+
+    ResolveFreshTenantCreatorQualificationResponse response =
+        stub()
+            .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+            .resolveFreshTenantCreatorQualification(
+                ResolveFreshTenantCreatorQualificationRequest.newBuilder()
+                    .setReadRequestId(readRequestId.toString())
+                    .setCreationRequestId(expectedCreationEvidence.creationRequestId().toString())
+                    .setExpectedRequestDigest(expectedCreationEvidence.requestDigest())
+                    .setExpectedEvidenceDigest(expectedCreationEvidence.evidenceDigest())
+                    .setInitiatingAccountId(initiatingAccountId.toString())
+                    .setAccountAuthorizationOperationId(accountAuthorizationOperationId.toString())
+                    .setAccountAuthorizationDigest(accountAuthorizationDigest)
+                    .setExpectedCreatorEvidenceDigest(expectedCreatorEvidenceDigest)
+                    .build());
+
+    if (!response.getUnknownFields().asMap().isEmpty()
+        || !response.hasCreationEvidence()
+        || !response.hasCreatorQualification()) {
+      throw new IllegalStateException(
+          "Game Design creator qualification response is not the exact closed schema");
+    }
+    if (!response.getCreationEvidence().getUnknownFields().asMap().isEmpty()
+        || !response.getCreatorQualification().getUnknownFields().asMap().isEmpty()) {
+      throw new IllegalStateException("Game Design creator qualification contains unknown fields");
+    }
+    if (!readRequestId.toString().equals(response.getReadRequestId())) {
+      throw new IllegalStateException("Game Design did not echo the exact creator read identity");
+    }
+
+    FreshTenantCreationEvidence actualCreationEvidence;
+    try {
+      ResolveFreshTenantCreationResponse source = response.getCreationEvidence();
+      actualCreationEvidence =
+          new FreshTenantCreationEvidence(
+              source.getSchemaVersion(),
+              source.getTargetNamespace(),
+              parseCanonicalNonNilUuid(source.getCreationRequestId()),
+              parseCanonicalNonNilUuid(source.getOperationId()),
+              source.getRequestDigest(),
+              parseCanonicalNonNilUuid(source.getCanonicalTenantId()),
+              source.getSourceGameRowId(),
+              source.getSourceGameTenantKey(),
+              source.getProvenanceKind(),
+              source.getEvidenceDigest());
+    } catch (IllegalArgumentException exception) {
+      throw new IllegalStateException("Game Design source creation evidence is invalid", exception);
+    }
+    if (!expectedCreationEvidence.equals(actualCreationEvidence)) {
+      throw new IllegalStateException(
+          "Game Design creator qualification changed the original source evidence");
+    }
+
+    FreshTenantCreatorEvidence qualification;
+    try {
+      var wireQualification = response.getCreatorQualification();
+      qualification =
+          new FreshTenantCreatorEvidence(
+              wireQualification.getSchemaVersion(),
+              actualCreationEvidence,
+              parseCanonicalNonNilUuid(wireQualification.getInitiatingAccountId()),
+              parseCanonicalNonNilUuid(wireQualification.getAccountAuthorizationOperationId()),
+              wireQualification.getAccountAuthorizationDigest(),
+              wireQualification.getEvidenceDigest());
+    } catch (IllegalArgumentException exception) {
+      throw new IllegalStateException(
+          "Game Design creator qualification evidence is invalid", exception);
+    }
+    if (!initiatingAccountId.equals(qualification.initiatingAccountId())
+        || !accountAuthorizationOperationId.equals(qualification.accountAuthorizationOperationId())
+        || !accountAuthorizationDigest.equals(qualification.accountAuthorizationDigest())
+        || !expectedCreatorEvidenceDigest.equals(qualification.evidenceDigest())) {
+      throw new IllegalStateException(
+          "Game Design creator qualification does not match the exact Account binding");
+    }
+    return qualification;
   }
 
   private static UUID parseCanonicalNonNilUuid(String value) {

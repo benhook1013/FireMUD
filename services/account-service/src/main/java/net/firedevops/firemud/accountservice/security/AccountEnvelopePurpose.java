@@ -4,7 +4,8 @@ package net.firedevops.firemud.accountservice.security;
 public enum AccountEnvelopePurpose {
   CONNECT_TOKEN_RESPONSE("connect-token"),
   BARE_LOGIN_RESPONSE("bare-login"),
-  PENDING_PASSWORD_RESET("pending-reset");
+  PENDING_PASSWORD_RESET("pending-reset"),
+  CONTROL_UI_RESPONSE("control-ui-response");
 
   private final String manifestName;
 

@@ -37,6 +37,24 @@ authorityTuple: {
 }
 ```
 
+### Canonical Authority Counter Representation
+
+Authority counters are JSON strings containing canonical unsigned base-10 integers, never JSON numbers. The positive grammar `[1-9][0-9]*` applies to `tokenGeneration`, `issuanceFence`, issuer/account generations, every tenant/membership generation-map value, `grantVersion`, and every generation or sequence inside an applicable account-security or tenant-billing cutoff. The separate `membershipVersion` map follows [ADR 0030](./decisions/adr-0030-risk-based-active-session-revocation.md#canonical-membershipversion-carrier): its values use `0|[1-9][0-9]*`. A structurally valid zero membership version does not prove that a membership exists or authorize a route. Required empty maps and lists retain their exact empty representations.
+
+Consumers validate the grammar and compare arbitrary-precision integer values without a signed-64-bit ceiling, IEEE-754 conversion, or lexicographic ordering. Signs, leading zeros, whitespace, fractions, exponents, alternate numeral forms and numeric/string aliases are invalid. Complete carrier equality still compares every identity, map key, list entry, counter and presence/absence value; canonical byte measurement is not an equality oracle. Counter values remain independent even when their current values happen to match.
+
+JWT `iat`, `nbf` and `exp` remain exact bounded numeric UTC epoch-second timestamps; numeric schema literals and opaque identifiers do not become authority counters. Separately owned source-version, checkpoint, bundle-capture and signer evidence retains its owning schema and is not retyped by this rule. Account's sole-writer SQL counters keep their documented storage range: source overflow fails the producer before mutation, without wrapping or widening storage. Historical signed JWTs and digests are never rewritten or interpreted through a compatibility alias; a noncanonical credential requires fresh canonical issuance.
+
+The exact RFC 8785 canonical UTF-8 vectors below retain all decimal digits, including beyond Java `long`; the differing strings must never compare equal:
+
+| Logical counter | Canonical JSON bytes (ASCII subset of UTF-8) |
+| --- | --- |
+| `9007199254740992` | `{"tokenGeneration":"9007199254740992"}` |
+| `9007199254740993` | `{"tokenGeneration":"9007199254740993"}` |
+| `9223372036854775808` | `{"tokenGeneration":"9223372036854775808"}` |
+| `9223372036854775809` | `{"tokenGeneration":"9223372036854775809"}` |
+| Zero membership version | `{"membershipVersion":{"018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f":"0"}}` |
+
 In contract examples, a trailing `?` on an object field marks an **Optional object field**: the object may be omitted only when that object is inapplicable to the profile or operation. It is not a shorthand for an empty object, and `null` is not omission. A **Required** field must be present even when its value is empty. A required **Empty-map** or **Empty-list** field must serialize its declared empty representation (`{}` or `[]`); omission, `null`, a scalar sentinel, or another empty shape is not equivalent. These presence rules apply consistently to JWT claims, registry records, evidence bundles, and bindings.
 
 `issuerAuthGeneration` and `accountAuthorityGeneration` are positive Account-owned generations. `tenantAuthorityGeneration` and `membershipAuthorityGeneration` are independent maps keyed by exact tenant IDs; each map's applicable keys are determined separately by the token profile and route classification. The closed `billing_safe_tenant` exception can omit the target-tenant generation from route comparison, but it must not omit the canonical generation claim or the target-tenant key when the token profile requires that scoped key. Explicitly unscoped artifacts use empty maps. `privateRealmGrantVersions` contains exact lifecycle-bound non-public grant entries `{tenantId, worldSlug, realmSlug, playtestLifecycleId, grantVersion}` for every ordinary-private and playtest grant, and is empty for public production. The corresponding grant stream for either kind uses the canonical grant authority-stream scope codec; its exact field forms and codec bounds are defined by the [identifier glossary](./system-architecture-identifier-glossary.md#non-public-grant-identity) and [grant authority-stream codec](./system-architecture-redis.md#canonical-grant-authority-stream-scope-codec), without redefining that codec here. There is no ordinary-private grant entry without `playtestLifecycleId`. `accountSecurityCutoff` is an optional object field, and `tenantBillingCutoff` is an optional object field omitted when no tenant billing cutoff applies; neither is a replacement authority and neither uses collection omission-as-empty semantics. `membershipVersion` is separate membership projection/version data and `billing_safe_tenant` requires it to be compared independently from `membershipAuthorityGeneration`; neither field substitutes for the other. A missing applicable field, extra scope, malformed value, or mismatch fails closed.
@@ -229,16 +247,16 @@ Workload-only methods explicitly declare token profile, type, issuer, and audien
 - `iat`: `1735689600`
 - `nbf`: `1735689600`
 - `exp`: `1735693200`
-- `tokenGeneration`: `12`
+- `tokenGeneration`: `"12"`
 - `authorityTuple`:
-  - `issuerAuthGeneration`: `7`
-  - `accountAuthorityGeneration`: `12`
-  - `tenantAuthorityGeneration`: `{ "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f": 4, "018f8f0a-3c8d-7b35-ad26-7b0c9d8e6f4a": 9 }`
-  - `membershipAuthorityGeneration`: `{ "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f": 18, "018f8f0a-3c8d-7b35-ad26-7b0c9d8e6f4a": 3 }`
+  - `issuerAuthGeneration`: `"7"`
+  - `accountAuthorityGeneration`: `"12"`
+  - `tenantAuthorityGeneration`: `{ "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f": "4", "018f8f0a-3c8d-7b35-ad26-7b0c9d8e6f4a": "9" }`
+  - `membershipAuthorityGeneration`: `{ "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f": "18", "018f8f0a-3c8d-7b35-ad26-7b0c9d8e6f4a": "3" }`
   - `privateRealmGrantVersions`: `[]`
-  - `accountSecurityCutoff`: `{ accountAuthorityGeneration: 12, outboxStreamKey: "account:auth-authority:v1:account/018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a", outboxSequence: 44 }`
-- `issuanceFence`: `27`
-- `membershipVersion`: `{ "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f": 42, "018f8f0a-3c8d-7b35-ad26-7b0c9d8e6f4a": 7 }`
+  - `accountSecurityCutoff`: `{ accountAuthorityGeneration: "12", outboxStreamKey: "account:auth-authority:v1:account/018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a", outboxSequence: "44" }`
+- `issuanceFence`: `"27"`
+- `membershipVersion`: `{ "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f": "42", "018f8f0a-3c8d-7b35-ad26-7b0c9d8e6f4a": "7" }`
 - `globalRoles`: `["billingAdmin"]`
 - `scopedRoles`:
   - `"018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f"` -> `["tenantAdmin", "designer"]`
@@ -348,7 +366,7 @@ This is a closed Account claim set: all listed claims are required except the tw
 | `iat` | Required | Required | Required | Required | UTC epoch seconds; Gateway preserves the gameplay-connect value as context `issuedAt` |
 | `nbf` | Required | Required | Absent | Required | Token not usable before this time when present |
 | `exp` | Required | Required | Required | Required | Token unusable after this time; `gameplay-connect` lifetime is at most 30 seconds from `iat` |
-| `tokenGeneration` | Required | Required | Absent (ordinary registry-only lineage field) | Required | Positive integer for issued-token-registry lineage; gameplay-connect instead uses its dedicated single-use replay contract |
+| `tokenGeneration` | Required | Required | Absent (ordinary registry-only lineage field) | Required | Canonical positive decimal string for issued-token-registry lineage; gameplay-connect instead uses its dedicated single-use replay contract |
 | `authorityTuple` | Required | Required | Required | Required | Complete applicable tuple. For `gameplay-connect`, the exact bounded selected-target tuple is immutable issuance evidence passed unchanged through Gateway context into the later admission lease/binding checks; it is not registry-backed or standalone gameplay authority |
 | `authorityTuple.issuerAuthGeneration` | Required | Required | Required | Required | Positive monotonic Account-owned issuer generation captured at issuance |
 | `authorityTuple.accountAuthorityGeneration` | Required | Required | Required | Required | Positive monotonic Account-owned account generation captured at issuance |

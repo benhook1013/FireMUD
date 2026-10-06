@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -26,6 +27,7 @@ import net.firedevops.firemud.accountservice.service.AccountAuthoritySourceReade
 import net.firedevops.firemud.accountservice.service.AccountGenerationProjection;
 import net.firedevops.firemud.accountservice.service.RedisAccountGenerationProjectionStore;
 import net.firedevops.firemud.common.account.authority.AccountLogoutAllAuthorityEventV1Codec;
+import net.firedevops.firemud.common.account.authority.AccountSecurityStateAuthorityEventV1Codec;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.data.redis.connection.RedisConnection;
@@ -183,6 +185,44 @@ class RedisAccountGenerationProjectionStoreTest {
         .isEqualTo(RedisAccountGenerationProjectionStore.Outcome.QUARANTINED);
     assertThat(result.detail()).contains("SAME_CHECKPOINT_DISAGREEMENT");
     assertThat(redis.scriptCalls).isZero();
+    harness.store().close();
+  }
+
+  @Test
+  void completeSecurityStateSnapshotReplaysWithExactCanonicalBytes() throws Exception {
+    // Synthetic owner snapshot: this proves projection consumption, not receipt-backed SQL reads.
+    AccountSourceSnapshot source = source(2L, 2L, 1L, securityEvent(true), 2L);
+    AccountGenerationProjection projection = AccountGenerationProjection.fromSource(source);
+    FakeRedis redis = new FakeRedis(projection.toJson().getBytes(StandardCharsets.UTF_8));
+    Harness harness = harness(redis, source, source);
+
+    var result = harness.store().refreshCurrent(ACCOUNT_ID);
+
+    assertThat(result.outcome()).isEqualTo(RedisAccountGenerationProjectionStore.Outcome.REPLAYED);
+    assertThat(redis.lastMode).isEqualTo("VERIFY");
+    assertThat(redis.bytes).isEqualTo(projection.toJson().getBytes(StandardCharsets.UTF_8));
+    verify(harness.reader(), times(2)).readCurrent(ACCOUNT_ID);
+    harness.store().close();
+  }
+
+  @Test
+  void sameSecurityCheckpointWithResealedChangedStateIsQuarantinedWithoutWrite() throws Exception {
+    // Both events have valid digests and identical request/counters; complete payloads still
+    // differ.
+    AccountGenerationProjection stored =
+        AccountGenerationProjection.fromSource(source(2L, 2L, 1L, securityEvent(true), 2L));
+    AccountSourceSnapshot changed = source(2L, 2L, 1L, securityEvent(false), 2L);
+    FakeRedis redis = new FakeRedis(stored.toJson().getBytes(StandardCharsets.UTF_8));
+    Harness harness = harness(redis, changed);
+
+    var result = harness.store().refreshCurrent(ACCOUNT_ID);
+
+    assertThat(result.outcome())
+        .isEqualTo(RedisAccountGenerationProjectionStore.Outcome.QUARANTINED);
+    assertThat(result.detail()).contains("SAME_CHECKPOINT_DISAGREEMENT");
+    assertThat(redis.scriptCalls).isZero();
+    assertThat(redis.bytes).isEqualTo(stored.toJson().getBytes(StandardCharsets.UTF_8));
+    verify(harness.reader(), times(1)).readCurrent(ACCOUNT_ID);
     harness.store().close();
   }
 
@@ -440,6 +480,54 @@ class RedisAccountGenerationProjectionStoreTest {
         STREAM_KEY,
         exactRequestId,
         Long.parseLong(sequence),
+        evidence.eventId(),
+        evidence.eventDigest(),
+        evidence.canonicalJsonUtf8());
+  }
+
+  private static Event securityEvent(boolean emailVerified) {
+    String requestId = "11111111-1111-4111-8111-111111111111";
+    var evidence =
+        AccountSecurityStateAuthorityEventV1Codec.seal(
+            Map.ofEntries(
+                Map.entry(
+                    "schemaVersion", AccountSecurityStateAuthorityEventV1Codec.SCHEMA_VERSION),
+                Map.entry("eventType", AccountSecurityStateAuthorityEventV1Codec.EVENT_TYPE),
+                Map.entry(
+                    "eventId",
+                    AccountSecurityStateAuthorityEventV1Codec.EVENT_ID_PREFIX + requestId),
+                Map.entry("requestId", requestId),
+                Map.entry("accountId", ACCOUNT_TEXT),
+                Map.entry("sourceScope", "account/" + ACCOUNT_TEXT),
+                Map.entry("outboxStreamKey", STREAM_KEY),
+                Map.entry("outboxSequence", "1"),
+                Map.entry("accountAuthorityGeneration", "2"),
+                Map.entry("sourceVersion", "2"),
+                Map.entry(
+                    "accountSecurityCutoff",
+                    Map.of(
+                        "accountAuthorityGeneration",
+                        "2",
+                        "outboxStreamKey",
+                        STREAM_KEY,
+                        "outboxSequence",
+                        "1")),
+                Map.entry("mutationKinds", List.of("EMAIL_LOGIN_ELIGIBILITY_CHANGED")),
+                Map.entry(
+                    "accountState",
+                    Map.of(
+                        "emailVerified",
+                        emailVerified,
+                        "loginAuthModes",
+                        List.of("PASSWORD"),
+                        "globalRoles",
+                        List.of(),
+                        "lifecycleState",
+                        "ACTIVE"))));
+    return new Event(
+        STREAM_KEY,
+        requestId,
+        1L,
         evidence.eventId(),
         evidence.eventDigest(),
         evidence.canonicalJsonUtf8());

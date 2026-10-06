@@ -118,7 +118,7 @@ class AccountResponseEnvelopeBootstrapTest(unittest.TestCase):
         manifest = MATERIALIZER.parse_manifest(source.manifest_bytes)
         self.assertEqual(manifest.active_key_id, next(iter(manifest.keys)))
         self.assertEqual(
-            {"bare-login", "connect-token", "pending-reset"},
+            {"bare-login", "connect-token", "pending-reset", "control-ui-response"},
             set(manifest.keys[manifest.active_key_id]),
         )
 
@@ -131,25 +131,31 @@ class AccountResponseEnvelopeBootstrapTest(unittest.TestCase):
         self.assertEqual(32, len(keys["bare-login"]))
         self.assertEqual(32, len(keys["connect-token"]))
         self.assertEqual(32, len(keys["pending-reset"]))
-        self.assertEqual(3, len(set(keys.values())))
+        self.assertEqual(32, len(keys["control-ui-response"]))
+        self.assertEqual(4, len(set(keys.values())))
         self.assertNotEqual("key-id", manifest.active_key_id)
         self.assertNotEqual("source-generation", source.source_generation)
 
-    def test_pending_key_redraw_cannot_collide_with_another_purpose(self) -> None:
-        first_key, second_key, third_key = (bytes([number]) * 32 for number in (1, 2, 3))
+    def test_control_ui_response_key_redraw_cannot_collide_with_another_purpose(self) -> None:
+        first_key, second_key, third_key, fourth_key = (bytes([number]) * 32 for number in (1, 2, 3, 4))
         with (
             patch.object(BOOTSTRAP, "_random_identifier", return_value="k1"),
             patch.object(
                 BOOTSTRAP.secrets,
                 "token_bytes",
-                side_effect=[first_key, second_key, first_key, second_key, third_key],
+                side_effect=[first_key, second_key, third_key, first_key, second_key, third_key, fourth_key],
             ),
         ):
             manifest_bytes = BOOTSTRAP._manifest()
 
         manifest = MATERIALIZER.parse_manifest(manifest_bytes)
         self.assertEqual(
-            {"bare-login": first_key, "connect-token": second_key, "pending-reset": third_key},
+            {
+                "bare-login": first_key,
+                "connect-token": second_key,
+                "pending-reset": third_key,
+                "control-ui-response": fourth_key,
+            },
             manifest.keys["k1"],
         )
 
@@ -181,7 +187,7 @@ class AccountResponseEnvelopeBootstrapTest(unittest.TestCase):
         for key_id, purposes in previous_manifest.keys.items():
             self.assertEqual(purposes, rotated_manifest.keys[key_id])
         self.assertEqual(
-            {"bare-login", "connect-token", "pending-reset"},
+            {"bare-login", "connect-token", "pending-reset", "control-ui-response"},
             set(rotated_manifest.keys[rotated_manifest.active_key_id]),
         )
         self.assertEqual(
@@ -204,7 +210,7 @@ class AccountResponseEnvelopeBootstrapTest(unittest.TestCase):
         for key_id, purposes in rotated_manifest.keys.items():
             self.assertEqual(purposes, third_manifest.keys[key_id])
         self.assertEqual(
-            {"bare-login", "connect-token", "pending-reset"},
+            {"bare-login", "connect-token", "pending-reset", "control-ui-response"},
             set(third_manifest.keys[third_manifest.active_key_id]),
         )
 
@@ -271,7 +277,7 @@ class AccountResponseEnvelopeBootstrapTest(unittest.TestCase):
         self.assertEqual(old_keys["bare-login"], upgraded_manifest.keys[old_id]["bare-login"])
         self.assertEqual(old_keys["connect-token"], upgraded_manifest.keys[old_id]["connect-token"])
         self.assertEqual(
-            {"bare-login", "connect-token", "pending-reset"},
+            {"bare-login", "connect-token", "pending-reset", "control-ui-response"},
             set(upgraded_manifest.keys[upgraded_manifest.active_key_id]),
         )
 
@@ -300,6 +306,49 @@ class AccountResponseEnvelopeBootstrapTest(unittest.TestCase):
                     now=rotation_time + dt.timedelta(minutes=1),
                 )
             )
+
+    def test_rotation_upgrades_a_three_purpose_ring_without_inventing_old_control_ui_key(self) -> None:
+        self.create()
+        original = MATERIALIZER.read_source_record(self.output)
+        original_manifest = MATERIALIZER.parse_manifest(original.manifest_bytes)
+        old_id = original_manifest.active_key_id
+        old_keys = original_manifest.keys[old_id]
+        retained_purposes = ("bare-login", "connect-token", "pending-reset")
+        legacy_manifest = (
+            f"version=1\nactiveKeyId={old_id}\n"
+            + "".join(
+                f"key:{old_id}:{purpose}={base64.urlsafe_b64encode(old_keys[purpose]).rstrip(b'=').decode('ascii')}\n"
+                for purpose in retained_purposes
+            )
+        ).encode("ascii")
+        legacy_record = json.loads(self.output.read_text(encoding="utf-8"))
+        legacy_record["manifestBase64"] = base64.b64encode(legacy_manifest).decode("ascii")
+        legacy_output = self.custody_directory / "legacy-three-purpose-source-record.json"
+        legacy_output.write_text(
+            json.dumps(legacy_record, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+        os.chmod(legacy_output, 0o600)
+
+        rotated_output = self.custody_directory / "upgraded-three-purpose-source-record.json"
+        BOOTSTRAP.create_rotated_source_record(
+            output=rotated_output,
+            previous_source_record=legacy_output,
+            environment_id=ENVIRONMENT_ID,
+            namespace=TARGET_NAMESPACE,
+            source_ttl_seconds=3600,
+            now=NOW + dt.timedelta(minutes=10),
+        )
+
+        upgraded = MATERIALIZER.read_source_record(rotated_output)
+        upgraded_manifest = MATERIALIZER.parse_manifest(upgraded.manifest_bytes)
+        self.assertEqual(set(retained_purposes), set(upgraded_manifest.keys[old_id]))
+        for purpose in retained_purposes:
+            self.assertEqual(old_keys[purpose], upgraded_manifest.keys[old_id][purpose])
+        self.assertEqual(
+            {"bare-login", "connect-token", "pending-reset", "control-ui-response"},
+            set(upgraded_manifest.keys[upgraded_manifest.active_key_id]),
+        )
 
     def test_rotation_rejects_wrong_environment_or_namespace_without_output(self) -> None:
         self.create()
