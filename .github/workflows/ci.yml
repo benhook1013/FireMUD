@@ -3164,6 +3164,36 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+      # Keep this focused rerun after earlier Account XML captures: integrationTest replaces reports.
+      - name: Run Account creator-control capture PostgreSQL component proof
+        if: ${{ matrix.module == 'account-service' }}
+        run: |
+          ./gradlew :account-service:integrationTest \
+            --tests 'integration.net.firedevops.firemud.accountservice.AccountTenantCreationBootstrapServicePostgresIntegrationTest.committedCreatorControlCaptureRetainsExactSourcesWithoutGameplayAdmission' \
+            --tests 'integration.net.firedevops.firemud.accountservice.AccountTenantCreationBootstrapServicePostgresIntegrationTest.creatorControlCaptureDeniesLaterJoinedMembershipWithoutRewritingOriginalReceipt' \
+            --tests 'integration.net.firedevops.firemud.accountservice.AccountTenantCreationBootstrapServicePostgresIntegrationTest.creatorControlCaptureDeniesMissingCommittedReceiptReadbackRatherThanInferringFromRoles' \
+            --tests 'integration.net.firedevops.firemud.accountservice.AccountTenantCreationBootstrapServicePostgresIntegrationTest.creatorControlCaptureDeniesCorruptedOriginalReceiptBytes' \
+            --tests 'integration.net.firedevops.firemud.accountservice.AccountTenantCreationBootstrapServicePostgresIntegrationTest.creatorControlCaptureDoesNotCreateMissingMembershipOrReceiptHistory' \
+            -PfullCheck --no-build-cache --no-configuration-cache
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.accountservice.AccountTenantCreationBootstrapServicePostgresIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountTenantCreationBootstrapServicePostgresIntegrationTest#committedCreatorControlCaptureRetainsExactSourcesWithoutGameplayAdmission()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountTenantCreationBootstrapServicePostgresIntegrationTest#creatorControlCaptureDeniesLaterJoinedMembershipWithoutRewritingOriginalReceipt()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountTenantCreationBootstrapServicePostgresIntegrationTest#creatorControlCaptureDeniesMissingCommittedReceiptReadbackRatherThanInferringFromRoles()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountTenantCreationBootstrapServicePostgresIntegrationTest#creatorControlCaptureDeniesCorruptedOriginalReceiptBytes()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountTenantCreationBootstrapServicePostgresIntegrationTest#creatorControlCaptureDoesNotCreateMissingMembershipOrReceiptHistory()' \
+            account-service
+
+      - name: Upload Account creator-control capture PostgreSQL raw proof
+        if: ${{ always() && matrix.module == 'account-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: account-creator-control-capture-postgresql-proof-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: services/account-service/build/test-results/integrationTest/TEST-*AccountTenantCreationBootstrapServicePostgresIntegrationTest.xml
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Verify Game Session LOGIN fixture isolation proof
         if: ${{ !cancelled() && matrix.module == 'game-session-service' }}
         run: |

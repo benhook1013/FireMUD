@@ -2,13 +2,16 @@ package integration.net.firedevops.firemud.accountservice;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.locks.ReentrantLock;
 import net.firedevops.firemud.accountservice.dto.AccountTenantCreationBootstrapResult;
@@ -248,6 +251,169 @@ class AccountTenantCreationBootstrapServicePostgresIntegrationTest {
         .isEqualTo(0L);
   }
 
+  @Test
+  void committedCreatorControlCaptureRetainsExactSourcesWithoutGameplayAdmission() {
+    Fixture f = fixture(false);
+    AccountTenantCreationBootstrapResult committed = bootstrap(f);
+    var capture =
+        inTransaction(
+            f,
+            () ->
+                f.service()
+                    .readExistingCreatorControlCaptureSources(f.accountUuid(), f.tenantUuid()));
+    assertThat(capture.accountUuid()).isEqualTo(f.accountUuid());
+    assertThat(capture.tenantUuid()).isEqualTo(f.tenantUuid());
+    assertThat(capture.membershipVersion()).isEqualTo(committed.membershipVersion());
+    assertThat(capture.roleSource().roles()).containsExactly("tenantAdmin");
+    assertThat(capture.roleSource().tenantProvenance().sourceOperationId())
+        .isEqualTo(f.evidence().creationEvidence().operationId());
+    assertThat(capture.creationSource()).isEqualTo(f.evidence().creationEvidence());
+    assertThat(capture.bootstrapReceipt().result()).isEqualTo(committed);
+    assertThat(capture.pairSource())
+        .isEqualTo(
+            inTransaction(
+                f,
+                () ->
+                    f.pairAuthority()
+                        .readForUpdate(f.accountUuid(), f.tenantUuid())
+                        .orElseThrow()));
+    assertThat(capture.sourceEvent().membershipLifecycleState()).isEqualTo("ACTIVE");
+    assertThat(capture.sourceEvent().gameplayAdmissionAllowed()).isFalse();
+    assertThat(capture.sourceEvent().roles()).containsExactly("tenantAdmin");
+    assertThat(capture.sourceEvent().eventId()).isEqualTo(committed.eventId());
+    assertThat(capture.sourceEvent().eventDigest()).isEqualTo(committed.eventDigest());
+    assertThat(capture.sourceEvent().membershipVersion()).isEqualTo(capture.membershipVersion());
+    assertThat(capture.authorityTuple().membershipAuthorityGeneration())
+        .isEqualTo(Map.of(f.tenantUuid().toString(), "1"));
+    assertThat(capture.issuanceFence())
+        .isEqualTo(Long.toString(capture.authoritySnapshot().issuanceFence().value()));
+    assertThat(capture.outboxCheckpoints()).hasSize(4);
+    assertThat(capture.outboxSourceEvidence()).hasSize(1);
+    assertThat(capture.outboxSourceEvidence().getFirst().eventDigest())
+        .isEqualTo(committed.eventDigest());
+    assertThat(currentState(f).membership().isGameplayAdmissionAllowed()).isFalse();
+    // The separate existing runtime path must still reject this control-only state.
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    f,
+                    () ->
+                        f.producer()
+                            .readExistingRuntimeMembershipCaptureSources(
+                                f.accountUuid(), f.tenantUuid())))
+        .isInstanceOf(IllegalStateException.class);
+  }
+
+  @Test
+  void creatorControlCaptureDeniesLaterJoinedMembershipWithoutRewritingOriginalReceipt() {
+    Fixture f = fixture(false);
+    var committed = bootstrap(f);
+    MembershipEvent event =
+        inTransaction(
+            f,
+            () ->
+                MembershipAuthorityEventV1Codec.verify(
+                    new String(
+                        f.outbox()
+                            .findEvent(
+                                membershipStreamKey(f.accountUuid(), f.tenantUuid()),
+                                committed.eventRequestId())
+                            .orElseThrow()
+                            .payload(),
+                        StandardCharsets.UTF_8)));
+    advanceMembershipForLaterJoin(f, event);
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    f,
+                    () ->
+                        f.service()
+                            .readExistingCreatorControlCaptureSources(
+                                f.accountUuid(), f.tenantUuid())))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(currentState(f).membership().getMembershipVersion()).isEqualTo(3L);
+    assertThat(
+            inTransaction(
+                f,
+                () ->
+                    f.operationRepository()
+                        .findForUpdate(committed.operationId())
+                        .orElseThrow()
+                        .result()))
+        .isEqualTo(committed);
+  }
+
+  @Test
+  void creatorControlCaptureDeniesMissingCommittedReceiptReadbackRatherThanInferringFromRoles() {
+    Fixture f = fixture(false);
+    var committed = bootstrap(f);
+    // A synthetic unavailable owner read overlays the real committed database fixture.
+    doReturn(Optional.empty()).when(f.operationRepository()).findForUpdate(committed.operationId());
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    f,
+                    () ->
+                        f.service()
+                            .readExistingCreatorControlCaptureSources(
+                                f.accountUuid(), f.tenantUuid())))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("receipt is absent");
+    assertThat(currentState(f).roles()).containsExactly("tenantAdmin");
+    assertThat(currentState(f).membership().isGameplayAdmissionAllowed()).isFalse();
+  }
+
+  @Test
+  void creatorControlCaptureDeniesCorruptedOriginalReceiptBytes() {
+    Fixture f = fixture(false);
+    var committed = bootstrap(f);
+    StoredOperation original =
+        inTransaction(
+            f, () -> f.operationRepository().findForUpdate(committed.operationId()).orElseThrow());
+    StoredOperation corrupt = spy(original);
+    doReturn(new byte[] {1}).when(corrupt).creatorEvidencePayload();
+    // Keep production immutability guards intact; inject corrupt read evidence, not SQL rewrites.
+    doReturn(Optional.of(corrupt))
+        .when(f.operationRepository())
+        .findForUpdate(committed.operationId());
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    f,
+                    () ->
+                        f.service()
+                            .readExistingCreatorControlCaptureSources(
+                                f.accountUuid(), f.tenantUuid())))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("changed creator");
+    assertThat(currentState(f).membership().isGameplayAdmissionAllowed()).isFalse();
+  }
+
+  @Test
+  void creatorControlCaptureDoesNotCreateMissingMembershipOrReceiptHistory() {
+    Fixture f = fixture(false);
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    f,
+                    () ->
+                        f.service()
+                            .readExistingCreatorControlCaptureSources(
+                                f.accountUuid(), f.tenantUuid())))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(
+            inTransaction(
+                f,
+                () ->
+                    f.memberships()
+                        .findCanonicalMembershipForUpdate(f.accountUuid(), f.tenantUuid())))
+        .isEmpty();
+    assertThat(
+            inTransaction(
+                f, () -> f.operationRepository().findRequestIdByTenantForUpdate(f.tenantUuid())))
+        .isEmpty();
+  }
+
   private static AccountTenantCreationBootstrapResult bootstrap(Fixture fixture) {
     return fixture.transaction().execute(status -> fixture.service().bootstrap(fixture.evidence()));
   }
@@ -476,9 +642,10 @@ class AccountTenantCreationBootstrapServicePostgresIntegrationTest {
         });
 
     AccountTenantCreationBootstrapOperationRepository operationRepository =
-        failAfterAudit
-            ? new FailingAfterAuditOperationRepository(txDsl)
-            : new AccountTenantCreationBootstrapOperationRepository(txDsl);
+        spy(
+            failAfterAudit
+                ? new FailingAfterAuditOperationRepository(txDsl)
+                : new AccountTenantCreationBootstrapOperationRepository(txDsl));
     AccountTenantCreationBootstrapAuthorizationSource syntheticParticipant =
         syntheticParticipant(evidence);
     @SuppressWarnings("unchecked")
@@ -508,7 +675,8 @@ class AccountTenantCreationBootstrapServicePostgresIntegrationTest {
         roles,
         pairs,
         outbox,
-        operationRepository);
+        operationRepository,
+        producer);
   }
 
   private static FreshTenantCreatorEvidence creatorEvidence(UUID accountUuid, UUID tenantUuid) {
@@ -631,7 +799,8 @@ class AccountTenantCreationBootstrapServicePostgresIntegrationTest {
       AccountTenantMembershipRoleSnapshotRepository roles,
       AccountMembershipPairAuthorityRepository pairAuthority,
       AccountAuthorityOutboxRepository outbox,
-      AccountTenantCreationBootstrapOperationRepository operationRepository) {}
+      AccountTenantCreationBootstrapOperationRepository operationRepository,
+      AccountMembershipAuthorityEventProducer producer) {}
 
   private static final class FailingAfterAuditOperationRepository
       extends AccountTenantCreationBootstrapOperationRepository {
