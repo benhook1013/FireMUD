@@ -21,7 +21,9 @@ import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperatio
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.service.AccountAuthoritySourceEventReadback;
+import net.firedevops.firemud.accountservice.service.AccountIssuerAuthorityEventProducer;
 import net.firedevops.firemud.accountservice.service.controlui.AccountControlUiTokenChecks.InspectedToken;
+import net.firedevops.firemud.common.account.authority.IssuerGenerationAuthorityEventV1Codec;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
@@ -60,12 +62,102 @@ class AccountControlUiCurrentSourcePostgresIntegrationTest {
     assertThat(observation).isNotNull();
     assertThat(observation.accountId()).isEqualTo(fixture.accountId());
     assertThat(observation.authority().issuer().generation()).isEqualTo(1L);
+    assertThat(observation.issuerSource().issuerAuthGeneration()).isEqualTo(1L);
+    assertThat(observation.issuerSource().outboxSequence()).isZero();
+    assertThat(observation.issuerSource().latestEvent()).isEmpty();
     assertThat(observation.accountSource().sourceState().generation()).isEqualTo(1L);
     assertThat(observation.globalRoleSourceVersion()).isEqualTo(1L);
     assertThat(observation.toString()).contains("non-authorizing");
     assertThat(count(fixture.dsl(), "account_authority_generations")).isEqualTo(generationsBefore);
     assertThat(count(fixture.dsl(), "account_authority_outbox_events")).isZero();
     assertThat(count(fixture.dsl(), "account_global_role_sources")).isEqualTo(1L);
+  }
+
+  @Test
+  void currentIssuerAdvanceRetainsItsCompleteExactEventAndCheckpointInTheSameObservation()
+      throws Exception {
+    Fixture fixture = fixture(true);
+    var event = fixture.issuer().advance(ISSUER, UUID.randomUUID(), 1L, 1L);
+    var currentCandidate = candidate(fixture.accountId(), 2L);
+    var observation =
+        fixture.tx().execute(status -> fixture.source().inspectUnscopedCurrent(currentCandidate));
+    assertThat(observation).isNotNull();
+    assertThat(observation.issuerSource().issuerAuthGeneration()).isEqualTo(2L);
+    assertThat(observation.issuerSource().sourceVersion()).isEqualTo(2L);
+    assertThat(observation.issuerSource().outboxSequence()).isEqualTo(1L);
+    var retained = observation.issuerSource().latestEvent().orElseThrow();
+    assertThat(retained.canonicalJsonUtf8()).isEqualTo(event.canonicalJsonUtf8());
+    assertThat(retained.eventId()).isEqualTo(event.eventId());
+    assertThat(retained.eventDigest()).isEqualTo(event.eventDigest());
+    assertThat(observation.accountSource().outboxSequence()).isZero();
+  }
+
+  @Test
+  void matchingAdvancedCountersWithoutTheirIssuerEventCannotProduceObservation() throws Exception {
+    Fixture fixture = fixture(true);
+    fixture
+        .tx()
+        .execute(
+            status ->
+                fixture
+                    .generations()
+                    .advance(fixture.generations().read(AuthorityScope.issuer(ISSUER)), null));
+    var matchingCounters = candidate(fixture.accountId(), 2L);
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .tx()
+                    .execute(status -> fixture.source().inspectUnscopedCurrent(matchingCounters)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("sequence-zero");
+    assertThat(count(fixture.dsl(), "account_authority_outbox_events")).isZero();
+  }
+
+  @Test
+  void matchingCountersAndCheckpointCannotHideContradictoryIssuerEventDigest() throws Exception {
+    Fixture fixture = fixture(true);
+    UUID request = UUID.randomUUID();
+    fixture
+        .tx()
+        .executeWithoutResult(
+            status -> {
+              fixture
+                  .generations()
+                  .advance(fixture.generations().read(AuthorityScope.issuer(ISSUER)), null);
+              var event =
+                  IssuerGenerationAuthorityEventV1Codec.seal(
+                      Map.ofEntries(
+                          Map.entry(
+                              "schemaVersion",
+                              IssuerGenerationAuthorityEventV1Codec.SCHEMA_VERSION),
+                          Map.entry("eventType", IssuerGenerationAuthorityEventV1Codec.EVENT_TYPE),
+                          Map.entry("eventId", "account-issuer-authority-event-v1:" + request),
+                          Map.entry("requestId", request.toString()),
+                          Map.entry("issuerId", ISSUER),
+                          Map.entry("sourceScope", "issuer/" + ISSUER),
+                          Map.entry(
+                              "outboxStreamKey", "account:auth-authority:v1:issuer/" + ISSUER),
+                          Map.entry("outboxSequence", "1"),
+                          Map.entry("issuerAuthGeneration", "2"),
+                          Map.entry("sourceVersion", "2")));
+              fixture
+                  .outbox()
+                  .append(
+                      event.outboxStreamKey(),
+                      request.toString(),
+                      event.eventId(),
+                      "f".repeat(64),
+                      event.canonicalJsonUtf8());
+            });
+    var matchingCounters = candidate(fixture.accountId(), 2L);
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .tx()
+                    .execute(status -> fixture.source().inspectUnscopedCurrent(matchingCounters)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("contradict");
+    assertThat(count(fixture.dsl(), "account_authority_outbox_events")).isEqualTo(1L);
   }
 
   @Test
@@ -166,17 +258,35 @@ class AccountControlUiCurrentSourcePostgresIntegrationTest {
   }
 
   private static InspectedToken candidate(UUID accountId) throws Exception {
+    return candidate(accountId, 1L);
+  }
+
+  private static InspectedToken candidate(UUID accountId, long issuerVersion) throws Exception {
     var crypto =
         new AccountControlUiTokenFixture(
             Clock.fixed(AccountControlUiTokenFixture.NOW, ZoneOffset.UTC));
     var claims = crypto.claims(accountId);
+    @SuppressWarnings("unchecked")
+    var tuple = new java.util.LinkedHashMap<>((Map<String, Object>) claims.get("authorityTuple"));
+    tuple.put("issuerAuthGeneration", Long.toString(issuerVersion));
+    claims.put("authorityTuple", tuple);
     String token = crypto.sign(claims);
+    var registry = crypto.registry(token, claims);
+    registry.put(
+        "authoritySourceVersions",
+        Map.of(
+            "issuerSourceVersion",
+            issuerVersion,
+            "accountSourceVersion",
+            1L,
+            "issuanceFenceSourceVersion",
+            1L));
     return crypto
         .checks()
         .inspect(
             "fresh-creator-candidate",
             token,
-            AccountControlUiTokenFixture.canonical(crypto.registry(token, claims)),
+            AccountControlUiTokenFixture.canonical(registry),
             AccountControlUiTokenFixture.unscopedShape());
   }
 
@@ -193,7 +303,7 @@ class AccountControlUiCurrentSourcePostgresIntegrationTest {
         .defaultSchema(schema)
         .placeholders(Map.of("serviceSchema", schema))
         .locations("classpath:db/migration")
-        .target(MigrationVersion.fromVersion("55"))
+        .target(MigrationVersion.fromVersion("65"))
         .load()
         .migrate();
     DSLContext dsl =
@@ -214,6 +324,13 @@ class AccountControlUiCurrentSourcePostgresIntegrationTest {
             return generations.initialize(AuthorityScope.account(account.getAccountUuid()));
           });
     var outbox = new AccountAuthorityOutboxRepository(dsl);
+    var issuer =
+        new AccountIssuerAuthorityEventProducer(
+            ISSUER,
+            generations,
+            outbox,
+            dsl,
+            java.util.Objects.requireNonNull(tx.getTransactionManager()));
     var readback =
         new AccountAuthoritySourceEventReadback(
             outbox,
@@ -227,8 +344,9 @@ class AccountControlUiCurrentSourcePostgresIntegrationTest {
             accounts,
             new AccountGlobalRoleSourceRepository(dsl, dataSource),
             generations,
-            readback);
-    return new Fixture(dsl, tx, account.getAccountUuid(), generations, source);
+            readback,
+            issuer);
+    return new Fixture(dsl, tx, account.getAccountUuid(), generations, source, issuer, outbox);
   }
 
   private static Long count(DSLContext dsl, String table) {
@@ -253,5 +371,7 @@ class AccountControlUiCurrentSourcePostgresIntegrationTest {
       TransactionTemplate tx,
       UUID accountId,
       AccountAuthorityGenerationRepository generations,
-      AccountControlUiCurrentSourceRepository source) {}
+      AccountControlUiCurrentSourceRepository source,
+      AccountIssuerAuthorityEventProducer issuer,
+      AccountAuthorityOutboxRepository outbox) {}
 }

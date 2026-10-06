@@ -2480,6 +2480,7 @@ jobs:
           path: |
             services/account-service/build/test-results/integrationTest/TEST-*AccountSecurityStateOperationPostgresIntegrationTest.xml
             services/account-service/build/test-results/integrationTest/TEST-*AccountControlUiIssuanceOperationPostgresIntegrationTest.xml
+            services/account-service/build/test-results/integrationTest/TEST-*AccountControlUiCurrentSourcePostgresIntegrationTest.xml
           if-no-files-found: warn
           retention-days: 7
 
@@ -2490,6 +2491,7 @@ jobs:
             --strict \
             --require-suite integration.net.firedevops.firemud.accountservice.AccountSecurityStateOperationPostgresIntegrationTest \
             --require-suite integration.net.firedevops.firemud.accountservice.AccountControlUiIssuanceOperationPostgresIntegrationTest \
+            --require-suite integration.net.firedevops.firemud.accountservice.repository.AccountControlUiCurrentSourcePostgresIntegrationTest \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountSecurityStateOperationPostgresIntegrationTest#pendingClaimAndExactRetryRetainOneOriginalCaptureWithoutSourceMutation()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountSecurityStateOperationPostgresIntegrationTest#originalCallerAndFamilyBindingsCannotBeChangedOnRetry()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountSecurityStateOperationPostgresIntegrationTest#concurrentExactClaimsSerializeToOneOriginalRequest()' \
@@ -2509,6 +2511,14 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountControlUiIssuanceOperationPostgresIntegrationTest#exactEncryptedResultSurvivesRestartRotationAndLaterTransactionRetry(Path)' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountControlUiIssuanceOperationPostgresIntegrationTest#lateRollbackLeavesOriginalPendingCaptureAndNoEncryptedResult()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountControlUiIssuanceOperationPostgresIntegrationTest#additiveV66MigrationPreservesV64ReceiptAndExistingV65Structure()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountControlUiCurrentSourcePostgresIntegrationTest#currentFreshSourceIsObservedAtOneOwnerTransactionWithoutEnrollmentOrMutation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountControlUiCurrentSourcePostgresIntegrationTest#currentIssuerAdvanceRetainsItsCompleteExactEventAndCheckpointInTheSameObservation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountControlUiCurrentSourcePostgresIntegrationTest#matchingAdvancedCountersWithoutTheirIssuerEventCannotProduceObservation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountControlUiCurrentSourcePostgresIntegrationTest#matchingCountersAndCheckpointCannotHideContradictoryIssuerEventDigest()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountControlUiCurrentSourcePostgresIntegrationTest#missingAuthorityFailsWithoutInventingAnInitialGeneration()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountControlUiCurrentSourcePostgresIntegrationTest#absentOwnerTransactionAndReadOnlyTransactionCannotProduceObservation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountControlUiCurrentSourcePostgresIntegrationTest#committedIssuerAdvanceRejectsThePriorExactSignedAndActiveRecord()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountControlUiCurrentSourcePostgresIntegrationTest#concurrentIssuerAdvanceSerializesOnTheObservationCompositeFence()' \
             account-service
 
       - name: Verify Account generation projection PostgreSQL and Redis proof cases

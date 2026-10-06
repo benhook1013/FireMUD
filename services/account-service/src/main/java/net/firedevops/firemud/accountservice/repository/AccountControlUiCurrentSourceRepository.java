@@ -14,6 +14,8 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerati
 import net.firedevops.firemud.accountservice.repository.AccountGlobalRoleSourceRepository.FreshEmptySource;
 import net.firedevops.firemud.accountservice.service.AccountAuthoritySourceEventReadback;
 import net.firedevops.firemud.accountservice.service.AccountAuthoritySourceReader.AccountSourceSnapshot;
+import net.firedevops.firemud.accountservice.service.AccountIssuerAuthorityEventProducer;
+import net.firedevops.firemud.accountservice.service.AccountIssuerAuthorityEventProducer.IssuerAuthoritySnapshot;
 import net.firedevops.firemud.accountservice.service.controlui.AccountControlUiTokenChecks.InspectedToken;
 import net.firedevops.firemud.common.security.AccountJwtExactValues;
 import net.firedevops.firemud.common.security.ControlUiJwtProfileValidator;
@@ -26,9 +28,9 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * Existing-only source observations for the genuinely unscoped fresh-creator control-ui cut.
  *
  * <p>All observations use the same locked Account transaction. The result is not a complete
- * account-auth-evidence-bundle/v1 and never authorizes creator registration: issuer event/source
- * provenance, current Coordination projections, durable token issuance and signer-generation
- * retention remain separate prerequisites. Reads cannot enroll missing authority or roles.
+ * account-auth-evidence-bundle/v1 and never authorizes creator registration: current Coordination
+ * projections, durable token issuance and signer-generation retention remain separate
+ * prerequisites. Reads cannot enroll missing authority or roles.
  */
 public final class AccountControlUiCurrentSourceRepository {
   private static final JsonMapper JSON = JsonMapper.builder().build();
@@ -37,6 +39,7 @@ public final class AccountControlUiCurrentSourceRepository {
   private final AccountGlobalRoleSourceRepository globalRoles;
   private final AccountAuthorityGenerationRepository generations;
   private final AccountAuthoritySourceEventReadback accountSource;
+  private final AccountIssuerAuthorityEventProducer issuerSource;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -46,12 +49,14 @@ public final class AccountControlUiCurrentSourceRepository {
       AccountRepository accounts,
       AccountGlobalRoleSourceRepository globalRoles,
       AccountAuthorityGenerationRepository generations,
-      AccountAuthoritySourceEventReadback accountSource) {
+      AccountAuthoritySourceEventReadback accountSource,
+      AccountIssuerAuthorityEventProducer issuerSource) {
     this.dsl = Objects.requireNonNull(dsl);
     this.accounts = Objects.requireNonNull(accounts);
     this.globalRoles = Objects.requireNonNull(globalRoles);
     this.generations = Objects.requireNonNull(generations);
     this.accountSource = Objects.requireNonNull(accountSource);
+    this.issuerSource = Objects.requireNonNull(issuerSource);
   }
 
   /**
@@ -71,6 +76,10 @@ public final class AccountControlUiCurrentSourceRepository {
         || (claims.containsKey("globalRoles") && !List.of().equals(claims.get("globalRoles")))) {
       throw invalid();
     }
+    // Lock issuer first, preserving the composite source-writer lock order. Both issuer history
+    // and recipient evidence remain fenced until this same Account transaction finishes.
+    IssuerAuthoritySnapshot issuer =
+        issuerSource.readCurrentInAccountSnapshot(ControlUiJwtProfileValidator.ISSUER);
     FreshEmptySource roles = globalRoles.readFreshEmptySourceForUpdate(candidate.accountId());
     Account account =
         accounts
@@ -86,6 +95,10 @@ public final class AccountControlUiCurrentSourceRepository {
     CompositeSnapshot current =
         generations.readCompositeSnapshot(
             ControlUiJwtProfileValidator.ISSUER, candidate.accountId(), List.of(), List.of());
+    if (issuer.issuerAuthGeneration() != current.issuer().generation()
+        || issuer.sourceVersion() != current.issuer().sourceVersion()) {
+      throw invalid();
+    }
     var latest = accountSource.requireCurrentLatest(account, current.account());
     String stream = "account:auth-authority:v1:account/" + candidate.accountId();
     if (latest.outboxSequence() == 0L) {
@@ -133,7 +146,7 @@ public final class AccountControlUiCurrentSourceRepository {
             "issuanceFenceSourceVersion", current.issuanceFence().sourceVersion());
     requireEqual(expectedVersions, candidate.registryRecord().get("authoritySourceVersions"));
     return new CurrentSourceObservation(
-        candidate.accountId(), current, source, roles.globalRoleSourceVersion());
+        candidate.accountId(), current, issuer, source, roles.globalRoleSourceVersion());
   }
 
   private static void requireEqual(Object left, Object right) {
@@ -150,16 +163,19 @@ public final class AccountControlUiCurrentSourceRepository {
   public static final class CurrentSourceObservation {
     private final UUID accountId;
     private final CompositeSnapshot authority;
+    private final IssuerAuthoritySnapshot issuerSource;
     private final AccountSourceSnapshot accountSource;
     private final long globalRoleSourceVersion;
 
     private CurrentSourceObservation(
         UUID accountId,
         CompositeSnapshot authority,
+        IssuerAuthoritySnapshot issuerSource,
         AccountSourceSnapshot accountSource,
         long globalRoleSourceVersion) {
       this.accountId = accountId;
       this.authority = authority;
+      this.issuerSource = issuerSource;
       this.accountSource = accountSource;
       this.globalRoleSourceVersion = globalRoleSourceVersion;
     }
@@ -174,6 +190,10 @@ public final class AccountControlUiCurrentSourceRepository {
 
     public AccountSourceSnapshot accountSource() {
       return accountSource;
+    }
+
+    public IssuerAuthoritySnapshot issuerSource() {
+      return issuerSource;
     }
 
     public long globalRoleSourceVersion() {

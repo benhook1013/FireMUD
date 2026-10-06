@@ -455,3 +455,7 @@ Entry format:
   - Context: commits and normal parent merges in the Unit 1B worktrees succeeded, but Git reported an earlier `gc.log` failure and excessive unreachable loose objects, then disabled automatic cleanup. The shared repository's root cause and object-retention needs are not established.
   - Expected pattern: distinguish successful publication from housekeeping health. Do not delete the warning log or run destructive object pruning as an implementation workaround; preserve unmerged branches, worktrees and unpublished objects until separately authorized maintenance establishes safe retention.
   - Outcome: commit/push and byte-exact patch-preservation checks succeeded. Housekeeping remains a nonblocking maintenance concern; no cleanup or pruning was attempted.
+
+- `2026-10-06`: JSON string escaping is not shell argument quoting
+  - Context: a controller job revision passed Markdown via a JSON-quoted shell argument; Bash evaluated backtick spans and preserved literal newline escapes, corrupting the saved brief despite a successful controller result. The observed substitutions were non-existent commit-name commands; no repository code or secret was read by them.
+  - Outcome: the next guarded revision restored the complete intended brief using shell-safe single-argument quoting, and exact readback matched the original text. Use a body file/stdin or shell-safe quoting for multiline controller input; a successful write alone does not prove content preservation.
