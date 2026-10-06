@@ -7,9 +7,11 @@ import dataclasses
 import fcntl
 import json
 import os
+import sqlite3
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
@@ -179,6 +181,96 @@ class RuntimeTest(unittest.TestCase):
             observer = LiveEvidence("owner/repo", LiveGitHub("owner/repo"), records=records)
             with self.subTest(error=type(failure).__name__):
                 self.assertEqual(observer._source_resolution_status(42, "hosted", checkpoint, HEAD), "unavailable")
+
+    def test_hosted_source_resolution_sqlite_wait_inherits_active_budget(self) -> None:
+        checkpoint = evidence.Checkpoint(
+            comment_id=55,
+            created_at="2026-09-30T12:00:00Z",
+            type="hosted",
+            raw_found=1,
+            accepted=1,
+            reviewed_sha=HEAD,
+            file_count=1,
+            correction=False,
+            updated_at=None,
+            run_id=None,
+            hosted_review_id=901,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            records = self._new_review_records(Path(directory) / "controller.sqlite3")
+            observer = LiveEvidence("owner/repo", LiveGitHub("owner/repo"), records=records)
+            with sqlite3.connect(records.path, isolation_level=None) as writer:
+                writer.execute("BEGIN EXCLUSIVE")
+                started = time.monotonic()
+                with (
+                    github.activate_hosted_preflight_budget(timeout_seconds=0.05),
+                    self.assertRaises(github.HostedPreflightDeadlineExceeded),
+                ):
+                    observer._source_resolution_status(42, "hosted", checkpoint, HEAD)
+                self.assertLess(time.monotonic() - started, 1)
+                writer.rollback()
+
+    def test_unposted_attempt_cleanup_uses_configured_sqlite_bound_after_budget_expires(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            records = self._new_review_records(Path(directory) / "controller.sqlite3")
+            records.start_attempt(
+                attempt_id="cleanup-after-hosted-expiry",
+                source_pr=42,
+                channel="hosted",
+                candidate_sha=HEAD,
+            )
+            runner = HostedRunner("owner/repo", LiveGitHub("owner/repo"), records=records)
+            with github.activate_hosted_preflight_budget(timeout_seconds=10) as budget:
+                budget.deadline = time.monotonic() - 1
+                runner._finish_unposted_attempt("cleanup-after-hosted-expiry")
+
+            self.assertEqual(records.attempt("cleanup-after-hosted-expiry")["state"], "failed")
+
+    def test_archived_thread_history_wait_uses_remaining_hosted_budget(self) -> None:
+        trigger_at = "2026-09-23T00:00:00Z"
+        response_at = datetime.fromisoformat("2026-09-23T00:02:00+00:00")
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            state_json = common / "firemud" / "pr-review-stack.json"
+            state_json.parent.mkdir(parents=True)
+            state_json.write_text(json.dumps(ReviewState(ordered_prs=(42,)).to_dict()), encoding="utf-8")
+            database = state_json.with_suffix(".sqlite3")
+            sqlite_store.SqliteStateStore.migrate_legacy_json(state_json, database)
+            records = sqlite_review_records.SqliteReviewRecords(database)
+            records.bootstrap()
+            attempt_id = "archived-thread-budget"
+            records.start_attempt(
+                attempt_id=attempt_id,
+                source_pr=42,
+                channel="hosted",
+                candidate_sha=HEAD,
+                started_at=trigger_at,
+                metadata={"repository": "owner/repo"},
+            )
+            record = self._trigger_record(created=trigger_at)
+            record["sqlite_attempt_id"] = attempt_id
+            record_path = hosted.default_trigger_record_path("owner/repo", 42, common)
+
+            with sqlite3.connect(database, isolation_level=None) as writer:
+                writer.execute("BEGIN EXCLUSIVE")
+                started = time.monotonic()
+                with (
+                    github.activate_hosted_preflight_budget(timeout_seconds=0.05) as budget,
+                ):
+                    archived = hosted._archived_completed_thread_bodies(
+                        "owner/repo",
+                        42,
+                        HEAD,
+                        11,
+                        response_at,
+                        record,
+                        record_path,
+                    )
+                    self.assertEqual(archived, {})
+                    with self.assertRaises(github.HostedPreflightDeadlineExceeded):
+                        budget.remaining_seconds()
+                self.assertLess(time.monotonic() - started, 1)
+                writer.rollback()
 
     def test_closed_pr_archived_cooldown_uses_response_time_and_casefolds_repository(self) -> None:
         runner = HostedRunner("owner/repo", LiveGitHub("owner/repo"))
@@ -2307,6 +2399,35 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(prior["run_id"], "prior-hosted-attempt")
             self.assertTrue(records.history(42)["runs"][0]["finalized"])
             self.assertTrue(path.with_name("trigger-10.json").exists())
+
+    def test_terminal_capture_wait_uses_remaining_hosted_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            records = self._new_review_records(common / "controller.sqlite3")
+            attempt_id = "terminal-capture-deadline"
+            records.start_attempt(
+                attempt_id=attempt_id,
+                source_pr=42,
+                channel="hosted",
+                candidate_sha=HEAD,
+                metadata={"repository": "owner/repo"},
+            )
+            record = self._trigger_record()
+            record["sqlite_attempt_id"] = attempt_id
+            current_path = hosted.default_trigger_record_path("owner/repo", 42, common)
+            runner = HostedRunner("owner/repo", LiveGitHub("owner/repo"), records=records)
+            with sqlite3.connect(records.path, isolation_level=None) as writer:
+                writer.execute("BEGIN EXCLUSIVE")
+                started = time.monotonic()
+                with github.activate_hosted_preflight_budget(timeout_seconds=0.05) as budget:
+                    warning = runner._capture_terminal_attempt(42, record, self._payload(), current_path)
+                    self.assertIn("HostedPreflightDeadlineExceeded", warning or "")
+                    with self.assertRaises(github.HostedPreflightDeadlineExceeded):
+                        budget.remaining_seconds()
+                self.assertLess(time.monotonic() - started, 1)
+                writer.rollback()
+
+            self.assertEqual(records.attempt(attempt_id)["state"], "started")
 
     def test_status_history_does_not_mutate_hosted_attempt_records(self) -> None:
         scenarios = (

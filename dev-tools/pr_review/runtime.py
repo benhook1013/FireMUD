@@ -9,6 +9,7 @@ import os
 import re
 import stat
 import subprocess
+import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -1777,6 +1778,8 @@ class LiveEvidence:
                     self._records_histories[pr] = self.records.history(pr, include_display=False)
                 except RecordsNotBootstrapped:
                     return None
+                except github.HostedPreflightDeadlineExceeded:
+                    raise
                 except (ReviewRecordsError, OSError):
                     return "unavailable"
             history = self._records_histories[pr]
@@ -2200,7 +2203,14 @@ class HostedRunner:
         if self.records is None:
             return
         try:
-            attempt = self.records.attempt(attempt_id)
+            cleanup_deadline = (
+                time.monotonic() + self.records.timeout if isinstance(self.records, SqliteReviewRecords) else None
+            )
+            attempt = (
+                self.records.attempt(attempt_id, deadline=cleanup_deadline)
+                if cleanup_deadline is not None
+                else self.records.attempt(attempt_id)
+            )
             if attempt["state"] != "started":
                 return
             self.records.finish_attempt(
@@ -2208,6 +2218,7 @@ class HostedRunner:
                 state="failed",
                 finished_at=hosted.utc_now(),
                 diagnostic="Hosted POST was not issued because its durable reservation could not be written",
+                **({"deadline": cleanup_deadline} if cleanup_deadline is not None else {}),
             )
         except Exception:  # noqa: BLE001 - preserve the primary reservation failure
             # The reservation write failure remains primary. A later explicit

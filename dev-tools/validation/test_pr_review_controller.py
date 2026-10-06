@@ -7,9 +7,11 @@ import dataclasses
 import fcntl
 import hashlib
 import json
+import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from subprocess import CompletedProcess
@@ -52,8 +54,10 @@ from pr_review.runtime import LiveEvidence, LiveGitHub
 from pr_review.sqlite_review_records import FindingObservation, ReviewRecordsError, SqliteReviewRecords
 from pr_review.sqlite_store import SqliteStateStore
 from pr_review.state import (
+    ControllerStateStore,
     Judgment,
     LegacyEvidenceTransition,
+    ReviewState,
     StackReconciliationDecision,
     StateStore,
     SummaryFindingDisposition,
@@ -318,6 +322,39 @@ class ControllerTests(unittest.TestCase):
 
         self.assertEqual(observed_phases, ["target_selection"])
         self.assertEqual(adapter_calls, [])
+
+    def test_held_state_database_during_target_selection_keeps_preflight_diagnostics(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = Path(directory) / "firemud" / "pr-review-stack.json"
+            state_path.parent.mkdir(parents=True)
+            state_path.write_text(json.dumps(ReviewState(ordered_prs=(1,)).to_dict()), encoding="utf-8")
+            database = state_path.with_suffix(".sqlite3")
+            SqliteStateStore.migrate_legacy_json(state_path, database)
+            controller = ReviewController(
+                store=ControllerStateStore(state_path),
+                github=FakeGitHub({1: pr(1, HEAD_1)}),
+                git=FakeGit(),
+                evidence={},
+                repository="owner/repo",
+                hosted_adapter=lambda *_args, **_kwargs: self.fail("preflight must fail before adapter"),
+            )
+            with sqlite3.connect(database, isolation_level=None) as writer:
+                writer.execute("BEGIN EXCLUSIVE")
+                started = time.monotonic()
+                with (
+                    patch.object(
+                        github,
+                        "hosted_preflight_budget",
+                        side_effect=lambda: github.activate_hosted_preflight_budget(timeout_seconds=0.05),
+                    ),
+                    self.assertRaisesRegex(
+                        ControllerError,
+                        r"Hosted preflight deadline exceeded \(phase=target_selection, elapsed=.*completed=0, budget=0s\)",
+                    ),
+                ):
+                    controller.run_hosted(expected_pr=1)
+                self.assertLess(time.monotonic() - started, 1)
+                writer.rollback()
 
     def test_summary_decision_race_reselects_and_holds_before_reservation(self):
         evidence = {(1, "hosted"): [self.allocation_evidence(checkpoint="baseline")]}

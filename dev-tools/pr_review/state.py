@@ -1383,7 +1383,11 @@ class ControllerStateStore:
     def _active_store(self, *, deadline: float | None = None) -> Any:
         deadline, _ = self._hosted_deadline(deadline)
         if self.path.is_dir():
-            store, status = _cutover_sqlite_store(self.path, deadline=deadline)
+            try:
+                store, status = _cutover_sqlite_store(self.path, deadline=deadline)
+            except StateLockTimeout:
+                self._check_hosted_deadline(deadline, lock_timeout=True)
+                raise
             if status.get("compatible") is not True:
                 raise StateError(f"SQLite review state is incompatible: {status.get('reason')}")
             return store
@@ -1393,24 +1397,31 @@ class ControllerStateStore:
 
     def load(self, *, deadline: float | None = None) -> ReviewState:
         deadline, _ = self._hosted_deadline(deadline)
-        store = self._active_store(deadline=deadline)
-        if isinstance(store, StateStore):
-            state = store.load()
-            if deadline is not None:
-                self._check_hosted_deadline(deadline)
-            return state
-        return store.load(deadline=deadline)
+        try:
+            store = self._active_store(deadline=deadline)
+            if isinstance(store, StateStore):
+                state = store.load()
+                if deadline is not None:
+                    self._check_hosted_deadline(deadline)
+                return state
+            return store.load(deadline=deadline)
+        except StateLockTimeout:
+            self._check_hosted_deadline(deadline, lock_timeout=True)
+            raise
 
     @staticmethod
-    def _check_hosted_deadline(deadline: float | None) -> None:
+    def _check_hosted_deadline(deadline: float | None, *, lock_timeout: bool = False) -> None:
         if deadline is None:
             return
         from . import github
 
         budget = github.active_hosted_preflight_budget()
         if budget is not None and budget.deadline == deadline:
-            budget.remaining_seconds()
-        elif time.monotonic() >= deadline:
+            remaining = budget.remaining_seconds()
+            if lock_timeout and remaining <= 0.002:
+                time.sleep(remaining)
+                budget.remaining_seconds()
+        elif not lock_timeout and time.monotonic() >= deadline:
             raise StateLockTimeout("timed out waiting for the Hosted preflight state read")
 
     def save(self, state: ReviewState) -> None:

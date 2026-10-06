@@ -6,12 +6,13 @@ import sys
 import tempfile
 import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
-from pr_review import sqlite_backup, sqlite_hosted_capture, sqlite_provider_imports, sqlite_review_records
+from pr_review import github, sqlite_backup, sqlite_hosted_capture, sqlite_provider_imports, sqlite_review_records
 from pr_review.evidence import Checkpoint
 from pr_review.sqlite_finding_text import _hosted_aggregate_display_detail, _safe_finding_detail
 from pr_review.sqlite_review_records import (
@@ -936,6 +937,43 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             )["state"],
             "started",
         )
+
+    def test_unparameterized_record_operations_inherit_only_an_active_hosted_budget(self) -> None:
+        self.bootstrap()
+        writer = sqlite3.connect(self.database, isolation_level=None)
+        try:
+            writer.execute("BEGIN IMMEDIATE")
+            started = time.monotonic()
+            with (
+                github.activate_hosted_preflight_budget(timeout_seconds=0.05) as budget,
+                self.assertRaises(github.HostedPreflightDeadlineExceeded),
+            ):
+                def register_attempt_in_worker():
+                    with github.bind_hosted_preflight_budget(budget):
+                        self.records.start_attempt(
+                            attempt_id="attempt-inherited-hosted-budget",
+                            source_pr=2890,
+                            channel="hosted",
+                        )
+
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    pool.submit(register_attempt_in_worker).result()
+            self.assertLess(time.monotonic() - started, 1)
+            self.assertIsNone(github.active_hosted_preflight_budget())
+        finally:
+            writer.rollback()
+            writer.close()
+
+        bounded_records = SqliteReviewRecords(self.database, timeout=0.05)
+        with sqlite3.connect(self.database, isolation_level=None) as writer:
+            writer.execute("BEGIN EXCLUSIVE")
+            started = time.monotonic()
+            with self.assertRaisesRegex(ReviewRecordsError, "SQLite failure in attempt_history"):
+                bounded_records.attempt_history(2890)
+            self.assertLess(time.monotonic() - started, 1)
+            writer.rollback()
+
+        self.assertEqual(self.records.attempt_history(2890), [])
 
     def test_history_validates_attempt_metadata_once_as_an_object(self) -> None:
         self.bootstrap()
