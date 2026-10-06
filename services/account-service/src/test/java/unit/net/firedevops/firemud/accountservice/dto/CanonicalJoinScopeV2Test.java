@@ -58,7 +58,7 @@ class CanonicalJoinScopeV2Test {
     assertThrows(
         IllegalArgumentException.class, () -> withEvaluatedAt(scope, "2026-02-30T00:00:00Z"));
     assertThrows(
-        IllegalArgumentException.class, () -> withExpiry(scope, "2026-10-03T00:01:00+00:00"));
+        IllegalArgumentException.class, () -> withExpiry(scope, "2026-10-03T01:04:03+00:00"));
     assertThrows(IllegalArgumentException.class, () -> withConnectScopeId(scope, "\uD800"));
     assertThrows(IllegalArgumentException.class, () -> withWorldSlug(scope, "\uD800"));
   }
