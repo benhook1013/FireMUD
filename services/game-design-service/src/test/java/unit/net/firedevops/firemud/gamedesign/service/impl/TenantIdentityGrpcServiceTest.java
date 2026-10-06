@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
@@ -29,12 +30,16 @@ import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.FreshTenantCreatorDigest;
 import net.firedevops.firemud.common.tenant.FreshTenantCreatorEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
+import net.firedevops.firemud.gamedesign.repository.FreshTenantCreationReservation;
 import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository;
+import net.firedevops.firemud.gamedesign.repository.GameTenantCreationReservationRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTenantIdentity;
 import net.firedevops.firemud.gamedesign.service.impl.TenantAssociationMigrationService.ApprovedAssociation;
+import net.firedevops.firemud.gamedesign.v1.ReadFreshTenantCreationReservationRequest;
+import net.firedevops.firemud.gamedesign.v1.ReadFreshTenantCreationReservationResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreationRequest;
@@ -79,6 +84,8 @@ class TenantIdentityGrpcServiceTest {
       UUID.fromString("33333333-3333-4333-8333-333333333333");
   private static final UUID CREATOR_READ_REQUEST_ID =
       UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+  private static final UUID RESERVATION_READ_REQUEST_ID =
+      UUID.fromString("dddddddd-dddd-4ddd-8ddd-dddddddddddd");
   private static final UUID CREATOR_INITIATING_ACCOUNT_ID =
       UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
   private static final UUID CREATOR_AUTHORIZATION_OPERATION_ID =
@@ -98,6 +105,8 @@ class TenantIdentityGrpcServiceTest {
       mock(TenantAssociationMigrationService.class);
   private final GameTenantCreationRepository creationRepository =
       mock(GameTenantCreationRepository.class);
+  private final GameTenantCreationReservationRepository reservationRepository =
+      mock(GameTenantCreationReservationRepository.class);
   private final GameAuthoredWorldSourceRepository authoredWorldRepository =
       mock(GameAuthoredWorldSourceRepository.class);
   private final GameSessionTenantAssociationRepository gameSessionAssociationRepository =
@@ -107,6 +116,7 @@ class TenantIdentityGrpcServiceTest {
           repository,
           associationService,
           creationRepository,
+          reservationRepository,
           authoredWorldRepository,
           gameSessionAssociationRepository,
           "test");
@@ -481,6 +491,131 @@ class TenantIdentityGrpcServiceTest {
     assertNull(unknownFields.value);
     assertNull(authenticatedContext.value);
     verifyNoInteractions(creationRepository);
+  }
+
+  @Test
+  void reservationReadRequiresExactSameNamespaceAccountPeerBeforeOwnerAccess() {
+    for (String peer :
+        new String[] {
+          null,
+          WRONG_PEER,
+          WRONG_NAMESPACE_ACCOUNT_PEER,
+          ACCOUNT_MIGRATOR_PEER,
+          WRONG_NAMESPACE_MIGRATOR_PEER
+        }) {
+      ReservationObserver observer = reservationCall(reservationRequest(), peer, false);
+      assertEquals(Status.Code.PERMISSION_DENIED, observer.errorCode);
+      assertNull(observer.value);
+      assertFalse(observer.completed);
+    }
+    verifyNoInteractions(reservationRepository);
+  }
+
+  @Test
+  void reservationReadReturnsOnlyExactPersistedPreparationWithoutCreatingOwnerState() {
+    FreshTenantCreationReservation reservation = freshReservation();
+    when(reservationRepository.read("test", FRESH_CREATION_REQUEST_ID, FRESH_REQUEST_DIGEST))
+        .thenReturn(Optional.of(reservation));
+
+    ReservationObserver observer = reservationCall(reservationRequest(), ACCOUNT_PEER, false);
+
+    assertNull(observer.errorCode);
+    assertTrue(observer.completed);
+    assertNotNull(observer.value);
+    assertEquals(1, observer.value.getSchemaVersion());
+    assertEquals("test", observer.value.getTargetNamespace());
+    assertEquals(RESERVATION_READ_REQUEST_ID.toString(), observer.value.getReadRequestId());
+    assertEquals(FRESH_CREATION_REQUEST_ID.toString(), observer.value.getCreationRequestId());
+    assertEquals(FRESH_REQUEST_DIGEST, observer.value.getRequestDigest());
+    assertEquals(FRESH_OPERATION_ID.toString(), observer.value.getCreationOperationId());
+    assertEquals(FRESH_CANONICAL_TENANT_ID.toString(), observer.value.getCanonicalTenantId());
+    assertEquals(FRESH_SOURCE_GAME_TENANT_KEY, observer.value.getSourceGameTenantKey());
+    assertEquals("Fresh Realm", observer.value.getName());
+    assertFalse(observer.value.hasDescription());
+    assertEquals(
+        net.firedevops.firemud.common.tenant.FreshTenantCreationReservationDigest.evidenceDigest(
+            1,
+            "test",
+            FRESH_CREATION_REQUEST_ID,
+            FRESH_REQUEST_DIGEST,
+            FRESH_OPERATION_ID,
+            FRESH_CANONICAL_TENANT_ID,
+            FRESH_SOURCE_GAME_TENANT_KEY,
+            "Fresh Realm",
+            null),
+        observer.value.getEvidenceDigest());
+    verify(reservationRepository).read("test", FRESH_CREATION_REQUEST_ID, FRESH_REQUEST_DIGEST);
+    verifyNoInteractions(
+        repository,
+        associationService,
+        creationRepository,
+        authoredWorldRepository,
+        gameSessionAssociationRepository);
+  }
+
+  @Test
+  void reservationReadRejectsForwardedContextUnknownFieldsChangedNamespaceAndSubstitutedIds() {
+    ReadFreshTenantCreationReservationRequest exact = reservationRequest();
+    when(reservationRepository.read("test", FRESH_CREATION_REQUEST_ID, FRESH_REQUEST_DIGEST))
+        .thenReturn(Optional.of(freshReservation()));
+    ReservationObserver forwarded = reservationCall(exact, ACCOUNT_PEER, true);
+    ReservationObserver unknown =
+        reservationCall(
+            exact.toBuilder()
+                .setUnknownFields(
+                    UnknownFieldSet.newBuilder()
+                        .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
+                        .build())
+                .build(),
+            ACCOUNT_PEER,
+            false);
+    ReservationObserver otherNamespace =
+        reservationCall(exact.toBuilder().setTargetNamespace("other").build(), ACCOUNT_PEER, false);
+    ReservationObserver substitutedOperation =
+        reservationCall(
+            exact.toBuilder()
+                .setExpectedCreationOperationId(FRESH_CANONICAL_TENANT_ID.toString())
+                .build(),
+            ACCOUNT_PEER,
+            false);
+    ReservationObserver substitutedTenant =
+        reservationCall(
+            exact.toBuilder().setExpectedCanonicalTenantId(FRESH_OPERATION_ID.toString()).build(),
+            ACCOUNT_PEER,
+            false);
+
+    assertEquals(Status.Code.PERMISSION_DENIED, forwarded.errorCode);
+    assertEquals(Status.Code.INVALID_ARGUMENT, unknown.errorCode);
+    assertEquals(Status.Code.PERMISSION_DENIED, otherNamespace.errorCode);
+    assertEquals(Status.Code.FAILED_PRECONDITION, substitutedOperation.errorCode);
+    assertEquals(Status.Code.FAILED_PRECONDITION, substitutedTenant.errorCode);
+    assertNull(forwarded.value);
+    assertNull(unknown.value);
+    verify(reservationRepository, times(2))
+        .read("test", FRESH_CREATION_REQUEST_ID, FRESH_REQUEST_DIGEST);
+  }
+
+  @Test
+  void reservationReadRejectsMissingMalformedNilAndReusedReadIdentityBeforeOwnerAccess() {
+    for (ReadFreshTenantCreationReservationRequest request :
+        new ReadFreshTenantCreationReservationRequest[] {
+          ReadFreshTenantCreationReservationRequest.getDefaultInstance(),
+          reservationRequest().toBuilder().clearReadRequestId().build(),
+          reservationRequest().toBuilder().setReadRequestId("not-a-uuid").build(),
+          reservationRequest().toBuilder()
+              .setReadRequestId(FRESH_CREATION_REQUEST_ID.toString())
+              .build(),
+          reservationRequest().toBuilder()
+              .setExpectedCanonicalTenantId("00000000-0000-0000-0000-000000000000")
+              .build(),
+          reservationRequest().toBuilder()
+              .setExpectedRequestDigest("SHA256:" + "a".repeat(64))
+              .build()
+        }) {
+      assertEquals(
+          Status.Code.INVALID_ARGUMENT, reservationCall(request, ACCOUNT_PEER, false).errorCode);
+    }
+    verifyNoInteractions(reservationRepository);
   }
 
   @Test
@@ -1026,6 +1161,55 @@ class TenantIdentityGrpcServiceTest {
     return observer;
   }
 
+  private ReadFreshTenantCreationReservationRequest reservationRequest() {
+    return ReadFreshTenantCreationReservationRequest.newBuilder()
+        .setSchemaVersion(1)
+        .setTargetNamespace("test")
+        .setReadRequestId(RESERVATION_READ_REQUEST_ID.toString())
+        .setCreationRequestId(FRESH_CREATION_REQUEST_ID.toString())
+        .setExpectedRequestDigest(FRESH_REQUEST_DIGEST)
+        .setExpectedCreationOperationId(FRESH_OPERATION_ID.toString())
+        .setExpectedCanonicalTenantId(FRESH_CANONICAL_TENANT_ID.toString())
+        .build();
+  }
+
+  private FreshTenantCreationReservation freshReservation() {
+    return new FreshTenantCreationReservation(
+        1,
+        "test",
+        FRESH_CREATION_REQUEST_ID,
+        FRESH_REQUEST_DIGEST,
+        FRESH_OPERATION_ID,
+        FRESH_CANONICAL_TENANT_ID,
+        FRESH_SOURCE_GAME_TENANT_KEY,
+        "Fresh Realm",
+        null);
+  }
+
+  private ReservationObserver reservationCall(
+      ReadFreshTenantCreationReservationRequest request,
+      String peerUri,
+      boolean authenticatedContext) {
+    ReservationObserver observer = new ReservationObserver();
+    Context context = Context.current();
+    if (peerUri != null) {
+      context =
+          context.withValue(
+              GrpcPeerIdentity.CONTEXT_KEY, GrpcPeerIdentity.parseUri(peerUri).orElseThrow());
+    }
+    if (authenticatedContext) {
+      SessionContext.setContext(FRESH_CANONICAL_TENANT_ID.toString(), List.of(), Map.of());
+    }
+    try {
+      context.run(() -> service.readFreshTenantCreationReservation(request, observer));
+    } finally {
+      if (authenticatedContext) {
+        SessionContext.clear();
+      }
+    }
+    return observer;
+  }
+
   private ResolveFreshTenantCreatorQualificationRequest freshCreatorRequest() {
     FreshTenantCreationEvidence source = freshCreationReceipt();
     String creatorDigest =
@@ -1270,6 +1454,28 @@ class TenantIdentityGrpcServiceTest {
 
     @Override
     public void onNext(ResolveFreshTenantCreatorQualificationResponse response) {
+      value = response;
+    }
+
+    @Override
+    public void onError(Throwable failure) {
+      errorCode = Status.fromThrowable(failure).getCode();
+    }
+
+    @Override
+    public void onCompleted() {
+      completed = true;
+    }
+  }
+
+  private static final class ReservationObserver
+      implements StreamObserver<ReadFreshTenantCreationReservationResponse> {
+    private ReadFreshTenantCreationReservationResponse value;
+    private Status.Code errorCode;
+    private boolean completed;
+
+    @Override
+    public void onNext(ReadFreshTenantCreationReservationResponse response) {
       value = response;
     }
 

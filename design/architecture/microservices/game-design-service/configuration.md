@@ -22,6 +22,12 @@ Additional variables specific to this service:
 
 - The Game Design Service does **not** use Redis at runtime. It neither reads nor writes Coordination Redis or Cache/Rate-Limit Redis; all state lives in PostgreSQL and external asset storage as described in the parent service doc and sibling design docs.
 
+## Authored-World Source Delivery
+
+The owner-local delivery worker uses `firemud.authored-world-source.enabled` (default `false`), `delivery.batch-size` (default `25`, range `1..100`) and `delivery.poll-interval-ms` (default `5000`, minimum `1000`). `FIREMUD_GRPC_WORKLOAD_NAMESPACE` supplies the exact workload namespace; no namespace is inferred. The worker reads bounded namespace-qualified pending pages, invokes the existing authenticated World intake and independent readback outside database transactions, then acknowledges the exact durable result. Failed or ambiguous deliveries retain their original request identity for automatic retry.
+
+The feature remains disabled until the [creator/source prerequisites](../../../project-management/implementation-tracking/game-authoring-publishing-and-activation.md#current-status) are proved. Configuration and workload authentication do not establish creator authorization, release attestation or runtime admission. The source contract remains owned by [API Contracts](./api-contracts.md).
+
 ## Asset Store
 
 Published assets are uploaded to an S3-compatible bucket. Configure the client with:

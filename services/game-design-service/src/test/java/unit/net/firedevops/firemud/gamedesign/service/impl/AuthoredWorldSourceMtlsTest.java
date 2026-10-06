@@ -59,14 +59,18 @@ import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceGrpcCodec;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationReservationDigest;
 import net.firedevops.firemud.common.tenant.FreshTenantCreatorDigest;
 import net.firedevops.firemud.common.tenant.FreshTenantCreatorEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
+import net.firedevops.firemud.gamedesign.repository.FreshTenantCreationReservation;
 import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository;
+import net.firedevops.firemud.gamedesign.repository.GameTenantCreationReservationRepository;
 import net.firedevops.firemud.gamedesign.v1.FreshTenantCreatorQualificationEvidence;
+import net.firedevops.firemud.gamedesign.v1.ReadFreshTenantCreationReservationRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreationRequest;
@@ -131,6 +135,7 @@ class AuthoredWorldSourceMtlsTest {
           "gamedesign.v1.TenantIdentityService/ResolveLegacyAccountTenantAssociation",
           "gamedesign.v1.TenantIdentityService/ResolveFreshTenantCreation",
           CREATOR_QUALIFICATION_METHOD,
+          "gamedesign.v1.TenantIdentityService/ReadFreshTenantCreationReservation",
           "gamedesign.v1.TenantIdentityService/ResolveRuntimeTenantIdentity",
           SOURCE_METHOD,
           "gamedesign.v1.TenantIdentityService/ResolveLegacyGameSessionTenantAssociation");
@@ -156,6 +161,7 @@ class AuthoredWorldSourceMtlsTest {
   private GameRepository gameRepository;
   private TenantAssociationMigrationService associationService;
   private GameTenantCreationRepository creationRepository;
+  private GameTenantCreationReservationRepository reservationRepository;
   private GameAuthoredWorldSourceRepository authoredWorldRepository;
   private GameSessionTenantAssociationRepository gameSessionAssociationRepository;
   private Server server;
@@ -235,6 +241,7 @@ class AuthoredWorldSourceMtlsTest {
     gameRepository = mock(GameRepository.class);
     associationService = mock(TenantAssociationMigrationService.class);
     creationRepository = mock(GameTenantCreationRepository.class);
+    reservationRepository = mock(GameTenantCreationReservationRepository.class);
     authoredWorldRepository = mock(GameAuthoredWorldSourceRepository.class);
     gameSessionAssociationRepository = mock(GameSessionTenantAssociationRepository.class);
     when(authoredWorldRepository.read(SOURCE_OPERATION_ID, TENANT_ID, "harbor-world", NAMESPACE))
@@ -330,6 +337,78 @@ class AuthoredWorldSourceMtlsTest {
     }
 
     verifyNoInteractions(authoredWorldRepository);
+  }
+
+  @Test
+  void exactAccountMtlsPeerReadsOnlyThePersistedReservationOverPhysicalSocket() throws Exception {
+    String requestDigest =
+        GameTenantCreationDigest.requestDigest(
+            NAMESPACE, FRESH_CREATION_REQUEST_ID, "fresh-game-tenant-17", "Fresh World", null);
+    FreshTenantCreationReservation reservation =
+        new FreshTenantCreationReservation(
+            1,
+            NAMESPACE,
+            FRESH_CREATION_REQUEST_ID,
+            requestDigest,
+            FRESH_CREATION_OPERATION_ID,
+            TENANT_ID,
+            "fresh-game-tenant-17",
+            "Fresh World",
+            null);
+    when(reservationRepository.read(NAMESPACE, FRESH_CREATION_REQUEST_ID, requestDigest))
+        .thenReturn(Optional.of(reservation));
+
+    ManagedChannel channel = channel(server, pki.accountServiceCertificate(), null);
+    try {
+      var response =
+          sourceStub(channel)
+              .readFreshTenantCreationReservation(reservationReadRequest(requestDigest));
+      assertThat(response.getSchemaVersion()).isEqualTo(1);
+      assertThat(response.getTargetNamespace()).isEqualTo(NAMESPACE);
+      assertThat(response.getReadRequestId()).isEqualTo(CREATOR_READ_REQUEST_ID.toString());
+      assertThat(response.getCreationRequestId()).isEqualTo(FRESH_CREATION_REQUEST_ID.toString());
+      assertThat(response.getRequestDigest()).isEqualTo(requestDigest);
+      assertThat(response.getCreationOperationId())
+          .isEqualTo(FRESH_CREATION_OPERATION_ID.toString());
+      assertThat(response.getCanonicalTenantId()).isEqualTo(TENANT_ID.toString());
+      assertThat(response.getSourceGameTenantKey()).isEqualTo("fresh-game-tenant-17");
+      assertThat(response.getName()).isEqualTo("Fresh World");
+      assertThat(response.hasDescription()).isFalse();
+      assertThat(response.getEvidenceDigest())
+          .isEqualTo(
+              FreshTenantCreationReservationDigest.evidenceDigest(
+                  1,
+                  NAMESPACE,
+                  FRESH_CREATION_REQUEST_ID,
+                  requestDigest,
+                  FRESH_CREATION_OPERATION_ID,
+                  TENANT_ID,
+                  "fresh-game-tenant-17",
+                  "Fresh World",
+                  null));
+    } finally {
+      stopChannel(channel);
+    }
+    verify(reservationRepository).read(NAMESPACE, FRESH_CREATION_REQUEST_ID, requestDigest);
+  }
+
+  @Test
+  void reservationSocketDeniesWrongNamespaceAccountPeerBeforeOwnerRead() throws Exception {
+    String requestDigest =
+        GameTenantCreationDigest.requestDigest(
+            NAMESPACE, FRESH_CREATION_REQUEST_ID, "fresh-game-tenant-17", "Fresh World", null);
+    ManagedChannel wrongNamespaceChannel =
+        channel(server, pki.crossNamespaceAccountCertificate(), null);
+    try {
+      assertStatus(
+          () ->
+              sourceStub(wrongNamespaceChannel)
+                  .readFreshTenantCreationReservation(reservationReadRequest(requestDigest)),
+          Status.Code.PERMISSION_DENIED);
+    } finally {
+      stopChannel(wrongNamespaceChannel);
+    }
+    verifyNoInteractions(reservationRepository);
   }
 
   @Test
@@ -611,6 +690,7 @@ class AuthoredWorldSourceMtlsTest {
             gameRepository,
             associationService,
             creationRepository,
+            reservationRepository,
             authoredWorldRepository,
             gameSessionAssociationRepository,
             NAMESPACE);
@@ -716,6 +796,19 @@ class AuthoredWorldSourceMtlsTest {
         .setAccountAuthorizationOperationId(ACCOUNT_AUTHORIZATION_OPERATION_ID.toString())
         .setAccountAuthorizationDigest(ACCOUNT_AUTHORIZATION_DIGEST)
         .setExpectedCreatorEvidenceDigest(expectedCreatorEvidenceDigest)
+        .build();
+  }
+
+  private static ReadFreshTenantCreationReservationRequest reservationReadRequest(
+      String requestDigest) {
+    return ReadFreshTenantCreationReservationRequest.newBuilder()
+        .setSchemaVersion(1)
+        .setTargetNamespace(NAMESPACE)
+        .setReadRequestId(CREATOR_READ_REQUEST_ID.toString())
+        .setCreationRequestId(FRESH_CREATION_REQUEST_ID.toString())
+        .setExpectedRequestDigest(requestDigest)
+        .setExpectedCreationOperationId(FRESH_CREATION_OPERATION_ID.toString())
+        .setExpectedCanonicalTenantId(TENANT_ID.toString())
         .build();
   }
 

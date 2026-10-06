@@ -36,6 +36,8 @@ class TenantIdentityAuthConfigurationTest {
       "gamedesign.v1.TenantIdentityService/ResolveFreshTenantCreation";
   private static final String FRESH_CREATOR_QUALIFICATION_METHOD =
       "gamedesign.v1.TenantIdentityService/ResolveFreshTenantCreatorQualification";
+  private static final String FRESH_RESERVATION_READ_METHOD =
+      "gamedesign.v1.TenantIdentityService/ReadFreshTenantCreationReservation";
   private static final String RUNTIME_TENANT_METHOD =
       "gamedesign.v1.TenantIdentityService/ResolveRuntimeTenantIdentity";
   private static final String AUTHORED_WORLD_SOURCE_METHOD =
@@ -86,6 +88,7 @@ class TenantIdentityAuthConfigurationTest {
             ACCOUNT_ASSOCIATION_METHOD,
             FRESH_CREATION_METHOD,
             FRESH_CREATOR_QUALIFICATION_METHOD,
+            FRESH_RESERVATION_READ_METHOD,
             RUNTIME_TENANT_METHOD,
             AUTHORED_WORLD_SOURCE_METHOD,
             GAME_SESSION_ASSOCIATION_METHOD,

@@ -19,6 +19,8 @@ Additional variables configure world-data caching and housekeeping:
 
 ## Configuration Source Locations
 
+Authored-source intake composition is separately gated by `firemud.authored-world-source.enabled` (default `false`) and the exact `FIREMUD_GRPC_WORKLOAD_NAMESPACE`. Composition requires an enabled gRPC mTLS server with mandatory client certificates and readable file-backed certificate, private key and trust material. Its two exact owner methods bypass bearer JWT checks only; each handler still verifies the same-namespace Game Design peer before any owner lookup or mutation. This gate does not authorize creator writes, release publication or lifecycle activation; those [implementation prerequisites](../../../project-management/implementation-tracking/game-authoring-publishing-and-activation.md#current-status) remain independent.
+
 - Runtime configuration defaults live in `services/world-management-service/src/main/resources/application.yml`.
 - gRPC contract definitions referenced by this service live under [`../../../../protos/world-management/v1`](../../../../protos/world-management/v1).
 - Design-time API semantics and service behavior remain owned by [`api-contracts.md`](./api-contracts.md), while this document owns the service-local configuration surface and discovery overrides.

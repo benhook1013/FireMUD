@@ -14,7 +14,7 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
-/** One-item durable delivery pass, intentionally not registered as a Spring bean or scheduler. */
+/** One-item durable delivery pass used by the separately gated automatic source-delivery worker. */
 public final class GameAuthoredWorldSourceDeliveryService {
   private static final UUID NIL_UUID = new UUID(0L, 0L);
 

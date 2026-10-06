@@ -16,21 +16,31 @@ import net.firedevops.firemud.worldmanagement.v1.IntakeAuthoredWorldSourceRespon
 import net.firedevops.firemud.worldmanagement.v1.ReadAuthoredWorldSourceIntakeRequest;
 import net.firedevops.firemud.worldmanagement.v1.ReadAuthoredWorldSourceIntakeResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldAuthoredSourceIntakeServiceGrpc;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.TransientDataAccessException;
+import org.springframework.grpc.server.service.GrpcService;
 
 /**
- * Explicitly unregistered gRPC adapter for authenticated authored-source intake and exact receipt
- * readback. This class has no Spring gRPC registration annotation or application wiring.
+ * Opt-in gRPC adapter for authenticated authored-source intake and exact receipt readback. World
+ * binds the trusted namespace locally, and each method independently requires the exact same-
+ * namespace Game Design mTLS peer.
  */
+@GrpcService
+@ConditionalOnProperty(
+    prefix = "firemud.authored-world-source",
+    name = "enabled",
+    havingValue = "true")
 public final class WorldAuthoredSourceIntakeGrpcService
     extends WorldAuthoredSourceIntakeServiceGrpc.WorldAuthoredSourceIntakeServiceImplBase {
   private final WorldAuthoredSourceIntakeService intakeService;
   private final String trustedNamespace;
 
   public WorldAuthoredSourceIntakeGrpcService(
-      WorldAuthoredSourceIntakeService intakeService, String trustedNamespace) {
+      WorldAuthoredSourceIntakeService intakeService,
+      @Value("${firemud.grpc.workload-namespace:}") String trustedNamespace) {
     this.intakeService = Objects.requireNonNull(intakeService, "intakeService");
     if (!GrpcPeerIdentity.isValidNamespace(trustedNamespace)) {
       throw new IllegalArgumentException("World workload namespace is invalid");

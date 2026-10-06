@@ -246,11 +246,14 @@ class WorldPublicationDigestMtlsTest {
   }
 
   @Test
-  void worldGrpcYamlAllowsOnlyPingAndThePeerGuardedPublicationDigestWithoutBearer()
-      throws Exception {
+  void worldGrpcYamlAllowsOnlyPingAndExactPeerGuardedOwnerMethodsWithoutBearer() throws Exception {
     assertThat(publicMethods("application.yml"))
         .isEqualTo(
-            Set.of(WorldManagementServiceGrpc.getPingMethod().getFullMethodName(), DIGEST_METHOD));
+            Set.of(
+                WorldManagementServiceGrpc.getPingMethod().getFullMethodName(),
+                DIGEST_METHOD,
+                "world_management.v1.WorldAuthoredSourceIntakeService/IntakeAuthoredWorldSource",
+                "world_management.v1.WorldAuthoredSourceIntakeService/ReadAuthoredWorldSourceIntake"));
   }
 
   @Test

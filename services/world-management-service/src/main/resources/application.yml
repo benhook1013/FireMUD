@@ -65,6 +65,9 @@ server:
     min-response-size: 1024
 
 firemud:
+  authored-world-source:
+    # Intake stays off until protected creator authorization and readiness proof are complete.
+    enabled: false
   smoke:
     seed-demo-runtime:
       targets:
@@ -90,7 +93,12 @@ firemud:
         # This bypasses bearer JWT only; the digest handler still requires the exact
         # Game Design mTLS peer.
         - world_management.v1.WorldManagementService/GetDraftDesignDigest
+        # These bypass bearer JWT only; the intake adapter still requires the exact same-namespace
+        # Game Design mTLS peer before it reaches World-owned durable intake/readback.
+        - world_management.v1.WorldAuthoredSourceIntakeService/IntakeAuthoredWorldSource
+        - world_management.v1.WorldAuthoredSourceIntakeService/ReadAuthoredWorldSourceIntake
   grpc:
+    workload-namespace: ${FIREMUD_GRPC_WORKLOAD_NAMESPACE:}
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}
     ca-cert: ${FIREMUD_GRPC_CA_CERT_PATH:certs/ca.crt}

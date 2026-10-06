@@ -3,9 +3,12 @@ package net.firedevops.firemud.gamedesign.repository;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec;
 import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec.CommittedReceipt;
@@ -25,6 +28,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 public class GameAuthoredWorldSourceDeliveryRepository {
   private static final int SCHEMA_VERSION = 1;
   private static final String NEW_GAME_ROW = "NEW_GAME_ROW";
+  private static final int MAX_PENDING_BATCH_SIZE = 100;
   private static final UUID NIL_UUID = new UUID(0L, 0L);
 
   private static final Table<?> DELIVERY =
@@ -221,6 +225,58 @@ public class GameAuthoredWorldSourceDeliveryRepository {
     DeliveryClaim claim = toClaim(record);
     requireExactPersistedSource(claim.source());
     return Optional.of(claim);
+  }
+
+  /**
+   * Reads one bounded page of exact pending claims for this workload namespace. The stable intake
+   * request identity is the keyset cursor; callers cycle back to the beginning after reaching the
+   * end so a failed older claim cannot starve later claims.
+   */
+  @Transactional(propagation = Propagation.NOT_SUPPORTED, readOnly = true)
+  public List<DeliveryClaim> readPending(
+      String targetNamespace, UUID afterIntakeRequestId, int limit) {
+    if (!GrpcPeerIdentity.isValidNamespace(targetNamespace)) {
+      throw new IllegalArgumentException("Workload namespace must be one canonical DNS label");
+    }
+    if (afterIntakeRequestId != null) {
+      requireNonNil(afterIntakeRequestId, "afterIntakeRequestId");
+    }
+    if (limit < 1 || limit > MAX_PENDING_BATCH_SIZE) {
+      throw new IllegalArgumentException(
+          "Pending authored-world delivery page size must be between 1 and "
+              + MAX_PENDING_BATCH_SIZE);
+    }
+    requireCommittedOutcomeRead();
+
+    var rows =
+        dsl.selectFrom(DELIVERY)
+            .where(
+                DELIVERY_NAMESPACE
+                    .eq(targetNamespace)
+                    .and(DELIVERY_PROVENANCE_KIND.eq(NEW_GAME_ROW))
+                    .and(DELIVERY_WORLD_OPERATION_ID.isNull())
+                    .and(DELIVERY_WORLD_REQUEST_DIGEST.isNull())
+                    .and(DELIVERY_WORLD_RECEIPT_DIGEST.isNull())
+                    .and(DELIVERY_ACKNOWLEDGED_AT.isNull())
+                    .and(
+                        afterIntakeRequestId == null
+                            ? DSL.noCondition()
+                            : DELIVERY_INTAKE_REQUEST_ID.gt(afterIntakeRequestId)))
+            .orderBy(DELIVERY_INTAKE_REQUEST_ID.asc())
+            .limit(limit)
+            .fetch();
+    List<DeliveryClaim> claims = new ArrayList<>(rows.size());
+    for (Record row : rows) {
+      DeliveryClaim claim = toClaim(row);
+      if (!targetNamespace.equals(claim.request().targetNamespace())
+          || claim.acknowledgedReceipt().isPresent()) {
+        throw new DeliveryConflictException(
+            "Pending authored-world delivery read returned a claim outside its exact selector");
+      }
+      requireExactPersistedSource(claim.source());
+      claims.add(claim);
+    }
+    return List.copyOf(claims);
   }
 
   /** Records only the first full World receipt, or returns an identical concurrent winner. */

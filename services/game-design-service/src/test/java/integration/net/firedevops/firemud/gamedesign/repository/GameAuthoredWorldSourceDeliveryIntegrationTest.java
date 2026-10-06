@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -26,12 +27,14 @@ import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeClient;
 import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec;
 import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec.CommittedReceipt;
 import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec.IntakeRequest;
+import net.firedevops.firemud.gamedesign.config.GameAuthoredWorldSourceDeliveryProperties;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceDeliveryRepository;
 import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceDeliveryRepository.DeliveryClaim;
 import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.service.impl.GameAuthoredWorldSourceDeliveryService;
+import net.firedevops.firemud.gamedesign.service.impl.GameAuthoredWorldSourceDeliveryWorker;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
@@ -102,6 +105,108 @@ class GameAuthoredWorldSourceDeliveryIntegrationTest {
     assertThat(fixture.dsl().fetchCount(SOURCE_OPERATIONS)).isEqualTo(1);
     assertThat(fixture.dsl().fetchCount(TENANT_BINDINGS)).isEqualTo(1);
     assertThat(fixture.dsl().fetchCount(DELIVERIES)).isEqualTo(1);
+  }
+
+  @Test
+  void pendingDeliveryPagesAreNamespaceBoundKeysetOrderedAndExcludeAcknowledgedClaims() {
+    Fixture fixture = fixture(null);
+    String otherNamespace = "other-authored-world-delivery-test";
+    AuthoredWorldSourceEvidence firstNamespaceSource =
+        fixture.register(
+            NAMESPACE,
+            uuid("12121212-1212-4212-8212-121212121212"),
+            fixture.freshGame(),
+            "pending-tenant-one",
+            "pending-world-one");
+    AuthoredWorldSourceEvidence secondNamespaceSource =
+        fixture.register(
+            NAMESPACE,
+            uuid("13131313-1313-4313-8313-131313131313"),
+            fixture.createFreshGame(),
+            "pending-tenant-two",
+            "pending-world-two");
+    AuthoredWorldSourceEvidence otherNamespaceSource =
+        fixture.register(
+            otherNamespace,
+            uuid("14141414-1414-4414-8414-141414141414"),
+            fixture.freshGame(),
+            "other-pending-tenant",
+            "other-pending-world");
+
+    var firstPage = fixture.deliveryRepository().readPending(NAMESPACE, null, 1);
+    var secondPage =
+        fixture
+            .deliveryRepository()
+            .readPending(NAMESPACE, firstPage.get(0).request().intakeRequestId(), 1);
+    var otherNamespacePage = fixture.deliveryRepository().readPending(otherNamespace, null, 10);
+
+    assertThat(firstPage).hasSize(1);
+    assertThat(secondPage).hasSize(1);
+    assertThat(firstPage.get(0).source().operationId())
+        .isNotEqualTo(secondPage.get(0).source().operationId());
+    assertThat(
+            List.of(
+                firstPage.get(0).source().operationId(), secondPage.get(0).source().operationId()))
+        .containsExactlyInAnyOrder(
+            firstNamespaceSource.operationId(), secondNamespaceSource.operationId());
+    assertThat(otherNamespacePage)
+        .singleElement()
+        .extracting(claim -> claim.source().operationId())
+        .isEqualTo(otherNamespaceSource.operationId());
+
+    DeliveryClaim pending = firstPage.get(0);
+    CommittedReceipt receipt =
+        committedReceipt(pending.request(), uuid("15151515-1515-4515-8515-151515151515"), 'a');
+    DeliveryClaim acknowledged =
+        fixture
+            .transactionTemplate()
+            .execute(status -> fixture.deliveryRepository().acknowledge(pending, receipt));
+
+    assertThat(acknowledged).isNotNull();
+    assertThat(fixture.deliveryRepository().readPending(NAMESPACE, null, 10))
+        .singleElement()
+        .extracting(claim -> claim.source().operationId())
+        .isEqualTo(
+            firstNamespaceSource.operationId().equals(pending.source().operationId())
+                ? secondNamespaceSource.operationId()
+                : firstNamespaceSource.operationId());
+  }
+
+  @Test
+  void registeredWorkerDispatchesDurableClaimAndAcknowledgedRestartDoesNotRedeliver() {
+    Fixture fixture = fixture(null);
+    AuthoredWorldSourceEvidence source = fixture.registerFresh(88);
+    DeliveryClaim pending = fixture.deliveryRepository().read(source.operationId()).orElseThrow();
+    CommittedReceipt worldReceipt =
+        committedReceipt(pending.request(), uuid("16161616-1616-4616-8616-161616161616"), 'b');
+    WorldAuthoredSourceIntakeClient worldClient = mock(WorldAuthoredSourceIntakeClient.class);
+    when(worldClient.intake(pending.request())).thenReturn(worldReceipt);
+    when(worldClient.read(any(WorldAuthoredSourceIntakeGrpcCodec.ReadRequest.class)))
+        .thenReturn(worldReceipt);
+    GameAuthoredWorldSourceDeliveryService deliveryService =
+        new GameAuthoredWorldSourceDeliveryService(
+            fixture.deliveryRepository(), worldClient, fixture.transactionManager(), NAMESPACE);
+    GameAuthoredWorldSourceDeliveryWorker worker =
+        new GameAuthoredWorldSourceDeliveryWorker(
+            fixture.deliveryRepository(),
+            deliveryService,
+            new GameAuthoredWorldSourceDeliveryProperties(),
+            NAMESPACE);
+
+    assertThat(worker.runPass()).isOne();
+    DeliveryClaim acknowledged =
+        fixture.deliveryRepository().read(source.operationId()).orElseThrow();
+    assertThat(acknowledged.acknowledgedReceipt()).contains(worldReceipt);
+
+    GameAuthoredWorldSourceDeliveryWorker restartedWorker =
+        new GameAuthoredWorldSourceDeliveryWorker(
+            fixture.deliveryRepository(),
+            deliveryService,
+            new GameAuthoredWorldSourceDeliveryProperties(),
+            NAMESPACE);
+    assertThat(restartedWorker.runPass()).isZero();
+    verify(worldClient).intake(pending.request());
+    verify(worldClient).read(any(WorldAuthoredSourceIntakeGrpcCodec.ReadRequest.class));
   }
 
   @Test
@@ -626,17 +731,35 @@ class GameAuthoredWorldSourceDeliveryIntegrationTest {
 
     AuthoredWorldSourceEvidence register(
         UUID registrationRequestId, Game sourceGame, String tenantSlug, String worldSlug) {
+      return register(NAMESPACE, registrationRequestId, sourceGame, tenantSlug, worldSlug);
+    }
+
+    AuthoredWorldSourceEvidence register(
+        String targetNamespace,
+        UUID registrationRequestId,
+        Game sourceGame,
+        String tenantSlug,
+        String worldSlug) {
       AuthoredWorldSourceEvidence source =
           transactionTemplate.execute(
               status ->
                   sourceRepository.register(
-                      NAMESPACE,
+                      targetNamespace,
                       registrationRequestId,
                       sourceGame.getCanonicalTenantId(),
                       tenantSlug,
                       worldSlug,
                       "Authored World " + worldSlug));
       return java.util.Objects.requireNonNull(source);
+    }
+
+    Game createFreshGame() {
+      Game game = new Game();
+      game.setTenantId(UUID.randomUUID().toString());
+      game.setName("Additional Fresh Delivery Source");
+      game.setDescription("A second isolated fresh tenant source for pending paging");
+      return Objects.requireNonNull(
+          transactionTemplate.execute(status -> new GameRepository(dsl).save(game)));
     }
 
     AuthoredWorldSourceEvidence register(

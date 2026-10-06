@@ -35,7 +35,35 @@ public class GameTenantCreationRepository {
       DSL.table(DSL.name("game_tenant_creation_operations"));
   private static final Table<?> CREATOR_QUALIFICATION_TABLE =
       DSL.table(DSL.name("game_tenant_creation_creator_qualifications"));
+  private static final Table<?> RESERVATION_TABLE =
+      DSL.table(DSL.name("game_tenant_creation_reservations"));
+  private static final Table<?> GAME_TABLE = DSL.table(DSL.name("game"));
   private static final Field<UUID> OPERATION_ID = DSL.field(DSL.name("operation_id"), UUID.class);
+  private static final Field<String> RESERVATION_TARGET_NAMESPACE =
+      DSL.field(DSL.name("target_namespace"), String.class);
+  private static final Field<UUID> RESERVATION_REQUEST_ID =
+      DSL.field(DSL.name("creation_request_id"), UUID.class);
+  private static final Field<Integer> RESERVATION_SCHEMA_VERSION =
+      DSL.field(DSL.name("schema_version"), Integer.class);
+  private static final Field<String> RESERVATION_REQUEST_DIGEST =
+      DSL.field(DSL.name("request_digest"), String.class);
+  private static final Field<UUID> RESERVATION_OPERATION_ID =
+      DSL.field(DSL.name("operation_id"), UUID.class);
+  private static final Field<UUID> RESERVATION_CANONICAL_TENANT_ID =
+      DSL.field(DSL.name("canonical_tenant_id"), UUID.class);
+  private static final Field<String> RESERVATION_SOURCE_GAME_TENANT_KEY =
+      DSL.field(DSL.name("source_game_tenant_key"), String.class);
+  private static final Field<String> RESERVATION_NAME = DSL.field(DSL.name("name"), String.class);
+  private static final Field<String> RESERVATION_DESCRIPTION =
+      DSL.field(DSL.name("description"), String.class);
+  private static final Field<Long> GAME_ID = DSL.field(DSL.name("id"), Long.class);
+  private static final Field<String> GAME_TENANT_ID =
+      DSL.field(DSL.name("tenant_id"), String.class);
+  private static final Field<UUID> GAME_CANONICAL_TENANT_ID =
+      DSL.field(DSL.name("canonical_tenant_id"), UUID.class);
+  private static final Field<String> GAME_NAME = DSL.field(DSL.name("name"), String.class);
+  private static final Field<String> GAME_DESCRIPTION =
+      DSL.field(DSL.name("description"), String.class);
   private static final Field<Integer> SCHEMA_VERSION_FIELD =
       DSL.field(DSL.name("schema_version"), Integer.class);
   private static final Field<String> TARGET_NAMESPACE =
@@ -115,6 +143,54 @@ public class GameTenantCreationRepository {
       UUID initiatingAccountId,
       UUID accountAuthorizationOperationId,
       String accountAuthorizationDigest) {
+    return createCandidateWithCreatorInternal(
+        null,
+        targetNamespace,
+        creationRequestId,
+        sourceGameTenantKey,
+        name,
+        description,
+        initiatingAccountId,
+        accountAuthorizationOperationId,
+        accountAuthorizationDigest);
+  }
+
+  /**
+   * Completes creation from one exact persisted non-authoritative reservation.
+   *
+   * <p>The reservation's generated tenant UUID and operation identity are preserved verbatim.
+   * Structural creator and Account authorization fields are data only; this repository does not
+   * authenticate their producer or authorize creation.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public FreshTenantCreatorEvidence createReservedCandidateWithCreator(
+      FreshTenantCreationReservation reservation,
+      UUID initiatingAccountId,
+      UUID accountAuthorizationOperationId,
+      String accountAuthorizationDigest) {
+    Objects.requireNonNull(reservation, "reservation");
+    return createCandidateWithCreatorInternal(
+        reservation,
+        reservation.targetNamespace(),
+        reservation.creationRequestId(),
+        reservation.sourceGameTenantKey(),
+        reservation.name(),
+        reservation.description(),
+        initiatingAccountId,
+        accountAuthorizationOperationId,
+        accountAuthorizationDigest);
+  }
+
+  private FreshTenantCreatorEvidence createCandidateWithCreatorInternal(
+      FreshTenantCreationReservation reservation,
+      String targetNamespace,
+      UUID creationRequestId,
+      String sourceGameTenantKey,
+      String name,
+      String description,
+      UUID initiatingAccountId,
+      UUID accountAuthorizationOperationId,
+      String accountAuthorizationDigest) {
     requireActiveOwnerTransaction();
     validateInput(targetNamespace, creationRequestId, sourceGameTenantKey, name, description);
     validateCreatorBinding(
@@ -123,7 +199,10 @@ public class GameTenantCreationRepository {
     String requestDigest =
         GameTenantCreationDigest.requestDigest(
             targetNamespace, creationRequestId, sourceGameTenantKey, name, description);
-    UUID operationId = newNonNilUuid();
+    if (reservation != null) {
+      requirePersistedReservation(reservation, requestDigest);
+    }
+    UUID operationId = reservation == null ? newNonNilUuid() : reservation.operationId();
     int inserted =
         dsl.insertInto(OPERATION_TABLE)
             .set(OPERATION_ID, operationId)
@@ -156,6 +235,7 @@ public class GameTenantCreationRepository {
             "Fresh tenant creation request identity was reused with changed input");
       }
       FreshTenantCreationEvidence sourceEvidence = toReceipt(existing);
+      requireReservationOutcomeMatches(reservation, sourceEvidence);
       if (!Boolean.TRUE.equals(existing.get(CREATOR_QUALIFICATION_REQUIRED))) {
         throw new CreationRequestConflictException(
             "Creator qualification cannot be attached to an existing source-only operation");
@@ -184,7 +264,10 @@ public class GameTenantCreationRepository {
     candidate.setTenantId(sourceGameTenantKey);
     candidate.setName(name);
     candidate.setDescription(description);
-    Game saved = gameRepository.save(candidate);
+    Game saved =
+        reservation == null
+            ? gameRepository.save(candidate)
+            : insertReservedGame(candidate, reservation.canonicalTenantId());
     requireNewGameSource(saved, sourceGameTenantKey);
 
     String evidenceDigest =
@@ -239,6 +322,83 @@ public class GameTenantCreationRepository {
         accountAuthorizationOperationId,
         accountAuthorizationDigest,
         creatorEvidenceDigest);
+  }
+
+  private void requirePersistedReservation(
+      FreshTenantCreationReservation reservation, String requestDigest) {
+    Record record =
+        dsl.selectFrom(RESERVATION_TABLE)
+            .where(
+                RESERVATION_TARGET_NAMESPACE
+                    .eq(reservation.targetNamespace())
+                    .and(RESERVATION_REQUEST_ID.eq(reservation.creationRequestId())))
+            .fetchOne();
+    if (record == null) {
+      throw new CreationRequestConflictException(
+          "Fresh tenant creation requires an exact persisted Game Design reservation");
+    }
+    try {
+      FreshTenantCreationReservation persisted = toReservation(record);
+      if (!persisted.equals(reservation) || !requestDigest.equals(persisted.requestDigest())) {
+        throw new CreationRequestConflictException(
+            "Fresh tenant creation reservation does not match the persisted request");
+      }
+    } catch (IllegalArgumentException
+        | GameTenantCreationReservationRepository.InvalidReservationException exception) {
+      throw new InvalidCreationEvidenceException(
+          "Stored fresh tenant reservation evidence is invalid", exception);
+    }
+  }
+
+  private FreshTenantCreationReservation toReservation(Record record) {
+    Integer schemaVersion = record.get(RESERVATION_SCHEMA_VERSION);
+    if (schemaVersion == null) {
+      throw new InvalidCreationEvidenceException(
+          "Stored fresh tenant reservation schema version is missing");
+    }
+    return new FreshTenantCreationReservation(
+        schemaVersion,
+        record.get(RESERVATION_TARGET_NAMESPACE),
+        record.get(RESERVATION_REQUEST_ID),
+        record.get(RESERVATION_REQUEST_DIGEST),
+        record.get(RESERVATION_OPERATION_ID),
+        record.get(RESERVATION_CANONICAL_TENANT_ID),
+        record.get(RESERVATION_SOURCE_GAME_TENANT_KEY),
+        record.get(RESERVATION_NAME),
+        record.get(RESERVATION_DESCRIPTION));
+  }
+
+  private void requireReservationOutcomeMatches(
+      FreshTenantCreationReservation reservation, FreshTenantCreationEvidence sourceEvidence) {
+    if (reservation != null
+        && (!reservation.operationId().equals(sourceEvidence.operationId())
+            || !reservation.canonicalTenantId().equals(sourceEvidence.canonicalTenantId()))) {
+      throw new CreationRequestConflictException(
+          "Completed fresh tenant creation does not match its exact reservation");
+    }
+  }
+
+  private Game insertReservedGame(Game candidate, UUID canonicalTenantId) {
+    Record record =
+        dsl.insertInto(GAME_TABLE)
+            .set(GAME_TENANT_ID, candidate.getTenantId())
+            .set(GAME_CANONICAL_TENANT_ID, canonicalTenantId)
+            .set(GAME_NAME, candidate.getName())
+            .set(GAME_DESCRIPTION, candidate.getDescription())
+            .returning(
+                GAME_ID, GAME_TENANT_ID, GAME_CANONICAL_TENANT_ID, GAME_NAME, GAME_DESCRIPTION)
+            .fetchOne();
+    if (record == null) {
+      throw new IllegalStateException(
+          "Reserved Game tenant insert did not return its persisted row");
+    }
+    Game saved = new Game();
+    saved.setId(record.get(GAME_ID));
+    saved.setTenantId(record.get(GAME_TENANT_ID));
+    saved.setCanonicalTenantId(record.get(GAME_CANONICAL_TENANT_ID));
+    saved.setName(record.get(GAME_NAME));
+    saved.setDescription(record.get(GAME_DESCRIPTION));
+    return saved;
   }
 
   private FreshTenantCreationEvidence createCandidateInternal(
@@ -425,9 +585,10 @@ public class GameTenantCreationRepository {
   }
 
   private void requireActiveOwnerTransaction() {
-    if (!TransactionSynchronizationManager.isActualTransactionActive()) {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
       throw new IllegalStateException(
-          "Fresh tenant creation requires an active Game Design owner transaction");
+          "Fresh tenant creation requires an active writable Game Design owner transaction");
     }
   }
 

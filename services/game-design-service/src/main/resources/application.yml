@@ -67,6 +67,12 @@ asset:
     secret-key: ${ASSET_STORE_SECRET_KEY:}
 
 firemud:
+  authored-world-source:
+    # Automatic cross-owner delivery stays off until protected creator authorization is complete.
+    enabled: false
+    delivery:
+      batch-size: 25
+      poll-interval-ms: 5000
   auth:
     http:
       enabled: true
@@ -85,6 +91,7 @@ firemud:
         - gamedesign.v1.TenantIdentityService/ResolveLegacyAccountTenantAssociation
         - gamedesign.v1.TenantIdentityService/ResolveFreshTenantCreation
         - gamedesign.v1.TenantIdentityService/ResolveFreshTenantCreatorQualification
+        - gamedesign.v1.TenantIdentityService/ReadFreshTenantCreationReservation
         - gamedesign.v1.TenantIdentityService/ResolveRuntimeTenantIdentity
         - gamedesign.v1.TenantIdentityService/ResolveAuthoredWorldSource
         - gamedesign.v1.TenantIdentityService/ResolveLegacyGameSessionTenantAssociation
@@ -92,6 +99,7 @@ firemud:
         - gamedesign.v1.GameDesignService/GetLaunchDescriptor
         - gamedesign.v1.GameDesignService/GetCompleteLaunchBinding
   grpc:
+    workload-namespace: ${FIREMUD_GRPC_WORKLOAD_NAMESPACE:}
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}
     ca-cert: ${FIREMUD_GRPC_CA_CERT_PATH:certs/ca.crt}
