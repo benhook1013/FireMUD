@@ -158,7 +158,8 @@ class AccountControlUiCredentialAuthenticationPostgresIntegrationTest {
                 + "request_digest_version, request_digest, authority_capture, authority_capture_digest, "
                 + "issuance_fence_capture, issuance_fence_digest, status) "
                 + "SELECT ?, ?, account_uuid, account_id, account_provenance, profile, audience, "
-                + "request_digest_version, request_digest, authority_capture, authority_capture_digest, "
+                + "request_digest_version, set_byte(request_digest, 0, get_byte(request_digest, 0) # 1), "
+                + "authority_capture, authority_capture_digest, "
                 + "issuance_fence_capture, issuance_fence_digest, 'PENDING' "
                 + "FROM account_control_ui_issuance_operations WHERE operation_id = ?",
             UUID.randomUUID(),

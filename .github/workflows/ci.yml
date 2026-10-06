@@ -906,9 +906,10 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    # Game Session runs composed owner proofs before its full checks and runtime JAR.
-    # Exact CI37121026340 exhausted 20m after those proofs passed, at JAR packaging.
-    timeout-minutes: ${{ matrix.module == 'game-session-service' && 30 || 20 }}
+    # Game Session and Account run composed owner proofs before full checks and runtime JARs.
+    # CI37121026340 exhausted 20m at Game Session packaging; CI37425364000
+    # reached Account PostgreSQL cases but exhausted 20m before raw XML finalized.
+    timeout-minutes: ${{ (matrix.module == 'game-session-service' || matrix.module == 'account-service') && 30 || 20 }}
     strategy:
       fail-fast: false
       matrix:

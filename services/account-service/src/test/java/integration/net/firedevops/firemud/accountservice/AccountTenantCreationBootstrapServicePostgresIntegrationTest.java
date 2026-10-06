@@ -72,7 +72,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 class AccountTenantCreationBootstrapServicePostgresIntegrationTest {
   private static final String TEST_NAMESPACE = "creator-bootstrap-proof";
   private static final String AUDIT_EVENT_TYPE = "ACCOUNT_TENANT_CREATOR_BOOTSTRAPPED";
-  private static final String SCHEMA_PREFIX = "creator_bootstrap_service_proof_";
+  private static final String SCHEMA_PREFIX = "creator_bootstrap_service_";
 
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
