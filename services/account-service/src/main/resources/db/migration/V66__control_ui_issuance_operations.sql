@@ -215,7 +215,7 @@ CREATE TRIGGER account_control_ui_issuance_operation_no_truncate_trigger
 CREATE TRIGGER account_control_ui_issuance_envelope_no_truncate_trigger
     BEFORE TRUNCATE ON account_control_ui_issuance_response_envelopes
     FOR EACH STATEMENT EXECUTE FUNCTION account_control_ui_issuance_no_truncate();
-CREATE TRIGGER account_control_ui_issuance_terminal_envelope_check_trigger
+CREATE CONSTRAINT TRIGGER account_control_ui_issuance_terminal_envelope_check_trigger
     AFTER INSERT OR UPDATE ON account_control_ui_issuance_operations
     DEFERRABLE INITIALLY DEFERRED
     FOR EACH ROW EXECUTE FUNCTION account_control_ui_issuance_terminal_envelope_check();

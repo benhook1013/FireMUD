@@ -177,6 +177,33 @@ class AccountControlUiIssuanceOperationPostgresIntegrationTest {
                                     + "WHERE operation_id = ?",
                                 claim.operation().operationId())))
         .isInstanceOf(RuntimeException.class);
+    // A structurally complete terminal row must still fail at commit without its envelope.
+    // This reaches the deferred constraint rather than only the immediate result-shape check.
+    AccountControlUiResponseEnvelopeBinding missingEnvelopeBinding =
+        binding(
+            claim.operation(),
+            "synthetic missing-envelope result".getBytes(StandardCharsets.UTF_8));
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    context.transaction(),
+                    () ->
+                        context
+                            .dsl()
+                            .execute(
+                                "UPDATE account_control_ui_issuance_operations SET status = 'COMMITTED', "
+                                    + "token_hash = ?, response_digest = ?, issued_at = ?, expires_at = ? "
+                                    + "WHERE operation_id = ?",
+                                missingEnvelopeBinding.tokenHash(),
+                                missingEnvelopeBinding.responseDigest(),
+                                java.time.OffsetDateTime.ofInstant(
+                                    missingEnvelopeBinding.issuedAt(), java.time.ZoneOffset.UTC),
+                                java.time.OffsetDateTime.ofInstant(
+                                    missingEnvelopeBinding.expiresAt(), java.time.ZoneOffset.UTC),
+                                claim.operation().operationId())))
+        .isInstanceOf(RuntimeException.class)
+        .hasStackTraceContaining(
+            "Committed control-UI issuance requires its exact encrypted envelope");
     AccountControlUiIssuanceOperation stored =
         inTransaction(
             context.transaction(), () -> context.repository().findByRequest(request).orElseThrow());
