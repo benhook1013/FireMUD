@@ -334,25 +334,38 @@ for path in "$ci_path" "$security_path" "$smoke_path"; do
   require_contains "$path" 'types: [opened, synchronize, reopened, edited]'
 done
 
-# Stacked feature-base PRs must reach normal Validation on every supported
-# event; push scope and metadata/base-retarget job guards remain unchanged.
-python3 - "$ci_path" <<'PYTHON'
+# Ordinary required gates must cover stacked feature-base PRs without widening
+# trusted push publication or changing substantive/metadata event handling.
+python3 - "$ROOT_DIR" <<'PYTHON'
 import sys
 from pathlib import Path
 
 import yaml
 
-workflow = yaml.load(Path(sys.argv[1]).read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-events = workflow["on"]
-pr = events["pull_request"]
-if set(pr) != {"types"}:
-    raise SystemExit("Validation PR triggers must not filter base branches or paths")
-if set(pr["types"]) != {"opened", "synchronize", "reopened", "edited"}:
-    raise SystemExit("Validation must cover opens, new commits, reopenings, and base/metadata edits")
-if events["push"] != {"branches": ["main", "develop"]}:
-    raise SystemExit("Validation push scope must remain main/develop only")
-if "workflow_dispatch" not in events:
-    raise SystemExit("Validation must retain manual dispatch")
+root = Path(sys.argv[1])
+for filename in ("ci.yml", "security.yml", "license-scan.yml", "codeql.yml"):
+    workflow = yaml.load(
+        (root / ".github/workflows" / filename).read_text(encoding="utf-8"),
+        Loader=yaml.BaseLoader,
+    )
+    events = workflow["on"]
+    pr = events["pull_request"]
+    if set(pr) != {"types"}:
+        raise SystemExit(f"{filename} PR triggers must not filter base branches or paths")
+    if set(pr["types"]) != {"opened", "synchronize", "reopened", "edited"}:
+        raise SystemExit(f"{filename} must cover opens, new commits, reopenings, and base/metadata edits")
+    expected_push = ["main"] if filename == "codeql.yml" else ["main", "develop"]
+    if events["push"] != {"branches": expected_push}:
+        raise SystemExit(f"{filename} must retain its trusted push scope")
+    expected_events = {"push", "pull_request", "workflow_dispatch"}
+    if filename == "codeql.yml":
+        expected_events.add("schedule")
+        if events["schedule"] != [{"cron": "0 0 * * 0"}]:
+            raise SystemExit("CodeQL must retain its weekly full-analysis schedule")
+        if workflow["jobs"]["codeql-gate"]["if"] != "${{ always() && github.event_name == 'pull_request' }}":
+            raise SystemExit("CodeQL Gate must cover every PR base and remain PR-only")
+    if set(events) != expected_events or events["workflow_dispatch"] not in ("", {}):
+        raise SystemExit(f"{filename} must retain exactly its supported events and manual dispatch")
 PYTHON
 
 # Optional native-PR comments cannot delay cancellation or require fork/bot write tokens.

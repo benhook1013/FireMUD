@@ -374,11 +374,17 @@ class FireControllerWebTest(unittest.TestCase):
                 self.list_calls = []
                 self.thread_calls = []
 
-            def list(self, recipient, *, unread, limit, offset):
-                self.list_calls.append((recipient, unread, limit, offset))
-                return [{"id": "message-1", "recipient": recipient, "author": "Overseer",
+            def messages_page(self, worker, *, limit, offset):
+                self.list_calls.append((worker, limit, offset))
+                return {"offset": offset, "has_more": False, "messages": [{"id": "message-1", "recipient": worker, "author": "Overseer",
                          "body": PRIVATE_SENTINEL, "created_at": "2026-10-03T00:00:00Z",
-                         "reply_to": "message-0"}]
+                         "reply_to": "message-0"}]}
+
+            def conversations_page(self, worker, *, limit, offset):
+                return {"offset": offset, "has_more": False, "conversations": [{"root_id": "message-0",
+                        "message_count": 2, "unread_count": 1, "latest_message": {
+                            "id": "message-1", "recipient": worker, "author": "Overseer",
+                            "body": PRIVATE_SENTINEL, "created_at": "2026-10-03T00:00:00Z"}}]}
 
             def unread_count(self, worker):
                 return 1
@@ -388,9 +394,9 @@ class FireControllerWebTest(unittest.TestCase):
                 return {"id": message_id, "author": "Overseer", "body": PRIVATE_SENTINEL,
                         "created_at": "2026-10-03T00:00:00Z", "reply_to": "message-0"}
 
-            def thread_page(self, message_id, *, limit, offset, focus_id=None):
-                self.thread_calls.append((message_id, limit, offset, focus_id))
-                return {"offset": offset, "messages": [
+            def thread_page(self, message_id, *, limit, offset, focus_id=None, worker=None):
+                self.thread_calls.append((message_id, limit, offset, focus_id, worker))
+                return {"offset": offset, "has_more": False, "messages": [
                     {"id": "message-0", "recipient": "Overseer", "author": "Build & Tools",
                      "body": "Original private request", "created_at": "2026-10-02T00:00:00Z",
                      "seen_at": None, "acknowledged_at": None},
@@ -405,8 +411,13 @@ class FireControllerWebTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertNotIn(PRIVATE_SENTINEL.encode(), body)
         self.assertIn(b'<time datetime="2026-10-03T00:00:00Z">3 Oct 2026 13:00 NZDT</time>', body)
-        self.assertEqual(inbox.list_calls, [("Build & Tools", False, 50, 0)])
-        self.assertIn(b"Conversation", body)
+        self.assertEqual(inbox.list_calls, [])
+        self.assertIn(b"Open conversation", body)
+        self.assertIn(b"2 message(s)", body)
+        self.assertIn(b"1 unread incoming", body)
+        status, _headers, body = web.private_route("/inbox/Build%20%26%20Tools?view=messages", None, inbox=inbox)
+        self.assertEqual(status, 200)
+        self.assertEqual(inbox.list_calls, [("Build & Tools", 50, 0)])
         self.assertIn(b"/thread/message-0?focus=message-0#message-message-0", body)
         self.assertEqual(inbox.read_calls, [])
         status, _headers, body = web.private_route("/inbox/Build%20%26%20Tools/message-1", None, inbox=inbox)
@@ -420,7 +431,7 @@ class FireControllerWebTest(unittest.TestCase):
             "/inbox/Build%20%26%20Tools/thread/message-1?offset=50", None, inbox=inbox,
         )
         self.assertEqual(status, 200)
-        self.assertEqual(inbox.thread_calls, [("message-1", 50, 50, None)])
+        self.assertEqual(inbox.thread_calls, [("message-1", 50, 50, None, "Build & Tools")])
         self.assertEqual(inbox.read_calls, [("message-1", "Build & Tools")])
         self.assertIn(PRIVATE_SENTINEL.encode(), body)
         self.assertIn(b"Overseer", body)
@@ -437,13 +448,154 @@ class FireControllerWebTest(unittest.TestCase):
              "body": f"Message {index}", "created_at": f"2026-10-01T00:{index:02d}:00Z"}
             for index in range(web.HISTORY_PAGE_SIZE)
         ]
-        later = web.render_inbox_thread("General", first_page, message_id="message-0", offset=0)
+        later = web.render_inbox_thread("General", first_page, message_id="message-0", offset=0, has_more=True)
         self.assertIn("Later messages", later)
         self.assertNotIn("Earlier messages", later)
 
         earlier = web.render_inbox_thread("General", first_page[:1], message_id="message-49", offset=web.HISTORY_PAGE_SIZE)
         self.assertIn("Earlier messages", earlier)
         self.assertNotIn("Later messages", earlier)
+
+    def test_private_job_times_use_durable_activity_nz_timezone_and_relative_age(self):
+        from datetime import datetime, timezone
+
+        class FixedDateTime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime(2026, 10, 6, 0, 0, tzinfo=timezone.utc).astimezone(tz)
+
+        job = {**public_row(), "created_at": "2026-07-01T00:00:00Z",
+               "updated_at": "2026-10-01T00:00:00Z", "last_activity_at": "2026-10-05T22:30:00Z"}
+        with patch.object(web, "datetime", FixedDateTime):
+            document = web.render_worker_history("Gameplay", [job])
+        self.assertIn("<strong>Created</strong>", document)
+        self.assertIn("1 Jul 2026 12:00 NZST", document)
+        self.assertIn("<strong>Last activity</strong>", document)
+        self.assertIn("6 Oct 2026 11:30 NZDT", document)
+        self.assertIn("(1h 30m ago)", document)
+        self.assertNotIn('datetime="2026-10-01T00:00:00Z"', document)
+        self.assertIn('datetime="2026-07-01T00:00:00Z"', document)
+        missing = web.render_worker_history("Gameplay", [public_row()])
+        self.assertEqual(missing.count("Not recorded"), 2)
+        self.assertNotIn("1970", missing)
+        invalid = web._time_metadata('<invalid>', relative=True)
+        self.assertEqual(invalid, "&lt;invalid&gt;")
+
+    def test_private_pages_share_card_navigation_and_empty_state_styles_only(self):
+        pages = [web.render_worker_history("Gameplay", []), web.render_job(FakeStore().detail),
+                 web.render_job({"job": FakeStore().detail, "history": []}, history=True),
+                 web.render_inbox("Gameplay", []), web.render_inbox_conversations("Gameplay", []),
+                 web.render_inbox_thread("Gameplay", [], message_id="message-1"),
+                 web.render_workstream({"id": "delivery", "name": "Delivery", "history": []}, history=True)]
+        for page in pages:
+            with self.subTest(page=page[:120]):
+                self.assertIn('<main class="private-pages">', page)
+                self.assertIn('href="/shared.css"', page)
+                self.assertIn('class="private-actions"', page)
+                self.assertIn('var(--paper,#e7e7e7)', page)
+                self.assertIn('@media(max-width:760px)', page)
+        self.assertIn("private-empty", pages[0])
+        self.assertIn("No revisions recorded.", pages[2])
+        self.assertIn("No conversations on this page.", pages[4])
+        self.assertNotIn("private-pages", json.dumps(web.public_jobs([public_row()])))
+
+    def test_private_page_titles_and_headings_escape_aliases_and_names_once(self):
+        for worker in ("Build & Tools", "Build <script>alert(1)</script>"):
+            escaped_worker = web.html.escape(worker, quote=True)
+            for render in (web.render_inbox_conversations, web.render_inbox):
+                document = render(worker, [])
+                with self.subTest(worker=worker, render=render):
+                    self.assertIn(f"<title>{escaped_worker} inbox · FireController</title>", document)
+                    self.assertIn(f"<h1>{escaped_worker} inbox</h1>", document)
+                    self.assertNotIn("&amp;amp;", document)
+                    self.assertNotIn("&amp;lt;", document)
+                    self.assertNotIn("<script>", document)
+        record = {"id": "delivery", "name": "Build & <Tools>", "history": []}
+        for history in (False, True):
+            document = web.render_workstream(record, history=history)
+            suffix = " history" if history else " · local workstream"
+            self.assertIn(f"<title>Build &amp; &lt;Tools&gt;{suffix}</title>", document)
+            self.assertNotIn("&amp;amp;", document)
+            self.assertNotIn("&amp;lt;", document)
+
+    def test_worker_history_orders_all_jobs_by_activity_after_the_primary(self):
+        jobs = [
+            {**public_row(), "id": "state-newer", "name": "state-newer", "title": "State newer",
+             "primary": False, "updated_at": "2026-10-05T00:00:00Z", "last_activity_at": "2026-10-05T00:00:00Z"},
+            {**public_row(), "id": "primary", "title": "Primary first", "last_activity_at": "2026-10-01T00:00:00Z"},
+            {**public_row(), "id": "append-newer", "name": "append-newer", "title": "Appended activity newer",
+             "primary": False, "updated_at": "2026-10-01T00:00:00Z", "last_activity_at": "2026-10-06T00:00:00Z"},
+        ]
+        document = web.render_worker_history("Gameplay", jobs)
+        self.assertLess(document.index('href="/jobs/primary"'), document.index('href="/jobs/append-newer"'))
+        self.assertLess(document.index('href="/jobs/append-newer"'), document.index('href="/jobs/state-newer"'))
+        self.assertEqual(jobs[0]["id"], "state-newer")
+
+    def test_private_inbox_modes_keep_worker_scope_and_message_handling_separate(self):
+        import tempfile
+
+        from fire_controller.inbox import InboxStore
+
+        with tempfile.TemporaryDirectory() as directory:
+            inbox = InboxStore(Path(directory) / "controller.sqlite3")
+            inbox.bootstrap()
+            incoming = inbox.send("General", "**Private request**", author="Overseer")
+            outgoing = inbox.send("Overseer", "Private response", author="General", reply_to=incoming["id"])
+            self_message = inbox.send("General", "Self note", author="General")
+            unrelated = inbox.send("Gameplay", "Other lane private text", author="Review")
+            other_branch = inbox.send("Gameplay", "Other participant branch", author="Review", reply_to=outgoing["id"])
+            for route in ("/inbox/General", "/inbox/General?view=messages", f"/inbox/General/thread/{incoming['id']}"):
+                status, headers, body = web.private_route(route, None, inbox=inbox)
+                self.assertEqual(status, 200)
+                self.assertEqual(headers["Cache-Control"], "no-store")
+                self.assertNotIn(b"Other lane private text", body)
+                self.assertNotIn(unrelated["id"].encode(), body)
+            messages = web.private_route("/inbox/General?view=messages", None, inbox=inbox)[2].decode()
+            self.assertIn("Incoming", messages)
+            self.assertIn("Outgoing", messages)
+            self.assertIn("Self", messages)
+            self.assertIn(f'href="/inbox/General/{incoming["id"]}"', messages)
+            self.assertIn(f'?focus={outgoing["id"]}#message-{outgoing["id"]}', messages)
+            self.assertNotIn(f'href="/inbox/General/{outgoing["id"]}"', messages)
+            self.assertNotIn(other_branch["id"], messages)
+            thread = web.private_route(f"/inbox/General/thread/{other_branch['id']}", None, inbox=inbox)[2].decode()
+            self.assertIn("Other participant branch", thread)
+            self.assertIn("<strong>Private request</strong>", thread)
+            self.assertEqual(web.private_route(f"/inbox/Gameplay/thread/{self_message['id']}", None, inbox=inbox)[0], 404)
+            self.assertTrue(all(row["seen_at"] is None and row["acknowledged_at"] is None
+                                for row in inbox.thread(incoming["id"])))
+            self.assertEqual(inbox.unread_count("General"), 2)
+            self.assertEqual(web.private_route(f"/inbox/General/{incoming['id']}", None, inbox=inbox)[0], 200)
+            self.assertEqual(inbox.unread_count("General"), 1)
+            self.assertIsNone(inbox.list("General")[-1]["acknowledged_at"])
+            self.assertEqual(web.private_route(f"/inbox/General/{outgoing['id']}", None, inbox=inbox)[0], 404)
+            for query in ("view=", "view=sent", "view=messages&view=conversations", "view=messages&offset=-1",
+                          "view=messages&offset=1000001", "view=messages&focus=message-1"):
+                self.assertEqual(web.private_route(f"/inbox/General?{query}", None, inbox=inbox)[0], 400)
+            self.assertEqual(web.private_route(f"/inbox/General/thread/{incoming['id']}?view=messages", None, inbox=inbox)[0], 400)
+
+    def test_inbox_full_final_pages_hide_forward_links_and_message_pages_preserve_view(self):
+        import tempfile
+
+        from fire_controller.inbox import InboxStore
+
+        with tempfile.TemporaryDirectory() as directory:
+            inbox = InboxStore(Path(directory) / "controller.sqlite3")
+            inbox.bootstrap()
+            roots = [inbox.send("General", f"Request {index}", author="Overseer") for index in range(50)]
+            for query, label in (("", "Older conversations"), ("?view=messages", "Older messages")):
+                body = web.private_route(f"/inbox/General{query}", None, inbox=inbox)[2].decode()
+                self.assertNotIn(label, body)
+            inbox.send("Overseer", "Latest response", author="General", reply_to=roots[0]["id"])
+            messages = web.private_route("/inbox/General?view=messages", None, inbox=inbox)[2].decode()
+            self.assertIn('href="/inbox/General?view=messages&amp;offset=50">Older messages', messages)
+            final = web.private_route("/inbox/General?view=messages&offset=50", None, inbox=inbox)[2].decode()
+            self.assertIn('href="/inbox/General?view=messages&amp;offset=0">Newer messages', final)
+            self.assertNotIn("Older messages", final)
+            conversations = web.private_route("/inbox/General", None, inbox=inbox)[2].decode()
+            self.assertNotIn("Older conversations", conversations)
+            first_link = f'href="/inbox/General/thread/{roots[0]["id"]}"'
+            self.assertLess(conversations.index(first_link), conversations.index(roots[-1]["id"]))
 
     def test_private_parent_focus_loads_only_its_bounded_page_without_marking_messages(self):
         import tempfile

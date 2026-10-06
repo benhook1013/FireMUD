@@ -23,7 +23,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Protocol
 
-from . import policy, stack
+from . import github, policy, stack
 from .cli_runner import (
     HOSTED_ACTIVE_RESPONSE_REASON,
     HOSTED_CLI_OVERLAP_HOLD_REASON,
@@ -35,7 +35,9 @@ from .cli_runner import (
 from .git_merge import TestMergeError, test_merge_tree
 from .hosted import parse_timestamp, prepare_full_trigger
 from .patch_identity import patch_identity
+from .sqlite_store import SqliteStateStore
 from .state import (
+    ControllerStateStore,
     FindingRoute,
     Judgment,
     LegacyEvidenceTransition,
@@ -44,6 +46,7 @@ from .state import (
     ReviewState,
     StackReconciliationDecision,
     StateError,
+    StateLockTimeout,
     StateStore,
     merge_open_route,
     observation_fingerprint,
@@ -127,17 +130,30 @@ class DefaultGitProvider:
         check: bool = True,
         capture_output: bool = True,
         text: bool = False,
+        timeout_seconds: float | None = None,
+        enforce_preflight_budget: bool = True,
     ) -> subprocess.CompletedProcess[str] | subprocess.CompletedProcess[bytes]:
+        timeout_limit = self.timeout_seconds if timeout_seconds is None else min(self.timeout_seconds, timeout_seconds)
+        budget = github.active_hosted_preflight_budget() if enforce_preflight_budget else None
+        timeout = budget.request_timeout(timeout_limit) if budget is not None else timeout_limit
         try:
-            return subprocess.run(
+            completed = subprocess.run(
                 list(args),
                 check=check,
                 capture_output=capture_output,
                 text=text,
-                timeout=self.timeout_seconds,
+                timeout=timeout,
             )
         except subprocess.TimeoutExpired as error:
-            raise ControllerError(f"git command timed out after {self.timeout_seconds} seconds") from error
+            if budget is not None:
+                try:
+                    budget.remaining_seconds()
+                except github.HostedPreflightDeadlineExceeded as deadline_error:
+                    raise deadline_error from error
+            raise ControllerError(f"git command timed out after {timeout_limit} seconds") from error
+        if budget is not None:
+            budget.remaining_seconds()
+        return completed
 
     def _run(self, *args: str, check: bool = True) -> str:
         result = self._run_process(
@@ -220,7 +236,15 @@ class DefaultGitProvider:
         self._ensure_commit(normalized_head)
 
         def run_git(args, *, check, text, timeout):
-            del timeout
+            command = args[args.index("-C") + 2 :] if "-C" in args else []
+            if len(command) == 4 and command[:3] == ["worktree", "remove", "--force"]:
+                return self._run_process(
+                    args,
+                    check=check,
+                    text=text,
+                    timeout_seconds=timeout,
+                    enforce_preflight_budget=False,
+                )
             return self._run_process(args, check=check, text=text)
 
         try:
@@ -578,6 +602,13 @@ class ReviewController:
         return self.github
 
     def _state(self) -> ReviewState:
+        budget = github.active_hosted_preflight_budget()
+        if budget is not None and isinstance(self.store, SqliteStateStore):
+            try:
+                return self.store.load(deadline=budget.deadline)
+            except StateLockTimeout:
+                ControllerStateStore._check_hosted_deadline(budget.deadline, lock_timeout=True)
+                raise
         return self.store.load()
 
     @staticmethod
@@ -5747,7 +5778,27 @@ class ReviewController:
             reserve()
             return state
 
-        self.store.update(admit)
+        budget = github.active_hosted_preflight_budget()
+        try:
+            if budget is None:
+                self.store.update(admit)
+            elif isinstance(self.store, (StateStore, ControllerStateStore)):
+                self.store.update(admit, lock_deadline=budget.deadline)
+            elif isinstance(self.store, SqliteStateStore):
+                self.store.update(
+                    admit,
+                    deadline=budget.deadline,
+                    deadline_active=lambda: budget.active,
+                )
+            else:
+                self.store.update(admit)
+        except StateLockTimeout as error:
+            if budget is not None:
+                try:
+                    budget.remaining_seconds()
+                except github.HostedPreflightDeadlineExceeded as deadline_error:
+                    raise ControllerError(str(deadline_error)) from error
+            raise ControllerError("could not acquire the review-stack state lock before Hosted admission") from error
 
     @staticmethod
     def _validate_force_options(force: bool, reason: str | None) -> None:
@@ -5769,40 +5820,51 @@ class ReviewController:
         **kwargs: Any,
     ) -> Any:
         self._validate_force_options(force, reason)
-        selected = self._target(policy.Channel.HOSTED, expected_pr)
-        self._ensure_runnable(selected, force=force, require_force_for_warnings=True)
-        if self.hosted_adapter is None:
-            raise ControllerError("Hosted adapter is not configured")
-        for attempt in range(MAX_BASE_RESELECTIONS + 1):
-            if not self.isolated_fixture:
-                prepare_full_trigger(selected.pr, expected_pr)
+        with github.hosted_preflight_budget() as budget:
             try:
-                return self.hosted_adapter(
-                    selected.target,
-                    expect_pr=expected_pr,
-                    force=force,
-                    reason=reason,
-                    admit=lambda reserve, selected=selected: self._admit_review(
-                        selected.pr, "hosted", reserve, selection_inputs=selected.selection_inputs
-                    ),
-                    **kwargs,
-                )
-            except _SelectionChanged:
-                if attempt == MAX_BASE_RESELECTIONS:
-                    raise
+                budget.set_phase("target_selection")
                 selected = self._target(policy.Channel.HOSTED, expected_pr)
+                budget.set_phase("runnable_check")
                 self._ensure_runnable(selected, force=force, require_force_for_warnings=True)
-            except StaleReviewTarget:
-                if not selected.target.default_base_front or attempt == MAX_BASE_RESELECTIONS:
-                    raise
-                selected = self._target(policy.Channel.HOSTED, selected.pr)
-                self._ensure_runnable(selected, force=force, require_force_for_warnings=True)
-            except HostedAdmissionBusy:
-                if attempt == MAX_BASE_RESELECTIONS:
-                    raise
-                time.sleep(min(HOSTED_ADMISSION_RETRY_BASE_SECONDS * (attempt + 1), HOSTED_ADMISSION_RETRY_MAX_SECONDS))
-                selected = self._target(policy.Channel.HOSTED, expected_pr)
-                self._ensure_runnable(selected, force=force, require_force_for_warnings=True)
+                if self.hosted_adapter is None:
+                    raise ControllerError("Hosted adapter is not configured")
+                for attempt in range(MAX_BASE_RESELECTIONS + 1):
+                    if not self.isolated_fixture:
+                        prepare_full_trigger(selected.pr, expected_pr)
+                    try:
+                        return self.hosted_adapter(
+                            selected.target,
+                            expect_pr=expected_pr,
+                            force=force,
+                            reason=reason,
+                            admit=lambda reserve, selected=selected: self._admit_review(
+                                selected.pr, "hosted", reserve, selection_inputs=selected.selection_inputs
+                            ),
+                            **kwargs,
+                        )
+                    except _SelectionChanged:
+                        if attempt == MAX_BASE_RESELECTIONS:
+                            raise
+                        budget.set_phase("target_reselection")
+                        selected = self._target(policy.Channel.HOSTED, expected_pr)
+                        self._ensure_runnable(selected, force=force, require_force_for_warnings=True)
+                    except StaleReviewTarget:
+                        if not selected.target.default_base_front or attempt == MAX_BASE_RESELECTIONS:
+                            raise
+                        budget.set_phase("target_reselection")
+                        selected = self._target(policy.Channel.HOSTED, selected.pr)
+                        self._ensure_runnable(selected, force=force, require_force_for_warnings=True)
+                    except HostedAdmissionBusy:
+                        if attempt == MAX_BASE_RESELECTIONS:
+                            raise
+                        budget.set_phase("admission_retry")
+                        time.sleep(
+                            min(HOSTED_ADMISSION_RETRY_BASE_SECONDS * (attempt + 1), HOSTED_ADMISSION_RETRY_MAX_SECONDS)
+                        )
+                        selected = self._target(policy.Channel.HOSTED, expected_pr)
+                        self._ensure_runnable(selected, force=force, require_force_for_warnings=True)
+            except github.HostedPreflightDeadlineExceeded as error:
+                raise ControllerError(str(error)) from error
         raise AssertionError("bounded Hosted reselection loop exhausted unexpectedly")
 
     def run_cli(

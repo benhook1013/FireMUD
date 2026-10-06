@@ -1,4 +1,5 @@
 import dataclasses
+import fcntl
 import json
 import multiprocessing
 import sys
@@ -9,6 +10,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
+from pr_review import github
 from pr_review import state as state_module
 from pr_review.policy import (
     Channel,
@@ -29,6 +31,7 @@ from pr_review.state import (
     ReviewState,
     StackReconciliationDecision,
     StateError,
+    StateLockTimeout,
     StateStore,
     SummaryFindingDisposition,
     adjudicate_summary_findings,
@@ -780,6 +783,61 @@ class ReviewStateStackTest(unittest.TestCase):
         ):
             state_module.git_common_dir()
         self.assertEqual(run.call_args.kwargs["timeout"], 30)
+
+    def test_git_common_dir_uses_remaining_hosted_preflight_budget(self):
+        class Clock:
+            now = 0.0
+
+            def monotonic(self):
+                return self.now
+
+        clock = Clock()
+
+        def git_call(args, **_kwargs):
+            clock.now = 13
+            return state_module.subprocess.CompletedProcess(args, 0, ".git\n", "")
+
+        with (
+            patch.object(github.time, "monotonic", side_effect=clock.monotonic),
+            github.activate_hosted_preflight_budget(timeout_seconds=12),
+            patch.object(state_module.subprocess, "run", side_effect=git_call) as run,
+            self.assertRaises(github.HostedPreflightDeadlineExceeded),
+        ):
+            state_module.git_common_dir()
+
+        self.assertEqual(run.call_args.kwargs["timeout"], 12)
+
+    def test_state_update_bounds_a_held_lock_to_its_deadline(self):
+        class Clock:
+            now = 0.0
+
+            def monotonic(self):
+                return self.now
+
+            def sleep(self, seconds):
+                self.now += seconds
+
+        clock = Clock()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state.json"
+            store = StateStore(path)
+            store.save(ReviewState(ordered_prs=(42,)))
+            with store.lock_path.open("a+") as lock_handle:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+                try:
+                    with (
+                        patch.object(state_module.time, "monotonic", side_effect=clock.monotonic),
+                        patch.object(state_module.time, "sleep", side_effect=clock.sleep),
+                        self.assertRaisesRegex(StateLockTimeout, "review-stack state lock"),
+                    ):
+                        store.update(
+                            lambda current: ReviewState(ordered_prs=current.ordered_prs + (43,)),
+                            lock_deadline=0.03,
+                        )
+                finally:
+                    fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+            self.assertGreaterEqual(clock.now, 0.03)
+            self.assertEqual(store.load().ordered_prs, (42,))
 
     def test_override_cannot_bypass_an_accepted_or_non_zero_useful_checkpoint(self):
         state = ReviewState(

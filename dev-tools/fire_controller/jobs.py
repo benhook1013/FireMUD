@@ -739,7 +739,31 @@ class JobStore:
                 "ORDER BY is_primary DESC, updated_at DESC, name COLLATE NOCASE ASC",
                 parameters,
             ).fetchall()
-            return [_public_row(_row_dict(row, _LIST_COLUMN_NAMES)) for row in rows]
+            result = [_public_row(_row_dict(row, _LIST_COLUMN_NAMES)) for row in rows]
+            activity = self._last_activity(connection, [job["id"] for job in result])
+            for job in result:
+                job["last_activity_at"] = activity[job["id"]]
+            return result
+
+    @staticmethod
+    def _last_activity(connection: sqlite3.Connection, identifiers: list[str]) -> dict[str, str]:
+        """Aggregate durable job activity in one read, including historical note scopes."""
+
+        if not identifiers:
+            return {}
+        rows = connection.execute(
+            "WITH selected AS (SELECT id, updated_at FROM jobs WHERE id IN (SELECT value FROM json_each(?))), "
+            "activity(job_id, touched_at) AS (SELECT id, updated_at FROM selected "
+            "UNION ALL SELECT job_id, created_at FROM job_revisions JOIN selected ON selected.id = job_id "
+            "UNION ALL SELECT job_id, created_at FROM job_updates JOIN selected ON selected.id = job_id "
+            "UNION ALL SELECT job_id, created_at FROM job_checkpoints JOIN selected ON selected.id = job_id "
+            "UNION ALL SELECT job, job_notes.updated_at FROM job_notes JOIN selected ON selected.id = job "
+            "UNION ALL SELECT selected.id, created_at FROM job_note_revisions "
+            "JOIN selected ON selected.id = json_extract(state_json, '$.job')) "
+            "SELECT job_id, MAX(touched_at) FROM activity GROUP BY job_id",
+            (_json(identifiers),),
+        ).fetchall()
+        return {row[0]: row[1] for row in rows}
 
     def revise(self, identifier: str, expected_revision: int, **changes: Any) -> dict[str, Any]:
         """Revise current fields atomically after an exact expected-revision check."""
@@ -1702,6 +1726,7 @@ class JobStore:
     def _get(self, connection: sqlite3.Connection, identifier: str, *, latest: int, full_history: bool) -> dict[str, Any]:
         row = self._find_job(connection, identifier)
         public = _public_row(_row_dict(row, JOB_COLUMNS["jobs"]))
+        public["last_activity_at"] = self._last_activity(connection, [row["id"]])[row["id"]]
         public["brief"] = self._current_brief(connection, row["id"], row["brief_revision"])
         if latest or full_history:
             update_sql = ("SELECT sequence, job_id, created_at, kind, body FROM job_updates WHERE job_id = ? "
