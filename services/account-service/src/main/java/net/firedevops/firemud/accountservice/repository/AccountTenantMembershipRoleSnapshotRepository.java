@@ -65,44 +65,7 @@ public class AccountTenantMembershipRoleSnapshotRepository {
 
     MembershipIdentity identity =
         lockRetainedMembership(accountId, tenantId, membershipId, expectedMembershipVersion);
-
-    Record header =
-        dsl.fetchOne(
-            "SELECT membership_id, snapshot_version FROM "
-                + SNAPSHOT_TABLE
-                + " WHERE membership_id = ? FOR UPDATE",
-            membershipId);
-    if (header == null) {
-      return Optional.empty();
-    }
-    requireExactPositive(header.get("membership_id", Long.class), membershipId, "membership ID");
-    requireExactPositive(
-        header.get("snapshot_version", Long.class),
-        expectedMembershipVersion,
-        "role snapshot version");
-
-    List<String> roles =
-        dsl
-            .fetch(
-                "SELECT role_identifier FROM "
-                    + ROLE_TABLE
-                    + " WHERE membership_id = ? AND snapshot_version = ?"
-                    + " ORDER BY convert_to(role_identifier, 'UTF8')",
-                membershipId,
-                expectedMembershipVersion)
-            .stream()
-            .map(row -> requiredRole(row.get("role_identifier", String.class)))
-            .toList();
-    return Optional.of(
-        new RoleSnapshot(
-            identity.accountId(),
-            identity.tenantId(),
-            identity.membershipId(),
-            expectedMembershipVersion,
-            roles,
-            identity.accountUuid(),
-            identity.tenantUuid(),
-            identity.tenantProvenance()));
+    return readLockedSnapshot(identity, expectedMembershipVersion);
   }
 
   /**
