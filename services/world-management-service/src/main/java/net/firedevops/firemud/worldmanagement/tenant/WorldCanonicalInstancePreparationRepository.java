@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalFrozenTopology.Request;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstancePreparation.Input;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstancePreparation.Result;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceTopologyPlan.Entry;
@@ -205,7 +206,7 @@ public final class WorldCanonicalInstancePreparationRepository {
     WorldCanonicalInstanceTopologyPlan reconstructed =
         WorldCanonicalInstanceTopologyPlan.create(frozen);
     if (!frozen.captureId().equals(input.captureId())
-        || !frozen.request().equals(input.topologyPlan().sourceBinding())
+        || !matchesCompleteFrozenSource(frozen.request(), input.topologyPlan().sourceBinding())
         || !reconstructed.entries().equals(input.topologyPlan().entries())
         || !reconstructed.regions().equals(input.topologyPlan().regions())
         || !reconstructed.zones().equals(input.topologyPlan().zones())
@@ -217,6 +218,25 @@ public final class WorldCanonicalInstancePreparationRepository {
           "Canonical preparation plan differs from the full immutable capture row/payload/revision/source vector");
     }
     WorldCanonicalInstancePreparation.requireGenerationFree(reconstructed);
+  }
+
+  /**
+   * Compares every immutable value in a frozen request without relying on the enclosing plan's
+   * object identity. The plan intentionally has no value equality of its own.
+   */
+  static boolean matchesCompleteFrozenSource(Request retained, Request supplied) {
+    Objects.requireNonNull(retained, "retained");
+    Objects.requireNonNull(supplied, "supplied");
+    var retainedPlan = retained.plan();
+    var suppliedPlan = supplied.plan();
+    var retainedGraph = retainedPlan.graph();
+    var suppliedGraph = suppliedPlan.graph();
+    return retained.freeze().equals(supplied.freeze())
+        && retainedPlan.binding().equals(suppliedPlan.binding())
+        && retainedPlan.ownerBinding().equals(suppliedPlan.ownerBinding())
+        && retainedGraph.tenantId().equals(suppliedGraph.tenantId())
+        && retainedGraph.versionId().equals(suppliedGraph.versionId())
+        && retainedGraph.nodes().equals(suppliedGraph.nodes());
   }
 
   /** Reloads original World-owned source, launch-pair, and Version rows before allocation. */

@@ -1,11 +1,29 @@
 package net.firedevops.firemud.worldmanagement.tenant;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.google.protobuf.util.JsonFormat;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
+import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
+import net.firedevops.firemud.gamedesign.v1.WorldDesignMutationRevision;
+import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredGraphSnapshot.CaptureRequest;
+import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredGraphSnapshot.OwnedAffectedTuple;
+import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalFrozenTopology.Request;
+import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceEvidence.OwnerBinding;
+import net.firedevops.firemud.worldmanagement.v1.RegionDesignMutation;
+import net.firedevops.firemud.worldmanagement.v1.WorldDesignAggregateType;
+import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationOperation;
+import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeMutationPolicy;
+import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeType;
 import org.junit.jupiter.api.Test;
 
 class WorldCanonicalInstancePreparationTest {
@@ -50,5 +68,372 @@ class WorldCanonicalInstancePreparationTest {
     assertThatThrownBy(() -> WorldCanonicalInstancePreparation.requireGenerationFree(plan))
         .isInstanceOf(WorldCanonicalInstancePreparation.GenerationIntentNotSupportedException.class)
         .hasMessageContaining("configured generation or spawn intent");
+  }
+
+  @Test
+  void separatelyReconstructedFrozenSourceMatchesEveryValueButChangedPayloadIsDenied()
+      throws Exception {
+    UUID tenantId = UUID.randomUUID();
+    UUID versionId = UUID.randomUUID();
+    UUID requestId = UUID.randomUUID();
+    UUID commitId = UUID.randomUUID();
+    UUID revisionId = UUID.randomUUID();
+    UUID regionId = UUID.randomUUID();
+    UUID secondRevisionId = UUID.randomUUID();
+    UUID secondRegionId = UUID.randomUUID();
+    var target =
+        new DraftCommitBinding.TargetProof(
+            tenantId, versionId, 41L, "gd-tenant", 42L, "gd-tenant", "NEW_GAME_ROW");
+    var originalMutation = regionMutation(commitId, revisionId, regionId, "Original region");
+    var secondMutation =
+        regionMutation(commitId, secondRevisionId, secondRegionId, "Second region");
+    DraftCommitBinding binding =
+        draftBinding(
+            target,
+            requestId,
+            commitId,
+            revisionId,
+            regionId,
+            originalMutation,
+            secondRevisionId,
+            secondRegionId,
+            secondMutation);
+    OwnerBinding owner = ownerBinding(tenantId, versionId);
+    CaptureRequest freeze = freezeRequest(owner, binding);
+    WorldDraftTopologyInputGraph graph =
+        topologyGraph(
+            tenantId,
+            versionId,
+            revisionId,
+            regionId,
+            originalMutation,
+            secondRevisionId,
+            secondRegionId,
+            secondMutation);
+    Request supplied = sourceRequest(binding, owner, freeze, graph);
+
+    DraftCommitBinding reconstructedBinding =
+        DraftCommitBinding.fromStored(binding.canonicalJson(), binding.digest());
+    Request reconstructed =
+        sourceRequest(
+            reconstructedBinding,
+            copyOwnerBinding(owner),
+            copyFreezeRequest(freeze),
+            topologyGraph(
+                tenantId,
+                versionId,
+                revisionId,
+                regionId,
+                originalMutation,
+                secondRevisionId,
+                secondRegionId,
+                secondMutation));
+
+    assertThat(reconstructed).isNotEqualTo(supplied);
+    assertThat(
+            WorldCanonicalInstancePreparationRepository.matchesCompleteFrozenSource(
+                reconstructed, supplied))
+        .isTrue();
+
+    var changedMutation = regionMutation(commitId, revisionId, regionId, "Changed region");
+    Request changedSource =
+        sourceRequest(
+            draftBinding(
+                target,
+                requestId,
+                commitId,
+                revisionId,
+                regionId,
+                changedMutation,
+                secondRevisionId,
+                secondRegionId,
+                secondMutation),
+            owner,
+            freeze,
+            topologyGraph(
+                tenantId,
+                versionId,
+                revisionId,
+                regionId,
+                changedMutation,
+                secondRevisionId,
+                secondRegionId,
+                secondMutation));
+    assertThat(
+            WorldCanonicalInstancePreparationRepository.matchesCompleteFrozenSource(
+                reconstructed, changedSource))
+        .isFalse();
+
+    assertThat(
+            WorldCanonicalInstancePreparationRepository.matchesCompleteFrozenSource(
+                reconstructed, requestWithFreeze(supplied, withChangedAffectedTuple(freeze))))
+        .isFalse();
+
+    assertThat(
+            WorldCanonicalInstancePreparationRepository.matchesCompleteFrozenSource(
+                reconstructed,
+                sourceRequest(binding, withChangedOwnerEvidence(owner), freeze, graph)))
+        .isFalse();
+
+    var changedGraphMutation =
+        regionMutation(commitId, revisionId, regionId, "Graph-only payload change");
+    assertThat(
+            WorldCanonicalInstancePreparationRepository.matchesCompleteFrozenSource(
+                reconstructed,
+                sourceRequest(
+                    binding,
+                    owner,
+                    freeze,
+                    topologyGraph(
+                        tenantId,
+                        versionId,
+                        revisionId,
+                        regionId,
+                        changedGraphMutation,
+                        secondRevisionId,
+                        secondRegionId,
+                        secondMutation))))
+        .isFalse();
+
+    assertThat(
+            WorldCanonicalInstancePreparationRepository.matchesCompleteFrozenSource(
+                reconstructed, sourceRequest(binding, owner, freeze, reverseTopologyGraph(graph))))
+        .isFalse();
+  }
+
+  private static DraftCommitBinding draftBinding(
+      DraftCommitBinding.TargetProof target,
+      UUID requestId,
+      UUID commitId,
+      UUID revisionId,
+      UUID regionId,
+      WorldDesignMutationRevision mutation,
+      UUID secondRevisionId,
+      UUID secondRegionId,
+      WorldDesignMutationRevision secondMutation)
+      throws Exception {
+    return DraftCommitBinding.create(
+        target,
+        requestId,
+        commitId,
+        "base-commit",
+        List.of(
+            new DraftCommitBinding.RevisionPayload(
+                "0", revisionId, Owner.WORLD_MANAGEMENT, JsonFormat.printer().print(mutation)),
+            new DraftCommitBinding.RevisionPayload(
+                "1",
+                secondRevisionId,
+                Owner.WORLD_MANAGEMENT,
+                JsonFormat.printer().print(secondMutation))),
+        List.of(
+            new AffectedUnit(
+                Owner.WORLD_MANAGEMENT,
+                "REGION",
+                regionId.toString(),
+                "AGGREGATE",
+                regionId.toString(),
+                "0"),
+            new AffectedUnit(
+                Owner.WORLD_MANAGEMENT,
+                "REGION",
+                regionId.toString(),
+                "REGION_SUBTREE",
+                regionId.toString(),
+                "0"),
+            new AffectedUnit(
+                Owner.WORLD_MANAGEMENT,
+                "REGION",
+                secondRegionId.toString(),
+                "AGGREGATE",
+                secondRegionId.toString(),
+                "0"),
+            new AffectedUnit(
+                Owner.WORLD_MANAGEMENT,
+                "REGION",
+                secondRegionId.toString(),
+                "REGION_SUBTREE",
+                secondRegionId.toString(),
+                "0")));
+  }
+
+  private static WorldDesignMutationRevision regionMutation(
+      UUID commitId, UUID revisionId, UUID regionId, String name) {
+    return WorldDesignMutationRevision.newBuilder()
+        .setLogicalRevisionId(revisionId.toString())
+        .setCommitId(commitId.toString())
+        .setOperation(WorldDesignMutationOperation.WORLD_DESIGN_MUTATION_OPERATION_UPSERT)
+        .setAggregateType(WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION)
+        .setAggregateId(regionId.toString())
+        .setScopeType(WorldDesignScopeType.WORLD_DESIGN_SCOPE_TYPE_REGION_SUBTREE)
+        .setScopeId(regionId.toString())
+        .setScopeMutationPolicy(
+            WorldDesignScopeMutationPolicy.WORLD_DESIGN_SCOPE_MUTATION_POLICY_UNSPECIFIED)
+        .setRegion(RegionDesignMutation.newBuilder().setName(name))
+        .build();
+  }
+
+  private static WorldDraftTopologyInputGraph topologyGraph(
+      UUID tenantId,
+      UUID versionId,
+      UUID revisionId,
+      UUID regionId,
+      WorldDesignMutationRevision mutation,
+      UUID secondRevisionId,
+      UUID secondRegionId,
+      WorldDesignMutationRevision secondMutation) {
+    return new WorldDraftTopologyInputGraph(
+        tenantId,
+        versionId,
+        List.of(
+            new WorldDraftTopologyInputGraph.Node(
+                "0", revisionId, regionId, regionId, mutation, null),
+            new WorldDraftTopologyInputGraph.Node(
+                "1", secondRevisionId, secondRegionId, secondRegionId, secondMutation, null)));
+  }
+
+  private static WorldDraftTopologyInputGraph reverseTopologyGraph(
+      WorldDraftTopologyInputGraph graph) {
+    return new WorldDraftTopologyInputGraph(
+        graph.tenantId(), graph.versionId(), List.of(graph.nodes().get(1), graph.nodes().get(0)));
+  }
+
+  private static OwnerBinding ownerBinding(UUID tenantId, UUID versionId) {
+    return new OwnerBinding(
+        "firemud",
+        tenantId,
+        versionId,
+        UUID.randomUUID(),
+        41L,
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        "sha256:" + "1".repeat(64),
+        UUID.randomUUID(),
+        "sha256:" + "2".repeat(64),
+        "sha256:" + "3".repeat(64));
+  }
+
+  private static CaptureRequest freezeRequest(OwnerBinding owner, DraftCommitBinding binding) {
+    return new CaptureRequest(
+        owner.targetNamespace(),
+        owner.canonicalTenantId(),
+        owner.canonicalVersionId(),
+        owner.intakeRequestId(),
+        UUID.randomUUID(),
+        "publication-request",
+        "4".repeat(64),
+        7L,
+        PublicationDigestRequestBinding.full(
+                owner.canonicalTenantId().toString(),
+                Long.toString(owner.gameDesignVersionId()),
+                "publication-request")
+            .derivedWorkflowIdentity(),
+        binding.commitId().toString(),
+        "5".repeat(64),
+        3,
+        binding.affectedUnits(Owner.WORLD_MANAGEMENT).stream()
+            .map(
+                unit ->
+                    new OwnedAffectedTuple(
+                        unit.owner().name(),
+                        unit.aggregateType(),
+                        unit.aggregateId(),
+                        unit.scopeType(),
+                        unit.scopeId(),
+                        unit.expectedEpoch()))
+            .toList());
+  }
+
+  private static CaptureRequest copyFreezeRequest(CaptureRequest source) {
+    return new CaptureRequest(
+        source.targetNamespace(),
+        source.canonicalTenantId(),
+        source.canonicalVersionId(),
+        source.intakeRequestId(),
+        source.publicationFence(),
+        source.publicationRequestId(),
+        source.requestDigest(),
+        source.versionStateEpoch(),
+        source.publishWorkflowId(),
+        source.appliedCommitId(),
+        source.contentDigest(),
+        source.digestSchemaVersion(),
+        List.copyOf(source.suppliedOwnedAffectedTuples()));
+  }
+
+  private static CaptureRequest withChangedAffectedTuple(CaptureRequest source) {
+    List<OwnedAffectedTuple> tuples = new ArrayList<>(source.suppliedOwnedAffectedTuples());
+    OwnedAffectedTuple first = tuples.get(0);
+    tuples.set(
+        0,
+        new OwnedAffectedTuple(
+            first.owner(),
+            first.aggregateType(),
+            first.aggregateId(),
+            first.scopeType(),
+            first.scopeId(),
+            "1"));
+    return new CaptureRequest(
+        source.targetNamespace(),
+        source.canonicalTenantId(),
+        source.canonicalVersionId(),
+        source.intakeRequestId(),
+        source.publicationFence(),
+        source.publicationRequestId(),
+        source.requestDigest(),
+        source.versionStateEpoch(),
+        source.publishWorkflowId(),
+        source.appliedCommitId(),
+        source.contentDigest(),
+        source.digestSchemaVersion(),
+        tuples);
+  }
+
+  private static OwnerBinding copyOwnerBinding(OwnerBinding source) {
+    return new OwnerBinding(
+        source.targetNamespace(),
+        source.canonicalTenantId(),
+        source.canonicalVersionId(),
+        source.versionIdentityOperationId(),
+        source.gameDesignVersionId(),
+        source.intakeRequestId(),
+        source.intakeOperationId(),
+        source.intakeRequestDigest(),
+        source.sourceOperationId(),
+        source.sourceEvidenceDigest(),
+        source.intakeReceiptDigest());
+  }
+
+  private static OwnerBinding withChangedOwnerEvidence(OwnerBinding source) {
+    return new OwnerBinding(
+        source.targetNamespace(),
+        source.canonicalTenantId(),
+        source.canonicalVersionId(),
+        source.versionIdentityOperationId(),
+        source.gameDesignVersionId(),
+        source.intakeRequestId(),
+        source.intakeOperationId(),
+        source.intakeRequestDigest(),
+        source.sourceOperationId(),
+        "sha256:" + "8".repeat(64),
+        source.intakeReceiptDigest());
+  }
+
+  private static Request requestWithFreeze(Request source, CaptureRequest freeze) {
+    Request request = mock(Request.class);
+    when(request.plan()).thenReturn(source.plan());
+    when(request.freeze()).thenReturn(freeze);
+    return request;
+  }
+
+  private static Request sourceRequest(
+      DraftCommitBinding binding,
+      OwnerBinding owner,
+      CaptureRequest freeze,
+      WorldDraftTopologyInputGraph graph) {
+    WorldDraftTopologyCommitPlan plan = mock(WorldDraftTopologyCommitPlan.class);
+    when(plan.binding()).thenReturn(binding);
+    when(plan.ownerBinding()).thenReturn(owner);
+    when(plan.graph()).thenReturn(graph);
+    return new Request(plan, freeze);
   }
 }

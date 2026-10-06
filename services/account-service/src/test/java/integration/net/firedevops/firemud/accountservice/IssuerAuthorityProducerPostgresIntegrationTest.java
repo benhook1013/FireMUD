@@ -424,6 +424,7 @@ class IssuerAuthorityProducerPostgresIntegrationTest {
         .defaultSchema(schema)
         .placeholders(Map.of("serviceSchema", schema))
         .locations("classpath:db/migration")
+        .target("59")
         .load()
         .migrate();
     assertThat(
