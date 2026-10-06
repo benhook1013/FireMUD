@@ -17,6 +17,7 @@ import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateEvidence;
+import net.firedevops.firemud.common.gamedesign.DraftSynchronizedVisibilityEvidence;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceRepository.ConflictException;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceRepository.OpenOwner;
@@ -50,6 +51,32 @@ public class WorldDraftTopologyCommitRepository {
           "World complete storage readback requires no active caller transaction");
     }
     return Optional.ofNullable(find(plan, mapper.writeValueAsString(plan.ownerBinding())));
+  }
+
+  /**
+   * Selects the retained immutable graph for one exact synchronized binding. The separate Game
+   * Design evidence must prove this owner is APPLIED; this row's STORED_PERMISSION_UNVERIFIED label
+   * is never treated as APPLIED or as authorization. Unlike reconciliation readback, this path
+   * intentionally does not consult mutable current topology rows or epochs. Selection stays denied
+   * until the owner-result contract canonically binds an APPLIED result to this graph.
+   */
+  public Optional<WorldCanonicalAuthoredGraph> readSynchronized(
+      DraftSynchronizedVisibilityEvidence evidence) {
+    Objects.requireNonNull(evidence, "evidence");
+    evidence.requireValid();
+    var applied = evidence.appliedOwnerResult(DraftCommitBinding.Owner.WORLD_MANAGEMENT);
+    if (!applied.commitId().equals(evidence.binding().commitId())
+        || !applied.bindingDigest().equals(evidence.binding().digest())) {
+      throw new ConflictException(
+          "World owner APPLIED evidence differs from the exact Draft binding");
+    }
+    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new ConflictException(
+          "World synchronized graph selection requires no active caller transaction");
+    }
+    throw new ConflictException(
+        "World synchronized graph selection has no canonical World APPLIED-result carrier "
+            + "bound to the retained graph");
   }
 
   /** Caller already holds the exact shared V25 FROZEN owner lock; no writer is entered. */

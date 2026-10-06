@@ -17,6 +17,7 @@ import static org.mockito.Mockito.when;
 
 import com.google.protobuf.UnknownFieldSet;
 import io.grpc.Attributes;
+import io.grpc.CallCredentials;
 import io.grpc.CallOptions;
 import io.grpc.ClientCall;
 import io.grpc.ManagedChannel;
@@ -36,10 +37,14 @@ import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationReservationEvidence;
 import net.firedevops.firemud.common.tenant.FreshTenantCreatorDigest;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
+import net.firedevops.firemud.gamedesign.v1.ReadFreshTenantCreationReservationRequest;
+import net.firedevops.firemud.gamedesign.v1.ReadFreshTenantCreationReservationResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreationRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreationResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreatorQualificationResponse;
@@ -65,6 +70,9 @@ class GameDesignFreshTenantIdentityClientTest {
   private static final long SOURCE_GAME_ROW_ID = 91L;
   private static final String SOURCE_GAME_TENANT_KEY = "fresh-owner-key-91";
   private static final String REQUEST_DIGEST = "sha256:" + "a".repeat(64);
+  private static final String RESERVATION_REQUEST_DIGEST =
+      GameTenantCreationDigest.requestDigest(
+          "test", REQUEST_ID, SOURCE_GAME_TENANT_KEY, "Fresh Realm", null);
   private static final String AUTHORIZATION_DIGEST = "sha256:" + "b".repeat(64);
 
   @Test
@@ -129,6 +137,104 @@ class GameDesignFreshTenantIdentityClientTest {
             .addField(100, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
             .build();
     assertRejected(validResponse().toBuilder().setUnknownFields(unknownFields).build());
+  }
+
+  @Test
+  void exactReservationResponseBindsDistinctReadIdentityAndCompleteImmutableTuple()
+      throws Exception {
+    TenantIdentityServiceGrpc.TenantIdentityServiceBlockingStub stub = mockStub();
+    when(stub.readFreshTenantCreationReservation(any())).thenReturn(validReservationResponse());
+    GameDesignFreshTenantIdentityClient client = newClient(stub);
+
+    FreshTenantCreationReservationEvidence first =
+        client.readCreationReservation(
+            READ_REQUEST_ID,
+            REQUEST_ID,
+            RESERVATION_REQUEST_DIGEST,
+            OPERATION_ID,
+            CANONICAL_TENANT_ID);
+    FreshTenantCreationReservationEvidence retry =
+        client.readCreationReservation(
+            READ_REQUEST_ID,
+            REQUEST_ID,
+            RESERVATION_REQUEST_DIGEST,
+            OPERATION_ID,
+            CANONICAL_TENANT_ID);
+
+    assertThat(first).isEqualTo(retry);
+    assertThat(first.targetNamespace()).isEqualTo("test");
+    assertThat(first.creationRequestId()).isEqualTo(REQUEST_ID);
+    assertThat(first.requestDigest()).isEqualTo(RESERVATION_REQUEST_DIGEST);
+    assertThat(first.operationId()).isEqualTo(OPERATION_ID);
+    assertThat(first.canonicalTenantId()).isEqualTo(CANONICAL_TENANT_ID);
+    assertThat(first.sourceGameTenantKey()).isEqualTo(SOURCE_GAME_TENANT_KEY);
+    assertThat(first.name()).isEqualTo("Fresh Realm");
+    assertThat(first.description()).isNull();
+
+    ArgumentCaptor<ReadFreshTenantCreationReservationRequest> requestCaptor =
+        ArgumentCaptor.forClass(ReadFreshTenantCreationReservationRequest.class);
+    verify(stub, times(2)).withDeadlineAfter(5L, TimeUnit.SECONDS);
+    verify(stub, times(2)).readFreshTenantCreationReservation(requestCaptor.capture());
+    assertThat(requestCaptor.getAllValues())
+        .allSatisfy(
+            request -> {
+              assertThat(request.getSchemaVersion()).isEqualTo(1);
+              assertThat(request.getTargetNamespace()).isEqualTo("test");
+              assertThat(request.getReadRequestId()).isEqualTo(READ_REQUEST_ID.toString());
+              assertThat(request.getCreationRequestId()).isEqualTo(REQUEST_ID.toString());
+              assertThat(request.getExpectedRequestDigest()).isEqualTo(RESERVATION_REQUEST_DIGEST);
+              assertThat(request.getExpectedCreationOperationId())
+                  .isEqualTo(OPERATION_ID.toString());
+              assertThat(request.getExpectedCanonicalTenantId())
+                  .isEqualTo(CANONICAL_TENANT_ID.toString());
+              assertThat(request.getUnknownFields().asMap()).isEmpty();
+            });
+  }
+
+  @Test
+  void reservationClientRejectsSubstitutedOrIncompleteResponseAndMalformedSelectors()
+      throws Exception {
+    ReadFreshTenantCreationReservationResponse valid = validReservationResponse();
+    for (ReadFreshTenantCreationReservationResponse changed :
+        List.of(
+            valid.toBuilder().setTargetNamespace("other").build(),
+            valid.toBuilder().setReadRequestId(OTHER_REQUEST_ID.toString()).build(),
+            valid.toBuilder().setCreationRequestId(OTHER_REQUEST_ID.toString()).build(),
+            valid.toBuilder().setRequestDigest(REQUEST_DIGEST).build(),
+            valid.toBuilder().setCreationOperationId(OTHER_REQUEST_ID.toString()).build(),
+            valid.toBuilder().setCanonicalTenantId(OTHER_REQUEST_ID.toString()).build(),
+            valid.toBuilder().setSourceGameTenantKey("changed-key").build(),
+            valid.toBuilder().setName("Changed").build(),
+            valid.toBuilder().setDescription("").build(),
+            valid.toBuilder().setEvidenceDigest("sha256:" + "0".repeat(64)).build(),
+            valid.toBuilder().clearCreationOperationId().build(),
+            valid.toBuilder()
+                .clearDescription()
+                .setUnknownFields(
+                    UnknownFieldSet.newBuilder()
+                        .addField(100, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
+                        .build())
+                .build())) {
+      assertRejectedReservation(changed);
+    }
+
+    TenantIdentityServiceGrpc.TenantIdentityServiceBlockingStub stub = mockStub();
+    GameDesignFreshTenantIdentityClient client = newClient(stub);
+    assertThatThrownBy(
+            () ->
+                client.readCreationReservation(
+                    REQUEST_ID,
+                    REQUEST_ID,
+                    RESERVATION_REQUEST_DIGEST,
+                    OPERATION_ID,
+                    CANONICAL_TENANT_ID))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                client.readCreationReservation(
+                    READ_REQUEST_ID, REQUEST_ID, "bad", OPERATION_ID, CANONICAL_TENANT_ID))
+        .isInstanceOf(IllegalArgumentException.class);
+    verifyNoInteractions(stub);
   }
 
   @Test
@@ -402,8 +508,8 @@ class GameDesignFreshTenantIdentityClientTest {
   }
 
   @Test
-  void initializedStubRejectsResponseWithoutAuthenticatedServerSession(@TempDir Path directory)
-      throws Exception {
+  void initializedStubRequiresAuthenticatedServerIdentityForRequestAndResponse(
+      @TempDir Path directory) throws Exception {
     UnauthenticatedResponseChannel channel = new UnauthenticatedResponseChannel(validResponse());
     GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
     when(channelFactory.buildChannel(
@@ -421,6 +527,8 @@ class GameDesignFreshTenantIdentityClientTest {
           .extracting(error -> ((StatusRuntimeException) error).getStatus().getCode())
           .isEqualTo(Status.Code.UNAUTHENTICATED);
       assertThat(channel.lastCallCancelled).isTrue();
+      assertThat(channel.lastCallCredentials)
+          .isInstanceOf(GrpcServerPeerIdentityCallCredentials.class);
     } finally {
       client.close();
     }
@@ -432,6 +540,22 @@ class GameDesignFreshTenantIdentityClientTest {
     GameDesignFreshTenantIdentityClient client = newClient(stub);
 
     assertThatThrownBy(() -> client.resolveCreation(REQUEST_ID, REQUEST_DIGEST))
+        .isInstanceOf(IllegalStateException.class);
+  }
+
+  private static void assertRejectedReservation(ReadFreshTenantCreationReservationResponse response)
+      throws Exception {
+    TenantIdentityServiceGrpc.TenantIdentityServiceBlockingStub stub = mockStub();
+    when(stub.readFreshTenantCreationReservation(any())).thenReturn(response);
+    GameDesignFreshTenantIdentityClient client = newClient(stub);
+    assertThatThrownBy(
+            () ->
+                client.readCreationReservation(
+                    READ_REQUEST_ID,
+                    REQUEST_ID,
+                    RESERVATION_REQUEST_DIGEST,
+                    OPERATION_ID,
+                    CANONICAL_TENANT_ID))
         .isInstanceOf(IllegalStateException.class);
   }
 
@@ -531,6 +655,32 @@ class GameDesignFreshTenantIdentityClientTest {
         source.getEvidenceDigest());
   }
 
+  private static ReadFreshTenantCreationReservationResponse validReservationResponse() {
+    FreshTenantCreationReservationEvidence evidence =
+        FreshTenantCreationReservationEvidence.fromReservation(
+            1,
+            "test",
+            REQUEST_ID,
+            RESERVATION_REQUEST_DIGEST,
+            OPERATION_ID,
+            CANONICAL_TENANT_ID,
+            SOURCE_GAME_TENANT_KEY,
+            "Fresh Realm",
+            null);
+    return ReadFreshTenantCreationReservationResponse.newBuilder()
+        .setSchemaVersion(1)
+        .setTargetNamespace("test")
+        .setReadRequestId(READ_REQUEST_ID.toString())
+        .setCreationRequestId(REQUEST_ID.toString())
+        .setRequestDigest(RESERVATION_REQUEST_DIGEST)
+        .setCreationOperationId(OPERATION_ID.toString())
+        .setCanonicalTenantId(CANONICAL_TENANT_ID.toString())
+        .setSourceGameTenantKey(SOURCE_GAME_TENANT_KEY)
+        .setName("Fresh Realm")
+        .setEvidenceDigest(evidence.evidenceDigest())
+        .build();
+  }
+
   private static ResolveFreshTenantCreatorQualificationResponse
       validCreatorQualificationResponse() {
     FreshTenantCreationEvidence source = validFreshCreationEvidence();
@@ -600,6 +750,7 @@ class GameDesignFreshTenantIdentityClientTest {
 
   private static final class UnauthenticatedResponseChannel extends ManagedChannel {
     private final byte[] responseBytes;
+    private CallCredentials lastCallCredentials;
     private boolean lastCallCancelled;
 
     private UnauthenticatedResponseChannel(ResolveFreshTenantCreationResponse response) {
@@ -614,6 +765,7 @@ class GameDesignFreshTenantIdentityClientTest {
     @Override
     public <ReqT, RespT> ClientCall<ReqT, RespT> newCall(
         MethodDescriptor<ReqT, RespT> method, CallOptions callOptions) {
+      lastCallCredentials = callOptions.getCredentials();
       return new ClientCall<>() {
         @Override
         public void start(Listener<RespT> responseListener, Metadata headers) {

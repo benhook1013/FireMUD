@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import java.sql.SQLException;
@@ -11,18 +12,23 @@ import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationReservationEvidence;
 import net.firedevops.firemud.common.tenant.FreshTenantCreatorEvidence;
 import net.firedevops.firemud.common.tenant.GameSessionTenantAssociationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.common.tenant.RuntimeTenantIdentityEvidence;
+import net.firedevops.firemud.gamedesign.repository.FreshTenantCreationReservation;
 import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository;
+import net.firedevops.firemud.gamedesign.repository.GameTenantCreationReservationRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTenantIdentity;
 import net.firedevops.firemud.gamedesign.service.impl.TenantAssociationMigrationService.ApprovedAssociation;
 import net.firedevops.firemud.gamedesign.v1.FreshTenantCreatorQualificationEvidence;
 import net.firedevops.firemud.gamedesign.v1.GameSessionTenantAssociationManifestEvidence;
+import net.firedevops.firemud.gamedesign.v1.ReadFreshTenantCreationReservationRequest;
+import net.firedevops.firemud.gamedesign.v1.ReadFreshTenantCreationReservationResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreationRequest;
@@ -51,20 +57,26 @@ public class TenantIdentityGrpcService
   private final GameRepository gameRepository;
   private final TenantAssociationMigrationService associationService;
   private final GameTenantCreationRepository creationRepository;
+  private final GameTenantCreationReservationRepository reservationRepository;
   private final GameAuthoredWorldSourceRepository authoredWorldRepository;
   private final GameSessionTenantAssociationRepository gameSessionAssociationRepository;
   private final String workloadNamespace;
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Injected persistence owners remain internal Spring collaborators.")
   public TenantIdentityGrpcService(
       GameRepository gameRepository,
       TenantAssociationMigrationService associationService,
       GameTenantCreationRepository creationRepository,
+      GameTenantCreationReservationRepository reservationRepository,
       GameAuthoredWorldSourceRepository authoredWorldRepository,
       GameSessionTenantAssociationRepository gameSessionAssociationRepository,
       @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace) {
     this.gameRepository = gameRepository;
     this.associationService = associationService;
     this.creationRepository = creationRepository;
+    this.reservationRepository = reservationRepository;
     this.authoredWorldRepository = authoredWorldRepository;
     this.gameSessionAssociationRepository = gameSessionAssociationRepository;
     this.workloadNamespace = workloadNamespace;
@@ -463,6 +475,166 @@ public class TenantIdentityGrpcService
                     .setEvidenceDigest(qualification.evidenceDigest())
                     .build())
             .build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  public void readFreshTenantCreationReservation(
+      ReadFreshTenantCreationReservationRequest request,
+      StreamObserver<ReadFreshTenantCreationReservationResponse> responseObserver) {
+    if (SessionContext.hasAuthenticatedCallerContext() || !isAccountPeer()) {
+      responseObserver.onError(
+          Status.PERMISSION_DENIED
+              .withDescription(
+                  "Verified Account workload identity without caller context is required")
+              .asRuntimeException());
+      return;
+    }
+
+    if (!request.hasTargetNamespace()) {
+      responseObserver.onError(
+          Status.INVALID_ARGUMENT
+              .withDescription("Reservation target namespace is required")
+              .asRuntimeException());
+      return;
+    }
+    if (!workloadNamespace.equals(request.getTargetNamespace())) {
+      responseObserver.onError(
+          Status.PERMISSION_DENIED
+              .withDescription("Reservation read is limited to the configured namespace")
+              .asRuntimeException());
+      return;
+    }
+
+    UUID readRequestId = parseCanonicalNonNilUuid(request.getReadRequestId());
+    UUID creationRequestId = parseCanonicalNonNilUuid(request.getCreationRequestId());
+    UUID expectedOperationId = parseCanonicalNonNilUuid(request.getExpectedCreationOperationId());
+    UUID expectedCanonicalTenantId =
+        parseCanonicalNonNilUuid(request.getExpectedCanonicalTenantId());
+    String targetNamespace = request.getTargetNamespace();
+    String expectedRequestDigest = request.getExpectedRequestDigest();
+    if (!request.getUnknownFields().asMap().isEmpty()
+        || !request.hasSchemaVersion()
+        || request.getSchemaVersion() != 1
+        || !request.hasReadRequestId()
+        || !request.hasCreationRequestId()
+        || !request.hasExpectedRequestDigest()
+        || !request.hasExpectedCreationOperationId()
+        || !request.hasExpectedCanonicalTenantId()
+        || readRequestId == null
+        || creationRequestId == null
+        || readRequestId.equals(creationRequestId)
+        || expectedOperationId == null
+        || expectedCanonicalTenantId == null
+        || !isSha256Digest(expectedRequestDigest)) {
+      responseObserver.onError(
+          Status.INVALID_ARGUMENT
+              .withDescription("Canonical closed fresh tenant reservation read is required")
+              .asRuntimeException());
+      return;
+    }
+    Optional<FreshTenantCreationReservation> resolved;
+    try {
+      resolved =
+          reservationRepository.read(targetNamespace, creationRequestId, expectedRequestDigest);
+    } catch (GameTenantCreationReservationRepository.InvalidReservationException ex) {
+      responseObserver.onError(
+          Status.FAILED_PRECONDITION
+              .withDescription("Fresh tenant reservation is incomplete or inconsistent")
+              .asRuntimeException());
+      return;
+    } catch (GameTenantCreationReservationRepository.ReservationConflictException ex) {
+      responseObserver.onError(
+          Status.FAILED_PRECONDITION
+              .withDescription("Fresh tenant reservation does not match the exact request")
+              .asRuntimeException());
+      return;
+    } catch (TooManyRowsException ex) {
+      responseObserver.onError(
+          Status.FAILED_PRECONDITION
+              .withDescription("Fresh tenant reservation is ambiguous")
+              .asRuntimeException());
+      return;
+    } catch (DataAccessResourceFailureException ex) {
+      responseObserver.onError(
+          Status.UNAVAILABLE
+              .withDescription("Fresh tenant reservation is temporarily unavailable")
+              .asRuntimeException());
+      return;
+    } catch (DataAccessException ex) {
+      Status.Code code =
+          hasConnectionFailureSqlState(ex) ? Status.Code.UNAVAILABLE : Status.Code.INTERNAL;
+      responseObserver.onError(
+          Status.fromCode(code)
+              .withDescription(
+                  code == Status.Code.UNAVAILABLE
+                      ? "Fresh tenant reservation is temporarily unavailable"
+                      : "Fresh tenant reservation could not be read")
+              .asRuntimeException());
+      return;
+    } catch (RuntimeException ex) {
+      responseObserver.onError(
+          Status.INTERNAL
+              .withDescription("Fresh tenant reservation could not be read")
+              .asRuntimeException());
+      return;
+    }
+    if (resolved.isEmpty()) {
+      responseObserver.onError(
+          Status.NOT_FOUND
+              .withDescription("No fresh tenant reservation for exact request ID")
+              .asRuntimeException());
+      return;
+    }
+
+    FreshTenantCreationReservation reservation = resolved.orElseThrow();
+    if (!expectedOperationId.equals(reservation.operationId())
+        || !expectedCanonicalTenantId.equals(reservation.canonicalTenantId())) {
+      responseObserver.onError(
+          Status.FAILED_PRECONDITION
+              .withDescription(
+                  "Fresh tenant reservation does not match the exact expected identity")
+              .asRuntimeException());
+      return;
+    }
+
+    FreshTenantCreationReservationEvidence evidence;
+    try {
+      evidence =
+          FreshTenantCreationReservationEvidence.fromReservation(
+              reservation.schemaVersion(),
+              reservation.targetNamespace(),
+              reservation.creationRequestId(),
+              reservation.requestDigest(),
+              reservation.operationId(),
+              reservation.canonicalTenantId(),
+              reservation.sourceGameTenantKey(),
+              reservation.name(),
+              reservation.description());
+    } catch (IllegalArgumentException ex) {
+      responseObserver.onError(
+          Status.FAILED_PRECONDITION
+              .withDescription("Fresh tenant reservation evidence is invalid")
+              .asRuntimeException());
+      return;
+    }
+
+    ReadFreshTenantCreationReservationResponse.Builder response =
+        ReadFreshTenantCreationReservationResponse.newBuilder()
+            .setSchemaVersion(evidence.schemaVersion())
+            .setTargetNamespace(evidence.targetNamespace())
+            .setReadRequestId(readRequestId.toString())
+            .setCreationRequestId(evidence.creationRequestId().toString())
+            .setRequestDigest(evidence.requestDigest())
+            .setCreationOperationId(evidence.operationId().toString())
+            .setCanonicalTenantId(evidence.canonicalTenantId().toString())
+            .setSourceGameTenantKey(evidence.sourceGameTenantKey())
+            .setName(evidence.name())
+            .setEvidenceDigest(evidence.evidenceDigest());
+    if (evidence.description() != null) {
+      response.setDescription(evidence.description());
+    }
+    responseObserver.onNext(response.build());
     responseObserver.onCompleted();
   }
 

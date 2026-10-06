@@ -11,11 +11,15 @@ import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationReservationEvidence;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationReservationGrpcCodec;
 import net.firedevops.firemud.common.tenant.FreshTenantCreatorDigest;
 import net.firedevops.firemud.common.tenant.FreshTenantCreatorEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
+import net.firedevops.firemud.gamedesign.v1.ReadFreshTenantCreationReservationResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreationRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreationResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreatorQualificationRequest;
@@ -70,7 +74,9 @@ public final class GameDesignFreshTenantIdentityClient
       ManagedChannel channel) {
     return TenantIdentityServiceGrpc.newBlockingStub(
             ClientInterceptors.intercept(channel, serverPeerIdentityInterceptor))
-        .withCompression("gzip");
+        .withCompression("gzip")
+        .withCallCredentials(
+            new GrpcServerPeerIdentityCallCredentials(gameDesignServerPeerUri(workloadNamespace)));
   }
 
   private static String gameDesignServerPeerUri(String namespace) {
@@ -125,6 +131,41 @@ public final class GameDesignFreshTenantIdentityClient
           "Game Design fresh tenant evidence does not match the exact request");
     }
     return evidence;
+  }
+
+  /** Reads the exact immutable, non-authoritative reservation for a proposed target identity. */
+  public FreshTenantCreationReservationEvidence readCreationReservation(
+      UUID readRequestId,
+      UUID creationRequestId,
+      String expectedRequestDigest,
+      UUID expectedCreationOperationId,
+      UUID expectedCanonicalTenantId) {
+    FreshTenantCreationReservationGrpcCodec.ReadRequest request;
+    try {
+      request =
+          new FreshTenantCreationReservationGrpcCodec.ReadRequest(
+              workloadNamespace,
+              readRequestId,
+              creationRequestId,
+              expectedRequestDigest,
+              expectedCreationOperationId,
+              expectedCanonicalTenantId);
+    } catch (IllegalArgumentException exception) {
+      throw new IllegalArgumentException(
+          "Exact fresh tenant reservation selector is required", exception);
+    }
+
+    ReadFreshTenantCreationReservationResponse response =
+        stub()
+            .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+            .readFreshTenantCreationReservation(
+                FreshTenantCreationReservationGrpcCodec.toReadRequest(request));
+    try {
+      return FreshTenantCreationReservationGrpcCodec.fromReadResponse(request, response);
+    } catch (IllegalArgumentException exception) {
+      throw new IllegalStateException(
+          "Game Design reservation evidence does not match the exact read request", exception);
+    }
   }
 
   /**

@@ -22,6 +22,7 @@ import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepository;
 import net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepository.AssociationReceipt;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository;
+import net.firedevops.firemud.gamedesign.repository.GameTenantCreationReservationRepository;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyGameSessionTenantAssociationRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyGameSessionTenantAssociationResponse;
 import org.jooq.exception.DataAccessException;
@@ -43,6 +44,7 @@ class GameSessionTenantAssociationGrpcTest {
           mock(GameRepository.class),
           mock(TenantAssociationMigrationService.class),
           mock(GameTenantCreationRepository.class),
+          mock(GameTenantCreationReservationRepository.class),
           mock(GameAuthoredWorldSourceRepository.class),
           repository,
           "test");

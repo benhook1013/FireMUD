@@ -493,7 +493,7 @@ class GameTenantCreationRepositoryIntegrationTest {
                 fixture.repository.createCandidate(
                     NAMESPACE, REQUEST_ID, SOURCE_KEY, "World", null))
         .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("active Game Design owner transaction");
+        .hasMessageContaining("active writable Game Design owner transaction");
     assertThatThrownBy(
             () ->
                 fixture.transactionTemplate.execute(

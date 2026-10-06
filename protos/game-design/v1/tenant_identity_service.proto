@@ -18,6 +18,9 @@ service TenantIdentityService {
   // Same-namespace Account mTLS read only, without forwarded caller context.
   rpc ResolveFreshTenantCreatorQualification(ResolveFreshTenantCreatorQualificationRequest)
       returns (ResolveFreshTenantCreatorQualificationResponse);
+  // Exact Account-only read of a non-authoritative Game Design tenant reservation.
+  rpc ReadFreshTenantCreationReservation(ReadFreshTenantCreationReservationRequest)
+      returns (ReadFreshTenantCreationReservationResponse);
   // Exact owner-local read of one persisted runtime tenant identity for Game Session.
   rpc ResolveRuntimeTenantIdentity(ResolveRuntimeTenantIdentityRequest)
       returns (ResolveRuntimeTenantIdentityResponse);
@@ -136,6 +139,32 @@ message ResolveFreshTenantCreatorQualificationResponse {
   // Original source identity evidence remains byte-for-byte and digest-for-digest unchanged.
   ResolveFreshTenantCreationResponse creation_evidence = 2;
   FreshTenantCreatorQualificationEvidence creator_qualification = 3;
+}
+
+// Non-mutating reservation identity read; this does not prove creation or creator authority.
+message ReadFreshTenantCreationReservationRequest {
+  optional int32 schema_version = 1;
+  optional string target_namespace = 2;
+  optional string read_request_id = 3;
+  optional string creation_request_id = 4;
+  optional string expected_request_digest = 5;
+  optional string expected_creation_operation_id = 6;
+  optional string expected_canonical_tenant_id = 7;
+}
+
+message ReadFreshTenantCreationReservationResponse {
+  optional int32 schema_version = 1;
+  optional string target_namespace = 2;
+  optional string read_request_id = 3;
+  optional string creation_request_id = 4;
+  optional string request_digest = 5;
+  optional string creation_operation_id = 6;
+  optional string canonical_tenant_id = 7;
+  optional string source_game_tenant_key = 8;
+  optional string name = 9;
+  // Presence distinguishes the immutable absent-description value from present-empty.
+  optional string description = 10;
+  optional string evidence_digest = 11;
 }
 
 message ResolveRuntimeTenantIdentityRequest {

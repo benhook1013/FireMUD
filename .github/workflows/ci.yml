@@ -955,6 +955,7 @@ jobs:
             --tests integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest \
             --tests net.firedevops.firemud.gamedesign.service.EntityDigestBaselineMigrationIntegrationTest \
             --tests integration.net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepositoryIntegrationTest \
+            --tests integration.net.firedevops.firemud.gamedesign.repository.GameTenantCreationReservationIntegrationTest \
             --tests integration.net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepositoryIntegrationTest \
             --tests integration.net.firedevops.firemud.gamedesign.repository.VersionCanonicalIdentityIntegrationTest \
             --tests integration.net.firedevops.firemud.gamedesign.repository.PublishedReleaseCanonicalIdentityIntegrationTest \
@@ -965,6 +966,7 @@ jobs:
           bash dev-tools/validation/inspect-test-results.sh \
             --strict \
             --require-suite integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest \
+            --require-suite integration.net.firedevops.firemud.gamedesign.repository.GameTenantCreationReservationIntegrationTest \
             --require-suite integration.net.firedevops.firemud.gamedesign.repository.VersionCanonicalIdentityIntegrationTest \
             --require-suite integration.net.firedevops.firemud.gamedesign.repository.PublishedReleaseCanonicalIdentityIntegrationTest \
             --require-suite integration.net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepositoryIntegrationTest \
@@ -976,6 +978,12 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest#concurrentExactFirstWritersReturnOneImmutableReceipt()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest#ownerRollbackLeavesNoClaimAndLostAcknowledgementRetryReadsExactReceipt()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest#databaseRejectsAssociationUpdatesDeletesTruncatesAndContradictorySourceInsert()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameTenantCreationReservationIntegrationTest#reservationIsRestartSafeExactReadbackAndChangedInputConflicts()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameTenantCreationReservationIntegrationTest#committedReservationReadbackThroughGrpcReceiverUsesExactPostgresTuple()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameTenantCreationReservationIntegrationTest#reservedCreationRetainsExactIdentityAndAtomicallyCompletesQualification()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameTenantCreationReservationIntegrationTest#failedQualifiedCommitRollsBackGameAndCompletedOperationButRetainsReservation()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameTenantCreationReservationIntegrationTest#concurrentExactReservedCreationRetriesConvergeOnOneIdentity()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameTenantCreationReservationIntegrationTest#additiveReservationMigrationPreservesPriorCompletedReceiptBytes()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.VersionCanonicalIdentityIntegrationTest#v35_1PreservesRetainedVersionHistoryAndLeavesIdentityUnmapped()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.VersionCanonicalIdentityIntegrationTest#savePersistsAndReadsBackFreshCanonicalIdentityAcrossUpdate()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.VersionCanonicalIdentityIntegrationTest#newVersionIdentityUsesExactRetainedGameSourceProvenance()' \
@@ -1130,6 +1138,8 @@ jobs:
             --strict \
             --require-suite integration.net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceDeliveryIntegrationTest \
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceDeliveryIntegrationTest#freshRegistrationQueuesOneStableWorldRequestAndExactSourceRetryReusesIt()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceDeliveryIntegrationTest#pendingDeliveryPagesAreNamespaceBoundKeysetOrderedAndExcludeAcknowledgedClaims()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceDeliveryIntegrationTest#registeredWorkerDispatchesDurableClaimAndAcknowledgedRestartDoesNotRedeliver()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceDeliveryIntegrationTest#sourceAndDeliveryIntentRollBackTogether()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceDeliveryIntegrationTest#concurrentExactDeliveriesReturnOneDurableAckAndChangedReceiptIsDenied()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceDeliveryIntegrationTest#databaseRejectsDeliverySourceRebindingAndReceiptMutation()' \
@@ -1163,6 +1173,8 @@ jobs:
             --strict \
             --require-suite net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldSourceMtlsTest \
             --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldSourceMtlsTest#exactWorldAndGameSessionReadersResolveCompleteSourceReceiptThroughSharedClient(Path)' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldSourceMtlsTest#exactAccountMtlsPeerReadsOnlyThePersistedReservationOverPhysicalSocket()' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldSourceMtlsTest#reservationSocketDeniesWrongNamespaceAccountPeerBeforeOwnerRead()' \
             --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldSourceMtlsTest#wrongServiceNamespaceAndSharedCertificatesAreDeniedBeforeOwnerRead()' \
             --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldSourceMtlsTest#missingClientCertificateFailsWithTlsHandshakeEvidenceBeforeOwnerRead()' \
             --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldSourceMtlsTest#jwtOnlyCallerWithoutClientCertificateFailsWithTlsHandshakeEvidence()' \
@@ -2040,6 +2052,29 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.accountservice.IssuerProjectionAcknowledgmentPostgresIntegrationTest#storedAcknowledgmentRejectsDirectUpdateAndDelete()' \
             account-service
 
+      - name: Run Account fresh-tenant reservation client physical socket mTLS proof
+        if: ${{ matrix.module == 'account-service' }}
+        run: |
+          ./gradlew :account-service:test \
+            --tests unit.net.firedevops.firemud.accountservice.client.GameDesignFreshTenantReservationMtlsTest \
+            -PfullCheck --no-build-cache --no-configuration-cache
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite unit.net.firedevops.firemud.accountservice.client.GameDesignFreshTenantReservationMtlsTest \
+            --require-case 'unit.net.firedevops.firemud.accountservice.client.GameDesignFreshTenantReservationMtlsTest#authenticServerReturnsExactReservationAndConfirmsAccountClientCertificate(Path)' \
+            --require-case 'unit.net.firedevops.firemud.accountservice.client.GameDesignFreshTenantReservationMtlsTest#wrongTrustedServerWorkloadAndNamespaceReceiveNoRequestMetadataOrBody(Path)' \
+            --require-case 'unit.net.firedevops.firemud.accountservice.client.GameDesignFreshTenantReservationMtlsTest#authenticatedServerCannotSubstituteACompleteDifferentReservedTarget(Path)' \
+            account-service
+
+      - name: Preserve Account fresh-tenant reservation client physical mTLS XML
+        if: ${{ always() && matrix.module == 'account-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: account-fresh-tenant-reservation-client-physical-mtls-proof-${{ github.sha }}-${{ github.run_attempt }}
+          path: services/account-service/build/test-results/test/TEST-*GameDesignFreshTenantReservationMtlsTest.xml
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Run Game Session command Account UUID storage PostgreSQL component proof
         if: ${{ matrix.module == 'game-session-service' }}
         run: |
@@ -2071,6 +2106,67 @@ jobs:
             ./gradlew :${{ matrix.module }}:check -PfullCheck
           fi
           echo "::endgroup::"
+
+      - name: Verify Game Design synchronized visibility PostgreSQL proof
+        if: ${{ always() && matrix.module == 'game-design-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite net.firedevops.firemud.gamedesign.draft.DraftSynchronizedVisibilityPostgresIntegrationTest \
+            --require-case 'net.firedevops.firemud.gamedesign.draft.DraftSynchronizedVisibilityPostgresIntegrationTest#readsOldSynchronizedFenceAfterNewerPartialOwnerWorkAndDeniesUnfencedTarget()' \
+            --require-case 'net.firedevops.firemud.gamedesign.draft.DraftSynchronizedVisibilityPostgresIntegrationTest#noFenceAndPartialOnlyCommitAreUnavailable()' \
+            game-design-service
+
+      - name: Capture Game Design synchronized visibility PostgreSQL raw XML
+        if: ${{ always() && matrix.module == 'game-design-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: game-design-synchronized-visibility-postgresql-proof-${{ github.sha }}-${{ github.run_attempt }}
+          path: services/game-design-service/build/test-results/integrationTest/TEST-*DraftSynchronizedVisibilityPostgresIntegrationTest.xml
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Verify World synchronized topology selector PostgreSQL proof
+        if: ${{ always() && matrix.module == 'world-management-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite net.firedevops.firemud.worldmanagement.tenant.WorldSynchronizedDraftTopologyReadPostgresIntegrationTest \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldSynchronizedDraftTopologyReadPostgresIntegrationTest#deniesArbitraryAppliedFixtureBytesEvenWhenOriginalGraphIsRetained()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldSynchronizedDraftTopologyReadPostgresIntegrationTest#missingCanonicalOwnerOutputNeverFallsBackToMutableCurrentWorldGraph()' \
+            world-management-service
+
+      - name: Capture World synchronized topology selector PostgreSQL raw XML
+        if: ${{ always() && matrix.module == 'world-management-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: world-synchronized-topology-selector-postgresql-proof-${{ github.sha }}-${{ github.run_attempt }}
+          path: services/world-management-service/build/test-results/integrationTest/TEST-*WorldSynchronizedDraftTopologyReadPostgresIntegrationTest.xml
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Capture World definitive Draft abort PostgreSQL raw XML
+        if: ${{ always() && matrix.module == 'world-management-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: world-definitive-draft-abort-postgresql-proof-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: services/world-management-service/build/test-results/integrationTest/TEST-*WorldDraftTerminalOutcomePostgresIntegrationTest.xml
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Verify World definitive Draft abort PostgreSQL execution
+        if: ${{ !cancelled() && matrix.module == 'world-management-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOutcomePostgresIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOutcomePostgresIntegrationTest#abortBlocksDelayedTopologyAndRawRegionWritesAndExactRetrySurvivesFreeze()' \
+            --require-case 'integration.net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOutcomePostgresIntegrationTest#v37FunctionReplacementPreservesCommittedAbortEvidenceAndBlocksDelayedWrites()' \
+            --require-case 'integration.net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOutcomePostgresIntegrationTest#retainedUnverifiedTopologyOrRegionOutputCannotBeRelabeledAsAborted()' \
+            --require-case 'integration.net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOutcomePostgresIntegrationTest#topologyCommitAndAbortSerializeToExactlyOneImmutableTerminalResult()' \
+            --require-case 'integration.net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOutcomePostgresIntegrationTest#rawRegionCommitAndAbortSerializeOnTheSameV25Row()' \
+            --require-case 'integration.net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOutcomePostgresIntegrationTest#absentReadbackIsUnknownChangedBindingsConflictAndRolledBackAbortLeavesNoRow()' \
+            world-management-service
 
       - name: Capture Account authored-draft publication PostgreSQL XML
         if: ${{ always() && matrix.module == 'account-service' }}

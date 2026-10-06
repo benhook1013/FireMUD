@@ -1,8 +1,9 @@
-package net.firedevops.firemud.accountservice.authordraft;
+package net.firedevops.firemud.common.authoring;
 
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -13,7 +14,6 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
-import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 
 /** Exact immutable source material, not an authorization decision or authenticated actor proof. */
 public record DraftAuthorizationFenceBinding(
@@ -75,6 +75,60 @@ public record DraftAuthorizationFenceBinding(
     if (sources.stream().map(SourceEvidence::key).distinct().count() != sources.size()) {
       throw new IllegalArgumentException("Duplicate Account source scope");
     }
+  }
+
+  /** Reconstructs only the exact existing immutable V57 framing; this grants no authorization. */
+  public static DraftAuthorizationFenceBinding fromStored(byte[] original) {
+    byte[] stored = bytes(original);
+    FrameReader reader = new FrameReader(stored);
+    reader.expect(SCHEMA);
+    UUID operationId = canonicalUuidValue(reader.text());
+    UUID requestId = canonicalUuidValue(reader.text());
+    UUID commitId = canonicalUuidValue(reader.text());
+    UUID fenceId = canonicalUuidValue(reader.text());
+    UUID actorAccountId = canonicalUuidValue(reader.text());
+    UUID tenantId = canonicalUuidValue(reader.text());
+    UUID versionId = canonicalUuidValue(reader.text());
+    String baseCommitId = reader.text();
+    reader.expect("DRAFT");
+    String expectedDraftEpoch = reader.text();
+    byte[] gameDesignBinding = reader.bytes();
+    byte[] normalizedInput = reader.bytes();
+    String inputDigest = reader.text();
+    String countText = reader.text();
+    decimal(countText, false);
+    BigInteger sourceCount = new BigInteger(countText);
+    if (sourceCount.compareTo(BigInteger.valueOf(reader.remaining() / Integer.BYTES)) > 0) {
+      throw new IllegalArgumentException("Incomplete stored source vector");
+    }
+    int sourceCountValue = sourceCount.intValueExact();
+    java.util.ArrayList<SourceEvidence> sources = new java.util.ArrayList<>();
+    for (int index = 0; index < sourceCountValue; index++) {
+      sources.add(SourceEvidence.fromStored(reader.bytes()));
+    }
+    reader.expect("GAME_DESIGN");
+    reader.expect("WORLD");
+    reader.requireEnd();
+
+    DraftAuthorizationFenceBinding binding =
+        new DraftAuthorizationFenceBinding(
+            operationId,
+            requestId,
+            commitId,
+            fenceId,
+            actorAccountId,
+            tenantId,
+            versionId,
+            baseCommitId,
+            expectedDraftEpoch,
+            gameDesignBinding,
+            normalizedInput,
+            inputDigest,
+            sources);
+    if (!Arrays.equals(stored, binding.canonicalBytes())) {
+      throw new IllegalArgumentException("Noncanonical stored authorization fence binding");
+    }
+    return binding;
   }
 
   @Override
@@ -220,14 +274,14 @@ public record DraftAuthorizationFenceBinding(
   }
 
   /** Bounded exact frame decoding for persisted source evidence and source-change intent. */
-  static final class FrameReader {
+  public static final class FrameReader {
     private final ByteBuffer input;
 
-    FrameReader(byte[] stored) {
+    public FrameReader(byte[] stored) {
       input = ByteBuffer.wrap(DraftAuthorizationFenceBinding.bytes(stored));
     }
 
-    byte[] bytes() {
+    public byte[] bytes() {
       if (input.remaining() < Integer.BYTES) {
         throw new IllegalArgumentException("Truncated immutable source frame");
       }
@@ -240,7 +294,7 @@ public record DraftAuthorizationFenceBinding(
       return value;
     }
 
-    String text() {
+    public String text() {
       byte[] value = bytes();
       String text = new String(value, StandardCharsets.UTF_8);
       DraftAuthorizationFenceBinding.text(text);
@@ -250,7 +304,7 @@ public record DraftAuthorizationFenceBinding(
       return text;
     }
 
-    String optionalText() {
+    public String optionalText() {
       String presence = text();
       if ("ABSENT".equals(presence)) {
         return null;
@@ -261,17 +315,17 @@ public record DraftAuthorizationFenceBinding(
       return text();
     }
 
-    void expect(String expected) {
+    public void expect(String expected) {
       if (!expected.equals(text())) {
         throw new IllegalArgumentException("Unsupported immutable source schema");
       }
     }
 
-    int remaining() {
+    public int remaining() {
       return input.remaining();
     }
 
-    void requireEnd() {
+    public void requireEnd() {
       if (input.hasRemaining()) {
         throw new IllegalArgumentException("Trailing immutable source frames");
       }
@@ -350,20 +404,20 @@ public record DraftAuthorizationFenceBinding(
     }
   }
 
-  static byte[] bytes(byte[] value) {
+  public static byte[] bytes(byte[] value) {
     if (value == null || value.length == 0) {
       throw new IllegalArgumentException("Exact bytes required");
     }
     return value.clone();
   }
 
-  static void requireUuid(UUID value) {
+  public static void requireUuid(UUID value) {
     if (value == null || value.equals(new UUID(0, 0))) {
       throw new IllegalArgumentException("Non-nil UUID required");
     }
   }
 
-  static void canonicalUuid(String value) {
+  public static void canonicalUuid(String value) {
     UUID id = UUID.fromString(value);
     requireUuid(id);
     if (!id.toString().equals(value)) {
@@ -387,18 +441,18 @@ public record DraftAuthorizationFenceBinding(
     }
   }
 
-  static void decimal(String value, boolean zero) {
+  public static void decimal(String value, boolean zero) {
     if (value == null || !value.matches(zero ? "0|[1-9][0-9]*" : "[1-9][0-9]*")) {
       throw new IllegalArgumentException("Canonical decimal string required");
     }
   }
 
-  static void frame(ByteArrayOutputStream output, String value) {
+  public static void frame(ByteArrayOutputStream output, String value) {
     text(value);
     frame(output, value.getBytes(StandardCharsets.UTF_8));
   }
 
-  static void frame(ByteArrayOutputStream output, byte[] value) {
+  public static void frame(ByteArrayOutputStream output, byte[] value) {
     try {
       DataOutputStream data = new DataOutputStream(output);
       data.writeInt(value.length);
@@ -415,5 +469,10 @@ public record DraftAuthorizationFenceBinding(
     } catch (NoSuchAlgorithmException impossible) {
       throw new IllegalStateException(impossible);
     }
+  }
+
+  private static UUID canonicalUuidValue(String value) {
+    canonicalUuid(value);
+    return UUID.fromString(value);
   }
 }

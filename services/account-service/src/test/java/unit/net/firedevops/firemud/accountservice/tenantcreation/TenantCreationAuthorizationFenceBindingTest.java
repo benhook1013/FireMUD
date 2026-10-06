@@ -6,12 +6,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
-import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.SourceEvidence;
-import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.SourceKind;
 import net.firedevops.firemud.accountservice.tenantcreation.TenantCreationAuthorizationFenceBinding;
 import net.firedevops.firemud.accountservice.tenantcreation.TenantCreationAuthorizationFenceBinding.Outcome;
 import net.firedevops.firemud.accountservice.tenantcreation.TenantCreationAuthorizationFenceBinding.Owner;
 import net.firedevops.firemud.accountservice.tenantcreation.TenantCreationAuthorizationFenceBinding.OwnerReadback;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import org.junit.jupiter.api.Test;
 
