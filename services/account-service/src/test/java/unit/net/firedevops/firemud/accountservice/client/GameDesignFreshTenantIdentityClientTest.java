@@ -38,9 +38,11 @@ import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import net.firedevops.firemud.common.tenant.FreshTenantCreatorDigest;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreationRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreationResponse;
+import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreatorQualificationResponse;
 import net.firedevops.firemud.gamedesign.v1.TenantIdentityServiceGrpc;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -53,10 +55,17 @@ class GameDesignFreshTenantIdentityClientTest {
   private static final UUID OPERATION_ID = UUID.fromString("22222222-2222-4222-8222-222222222222");
   private static final UUID CANONICAL_TENANT_ID =
       UUID.fromString("33333333-3333-4333-8333-333333333333");
+  private static final UUID READ_REQUEST_ID =
+      UUID.fromString("55555555-5555-4555-8555-555555555555");
+  private static final UUID INITIATING_ACCOUNT_ID =
+      UUID.fromString("66666666-6666-4666-8666-666666666666");
+  private static final UUID AUTHORIZATION_OPERATION_ID =
+      UUID.fromString("77777777-7777-4777-8777-777777777777");
   private static final UUID NIL_UUID = new UUID(0L, 0L);
   private static final long SOURCE_GAME_ROW_ID = 91L;
   private static final String SOURCE_GAME_TENANT_KEY = "fresh-owner-key-91";
   private static final String REQUEST_DIGEST = "sha256:" + "a".repeat(64);
+  private static final String AUTHORIZATION_DIGEST = "sha256:" + "b".repeat(64);
 
   @Test
   void exactResponseIsValidatedAndStableOnReplayWithoutCallingRetainedRpcs() throws Exception {
@@ -134,6 +143,145 @@ class GameDesignFreshTenantIdentityClientTest {
     assertThatThrownBy(() -> client.resolveCreation(REQUEST_ID, "SHA256:" + "a".repeat(64)))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> client.resolveCreation(REQUEST_ID, "bad-digest"))
+        .isInstanceOf(IllegalArgumentException.class);
+    verifyNoInteractions(stub);
+  }
+
+  @Test
+  void exactCreatorQualificationReadPreservesOriginalReceiptAndBindsDistinctReadIdentity()
+      throws Exception {
+    TenantIdentityServiceGrpc.TenantIdentityServiceBlockingStub stub = mockStub();
+    when(stub.resolveFreshTenantCreatorQualification(any()))
+        .thenReturn(validCreatorQualificationResponse());
+    GameDesignFreshTenantIdentityClient client = newClient(stub);
+    FreshTenantCreationEvidence source = validFreshCreationEvidence();
+
+    var qualification =
+        client.resolveCreatorQualification(
+            READ_REQUEST_ID,
+            source,
+            INITIATING_ACCOUNT_ID,
+            AUTHORIZATION_OPERATION_ID,
+            AUTHORIZATION_DIGEST);
+
+    assertThat(qualification.creationEvidence()).isEqualTo(source);
+    assertThat(qualification.initiatingAccountId()).isEqualTo(INITIATING_ACCOUNT_ID);
+    assertThat(qualification.accountAuthorizationOperationId())
+        .isEqualTo(AUTHORIZATION_OPERATION_ID);
+    assertThat(qualification.accountAuthorizationDigest()).isEqualTo(AUTHORIZATION_DIGEST);
+    assertThat(qualification.evidenceDigest())
+        .isEqualTo(
+            validCreatorQualificationResponse().getCreatorQualification().getEvidenceDigest());
+    verify(stub).withDeadlineAfter(5L, TimeUnit.SECONDS);
+    ArgumentCaptor<
+            net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreatorQualificationRequest>
+        requestCaptor =
+            ArgumentCaptor.forClass(
+                net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreatorQualificationRequest
+                    .class);
+    verify(stub).resolveFreshTenantCreatorQualification(requestCaptor.capture());
+    assertThat(requestCaptor.getValue().getReadRequestId()).isEqualTo(READ_REQUEST_ID.toString());
+    assertThat(requestCaptor.getValue().getCreationRequestId()).isEqualTo(REQUEST_ID.toString());
+    assertThat(requestCaptor.getValue().getExpectedRequestDigest()).isEqualTo(REQUEST_DIGEST);
+    assertThat(requestCaptor.getValue().getExpectedEvidenceDigest())
+        .isEqualTo(source.evidenceDigest());
+    assertThat(requestCaptor.getValue().getInitiatingAccountId())
+        .isEqualTo(INITIATING_ACCOUNT_ID.toString());
+    assertThat(requestCaptor.getValue().getAccountAuthorizationOperationId())
+        .isEqualTo(AUTHORIZATION_OPERATION_ID.toString());
+    assertThat(requestCaptor.getValue().getAccountAuthorizationDigest())
+        .isEqualTo(AUTHORIZATION_DIGEST);
+  }
+
+  @Test
+  void rejectsChangedReadIdentitySourceCreatorBindingAndUnknownResponseFields() throws Exception {
+    ResolveFreshTenantCreatorQualificationResponse valid = validCreatorQualificationResponse();
+    assertRejectedCreator(valid.toBuilder().setReadRequestId(OTHER_REQUEST_ID.toString()).build());
+    assertRejectedCreator(
+        valid.toBuilder()
+            .setCreationEvidence(
+                valid.getCreationEvidence().toBuilder()
+                    .setSourceGameRowId(SOURCE_GAME_ROW_ID + 1)
+                    .build())
+            .build());
+    assertRejectedCreator(
+        valid.toBuilder()
+            .setCreatorQualification(
+                valid.getCreatorQualification().toBuilder()
+                    .setInitiatingAccountId(OTHER_REQUEST_ID.toString())
+                    .build())
+            .build());
+    assertRejectedCreator(
+        valid.toBuilder()
+            .setCreatorQualification(
+                valid.getCreatorQualification().toBuilder()
+                    .setEvidenceDigest("sha256:" + "c".repeat(64))
+                    .build())
+            .build());
+    UnknownFieldSet unknownFields =
+        UnknownFieldSet.newBuilder()
+            .addField(100, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
+            .build();
+    assertRejectedCreator(valid.toBuilder().setUnknownFields(unknownFields).build());
+    assertRejectedCreator(
+        valid.toBuilder()
+            .setCreatorQualification(
+                valid.getCreatorQualification().toBuilder().setUnknownFields(unknownFields))
+            .build());
+    assertRejectedCreator(
+        valid.toBuilder()
+            .setCreationEvidence(
+                valid.getCreationEvidence().toBuilder().setUnknownFields(unknownFields).build())
+            .build());
+    assertRejectedCreator(valid.toBuilder().clearCreatorQualification().build());
+  }
+
+  @Test
+  void malformedCreatorSelectorsAreRejectedBeforeTheRpc() throws Exception {
+    TenantIdentityServiceGrpc.TenantIdentityServiceBlockingStub stub = mockStub();
+    GameDesignFreshTenantIdentityClient client = newClient(stub);
+    FreshTenantCreationEvidence source = validFreshCreationEvidence();
+
+    assertThatThrownBy(
+            () ->
+                client.resolveCreatorQualification(
+                    NIL_UUID,
+                    source,
+                    INITIATING_ACCOUNT_ID,
+                    AUTHORIZATION_OPERATION_ID,
+                    AUTHORIZATION_DIGEST))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                client.resolveCreatorQualification(
+                    READ_REQUEST_ID,
+                    source,
+                    NIL_UUID,
+                    AUTHORIZATION_OPERATION_ID,
+                    AUTHORIZATION_DIGEST))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                client.resolveCreatorQualification(
+                    READ_REQUEST_ID, source, INITIATING_ACCOUNT_ID, NIL_UUID, AUTHORIZATION_DIGEST))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                client.resolveCreatorQualification(
+                    READ_REQUEST_ID,
+                    source,
+                    INITIATING_ACCOUNT_ID,
+                    AUTHORIZATION_OPERATION_ID,
+                    "bad"))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                client.resolveCreatorQualification(
+                    READ_REQUEST_ID,
+                    null,
+                    INITIATING_ACCOUNT_ID,
+                    AUTHORIZATION_OPERATION_ID,
+                    AUTHORIZATION_DIGEST))
         .isInstanceOf(IllegalArgumentException.class);
     verifyNoInteractions(stub);
   }
@@ -287,6 +435,23 @@ class GameDesignFreshTenantIdentityClientTest {
         .isInstanceOf(IllegalStateException.class);
   }
 
+  private static void assertRejectedCreator(ResolveFreshTenantCreatorQualificationResponse response)
+      throws Exception {
+    TenantIdentityServiceGrpc.TenantIdentityServiceBlockingStub stub = mockStub();
+    when(stub.resolveFreshTenantCreatorQualification(any())).thenReturn(response);
+    GameDesignFreshTenantIdentityClient client = newClient(stub);
+
+    assertThatThrownBy(
+            () ->
+                client.resolveCreatorQualification(
+                    READ_REQUEST_ID,
+                    validFreshCreationEvidence(),
+                    INITIATING_ACCOUNT_ID,
+                    AUTHORIZATION_OPERATION_ID,
+                    AUTHORIZATION_DIGEST))
+        .isInstanceOf(IllegalStateException.class);
+  }
+
   private static GameDesignFreshTenantIdentityClient newClient(
       TenantIdentityServiceGrpc.TenantIdentityServiceBlockingStub stub) throws Exception {
     GameDesignFreshTenantIdentityClient client =
@@ -348,6 +513,42 @@ class GameDesignFreshTenantIdentityClientTest {
         .setSourceGameTenantKey(SOURCE_GAME_TENANT_KEY)
         .setProvenanceKind("NEW_GAME_ROW")
         .setEvidenceDigest(evidenceDigest)
+        .build();
+  }
+
+  private static FreshTenantCreationEvidence validFreshCreationEvidence() {
+    ResolveFreshTenantCreationResponse source = validResponse();
+    return new FreshTenantCreationEvidence(
+        source.getSchemaVersion(),
+        source.getTargetNamespace(),
+        UUID.fromString(source.getCreationRequestId()),
+        UUID.fromString(source.getOperationId()),
+        source.getRequestDigest(),
+        UUID.fromString(source.getCanonicalTenantId()),
+        source.getSourceGameRowId(),
+        source.getSourceGameTenantKey(),
+        source.getProvenanceKind(),
+        source.getEvidenceDigest());
+  }
+
+  private static ResolveFreshTenantCreatorQualificationResponse
+      validCreatorQualificationResponse() {
+    FreshTenantCreationEvidence source = validFreshCreationEvidence();
+    String creatorDigest =
+        FreshTenantCreatorDigest.evidenceDigest(
+            1, source, INITIATING_ACCOUNT_ID, AUTHORIZATION_OPERATION_ID, AUTHORIZATION_DIGEST);
+    return ResolveFreshTenantCreatorQualificationResponse.newBuilder()
+        .setReadRequestId(READ_REQUEST_ID.toString())
+        .setCreationEvidence(validResponse())
+        .setCreatorQualification(
+            net.firedevops.firemud.gamedesign.v1.FreshTenantCreatorQualificationEvidence
+                .newBuilder()
+                .setSchemaVersion(1)
+                .setInitiatingAccountId(INITIATING_ACCOUNT_ID.toString())
+                .setAccountAuthorizationOperationId(AUTHORIZATION_OPERATION_ID.toString())
+                .setAccountAuthorizationDigest(AUTHORIZATION_DIGEST)
+                .setEvidenceDigest(creatorDigest)
+                .build())
         .build();
   }
 

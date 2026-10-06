@@ -84,6 +84,7 @@ firemud:
       public-methods:
         - gamedesign.v1.TenantIdentityService/ResolveLegacyAccountTenantAssociation
         - gamedesign.v1.TenantIdentityService/ResolveFreshTenantCreation
+        - gamedesign.v1.TenantIdentityService/ResolveFreshTenantCreatorQualification
         - gamedesign.v1.TenantIdentityService/ResolveRuntimeTenantIdentity
         - gamedesign.v1.TenantIdentityService/ResolveAuthoredWorldSource
         - gamedesign.v1.TenantIdentityService/ResolveLegacyGameSessionTenantAssociation

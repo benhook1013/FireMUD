@@ -1,5 +1,6 @@
 package unit.net.firedevops.firemud.accountservice.security;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -762,6 +763,27 @@ class AccountTokenProfileCatalogTest {
   }
 
   @Test
+  void acceptsZeroMembershipVersionWithoutChangingScopeOrGenerationRequirements() {
+    AccountTokenProfileCatalog catalog = catalog();
+    ControlUiShape shape = controlUiShape();
+    ActualClaimMaps valid = actualClaimMaps(shape);
+    assertDoesNotThrow(
+        () ->
+            catalog.validatePreSignCandidate(
+                AccountTokenProfileCatalog.CONTROL_UI,
+                shape,
+                new ActualClaimMaps(
+                    Optional.of(
+                        Map.of(
+                            TENANT_A.toString(), BigInteger.ZERO,
+                            TENANT_B.toString(), BigInteger.ONE)),
+                    valid.scopedRoles()),
+                1_000L,
+                1_900L,
+                tupleJson(shape)));
+  }
+
+  @Test
   void rejectsActualMembershipVersionAndScopedRoleScopeOrValueMismatches() {
     AccountTokenProfileCatalog catalog = catalog();
     ControlUiShape shape = controlUiShape();
@@ -805,16 +827,6 @@ class AccountTokenProfileCatalogTest {
                     BigInteger.ONE,
                     TENANT_B.toString(),
                     BigInteger.ONE)),
-            valid.scopedRoles()));
-    assertInvalidClaimMaps(
-        catalog,
-        AccountTokenProfileCatalog.CONTROL_UI,
-        shape,
-        new ActualClaimMaps(
-            Optional.of(
-                Map.of(
-                    TENANT_A.toString(), BigInteger.ZERO,
-                    TENANT_B.toString(), BigInteger.ONE)),
             valid.scopedRoles()));
     assertInvalidClaimMaps(
         catalog,

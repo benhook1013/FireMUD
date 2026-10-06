@@ -15,6 +15,9 @@ service TenantIdentityService {
   // Exact immutable readback of a newly created tenant operation for Account.
   rpc ResolveFreshTenantCreation(ResolveFreshTenantCreationRequest)
       returns (ResolveFreshTenantCreationResponse);
+  // Same-namespace Account mTLS read only, without forwarded caller context.
+  rpc ResolveFreshTenantCreatorQualification(ResolveFreshTenantCreatorQualificationRequest)
+      returns (ResolveFreshTenantCreatorQualificationResponse);
   // Exact owner-local read of one persisted runtime tenant identity for Game Session.
   rpc ResolveRuntimeTenantIdentity(ResolveRuntimeTenantIdentityRequest)
       returns (ResolveRuntimeTenantIdentityResponse);
@@ -106,6 +109,33 @@ message ResolveFreshTenantCreationResponse {
   string source_game_tenant_key = 8;
   string provenance_kind = 9;
   string evidence_digest = 10;
+}
+
+message ResolveFreshTenantCreatorQualificationRequest {
+  // Distinct Account read identity; it does not replace the creation request identity.
+  string read_request_id = 1;
+  string creation_request_id = 2;
+  string expected_request_digest = 3;
+  string expected_evidence_digest = 4;
+  string initiating_account_id = 5;
+  string account_authorization_operation_id = 6;
+  string account_authorization_digest = 7;
+  string expected_creator_evidence_digest = 8;
+}
+
+message FreshTenantCreatorQualificationEvidence {
+  int32 schema_version = 1;
+  string initiating_account_id = 2;
+  string account_authorization_operation_id = 3;
+  string account_authorization_digest = 4;
+  string evidence_digest = 5;
+}
+
+message ResolveFreshTenantCreatorQualificationResponse {
+  string read_request_id = 1;
+  // Original source identity evidence remains byte-for-byte and digest-for-digest unchanged.
+  ResolveFreshTenantCreationResponse creation_evidence = 2;
+  FreshTenantCreatorQualificationEvidence creator_qualification = 3;
 }
 
 message ResolveRuntimeTenantIdentityRequest {

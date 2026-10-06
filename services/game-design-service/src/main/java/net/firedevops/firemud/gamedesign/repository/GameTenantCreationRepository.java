@@ -6,6 +6,8 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import net.firedevops.firemud.common.tenant.FreshTenantCreatorDigest;
+import net.firedevops.firemud.common.tenant.FreshTenantCreatorEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import org.jooq.DSLContext;
@@ -31,6 +33,8 @@ public class GameTenantCreationRepository {
   private static final Pattern DNS_LABEL = Pattern.compile("[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?");
   private static final Table<?> OPERATION_TABLE =
       DSL.table(DSL.name("game_tenant_creation_operations"));
+  private static final Table<?> CREATOR_QUALIFICATION_TABLE =
+      DSL.table(DSL.name("game_tenant_creation_creator_qualifications"));
   private static final Field<UUID> OPERATION_ID = DSL.field(DSL.name("operation_id"), UUID.class);
   private static final Field<Integer> SCHEMA_VERSION_FIELD =
       DSL.field(DSL.name("schema_version"), Integer.class);
@@ -52,6 +56,20 @@ public class GameTenantCreationRepository {
   private static final Field<String> PROVENANCE_KIND =
       DSL.field(DSL.name("provenance_kind"), String.class);
   private static final Field<String> EVIDENCE_DIGEST =
+      DSL.field(DSL.name("evidence_digest"), String.class);
+  private static final Field<Boolean> CREATOR_QUALIFICATION_REQUIRED =
+      DSL.field(DSL.name("creator_qualification_required"), Boolean.class);
+  private static final Field<UUID> CREATOR_QUALIFICATION_OPERATION_ID =
+      DSL.field(DSL.name("operation_id"), UUID.class);
+  private static final Field<Integer> CREATOR_QUALIFICATION_SCHEMA_VERSION =
+      DSL.field(DSL.name("schema_version"), Integer.class);
+  private static final Field<UUID> INITIATING_ACCOUNT_ID =
+      DSL.field(DSL.name("initiating_account_id"), UUID.class);
+  private static final Field<UUID> ACCOUNT_AUTHORIZATION_OPERATION_ID =
+      DSL.field(DSL.name("account_authorization_operation_id"), UUID.class);
+  private static final Field<String> ACCOUNT_AUTHORIZATION_DIGEST =
+      DSL.field(DSL.name("account_authorization_digest"), String.class);
+  private static final Field<String> CREATOR_EVIDENCE_DIGEST =
       DSL.field(DSL.name("evidence_digest"), String.class);
 
   private final DSLContext dsl;
@@ -76,8 +94,31 @@ public class GameTenantCreationRepository {
       String sourceGameTenantKey,
       String name,
       String description) {
+    return createCandidateInternal(
+        targetNamespace, creationRequestId, sourceGameTenantKey, name, description, false);
+  }
+
+  /**
+   * Candidate-only storage producer for a distinct creator qualification.
+   *
+   * <p>The UUID and digest values are structurally validated but are not authenticated by this
+   * repository. A protected Account capture adapter must establish their authority before calling
+   * this method. The source operation and creator qualification are committed atomically.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public FreshTenantCreatorEvidence createCandidateWithCreator(
+      String targetNamespace,
+      UUID creationRequestId,
+      String sourceGameTenantKey,
+      String name,
+      String description,
+      UUID initiatingAccountId,
+      UUID accountAuthorizationOperationId,
+      String accountAuthorizationDigest) {
     requireActiveOwnerTransaction();
     validateInput(targetNamespace, creationRequestId, sourceGameTenantKey, name, description);
+    validateCreatorBinding(
+        initiatingAccountId, accountAuthorizationOperationId, accountAuthorizationDigest);
 
     String requestDigest =
         GameTenantCreationDigest.requestDigest(
@@ -94,6 +135,7 @@ public class GameTenantCreationRepository {
             .set(NAME, name)
             .set(DESCRIPTION, description)
             .set(STATUS, PENDING)
+            .set(CREATOR_QUALIFICATION_REQUIRED, true)
             .onConflictDoNothing()
             .execute();
 
@@ -112,6 +154,141 @@ public class GameTenantCreationRepository {
       if (!sameRequest(existing, sourceGameTenantKey, name, description, requestDigest)) {
         throw new CreationRequestConflictException(
             "Fresh tenant creation request identity was reused with changed input");
+      }
+      FreshTenantCreationEvidence sourceEvidence = toReceipt(existing);
+      if (!Boolean.TRUE.equals(existing.get(CREATOR_QUALIFICATION_REQUIRED))) {
+        throw new CreationRequestConflictException(
+            "Creator qualification cannot be attached to an existing source-only operation");
+      }
+      FreshTenantCreatorEvidence existingQualification =
+          readCreatorQualificationForOperation(sourceEvidence);
+      if (!existingQualification.initiatingAccountId().equals(initiatingAccountId)
+          || !existingQualification
+              .accountAuthorizationOperationId()
+              .equals(accountAuthorizationOperationId)
+          || !existingQualification
+              .accountAuthorizationDigest()
+              .equals(accountAuthorizationDigest)) {
+        throw new CreationRequestConflictException(
+            "Fresh tenant creator binding was reused with changed Account authority");
+      }
+      return existingQualification;
+    }
+
+    if (gameRepository.findByTenantId(sourceGameTenantKey) != null) {
+      throw new CreationRequestConflictException(
+          "Fresh tenant creation source key already belongs to a game row");
+    }
+
+    Game candidate = new Game();
+    candidate.setTenantId(sourceGameTenantKey);
+    candidate.setName(name);
+    candidate.setDescription(description);
+    Game saved = gameRepository.save(candidate);
+    requireNewGameSource(saved, sourceGameTenantKey);
+
+    String evidenceDigest =
+        GameTenantCreationDigest.evidenceDigest(
+            targetNamespace,
+            creationRequestId,
+            operationId,
+            requestDigest,
+            saved.getCanonicalTenantId(),
+            saved.getId(),
+            sourceGameTenantKey,
+            NEW_GAME_ROW);
+    int completed =
+        dsl.update(OPERATION_TABLE)
+            .set(STATUS, COMPLETED)
+            .set(CANONICAL_TENANT_ID, saved.getCanonicalTenantId())
+            .set(SOURCE_GAME_ROW_ID, saved.getId())
+            .set(PROVENANCE_KIND, NEW_GAME_ROW)
+            .set(EVIDENCE_DIGEST, evidenceDigest)
+            .where(OPERATION_ID.eq(operationId).and(STATUS.eq(PENDING)))
+            .execute();
+    if (completed != 1) {
+      throw new IllegalStateException("Fresh tenant creation operation claim was lost");
+    }
+
+    Record completedRecord =
+        dsl.selectFrom(OPERATION_TABLE).where(OPERATION_ID.eq(operationId)).fetchOne();
+    if (completedRecord == null) {
+      throw new IllegalStateException("Completed fresh tenant creation operation is missing");
+    }
+    FreshTenantCreationEvidence sourceEvidence = toReceipt(completedRecord);
+    String creatorEvidenceDigest =
+        FreshTenantCreatorDigest.evidenceDigest(
+            1,
+            sourceEvidence,
+            initiatingAccountId,
+            accountAuthorizationOperationId,
+            accountAuthorizationDigest);
+    dsl.insertInto(CREATOR_QUALIFICATION_TABLE)
+        .set(CREATOR_QUALIFICATION_OPERATION_ID, operationId)
+        .set(CREATOR_QUALIFICATION_SCHEMA_VERSION, 1)
+        .set(INITIATING_ACCOUNT_ID, initiatingAccountId)
+        .set(ACCOUNT_AUTHORIZATION_OPERATION_ID, accountAuthorizationOperationId)
+        .set(ACCOUNT_AUTHORIZATION_DIGEST, accountAuthorizationDigest)
+        .set(CREATOR_EVIDENCE_DIGEST, creatorEvidenceDigest)
+        .execute();
+
+    return new FreshTenantCreatorEvidence(
+        1,
+        sourceEvidence,
+        initiatingAccountId,
+        accountAuthorizationOperationId,
+        accountAuthorizationDigest,
+        creatorEvidenceDigest);
+  }
+
+  private FreshTenantCreationEvidence createCandidateInternal(
+      String targetNamespace,
+      UUID creationRequestId,
+      String sourceGameTenantKey,
+      String name,
+      String description,
+      boolean creatorQualificationRequired) {
+    requireActiveOwnerTransaction();
+    validateInput(targetNamespace, creationRequestId, sourceGameTenantKey, name, description);
+
+    String requestDigest =
+        GameTenantCreationDigest.requestDigest(
+            targetNamespace, creationRequestId, sourceGameTenantKey, name, description);
+    UUID operationId = newNonNilUuid();
+    int inserted =
+        dsl.insertInto(OPERATION_TABLE)
+            .set(OPERATION_ID, operationId)
+            .set(SCHEMA_VERSION_FIELD, SCHEMA_VERSION)
+            .set(TARGET_NAMESPACE, targetNamespace)
+            .set(CREATION_REQUEST_ID, creationRequestId)
+            .set(REQUEST_DIGEST, requestDigest)
+            .set(SOURCE_GAME_TENANT_KEY, sourceGameTenantKey)
+            .set(NAME, name)
+            .set(DESCRIPTION, description)
+            .set(STATUS, PENDING)
+            .set(CREATOR_QUALIFICATION_REQUIRED, creatorQualificationRequired)
+            .onConflictDoNothing()
+            .execute();
+
+    if (inserted == 0) {
+      Record existing =
+          dsl.selectFrom(OPERATION_TABLE)
+              .where(
+                  TARGET_NAMESPACE
+                      .eq(targetNamespace)
+                      .and(CREATION_REQUEST_ID.eq(creationRequestId)))
+              .fetchOne();
+      if (existing == null) {
+        throw new CreationRequestConflictException(
+            "Fresh tenant creation source key is already claimed by another operation");
+      }
+      if (!sameRequest(existing, sourceGameTenantKey, name, description, requestDigest)) {
+        throw new CreationRequestConflictException(
+            "Fresh tenant creation request identity was reused with changed input");
+      }
+      if (Boolean.TRUE.equals(existing.get(CREATOR_QUALIFICATION_REQUIRED))) {
+        throw new CreationRequestConflictException(
+            "Qualified fresh tenant creation cannot be retried as source-only creation");
       }
       return toReceipt(existing);
     }
@@ -176,6 +353,77 @@ public class GameTenantCreationRepository {
     return record == null ? Optional.empty() : Optional.of(toReceipt(record));
   }
 
+  /**
+   * Reads the source operation and creator qualification separately after commit and compares the
+   * complete immutable request binding.
+   */
+  @Transactional(propagation = Propagation.NOT_SUPPORTED, readOnly = true)
+  public Optional<FreshTenantCreatorEvidence> readCreatorQualification(
+      UUID creationRequestId,
+      String targetNamespace,
+      String expectedRequestDigest,
+      String expectedCreationEvidenceDigest,
+      UUID expectedInitiatingAccountId,
+      UUID expectedAccountAuthorizationOperationId,
+      String expectedAccountAuthorizationDigest,
+      String expectedCreatorEvidenceDigest) {
+    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new IllegalStateException(
+          "Fresh tenant creator read requires a committed-outcome owner read");
+    }
+    validateSelector(targetNamespace, creationRequestId);
+    if (!GameTenantCreationDigest.isDigest(expectedRequestDigest)
+        || !GameTenantCreationDigest.isDigest(expectedCreationEvidenceDigest)
+        || !GameTenantCreationDigest.isDigest(expectedCreatorEvidenceDigest)) {
+      throw new IllegalArgumentException("Canonical expected fresh tenant digests are required");
+    }
+    validateCreatorBinding(
+        expectedInitiatingAccountId,
+        expectedAccountAuthorizationOperationId,
+        expectedAccountAuthorizationDigest);
+
+    Optional<FreshTenantCreationEvidence> sourceResult = read(creationRequestId, targetNamespace);
+    if (sourceResult.isEmpty()) {
+      return Optional.empty();
+    }
+    FreshTenantCreationEvidence sourceEvidence = sourceResult.orElseThrow();
+    if (!expectedRequestDigest.equals(sourceEvidence.requestDigest())
+        || !expectedCreationEvidenceDigest.equals(sourceEvidence.evidenceDigest())) {
+      throw invalidEvidence("Fresh tenant creator read does not match the exact source evidence");
+    }
+
+    Record operationRecord =
+        dsl.selectFrom(OPERATION_TABLE)
+            .where(OPERATION_ID.eq(sourceEvidence.operationId()))
+            .fetchOne();
+    if (operationRecord == null) {
+      throw invalidEvidence("Fresh tenant creator source operation disappeared during readback");
+    }
+
+    Record creatorRecord =
+        dsl.selectFrom(CREATOR_QUALIFICATION_TABLE)
+            .where(CREATOR_QUALIFICATION_OPERATION_ID.eq(sourceEvidence.operationId()))
+            .fetchOne();
+    if (creatorRecord == null) {
+      if (Boolean.TRUE.equals(operationRecord.get(CREATOR_QUALIFICATION_REQUIRED))) {
+        throw invalidEvidence("Qualified fresh tenant operation has no creator evidence");
+      }
+      return Optional.empty();
+    }
+    if (!Boolean.TRUE.equals(operationRecord.get(CREATOR_QUALIFICATION_REQUIRED))) {
+      throw invalidEvidence("Creator qualification is attached to a source-only operation");
+    }
+    FreshTenantCreatorEvidence qualification = toCreatorEvidence(creatorRecord, sourceEvidence);
+    if (!expectedInitiatingAccountId.equals(qualification.initiatingAccountId())
+        || !expectedAccountAuthorizationOperationId.equals(
+            qualification.accountAuthorizationOperationId())
+        || !expectedAccountAuthorizationDigest.equals(qualification.accountAuthorizationDigest())
+        || !expectedCreatorEvidenceDigest.equals(qualification.evidenceDigest())) {
+      throw invalidEvidence("Fresh tenant creator qualification does not match the exact request");
+    }
+    return Optional.of(qualification);
+  }
+
   private void requireActiveOwnerTransaction() {
     if (!TransactionSynchronizationManager.isActualTransactionActive()) {
       throw new IllegalStateException(
@@ -224,6 +472,66 @@ public class GameTenantCreationRepository {
     }
     if (creationRequestId.equals(new UUID(0L, 0L))) {
       throw new IllegalArgumentException("creationRequestId must not be nil");
+    }
+  }
+
+  private void validateCreatorBinding(
+      UUID initiatingAccountId,
+      UUID accountAuthorizationOperationId,
+      String accountAuthorizationDigest) {
+    if (initiatingAccountId == null || initiatingAccountId.equals(new UUID(0L, 0L))) {
+      throw new IllegalArgumentException("A canonical nonnil initiating Account UUID is required");
+    }
+    if (accountAuthorizationOperationId == null
+        || accountAuthorizationOperationId.equals(new UUID(0L, 0L))) {
+      throw new IllegalArgumentException(
+          "A canonical nonnil Account authorization operation UUID is required");
+    }
+    if (!GameTenantCreationDigest.isDigest(accountAuthorizationDigest)) {
+      throw new IllegalArgumentException("A canonical Account authorization digest is required");
+    }
+  }
+
+  private FreshTenantCreatorEvidence readCreatorQualificationForOperation(
+      FreshTenantCreationEvidence sourceEvidence) {
+    Record creatorRecord =
+        dsl.selectFrom(CREATOR_QUALIFICATION_TABLE)
+            .where(CREATOR_QUALIFICATION_OPERATION_ID.eq(sourceEvidence.operationId()))
+            .fetchOne();
+    if (creatorRecord == null) {
+      throw invalidEvidence("Qualified fresh tenant operation has no creator evidence");
+    }
+    return toCreatorEvidence(creatorRecord, sourceEvidence);
+  }
+
+  private FreshTenantCreatorEvidence toCreatorEvidence(
+      Record record, FreshTenantCreationEvidence sourceEvidence) {
+    Integer schemaVersion = record.get(CREATOR_QUALIFICATION_SCHEMA_VERSION);
+    UUID initiatingAccountId = record.get(INITIATING_ACCOUNT_ID);
+    UUID accountAuthorizationOperationId = record.get(ACCOUNT_AUTHORIZATION_OPERATION_ID);
+    String accountAuthorizationDigest = record.get(ACCOUNT_AUTHORIZATION_DIGEST);
+    String evidenceDigest = record.get(CREATOR_EVIDENCE_DIGEST);
+    if (schemaVersion == null
+        || schemaVersion != 1
+        || initiatingAccountId == null
+        || initiatingAccountId.equals(new UUID(0L, 0L))
+        || accountAuthorizationOperationId == null
+        || accountAuthorizationOperationId.equals(new UUID(0L, 0L))
+        || !GameTenantCreationDigest.isDigest(accountAuthorizationDigest)
+        || !GameTenantCreationDigest.isDigest(evidenceDigest)) {
+      throw invalidEvidence("Stored fresh tenant creator qualification is incomplete or malformed");
+    }
+    try {
+      return new FreshTenantCreatorEvidence(
+          schemaVersion,
+          sourceEvidence,
+          initiatingAccountId,
+          accountAuthorizationOperationId,
+          accountAuthorizationDigest,
+          evidenceDigest);
+    } catch (IllegalArgumentException exception) {
+      throw invalidEvidence(
+          "Stored fresh tenant creator qualification digest does not match its tuple", exception);
     }
   }
 

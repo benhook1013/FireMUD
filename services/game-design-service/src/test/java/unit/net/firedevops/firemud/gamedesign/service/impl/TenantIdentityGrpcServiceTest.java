@@ -26,6 +26,8 @@ import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import net.firedevops.firemud.common.tenant.FreshTenantCreatorDigest;
+import net.firedevops.firemud.common.tenant.FreshTenantCreatorEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
@@ -37,6 +39,8 @@ import net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreationRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreationResponse;
+import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreatorQualificationRequest;
+import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreatorQualificationResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyAccountTenantAssociationRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyAccountTenantAssociationResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyGameTenantIdentityRequest;
@@ -73,6 +77,13 @@ class TenantIdentityGrpcServiceTest {
       UUID.fromString("22222222-2222-4222-8222-222222222222");
   private static final UUID FRESH_CANONICAL_TENANT_ID =
       UUID.fromString("33333333-3333-4333-8333-333333333333");
+  private static final UUID CREATOR_READ_REQUEST_ID =
+      UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+  private static final UUID CREATOR_INITIATING_ACCOUNT_ID =
+      UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+  private static final UUID CREATOR_AUTHORIZATION_OPERATION_ID =
+      UUID.fromString("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+  private static final String CREATOR_AUTHORIZATION_DIGEST = "sha256:" + "d".repeat(64);
   private static final UUID RUNTIME_REQUEST_ID =
       UUID.fromString("44444444-4444-4444-8444-444444444444");
   private static final UUID RUNTIME_TENANT_ID =
@@ -631,6 +642,127 @@ class TenantIdentityGrpcServiceTest {
   }
 
   @Test
+  void freshCreatorQualificationReadRequiresExactAccountPeerWithoutForwardedContext() {
+    for (String peer :
+        new String[] {
+          null,
+          WRONG_PEER,
+          WRONG_NAMESPACE_ACCOUNT_PEER,
+          ACCOUNT_MIGRATOR_PEER,
+          WRONG_NAMESPACE_MIGRATOR_PEER,
+          GAME_DESIGN_PEER
+        }) {
+      FreshCreatorObserver observer = freshCreatorCall(freshCreatorRequest(), peer, false);
+      assertEquals(Status.Code.PERMISSION_DENIED, freshCreatorStatus(observer));
+      assertNull(observer.value);
+    }
+    FreshCreatorObserver forwardedContext =
+        freshCreatorCall(freshCreatorRequest(), ACCOUNT_PEER, true);
+    assertEquals(Status.Code.PERMISSION_DENIED, freshCreatorStatus(forwardedContext));
+    assertNull(forwardedContext.value);
+    verifyNoInteractions(creationRepository);
+  }
+
+  @Test
+  void freshCreatorQualificationReadRejectsMalformedIdsDigestsAndUnknownFieldsBeforeOwnerRead() {
+    ResolveFreshTenantCreatorQualificationRequest exact = freshCreatorRequest();
+    UnknownFieldSet unknownFields =
+        UnknownFieldSet.newBuilder()
+            .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
+            .build();
+    for (ResolveFreshTenantCreatorQualificationRequest request :
+        new ResolveFreshTenantCreatorQualificationRequest[] {
+          exact.toBuilder().setReadRequestId("bad").build(),
+          exact.toBuilder().setCreationRequestId("00000000-0000-0000-0000-000000000000").build(),
+          exact.toBuilder().setInitiatingAccountId("bad").build(),
+          exact.toBuilder().setAccountAuthorizationOperationId("bad").build(),
+          exact.toBuilder().setExpectedEvidenceDigest("bad").build(),
+          exact.toBuilder().setExpectedCreatorEvidenceDigest("SHA256:" + "d".repeat(64)).build(),
+          exact.toBuilder().setUnknownFields(unknownFields).build()
+        }) {
+      FreshCreatorObserver observer = freshCreatorCall(request, ACCOUNT_PEER, false);
+      assertEquals(Status.Code.INVALID_ARGUMENT, freshCreatorStatus(observer));
+      assertNull(observer.value);
+    }
+    verifyNoInteractions(creationRepository);
+  }
+
+  @Test
+  void exactAccountPeerReadsCreatorQualificationAndPreservesOriginalSourceEvidence() {
+    FreshTenantCreatorEvidence evidence = freshCreatorEvidence(freshCreationReceipt());
+    when(creationRepository.readCreatorQualification(
+            FRESH_CREATION_REQUEST_ID,
+            "test",
+            evidence.creationEvidence().requestDigest(),
+            evidence.creationEvidence().evidenceDigest(),
+            CREATOR_INITIATING_ACCOUNT_ID,
+            CREATOR_AUTHORIZATION_OPERATION_ID,
+            CREATOR_AUTHORIZATION_DIGEST,
+            evidence.evidenceDigest()))
+        .thenReturn(Optional.of(evidence));
+
+    FreshCreatorObserver first = freshCreatorCall(freshCreatorRequest(), ACCOUNT_PEER, false);
+    FreshCreatorObserver retry = freshCreatorCall(freshCreatorRequest(), ACCOUNT_PEER, false);
+
+    assertNull(first.errorCode);
+    assertTrue(first.completed);
+    assertEquals(CREATOR_READ_REQUEST_ID.toString(), first.value.getReadRequestId());
+    assertEquals(freshCreationReceiptResponse(), first.value.getCreationEvidence());
+    assertEquals(1, first.value.getCreatorQualification().getSchemaVersion());
+    assertEquals(
+        CREATOR_INITIATING_ACCOUNT_ID.toString(),
+        first.value.getCreatorQualification().getInitiatingAccountId());
+    assertEquals(
+        CREATOR_AUTHORIZATION_OPERATION_ID.toString(),
+        first.value.getCreatorQualification().getAccountAuthorizationOperationId());
+    assertEquals(
+        CREATOR_AUTHORIZATION_DIGEST,
+        first.value.getCreatorQualification().getAccountAuthorizationDigest());
+    assertEquals(
+        evidence.evidenceDigest(), first.value.getCreatorQualification().getEvidenceDigest());
+    assertNull(retry.errorCode);
+    assertTrue(retry.completed);
+    assertEquals(first.value, retry.value);
+    verify(creationRepository, org.mockito.Mockito.times(2))
+        .readCreatorQualification(
+            FRESH_CREATION_REQUEST_ID,
+            "test",
+            evidence.creationEvidence().requestDigest(),
+            evidence.creationEvidence().evidenceDigest(),
+            CREATOR_INITIATING_ACCOUNT_ID,
+            CREATOR_AUTHORIZATION_OPERATION_ID,
+            CREATOR_AUTHORIZATION_DIGEST,
+            evidence.evidenceDigest());
+    verifyNoMoreInteractions(creationRepository);
+  }
+
+  @Test
+  void creatorQualificationReadFailsClosedWhenMissingOrChanged() {
+    FreshTenantCreatorEvidence changed =
+        freshCreatorEvidence(freshCreationReceipt("other", FRESH_CREATION_REQUEST_ID));
+    when(creationRepository.readCreatorQualification(
+            FRESH_CREATION_REQUEST_ID,
+            "test",
+            FRESH_REQUEST_DIGEST,
+            freshCreationReceipt().evidenceDigest(),
+            CREATOR_INITIATING_ACCOUNT_ID,
+            CREATOR_AUTHORIZATION_OPERATION_ID,
+            CREATOR_AUTHORIZATION_DIGEST,
+            freshCreatorEvidence(freshCreationReceipt()).evidenceDigest()))
+        .thenReturn(Optional.empty())
+        .thenReturn(Optional.of(changed));
+
+    FreshCreatorObserver absent = freshCreatorCall(freshCreatorRequest(), ACCOUNT_PEER, false);
+    FreshCreatorObserver changedSource =
+        freshCreatorCall(freshCreatorRequest(), ACCOUNT_PEER, false);
+
+    assertEquals(Status.Code.NOT_FOUND, freshCreatorStatus(absent));
+    assertEquals(Status.Code.FAILED_PRECONDITION, freshCreatorStatus(changedSource));
+    assertNull(absent.value);
+    assertNull(changedSource.value);
+  }
+
+  @Test
   void exactGameSessionPeerReadsNewAndRetainedIdentityAndRetryKeepsOwnerSource() {
     GameTenantIdentity newRowIdentity =
         new GameTenantIdentity(
@@ -894,6 +1026,83 @@ class TenantIdentityGrpcServiceTest {
     return observer;
   }
 
+  private ResolveFreshTenantCreatorQualificationRequest freshCreatorRequest() {
+    FreshTenantCreationEvidence source = freshCreationReceipt();
+    String creatorDigest =
+        FreshTenantCreatorDigest.evidenceDigest(
+            1,
+            source,
+            CREATOR_INITIATING_ACCOUNT_ID,
+            CREATOR_AUTHORIZATION_OPERATION_ID,
+            CREATOR_AUTHORIZATION_DIGEST);
+    return ResolveFreshTenantCreatorQualificationRequest.newBuilder()
+        .setReadRequestId(CREATOR_READ_REQUEST_ID.toString())
+        .setCreationRequestId(source.creationRequestId().toString())
+        .setExpectedRequestDigest(source.requestDigest())
+        .setExpectedEvidenceDigest(source.evidenceDigest())
+        .setInitiatingAccountId(CREATOR_INITIATING_ACCOUNT_ID.toString())
+        .setAccountAuthorizationOperationId(CREATOR_AUTHORIZATION_OPERATION_ID.toString())
+        .setAccountAuthorizationDigest(CREATOR_AUTHORIZATION_DIGEST)
+        .setExpectedCreatorEvidenceDigest(creatorDigest)
+        .build();
+  }
+
+  private FreshCreatorObserver freshCreatorCall(
+      ResolveFreshTenantCreatorQualificationRequest request,
+      String peerUri,
+      boolean authenticatedContext) {
+    FreshCreatorObserver observer = new FreshCreatorObserver();
+    Context context = Context.current();
+    if (peerUri != null) {
+      context =
+          context.withValue(
+              GrpcPeerIdentity.CONTEXT_KEY, GrpcPeerIdentity.parseUri(peerUri).orElseThrow());
+    }
+    if (authenticatedContext) {
+      SessionContext.setContext(FRESH_CANONICAL_TENANT_ID.toString(), List.of(), Map.of());
+    }
+    try {
+      context.run(() -> service.resolveFreshTenantCreatorQualification(request, observer));
+    } finally {
+      if (authenticatedContext) {
+        SessionContext.clear();
+      }
+    }
+    return observer;
+  }
+
+  private FreshTenantCreatorEvidence freshCreatorEvidence(
+      FreshTenantCreationEvidence sourceEvidence) {
+    return new FreshTenantCreatorEvidence(
+        1,
+        sourceEvidence,
+        CREATOR_INITIATING_ACCOUNT_ID,
+        CREATOR_AUTHORIZATION_OPERATION_ID,
+        CREATOR_AUTHORIZATION_DIGEST,
+        FreshTenantCreatorDigest.evidenceDigest(
+            1,
+            sourceEvidence,
+            CREATOR_INITIATING_ACCOUNT_ID,
+            CREATOR_AUTHORIZATION_OPERATION_ID,
+            CREATOR_AUTHORIZATION_DIGEST));
+  }
+
+  private ResolveFreshTenantCreationResponse freshCreationReceiptResponse() {
+    FreshTenantCreationEvidence evidence = freshCreationReceipt();
+    return ResolveFreshTenantCreationResponse.newBuilder()
+        .setSchemaVersion(evidence.schemaVersion())
+        .setTargetNamespace(evidence.targetNamespace())
+        .setCreationRequestId(evidence.creationRequestId().toString())
+        .setOperationId(evidence.operationId().toString())
+        .setRequestDigest(evidence.requestDigest())
+        .setCanonicalTenantId(evidence.canonicalTenantId().toString())
+        .setSourceGameRowId(evidence.sourceGameRowId())
+        .setSourceGameTenantKey(evidence.sourceGameTenantKey())
+        .setProvenanceKind(evidence.provenanceKind())
+        .setEvidenceDigest(evidence.evidenceDigest())
+        .build();
+  }
+
   private RuntimeIdentityObserver runtimeIdentityCall(
       String canonicalTenantId, String requestId, String peerUri) {
     RuntimeIdentityObserver observer = new RuntimeIdentityObserver();
@@ -972,6 +1181,11 @@ class TenantIdentityGrpcServiceTest {
     return observer.errorCode;
   }
 
+  private static Status.Code freshCreatorStatus(FreshCreatorObserver observer) {
+    assertNotNull(observer.errorCode);
+    return observer.errorCode;
+  }
+
   private static Status.Code runtimeIdentityStatus(RuntimeIdentityObserver observer) {
     assertNotNull(observer.errorCode);
     return observer.errorCode;
@@ -1034,6 +1248,28 @@ class TenantIdentityGrpcServiceTest {
 
     @Override
     public void onNext(ResolveFreshTenantCreationResponse response) {
+      value = response;
+    }
+
+    @Override
+    public void onError(Throwable failure) {
+      errorCode = Status.fromThrowable(failure).getCode();
+    }
+
+    @Override
+    public void onCompleted() {
+      completed = true;
+    }
+  }
+
+  private static final class FreshCreatorObserver
+      implements StreamObserver<ResolveFreshTenantCreatorQualificationResponse> {
+    private ResolveFreshTenantCreatorQualificationResponse value;
+    private Status.Code errorCode;
+    private boolean completed;
+
+    @Override
+    public void onNext(ResolveFreshTenantCreatorQualificationResponse response) {
       value = response;
     }
 

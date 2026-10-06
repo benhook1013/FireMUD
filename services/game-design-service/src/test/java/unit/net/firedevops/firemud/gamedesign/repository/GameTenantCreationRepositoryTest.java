@@ -11,6 +11,7 @@ import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class GameTenantCreationRepositoryTest {
   private static final String NAMESPACE = "test";
@@ -69,5 +70,57 @@ class GameTenantCreationRepositoryTest {
           .hasMessageContaining("request digest does not match");
       verifyNoInteractions(gameRepository);
     }
+  }
+
+  @Test
+  void qualifiedCandidateRejectsMalformedAccountBindingBeforeOwnerAccess() {
+    DSLContext dsl = mock(DSLContext.class);
+    GameRepository gameRepository = mock(GameRepository.class);
+    GameTenantCreationRepository repository = new GameTenantCreationRepository(dsl, gameRepository);
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    try {
+      assertThatThrownBy(
+              () ->
+                  repository.createCandidateWithCreator(
+                      NAMESPACE,
+                      REQUEST_ID,
+                      SOURCE_KEY,
+                      NAME,
+                      null,
+                      new UUID(0L, 0L),
+                      OPERATION_ID,
+                      "sha256:" + "a".repeat(64)))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("initiating Account UUID");
+      assertThatThrownBy(
+              () ->
+                  repository.createCandidateWithCreator(
+                      NAMESPACE,
+                      REQUEST_ID,
+                      SOURCE_KEY,
+                      NAME,
+                      null,
+                      TENANT_ID,
+                      new UUID(0L, 0L),
+                      "sha256:" + "a".repeat(64)))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("authorization operation UUID");
+      assertThatThrownBy(
+              () ->
+                  repository.createCandidateWithCreator(
+                      NAMESPACE,
+                      REQUEST_ID,
+                      SOURCE_KEY,
+                      NAME,
+                      null,
+                      TENANT_ID,
+                      OPERATION_ID,
+                      "SHA256:" + "a".repeat(64)))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("authorization digest");
+    } finally {
+      TransactionSynchronizationManager.clear();
+    }
+    verifyNoInteractions(dsl, gameRepository);
   }
 }

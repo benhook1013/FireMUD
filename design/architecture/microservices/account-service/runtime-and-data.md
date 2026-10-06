@@ -237,6 +237,18 @@ Token refresh, replacement, generation, revocation, fencing, and logout are cano
 
 Game Session orchestrates binding-refresh installation and reconciliation through Account-owned operations; it never writes Account-owned registry or authority state. Current runtime still uses the legacy Account session keys rather than the target issued-token registry, so the target refresh, replacement, fencing, and logout proof remains unavailable.
 
+### Exact Control-UI Issuance Recovery
+
+Ordinary `POST /auth/login` uses the crash-safe registry-backed issuance protocol in [ADR 0014](../../decisions/adr-0014-phased-jwt-signing-key-rotation-and-readiness.md#crash-safe-issuance-and-registry-projection). Its ingress and callers retain a stable high-entropy `requestId` for that issuance operation. This identifier belongs to durable operation identity, not an additional JWT claim, and the existing login response shape is unchanged. The semantic request digest identifies issuance semantics, not the supplied credential: Account must not retain a plaintext password, OTP, or fast credential digest to identify an exact retry.
+
+The existing Account response-envelope ring uses a distinct `control-ui-response` AEAD key and versioned targetless operation binding. It binds the exact Account subject, operation and request identities, token profile and audience, semantic request digest, original committed token and response hashes, complete applicable authority/fence/generation evidence, and original expiry. It contains no invented tenant, connect scope, Gateway context, or private-delegation binding. A key for another envelope purpose cannot decrypt this response. Provisioning, rotation, authenticated materialization/readback, and evidence-based decrypt-only key retirement remain owned by [Environment and Secrets](../../infrastructure/environment-and-secrets-overview.md#account-ring-materializer-target-cluster-binding); local encryption does not satisfy those delivery gates.
+
+Every recovery authenticates a currently valid credential for the same Account at the required authentication strength, then proves the exact durable operation is `COMMITTED`, its original issued-token registry record is active and exact, current authority and issuance fences still match, and the original result remains unexpired. A valid password or newly valid eligible OTP may establish fresh authentication; a consumed or expired original OTP cannot. Historical authentication evidence alone is insufficient. Changed issuance semantics conflict under the retained request identity rather than causing a new issuance.
+
+Only after those checks may Account return the original encrypted response bytes. It never remints a token, extends expiry, resets issuance time, relabels a delegation token, or treats recovery as tenant/gameplay admission. Missing custody or currentness, wrong key/purpose/binding, conflicting operation evidence, and revoked or expired registry state fail closed. Confidential response retention is bounded by its documented recovery horizon, no later than original token expiry; immutable non-secret operation evidence and the existing safe key-retirement proof remain separate.
+
+The unmerged creator-route components do not yet implement this producer or recovery path. Lost-response/restart, fresh-credential exact recovery, consumed-OTP denial, cross-Account and conflicting-request denial, expiry/revocation/currentness, and wrong-key/purpose/binding proof remain required before activation; detailed implementation status belongs to [Player Access and Session](../../../project-management/implementation-tracking/player-access-and-session.md#current-status).
+
 ## Membership and Entitlement Authority
 
 Billing-safe mutation authority contract:

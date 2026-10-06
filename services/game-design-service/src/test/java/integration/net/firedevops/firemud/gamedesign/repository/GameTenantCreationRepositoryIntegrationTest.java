@@ -16,6 +16,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import net.firedevops.firemud.common.tenant.FreshTenantCreatorEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository;
@@ -41,6 +42,8 @@ class GameTenantCreationRepositoryIntegrationTest {
   private static final String FLYWAY_TABLE = "flyway_schema_history_game_design_service";
   private static final Table<?> GAME = DSL.table(DSL.name("game"));
   private static final Table<?> OPERATIONS = DSL.table(DSL.name("game_tenant_creation_operations"));
+  private static final Table<?> CREATOR_QUALIFICATIONS =
+      DSL.table(DSL.name("game_tenant_creation_creator_qualifications"));
   private static final org.jooq.Field<Long> GAME_ID = DSL.field(DSL.name("id"), Long.class);
   private static final org.jooq.Field<String> TENANT_ID =
       DSL.field(DSL.name("tenant_id"), String.class);
@@ -56,12 +59,33 @@ class GameTenantCreationRepositoryIntegrationTest {
       DSL.field(DSL.name("creation_request_id"), UUID.class);
   private static final org.jooq.Field<String> REQUEST_DIGEST =
       DSL.field(DSL.name("request_digest"), String.class);
+  private static final org.jooq.Field<String> OPERATION_EVIDENCE_DIGEST =
+      DSL.field(DSL.name("evidence_digest"), String.class);
   private static final org.jooq.Field<String> SOURCE_GAME_TENANT_KEY =
       DSL.field(DSL.name("source_game_tenant_key"), String.class);
   private static final org.jooq.Field<String> NAME = DSL.field(DSL.name("name"), String.class);
   private static final org.jooq.Field<String> DESCRIPTION =
       DSL.field(DSL.name("description"), String.class);
   private static final org.jooq.Field<String> STATUS = DSL.field(DSL.name("status"), String.class);
+  private static final org.jooq.Field<Boolean> CREATOR_QUALIFICATION_REQUIRED =
+      DSL.field(DSL.name("creator_qualification_required"), Boolean.class);
+  private static final org.jooq.Field<UUID> CREATOR_QUALIFICATION_OPERATION_ID =
+      DSL.field(DSL.name("operation_id"), UUID.class);
+  private static final org.jooq.Field<String> ACCOUNT_AUTHORIZATION_DIGEST =
+      DSL.field(DSL.name("account_authorization_digest"), String.class);
+  private static final org.jooq.Field<Integer> CREATOR_QUALIFICATION_SCHEMA_VERSION =
+      DSL.field(DSL.name("schema_version"), Integer.class);
+  private static final org.jooq.Field<UUID> INITIATING_ACCOUNT_ID_FIELD =
+      DSL.field(DSL.name("initiating_account_id"), UUID.class);
+  private static final org.jooq.Field<UUID> ACCOUNT_AUTHORIZATION_OPERATION_ID =
+      DSL.field(DSL.name("account_authorization_operation_id"), UUID.class);
+  private static final org.jooq.Field<String> CREATOR_EVIDENCE_DIGEST =
+      DSL.field(DSL.name("evidence_digest"), String.class);
+  private static final UUID INITIATING_ACCOUNT_ID =
+      UUID.fromString("55555555-5555-4555-8555-555555555555");
+  private static final UUID AUTHORIZATION_OPERATION_ID =
+      UUID.fromString("66666666-6666-4666-8666-666666666666");
+  private static final String AUTHORIZATION_DIGEST = "sha256:" + "a".repeat(64);
   private static final String NAMESPACE = "fresh-tenant-test";
   private static final String SOURCE_KEY = "new-game-tenant-01";
   private static final UUID REQUEST_ID = UUID.fromString("11111111-1111-4111-8111-111111111111");
@@ -90,6 +114,325 @@ class GameTenantCreationRepositoryIntegrationTest {
     assertThat(gameXmin(fixture.dsl, SOURCE_KEY)).isEqualTo(firstGameXmin);
     assertThat(fixture.dsl.fetchCount(GAME)).isEqualTo(1);
     assertThat(fixture.dsl.fetchCount(OPERATIONS)).isEqualTo(1);
+  }
+
+  @Test
+  void qualifiedCreationCommitsSourceAndCreatorEvidenceAtomicallyAndReadsBothBack()
+      throws Exception {
+    Fixture fixture = fixture();
+    FreshTenantCreatorEvidence created =
+        fixture.inTransaction(
+            () ->
+                createQualified(
+                    fixture,
+                    INITIATING_ACCOUNT_ID,
+                    AUTHORIZATION_OPERATION_ID,
+                    AUTHORIZATION_DIGEST));
+
+    FreshTenantCreationEvidence sourceEvidence =
+        fixture.repository.read(REQUEST_ID, NAMESPACE).orElseThrow();
+    FreshTenantCreatorEvidence committedReadback =
+        fixture
+            .repository
+            .readCreatorQualification(
+                REQUEST_ID,
+                NAMESPACE,
+                sourceEvidence.requestDigest(),
+                sourceEvidence.evidenceDigest(),
+                INITIATING_ACCOUNT_ID,
+                AUTHORIZATION_OPERATION_ID,
+                AUTHORIZATION_DIGEST,
+                created.evidenceDigest())
+            .orElseThrow();
+
+    assertThat(committedReadback).isEqualTo(created);
+    assertThat(committedReadback.creationEvidence()).isEqualTo(sourceEvidence);
+    assertThat(fixture.dsl.fetchCount(GAME)).isEqualTo(1);
+    assertThat(fixture.dsl.fetchCount(OPERATIONS)).isEqualTo(1);
+    assertThat(fixture.dsl.fetchCount(CREATOR_QUALIFICATIONS)).isEqualTo(1);
+    assertThat(
+            fixture
+                .dsl
+                .select(REQUEST_DIGEST)
+                .from(OPERATIONS)
+                .where(CREATION_REQUEST_ID.eq(REQUEST_ID))
+                .fetchOne(REQUEST_DIGEST))
+        .isEqualTo(sourceEvidence.requestDigest());
+    assertThat(
+            fixture
+                .dsl
+                .select(OPERATION_EVIDENCE_DIGEST)
+                .from(OPERATIONS)
+                .where(CREATION_REQUEST_ID.eq(REQUEST_ID))
+                .fetchOne(OPERATION_EVIDENCE_DIGEST))
+        .isEqualTo(sourceEvidence.evidenceDigest());
+  }
+
+  @Test
+  void qualifiedRetryWithChangedInitiatorOrAuthorizationConflictsBeforeMutation() throws Exception {
+    Fixture fixture = fixture();
+    FreshTenantCreatorEvidence first =
+        fixture.inTransaction(
+            () ->
+                createQualified(
+                    fixture,
+                    INITIATING_ACCOUNT_ID,
+                    AUTHORIZATION_OPERATION_ID,
+                    AUTHORIZATION_DIGEST));
+    String originalGameXmin = gameXmin(fixture.dsl, SOURCE_KEY);
+
+    assertThat(
+            fixture.inTransaction(
+                () ->
+                    createQualified(
+                        fixture,
+                        INITIATING_ACCOUNT_ID,
+                        AUTHORIZATION_OPERATION_ID,
+                        AUTHORIZATION_DIGEST)))
+        .isEqualTo(first);
+    assertThatThrownBy(
+            () ->
+                fixture.inTransaction(
+                    () ->
+                        createQualified(
+                            fixture,
+                            UUID.fromString("77777777-7777-4777-8777-777777777777"),
+                            AUTHORIZATION_OPERATION_ID,
+                            AUTHORIZATION_DIGEST)))
+        .isInstanceOf(GameTenantCreationRepository.CreationRequestConflictException.class)
+        .hasMessageContaining("changed Account authority");
+    assertThatThrownBy(
+            () ->
+                fixture.inTransaction(
+                    () ->
+                        createQualified(
+                            fixture,
+                            INITIATING_ACCOUNT_ID,
+                            UUID.fromString("88888888-8888-4888-8888-888888888888"),
+                            AUTHORIZATION_DIGEST)))
+        .isInstanceOf(GameTenantCreationRepository.CreationRequestConflictException.class)
+        .hasMessageContaining("changed Account authority");
+    assertThatThrownBy(
+            () ->
+                fixture.inTransaction(
+                    () ->
+                        createQualified(
+                            fixture,
+                            INITIATING_ACCOUNT_ID,
+                            AUTHORIZATION_OPERATION_ID,
+                            "sha256:" + "b".repeat(64))))
+        .isInstanceOf(GameTenantCreationRepository.CreationRequestConflictException.class)
+        .hasMessageContaining("changed Account authority");
+
+    assertThat(gameXmin(fixture.dsl, SOURCE_KEY)).isEqualTo(originalGameXmin);
+    assertThat(fixture.dsl.fetchCount(GAME)).isEqualTo(1);
+    assertThat(fixture.dsl.fetchCount(OPERATIONS)).isEqualTo(1);
+    assertThat(fixture.dsl.fetchCount(CREATOR_QUALIFICATIONS)).isEqualTo(1);
+  }
+
+  @Test
+  void sourceOnlyOperationCannotReceiveCreatorQualificationRetroactively() throws Exception {
+    Fixture fixture = fixture();
+    FreshTenantCreationEvidence sourceOnly =
+        fixture.inTransaction(
+            () ->
+                fixture.repository.createCandidate(
+                    NAMESPACE, REQUEST_ID, SOURCE_KEY, "The First World", "A description"));
+    String originalGameXmin = gameXmin(fixture.dsl, SOURCE_KEY);
+
+    assertThatThrownBy(
+            () ->
+                fixture.inTransaction(
+                    () ->
+                        createQualified(
+                            fixture,
+                            INITIATING_ACCOUNT_ID,
+                            AUTHORIZATION_OPERATION_ID,
+                            AUTHORIZATION_DIGEST)))
+        .isInstanceOf(GameTenantCreationRepository.CreationRequestConflictException.class)
+        .hasMessageContaining("cannot be attached to an existing source-only operation");
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .dsl
+                    .insertInto(CREATOR_QUALIFICATIONS)
+                    .set(CREATOR_QUALIFICATION_OPERATION_ID, sourceOnly.operationId())
+                    .set(CREATOR_QUALIFICATION_SCHEMA_VERSION, 1)
+                    .set(INITIATING_ACCOUNT_ID_FIELD, INITIATING_ACCOUNT_ID)
+                    .set(ACCOUNT_AUTHORIZATION_OPERATION_ID, AUTHORIZATION_OPERATION_ID)
+                    .set(ACCOUNT_AUTHORIZATION_DIGEST, AUTHORIZATION_DIGEST)
+                    .set(CREATOR_EVIDENCE_DIGEST, "sha256:" + "b".repeat(64))
+                    .execute())
+        .isInstanceOf(DataAccessException.class)
+        .hasStackTraceContaining("cannot attach to source-only");
+
+    assertThat(fixture.repository.read(REQUEST_ID, NAMESPACE)).contains(sourceOnly);
+    assertThat(gameXmin(fixture.dsl, SOURCE_KEY)).isEqualTo(originalGameXmin);
+    assertThat(fixture.dsl.fetchCount(GAME)).isEqualTo(1);
+    assertThat(fixture.dsl.fetchCount(OPERATIONS)).isEqualTo(1);
+    assertThat(fixture.dsl.fetchCount(CREATOR_QUALIFICATIONS)).isZero();
+  }
+
+  @Test
+  void creatorQualificationEvidenceCannotBeUpdatedDeletedOrTruncated() throws Exception {
+    Fixture fixture = fixture();
+    FreshTenantCreatorEvidence created =
+        fixture.inTransaction(
+            () ->
+                createQualified(
+                    fixture,
+                    INITIATING_ACCOUNT_ID,
+                    AUTHORIZATION_OPERATION_ID,
+                    AUTHORIZATION_DIGEST));
+
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .dsl
+                    .update(CREATOR_QUALIFICATIONS)
+                    .set(ACCOUNT_AUTHORIZATION_DIGEST, "sha256:" + "b".repeat(64))
+                    .where(
+                        CREATOR_QUALIFICATION_OPERATION_ID.eq(
+                            created.creationEvidence().operationId()))
+                    .execute())
+        .isInstanceOf(DataAccessException.class)
+        .hasStackTraceContaining("evidence is immutable");
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .dsl
+                    .deleteFrom(CREATOR_QUALIFICATIONS)
+                    .where(
+                        CREATOR_QUALIFICATION_OPERATION_ID.eq(
+                            created.creationEvidence().operationId()))
+                    .execute())
+        .isInstanceOf(DataAccessException.class)
+        .hasStackTraceContaining("evidence is immutable");
+    assertThatThrownBy(
+            () -> fixture.dsl.execute("TRUNCATE TABLE game_tenant_creation_creator_qualifications"))
+        .isInstanceOf(DataAccessException.class)
+        .hasStackTraceContaining("cannot be truncated");
+
+    assertThat(
+            fixture.repository.readCreatorQualification(
+                REQUEST_ID,
+                NAMESPACE,
+                created.creationEvidence().requestDigest(),
+                created.creationEvidence().evidenceDigest(),
+                INITIATING_ACCOUNT_ID,
+                AUTHORIZATION_OPERATION_ID,
+                AUTHORIZATION_DIGEST,
+                created.evidenceDigest()))
+        .contains(created);
+    assertThat(fixture.dsl.fetchCount(GAME)).isEqualTo(1);
+    assertThat(fixture.dsl.fetchCount(OPERATIONS)).isEqualTo(1);
+    assertThat(fixture.dsl.fetchCount(CREATOR_QUALIFICATIONS)).isEqualTo(1);
+  }
+
+  @Test
+  void creatorQualificationRequiredOperationCannotCommitWithoutItsQualifier() throws Exception {
+    Fixture fixture = fixture();
+    FreshTenantCreationEvidence sourceOnly =
+        fixture.inTransaction(
+            () ->
+                fixture.repository.createCandidate(
+                    NAMESPACE, REQUEST_ID, SOURCE_KEY, "The First World", "A description"));
+
+    try (Connection connection = fixture.dataSource.getConnection();
+        Statement statement = connection.createStatement()) {
+      statement.execute(
+          "ALTER TABLE game_tenant_creation_operations "
+              + "DISABLE TRIGGER game_tenant_creation_operation_immutable");
+      try {
+        assertThatThrownBy(
+                () ->
+                    fixture.transactionTemplate.execute(
+                        status ->
+                            fixture
+                                .dsl
+                                .update(OPERATIONS)
+                                .set(CREATOR_QUALIFICATION_REQUIRED, true)
+                                .where(OPERATION_ID.eq(sourceOnly.operationId()))
+                                .execute()))
+            .isInstanceOf(RuntimeException.class)
+            .hasStackTraceContaining("without creator evidence");
+      } finally {
+        statement.execute(
+            "ALTER TABLE game_tenant_creation_operations "
+                + "ENABLE TRIGGER game_tenant_creation_operation_immutable");
+      }
+    }
+    assertThat(fixture.repository.read(REQUEST_ID, NAMESPACE)).contains(sourceOnly);
+    assertThat(fixture.dsl.fetchCount(CREATOR_QUALIFICATIONS)).isZero();
+  }
+
+  @Test
+  void concurrentQualifiedRetriesWithSameBindingConvergeOnOneSourceAndQualifier() throws Exception {
+    Fixture fixture = fixture();
+    CountDownLatch firstOperationCreated = new CountDownLatch(1);
+    CountDownLatch allowFirstCommit = new CountDownLatch(1);
+    CountDownLatch secondOperationStarted = new CountDownLatch(1);
+    AtomicInteger firstBackendPid = new AtomicInteger();
+    AtomicInteger secondBackendPid = new AtomicInteger();
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      Future<FreshTenantCreatorEvidence> first =
+          executor.submit(
+              () ->
+                  fixture.transactionTemplate.execute(
+                      status -> {
+                        FreshTenantCreatorEvidence evidence =
+                            createQualified(
+                                fixture,
+                                INITIATING_ACCOUNT_ID,
+                                AUTHORIZATION_OPERATION_ID,
+                                AUTHORIZATION_DIGEST);
+                        firstBackendPid.set(currentBackendPid(fixture.dsl));
+                        firstOperationCreated.countDown();
+                        awaitLatch(allowFirstCommit);
+                        return evidence;
+                      }));
+      assertThat(firstOperationCreated.await(10, TimeUnit.SECONDS)).isTrue();
+      Future<FreshTenantCreatorEvidence> second =
+          executor.submit(
+              () ->
+                  fixture.transactionTemplate.execute(
+                      status -> {
+                        secondBackendPid.set(currentBackendPid(fixture.dsl));
+                        secondOperationStarted.countDown();
+                        return createQualified(
+                            fixture,
+                            INITIATING_ACCOUNT_ID,
+                            AUTHORIZATION_OPERATION_ID,
+                            AUTHORIZATION_DIGEST);
+                      }));
+      assertThat(secondOperationStarted.await(10, TimeUnit.SECONDS)).isTrue();
+      awaitDatabaseBlocking(fixture.dataSource, secondBackendPid.get(), firstBackendPid.get());
+      allowFirstCommit.countDown();
+
+      FreshTenantCreatorEvidence firstEvidence = first.get(10, TimeUnit.SECONDS);
+      FreshTenantCreatorEvidence secondEvidence = second.get(10, TimeUnit.SECONDS);
+      assertThat(secondEvidence).isEqualTo(firstEvidence);
+      assertThat(secondEvidence.creationEvidence().canonicalTenantId())
+          .isEqualTo(firstEvidence.creationEvidence().canonicalTenantId());
+      assertThat(
+              fixture.repository.readCreatorQualification(
+                  REQUEST_ID,
+                  NAMESPACE,
+                  firstEvidence.creationEvidence().requestDigest(),
+                  firstEvidence.creationEvidence().evidenceDigest(),
+                  INITIATING_ACCOUNT_ID,
+                  AUTHORIZATION_OPERATION_ID,
+                  AUTHORIZATION_DIGEST,
+                  firstEvidence.evidenceDigest()))
+          .contains(firstEvidence);
+      assertThat(fixture.dsl.fetchCount(GAME)).isEqualTo(1);
+      assertThat(fixture.dsl.fetchCount(OPERATIONS)).isEqualTo(1);
+      assertThat(fixture.dsl.fetchCount(CREATOR_QUALIFICATIONS)).isEqualTo(1);
+    } finally {
+      allowFirstCommit.countDown();
+      executor.shutdownNow();
+    }
   }
 
   @Test
@@ -443,6 +786,22 @@ class GameTenantCreationRepositoryIntegrationTest {
       allowFirstCommit.countDown();
       executor.shutdownNow();
     }
+  }
+
+  private FreshTenantCreatorEvidence createQualified(
+      Fixture fixture,
+      UUID initiatingAccountId,
+      UUID authorizationOperationId,
+      String authorizationDigest) {
+    return fixture.repository.createCandidateWithCreator(
+        NAMESPACE,
+        REQUEST_ID,
+        SOURCE_KEY,
+        "The First World",
+        "A description",
+        initiatingAccountId,
+        authorizationOperationId,
+        authorizationDigest);
   }
 
   private Fixture fixture() {

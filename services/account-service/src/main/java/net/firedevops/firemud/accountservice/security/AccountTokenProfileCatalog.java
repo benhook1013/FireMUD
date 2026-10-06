@@ -390,7 +390,7 @@ public final class AccountTokenProfileCatalog {
   private static void validateActualClaimMaps(ProfileShape shape, ActualClaimMaps actualClaims) {
     Map<String, BigInteger> membershipVersion =
         actualClaims.membershipVersion().orElseThrow(AccountTokenProfileCatalog::invalidCandidate);
-    Set<String> membershipVersionKeys = requirePositiveTenantCounterMap(membershipVersion);
+    Set<String> membershipVersionKeys = requireNonNegativeTenantCounterMap(membershipVersion);
     if (!membershipVersionKeys.equals(
         canonicalTenantKeys(shape.authority().membershipVersionKeys()))) {
       throw invalidCandidate();
@@ -407,13 +407,13 @@ public final class AccountTokenProfileCatalog {
     }
   }
 
-  private static Set<String> requirePositiveTenantCounterMap(Map<String, BigInteger> values) {
+  private static Set<String> requireNonNegativeTenantCounterMap(Map<String, BigInteger> values) {
     Set<String> keys = new HashSet<>();
     for (Map.Entry<String, BigInteger> entry : values.entrySet()) {
       String key = entry.getKey();
       BigInteger value = entry.getValue();
       requireCanonicalTenantKey(key);
-      if (value == null || value.signum() <= 0) {
+      if (value == null || value.signum() < 0) {
         throw invalidCandidate();
       }
       keys.add(key);
@@ -987,7 +987,8 @@ public final class AccountTokenProfileCatalog {
   }
 
   /**
-   * Actual separate JWT map claims, preserving omission and arbitrary-precision counters.
+   * Actual separate JWT map claims, preserving omission and arbitrary-precision non-negative
+   * membership-version counters.
    *
    * <p>The optionals preserve claim absence separately from an empty object. Maps and nested role
    * lists are copied defensively.
