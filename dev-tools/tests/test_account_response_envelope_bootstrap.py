@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import contextlib
 import datetime as dt
 import importlib.util
@@ -14,22 +15,14 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-SCRIPT_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "deploy"
-    / "bootstrap-account-response-envelope-ring.py"
-)
+SCRIPT_PATH = Path(__file__).resolve().parents[1] / "deploy" / "bootstrap-account-response-envelope-ring.py"
 SPEC = importlib.util.spec_from_file_location("account_response_envelope_bootstrap", SCRIPT_PATH)
 assert SPEC is not None and SPEC.loader is not None
 BOOTSTRAP = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = BOOTSTRAP
 SPEC.loader.exec_module(BOOTSTRAP)
 
-MATERIALIZER_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "deploy"
-    / "materialize-account-response-envelope-ring.py"
-)
+MATERIALIZER_PATH = Path(__file__).resolve().parents[1] / "deploy" / "materialize-account-response-envelope-ring.py"
 MATERIALIZER_SPEC = importlib.util.spec_from_file_location("account_response_envelope_materializer", MATERIALIZER_PATH)
 assert MATERIALIZER_SPEC is not None and MATERIALIZER_SPEC.loader is not None
 MATERIALIZER = importlib.util.module_from_spec(MATERIALIZER_SPEC)
@@ -40,9 +33,7 @@ MATERIALIZER_SPEC.loader.exec_module(MATERIALIZER)
 NOW = dt.datetime(2026, 9, 27, 12, 0, 0, 123400, tzinfo=dt.timezone.utc)
 ENVIRONMENT_ID = "player-facing-prod"
 TARGET_NAMESPACE = "account-prod"
-MATERIALIZER_USERNAME = (
-    "system:serviceaccount:account-prod:firemud-secret-materializer"
-)
+MATERIALIZER_USERNAME = "system:serviceaccount:account-prod:firemud-secret-materializer"
 
 
 class FakeKubectl:
@@ -59,9 +50,7 @@ class FakeKubectl:
         if operation == "auth":
             return SimpleNamespace(
                 returncode=0,
-                stdout=json.dumps(
-                    {"status": {"userInfo": {"username": self.username}}}
-                ),
+                stdout=json.dumps({"status": {"userInfo": {"username": self.username}}}),
                 stderr="",
             )
         if operation == "get":
@@ -128,7 +117,10 @@ class AccountResponseEnvelopeBootstrapTest(unittest.TestCase):
 
         manifest = MATERIALIZER.parse_manifest(source.manifest_bytes)
         self.assertEqual(manifest.active_key_id, next(iter(manifest.keys)))
-        self.assertEqual({"bare-login", "connect-token"}, set(manifest.keys[manifest.active_key_id]))
+        self.assertEqual(
+            {"bare-login", "connect-token", "pending-reset"},
+            set(manifest.keys[manifest.active_key_id]),
+        )
 
     def test_purpose_keys_are_distinct_random_32_byte_values(self) -> None:
         self.create()
@@ -138,9 +130,28 @@ class AccountResponseEnvelopeBootstrapTest(unittest.TestCase):
         keys = manifest.keys[manifest.active_key_id]
         self.assertEqual(32, len(keys["bare-login"]))
         self.assertEqual(32, len(keys["connect-token"]))
-        self.assertNotEqual(keys["bare-login"], keys["connect-token"])
+        self.assertEqual(32, len(keys["pending-reset"]))
+        self.assertEqual(3, len(set(keys.values())))
         self.assertNotEqual("key-id", manifest.active_key_id)
         self.assertNotEqual("source-generation", source.source_generation)
+
+    def test_pending_key_redraw_cannot_collide_with_another_purpose(self) -> None:
+        first_key, second_key, third_key = (bytes([number]) * 32 for number in (1, 2, 3))
+        with (
+            patch.object(BOOTSTRAP, "_random_identifier", return_value="k1"),
+            patch.object(
+                BOOTSTRAP.secrets,
+                "token_bytes",
+                side_effect=[first_key, second_key, first_key, second_key, third_key],
+            ),
+        ):
+            manifest_bytes = BOOTSTRAP._manifest()
+
+        manifest = MATERIALIZER.parse_manifest(manifest_bytes)
+        self.assertEqual(
+            {"bare-login": first_key, "connect-token": second_key, "pending-reset": third_key},
+            manifest.keys["k1"],
+        )
 
     def test_rotation_is_parser_and_materializer_compatible_and_retains_old_keys(self) -> None:
         self.create()
@@ -169,7 +180,100 @@ class AccountResponseEnvelopeBootstrapTest(unittest.TestCase):
         self.assertTrue(previous_manifest.key_ids < rotated_manifest.key_ids)
         for key_id, purposes in previous_manifest.keys.items():
             self.assertEqual(purposes, rotated_manifest.keys[key_id])
-        self.assertEqual({"bare-login", "connect-token"}, set(rotated_manifest.keys[rotated_manifest.active_key_id]))
+        self.assertEqual(
+            {"bare-login", "connect-token", "pending-reset"},
+            set(rotated_manifest.keys[rotated_manifest.active_key_id]),
+        )
+        self.assertEqual(
+            len({key for purpose_keys in rotated_manifest.keys.values() for key in purpose_keys.values()}),
+            sum(len(purpose_keys) for purpose_keys in rotated_manifest.keys.values()),
+        )
+
+        third_output = self.custody_directory / "third-source-record.json"
+        BOOTSTRAP.create_rotated_source_record(
+            output=third_output,
+            previous_source_record=rotated_output,
+            environment_id=ENVIRONMENT_ID,
+            namespace=TARGET_NAMESPACE,
+            source_ttl_seconds=3600,
+            now=rotation_time + dt.timedelta(minutes=10),
+        )
+        third = MATERIALIZER.read_source_record(third_output)
+        third_manifest = MATERIALIZER.parse_manifest(third.manifest_bytes)
+        self.assertTrue(rotated_manifest.key_ids < third_manifest.key_ids)
+        for key_id, purposes in rotated_manifest.keys.items():
+            self.assertEqual(purposes, third_manifest.keys[key_id])
+        self.assertEqual(
+            {"bare-login", "connect-token", "pending-reset"},
+            set(third_manifest.keys[third_manifest.active_key_id]),
+        )
+
+        fake_kubectl = FakeKubectl()
+        # Synthetic Kubernetes transcripts establish only exact offline readback behavior.
+        with (
+            patch.object(MATERIALIZER, "_require_target_cluster_binding", return_value=None),
+            patch.object(MATERIALIZER.subprocess, "run", side_effect=fake_kubectl),
+        ):
+            self.assertTrue(
+                MATERIALIZER.materialize(
+                    self.output,
+                    ENVIRONMENT_ID,
+                    TARGET_NAMESPACE,
+                    7200,
+                    now=NOW + dt.timedelta(minutes=1),
+                )
+            )
+            self.assertTrue(
+                MATERIALIZER.materialize(
+                    rotated_output,
+                    ENVIRONMENT_ID,
+                    TARGET_NAMESPACE,
+                    7200,
+                    now=rotation_time + dt.timedelta(minutes=1),
+                )
+            )
+
+    def test_rotation_upgrades_a_two_purpose_ring_without_inventing_old_pending_keys(self) -> None:
+        self.create()
+        original = MATERIALIZER.read_source_record(self.output)
+        original_manifest = MATERIALIZER.parse_manifest(original.manifest_bytes)
+        old_id = original_manifest.active_key_id
+        old_keys = original_manifest.keys[old_id]
+        legacy_manifest = (
+            f"version=1\nactiveKeyId={old_id}\n"
+            + "".join(
+                f"key:{old_id}:{purpose}={base64.urlsafe_b64encode(old_keys[purpose]).rstrip(b'=').decode('ascii')}\n"
+                for purpose in ("bare-login", "connect-token")
+            )
+        ).encode("ascii")
+        legacy_record = json.loads(self.output.read_text(encoding="utf-8"))
+        legacy_record["manifestBase64"] = base64.b64encode(legacy_manifest).decode("ascii")
+        legacy_output = self.custody_directory / "legacy-source-record.json"
+        legacy_output.write_text(
+            json.dumps(legacy_record, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+        os.chmod(legacy_output, 0o600)
+
+        rotated_output = self.custody_directory / "upgraded-source-record.json"
+        rotation_time = NOW + dt.timedelta(minutes=10)
+        BOOTSTRAP.create_rotated_source_record(
+            output=rotated_output,
+            previous_source_record=legacy_output,
+            environment_id=ENVIRONMENT_ID,
+            namespace=TARGET_NAMESPACE,
+            source_ttl_seconds=3600,
+            now=rotation_time,
+        )
+        upgraded = MATERIALIZER.read_source_record(rotated_output)
+        upgraded_manifest = MATERIALIZER.parse_manifest(upgraded.manifest_bytes)
+        self.assertEqual({"bare-login", "connect-token"}, set(upgraded_manifest.keys[old_id]))
+        self.assertEqual(old_keys["bare-login"], upgraded_manifest.keys[old_id]["bare-login"])
+        self.assertEqual(old_keys["connect-token"], upgraded_manifest.keys[old_id]["connect-token"])
+        self.assertEqual(
+            {"bare-login", "connect-token", "pending-reset"},
+            set(upgraded_manifest.keys[upgraded_manifest.active_key_id]),
+        )
 
         fake_kubectl = FakeKubectl()
         # These fake Kubernetes transcripts prove offline behavior only; they
@@ -180,7 +284,7 @@ class AccountResponseEnvelopeBootstrapTest(unittest.TestCase):
         ):
             self.assertTrue(
                 MATERIALIZER.materialize(
-                    self.output,
+                    legacy_output,
                     ENVIRONMENT_ID,
                     TARGET_NAMESPACE,
                     7200,
@@ -298,8 +402,9 @@ class AccountResponseEnvelopeBootstrapTest(unittest.TestCase):
             MaterializationError=MATERIALIZER.MaterializationError,
             MAX_SOURCE_RECORD_BYTES=1,
         )
-        with patch.object(BOOTSTRAP, "_load_materializer", return_value=size_limited_materializer), self.assertRaisesRegex(
-            BOOTSTRAP.BootstrapError, "size limit"
+        with (
+            patch.object(BOOTSTRAP, "_load_materializer", return_value=size_limited_materializer),
+            self.assertRaisesRegex(BOOTSTRAP.BootstrapError, "size limit"),
         ):
             BOOTSTRAP.create_rotated_source_record(
                 output=rotated_output,
@@ -314,9 +419,11 @@ class AccountResponseEnvelopeBootstrapTest(unittest.TestCase):
     def test_rotation_refuses_same_output_without_overwrite_or_regeneration(self) -> None:
         self.create()
         first_bytes = self.output.read_bytes()
-        with patch.object(BOOTSTRAP.secrets, "token_bytes", side_effect=AssertionError("regenerated")), patch.object(
-            BOOTSTRAP.secrets, "token_urlsafe", side_effect=AssertionError("regenerated")
-        ), self.assertRaisesRegex(BOOTSTRAP.BootstrapError, "already exists"):
+        with (
+            patch.object(BOOTSTRAP.secrets, "token_bytes", side_effect=AssertionError("regenerated")),
+            patch.object(BOOTSTRAP.secrets, "token_urlsafe", side_effect=AssertionError("regenerated")),
+            self.assertRaisesRegex(BOOTSTRAP.BootstrapError, "already exists"),
+        ):
             BOOTSTRAP.create_rotated_source_record(
                 output=self.output,
                 previous_source_record=self.output,
@@ -390,9 +497,11 @@ class AccountResponseEnvelopeBootstrapTest(unittest.TestCase):
         self.create()
         first_bytes = self.output.read_bytes()
 
-        with patch.object(BOOTSTRAP.secrets, "token_bytes", side_effect=AssertionError("regenerated")), patch.object(
-            BOOTSTRAP.secrets, "token_urlsafe", side_effect=AssertionError("regenerated")
-        ), self.assertRaisesRegex(BOOTSTRAP.BootstrapError, "already exists"):
+        with (
+            patch.object(BOOTSTRAP.secrets, "token_bytes", side_effect=AssertionError("regenerated")),
+            patch.object(BOOTSTRAP.secrets, "token_urlsafe", side_effect=AssertionError("regenerated")),
+            self.assertRaisesRegex(BOOTSTRAP.BootstrapError, "already exists"),
+        ):
             self.create()
 
         self.assertEqual(first_bytes, self.output.read_bytes())
@@ -486,7 +595,9 @@ class AccountResponseEnvelopeBootstrapTest(unittest.TestCase):
 
     def test_cli_requires_explicit_credential_class_lifetime(self) -> None:
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as raised:
-            BOOTSTRAP.main(["--output", str(self.output), "--environment-id", ENVIRONMENT_ID, "--namespace", TARGET_NAMESPACE])
+            BOOTSTRAP.main(
+                ["--output", str(self.output), "--environment-id", ENVIRONMENT_ID, "--namespace", TARGET_NAMESPACE]
+            )
         self.assertEqual(2, raised.exception.code)
         self.assertFalse(self.output.exists())
 
@@ -521,9 +632,7 @@ class AccountResponseEnvelopeBootstrapTest(unittest.TestCase):
         ):
             with self.subTest(username=username):
                 output = self.custody_directory / f"invalid-source-{index}.json"
-                with self.assertRaisesRegex(
-                    BOOTSTRAP.BootstrapError, "service-account username"
-                ):
+                with self.assertRaisesRegex(BOOTSTRAP.BootstrapError, "service-account username"):
                     self.create(output=output, materializer_username=username)
                 self.assertFalse(output.exists())
 

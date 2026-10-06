@@ -22,7 +22,7 @@ class AuthoredWorldReleaseAttestationEvidenceTest {
   private static final String EXPECTED_DESCRIPTOR_RESULT_DIGEST =
       "sha256:7129db5acb9aa27830598cdcfe4996f2f2259cfbe1f6dc137db5d39ec8ebc80c";
   private static final String EXPECTED_EVIDENCE_DIGEST =
-      "sha256:c1a8d369e3012ced0247b6de05a152fc0434b565db611acc9095447184cbe42f";
+      "sha256:156077bf55bfc35bff1dff953beb1b26fe35f6edf6cd4918b7c512977b8db10b";
 
   @Test
   void fullEvidenceMatchesIndependentUnicodeFramingVectorAndExactDescriptor() {
@@ -53,7 +53,7 @@ class AuthoredWorldReleaseAttestationEvidenceTest {
             "GAME_DESIGN_CONTROL_PLANE"),
         AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder());
     assertEquals(
-        List.of(2, 2, 1, 5, 1),
+        List.of(3, 2, 1, 5, 1),
         AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
             .map(AuthoredWorldReleaseAttestationEvidence::supportedParticipantDigestSchema)
             .toList());
@@ -121,6 +121,28 @@ class AuthoredWorldReleaseAttestationEvidenceTest {
             fixture.evidence().evidenceDigest(),
             List.of("changed command", "LOOK"));
     assertThrows(IllegalArgumentException.class, tampered::requireValid);
+  }
+
+  @Test
+  void retainedWorldSchema2IsNotAcceptedAsCurrentReleaseEvidence() {
+    Fixture fixture = fixture();
+    List<AuthoredWorldReleaseAttestationEvidence.Participant> participants =
+        new ArrayList<>(fixture.evidence().participantDigests());
+    participants.set(
+        0,
+        participant(
+            "WORLD_MANAGEMENT", "42", false, null, "commit-雪", digest("a"), false, null, 2));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            evidence(
+                fixture.descriptor(),
+                MAX_EPOCH,
+                participants,
+                keys(),
+                artifacts(),
+                commands(),
+                GENERATION_REVISION));
   }
 
   @Test
@@ -960,7 +982,8 @@ class AuthoredWorldReleaseAttestationEvidenceTest {
         abilityPresent,
         abilityDigest,
         switch (key) {
-          case "WORLD_MANAGEMENT", "ENTITY_MANAGEMENT" -> 2;
+          case "WORLD_MANAGEMENT" -> 3;
+          case "ENTITY_MANAGEMENT" -> 2;
           case "AUTOMATION_SCRIPTING" -> 5;
           case "GAME_LOGIC", "GAME_DESIGN_CONTROL_PLANE" -> 1;
           default -> 1;

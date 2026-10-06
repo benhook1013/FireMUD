@@ -33,7 +33,7 @@ import tools.jackson.databind.ObjectMapper;
  * publication eligibility or proof that World applied a complete synchronized owner commit.
  */
 public class WorldAuthoredGraphSnapshotCapture {
-  private static final int WORLD_DIGEST_SCHEMA_VERSION = 2;
+  private static final int WORLD_DIGEST_SCHEMA_VERSION = 3;
 
   private static final Table<?> REVISION_LEDGER = table("world_design_revision_ledger");
 
@@ -99,6 +99,9 @@ public class WorldAuthoredGraphSnapshotCapture {
           prior, request, provenance, captureRequestDigest, tuplesJson);
       return prior;
     }
+    if (request.digestSchemaVersion() != WORLD_DIGEST_SCHEMA_VERSION) {
+      throw new SnapshotConflictException("New World graph capture requires digest schema 3");
+    }
     if (!"FROZEN".equals(provenance.ownerFreezePhase())) {
       throw new SnapshotConflictException(
           "World graph capture cannot create a new snapshot after its V25 fence leaves FROZEN");
@@ -113,6 +116,7 @@ public class WorldAuthoredGraphSnapshotCapture {
             Long.toString(provenance.localTenantKey()),
             Long.toString(provenance.localVersionKey()));
     if (!Long.toString(provenance.localTenantKey()).equals(currentDigest.tenantId())
+        || !Long.toString(provenance.localVersionKey()).equals(currentDigest.scopeValue())
         || currentDigest.digestSchemaVersion() != WORLD_DIGEST_SCHEMA_VERSION
         || !request.contentDigest().equals(currentDigest.contentDigest())) {
       throw new SnapshotConflictException(

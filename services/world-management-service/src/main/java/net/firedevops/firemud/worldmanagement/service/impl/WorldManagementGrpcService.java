@@ -24,7 +24,6 @@ import net.firedevops.firemud.worldmanagement.service.InitialAdmissionBindHoldSe
 import net.firedevops.firemud.worldmanagement.service.PingService;
 import net.firedevops.firemud.worldmanagement.service.RoomService;
 import net.firedevops.firemud.worldmanagement.service.WorldDesignMutationService;
-import net.firedevops.firemud.worldmanagement.service.WorldDraftDesignDigestService;
 import net.firedevops.firemud.worldmanagement.service.WorldInstanceActivationService;
 import net.firedevops.firemud.worldmanagement.service.WorldUpgradeValidationService;
 import net.firedevops.firemud.worldmanagement.v1.AcquireInitialAdmissionBindHoldRequest;
@@ -75,7 +74,6 @@ public class WorldManagementGrpcService
   private final PingService pingService;
   private final RoomService roomService;
   private final WorldInstanceActivationService worldInstanceActivationService;
-  private final WorldDraftDesignDigestService worldDraftDesignDigestService;
   private final WorldUpgradeValidationService worldUpgradeValidationService;
   private final GameplaySessionAttestationService gameplaySessionAttestationService;
   private final MeterRegistry meterRegistry;
@@ -89,7 +87,6 @@ public class WorldManagementGrpcService
       PingService pingService,
       RoomService roomService,
       WorldInstanceActivationService worldInstanceActivationService,
-      WorldDraftDesignDigestService worldDraftDesignDigestService,
       WorldDesignMutationService worldDesignMutationService,
       WorldUpgradeValidationService worldUpgradeValidationService,
       GameplaySessionAttestationService gameplaySessionAttestationService,
@@ -98,7 +95,6 @@ public class WorldManagementGrpcService
     this.pingService = pingService;
     this.roomService = roomService;
     this.worldInstanceActivationService = worldInstanceActivationService;
-    this.worldDraftDesignDigestService = worldDraftDesignDigestService;
     this.worldUpgradeValidationService = worldUpgradeValidationService;
     this.gameplaySessionAttestationService = gameplaySessionAttestationService;
     this.meterRegistry = meterRegistry;
@@ -111,7 +107,6 @@ public class WorldManagementGrpcService
       PingService pingService,
       RoomService roomService,
       WorldInstanceActivationService worldInstanceActivationService,
-      WorldDraftDesignDigestService worldDraftDesignDigestService,
       WorldDesignMutationService worldDesignMutationService,
       WorldUpgradeValidationService worldUpgradeValidationService,
       GameplaySessionAttestationService gameplaySessionAttestationService,
@@ -123,7 +118,6 @@ public class WorldManagementGrpcService
         pingService,
         roomService,
         worldInstanceActivationService,
-        worldDraftDesignDigestService,
         worldDesignMutationService,
         worldUpgradeValidationService,
         gameplaySessionAttestationService,
@@ -144,7 +138,6 @@ public class WorldManagementGrpcService
       PingService pingService,
       RoomService roomService,
       WorldInstanceActivationService worldInstanceActivationService,
-      WorldDraftDesignDigestService worldDraftDesignDigestService,
       WorldDesignMutationService worldDesignMutationService,
       WorldUpgradeValidationService worldUpgradeValidationService,
       GameplaySessionAttestationService gameplaySessionAttestationService,
@@ -156,7 +149,6 @@ public class WorldManagementGrpcService
         pingService,
         roomService,
         worldInstanceActivationService,
-        worldDraftDesignDigestService,
         worldDesignMutationService,
         worldUpgradeValidationService,
         gameplaySessionAttestationService,
@@ -405,18 +397,16 @@ public class WorldManagementGrpcService
               request.getScriptPatchVersion(),
               request.getPublishRequestId());
       binding.validateSupplied(request.getDerivedWorkflowIdentity(), request.getRequestDigest());
-      var digest =
-          worldDraftDesignDigestService.getDraftDesignDigest(
-              request.getTenantId(), request.getVersionId());
-      binding.requireOwnerScope(digest.tenantId(), digest.scopeValue());
-      GetDraftDesignDigestResponse.Builder response =
+      responseObserver.onNext(
           GetDraftDesignDigestResponse.newBuilder()
-              .setTenantId(binding.tenantId())
-              .setVersionId(binding.versionId())
-              .setAppliedCommitId(digest.appliedCommitId())
-              .setContentDigest(digest.contentDigest())
-              .setDigestSchemaVersion(digest.digestSchemaVersion());
-      responseObserver.onNext(response.build());
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "GetDraftDesignDigest",
+                      "FAILED_PRECONDITION",
+                      "An authenticated complete World commit/publication checkpoint is unavailable."))
+              .build());
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
       responseObserver.onNext(

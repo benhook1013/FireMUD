@@ -60,7 +60,7 @@ class WorldDesignPublicationFenceIntegrationTest {
   private static final long GAME_DESIGN_VERSION_A = 9_000_000_042L;
   private static final long GAME_DESIGN_VERSION_B = 9_000_000_043L;
   private static final Checkpoint SYNTHETIC_CHECKPOINT =
-      new Checkpoint("synthetic-commit-42", "c".repeat(64), 2);
+      new Checkpoint("synthetic-commit-42", "c".repeat(64), 3);
 
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
@@ -112,6 +112,7 @@ class WorldDesignPublicationFenceIntegrationTest {
             .execute(status -> repository.claimFreeze(request, () -> SYNTHETIC_CHECKPOINT));
     assertThat(frozen).isNotNull();
     assertThat(repository.readAttempt(request)).contains(frozen);
+    assertThat(frozen.checkpoint().digestSchemaVersion()).isEqualTo(3);
     assertThat(ownerPhase(receipt.canonicalTenantId(), GAME_DESIGN_VERSION_A)).isEqualTo("FROZEN");
     WorldAuthoredVersionIdentityReceipt identity = identity(receipt, GAME_DESIGN_VERSION_A);
     assertThat(identity.localVersionKey()).isNotEqualTo(GAME_DESIGN_VERSION_A);
@@ -142,7 +143,7 @@ class WorldDesignPublicationFenceIntegrationTest {
                         request,
                         () -> {
                           retryRecapturedCheckpoint.set(true);
-                          return new Checkpoint("synthetic-new-commit", "d".repeat(64), 3);
+                          return new Checkpoint("synthetic-new-commit", "d".repeat(64), 2);
                         }));
     assertThat(retry).isEqualTo(frozen);
     assertThat(retryRecapturedCheckpoint).isFalse();

@@ -181,8 +181,8 @@ class WorldLifecycleCommandServiceImplTest {
     when(roomExitRepository.findByTenantIdAndVersionIdOrderByIdAsc(42L, 11L))
         .thenReturn(
             List.of(
-                templateExit(42L, 11L, starterRoom, secondaryRoom, "NORTH"),
-                templateExit(42L, 11L, secondaryRoom, starterRoom, "SOUTH")));
+                templateExit(42L, 11L, 1L, starterRoom, secondaryRoom, "NORTH"),
+                templateExit(42L, 11L, 2L, secondaryRoom, starterRoom, "SOUTH")));
     AtomicReference<WorldInstance> storedInstance = new AtomicReference<>();
     when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
         .thenAnswer(invocation -> Optional.ofNullable(storedInstance.get()));
@@ -279,6 +279,66 @@ class WorldLifecycleCommandServiceImplTest {
     verify(regionInstanceRepository).save(any());
     verify(zoneInstanceRepository).save(any());
     verify(roomInstanceRepository).save(any());
+  }
+
+  @Test
+  void prepareWorldInstanceRejectsRoomWhoseZoneIsNotSelectedBeforeWriting() {
+    Room room = templateRoom(42L, 1021L);
+    room.setZone(templateZone(42L, 99L));
+    when(roomRepository.findByTenantIdAndVersionIdOrderByIdAsc(42L, 11L)).thenReturn(List.of(room));
+
+    assertIncompleteTopologyRejectedBeforeWrites();
+  }
+
+  @Test
+  void prepareWorldInstanceRejectsMissingExitSourceBeforeWriting() {
+    Room selectedRoom = templateRoom(42L, 1021L);
+    Room missingRoom = templateRoom(42L, 2045L);
+    when(roomExitRepository.findByTenantIdAndVersionIdOrderByIdAsc(42L, 11L))
+        .thenReturn(List.of(templateExit(42L, 11L, 1L, missingRoom, selectedRoom, "NORTH")));
+
+    assertIncompleteTopologyRejectedBeforeWrites();
+  }
+
+  @Test
+  void prepareWorldInstanceRejectsMissingExitDestinationBeforeWriting() {
+    Room selectedRoom = templateRoom(42L, 1021L);
+    Room missingRoom = templateRoom(42L, 2045L);
+    when(roomExitRepository.findByTenantIdAndVersionIdOrderByIdAsc(42L, 11L))
+        .thenReturn(List.of(templateExit(42L, 11L, 1L, selectedRoom, missingRoom, "NORTH")));
+
+    assertIncompleteTopologyRejectedBeforeWrites();
+  }
+
+  @Test
+  void prepareWorldInstanceRejectsDuplicateSelectedZoneIdentityBeforeWriting() {
+    Zone zone = templateZone(42L, 11L);
+    Zone duplicate = templateZone(42L, 11L);
+    when(zoneRepository.findByTenantIdAndVersionIdOrderByIdAsc(42L, 11L))
+        .thenReturn(List.of(zone, duplicate));
+
+    assertIncompleteTopologyRejectedBeforeWrites();
+  }
+
+  @Test
+  void prepareWorldInstanceRejectsOutOfScopeRoomBeforeWriting() {
+    Room room = templateRoom(42L, 1021L);
+    room.setTenantId(43L);
+    when(roomRepository.findByTenantIdAndVersionIdOrderByIdAsc(42L, 11L)).thenReturn(List.of(room));
+
+    assertIncompleteTopologyRejectedBeforeWrites();
+  }
+
+  @Test
+  void prepareWorldInstanceRejectsDuplicateExitIdentityBeforeWriting() {
+    Room room = templateRoom(42L, 1021L);
+    when(roomExitRepository.findByTenantIdAndVersionIdOrderByIdAsc(42L, 11L))
+        .thenReturn(
+            List.of(
+                templateExit(42L, 11L, 1L, room, room, "NORTH"),
+                templateExit(42L, 11L, 1L, room, room, "SOUTH")));
+
+    assertIncompleteTopologyRejectedBeforeWrites();
   }
 
   @Test
@@ -960,14 +1020,46 @@ class WorldLifecycleCommandServiceImplTest {
   }
 
   private RoomExit templateExit(
-      long tenantId, long versionId, Room fromRoom, Room toRoom, String direction) {
+      long tenantId, long versionId, long exitId, Room fromRoom, Room toRoom, String direction) {
     RoomExit exit = new RoomExit();
+    exit.setId(exitId);
     exit.setTenantId(tenantId);
     exit.setVersionId(versionId);
     exit.setFromRoom(fromRoom);
     exit.setToRoom(toRoom);
     exit.setDirection(direction);
     return exit;
+  }
+
+  private void assertIncompleteTopologyRejectedBeforeWrites() {
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.prepareWorldInstance(
+                    new PreparedWorldInstanceRequest(
+                        42L,
+                        101L,
+                        7L,
+                        "cp-1",
+                        "ld-1",
+                        11L,
+                        "patch-1",
+                        "{}",
+                        "genrev-11",
+                        77L,
+                        PERSISTED_RELEASE_BUNDLE_REF,
+                        77L)));
+
+    assertTrue(error.getMessage().startsWith("FAILED_PRECONDITION: INCOMPLETE_WORLD_TOPOLOGY:"));
+    verify(zoneRepository, times(1)).findByTenantIdAndVersionIdOrderByIdAsc(42L, 11L);
+    verify(roomRepository, times(1)).findByTenantIdAndVersionIdOrderByIdAsc(42L, 11L);
+    verify(roomExitRepository, times(1)).findByTenantIdAndVersionIdOrderByIdAsc(42L, 11L);
+    verify(worldInstanceRepository, never()).save(any());
+    verify(regionInstanceRepository, never()).save(any());
+    verify(zoneInstanceRepository, never()).save(any());
+    verify(roomInstanceRepository, never()).save(any());
+    verify(roomInstanceExitRepository, never()).save(any());
   }
 
   private Zone templateZone(long tenantId, long zoneId) {

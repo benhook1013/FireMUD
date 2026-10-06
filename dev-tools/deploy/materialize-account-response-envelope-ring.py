@@ -432,7 +432,8 @@ def parse_manifest(manifest: bytes) -> ParsedManifest:
 
     keys: dict[str, dict[str, bytes]] = {}
     seen_material: set[bytes] = set()
-    allowed_purposes = {"bare-login", "connect-token"}
+    required_purposes = {"bare-login", "connect-token"}
+    allowed_purposes = required_purposes | {"pending-reset"}
     for line in lines[2:]:
         if line.count("=") != 1:
             raise MaterializationError("source manifest contains a malformed key line")
@@ -462,8 +463,8 @@ def parse_manifest(manifest: bytes) -> ParsedManifest:
 
     if not keys or active_key_id not in keys:
         raise MaterializationError("source manifest does not contain its active key ID")
-    if any(set(by_purpose) != allowed_purposes for by_purpose in keys.values()):
-        raise MaterializationError("every retained key ID must contain both Account purposes")
+    if any(not required_purposes.issubset(by_purpose) for by_purpose in keys.values()):
+        raise MaterializationError("every retained key ID must contain both Account response purposes")
     return ParsedManifest(active_key_id, keys)
 
 
@@ -568,9 +569,7 @@ def _run_kubectl(
 def _require_target_cluster_binding() -> None:
     """Fail closed until the trusted target-cluster binding verifier exists."""
 
-    raise MaterializationError(
-        "target-cluster binding verification is unavailable; Kubernetes access is disabled"
-    )
+    raise MaterializationError("target-cluster binding verification is unavailable; Kubernetes access is disabled")
 
 
 def _verify_materializer_identity(kubectl: str, expected_username: str) -> str:

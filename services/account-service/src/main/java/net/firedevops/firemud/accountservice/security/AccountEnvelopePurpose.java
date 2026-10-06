@@ -1,9 +1,10 @@
 package net.firedevops.firemud.accountservice.security;
 
-/** The independently keyed response-envelope purposes owned by Account. */
+/** The independently keyed encrypted-envelope purposes owned by Account. */
 public enum AccountEnvelopePurpose {
   CONNECT_TOKEN_RESPONSE("connect-token"),
-  BARE_LOGIN_RESPONSE("bare-login");
+  BARE_LOGIN_RESPONSE("bare-login"),
+  PENDING_PASSWORD_RESET("pending-reset");
 
   private final String manifestName;
 

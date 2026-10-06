@@ -28,7 +28,6 @@ import net.firedevops.firemud.worldmanagement.service.InitialAdmissionBindHoldSe
 import net.firedevops.firemud.worldmanagement.service.PingService;
 import net.firedevops.firemud.worldmanagement.service.RoomService;
 import net.firedevops.firemud.worldmanagement.service.WorldDesignMutationService;
-import net.firedevops.firemud.worldmanagement.service.WorldDraftDesignDigestService;
 import net.firedevops.firemud.worldmanagement.service.WorldInstanceActivationService;
 import net.firedevops.firemud.worldmanagement.service.WorldUpgradeValidationService;
 import net.firedevops.firemud.worldmanagement.v1.AcquireInitialAdmissionBindHoldRequest;
@@ -359,7 +358,6 @@ class WorldManagementGrpcServiceTest {
 
   private WorldManagementGrpcService newService(
       PingService pingService, RoomService roomService, MeterRegistry meterRegistry) {
-    WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
     WorldInstanceActivationService activationService =
         Mockito.mock(WorldInstanceActivationService.class);
     GameplaySessionAttestationService attestationService =
@@ -370,7 +368,6 @@ class WorldManagementGrpcServiceTest {
         pingService,
         roomService,
         activationService,
-        digestService,
         Mockito.mock(WorldDesignMutationService.class),
         Mockito.mock(WorldUpgradeValidationService.class),
         attestationService,
@@ -381,7 +378,6 @@ class WorldManagementGrpcServiceTest {
 
   private WorldManagementGrpcService newServiceWithoutContext(
       PingService pingService, RoomService roomService, MeterRegistry meterRegistry) {
-    WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
     WorldInstanceActivationService activationService =
         Mockito.mock(WorldInstanceActivationService.class);
     GameplaySessionAttestationService attestationService =
@@ -392,7 +388,6 @@ class WorldManagementGrpcServiceTest {
         pingService,
         roomService,
         activationService,
-        digestService,
         Mockito.mock(WorldDesignMutationService.class),
         Mockito.mock(WorldUpgradeValidationService.class),
         attestationService,
@@ -402,15 +397,11 @@ class WorldManagementGrpcServiceTest {
   }
 
   @Test
-  void getDraftDesignDigestReturnsVersionScopedDigest() {
+  void getDraftDesignDigestDeniesValidBoundRequestWithoutCompleteAppliedCommitProof() {
     PingService pingService = Mockito.mock(PingService.class);
     RoomService roomService = Mockito.mock(RoomService.class);
-    WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
+    WorldDesignMutationService mutationService = Mockito.mock(WorldDesignMutationService.class);
     MeterRegistry meterRegistry = new SimpleMeterRegistry();
-    Mockito.when(digestService.getDraftDesignDigest("1", "7"))
-        .thenReturn(
-            new WorldDraftDesignDigestService.WorldDraftDesignDigest(
-                "1", "7", "version:7", "digest-world", 1));
     SessionContext.setContext(
         null, List.of(), Map.of(), true, "game-design-service", "test-instance");
     WorldManagementGrpcService service =
@@ -418,8 +409,7 @@ class WorldManagementGrpcServiceTest {
             pingService,
             roomService,
             Mockito.mock(WorldInstanceActivationService.class),
-            digestService,
-            Mockito.mock(WorldDesignMutationService.class),
+            mutationService,
             Mockito.mock(WorldUpgradeValidationService.class),
             Mockito.mock(GameplaySessionAttestationService.class),
             meterRegistry,
@@ -429,19 +419,20 @@ class WorldManagementGrpcServiceTest {
     AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
     runAsGameDesign(() -> ref.set(invokeDigest(service, fullDigestRequest("1", "7"))));
 
-    assertEquals("7", ref.get().getVersionId());
-    assertEquals("version:7", ref.get().getAppliedCommitId());
+    assertEquals("FAILED_PRECONDITION", ref.get().getError().getCode());
+    assertEquals(
+        "An authenticated complete World commit/publication checkpoint is unavailable.",
+        ref.get().getError().getMessage());
+    Mockito.verifyNoInteractions(mutationService);
   }
 
   @Test
   void getDraftDesignDigestRejectsForgedInternalSessionClaimWithoutPeerIdentity() {
-    WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
     WorldManagementGrpcService service =
         new WorldManagementGrpcService(
             Mockito.mock(PingService.class),
             Mockito.mock(RoomService.class),
             Mockito.mock(WorldInstanceActivationService.class),
-            digestService,
             Mockito.mock(WorldDesignMutationService.class),
             Mockito.mock(WorldUpgradeValidationService.class),
             Mockito.mock(GameplaySessionAttestationService.class),
@@ -452,12 +443,10 @@ class WorldManagementGrpcServiceTest {
         null, List.of(), Map.of(), true, "game-design-service", "test-instance");
     GetDraftDesignDigestResponse response = invokeDigest(service, fullDigestRequest("1", "7"));
     assertEquals("PERMISSION_DENIED", response.getError().getCode());
-    Mockito.verifyNoInteractions(digestService);
   }
 
   @Test
   void getDraftDesignDigestFailsClosedWhenWorkloadNamespaceIsMissingOrInvalid() {
-    WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
     SessionContext.setContext(
         null, List.of(), Map.of(), true, "game-design-service", "test-instance");
     for (String workloadNamespace : new String[] {null, " ", "not a namespace"}) {
@@ -466,7 +455,6 @@ class WorldManagementGrpcServiceTest {
               Mockito.mock(PingService.class),
               Mockito.mock(RoomService.class),
               Mockito.mock(WorldInstanceActivationService.class),
-              digestService,
               Mockito.mock(WorldDesignMutationService.class),
               Mockito.mock(WorldUpgradeValidationService.class),
               Mockito.mock(GameplaySessionAttestationService.class),
@@ -480,19 +468,16 @@ class WorldManagementGrpcServiceTest {
               .getError()
               .getCode(),
           "workload namespace: " + workloadNamespace);
-      Mockito.verifyNoInteractions(digestService);
     }
   }
 
   @Test
-  void getDraftDesignDigestRejectsWrongPeerBeforeReadingDigest() {
-    WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
+  void getDraftDesignDigestRejectsWrongPeer() {
     WorldManagementGrpcService service =
         new WorldManagementGrpcService(
             Mockito.mock(PingService.class),
             Mockito.mock(RoomService.class),
             Mockito.mock(WorldInstanceActivationService.class),
-            digestService,
             Mockito.mock(WorldDesignMutationService.class),
             Mockito.mock(WorldUpgradeValidationService.class),
             Mockito.mock(GameplaySessionAttestationService.class),
@@ -507,18 +492,15 @@ class WorldManagementGrpcServiceTest {
             service, fullDigestRequest("1", "7"), peer("entity-management-service"));
 
     assertEquals("PERMISSION_DENIED", response.getError().getCode());
-    Mockito.verifyNoInteractions(digestService);
   }
 
   @Test
-  void getDraftDesignDigestRejectsUserOrAdminJwtBeforeReadingDigest() {
-    WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
+  void getDraftDesignDigestRejectsUserOrAdminJwt() {
     WorldManagementGrpcService service =
         new WorldManagementGrpcService(
             Mockito.mock(PingService.class),
             Mockito.mock(RoomService.class),
             Mockito.mock(WorldInstanceActivationService.class),
-            digestService,
             Mockito.mock(WorldDesignMutationService.class),
             Mockito.mock(WorldUpgradeValidationService.class),
             Mockito.mock(GameplaySessionAttestationService.class),
@@ -539,18 +521,15 @@ class WorldManagementGrpcServiceTest {
               "PERMISSION_DENIED",
               invokeDigest(service, fullDigestRequest("1", "7")).getError().getCode());
         });
-    Mockito.verifyNoInteractions(digestService);
   }
 
   @Test
-  void getDraftDesignDigestRejectsChangedBindingBeforeOwnerRead() {
-    WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
+  void getDraftDesignDigestRejectsChangedBinding() {
     WorldManagementGrpcService service =
         new WorldManagementGrpcService(
             Mockito.mock(PingService.class),
             Mockito.mock(RoomService.class),
             Mockito.mock(WorldInstanceActivationService.class),
-            digestService,
             Mockito.mock(WorldDesignMutationService.class),
             Mockito.mock(WorldUpgradeValidationService.class),
             Mockito.mock(GameplaySessionAttestationService.class),
@@ -569,18 +548,15 @@ class WorldManagementGrpcServiceTest {
                         .setRequestDigest("0".repeat(64))
                         .build())));
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
-    Mockito.verifyNoInteractions(digestService);
   }
 
   @Test
   void getDraftDesignDigestRejectsScriptPatchScope() {
-    WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
     WorldManagementGrpcService service =
         new WorldManagementGrpcService(
             Mockito.mock(PingService.class),
             Mockito.mock(RoomService.class),
             Mockito.mock(WorldInstanceActivationService.class),
-            digestService,
             Mockito.mock(WorldDesignMutationService.class),
             Mockito.mock(WorldUpgradeValidationService.class),
             Mockito.mock(GameplaySessionAttestationService.class),
@@ -603,23 +579,17 @@ class WorldManagementGrpcServiceTest {
     AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
     runAsGameDesign(() -> ref.set(invokeDigest(service, request)));
     assertEquals("UNSUPPORTED_SCOPE", ref.get().getError().getCode());
-    Mockito.verifyNoInteractions(digestService);
   }
 
   @Test
-  void getDraftDesignDigestRejectsOwnerTenantMismatch() {
-    WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
-    Mockito.when(digestService.getDraftDesignDigest("1", "7"))
-        .thenReturn(
-            new WorldDraftDesignDigestService.WorldDraftDesignDigest(
-                "other-tenant", "7", "version:7", "digest-world", 1));
+  void getDraftDesignDigestValidRequestReturnsNoSuccessFieldsWithoutPublicationCheckpoint() {
+    WorldDesignMutationService mutationService = Mockito.mock(WorldDesignMutationService.class);
     WorldManagementGrpcService service =
         new WorldManagementGrpcService(
             Mockito.mock(PingService.class),
             Mockito.mock(RoomService.class),
             Mockito.mock(WorldInstanceActivationService.class),
-            digestService,
-            Mockito.mock(WorldDesignMutationService.class),
+            mutationService,
             Mockito.mock(WorldUpgradeValidationService.class),
             Mockito.mock(GameplaySessionAttestationService.class),
             new SimpleMeterRegistry(),
@@ -629,15 +599,20 @@ class WorldManagementGrpcServiceTest {
         null, List.of(), Map.of(), true, "game-design-service", "test-instance");
     AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
     runAsGameDesign(() -> ref.set(invokeDigest(service, fullDigestRequest("1", "7"))));
-    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
-    Mockito.verify(digestService).getDraftDesignDigest("1", "7");
+    GetDraftDesignDigestResponse response = ref.get();
+    assertEquals("FAILED_PRECONDITION", response.getError().getCode());
+    assertEquals("", response.getTenantId());
+    assertEquals("", response.getVersionId());
+    assertEquals("", response.getAppliedCommitId());
+    assertEquals("", response.getContentDigest());
+    assertEquals(0, response.getDigestSchemaVersion());
+    Mockito.verifyNoInteractions(mutationService);
   }
 
   @Test
   void applyWorldDesignMutationDeniesCanonicalWritesWithoutAccountCommitAuthorization() {
     PingService pingService = Mockito.mock(PingService.class);
     RoomService roomService = Mockito.mock(RoomService.class);
-    WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
     WorldDesignMutationService mutationService = Mockito.mock(WorldDesignMutationService.class);
     WorldInstanceActivationService activationService =
         Mockito.mock(WorldInstanceActivationService.class);
@@ -647,7 +622,6 @@ class WorldManagementGrpcServiceTest {
             pingService,
             roomService,
             activationService,
-            digestService,
             mutationService,
             Mockito.mock(WorldUpgradeValidationService.class),
             Mockito.mock(GameplaySessionAttestationService.class),
@@ -670,14 +644,13 @@ class WorldManagementGrpcServiceTest {
     runAsGameDesign(() -> authenticatedPeerResponse.set(invokeMutation(service, request)));
     assertWorldMutationDenied(authenticatedPeerResponse.get());
 
-    Mockito.verifyNoInteractions(mutationService, digestService, activationService);
+    Mockito.verifyNoInteractions(mutationService, activationService);
   }
 
   @Test
   void applyWorldDesignMutationRejectsZeroVersionIdBeforeMutation() {
     PingService pingService = Mockito.mock(PingService.class);
     RoomService roomService = Mockito.mock(RoomService.class);
-    WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
     WorldDesignMutationService mutationService = Mockito.mock(WorldDesignMutationService.class);
     WorldInstanceActivationService activationService =
         Mockito.mock(WorldInstanceActivationService.class);
@@ -689,7 +662,6 @@ class WorldManagementGrpcServiceTest {
             pingService,
             roomService,
             activationService,
-            digestService,
             mutationService,
             Mockito.mock(WorldUpgradeValidationService.class),
             Mockito.mock(GameplaySessionAttestationService.class),
@@ -713,14 +685,13 @@ class WorldManagementGrpcServiceTest {
                 .build());
 
     assertWorldMutationDenied(response);
-    Mockito.verifyNoInteractions(mutationService, digestService, activationService);
+    Mockito.verifyNoInteractions(mutationService, activationService);
   }
 
   @Test
   void prepareWorldInstanceReturnsLifecycleSnapshot() {
     PingService pingService = Mockito.mock(PingService.class);
     RoomService roomService = Mockito.mock(RoomService.class);
-    WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
     WorldInstanceActivationService activationService =
         Mockito.mock(WorldInstanceActivationService.class);
     MeterRegistry meterRegistry = new SimpleMeterRegistry();
@@ -749,7 +720,6 @@ class WorldManagementGrpcServiceTest {
             pingService,
             roomService,
             activationService,
-            digestService,
             Mockito.mock(WorldDesignMutationService.class),
             Mockito.mock(WorldUpgradeValidationService.class),
             Mockito.mock(GameplaySessionAttestationService.class),
@@ -803,7 +773,6 @@ class WorldManagementGrpcServiceTest {
             pingService,
             roomService,
             activationService,
-            Mockito.mock(WorldDraftDesignDigestService.class),
             Mockito.mock(WorldDesignMutationService.class),
             Mockito.mock(WorldUpgradeValidationService.class),
             Mockito.mock(GameplaySessionAttestationService.class),
@@ -858,7 +827,6 @@ class WorldManagementGrpcServiceTest {
             pingService,
             roomService,
             activationService,
-            Mockito.mock(WorldDraftDesignDigestService.class),
             Mockito.mock(WorldDesignMutationService.class),
             Mockito.mock(WorldUpgradeValidationService.class),
             Mockito.mock(GameplaySessionAttestationService.class),
@@ -895,7 +863,6 @@ class WorldManagementGrpcServiceTest {
   void validateWorldUpgradeMappingsReturnsCompatibilityPayload() {
     PingService pingService = Mockito.mock(PingService.class);
     RoomService roomService = Mockito.mock(RoomService.class);
-    WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
     WorldUpgradeValidationService validationService =
         Mockito.mock(WorldUpgradeValidationService.class);
     MeterRegistry meterRegistry = new SimpleMeterRegistry();
@@ -916,7 +883,6 @@ class WorldManagementGrpcServiceTest {
             pingService,
             roomService,
             Mockito.mock(WorldInstanceActivationService.class),
-            digestService,
             Mockito.mock(WorldDesignMutationService.class),
             validationService,
             Mockito.mock(GameplaySessionAttestationService.class),
@@ -967,7 +933,6 @@ class WorldManagementGrpcServiceTest {
             pingService,
             roomService,
             Mockito.mock(WorldInstanceActivationService.class),
-            Mockito.mock(WorldDraftDesignDigestService.class),
             Mockito.mock(WorldDesignMutationService.class),
             validationService,
             Mockito.mock(GameplaySessionAttestationService.class),
@@ -1153,7 +1118,6 @@ class WorldManagementGrpcServiceTest {
             pingService,
             roomService,
             Mockito.mock(WorldInstanceActivationService.class),
-            Mockito.mock(WorldDraftDesignDigestService.class),
             Mockito.mock(WorldDesignMutationService.class),
             Mockito.mock(WorldUpgradeValidationService.class),
             attestationService,
@@ -1206,7 +1170,6 @@ class WorldManagementGrpcServiceTest {
             pingService,
             roomService,
             Mockito.mock(WorldInstanceActivationService.class),
-            Mockito.mock(WorldDraftDesignDigestService.class),
             Mockito.mock(WorldDesignMutationService.class),
             Mockito.mock(WorldUpgradeValidationService.class),
             attestationService,
@@ -1406,7 +1369,6 @@ class WorldManagementGrpcServiceTest {
             pingService,
             roomService,
             Mockito.mock(WorldInstanceActivationService.class),
-            Mockito.mock(WorldDraftDesignDigestService.class),
             Mockito.mock(WorldDesignMutationService.class),
             Mockito.mock(WorldUpgradeValidationService.class),
             attestationService,
@@ -1449,7 +1411,6 @@ class WorldManagementGrpcServiceTest {
   void getRoomRejectsNonInternalGameplayCaller() {
     PingService pingService = Mockito.mock(PingService.class);
     RoomService roomService = Mockito.mock(RoomService.class);
-    WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     SessionContext.setContext("test-account", List.of(), Map.of("9", List.of("tenantAdmin")));
     WorldManagementGrpcService service =
@@ -1457,7 +1418,6 @@ class WorldManagementGrpcServiceTest {
             pingService,
             roomService,
             Mockito.mock(WorldInstanceActivationService.class),
-            digestService,
             Mockito.mock(WorldDesignMutationService.class),
             Mockito.mock(WorldUpgradeValidationService.class),
             Mockito.mock(GameplaySessionAttestationService.class),
@@ -1511,7 +1471,6 @@ class WorldManagementGrpcServiceTest {
             pingService,
             roomService,
             Mockito.mock(WorldInstanceActivationService.class),
-            Mockito.mock(WorldDraftDesignDigestService.class),
             Mockito.mock(WorldDesignMutationService.class),
             Mockito.mock(WorldUpgradeValidationService.class),
             Mockito.mock(GameplaySessionAttestationService.class),

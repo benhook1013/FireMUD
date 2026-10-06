@@ -885,7 +885,7 @@ class CompleteLaunchBindingServiceImplTest {
 
   private List<PublishParticipantDigestDto> validParticipants() {
     return List.of(
-        participant(PublishParticipantKey.WORLD_MANAGEMENT.name(), 2, null),
+        participant(PublishParticipantKey.WORLD_MANAGEMENT.name(), 3, null),
         participant(PublishParticipantKey.ENTITY_MANAGEMENT.name(), 2, null),
         participant(PublishParticipantKey.GAME_LOGIC.name(), 1, ABILITY_SCHEMA_DIGEST),
         participant(PublishParticipantKey.AUTOMATION_SCRIPTING.name(), 5, null),

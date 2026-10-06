@@ -4,8 +4,14 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.TreeMap;
+import java.util.UUID;
 import net.firedevops.firemud.common.security.RequestIdValidation;
+import net.firedevops.firemud.worldmanagement.entity.WorldEntitySpawnBinding;
 import net.firedevops.firemud.worldmanagement.repository.GenerationRuleRepository;
 import net.firedevops.firemud.worldmanagement.repository.RegionRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomExitRepository;
@@ -20,8 +26,8 @@ import tools.jackson.databind.ObjectMapper;
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
     justification = "Spring-managed repositories and mapper are stored internally for digesting")
-public class WorldDraftDesignDigestServiceImpl implements WorldDraftDesignDigestService {
-  private static final int DIGEST_SCHEMA_VERSION = 2;
+public final class WorldDraftDesignDigestServiceImpl implements WorldDraftDesignDigestService {
+  private static final int DIGEST_SCHEMA_VERSION = 3;
 
   private final RegionRepository regionRepository;
   private final ZoneRepository zoneRepository;
@@ -45,7 +51,9 @@ public class WorldDraftDesignDigestServiceImpl implements WorldDraftDesignDigest
     this.roomExitRepository = roomExitRepository;
     this.generationRuleRepository = generationRuleRepository;
     this.worldEntitySpawnBindingRepository = worldEntitySpawnBindingRepository;
-    this.objectMapper = objectMapper;
+    Objects.requireNonNull(objectMapper, "objectMapper");
+    // Schema serialization must not inherit application-wide pretty-printing or map-order options.
+    this.objectMapper = new ObjectMapper();
   }
 
   @Override
@@ -58,7 +66,7 @@ public class WorldDraftDesignDigestServiceImpl implements WorldDraftDesignDigest
     try {
       String canonicalJson =
           objectMapper.writeValueAsString(
-              Map.of(
+              tables(
                   "regions",
                   regionRepository
                       .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
@@ -138,7 +146,7 @@ public class WorldDraftDesignDigestServiceImpl implements WorldDraftDesignDigest
                                   "id", binding.getId(),
                                   "roomId", binding.getRoom().getId(),
                                   "entityTemplateType", binding.getEntityTemplateType(),
-                                  "entityTemplateId", binding.getEntityTemplateId(),
+                                  "entityReference", entityReference(binding),
                                   "spawnCount", binding.getSpawnCount(),
                                   "respawnDelaySeconds", binding.getRespawnDelaySeconds()))
                       .toList()));
@@ -155,6 +163,55 @@ public class WorldDraftDesignDigestServiceImpl implements WorldDraftDesignDigest
 
   private String value(String value) {
     return value == null ? "" : value;
+  }
+
+  // Top-level table order is part of the manifest, while every nested object is field-sorted.
+  private Map<String, Object> tables(Object... entries) {
+    Map<String, Object> tables = new LinkedHashMap<>();
+    for (int index = 0; index < entries.length; index += 2) {
+      tables.put((String) entries[index], canonical(entries[index + 1]));
+    }
+    return tables;
+  }
+
+  private Object canonical(Object value) {
+    if (value instanceof Map<?, ?> fields) {
+      Map<String, Object> sorted = new TreeMap<>();
+      fields.forEach((key, item) -> sorted.put((String) key, canonical(item)));
+      return sorted;
+    }
+    if (value instanceof List<?> rows) {
+      return rows.stream().map(this::canonical).toList();
+    }
+    return value;
+  }
+
+  private Map<String, Object> entityReference(WorldEntitySpawnBinding binding) {
+    UUID tenant = binding.getEntityCanonicalTenantId();
+    UUID version = binding.getEntityCanonicalVersionId();
+    UUID template = binding.getEntityCanonicalTemplateId();
+    Long numeric = binding.getEntityTemplateId();
+    if (numeric != null) {
+      if (numeric <= 0 || tenant != null || version != null || template != null) {
+        throw new IllegalArgumentException("spawn Entity reference is mixed or nonpositive");
+      }
+      return Map.of("kind", "RETAINED_PRIVATE_KEY", "templateId", numeric.toString());
+    }
+    requireNonNil(tenant);
+    requireNonNil(version);
+    requireNonNil(template);
+    return Map.of(
+        "kind", "CANONICAL_UUID",
+        "tenantId", tenant.toString(),
+        "versionId", version.toString(),
+        "templateId", template.toString());
+  }
+
+  private void requireNonNil(UUID value) {
+    if (value == null || value.equals(new UUID(0L, 0L))) {
+      throw new IllegalArgumentException(
+          "spawn Entity reference must contain complete non-nil UUIDs");
+    }
   }
 
   private String sha256(String value) {
