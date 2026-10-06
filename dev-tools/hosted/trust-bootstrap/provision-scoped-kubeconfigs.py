@@ -364,8 +364,6 @@ def environment_secret_names(environment: str) -> set[str]:
             environment,
             "--json",
             "name",
-            "--limit",
-            "100",
         ]
     )
     try:
@@ -702,8 +700,6 @@ def repository_secret_names() -> set[str]:
             REPOSITORY,
             "--json",
             "name",
-            "--limit",
-            "100",
         ]
     )
     try:

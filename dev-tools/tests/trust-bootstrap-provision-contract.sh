@@ -68,6 +68,27 @@ for name, credential in module._CREDENTIALS_BY_NAME.items():
 assert module.REPOSITORY == "benhook1013/FireMUD"
 assert module.REPOSITORY_LEGACY_SECRET == "PREVIEW_KUBECONFIG"
 
+# gh secret list has no --limit flag and returns the full normal result.
+listed_secret_names = [f"secret-{index}" for index in range(101)]
+listed_secret_json = json.dumps([{"name": name} for name in listed_secret_names]).encode("utf-8")
+with patch.object(module, "run_command", side_effect=[listed_secret_json, listed_secret_json]) as run:
+    assert module.environment_secret_names("trusted-hosted-cluster") == set(listed_secret_names)
+    assert module.repository_secret_names() == set(listed_secret_names)
+    assert [entry.args[0] for entry in run.call_args_list] == [
+        [
+            "gh",
+            "secret",
+            "list",
+            "--repo",
+            module.REPOSITORY,
+            "--env",
+            "trusted-hosted-cluster",
+            "--json",
+            "name",
+        ],
+        ["gh", "secret", "list", "--repo", module.REPOSITORY, "--json", "name"],
+    ]
+
 assert module.select_credentials(None) == module.CREDENTIALS
 assert module.select_credentials([
     "firemud-preview-runtime",
