@@ -438,7 +438,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   }
 
   @Test
-  void lifecycleReadFollowsCurrentWorldEpochAndReturnsExactCanonicalServiceEcho() {
+  void lifecycleReadPreservesPreparingStateAndDeniesLegacyNumericFailureWithExactCanonicalServiceEcho() {
     Fixture f = fixture();
     var original = application(generationFreePlan(f));
     var roomTemplateId =
@@ -599,20 +599,26 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
         .isTrue();
 
     var prepareFields = materialized.association().worldPrepareFields();
-    lifecycleCommandService.failPreparedWorldInstance(
-        prepareFields.privateTenantKey(),
-        prepareFields.privateGameInstanceKey(),
-        preparing.lifecycleEpoch(),
-        "integration lifecycle read movement");
-    var failedCurrent = lifecycleRepository.read(request).orElseThrow();
-    assertThat(failedCurrent.lifecycleStatus()).isEqualTo("FAILED_PRE_ACTIVATION");
-    assertThat(failedCurrent.lifecycleEpoch()).isEqualTo(2L);
-    assertThat(failedCurrent.rowVersion()).isGreaterThan(preparing.rowVersion());
+    // Successful ACTIVE epoch movement and historical retry after a later lifecycle move belong
+    // to the canonical activation proof, including
+    // canonicalActivationCommitsOneOwnerCasAndReplaysItsImmutableResultAfterLaterLifecycleMove.
+    // This front owns preparation storage and lifecycle read only; its legacy numeric writer must
+    // remain denied for the reserved canonical tenant.
+    assertThatThrownBy(
+            () ->
+                lifecycleCommandService.failPreparedWorldInstance(
+                    prepareFields.privateTenantKey(),
+                    prepareFields.privateGameInstanceKey(),
+                    preparing.lifecycleEpoch(),
+                    "integration lifecycle read movement"))
+        .hasStackTraceContaining("no exact transaction execution manifest");
+    var afterDeniedFailure = lifecycleRepository.read(request).orElseThrow();
+    assertThat(afterDeniedFailure).isEqualTo(preparing);
 
     // The real V35 retry preserves immutable preparation history and does not rewrite lifecycle.
     assertThat(preparation.prepare(input)).isEqualTo(materialized);
     var afterRetry = lifecycleRepository.read(request).orElseThrow();
-    assertThat(afterRetry).isEqualTo(failedCurrent);
+    assertThat(afterRetry).isEqualTo(preparing);
 
     // Explicitly injected peer identity is a transport double; this does not prove production mTLS.
     var adapter =
