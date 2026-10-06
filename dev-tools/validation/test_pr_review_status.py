@@ -6,6 +6,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -172,6 +173,88 @@ def github_payload(checks: list[dict] | None = None) -> dict:
 
 
 class StatusTest(unittest.TestCase):
+    def test_repository_lookup_uses_remaining_status_budget(self) -> None:
+        clock = {"now": 0.0}
+
+        def lookup(args, *, timeout, **_kwargs):
+            self.assertEqual(timeout, 3)
+            clock["now"] += 1
+            return subprocess.CompletedProcess(args, 0, "owner/repo\n", "")
+
+        with (
+            patch.object(github.time, "monotonic", side_effect=lambda: clock["now"]),
+            patch.dict(github.os.environ, {"GH_REPO": "", "GITHUB_REPOSITORY": ""}),
+            github.activate_hosted_preflight_budget(preflight_name="PR status") as budget,
+            patch.object(github.subprocess, "run", side_effect=lookup) as run,
+        ):
+            budget.set_phase("controller_construction", total=1)
+            clock["now"] = 117
+            self.assertEqual(status._repo_name(None), "owner/repo")
+            self.assertEqual(status._repo_name("owner/repo"), "owner/repo")
+
+        run.assert_called_once()
+
+    def test_repository_lookup_preserves_status_deadline_diagnostic(self) -> None:
+        clock = {"now": 0.0}
+
+        def lookup(args, *, timeout, **_kwargs):
+            self.assertEqual(timeout, 3)
+            clock["now"] = 120
+            raise subprocess.TimeoutExpired(args, timeout)
+
+        with (
+            patch.object(github.time, "monotonic", side_effect=lambda: clock["now"]),
+            patch.dict(github.os.environ, {"GH_REPO": "", "GITHUB_REPOSITORY": ""}),
+            github.activate_hosted_preflight_budget(preflight_name="PR status") as budget,
+            patch.object(github.subprocess, "run", side_effect=lookup),
+        ):
+            budget.set_phase("controller_construction", total=1)
+            clock["now"] = 117
+            with self.assertRaisesRegex(
+                github.HostedPreflightDeadlineExceeded,
+                r"PR status deadline exceeded \(phase=controller_construction, .*budget=120s",
+            ):
+                status._repo_name(None)
+
+    def test_loc_merge_base_uses_remaining_status_budget_and_preserves_expiry(self) -> None:
+        pull_request = github_payload()["data"]["repository"]["pullRequest"]
+        for outcome in ("within-budget", "timeout", "late-success", "late-failure"):
+            with self.subTest(outcome=outcome):
+                clock = {"now": 0.0}
+
+                def merge_base(args, *, timeout, clock=clock, outcome=outcome, **_kwargs):
+                    self.assertEqual(args, ["git", "merge-base", BASE, HEAD])
+                    self.assertEqual(timeout, 3)
+                    clock["now"] = 118 if outcome == "within-budget" else 120
+                    if outcome == "timeout":
+                        raise subprocess.TimeoutExpired(args, timeout)
+                    if outcome == "late-failure":
+                        raise subprocess.CalledProcessError(1, args)
+                    return subprocess.CompletedProcess(args, 0, MERGE_BASE + "\n", "")
+
+                with (
+                    patch.object(github.time, "monotonic", side_effect=lambda clock=clock: clock["now"]),
+                    github.activate_hosted_preflight_budget(preflight_name="PR status") as budget,
+                    patch.object(status.subprocess, "run", side_effect=merge_base),
+                ):
+                    budget.set_phase("pr_review_evidence", total=1)
+                    clock["now"] = 117
+                    if outcome == "within-budget":
+                        self.assertEqual(status._loc_status(pull_request)["status"], "fresh")
+                    else:
+                        with self.assertRaisesRegex(
+                            github.HostedPreflightDeadlineExceeded,
+                            r"PR status deadline exceeded \(phase=pr_review_evidence, .*budget=120s",
+                        ):
+                            status._loc_status(pull_request)
+
+    def test_loc_timeout_without_shared_expiry_remains_unverified(self) -> None:
+        pull_request = github_payload()["data"]["repository"]["pullRequest"]
+        with patch.object(status.subprocess, "run", side_effect=subprocess.TimeoutExpired("git", 30)) as run:
+            result = status._loc_status(pull_request)
+        self.assertEqual(run.call_args.kwargs["timeout"], 30)
+        self.assertEqual(result["status"], "unverified")
+
     def test_cli_status_defaults_to_windowed_overview_and_keeps_full_scan_explicit(self) -> None:
         controller = Mock()
         controller.status_overview.return_value = {"mode": "windowed"}

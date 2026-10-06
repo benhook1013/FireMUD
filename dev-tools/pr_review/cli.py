@@ -1413,7 +1413,7 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
             budget.set_phase("pr_review_evidence", total=1)
         state_store = getattr(controller, "store", None)
         summary_dispositions = state_store.load().summary_dispositions if state_store is not None else ()
-        report = status_module.status(args.pr, summary_dispositions=summary_dispositions)
+        report = status_module.status(args.pr, repo=controller.repository, summary_dispositions=summary_dispositions)
         if selected_pr_status:
             budget.set_completed(1)
             budget.set_phase("stack_review_evidence", total=1)

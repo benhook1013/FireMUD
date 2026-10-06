@@ -70,7 +70,7 @@ class RuntimeTest(unittest.TestCase):
                 def construct(_args, clock=clock, observed_budgets=observed_budgets):
                     observed_budgets.append(github.active_hosted_preflight_budget())
                     clock.now += 10
-                    return SimpleNamespace(store=None, status_for_pr=stack_status, status=stack_status), None
+                    return SimpleNamespace(repository="owner/repo", store=None, status_for_pr=stack_status, status=stack_status), None
 
                 def gh_call(args, *, timeout, clock=clock, timeouts=timeouts, observed_budgets=observed_budgets, **_kwargs):
                     timeouts.append(timeout)
@@ -82,6 +82,7 @@ class RuntimeTest(unittest.TestCase):
                     github.run_gh_query("query { viewer { login } }", {})
 
                 def pr_status(*_args, **_kwargs):
+                    self.assertEqual(_kwargs["repo"], "owner/repo")
                     read()
                     read()
                     return {"reasons": [], "mergeability": {}}
