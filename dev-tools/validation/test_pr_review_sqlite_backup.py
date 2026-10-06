@@ -459,6 +459,111 @@ class SqliteBackupTest(unittest.TestCase):
         self.assertFalse(sqlite_backup._looks_secret(f"route proof names {code_identifier}"))
         self.assertFalse(sqlite_backup._looks_secret("GameSessionOperatorControlPlaneServiceTest fallback fixture"))
 
+    def _corrected_subagent_fixture(self) -> dict:
+        records = SqliteReviewRecords(self.database)
+        records.start_attempt(
+            attempt_id="corrected-backup-run", source_pr=125, channel="subagent",
+            metadata={"model": "fixture-model", "reviewer": "fixture reviewer", "scope": "narrow"},
+        )
+        records.import_completed_run(
+            run_id="corrected-backup-run", source_pr=125, channel="subagent",
+            findings=(FindingObservation(
+                source_finding_key="implementation-handoff", title="Implementation handoff",
+                disposition="rejected", display_severity="Minor",
+            ),),
+            source_decisions=({
+                "source_finding_key": "implementation-handoff", "decision_id": "handoff-decision",
+                "decision": "rejected", "actor": "fixture reviewer", "reason": "Original recording",
+            },),
+        )
+        records.finish_attempt("corrected-backup-run", state="completed")
+        records.link_attempt_run("corrected-backup-run", "corrected-backup-run")
+        original = records.history(125)
+        records.correct_subagent_record(
+            "corrected-backup-run", "implementation-handoff",
+            actor="fixture owner", reason="Implementation metadata; no discovery finding",
+        )
+        return original
+
+    def test_corrected_subagent_backup_restores_effective_and_immutable_history(self) -> None:
+        original = self._corrected_subagent_fixture()
+        with sqlite3.connect(self.database) as connection:
+            payload = connection.execute(
+                "SELECT import_payload_json FROM review_runs WHERE run_id = 'corrected-backup-run'"
+            ).fetchone()[0]
+        (sftp_patch,) = self._transport_patches()
+        with sftp_patch:
+            receipt = backup_database(self.database, **self._backup_arguments())
+            destination = self.root / "corrected-restored.sqlite3"
+            restored = restore_remote_backup(receipt.filename, destination, **self._backup_arguments())
+        self.assertEqual(restored.sha256, receipt.sha256)
+        self._assert_fixture_records(destination)
+        history = SqliteReviewRecords(destination).history(125)
+        self.assertEqual(history["runs"][0]["counts"], {"found": 0, "accepted": 0, "routed": 0})
+        self.assertEqual(history["runs"][0]["original_counts"], {"found": 1, "accepted": 0, "routed": 0})
+        self.assertEqual(history["findings"], [])
+        self.assertEqual(history["decisions"], original["decisions"])
+        self.assertEqual(history["record_corrections"][0]["original_observation"], original["findings"][0])
+        with sqlite3.connect(destination) as connection:
+            self.assertEqual(connection.execute(
+                "SELECT import_payload_json FROM review_runs WHERE run_id = 'corrected-backup-run'"
+            ).fetchone()[0], payload)
+            self.assertEqual(connection.execute(
+                "SELECT COUNT(*) FROM finding_observations WHERE run_id = 'corrected-backup-run'"
+            ).fetchone()[0], 1)
+
+    def test_backup_rejects_missing_duplicate_or_wrong_retained_observation_projection(self) -> None:
+        self._corrected_subagent_fixture()
+        native_history = SqliteReviewRecords.history
+        for defect in ("missing", "duplicate", "identity", "provenance"):
+            with self.subTest(defect=defect):
+                def malformed_history(records, pr, defect=defect, **kwargs):
+                    history = native_history(records, pr, **kwargs)
+                    if pr == 125:
+                        corrections = history["record_corrections"]
+                        if defect == "missing":
+                            corrections.clear()
+                        elif defect == "duplicate":
+                            corrections.append(corrections[0])
+                        elif defect == "identity":
+                            corrections[0]["original_observation"]["finding_id"] = "0" * 64
+                        else:
+                            corrections[0]["source_finding_key"] = "wrong-key"
+                    return history
+                with (
+                    patch.object(SqliteReviewRecords, "history", malformed_history),
+                    self.assertRaisesRegex(BackupError, "observations do not match|correction provenance"),
+                ):
+                    backup_database(self.database, **self._backup_arguments())
+                self.assertEqual(self.sftp_batches, [])
+
+    def test_restore_rejects_malformed_subagent_correction_evidence(self) -> None:
+        self._corrected_subagent_fixture()
+        for defect in ("duplicate", "missing-original", "missing-actor"):
+            with self.subTest(defect=defect):
+                malformed = self.root / (defect + ".sqlite3")
+                with sqlite3.connect(self.database) as connection, sqlite3.connect(malformed) as copied:
+                    connection.backup(copied)
+                with sqlite3.connect(malformed) as connection:
+                    metadata = json.loads(connection.execute(
+                        "SELECT metadata_json FROM review_attempts WHERE attempt_id = 'corrected-backup-run'"
+                    ).fetchone()[0])
+                    corrections = metadata["record_corrections"]
+                    if defect == "duplicate":
+                        corrections.append(corrections[0])
+                    elif defect == "missing-original":
+                        corrections[0]["source_finding_key"] = "missing-key"
+                    else:
+                        del corrections[0]["actor"]
+                    connection.execute(
+                        "UPDATE review_attempts SET metadata_json = ? WHERE attempt_id = 'corrected-backup-run'",
+                        (json.dumps(metadata),),
+                    )
+                destination = self.root / (defect + "-restored.sqlite3")
+                with self.assertRaisesRegex(BackupError, "logical readback validation"):
+                    restore_snapshot(malformed, destination)
+                self.assertFalse(destination.exists())
+
     def test_secret_screen_matches_write_valid_segmented_identifiers(self) -> None:
         long_identifier = "review_v2_route-reconciliation_source-proof_identifier_with-many-segments"
         very_long_identifier = "_".join(["review"] + [f"segment{index}" for index in range(1, 18)])
