@@ -11,6 +11,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -115,6 +116,27 @@ class AccountJwtValidatorInventorySourceTest {
     Fixture partial = new Fixture();
     partial.stubDeployment(new ApiResponse(200, deploymentJson("10", 1, 1, 0, false)));
     assertUnavailable(partial);
+  }
+
+  @Test
+  void rejectsNullPodListEntriesAsUnavailableInventory() throws Exception {
+    Fixture fixture = new Fixture();
+    byte[] nullPodList =
+        jsonBytes(
+            Map.of(
+                "apiVersion",
+                "v1",
+                "kind",
+                "PodList",
+                "metadata",
+                Map.of("resourceVersion", "20"),
+                "items",
+                java.util.Collections.singletonList(null)));
+    when(fixture.operation.listValidatorPods(
+            same(fixture.inventory), same(fixture.validator), isNull()))
+        .thenReturn(new ApiResponse(200, nullPodList));
+
+    assertUnavailable(fixture);
   }
 
   @Test
@@ -431,6 +453,9 @@ class AccountJwtValidatorInventorySourceTest {
     }
   }
 
+  @SuppressFBWarnings(
+      value = "DMI_HARDCODED_ABSOLUTE_FILENAME",
+      justification = "Canonical protected paths are fixed test binding inputs")
   private static ParsedBinding apiBinding() {
     return new ParsedBinding(
         "api-r1",

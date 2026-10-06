@@ -38,9 +38,6 @@ import tools.jackson.databind.json.JsonMapper;
  * PREPARED, activation, token issuance, or readiness.
  */
 @Repository
-@SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification = "Injected jOOQ and repository collaborators are internal Spring collaborators.")
 public class AccountJwtJwksPublicationRepository {
   public static final String PUBLIC_JWKS_NAME = "jwt-jwks";
   public static final String JWKS_DATA_KEY = "jwks.json";
@@ -60,6 +57,10 @@ public class AccountJwtJwksPublicationRepository {
   private final AccountJwtSignerDesiredStateRepository desiredStateRepository;
 
   @Autowired
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification =
+          "The constructor only validates trusted Spring collaborators; it performs no I/O or resource acquisition and defines no finalizer.")
   public AccountJwtJwksPublicationRepository(
       DSLContext dsl, AccountJwtSignerDesiredStateRepository desiredStateRepository) {
     this.dsl = Objects.requireNonNull(dsl, "DSLContext is required");
@@ -685,20 +686,6 @@ public class AccountJwtJwksPublicationRepository {
     }
     requireDigest(apiBindingDigest, "protected ConfigMap API binding digest");
     requireRevision(apiConfigRevision, "protected ConfigMap API configuration revision");
-  }
-
-  private static void requireExactGeneration(
-      GenerationResult result,
-      GenerationRequest request,
-      Binding binding,
-      TrustFence trust,
-      String apiBindingDigest,
-      String apiConfigRevision) {
-    if (!request.binding().equals(binding) || !request.trustFence().equals(trust)) {
-      throw new AccountJwtSignerDesiredStateRepository.BindingMismatchException(
-          "Account JWT publication request binding changed");
-    }
-    requireExactCurrentIdentity(binding, trust, result, apiBindingDigest, apiConfigRevision);
   }
 
   private static byte[] canonicalJson(Object value) {

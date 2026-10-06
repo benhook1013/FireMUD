@@ -70,6 +70,7 @@ class AccountJwtReadinessValidationServiceTest {
   private static final String MATERIALIZER_URI =
       "spiffe://firemud/ns/firemud-prod/sa/jwt-signer-materializer";
   private static final String SPKI_TEXT = "mock authenticated readiness leaf key";
+  private static final String KID = "pending-key-7";
   private static final String RESERVED_SUBJECT = "00000000-0000-4000-8000-000000000001";
   private static final JsonMapper JSON = JsonMapper.builder().build();
   private static final Map<String, String> REPRESENTATIVE_PROFILES =
@@ -376,7 +377,6 @@ class AccountJwtReadinessValidationServiceTest {
     private final UUID jti = UUID.randomUUID();
     private final long issuedAt = NOW.getEpochSecond() - 1L;
     private final long expiresAt = NOW.getEpochSecond() + 299L;
-    private final String kid = "pending-key-7";
     private final KeyPair keyPair = rsa3072();
     private final byte[] spki = SPKI_TEXT.getBytes(StandardCharsets.US_ASCII);
     private final Binding readinessBinding = readinessBinding(sha256(spki));
@@ -482,7 +482,7 @@ class AccountJwtReadinessValidationServiceTest {
               5,
               NOW.getEpochSecond(),
               "e".repeat(64),
-              kid,
+              KID,
               readinessBinding.validatorInstanceId(),
               readinessBinding.bindingDigest(),
               readinessBinding.configRevision(),
@@ -498,7 +498,7 @@ class AccountJwtReadinessValidationServiceTest {
               kind,
               jti,
               "7",
-              kid,
+              KID,
               Optional.empty(),
               1,
               5,
@@ -519,7 +519,7 @@ class AccountJwtReadinessValidationServiceTest {
       when(repository.recordVerified(any(), any(), any(), any(), any(), any(), any(), any(), any()))
           .thenReturn(verified);
       AccountPublicJwksCache.SourceIdentity sourceIdentity = sourceIdentity();
-      String jwks = jwks(kid, (RSAPublicKey) keyPair.getPublic());
+      String jwks = jwks(KID, (RSAPublicKey) keyPair.getPublic());
       AccountPublicJwksCache cache =
           new AccountPublicJwksCache(
               () ->
@@ -567,7 +567,7 @@ class AccountJwtReadinessValidationServiceTest {
           kind,
           jti,
           "7",
-          kid,
+          KID,
           Optional.empty(),
           1,
           4,
@@ -750,7 +750,7 @@ class AccountJwtReadinessValidationServiceTest {
       UUID jti,
       KeyPair keyPair)
       throws Exception {
-    Map<String, Object> header = Map.of("alg", "RS256", "kid", "pending-key-7", "typ", "JWT");
+    Map<String, Object> header = Map.of("alg", "RS256", "kid", KID, "typ", "JWT");
     Map<String, Object> claims = new LinkedHashMap<>();
     claims.put("iss", "firemud-account-service");
     claims.put("sub", RESERVED_SUBJECT);

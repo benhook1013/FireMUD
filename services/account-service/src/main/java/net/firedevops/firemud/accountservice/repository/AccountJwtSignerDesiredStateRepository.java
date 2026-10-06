@@ -42,9 +42,6 @@ import tools.jackson.databind.json.JsonMapper;
  * evidence are separately owned prerequisites and are never inferred by this repository.
  */
 @Repository
-@SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification = "Injected jOOQ DSLContext is an internal Spring collaborator.")
 public class AccountJwtSignerDesiredStateRepository {
   public static final String PRIVATE_SECRET_NAME = "jwt-signing-keys";
   public static final String PUBLIC_JWKS_CONFIG_MAP_NAME = "jwt-jwks";
@@ -89,6 +86,10 @@ public class AccountJwtSignerDesiredStateRepository {
   private final DSLContext dsl;
 
   @Autowired
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification =
+          "The constructor only validates its trusted injected DSLContext; it performs no I/O or resource acquisition and defines no finalizer.")
   public AccountJwtSignerDesiredStateRepository(DSLContext dsl) {
     this.dsl = Objects.requireNonNull(dsl, "DSLContext is required");
   }
@@ -127,7 +128,7 @@ public class AccountJwtSignerDesiredStateRepository {
             enrollmentIdentity.materializerTrustConfigRevision(),
             enrollmentIdentity.apiBindingDigest(),
             enrollmentIdentity.apiConfigRevision(),
-            enrollmentIdentity.publicConfigMapUid(),
+            UUID.fromString(enrollmentIdentity.publicConfigMapUid()),
             enrollmentIdentity.publicConfigMapResourceVersion(),
             enrollmentIdentity.publicConfigMapSnapshotDigest());
     if (inserted < 0 || inserted > 1) {
@@ -1489,7 +1490,7 @@ public class AccountJwtSignerDesiredStateRepository {
               .equals(requiredText(active, "publicKeyFingerprint", 64))) {
         throw new IllegalArgumentException("Active signer mismatch");
       }
-    } catch (Exception ex) {
+    } catch (RuntimeException ex) {
       throw new QuarantinedStateException("Account ACTIVE generation marker is malformed", ex);
     }
   }
@@ -3014,6 +3015,7 @@ public class AccountJwtSignerDesiredStateRepository {
           || !List.of(PENDING_SLOT).equals(allowedPrivateSlots)) {
         throw new QuarantinedStateException("JWT generation request fixed operation is malformed");
       }
+      allowedPrivateSlots = List.copyOf(allowedPrivateSlots);
       parseGeneration(targetGeneration);
       requireMatch(KID, targetKid, "target kid");
       expectedActive = Objects.requireNonNull(expectedActive, "Expected active signer is required");

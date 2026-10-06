@@ -13,6 +13,7 @@ import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.PosixFilePermission;
 import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HexFormat;
@@ -176,7 +177,7 @@ public final class AccountJwtValidatorInventoryBinding {
           validators);
     } catch (IllegalArgumentException failure) {
       throw unavailable();
-    } catch (Exception failure) {
+    } catch (RuntimeException failure) {
       throw unavailable();
     }
   }
@@ -193,7 +194,7 @@ public final class AccountJwtValidatorInventoryBinding {
       }
       byte[] canonical = Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(value));
       return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(canonical));
-    } catch (Exception failure) {
+    } catch (IOException | NoSuchAlgorithmException | RuntimeException failure) {
       throw unavailable();
     }
   }
@@ -311,7 +312,7 @@ public final class AccountJwtValidatorInventoryBinding {
       return new String(
           Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(runtime)),
           StandardCharsets.UTF_8);
-    } catch (Exception failure) {
+    } catch (IOException | RuntimeException failure) {
       throw unavailable();
     }
   }

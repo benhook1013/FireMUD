@@ -8,6 +8,7 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpsConfigurator;
 import com.sun.net.httpserver.HttpsServer;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -31,6 +32,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
 import net.firedevops.firemud.accountservice.config.AccountJwtJwksApiBinding.ApiCall;
@@ -59,24 +61,12 @@ class AccountJwtJwksApiTransportTest {
   private static final char[] KEYSTORE_PASSWORD = "firemud-test".toCharArray();
   private static final Duration NORMAL_TIMEOUT = Duration.ofSeconds(3);
   private static final Duration STALL_TIMEOUT = Duration.ofMillis(350);
-  private static final byte[] SELF_REVIEW =
-      ("""
-          {"apiVersion":"authentication.k8s.io/v1","kind":"SelfSubjectReview",
-           "status":{"userInfo":{"username":"%s"}}}
-          """
-              .formatted(API_USERNAME))
-          .getBytes(StandardCharsets.UTF_8);
+  private static final byte[] SELF_REVIEW = selfReviewJson().getBytes(StandardCharsets.UTF_8);
   private static final byte[] KUBE_SYSTEM_NAMESPACE =
       namespaceJson("kube-system", KUBE_SYSTEM_UID).getBytes(StandardCharsets.UTF_8);
   private static final byte[] TARGET_NAMESPACE =
       namespaceJson(NAMESPACE, NAMESPACE_UID).getBytes(StandardCharsets.UTF_8);
-  private static final byte[] CONFIG_MAP =
-      ("""
-          {"apiVersion":"v1","kind":"ConfigMap","metadata":{
-            "name":"jwt-jwks","namespace":"%s","uid":"%s","resourceVersion":"7"},"data":{}}
-          """
-              .formatted(NAMESPACE, CONFIG_MAP_UID))
-          .getBytes(StandardCharsets.UTF_8);
+  private static final byte[] CONFIG_MAP = configMapJson().getBytes(StandardCharsets.UTF_8);
 
   @TempDir private static Path temporaryDirectory;
 
@@ -277,6 +267,8 @@ class AccountJwtJwksApiTransportTest {
   void stalledPostHeaderBodyIsBoundedByTheWholeResponseDeadline() throws Exception {
     CountDownLatch bodyStarted = new CountDownLatch(1);
     CountDownLatch releaseBody = new CountDownLatch(1);
+    CountDownLatch handlerFinished = new CountDownLatch(1);
+    AtomicReference<Throwable> handlerFailure = new AtomicReference<>();
     HttpsServer server =
         startServer(
             pki.trustedServer(),
@@ -287,11 +279,17 @@ class AccountJwtJwksApiTransportTest {
                 body.write('{');
                 body.flush();
                 bodyStarted.countDown();
-                releaseBody.await(3, TimeUnit.SECONDS);
+                if (!releaseBody.await(3, TimeUnit.SECONDS)) {
+                  handlerFailure.set(
+                      new AssertionError("test did not release the stalled response body"));
+                }
               } catch (IOException ignored) {
                 // The client closes the response stream when its absolute deadline expires.
               } catch (InterruptedException interrupted) {
                 Thread.currentThread().interrupt();
+                handlerFailure.set(interrupted);
+              } finally {
+                handlerFinished.countDown();
               }
             });
     AccountJwtJwksApiBinding binding = transportBinding(server, pki.trustedCa(), STALL_TIMEOUT);
@@ -304,6 +302,8 @@ class AccountJwtJwksApiTransportTest {
     } finally {
       releaseBody.countDown();
     }
+    assertThat(handlerFinished.await(1, TimeUnit.SECONDS)).isTrue();
+    assertThat(handlerFailure.get()).isNull();
   }
 
   @Test
@@ -491,6 +491,9 @@ class AccountJwtJwksApiTransportTest {
     Files.setPosixFilePermissions(path, PosixFilePermissions.fromString(mode));
   }
 
+  @SuppressFBWarnings(
+      value = "DMI_HARDCODED_ABSOLUTE_FILENAME",
+      justification = "Deliberately unread paths identify transport-only binding inputs")
   private AccountJwtJwksApiBinding transportBinding(
       HttpsServer server, byte[] trustedCa, Duration timeout) throws Exception {
     ParsedBinding binding =
@@ -726,12 +729,39 @@ class AccountJwtJwksApiTransportTest {
     }
   }
 
+  @SuppressFBWarnings(
+      value = "VA_FORMAT_STRING_USES_NEWLINE",
+      justification = "JSON fixture bytes intentionally use literal LF, independent of host OS")
   private static String namespaceJson(String name, String uid) {
     return """
         {"apiVersion":"v1","kind":"Namespace","metadata":{"name":"%s","uid":"%s"},
          "status":{"phase":"Active"}}
         """
         .formatted(name, uid);
+  }
+
+  @SuppressFBWarnings(
+      value = "VA_FORMAT_STRING_USES_NEWLINE",
+      justification =
+          "Self-review fixture bytes intentionally use literal LF, independent of host OS")
+  private static String selfReviewJson() {
+    return """
+        {"apiVersion":"authentication.k8s.io/v1","kind":"SelfSubjectReview",
+         "status":{"userInfo":{"username":"%s"}}}
+        """
+        .formatted(API_USERNAME);
+  }
+
+  @SuppressFBWarnings(
+      value = "VA_FORMAT_STRING_USES_NEWLINE",
+      justification =
+          "ConfigMap fixture bytes intentionally use literal LF, independent of host OS")
+  private static String configMapJson() {
+    return """
+        {"apiVersion":"v1","kind":"ConfigMap","metadata":{
+          "name":"jwt-jwks","namespace":"%s","uid":"%s","resourceVersion":"7"},"data":{}}
+        """
+        .formatted(NAMESPACE, CONFIG_MAP_UID);
   }
 
   private static String sha256(byte[] bytes) throws Exception {

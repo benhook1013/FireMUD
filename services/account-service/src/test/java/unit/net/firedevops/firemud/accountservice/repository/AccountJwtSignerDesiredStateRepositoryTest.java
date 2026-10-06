@@ -16,6 +16,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.KeyPairGenerator;
 import java.security.MessageDigest;
 import java.security.interfaces.RSAPublicKey;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.List;
@@ -181,6 +182,43 @@ class AccountJwtSignerDesiredStateRepositoryTest {
         .anyMatch(sql -> sql.contains("generation_operation_id"))
         .noneMatch(sql -> sql.contains("target_public_key_fingerprint"));
     verify(conversation.dsl, times(2)).execute(anyString(), any(Object[].class));
+  }
+
+  @Test
+  void generationRequestDefensivelyCopiesItsValidatedPrivateSlots() {
+    Conversation conversation = new Conversation();
+    GenerationRequest source = inWritableTransaction(conversation::ensureRequest);
+    List<String> suppliedSlots = new ArrayList<>(source.allowedPrivateSlots());
+
+    GenerationRequest copied =
+        new GenerationRequest(
+            source.phase(),
+            source.operationId(),
+            source.operationDigest(),
+            source.generationRequestDigest(),
+            source.desiredStateVersion(),
+            source.binding(),
+            source.trustFence(),
+            source.privateSecretName(),
+            source.targetGeneration(),
+            source.targetKid(),
+            source.targetAlgorithm(),
+            source.operationAction(),
+            suppliedSlots,
+            source.expectedActive(),
+            source.expectedPublishedActive(),
+            source.secretUid(),
+            source.expectedSecretResourceVersion(),
+            source.generationReceiptDigest(),
+            source.publicKeyFingerprint(),
+            source.publicJwkJson(),
+            source.observedSecretResourceVersion());
+
+    suppliedSlots.clear();
+
+    assertThat(copied.allowedPrivateSlots()).containsExactly("pending");
+    assertThatThrownBy(() -> copied.allowedPrivateSlots().add("current"))
+        .isInstanceOf(UnsupportedOperationException.class);
   }
 
   @Test
@@ -428,10 +466,21 @@ class AccountJwtSignerDesiredStateRepositoryTest {
     assertThat(state.generationOperationId()).isEmpty();
     assertThat(state.preparedOperationId()).isEmpty();
     ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
-    verify(dsl).execute(sql.capture(), any(Object[].class));
+    ArgumentCaptor<Object[]> bindings = ArgumentCaptor.forClass(Object[].class);
+    verify(dsl).execute(sql.capture(), bindings.capture());
     assertThat(sql.getValue())
         .contains("generation_operation_id")
         .contains("prepared_operation_id");
+    Object[] values = bindings.getValue();
+    assertThat(values[4])
+        .isInstanceOf(UUID.class)
+        .isEqualTo(UUID.fromString(ENROLLMENT.expectedClusterIncarnationUid()));
+    assertThat(values[5])
+        .isInstanceOf(UUID.class)
+        .isEqualTo(UUID.fromString(ENROLLMENT.expectedNamespaceUid()));
+    assertThat(values[10])
+        .isInstanceOf(UUID.class)
+        .isEqualTo(UUID.fromString(ENROLLMENT.publicConfigMapUid()));
   }
 
   private void assertMandatory(String methodName, Class<?>... parameterTypes)
