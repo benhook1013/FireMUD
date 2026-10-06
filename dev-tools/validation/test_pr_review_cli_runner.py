@@ -518,6 +518,45 @@ def cli_anchor(*, parent_identity="develop", parent_head=PARENT, merge_base=PARE
 
 
 class CliReviewRunnerTests(unittest.TestCase):
+    def test_context_setup_deadline_remains_primary_when_pinned_ref_cleanup_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            commands = FakeCommands(root)
+            original_git = cli_runner._git
+            cleanup_calls = []
+
+            def cleanup_fails(runner, source_root, *args, **kwargs):
+                if args[:2] == ("update-ref", "-d"):
+                    cleanup_calls.append(kwargs)
+                    raise OSError("pinned ref is busy")
+                return original_git(runner, source_root, *args, **kwargs)
+
+            def expire_context_setup(*_args, **_kwargs):
+                budget.deadline = time.monotonic() - 1
+                budget.remaining_seconds()
+
+            with (
+                github.cli_preflight_budget() as budget,
+                patch.object(cli_runner, "_git", side_effect=cleanup_fails),
+                patch.object(cli_runner.tempfile, "mkdtemp", side_effect=expire_context_setup),
+                self.assertRaisesRegex(
+                    github.HostedPreflightDeadlineExceeded,
+                    r"CLI preflight deadline exceeded \(phase=candidate_context_setup, .*budget=120s\)",
+                ) as raised,
+            ):
+                run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands)
+
+            self.assertEqual(len(cleanup_calls), 1)
+            self.assertFalse(cleanup_calls[0]["enforce_preflight_budget"])
+            self.assertEqual(cleanup_calls[0]["timeout"], cli_runner.GIT_TIMEOUT_SECONDS)
+            self.assertTrue(
+                any(
+                    "CLI pinned-ref cleanup also failed: pinned ref is busy" in note
+                    for note in getattr(raised.exception, "__notes__", [])
+                )
+            )
+
     def test_selection_retry_failure_preserves_the_original_cli_budget_and_capture(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

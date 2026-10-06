@@ -40,7 +40,7 @@ from pr_review.controller import (
     compact_result,
     json_result,
 )
-from pr_review.git_merge import test_merge_tree
+from pr_review.git_merge import TestMergeError, test_merge_tree
 from pr_review.patch_identity import patch_diff_args
 from pr_review.policy import (
     Channel,
@@ -6268,6 +6268,60 @@ class ControllerTests(unittest.TestCase):
                 if args[-4:-2] != ["worktree", "remove"]
             )
         )
+
+    def test_fallback_worktree_cleanup_failure_preserves_deadline_and_fails_when_sole_error(self):
+        for cleanup_mode in ("raises", "times_out", "nonzero"):
+            for primary_deadline in (True, False):
+                with self.subTest(cleanup=cleanup_mode, primary_deadline=primary_deadline), tempfile.TemporaryDirectory() as directory:
+                    deadline = github.HostedPreflightDeadlineExceeded(
+                        "test_merge", 121, 120, 0, 1, "Hosted"
+                    )
+
+                    def run(
+                        args,
+                        *,
+                        check,
+                        text,
+                        timeout,
+                        cleanup_mode=cleanup_mode,
+                        primary_deadline=primary_deadline,
+                        deadline=deadline,
+                    ):
+                        command = args[args.index("-C") + 2 :]
+                        if command[:2] == ["merge-tree", "--write-tree"]:
+                            return CompletedProcess(args, 129, "", "unsupported option")
+                        if command[:2] == ["worktree", "add"]:
+                            return CompletedProcess(args, 0, "", "")
+                        if command[:2] == ["worktree", "remove"]:
+                            if cleanup_mode == "raises":
+                                raise OSError("worktree metadata is busy")
+                            if cleanup_mode == "times_out":
+                                raise subprocess.TimeoutExpired(args, timeout)
+                            return CompletedProcess(args, 1, "", "worktree is busy")
+                        if "merge" in command and primary_deadline:
+                            raise deadline
+                        if command == ["write-tree"]:
+                            return CompletedProcess(args, 0, "9" * 40 + "\n", "")
+                        if command[:2] == ["cat-file", "-t"]:
+                            return CompletedProcess(args, 0, "tree\n", "")
+                        return CompletedProcess(args, 0, "", "")
+
+                    if primary_deadline:
+                        with self.assertRaises(github.HostedPreflightDeadlineExceeded) as raised:
+                            test_merge_tree(directory, BASE, HEAD_1, run=run, timeout_seconds=9)
+                        self.assertIs(raised.exception, deadline)
+                        self.assertTrue(
+                            any(
+                                "Fallback test-merge worktree cleanup also failed" in note
+                                for note in getattr(deadline, "__notes__", [])
+                            )
+                        )
+                    else:
+                        with self.assertRaisesRegex(
+                            TestMergeError, "could not clean up the isolated test-merge worktree"
+                        ) as raised:
+                            test_merge_tree(directory, BASE, HEAD_1, run=run, timeout_seconds=9)
+                        self.assertIsNotNone(raised.exception.__cause__)
 
     def test_test_merge_falls_back_without_lfs_smudge_when_merge_tree_is_unavailable(self):
         tree = "9" * 40

@@ -1128,17 +1128,29 @@ def run_cli_review(
                 )
                 _git(runner, source_root, "update-ref", pinned_ref, review_base_sha, timeout=git_timeout_seconds)
                 temp_root = Path(tempfile.mkdtemp(prefix="firemud-pr-review-"))
-            except Exception:
-                _git(
-                    runner,
-                    source_root,
-                    "update-ref",
-                    "-d",
-                    pinned_ref,
-                    check=False,
-                    timeout=git_timeout_seconds,
-                    enforce_preflight_budget=False,
-                )
+            except Exception as primary_error:
+                try:
+                    _git(
+                        runner,
+                        source_root,
+                        "update-ref",
+                        "-d",
+                        pinned_ref,
+                        check=False,
+                        timeout=git_timeout_seconds,
+                        enforce_preflight_budget=False,
+                    )
+                except (OSError, subprocess.SubprocessError, ReviewRunnerError) as cleanup_error:
+                    add_note = getattr(primary_error, "add_note", None)
+                    note = f"CLI pinned-ref cleanup also failed: {cleanup_error}"
+                    if callable(add_note):
+                        add_note(note)
+                    else:
+                        notes = getattr(primary_error, "__notes__", None)
+                        if notes is None:
+                            notes = []
+                            primary_error.__notes__ = notes
+                        notes.append(note)
                 if temp_root is not None:
                     shutil.rmtree(temp_root, ignore_errors=True)
                 raise
