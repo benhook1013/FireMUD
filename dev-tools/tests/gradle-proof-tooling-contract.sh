@@ -2,11 +2,23 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-LOCKED_RUNNER="$ROOT_DIR/dev-tools/validation/run-locked-gradle.sh"
-INSPECTOR="$ROOT_DIR/dev-tools/validation/inspect-test-results.sh"
-BOOTSTRAP_PROOF="$ROOT_DIR/dev-tools/verify-fresh-bootstrap.sh"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
+FIXTURE_ROOT="$TMP_DIR/checkout"
+mkdir -p "$FIXTURE_ROOT/dev-tools/validation" "$FIXTURE_ROOT/dev-tools/smoke" "$FIXTURE_ROOT/docker"
+for service_dir in "$ROOT_DIR"/services/*/; do
+  mkdir -p "$FIXTURE_ROOT/services/$(basename "$service_dir")"
+done
+cp "$ROOT_DIR/dev-tools/validation/"{run-locked-gradle.sh,gradle-run-supervisor.py,inspect-test-results.sh} "$FIXTURE_ROOT/dev-tools/validation/"
+cp "$ROOT_DIR/dev-tools/"{verify-fresh-bootstrap.sh,ensure-local-compose-env.sh} "$FIXTURE_ROOT/dev-tools/"
+cp "$ROOT_DIR/dev-tools/smoke/run-owned-compose.sh" "$FIXTURE_ROOT/dev-tools/smoke/"
+cp "$ROOT_DIR/.env.sample" "$FIXTURE_ROOT/.env.sample"
+LOCKED_RUNNER="$FIXTURE_ROOT/dev-tools/validation/run-locked-gradle.sh"
+INSPECTOR="$FIXTURE_ROOT/dev-tools/validation/inspect-test-results.sh"
+BOOTSTRAP_PROOF="$FIXTURE_ROOT/dev-tools/verify-fresh-bootstrap.sh"
+
+# These original checks prove output guards independently of the local resource guard.
+export CI=true
 
 cat >"$TMP_DIR/fake-gradlew.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -96,5 +108,7 @@ bootstrap_invalid_status=$?
 set -e
 [[ $bootstrap_invalid_status -ne 0 ]]
 grep -q "Use Docker Compose service ids here" <<<"$bootstrap_invalid_output"
+
+python3 -m unittest discover -s "$ROOT_DIR/dev-tools/tests" -p '*gradle*test*.py'
 
 echo "gradle proof tooling contract checks passed"

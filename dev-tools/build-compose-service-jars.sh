@@ -18,4 +18,4 @@ GRADLE_TASKS=(
 )
 
 echo "Building current boot jars for source-built Docker compose services."
-"$ROOT_DIR/gradlew" -PincludeLoadTesting=false "${GRADLE_TASKS[@]}"
+bash "$ROOT_DIR/dev-tools/validation/run-locked-gradle.sh" -PincludeLoadTesting=false "${GRADLE_TASKS[@]}"
