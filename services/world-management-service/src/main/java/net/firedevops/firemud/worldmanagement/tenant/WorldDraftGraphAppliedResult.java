@@ -10,6 +10,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.gamedesign.DraftSynchronizedVisibilityEvidence.AppliedEpoch;
@@ -23,17 +24,33 @@ public final class WorldDraftGraphAppliedResult {
   private final WorldDraftGraphApplication application;
   private final byte[] graphBytes;
   private final byte[] canonicalBytes;
+  private final Optional<WorldDraftStartLocationReceipt> startLocationReceipt;
 
   private WorldDraftGraphAppliedResult(WorldDraftGraphApplication application, byte[] graphBytes) {
     this.application = Objects.requireNonNull(application, "application");
     this.graphBytes = Objects.requireNonNull(graphBytes, "graphBytes").clone();
     new WorldCanonicalAuthoredGraphReader().read(application.plan(), this.graphBytes);
+    startLocationReceipt =
+        application
+            .plan()
+            .graph()
+            .freshGraphDeclaration()
+            .map(ignored -> WorldDraftStartLocationReceipt.create(application, this.graphBytes));
     Map<String, Object> result = new LinkedHashMap<>();
-    result.put("schema", "world-draft-graph-applied/v1");
+    result.put(
+        "schema",
+        startLocationReceipt.isPresent()
+            ? "world-draft-graph-applied/v2"
+            : "world-draft-graph-applied/v1");
     result.put("status", "APPLIED");
     result.put("operationBytesBase64", base64(application.operation().canonicalBytes()));
     result.put("graphBytesBase64", base64(this.graphBytes));
     result.put("graphDigest", digest(this.graphBytes));
+    startLocationReceipt.ifPresent(
+        receipt -> {
+          result.put("startLocationReceiptBase64", base64(receipt.canonicalBytes()));
+          result.put("startLocationReceiptDigest", receipt.receiptDigest());
+        });
     result.put("appliedEpochs", appliedEpochs());
     try {
       canonicalBytes =
@@ -48,9 +65,15 @@ public final class WorldDraftGraphAppliedResult {
   }
 
   static WorldDraftGraphAppliedResult fromStored(
-      WorldDraftGraphApplication application, byte[] graph, byte[] bytes, String storedDigest) {
+      WorldDraftGraphApplication application,
+      byte[] graph,
+      byte[] bytes,
+      String storedDigest,
+      Optional<WorldDraftStartLocationReceipt> retainedStartLocation) {
     var result = create(application, graph);
-    if (!Arrays.equals(result.canonicalBytes, bytes) || !result.digest().equals(storedDigest)) {
+    if (!result.startLocationReceipt.equals(retainedStartLocation)
+        || !Arrays.equals(result.canonicalBytes, bytes)
+        || !result.digest().equals(storedDigest)) {
       throw new IllegalArgumentException(
           "World APPLIED result differs from exact operation, graph or epochs");
     }
@@ -65,6 +88,10 @@ public final class WorldDraftGraphAppliedResult {
     return graphBytes.clone();
   }
 
+  public Optional<WorldDraftStartLocationReceipt> startLocationReceipt() {
+    return startLocationReceipt;
+  }
+
   public byte[] canonicalBytes() {
     return canonicalBytes.clone();
   }
@@ -74,7 +101,8 @@ public final class WorldDraftGraphAppliedResult {
   }
 
   public String resultIdentity() {
-    return "world-draft-graph-applied/v1:" + application.operation().operationId();
+    String schema = startLocationReceipt.isPresent() ? "v2" : "v1";
+    return "world-draft-graph-applied/" + schema + ":" + application.operation().operationId();
   }
 
   public String status() {

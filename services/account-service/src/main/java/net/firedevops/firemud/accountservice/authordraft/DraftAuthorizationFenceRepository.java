@@ -454,7 +454,7 @@ public final class DraftAuthorizationFenceRepository {
     if (after == null) {
       parameters = new Object[] {limit};
     } else {
-      sql += " AND (f.reserved_at, f.operation_id) > (?, ?)";
+      sql += " AND (f.reserved_at, f.operation_id) > (?::timestamptz, ?::uuid)";
       parameters = new Object[] {after.reservedAt(), after.operationId(), limit};
     }
     sql += " ORDER BY f.reserved_at, f.operation_id LIMIT ? FOR UPDATE OF f";

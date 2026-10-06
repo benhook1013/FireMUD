@@ -53,7 +53,9 @@ class IndividualCreatorPartyPostgresIntegrationTest {
 
   @Test
   void migrationPreservesExistingAccountAndMembershipAndEnrollsNoParty() throws Exception {
-    Database db = database("77");
+    // V74 is this source tree's last existing migration before V78; V77 is reserved elsewhere
+    // and is not a historical schema that this candidate can execute or prove.
+    Database db = database("74");
     UUID account = insertAccount(db);
     long accountKey =
         Objects.requireNonNull(
@@ -62,6 +64,11 @@ class IndividualCreatorPartyPostgresIntegrationTest {
                     "Persisted baseline Account row is missing")
                 .get("id", Long.class),
             "Persisted baseline Account key is missing");
+    Map<String, Object> accountBefore =
+        Objects.requireNonNull(
+                db.dsl().fetchOne("SELECT * FROM accounts WHERE account_uuid = ?", account),
+                "Baseline Account row is missing")
+            .intoMap();
     db.dsl()
         .execute(
             "INSERT INTO account_tenant_membership (account_id, tenant_id, gameplay_admission_allowed) VALUES (?, 42, FALSE)",
@@ -74,6 +81,12 @@ class IndividualCreatorPartyPostgresIntegrationTest {
                 "Baseline membership row is missing")
             .intoMap();
     migrate(db, "78");
+    assertThat(
+            Objects.requireNonNull(
+                    db.dsl().fetchOne("SELECT * FROM accounts WHERE account_uuid = ?", account),
+                    "Preserved Account row is missing after migration")
+                .intoMap())
+        .isEqualTo(accountBefore);
     assertThat(
             Objects.requireNonNull(
                     db.dsl()

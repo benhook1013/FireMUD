@@ -344,7 +344,10 @@ public class WorldDraftTopologyCommitRepository {
                   version)
               .fetchOne(0, Long.class);
       if (!Objects.equals(actual, expected)) {
-        throw new ConflictException("World topology contains extra or missing actual family rows");
+        throw new ConflictException(
+            "World topology contains extra or missing actual "
+                + type.toLowerCase(java.util.Locale.ROOT)
+                + " rows");
       }
     }
     Map<String, Long> keys = new HashMap<>();

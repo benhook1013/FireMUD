@@ -2217,6 +2217,11 @@ jobs:
             --strict \
             --require-suite net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#freshApplicationRetainsCompleteExactGraphAndOriginalAccountReadbackAndRetriesAfterFreeze()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#explicitEmptyOptionalFamiliesProduceAppliedGraphAndExactTypedStartSelector()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#newAccountBoundGraphRequiresCompleteOriginalDeclaration()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#changedStartSelectorChangesAccountInputDigestAndConflictsOnReusedIdentity()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#extraRetainedOptionalFamilyRowDeniesFreshGraphApplication()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#v39AppliedV1HistoryRemainsByteExactAndRetryableAfterV41()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#oldPermissionUnverifiedRowsCannotBePromotedByWriterOrLateReceiptInsertion()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#failureAfterGraphAndReceiptInsertionRollsBackEveryFamilyEpochAndHistory()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#definitiveAbortExcludesDelayedTypedAndRawSqlGraphWrites()' \
@@ -2331,6 +2336,8 @@ jobs:
           bash dev-tools/validation/inspect-test-results.sh \
             --strict \
             --require-suite net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceAssociationPostgresIntegrationTest \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceAssociationPostgresIntegrationTest#changedReleaseCommitFailsJavaAndDatabaseBeforeAllocation()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceAssociationPostgresIntegrationTest#changedWorldContentDigestFailsJavaAndDatabaseBeforeAllocation()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceAssociationPostgresIntegrationTest#retainsFullCanonicalAssociationAndReadsItAfterTheOwnerCommit()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceAssociationPostgresIntegrationTest#exactRetryReusesOriginalAssociationAfterReadMetadataChangeWithoutLifecycleMutation()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceAssociationPostgresIntegrationTest#rejectsChangedRequestEchoDescriptorAttestationAndPlayableScopeWithoutMutation()' \

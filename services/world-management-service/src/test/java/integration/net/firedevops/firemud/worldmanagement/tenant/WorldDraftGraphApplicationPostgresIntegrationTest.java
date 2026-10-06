@@ -41,17 +41,29 @@ import net.firedevops.firemud.worldmanagement.v1.WorldDesignAggregateType;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationOperation;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeType;
 import net.firedevops.firemud.worldmanagement.v1.WorldEntitySpawnBindingDesignMutation;
+import net.firedevops.firemud.worldmanagement.v1.WorldFreshGraphDeclaration;
+import net.firedevops.firemud.worldmanagement.v1.WorldFreshGraphFamilyCount;
 import net.firedevops.firemud.worldmanagement.v1.ZoneDesignMutation;
+import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
+import org.jooq.SQLDialect;
+import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
+import org.springframework.aop.framework.ProxyFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource;
+import org.springframework.transaction.interceptor.TransactionInterceptor;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.GenericContainer;
@@ -160,10 +172,77 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
         new WorldDraftGraphApplicationService(appliedRepository(), manager).apply(application);
     assertThat(retry.canonicalBytes()).containsExactly(result.canonicalBytes());
     assertThat(retry.graphBytes()).containsExactly(result.graphBytes());
+    assertThat(retry.startLocationReceipt()).contains(result.startLocationReceipt().orElseThrow());
     assertThat(
             appliedRepository()
                 .readSynchronized(visibility(application, result, result.canonicalBytes())))
         .isPresent();
+  }
+
+  @Test
+  void explicitEmptyOptionalFamiliesProduceAppliedGraphAndExactTypedStartSelector() {
+    Fixture f = fixture();
+    var application = application(plan(f, true));
+    var result = appliedComponent().apply(application);
+
+    assertThat(result.status()).isEqualTo("APPLIED");
+    assertThat(result.startLocationReceipt()).isPresent();
+    var receipt = result.startLocationReceipt().orElseThrow();
+    assertThat(receipt.startLocation().tenantId())
+        .isEqualTo(application.operation().canonicalTenantId());
+    assertThat(receipt.startLocation().versionId())
+        .isEqualTo(application.operation().canonicalVersionId());
+    assertThat(receipt.startLocation().roomTemplateId())
+        .isEqualTo(
+            application
+                .plan()
+                .graph()
+                .freshGraphDeclaration()
+                .orElseThrow()
+                .startLocation()
+                .roomTemplateId());
+    assertThat(application.plan().graph().freshGraphDeclaration().orElseThrow().familyCounts())
+        .extracting(WorldDraftTopologyInputGraph.FamilyCount::count)
+        .containsExactly(1, 1, 1, 0, 0, 0);
+    assertThat(count(f, "region")).isEqualTo(1);
+    assertThat(count(f, "zone")).isEqualTo(1);
+    assertThat(count(f, "room")).isEqualTo(1);
+    for (String family : List.of("room_exit", "generation_rule", "world_entity_spawn_binding")) {
+      assertThat(count(f, family)).isZero();
+    }
+    assertThat(count(f, "world_draft_start_location_receipt")).isEqualTo(1);
+    assertThat(appliedRepository().readCommitted(application).orElseThrow().startLocationReceipt())
+        .contains(receipt);
+    assertThat(
+            appliedRepository()
+                .readCommitted(NAMESPACE, application.operation().accountBindingBytes())
+                .orElseThrow()
+                .startLocationReceipt())
+        .contains(receipt);
+  }
+
+  @Test
+  void newAccountBoundGraphRequiresCompleteOriginalDeclaration() {
+    Fixture f = fixture();
+    var historicalPlan = withoutFreshGraphDeclaration(plan(f));
+    var application = application(historicalPlan);
+
+    assertThatThrownBy(() -> appliedComponent().apply(application))
+        .hasMessageContaining("require the complete original fresh-graph declaration");
+    for (String table :
+        List.of(
+            "region",
+            "zone",
+            "room",
+            "room_exit",
+            "generation_rule",
+            "world_entity_spawn_binding",
+            "world_authored_topology_identity",
+            "world_topology_draft_commit",
+            "world_draft_graph_application",
+            "world_draft_start_location_receipt")) {
+      assertThat(count(f, table)).isZero();
+    }
   }
 
   @Test
@@ -297,7 +376,8 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             "world_design_aggregate_epoch",
             "world_design_scope_epoch",
             "world_authored_topology_identity",
-            "world_topology_draft_commit")) {
+            "world_topology_draft_commit",
+            "world_draft_start_location_receipt")) {
       assertThat(count(f, table)).isZero();
     }
     assertThat(appliedRepository().readCommitted(application)).isEmpty();
@@ -371,6 +451,153 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     assertThatThrownBy(
             () -> appliedComponent().apply(withAccount(application.plan(), changedFence)))
         .hasMessageContaining("changed complete binding");
+  }
+
+  @Test
+  void changedStartSelectorChangesAccountInputDigestAndConflictsOnReusedIdentity() {
+    Fixture f = fixture();
+    var original = application(f);
+    appliedComponent().apply(original);
+    UUID anotherRoom =
+        original
+            .plan()
+            .graph()
+            .family(WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM)
+            .get(1)
+            .templateId();
+    var changed = withStartRoom(original, anotherRoom);
+
+    assertThat(changed.operation().binding().digest())
+        .isNotEqualTo(original.operation().binding().digest());
+    assertThat(changed.operation().accountBindingDigest())
+        .isNotEqualTo(original.operation().accountBindingDigest());
+    assertThatThrownBy(() -> appliedRepository().readCommitted(changed))
+        .hasMessageContaining("changed complete binding");
+    assertThatThrownBy(() -> appliedComponent().apply(changed))
+        .hasMessageContaining("changed complete binding");
+    assertThat(count(f, "world_draft_start_location_receipt")).isEqualTo(1);
+  }
+
+  @Test
+  void extraRetainedOptionalFamilyRowDeniesFreshGraphApplication() {
+    Fixture f = fixture();
+    var application = application(plan(f, true));
+    var priorPlan = plan(f, true, true);
+    assertThat(component().store(priorPlan).status()).isEqualTo("STORED_PERMISSION_UNVERIFIED");
+
+    assertThatThrownBy(() -> appliedComponent().apply(application))
+        .hasMessageContaining("extra or missing actual");
+    assertThat(appliedRepository().readCommitted(application)).isEmpty();
+    assertThat(count(f, "world_authored_topology_identity")).isEqualTo(4);
+    assertThat(count(f, "world_draft_start_location_receipt")).isZero();
+  }
+
+  @Test
+  void v39AppliedV1HistoryRemainsByteExactAndRetryableAfterV41() throws Exception {
+    String schema = "world_v39_history_" + UUID.randomUUID().toString().replace("-", "");
+    Flyway.configure()
+        .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
+        .schemas(schema)
+        .defaultSchema(schema)
+        .table("flyway_schema_history_world_management_service")
+        .placeholders(Map.of("serviceSchema", schema))
+        .locations("classpath:db/migration")
+        .target(MigrationVersion.fromVersion("39"))
+        .load()
+        .migrate();
+
+    DriverManagerDataSource retainedDataSource = new DriverManagerDataSource();
+    retainedDataSource.setUrl(postgres.getJdbcUrl());
+    retainedDataSource.setUsername(postgres.getUsername());
+    retainedDataSource.setPassword(postgres.getPassword());
+    retainedDataSource.setSchema(schema);
+    DSLContext retainedDsl =
+        DSL.using(new TransactionAwareDataSourceProxy(retainedDataSource), SQLDialect.POSTGRES);
+    PlatformTransactionManager retainedManager =
+        new DataSourceTransactionManager(retainedDataSource);
+    WorldAuthoredSourceIntakeRepository retainedIntake =
+        proxiedIntakeRepository(retainedDsl, retainedManager);
+    Fixture f = fixture(retainedIntake, retainedManager, retainedDsl);
+    WorldDraftTopologyCommitPlan historicalPlan = withoutFreshGraphDeclaration(plan(f));
+    WorldDraftGraphApplication historicalApplication = application(historicalPlan);
+    TransactionTemplate retainedTransaction = ownerTransaction(retainedManager);
+    WorldDesignPublicationFenceRepository retainedFence =
+        new WorldDesignPublicationFenceRepository(retainedDsl, retainedIntake);
+    WorldDraftTopologyCommitRepository retainedTopology =
+        new WorldDraftTopologyCommitRepository(retainedDsl, retainedFence, mapper);
+    WorldDraftGraphAppliedResult legacyResult =
+        retainedTransaction.execute(
+            status -> {
+              var legacyGraph = retainedTopology.store(historicalPlan);
+              WorldDraftGraphAppliedResult result =
+                  WorldDraftGraphAppliedResult.create(
+                      historicalApplication, legacyGraph.graphBytes());
+              retainedDsl.execute(
+                  "INSERT INTO world_draft_graph_application (operation_id,request_id,commit_id,authorization_fence_id,"
+                      + "operation_bytes,account_binding_bytes,account_binding_digest,result_bytes,result_digest) VALUES (?,?,?,?,?,?,?,?,?)",
+                  historicalApplication.operation().operationId(),
+                  historicalApplication.operation().requestId(),
+                  historicalApplication.operation().commitId(),
+                  historicalApplication.operation().authorizationFenceId(),
+                  historicalApplication.operation().canonicalBytes(),
+                  historicalApplication.operation().accountBindingBytes(),
+                  historicalApplication.operation().accountBindingDigest(),
+                  result.canonicalBytes(),
+                  result.digest());
+              return result;
+            });
+    assertThat(legacyResult.resultIdentity()).contains("/v1:");
+    assertThat(legacyResult.startLocationReceipt()).isEmpty();
+
+    Map<String, byte[]> originalBytes =
+        retainedV39ApplicationBytes(retainedDsl, historicalApplication);
+    Map<String, String> originalRows =
+        retainedV39ApplicationRows(retainedDsl, historicalApplication);
+    Flyway.configure()
+        .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
+        .schemas(schema)
+        .defaultSchema(schema)
+        .table("flyway_schema_history_world_management_service")
+        .placeholders(Map.of("serviceSchema", schema))
+        .locations("classpath:db/migration")
+        .load()
+        .migrate();
+
+    Map<String, byte[]> migratedBytes =
+        retainedV39ApplicationBytes(retainedDsl, historicalApplication);
+    originalBytes.forEach(
+        (key, value) -> assertThat(migratedBytes.get(key)).containsExactly(value));
+    assertThat(retainedV39ApplicationRows(retainedDsl, historicalApplication))
+        .isEqualTo(originalRows);
+    Long receiptsAfterMigration =
+        Objects.requireNonNull(
+                retainedDsl.fetchOne("SELECT count(*) FROM world_draft_start_location_receipt"))
+            .get(0, Long.class);
+    assertThat(receiptsAfterMigration).isZero();
+
+    WorldDraftGraphApplicationRepository retainedApplications =
+        new WorldDraftGraphApplicationRepository(retainedDsl, retainedFence, mapper);
+    WorldDraftGraphAppliedResult exact =
+        retainedApplications.readCommitted(historicalApplication).orElseThrow();
+    assertThat(exact.canonicalBytes()).containsExactly(legacyResult.canonicalBytes());
+    assertThat(exact.graphBytes()).containsExactly(legacyResult.graphBytes());
+    assertThat(exact.startLocationReceipt()).isEmpty();
+    assertThat(
+            retainedApplications
+                .readCommitted(NAMESPACE, historicalApplication.operation().accountBindingBytes())
+                .orElseThrow()
+                .canonicalBytes())
+        .containsExactly(legacyResult.canonicalBytes());
+    WorldDraftGraphAppliedResult retry =
+        new WorldDraftGraphApplicationService(retainedApplications, retainedManager)
+            .apply(historicalApplication);
+    assertThat(retry.canonicalBytes()).containsExactly(legacyResult.canonicalBytes());
+    assertThat(retry.startLocationReceipt()).isEmpty();
+    Long receiptsAfterRetry =
+        Objects.requireNonNull(
+                retainedDsl.fetchOne("SELECT count(*) FROM world_draft_start_location_receipt"))
+            .get(0, Long.class);
+    assertThat(receiptsAfterRetry).isZero();
   }
 
   @Test
@@ -626,7 +853,10 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   }
 
   private WorldDraftGraphApplication application(Fixture f) {
-    var p = plan(f);
+    return application(plan(f));
+  }
+
+  private WorldDraftGraphApplication application(WorldDraftTopologyCommitPlan p) {
     var account =
         new net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding(
             UUID.randomUUID(),
@@ -705,8 +935,81 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     return new WorldDraftGraphApplication(operation, p);
   }
 
+  private WorldDraftGraphApplication withStartRoom(
+      WorldDraftGraphApplication original, UUID roomTemplateId) {
+    var binding = original.operation().binding();
+    List<DraftCommitBinding.RevisionPayload> revisions = new ArrayList<>(binding.revisions());
+    for (int index = 0; index < revisions.size(); index++) {
+      var revision = revisions.get(index);
+      if (revision.owner() != Owner.WORLD_MANAGEMENT) continue;
+      try {
+        var mutation = WorldDesignMutationRevision.newBuilder();
+        JsonFormat.parser().merge(revision.payload(), mutation);
+        if (!mutation.hasFreshGraphDeclaration()) continue;
+        var declaration =
+            mutation.getFreshGraphDeclaration().toBuilder()
+                .setStartLocation(
+                    mutation.getFreshGraphDeclaration().getStartLocation().toBuilder()
+                        .setRoomTemplateId(roomTemplateId.toString()))
+                .build();
+        revisions.set(
+            index,
+            new DraftCommitBinding.RevisionPayload(
+                revision.revisionOrder(),
+                revision.revisionId(),
+                revision.owner(),
+                JsonFormat.printer()
+                    .print(mutation.setFreshGraphDeclaration(declaration).build())));
+        DraftCommitBinding changedBinding =
+            DraftCommitBinding.create(
+                binding.target(),
+                binding.requestId(),
+                binding.commitId(),
+                binding.baseCommitId(),
+                revisions,
+                binding.affectedUnits());
+        var account =
+            net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.fromStored(
+                original.operation().accountBindingBytes());
+        var changedAccount =
+            new net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding(
+                account.operationId(),
+                account.requestId(),
+                account.commitId(),
+                account.fenceId(),
+                account.actorAccountId(),
+                account.tenantId(),
+                account.versionId(),
+                account.baseCommitId(),
+                account.expectedDraftEpoch(),
+                changedBinding.canonicalBytes(),
+                changedBinding.canonicalBytes(),
+                changedBinding.digest(),
+                account.sources());
+        return withAccount(
+            WorldDraftTopologyCommitPlan.create(changedBinding, original.plan().ownerBinding()),
+            changedAccount);
+      } catch (InvalidProtocolBufferException exception) {
+        throw new IllegalStateException(exception);
+      }
+    }
+    throw new IllegalArgumentException("Original application has no start-location declaration");
+  }
+
   private WorldDraftGraphApplicationRepository appliedRepository() {
     return new WorldDraftGraphApplicationRepository(dsl, fence, mapper);
+  }
+
+  private WorldAuthoredSourceIntakeRepository proxiedIntakeRepository(
+      DSLContext context, PlatformTransactionManager transactionManager) {
+    var repository = new WorldAuthoredSourceIntakeRepository(context);
+    TransactionInterceptor transactions = new TransactionInterceptor();
+    transactions.setTransactionManager(transactionManager);
+    transactions.setTransactionAttributeSource(new AnnotationTransactionAttributeSource());
+    ProxyFactory proxy = new ProxyFactory(repository);
+    proxy.setProxyTargetClass(true);
+    proxy.addAdvice(transactions);
+    return (WorldAuthoredSourceIntakeRepository) proxy.getProxy();
   }
 
   private WorldDraftGraphApplicationService appliedComponent() {
@@ -746,6 +1049,100 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
         operation.accountBindingDigest(),
         result,
         WorldDraftGraphAppliedResult.digest(result));
+  }
+
+  private WorldDraftTopologyCommitPlan withoutFreshGraphDeclaration(
+      WorldDraftTopologyCommitPlan original) {
+    List<DraftCommitBinding.RevisionPayload> revisions = new ArrayList<>();
+    for (var revision : original.binding().revisions()) {
+      if (revision.owner() != Owner.WORLD_MANAGEMENT) {
+        revisions.add(revision);
+        continue;
+      }
+      try {
+        var mutation = WorldDesignMutationRevision.newBuilder();
+        JsonFormat.parser().merge(revision.payload(), mutation);
+        revisions.add(
+            new DraftCommitBinding.RevisionPayload(
+                revision.revisionOrder(),
+                revision.revisionId(),
+                revision.owner(),
+                JsonFormat.printer()
+                    .omittingInsignificantWhitespace()
+                    .print(mutation.clearFreshGraphDeclaration().build())));
+      } catch (InvalidProtocolBufferException exception) {
+        throw new IllegalStateException(exception);
+      }
+    }
+    var binding = original.binding();
+    DraftCommitBinding historicalBinding =
+        DraftCommitBinding.create(
+            binding.target(),
+            binding.requestId(),
+            binding.commitId(),
+            binding.baseCommitId(),
+            revisions,
+            binding.affectedUnits());
+    return WorldDraftTopologyCommitPlan.create(historicalBinding, original.ownerBinding());
+  }
+
+  private Map<String, byte[]> retainedV39ApplicationBytes(
+      DSLContext retained, WorldDraftGraphApplication application) {
+    var operation = application.operation();
+    var graph =
+        Objects.requireNonNull(
+            retained.fetchOne(
+                "SELECT graph_bytes,result_bytes FROM world_topology_draft_commit WHERE request_id=? AND commit_id=?",
+                operation.requestId(),
+                operation.commitId()),
+            "expected retained V39 graph row");
+    var applied =
+        Objects.requireNonNull(
+            retained.fetchOne(
+                "SELECT operation_bytes,account_binding_bytes,result_bytes FROM world_draft_graph_application WHERE operation_id=?",
+                operation.operationId()),
+            "expected retained V39 APPLIED row");
+    var terminal =
+        Objects.requireNonNull(
+            retained.fetchOne(
+                "SELECT account_binding_bytes FROM world_draft_graph_terminal_identity WHERE operation_id=?",
+                operation.operationId()),
+            "expected retained V39 terminal identity");
+    return Map.of(
+        "graphBytes", graph.get("graph_bytes", byte[].class),
+        "graphResultBytes", graph.get("result_bytes", byte[].class),
+        "operationBytes", applied.get("operation_bytes", byte[].class),
+        "accountBindingBytes", applied.get("account_binding_bytes", byte[].class),
+        "appliedResultBytes", applied.get("result_bytes", byte[].class),
+        "terminalAccountBindingBytes", terminal.get("account_binding_bytes", byte[].class));
+  }
+
+  private Map<String, String> retainedV39ApplicationRows(
+      DSLContext retained, WorldDraftGraphApplication application) {
+    var operation = application.operation();
+    var graph =
+        Objects.requireNonNull(
+            retained.fetchOne(
+                "SELECT to_jsonb(t)::text FROM world_topology_draft_commit t WHERE request_id=? AND commit_id=?",
+                operation.requestId(),
+                operation.commitId()),
+            "expected retained V39 graph row");
+    var applied =
+        Objects.requireNonNull(
+            retained.fetchOne(
+                "SELECT to_jsonb(t)::text FROM world_draft_graph_application t WHERE operation_id=?",
+                operation.operationId()),
+            "expected retained V39 APPLIED row");
+    var terminal =
+        Objects.requireNonNull(
+            retained.fetchOne(
+                "SELECT to_jsonb(t)::text FROM world_draft_graph_terminal_identity t WHERE operation_id=?",
+                operation.operationId()),
+            "expected retained V39 terminal identity");
+    return Map.of(
+        "graph", graph.get(0, String.class),
+        "application", applied.get(0, String.class),
+        "terminal", terminal.get(0, String.class));
   }
 
   private net.firedevops.firemud.common.gamedesign.DraftSynchronizedVisibilityEvidence visibility(
@@ -807,6 +1204,13 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   }
 
   private Fixture fixture() {
+    return fixture(intakeRepository, manager, dsl);
+  }
+
+  private Fixture fixture(
+      WorldAuthoredSourceIntakeRepository sourceIntake,
+      PlatformTransactionManager transactionManager,
+      DSLContext context) {
     UUID tenant = UUID.randomUUID();
     UUID registration = UUID.randomUUID();
     UUID sourceOperation = UUID.randomUUID();
@@ -846,12 +1250,12 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             "NEW_GAME_ROW",
             evidenceDigest);
     UUID intakeRequest = UUID.randomUUID();
-    ownerTransaction()
-        .execute(status -> intakeRepository.acceptFresh(NAMESPACE, intakeRequest, source));
+    ownerTransaction(transactionManager)
+        .execute(status -> sourceIntake.acceptFresh(NAMESPACE, intakeRequest, source));
     WorldAuthoredSourceIntakeReceipt intake =
-        intakeRepository.read(NAMESPACE, intakeRequest).orElseThrow();
+        sourceIntake.read(NAMESPACE, intakeRequest).orElseThrow();
     return Objects.requireNonNull(
-        ownerTransaction()
+        ownerTransaction(transactionManager)
             .execute(
                 status -> {
                   UUID canonicalVersion = UUID.randomUUID();
@@ -866,7 +1270,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
                           evidenceDigest,
                           GAME_DESIGN_VERSION);
                   WorldAuthoredVersionIdentityReceipt version =
-                      new WorldAuthoredVersionIdentityRepository(dsl)
+                      new WorldAuthoredVersionIdentityRepository(context)
                           .acceptFresh(
                               intake,
                               AuthoredWorldVersionStateEvidence.create(
@@ -888,7 +1292,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
                           sourceOperation,
                           evidenceDigest,
                           intake.receiptDigest());
-                  assertOrigin();
+                  assertOrigin(context);
                   return new Fixture(intake, version, owner);
                 }));
   }
@@ -924,6 +1328,15 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   }
 
   private WorldDraftTopologyCommitPlan plan(Fixture f) {
+    return plan(f, false);
+  }
+
+  private WorldDraftTopologyCommitPlan plan(Fixture f, boolean threeFamilyGraph) {
+    return plan(f, threeFamilyGraph, false);
+  }
+
+  private WorldDraftTopologyCommitPlan plan(
+      Fixture f, boolean threeFamilyGraph, boolean includeGenerationRule) {
     UUID logical = UUID.randomUUID();
     UUID secondRoom = UUID.randomUUID();
     UUID entity = UUID.randomUUID();
@@ -1005,6 +1418,58 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
                     .setEntityTemplateId(entity.toString())
                     .setRespawnDelaySeconds(17))
             .build());
+    if (threeFamilyGraph) {
+      values = new ArrayList<>(values.subList(0, 3));
+      var region = values.getFirst();
+      values.set(
+          0,
+          region.toBuilder()
+              .setRegion(
+                  region.getRegion().toBuilder()
+                      .clearGenerationSeed()
+                      .clearGeneratorType()
+                      .clearGeneratorParams())
+              .build());
+    }
+    if (includeGenerationRule) {
+      values.add(
+          mutation(
+                  commit,
+                  UUID.randomUUID(),
+                  logical,
+                  WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_GENERATION_RULE)
+              .setGenerationRule(
+                  GenerationRuleDesignMutation.newBuilder()
+                      .setName("retained-extra")
+                      .setValue("must-deny"))
+              .build());
+    }
+    var declaration =
+        WorldFreshGraphDeclaration.newBuilder()
+            .setTenantId(f.owner().canonicalTenantId().toString())
+            .setVersionId(f.owner().canonicalVersionId().toString())
+            .setStartLocation(
+                net.firedevops.firemud.worldmanagement.v1.RoomTemplateRef.newBuilder()
+                    .setTenantId(f.owner().canonicalTenantId().toString())
+                    .setVersionId(f.owner().canonicalVersionId().toString())
+                    .setRoomTemplateId(logical.toString()))
+            .addFamilyCounts(
+                count(values, WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION))
+            .addFamilyCounts(
+                count(values, WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ZONE))
+            .addFamilyCounts(
+                count(values, WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM))
+            .addFamilyCounts(
+                count(values, WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM_EXIT))
+            .addFamilyCounts(
+                count(values, WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_GENERATION_RULE))
+            .addFamilyCounts(
+                count(
+                    values,
+                    WorldDesignAggregateType
+                        .WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING))
+            .build();
+    values.set(0, values.getFirst().toBuilder().setFreshGraphDeclaration(declaration).build());
     List<DraftCommitBinding.RevisionPayload> revisions = new ArrayList<>();
     List<AffectedUnit> units = new ArrayList<>();
     revisions.add(
@@ -1077,6 +1542,13 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
         f.owner());
   }
 
+  private WorldFreshGraphFamilyCount count(
+      List<WorldDesignMutationRevision> mutations, WorldDesignAggregateType family) {
+    int count =
+        (int) mutations.stream().filter(mutation -> mutation.getAggregateType() == family).count();
+    return WorldFreshGraphFamilyCount.newBuilder().setFamily(family).setCount(count).build();
+  }
+
   private WorldDesignMutationRevision.Builder mutation(
       UUID commit, UUID id, UUID scope, WorldDesignAggregateType type) {
     return WorldDesignMutationRevision.newBuilder()
@@ -1105,25 +1577,50 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   }
 
   private TransactionTemplate ownerTransaction() {
-    TransactionTemplate tx = new TransactionTemplate(manager);
+    return ownerTransaction(manager);
+  }
+
+  private TransactionTemplate ownerTransaction(PlatformTransactionManager transactionManager) {
+    TransactionTemplate tx = new TransactionTemplate(transactionManager);
     tx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     tx.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
     return tx;
   }
 
   private void assertOrigin() {
+    assertOrigin(dsl);
+  }
+
+  private void assertOrigin(DSLContext context) {
     assertThat(
-            dsl.resultQuery("SELECT current_setting('session_replication_role')")
+            context
+                .resultQuery("SELECT current_setting('session_replication_role')")
                 .fetchOne(0, String.class))
         .isEqualTo("origin");
   }
 
   private long count(Fixture f, String table) {
-    String tenant = table.equals("world_topology_draft_commit") ? "local_tenant_key" : "tenant_id";
+    if (table.equals("world_draft_graph_application")) {
+      return Objects.requireNonNull(
+          dsl.resultQuery(
+                  "SELECT count(*) FROM world_draft_graph_application a "
+                      + "JOIN world_topology_draft_commit c ON c.request_id=a.request_id AND c.commit_id=a.commit_id "
+                      + "WHERE c.local_tenant_key=?",
+                  f.intake().localTenantKey())
+              .fetchOne(0, Long.class));
+    }
+    String tenant =
+        switch (table) {
+          case "world_topology_draft_commit" -> "local_tenant_key";
+          case "world_draft_start_location_receipt" -> "canonical_tenant_id";
+          default -> "tenant_id";
+        };
+    Object tenantId =
+        table.equals("world_draft_start_location_receipt")
+            ? f.owner().canonicalTenantId()
+            : f.intake().localTenantKey();
     return Objects.requireNonNull(
-        dsl.resultQuery(
-                "SELECT count(*) FROM " + table + " WHERE " + tenant + "=?",
-                f.intake().localTenantKey())
+        dsl.resultQuery("SELECT count(*) FROM " + table + " WHERE " + tenant + "=?", tenantId)
             .fetchOne(0, Long.class));
   }
 

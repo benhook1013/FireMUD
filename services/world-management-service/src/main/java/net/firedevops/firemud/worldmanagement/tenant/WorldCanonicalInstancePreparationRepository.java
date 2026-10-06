@@ -166,6 +166,8 @@ public final class WorldCanonicalInstancePreparationRepository {
   public Optional<Result> readOwnerPreparation(Input input) {
     Objects.requireNonNull(input, "input");
     requireNoActiveTransaction("Canonical World preparation readback");
+    WorldCanonicalInstancePreparation.requireExactReleaseGraph(
+        input.completeLaunchBinding().evidence().releaseAttestation(), input.topologyPlan());
     String inputJson = inputJson(input);
     String inputDigest = digest(inputJson.getBytes(StandardCharsets.UTF_8));
     Record row =
@@ -252,6 +254,8 @@ public final class WorldCanonicalInstancePreparationRepository {
           "Canonical preparation plan differs from the full immutable capture row/payload/revision/source vector");
     }
     WorldCanonicalInstancePreparation.requireGenerationFree(reconstructed);
+    WorldCanonicalInstancePreparation.requireExactReleaseGraph(
+        input.completeLaunchBinding().evidence().releaseAttestation(), reconstructed);
   }
 
   /**
@@ -338,7 +342,7 @@ public final class WorldCanonicalInstancePreparationRepository {
     }
   }
 
-  private static String inputJson(Input input) {
+  static String inputJson(Input input) {
     var request = input.gameSessionReadRequest();
     var evidence = input.gameSessionReadEvidence();
     var launch = input.completeLaunchBinding();

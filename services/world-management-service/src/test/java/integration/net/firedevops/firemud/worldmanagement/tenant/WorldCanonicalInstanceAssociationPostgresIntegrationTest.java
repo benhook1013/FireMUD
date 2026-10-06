@@ -2,6 +2,8 @@ package net.firedevops.firemud.worldmanagement.tenant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.util.JsonFormat;
@@ -139,6 +141,113 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
     associationRepository =
         new WorldCanonicalInstanceAssociationRepository(
             dsl, launchBindingRepository, sourceRepository, versionIdentityRepository);
+  }
+
+  @Test
+  void changedReleaseCommitFailsJavaAndDatabaseBeforeAllocation() {
+    assertReleaseCheckpointSubstitutionDenied(true);
+  }
+
+  @Test
+  void changedWorldContentDigestFailsJavaAndDatabaseBeforeAllocation() {
+    assertReleaseCheckpointSubstitutionDenied(false);
+  }
+
+  private void assertReleaseCheckpointSubstitutionDenied(boolean changeCommit) {
+    Fixture original = fixture();
+    var topology = frozenPlan(original);
+    var checkpoint = topology.sourceBinding().freeze();
+    var changedCheckpoint =
+        new CaptureRequest(
+            checkpoint.targetNamespace(),
+            checkpoint.canonicalTenantId(),
+            checkpoint.canonicalVersionId(),
+            checkpoint.intakeRequestId(),
+            checkpoint.publicationFence(),
+            checkpoint.publicationRequestId(),
+            checkpoint.requestDigest(),
+            checkpoint.versionStateEpoch(),
+            checkpoint.publishWorkflowId(),
+            changeCommit ? UUID.randomUUID().toString() : checkpoint.appliedCommitId(),
+            changeCommit
+                ? checkpoint.contentDigest()
+                : (checkpoint.contentDigest().startsWith("0") ? "1" : "0")
+                    + checkpoint.contentDigest().substring(1),
+            checkpoint.digestSchemaVersion(),
+            checkpoint.suppliedOwnedAffectedTuples());
+    var descriptorEvidence =
+        completeEvidence(
+            original.source().source(),
+            controlRequest(),
+            original.versionIdentity().gameDesignVersionId(),
+            original.versionIdentity().canonicalVersionId(),
+            VERSION_EPOCH,
+            "changed-checkpoint-descriptor",
+            changedCheckpoint.appliedCommitId());
+    var evidence =
+        new CompleteLaunchBindingEvidence(
+            descriptorEvidence.descriptor(),
+            releaseWithWorldCheckpoint(descriptorEvidence.releaseAttestation(), changedCheckpoint));
+    // This is a complete, digest-valid five-owner pair for the same Version. Pair retention alone
+    // must not make its different commit or World content eligible for local materialization.
+    var changedBinding =
+        Objects.requireNonNull(
+            ownerTransaction()
+                .execute(
+                    status ->
+                        launchBindingRepository.acceptFresh(
+                            NAMESPACE, original.source().receipt(), evidence)));
+    UUID instance = UUID.randomUUID();
+    UUID playableNamespace = UUID.randomUUID();
+    var request = requestFor(evidence, instance, UUID.randomUUID());
+    var response =
+        responseFor(
+            evidence, instance, playableNamespace, request.readRequestId(), "GS_FIXTURE", 1L);
+    assertThatThrownBy(
+            () ->
+                new WorldCanonicalInstancePreparation.Input(
+                    request, response, changedBinding, original.versionIdentity(), topology))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    // Deliberately bypass the Java constructor to exercise the database owner's independent gate.
+    var rawInput = mock(WorldCanonicalInstancePreparation.Input.class);
+    when(rawInput.gameSessionReadRequest()).thenReturn(request);
+    when(rawInput.gameSessionReadEvidence()).thenReturn(response);
+    when(rawInput.completeLaunchBinding()).thenReturn(changedBinding);
+    when(rawInput.versionIdentity()).thenReturn(original.versionIdentity());
+    when(rawInput.topologyPlan()).thenReturn(topology);
+    String inputJson = WorldCanonicalInstancePreparationRepository.inputJson(rawInput);
+    assertThatThrownBy(
+            () ->
+                ownerTransaction()
+                    .execute(
+                        status ->
+                            dsl.fetch(
+                                "SELECT * FROM world_prepare_canonical_instance(?, 'sha256:' || encode(sha256(convert_to(?, 'UTF8')), 'hex'))",
+                                inputJson,
+                                inputJson)))
+        .rootCause()
+        .hasMessageContaining("release differs from the exact selected frozen World graph");
+    assertThat(preparationCount(instance)).isZero();
+    assertThat(associationCount(instance)).isZero();
+    assertThat(
+            dsl.fetchOne(
+                "SELECT id FROM world_instance WHERE canonical_game_instance_id = ?", instance))
+        .isNull();
+    assertThat(
+            dsl.fetchOne(
+                "SELECT id FROM world_instance WHERE canonical_launch_binding_operation_id = ?",
+                changedBinding.operationId()))
+        .isNull();
+    assertThat(
+            launchBindingRepository
+                .read(
+                    NAMESPACE,
+                    changedBinding.canonicalTenantId(),
+                    changedBinding.controlPlaneRequestId())
+                .orElseThrow()
+                .evidence())
+        .isEqualTo(evidence);
   }
 
   @Test
@@ -693,8 +802,7 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
             original.source(),
             original.versionIdentity(),
             controlRequest(),
-            "synthetic-second-binding",
-            "synthetic-second-binding-attestation");
+            "synthetic-second-binding");
     Fixture changedBindingFixture =
         new Fixture(original.source(), secondBinding.binding(), secondBinding.versionIdentity());
     assertThatThrownBy(
@@ -731,7 +839,6 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
             null,
             controlRequest(),
             "synthetic-version-descriptor",
-            "synthetic-version-attestation",
             UUID.randomUUID(),
             positiveLong());
     UUID otherGameInstanceId = UUID.randomUUID();
@@ -1052,13 +1159,7 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
     long gameDesignVersionId = positiveLong();
     WorldAuthoredVersionIdentityReceipt identity =
         seedVersionIdentity(source, canonicalVersionId, gameDesignVersionId, VERSION_EPOCH);
-    SeededPair pair =
-        seedPair(
-            source,
-            identity,
-            controlRequest(),
-            "synthetic-launch-descriptor",
-            "synthetic-release-attestation");
+    SeededPair pair = seedPair(source, identity, controlRequest(), "synthetic-launch-descriptor");
     return new Fixture(source, pair.binding(), pair.versionIdentity());
   }
 
@@ -1075,14 +1176,12 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
       SourceFixture source,
       WorldAuthoredVersionIdentityReceipt identity,
       String controlPlaneRequestId,
-      String launchDescriptorId,
-      String attestationCommit) {
+      String launchDescriptorId) {
     return seedPair(
         source,
         identity,
         controlPlaneRequestId,
         launchDescriptorId,
-        attestationCommit,
         identity.canonicalVersionId(),
         identity.gameDesignVersionId());
   }
@@ -1092,13 +1191,16 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
       WorldAuthoredVersionIdentityReceipt identity,
       String controlPlaneRequestId,
       String launchDescriptorId,
-      String attestationCommit,
       UUID canonicalVersionId,
       long gameDesignVersionId) {
     WorldAuthoredVersionIdentityReceipt resolvedIdentity =
         identity == null
             ? seedVersionIdentity(source, canonicalVersionId, gameDesignVersionId, VERSION_EPOCH)
             : identity;
+    // The source and Draft authority remain synthetic, but this release's World checkpoint is
+    // taken from actual stored/frozen content rather than an unrelated fixture token or digest.
+    var frozen = frozenPlan(new Fixture(source, null, resolvedIdentity));
+    var checkpoint = frozen.sourceBinding().freeze();
     CompleteLaunchBindingEvidence evidence =
         completeEvidence(
             source.source(),
@@ -1107,12 +1209,18 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
             canonicalVersionId,
             VERSION_EPOCH,
             launchDescriptorId,
-            attestationCommit);
+            checkpoint.appliedCommitId());
+    evidence =
+        new CompleteLaunchBindingEvidence(
+            evidence.descriptor(),
+            releaseWithWorldCheckpoint(evidence.releaseAttestation(), checkpoint));
+    CompleteLaunchBindingEvidence exactEvidence = evidence;
     WorldCompleteLaunchBindingReceipt binding =
         ownerTransaction()
             .execute(
                 status ->
-                    launchBindingRepository.acceptFresh(NAMESPACE, source.receipt(), evidence));
+                    launchBindingRepository.acceptFresh(
+                        NAMESPACE, source.receipt(), exactEvidence));
     return new SeededPair(
         Objects.requireNonNull(binding, "launch binding returned no receipt"), resolvedIdentity);
   }
@@ -1714,6 +1822,49 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
         List.of(),
         List.of("look"),
         descriptor.generationConfigRevision());
+  }
+
+  private static AuthoredWorldReleaseAttestationEvidence releaseWithWorldCheckpoint(
+      AuthoredWorldReleaseAttestationEvidence release, CaptureRequest checkpoint) {
+    var participants =
+        release.participantDigests().stream()
+            .map(
+                participant ->
+                    new AuthoredWorldReleaseAttestationEvidence.Participant(
+                        participant.participantKey(),
+                        participant.scopeValue(),
+                        participant.baseVersionIdPresent(),
+                        participant.baseVersionId(),
+                        checkpoint.appliedCommitId(),
+                        "WORLD_MANAGEMENT".equals(participant.participantKey())
+                            ? checkpoint.contentDigest()
+                            : participant.contentDigest(),
+                        "WORLD_MANAGEMENT".equals(participant.participantKey())
+                            ? checkpoint.digestSchemaVersion()
+                            : participant.digestSchemaVersion(),
+                        participant.abilitySchemaDigestPresent(),
+                        participant.abilitySchemaDigest()))
+            .toList();
+    return AuthoredWorldReleaseAttestationEvidence.create(
+        release.targetNamespace(),
+        release.descriptorResultDigest(),
+        release.canonicalTenantId(),
+        release.canonicalVersionId(),
+        release.worldSlug(),
+        release.authoredWorldSourceOperationId(),
+        release.authoredWorldSourceEvidenceDigest(),
+        release.launchDescriptorId(),
+        release.publishedReleaseBundleRef(),
+        release.versionStateEpoch(),
+        checkpoint.publishWorkflowId(),
+        checkpoint.appliedCommitId(),
+        participants,
+        release.manifestHash(),
+        release.manifestSchemaVersion(),
+        release.requiredManifestAssetKeys(),
+        release.artifactDigests(),
+        release.commandDefinitions(),
+        release.generationConfigRevision());
   }
 
   private static AuthoredWorldReleaseAttestationEvidence.Participant participant(

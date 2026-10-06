@@ -411,6 +411,28 @@ enum WorldDesignAggregateType {
   WORLD_DESIGN_AGGREGATE_TYPE_WORLD_GENERATION_SUBTREE = 7;
 }
 
+// Canonical authored room identity for a selected World start location. This is not a runtime
+// room instance or a private database key.
+message RoomTemplateRef {
+  string tenant_id = 1;
+  string version_id = 2;
+  string room_template_id = 3;
+}
+
+message WorldFreshGraphFamilyCount {
+  WorldDesignAggregateType family = 1;
+  // Presence is carried by this repeated entry; zero is an explicit empty-family declaration.
+  optional int32 count = 2;
+}
+
+// Complete fresh graph declaration bound into the original Game Design revision payload.
+message WorldFreshGraphDeclaration {
+  string tenant_id = 1;
+  string version_id = 2;
+  RoomTemplateRef start_location = 3;
+  repeated WorldFreshGraphFamilyCount family_counts = 4;
+}
+
 enum WorldDesignMutationResult {
   WORLD_DESIGN_MUTATION_RESULT_UNSPECIFIED = 0;
   WORLD_DESIGN_MUTATION_RESULT_APPLIED = 1;

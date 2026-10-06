@@ -23,6 +23,7 @@ public class WorldDraftGraphApplicationRepository {
   private final DSLContext dsl;
   private final WorldDesignPublicationFenceRepository fence;
   private final WorldDraftTopologyCommitRepository topology;
+  private final WorldDraftStartLocationReceiptRepository startLocations;
   private final ObjectMapper mapper;
 
   @SuppressFBWarnings(value = "CT_CONSTRUCTOR_THROW", justification = "No resources or finalizer.")
@@ -32,6 +33,7 @@ public class WorldDraftGraphApplicationRepository {
     this.fence = Objects.requireNonNull(fence, "fence");
     this.mapper = Objects.requireNonNull(mapper, "mapper");
     topology = new WorldDraftTopologyCommitRepository(dsl, fence, mapper);
+    startLocations = new WorldDraftStartLocationReceiptRepository(dsl);
   }
 
   public Optional<WorldDraftGraphAppliedResult> readCommitted(
@@ -82,6 +84,10 @@ public class WorldDraftGraphApplicationRepository {
     fence.lockOpenAndResolve(application.operation().ownerBinding());
     prior = find(application.operation());
     if (!prior.isEmpty()) return readUnique(application, prior);
+    if (application.plan().graph().freshGraphDeclaration().isEmpty()) {
+      throw new ConflictException(
+          "New World graph applications require the complete original fresh-graph declaration");
+    }
     var operation = application.operation();
     if (dsl.fetchOne(
             "SELECT 1 FROM world_draft_terminal_outcome WHERE operation_id=? OR request_id=? OR commit_id=? OR authorization_fence_id=?",
@@ -109,6 +115,11 @@ public class WorldDraftGraphApplicationRepository {
     // V39 independently requires that history to have been inserted in THIS transaction.
     var stored = topology.store(application.plan());
     var result = WorldDraftGraphAppliedResult.create(application, stored.graphBytes());
+    result
+        .startLocationReceipt()
+        .ifPresent(
+            receipt ->
+                startLocations.store(receipt, application.operation().accountBindingBytes()));
     dsl.execute(
         "INSERT INTO world_draft_graph_application (operation_id,request_id,commit_id,authorization_fence_id,"
             + "operation_bytes,account_binding_bytes,account_binding_digest,result_bytes,result_digest) VALUES (?,?,?,?,?,?,?,?,?)",
@@ -278,11 +289,17 @@ public class WorldDraftGraphApplicationRepository {
       }
     }
     try {
+      var startLocation = startLocations.read(application, graph);
+      if (application.plan().graph().freshGraphDeclaration().isPresent()
+          && startLocation.isEmpty()) {
+        throw new ConflictException("World APPLIED result lacks exact start-location evidence");
+      }
       return WorldDraftGraphAppliedResult.fromStored(
           application,
           graph,
           row.get("result_bytes", byte[].class),
-          row.get("result_digest", String.class));
+          row.get("result_digest", String.class),
+          startLocation);
     } catch (IllegalArgumentException invalid) {
       throw new ConflictException("World APPLIED result failed exact immutable integrity readback");
     }
