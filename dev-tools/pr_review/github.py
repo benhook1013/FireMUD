@@ -213,6 +213,17 @@ def bind_hosted_preflight_budget(budget: HostedPreflightBudget) -> Iterator[None
         _HOSTED_PREFLIGHT_BUDGET.reset(token)
 
 
+@contextmanager
+def without_hosted_preflight_budget() -> Iterator[None]:
+    """Temporarily exempt bounded local cleanup without ending the shared budget."""
+
+    token: Token[HostedPreflightBudget | None] = _HOSTED_PREFLIGHT_BUDGET.set(None)
+    try:
+        yield
+    finally:
+        _HOSTED_PREFLIGHT_BUDGET.reset(token)
+
+
 def active_hosted_preflight_budget() -> HostedPreflightBudget | None:
     budget = _HOSTED_PREFLIGHT_BUDGET.get()
     return budget if budget is not None and budget.active else None

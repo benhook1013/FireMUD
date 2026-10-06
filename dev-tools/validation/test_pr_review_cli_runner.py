@@ -38,6 +38,7 @@ from pr_review.cli_runner import (
     run_cli_review,
     target_from_resolver,
 )
+from pr_review.controller import _SelectionChanged
 from pr_review.patch_identity import patch_diff_args
 from pr_review.policy import Channel, taper_satisfied
 from pr_review.runtime import LiveEvidence, LiveGitHub
@@ -517,6 +518,58 @@ def cli_anchor(*, parent_identity="develop", parent_head=PARENT, merge_base=PARE
 
 
 class CliReviewRunnerTests(unittest.TestCase):
+    def test_selection_retry_failure_preserves_the_original_cli_budget_and_capture(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            commands = FakeCommands(root)
+
+            def reject_admission(_reserve):
+                raise _SelectionChanged("selection changed during admission")
+
+            with github.cli_preflight_budget(timeout_seconds=30) as budget:
+                with self.assertRaisesRegex(_SelectionChanged, "selection changed during admission"):
+                    run_cli_review(
+                        target(),
+                        github=FakeGitHub(),
+                        source_root=root,
+                        runner=commands,
+                        admit=reject_admission,
+                    )
+
+                self.assertTrue(budget.active)
+                self.assertIs(github.active_hosted_preflight_budget(), budget)
+                self.assertGreater(budget.remaining_seconds(), 0)
+
+            run_dirs = list((root / ".git" / "firemud" / "pr-review" / "runs").glob("run.*"))
+            self.assertEqual(len(run_dirs), 1)
+            self.assertIn("selection changed during admission", (run_dirs[0] / "error").read_text())
+            self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
+
+    def test_overlap_preflight_deadline_keeps_its_diagnostic_in_cli_capture(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            common_dir = root / ".git"
+            common_dir.mkdir()
+            write_hosted_trigger(common_dir)
+            commands = FakeCommands(root)
+            deadline = github.HostedPreflightDeadlineExceeded(
+                "hosted_overlap_preflight", 121.5, 120, 0, 1, "CLI"
+            )
+
+            with (
+                github.cli_preflight_budget(),
+                patch("pr_review.cli_runner.github_api.fetch_pull_request", side_effect=deadline),
+                self.assertRaises(github.HostedPreflightDeadlineExceeded) as raised,
+            ):
+                run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands)
+
+            self.assertIs(raised.exception, deadline)
+            run_dirs = list((common_dir / "firemud" / "pr-review" / "runs").glob("run.*"))
+            self.assertEqual(len(run_dirs), 1)
+            self.assertEqual((run_dirs[0] / "error").read_text(), f"{deadline}\n")
+            self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
+
     def test_cli_lock_acquisition_checks_the_shared_deadline_and_reports_progress(self):
         class Clock:
             now = 0.0

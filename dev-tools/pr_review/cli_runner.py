@@ -685,6 +685,8 @@ def _select_candidate_for_hosted_overlap(
                 "rate_limited",
             }:
                 raise hold(state.state, reservation_sha=state.head_sha)
+    except github_api.HostedPreflightDeadlineExceeded:
+        raise
     except ReviewRunnerError:
         raise
     except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
@@ -1497,29 +1499,28 @@ def run_cli_review(
                         for cleanup_error in cleanup_errors:
                             add_note(f"CLI candidate cleanup also failed: {cleanup_error}")
         except Exception as error:
-            if budget is not None:
-                budget.suspend()
-            if capture_dir.exists():
-                try:
-                    (capture_dir / "error").write_text(f"{error}\n", encoding="utf-8")
-                except OSError as capture_error:
-                    add_note = getattr(error, "add_note", None)
-                    if callable(add_note):
-                        add_note(f"CLI failure diagnostic could not be written to its capture: {capture_error}")
-            if records is not None and attempt_started and not attempt_finished and not provider_result_saved:
-                try:
-                    records.finish_attempt(
-                        run_id,
-                        state="failed",
-                        diagnostic=f"CLI setup or preflight failed: {error}",
-                        artifacts={"cli_diagnostic": str(error)},
-                    )
-                except (ReviewRecordsError, OSError, sqlite3.DatabaseError) as archive_error:
-                    # Keep the original provider failure while surfacing the
-                    # separate archive failure to the caller.
-                    add_note = getattr(error, "add_note", None)
-                    if callable(add_note):
-                        add_note(f"SQLite review-attempt archival also failed: {archive_error}")
+            with github_api.without_hosted_preflight_budget():
+                if capture_dir.exists():
+                    try:
+                        (capture_dir / "error").write_text(f"{error}\n", encoding="utf-8")
+                    except OSError as capture_error:
+                        add_note = getattr(error, "add_note", None)
+                        if callable(add_note):
+                            add_note(f"CLI failure diagnostic could not be written to its capture: {capture_error}")
+                if records is not None and attempt_started and not attempt_finished and not provider_result_saved:
+                    try:
+                        records.finish_attempt(
+                            run_id,
+                            state="failed",
+                            diagnostic=f"CLI setup or preflight failed: {error}",
+                            artifacts={"cli_diagnostic": str(error)},
+                        )
+                    except (ReviewRecordsError, OSError, sqlite3.DatabaseError) as archive_error:
+                        # Keep the original provider failure while surfacing the
+                        # separate archive failure to the caller.
+                        add_note = getattr(error, "add_note", None)
+                        if callable(add_note):
+                            add_note(f"SQLite review-attempt archival also failed: {archive_error}")
             raise
         finally:
             try:

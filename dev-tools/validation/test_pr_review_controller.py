@@ -24,6 +24,7 @@ sys.path.insert(0, str(ROOT / "dev-tools"))
 
 from pr_review import cli_runner, evidence, github, hosted, sqlite_provider_imports, stack
 from pr_review.cli import _parser
+from pr_review.cli_runner import StaleReviewTargetError
 from pr_review.controller import (
     HOSTED_ACTIVE_RESPONSE_REASON,
     HOSTED_CLI_OVERLAP_HOLD_REASON,
@@ -35,6 +36,7 @@ from pr_review.controller import (
     ReviewController,
     StaleReviewTarget,
     WrongStackTarget,
+    _SelectionChanged,
     compact_result,
     json_result,
 )
@@ -7334,6 +7336,86 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(batch_calls, [(1, 2, 3)])
         self.assertEqual(selected, [1])
         self.assertEqual({number for number, _channel in evidence.history_reads}, {1, 2, 3})
+
+    def test_cli_selection_change_reselects_with_the_same_active_budget(self):
+        controller = self.make({1: pr(1, HEAD_1)}, heads={"develop": BASE, "feature-1": HEAD_1})
+        controller.set_stack([1])
+        adapter_targets = []
+
+        def adapter(target, **_kwargs):
+            adapter_targets.append(target)
+            self.assertIs(github.active_hosted_preflight_budget(), budget)
+            if len(adapter_targets) == 1:
+                raise _SelectionChanged("selection changed during admission")
+            return target
+
+        controller.cli_adapter = adapter
+        with github.cli_preflight_budget(timeout_seconds=30) as budget:
+            result = controller.run_cli(expected_pr=1)
+
+        self.assertIs(result, adapter_targets[-1])
+        self.assertEqual(len(adapter_targets), 2)
+        self.assertTrue(budget.active)
+
+    def test_stale_default_base_reselects_cli_target(self):
+        advanced_base = "9" * 40
+        values = {1: pr(1, HEAD_1)}
+        controller = self.make(values, heads={"develop": BASE, "feature-1": HEAD_1})
+        controller.set_stack([1])
+        selected_targets = []
+
+        def adapter(target, **_kwargs):
+            selected_targets.append(target)
+            if len(selected_targets) == 1:
+                controller.git.heads["develop"] = advanced_base
+                controller.github.values[1] = pr(1, HEAD_1, base_tip=advanced_base)
+                raise StaleReviewTargetError("default base advanced after CLI target selection")
+            return target
+
+        controller.cli_adapter = adapter
+
+        result = controller.run_cli(expected_pr=1)
+
+        self.assertIs(result, selected_targets[-1])
+        self.assertEqual(len(selected_targets), 2)
+        self.assertEqual(selected_targets[0].parent.head_sha, BASE)
+        self.assertEqual(selected_targets[1].parent.head_sha, advanced_base)
+        self.assertTrue(selected_targets[1].default_base_front)
+
+    def test_cli_deadline_expiring_during_reselection_prevents_another_runner_start(self):
+        controller = self.make({1: pr(1, HEAD_1)}, heads={"develop": BASE, "feature-1": HEAD_1})
+        controller.set_stack([1])
+        runner_starts = []
+        target_reads = []
+
+        def adapter(_target, **_kwargs):
+            runner_starts.append("started")
+            raise _SelectionChanged("selection changed during admission")
+
+        controller.cli_adapter = adapter
+        original_target = controller._target
+
+        def expire_on_reselection(*args, **kwargs):
+            target_reads.append("selected")
+            if len(target_reads) == 2:
+                budget.deadline = time.monotonic() - 1
+                budget.remaining_seconds()
+            return original_target(*args, **kwargs)
+
+        with (
+            github.cli_preflight_budget(timeout_seconds=30) as budget,
+            patch.object(controller, "_target", side_effect=expire_on_reselection),
+            self.assertRaisesRegex(
+                ControllerError,
+                r"CLI preflight deadline exceeded \(phase=target_reselection, .*completed=0/1, budget=30s\)",
+            ),
+        ):
+            controller.run_cli(expected_pr=1)
+
+        self.assertEqual(target_reads, ["selected", "selected"])
+        self.assertEqual(runner_starts, ["started"])
+        self.assertTrue(budget.active)
+        self.assertLessEqual(budget.deadline, time.monotonic())
 
     def test_cli_run_fails_closed_when_a_batched_stack_identity_is_missing(self):
         values, heads = _stacked_prs(2)
