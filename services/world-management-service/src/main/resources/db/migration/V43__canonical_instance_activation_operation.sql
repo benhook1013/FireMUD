@@ -178,7 +178,7 @@ BEGIN
             AND b.descriptor_result_digest=a.descriptor_result_digest
             AND b.release_attestation_digest=a.release_attestation_digest
             AND b.descriptor_json::JSONB->>'launchDescriptorId'=a.launch_descriptor_id
-            AND b.descriptor_json::JSONB->>'versionId'=a.version_id::TEXT
+            AND b.descriptor_json::JSONB->>'versionId'=v.game_design_version_id::TEXT
             AND b.descriptor_json::JSONB->>'gameTemplateId'=a.game_template_id::TEXT
             AND b.descriptor_json::JSONB->>'targetNamespace'=a.canonical_target_namespace
             AND b.descriptor_json::JSONB->>'canonicalTenantId'=a.canonical_tenant_id::TEXT
@@ -232,7 +232,7 @@ BEGIN
             AND v.source_operation_id=a.source_operation_id
             AND v.source_evidence_digest=a.source_evidence_digest
             AND v.intake_receipt_digest=a.intake_receipt_digest
-            AND v.game_design_version_id=a.version_id
+            AND v.game_design_version_id::TEXT=b.descriptor_json::JSONB->>'versionId'
             AND v.version_state_epoch=a.version_state_epoch
             AND p.target_namespace=a.canonical_target_namespace
             AND p.canonical_tenant_id=a.canonical_tenant_id

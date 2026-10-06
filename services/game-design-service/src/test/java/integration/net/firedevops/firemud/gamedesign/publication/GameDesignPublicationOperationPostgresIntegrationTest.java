@@ -495,6 +495,7 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
   void retainedV50TerminalReadFailsPreconditionWithoutBackfillingEvidenceOrEpoch()
       throws Exception {
     var fixture = fixture("50");
+    assertThat(fixture.candidate()).isNull();
     var op = fixture.operation();
     var old = new ByteArrayOutputStream();
     DraftAuthorizationFenceBinding.frame(old, "game-design-publication-owner-readback/v1");
@@ -1083,60 +1084,64 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
               }
             });
     var operations = new GameDesignPublicationOperationRepository(dsl);
-    var gameAssets = new GameAssetRepository(dsl);
-    var asset =
-        write.execute(
-            status -> {
-              var requested = new GameAsset();
-              requested.setTenantId(game.getTenantId());
-              requested.setFileName(ASSET_FILE_NAME);
-              requested.setContentType(ASSET_CONTENT_TYPE);
-              requested.setData(ASSET_BYTES);
-              return gameAssets.save(requested);
-            });
-    var publicationRepository = new VersionAssetPublicationRepository(dsl);
-    var publicationService =
-        new VersionAssetPublicationServiceImpl(transactions, publicationRepository);
-    publicationService.associateDraftAsset(
-        game.getTenantId(), version.getId(), asset.getId(), "logo");
-    var snapshot =
-        publicationService.freezeOrReadSnapshot(game.getTenantId(), version.getVersionNumber());
-    var artifactService =
-        new VersionAssetArtifactServiceImpl(
-            new VersionAssetArtifactRepository(dsl),
-            null,
-            versions,
-            null,
-            null,
-            null,
-            null,
-            null,
-            new ObjectMapper());
-    write.execute(
-        status ->
-            artifactService.stageExport(
-                game.getTenantId(),
-                version.getId(),
-                version.getVersionNumber(),
-                operation.workflowId()));
+    ExportedAssetManifest readCandidate = null;
+    if (!"50".equals(migrationTarget)) {
+      var gameAssets = new GameAssetRepository(dsl);
+      var asset =
+          write.execute(
+              status -> {
+                var requested = new GameAsset();
+                requested.setTenantId(game.getTenantId());
+                requested.setFileName(ASSET_FILE_NAME);
+                requested.setContentType(ASSET_CONTENT_TYPE);
+                requested.setData(ASSET_BYTES);
+                return gameAssets.save(requested);
+              });
+      var publicationRepository = new VersionAssetPublicationRepository(dsl);
+      var publicationService =
+          new VersionAssetPublicationServiceImpl(transactions, publicationRepository);
+      publicationService.associateDraftAsset(
+          game.getTenantId(), version.getId(), asset.getId(), "logo");
+      var snapshot =
+          publicationService.freezeOrReadSnapshot(game.getTenantId(), version.getVersionNumber());
+      var artifactService =
+          new VersionAssetArtifactServiceImpl(
+              new VersionAssetArtifactRepository(dsl),
+              null,
+              versions,
+              null,
+              null,
+              null,
+              null,
+              null,
+              new ObjectMapper());
+      write.execute(
+          status ->
+              artifactService.stageExport(
+                  game.getTenantId(),
+                  version.getId(),
+                  version.getVersionNumber(),
+                  operation.workflowId()));
+      var artifacts = new VersionAssetArtifactRepository(dsl);
+      var candidateService =
+          new VersionAssetExportCandidateServiceImpl(
+              versions,
+              games,
+              new PublishAttemptRepository(dsl),
+              artifacts,
+              publicationService,
+              transactions,
+              new ObjectMapper());
+      var requestedCandidate = candidate(snapshot);
+      var committedCandidate =
+          candidateService.recordExportCandidate(
+              game.getTenantId(), version.getVersionNumber(), requestedCandidate);
+      readCandidate =
+          candidateService.readExportCandidate(game.getTenantId(), version.getVersionNumber());
+      assertThat(committedCandidate).isEqualTo(requestedCandidate);
+      assertThat(readCandidate).isEqualTo(committedCandidate);
+    }
     var artifacts = new VersionAssetArtifactRepository(dsl);
-    var candidateService =
-        new VersionAssetExportCandidateServiceImpl(
-            versions,
-            games,
-            new PublishAttemptRepository(dsl),
-            artifacts,
-            publicationService,
-            transactions,
-            new ObjectMapper());
-    var requestedCandidate = candidate(snapshot);
-    var committedCandidate =
-        candidateService.recordExportCandidate(
-            game.getTenantId(), version.getVersionNumber(), requestedCandidate);
-    var readCandidate =
-        candidateService.readExportCandidate(game.getTenantId(), version.getVersionNumber());
-    assertThat(committedCandidate).isEqualTo(requestedCandidate);
-    assertThat(readCandidate).isEqualTo(committedCandidate);
     return new Fixture(
         dsl,
         write,

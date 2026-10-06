@@ -993,25 +993,112 @@ class PublicationAuthorizationFencePostgresIntegrationTest {
     tx(context, () -> context.publication().reserve(binding));
     tx(context, () -> context.publication().claimPublicationOrder(binding));
     var change = change(binding);
-    assertThat(tx(context, () -> context.draft().requestSourceChange(change))).isFalse();
+
+    // V79 has no V80 owner-result table for the current repository settlement read. The failed
+    // request is not a historical retained source change, and its transaction must leave no rows.
+    assertThatThrownBy(() -> tx(context, () -> context.draft().requestSourceChange(change)))
+        .isInstanceOf(DataAccessException.class)
+        .hasStackTraceContaining("account_publication_authorization_owner_results");
+    assertThat(context.dsl().fetchCount(DSL.table("account_draft_authorization_source_changes")))
+        .isZero();
+    assertThat(context.dsl().fetchCount(DSL.table("account_draft_authorization_changed_scopes")))
+        .isZero();
+    var orderedBeforeHistory = tx(context, () -> context.publication().read(binding));
+    assertThat(orderedBeforeHistory.ordering()).isEqualTo(Ordering.PUBLICATION_ORDER);
+
+    // Seed a valid historical V79 WAITING journal through its existing owner tables. These bytes
+    // come from the exact source-change value and scopes; the SQL fixture does not claim owner
+    // authorization or publication settlement.
+    txRun(
+        context,
+        () -> {
+          context
+              .dsl()
+              .execute(
+                  "INSERT INTO account_draft_authorization_source_changes"
+                      + " (change_id, binding, status, requested_at)"
+                      + " VALUES (?, ?, 'WAITING', TIMESTAMPTZ '2026-10-06 12:34:56+00')",
+                  change.changeId(),
+                  change.canonicalBytes());
+          for (var source : change.sources()) {
+            context
+                .dsl()
+                .execute(
+                    "INSERT INTO account_draft_authorization_changed_scopes"
+                        + " (change_id, source_key) VALUES (?, ?)",
+                    change.changeId(),
+                    source.key());
+          }
+        });
+
+    var retainedTables =
+        Map.of(
+            "account_draft_authorization_source_locks",
+            retainedRows(context, "account_draft_authorization_source_locks"),
+            "account_draft_authorization_source_changes",
+            retainedRows(context, "account_draft_authorization_source_changes"),
+            "account_draft_authorization_changed_scopes",
+            retainedRows(context, "account_draft_authorization_changed_scopes"),
+            "account_publication_authorization_fences",
+            retainedRows(context, "account_publication_authorization_fences"),
+            "account_publication_authorization_sources",
+            retainedRows(context, "account_publication_authorization_sources"));
+    var beforeChange =
+        context
+            .dsl()
+            .fetchOne(
+                "SELECT binding, status, requested_at, committed_at FROM"
+                    + " account_draft_authorization_source_changes WHERE change_id = ?",
+                change.changeId());
+    assertThat(beforeChange).isNotNull();
+    assertThat(beforeChange.get("binding", byte[].class)).isEqualTo(change.canonicalBytes());
+    assertThat(beforeChange.get("status", String.class)).isEqualTo("WAITING");
+    assertThat(
+            context
+                .dsl()
+                .fetch(
+                    "SELECT source_key FROM account_draft_authorization_changed_scopes"
+                        + " WHERE change_id = ? ORDER BY source_key",
+                    change.changeId())
+                .getValues("source_key", String.class))
+        .containsExactlyElementsOf(change.sources().stream().map(SourceEvidence::key).toList());
     var before = tx(context, () -> context.publication().read(binding));
     assertThat(before.ordering()).isEqualTo(Ordering.PUBLICATION_ORDER);
-    assertThat(tx(context, () -> context.draft().readSourceChange(change)).status())
-        .isEqualTo("WAITING");
 
     migrate(context.source(), "latest");
+
+    for (var retainedTable : retainedTables.entrySet()) {
+      assertThat(retainedRows(context, retainedTable.getKey()))
+          .as("complete retained rows in %s", retainedTable.getKey())
+          .isEqualTo(retainedTable.getValue());
+    }
 
     var after = tx(context, () -> context.publication().read(binding));
     assertThat(after.binding()).isEqualTo(before.binding());
     assertThat(after.ordering()).isEqualTo(before.ordering());
     assertThat(after.reservedAt()).isEqualTo(before.reservedAt());
     assertThat(after.orderedAt()).isEqualTo(before.orderedAt());
-    assertThat(tx(context, () -> context.draft().readSourceChange(change)).status())
-        .isEqualTo("WAITING");
+    var afterChange = tx(context, () -> context.draft().readSourceChange(change));
+    assertThat(afterChange.binding()).isEqualTo(beforeChange.get("binding", byte[].class));
+    assertThat(afterChange.status()).isEqualTo(beforeChange.get("status", String.class));
+    assertThat(afterChange.requestedAt())
+        .isEqualTo(beforeChange.get("requested_at", OffsetDateTime.class));
+    assertThat(afterChange.committedAt())
+        .isEqualTo(beforeChange.get("committed_at", OffsetDateTime.class));
     assertThat(
             context.dsl().fetchCount(DSL.table("account_publication_authorization_owner_results")))
         .isZero();
     assertThat(tx(context, () -> context.draft().sourceMutationPermitted(change))).isFalse();
+  }
+
+  private static List<String> retainedRows(Context context, String table) {
+    return context
+        .dsl()
+        .fetch(
+            "SELECT to_jsonb(retained)::text AS retained_row FROM "
+                + table
+                + " retained ORDER BY to_jsonb(retained)")
+        .getValues("retained_row", String.class);
   }
 
   private static AccountPublicationAuthorizationBinding binding() {
