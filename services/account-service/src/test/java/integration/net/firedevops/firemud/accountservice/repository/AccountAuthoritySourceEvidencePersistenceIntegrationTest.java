@@ -328,8 +328,7 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
     assertThat(
             Objects.requireNonNull(
                     dsl.fetchOne(
-                        "SELECT * FROM accounts WHERE account_uuid = ?",
-                        account.getAccountUuid()),
+                        "SELECT * FROM accounts WHERE account_uuid = ?", account.getAccountUuid()),
                     "expected Account after lifecycle rejection")
                 .intoMap())
         .isEqualTo(accountBeforeLifecycleRejection);
