@@ -31,6 +31,10 @@ public class AccountTenantAuthorityEventRepository {
   private final FreshTenantIdentityAssociationRepository tenantIdentity;
   private final AccountAuthorityGenerationRepository generations;
 
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification =
+          "Preserve injected collaborator preconditions; Spring must proxy this non-final repository.")
   public AccountTenantAuthorityEventRepository(
       DSLContext dsl,
       AccountAuthorityOutboxRepository authorityOutbox,

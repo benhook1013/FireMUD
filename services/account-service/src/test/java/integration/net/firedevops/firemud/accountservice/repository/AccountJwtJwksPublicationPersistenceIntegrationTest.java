@@ -363,7 +363,9 @@ class AccountJwtJwksPublicationPersistenceIntegrationTest {
   }
 
   private static long count(TestContext context, String table) {
-    return context.dsl().resultQuery("SELECT COUNT(*) FROM " + table).fetchOne(0, Long.class);
+    return java.util.Objects.requireNonNull(
+        context.dsl().resultQuery("SELECT COUNT(*) FROM " + table).fetchOne(0, Long.class),
+        "COUNT query must return a scalar row");
   }
 
   private static TrustFence trust() {

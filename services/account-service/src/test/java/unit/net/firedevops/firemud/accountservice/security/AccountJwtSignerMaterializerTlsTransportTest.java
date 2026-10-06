@@ -129,13 +129,12 @@ class AccountJwtSignerMaterializerTlsTransportTest {
 
   @AfterEach
   void stopTransport() throws InterruptedException {
-    for (ManagedChannel channel : channels) {
-      channel.shutdownNow();
-    }
+    List<ManagedChannel> terminatingChannels =
+        channels.stream().map(ManagedChannel::shutdownNow).toList();
     if (server != null) {
       server.shutdownNow();
     }
-    for (ManagedChannel channel : channels) {
+    for (ManagedChannel channel : terminatingChannels) {
       assertThat(channel.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
     }
     if (server != null) {

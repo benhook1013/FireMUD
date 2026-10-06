@@ -84,8 +84,7 @@ class AccountJwtJwksTrustedSourceTest {
     assertThat(identity.apiServerOrigin()).isEqualTo("https://kubernetes.test:6443");
     assertThat(identity.servingCaSha256()).isEqualTo(API_CA_DIGEST);
     assertThat(snapshot.sourceIdentity()).isEqualTo(identity);
-    assertThat(snapshot.jwksBytes())
-        .containsExactly(fixture.publicJwks.getBytes(StandardCharsets.UTF_8));
+    assertThat(snapshot.jwksBytes()).containsExactly(JWKS_1.getBytes(StandardCharsets.UTF_8));
     verify(fixture.desiredStateRepository, never())
         .readCurrentCommittedSigner(any(), any(), any(), any());
     verify(fixture.configMapClient, never()).publish(any(), anyMap());
@@ -235,7 +234,7 @@ class AccountJwtJwksTrustedSourceTest {
     Map<String, String> changedData =
         Map.of(
             AccountJwtJwksPublicationRepository.JWKS_DATA_KEY,
-            fixture.publicJwks,
+            JWKS_1,
             AccountJwtJwksPublicationRepository.GENERATION_MARKER_DATA_KEY,
             "{\"phase\":\"OTHER\"}");
     when(fixture.configMapClient.observe())
@@ -269,8 +268,7 @@ class AccountJwtJwksTrustedSourceTest {
             fingerprint(JWK_1),
             Optional.of(new ActiveSigner("1", "key_1")));
     PublicationEvidence conflicting =
-        fixture.publication(
-            fixture.publicJwks, activeMarker, "41", "42", "1", "key_1", Optional.empty());
+        fixture.publication(JWKS_1, activeMarker, "41", "42", "1", "key_1", Optional.empty());
     when(fixture.publicationRepository.readCurrentPublication(
             eq(fixture.binding.accountBinding()), eq(fixture.trustFence)))
         .thenReturn(Optional.of(conflicting));
@@ -362,7 +360,6 @@ class AccountJwtJwksTrustedSourceTest {
             API_CA_DIGEST,
             "system:serviceaccount:" + NAMESPACE + ":account-service");
     private final String publicFingerprint = fingerprint(JWK_1);
-    private final String publicJwks = JWKS_1;
     private final EnrollmentIdentity enrollmentIdentity;
     private final GenerationRequest initialRequest;
     private final GenerationResult initialResult;
@@ -425,15 +422,14 @@ class AccountJwtJwksTrustedSourceTest {
               Optional.of(INITIAL_OPERATION_ID),
               Optional.empty(),
               Optional.of(enrollmentIdentity));
-      publication =
-          publication(publicJwks, initialMarker, "41", "42", "1", "key_1", Optional.empty());
+      publication = publication(JWKS_1, initialMarker, "41", "42", "1", "key_1", Optional.empty());
       snapshot =
           new ConfigMapSnapshot(
               CONFIG_MAP_UID,
               "42",
               Map.of(
                   AccountJwtJwksPublicationRepository.JWKS_DATA_KEY,
-                  publicJwks,
+                  JWKS_1,
                   AccountJwtJwksPublicationRepository.GENERATION_MARKER_DATA_KEY,
                   initialMarker,
                   "operator.note",
@@ -477,7 +473,7 @@ class AccountJwtJwksTrustedSourceTest {
           mock(AccountJwtSignerDesiredStateRepository.ActiveJwksPromotionReceipt.class);
       String activeMarker = activeMarker(active);
       String activeDigest =
-          AccountJwtJwksPublicationRepository.publicDataDigest(publicJwks, activeMarker);
+          AccountJwtJwksPublicationRepository.publicDataDigest(JWKS_1, activeMarker);
       when(committed.promotion()).thenReturn(promotion);
       when(committed.desiredState()).thenReturn(committedState);
       when(committed.publicReceipt()).thenReturn(receipt);
@@ -485,7 +481,7 @@ class AccountJwtJwksTrustedSourceTest {
       when(promotion.targetKid()).thenReturn("key_1");
       when(promotion.targetPublicKeyFingerprint()).thenReturn(publicFingerprint);
       when(promotion.publicConfigMapUid()).thenReturn(CONFIG_MAP_UID);
-      when(promotion.expectedPublicJwksJson()).thenReturn(publicJwks);
+      when(promotion.expectedPublicJwksJson()).thenReturn(JWKS_1);
       when(promotion.expectedActiveMarkerJson()).thenReturn(activeMarker);
       when(promotion.activeJwksObservedResourceVersion()).thenReturn(Optional.of("42"));
       when(promotion.activeJwksPublicDataDigest()).thenReturn(Optional.of(activeDigest));

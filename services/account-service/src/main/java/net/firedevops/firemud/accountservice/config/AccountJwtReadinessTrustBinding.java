@@ -321,7 +321,7 @@ public final class AccountJwtReadinessTrustBinding {
       binding.put("validUntilEpochSecond", validUntilEpochSecond);
       byte[] canonical = Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(binding));
       return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(canonical));
-    } catch (Exception ex) {
+    } catch (IOException | NoSuchAlgorithmException | RuntimeException ex) {
       throw new IllegalStateException("Readiness binding digest is unavailable");
     }
   }

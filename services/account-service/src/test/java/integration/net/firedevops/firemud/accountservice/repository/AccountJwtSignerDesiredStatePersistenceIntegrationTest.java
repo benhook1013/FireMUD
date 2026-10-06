@@ -698,9 +698,10 @@ class AccountJwtSignerDesiredStatePersistenceIntegrationTest {
 
     invokeWithAuthenticatedPeer(interceptor, service, request, response, PEER_SPKI);
 
-    assertThat(response.error).isInstanceOf(StatusRuntimeException.class);
-    assertThat(((StatusRuntimeException) response.error).getStatus().getCode())
-        .isEqualTo(io.grpc.Status.Code.PERMISSION_DENIED);
+    assertThat(response.error.type()).isEqualTo(StatusRuntimeException.class.getName());
+    assertThat(response.error.code()).isEqualTo(io.grpc.Status.Code.PERMISSION_DENIED);
+    assertThat(response.error.message()).contains("PERMISSION_DENIED");
+    assertThat(response.value).isNull();
     assertThat(response.completed).isFalse();
     verify(provider, times(3)).current();
     assertThat(count(context, "account_jwt_signer_generation_results")).isZero();
@@ -726,7 +727,9 @@ class AccountJwtSignerDesiredStatePersistenceIntegrationTest {
   }
 
   private static long count(TestContext context, String tableName) {
-    return context.dsl().resultQuery("SELECT COUNT(*) FROM " + tableName).fetchOne(0, Long.class);
+    return java.util.Objects.requireNonNull(
+        context.dsl().resultQuery("SELECT COUNT(*) FROM " + tableName).fetchOne(0, Long.class),
+        "COUNT query must return a scalar row");
   }
 
   private static void assertRejectedPartialPromotionInsert(
@@ -1008,7 +1011,7 @@ class AccountJwtSignerDesiredStatePersistenceIntegrationTest {
 
   private static final class RecordingObserver<T> implements StreamObserver<T> {
     private T value;
-    private Throwable error;
+    private ErrorDiagnostic error;
     private boolean completed;
 
     @Override
@@ -1018,13 +1021,21 @@ class AccountJwtSignerDesiredStatePersistenceIntegrationTest {
 
     @Override
     public void onError(Throwable error) {
-      this.error = error;
+      this.error =
+          new ErrorDiagnostic(
+              error.getClass().getName(),
+              error instanceof StatusRuntimeException statusError
+                  ? statusError.getStatus().getCode()
+                  : null,
+              error.getMessage());
     }
 
     @Override
     public void onCompleted() {
       completed = true;
     }
+
+    private record ErrorDiagnostic(String type, io.grpc.Status.Code code, String message) {}
   }
 
   private static List<Object> race(Callable<Object> left, Callable<Object> right) throws Exception {

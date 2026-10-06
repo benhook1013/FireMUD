@@ -128,7 +128,7 @@ class AccountJwtReadinessProbePersistenceIntegrationTest {
   private static String testJdbcUrl;
   private static String testJdbcUsername;
   private static String testJdbcPassword;
-  private static boolean startedOwnedContainer;
+  private static volatile boolean startedOwnedContainer;
 
   @BeforeAll
   static void configureDatabase() {
@@ -252,10 +252,12 @@ class AccountJwtReadinessProbePersistenceIntegrationTest {
     assertThat(mountObservation.publicationReceiptDigest()).isEqualTo(receipt.receiptDigest());
 
     long now =
-        context
-            .dsl()
-            .resultQuery("SELECT floor(extract(epoch FROM CURRENT_TIMESTAMP))::bigint")
-            .fetchOne(0, Long.class);
+        java.util.Objects.requireNonNull(
+            context
+                .dsl()
+                .resultQuery("SELECT floor(extract(epoch FROM CURRENT_TIMESTAMP))::bigint")
+                .fetchOne(0, Long.class),
+            "Database timestamp query must return a scalar row");
     // Controlled historical-plan fixture to reach the post-cache lifecycle without waiting in
     // this persistence test. This is not evidence of a production 300-second cache convergence.
     InventorySnapshot inventorySnapshot = inventorySnapshot(Instant.ofEpochSecond(now - 301));
@@ -313,14 +315,16 @@ class AccountJwtReadinessProbePersistenceIntegrationTest {
 
     assertThat(count(context, "account_jwt_validator_inventory_snapshots")).isEqualTo(1L);
     assertThat(count(context, "account_jwt_readiness_probe_plans")).isEqualTo(1L);
-    assertThat(
+    var retainedPlan =
+        java.util.Objects.requireNonNull(
             context
                 .dsl()
                 .fetchOne(
                     "SELECT inventory_snapshot_digest FROM account_jwt_readiness_probe_plans "
                         + "WHERE rotation_operation_id = ?",
-                    result.operationId())
-                .get("inventory_snapshot_digest", String.class))
+                    result.operationId()),
+            "Readiness plan must remain present after planning");
+    assertThat(retainedPlan.get("inventory_snapshot_digest", String.class))
         .isEqualTo(inventorySnapshot.digest());
     assertThatThrownBy(
             () ->
@@ -330,14 +334,16 @@ class AccountJwtReadinessProbePersistenceIntegrationTest {
         .isInstanceOf(DataAccessException.class);
     assertThat(count(context, "account_jwt_validator_inventory_snapshots")).isEqualTo(1L);
     assertThat(count(context, "account_jwt_readiness_probe_plans")).isEqualTo(1L);
-    assertThat(
+    var retainedPlanAfterRejectedTruncate =
+        java.util.Objects.requireNonNull(
             context
                 .dsl()
                 .fetchOne(
                     "SELECT inventory_snapshot_digest FROM account_jwt_readiness_probe_plans "
                         + "WHERE rotation_operation_id = ?",
-                    result.operationId())
-                .get("inventory_snapshot_digest", String.class))
+                    result.operationId()),
+            "Readiness plan must remain present after rejected truncation");
+    assertThat(retainedPlanAfterRejectedTruncate.get("inventory_snapshot_digest", String.class))
         .isEqualTo(inventorySnapshot.digest());
 
     Path privateMount = Files.createDirectory(tempDirectory.resolve("private-mount"));
@@ -770,7 +776,9 @@ class AccountJwtReadinessProbePersistenceIntegrationTest {
   }
 
   private static long count(TestContext context, String table) {
-    return context.dsl().resultQuery("SELECT COUNT(*) FROM " + table).fetchOne(0, Long.class);
+    return java.util.Objects.requireNonNull(
+        context.dsl().resultQuery("SELECT COUNT(*) FROM " + table).fetchOne(0, Long.class),
+        "COUNT query must return a scalar row");
   }
 
   private static AccountJwtReadinessProbeRepository.DeliveryClaim raceForSingleDeliveryClaim(

@@ -3,6 +3,7 @@ package net.firedevops.firemud.accountservice.config;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -29,6 +30,9 @@ class AccountJwtValidatorInventoryBindingTest {
   }
 
   @Test
+  @SuppressFBWarnings(
+      value = "DMI_HARDCODED_ABSOLUTE_FILENAME",
+      justification = "Canonical protected mount paths are fixed inputs for this binding proof")
   void parsesOnlyCompletePinnedRs256ApplicabilityAndProducesCanonicalRuntimeConfig() {
     ProtectedInventory inventory =
         AccountJwtValidatorInventoryBinding.parseProtectedBytes(validBindingBytes());

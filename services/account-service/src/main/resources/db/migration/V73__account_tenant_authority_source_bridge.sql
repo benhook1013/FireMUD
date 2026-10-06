@@ -322,14 +322,21 @@ LANGUAGE plpgsql
 AS $$
 DECLARE
     source_row RECORD;
+    stream_head BIGINT;
 BEGIN
     IF left(NEW.outbox_stream_key, length('account:auth-authority:v1:tenant/'))
         = 'account:auth-authority:v1:tenant/' THEN
+        -- This is deferred: the queued NEW image may be the temporary sequence-zero row
+        -- created while the first source head is enrolled. Validate the final live head instead.
+        SELECT last_sequence INTO stream_head
+            FROM account_authority_outbox_streams
+            WHERE outbox_stream_key = NEW.outbox_stream_key;
         SELECT last_outbox_sequence INTO source_row
             FROM account_tenant_authority_source_records
             WHERE outbox_stream_key = NEW.outbox_stream_key;
-        IF source_row.last_outbox_sequence IS DISTINCT FROM NEW.last_sequence
-            OR NEW.last_sequence <= 0 THEN
+        IF stream_head IS NULL
+            OR source_row.last_outbox_sequence IS DISTINCT FROM stream_head
+            OR stream_head <= 0 THEN
             RAISE EXCEPTION 'Tenant authority outbox head lacks an Account-owned source checkpoint'
                 USING ERRCODE = '23514', CONSTRAINT = 'account_tenant_authority_stream_source';
         END IF;

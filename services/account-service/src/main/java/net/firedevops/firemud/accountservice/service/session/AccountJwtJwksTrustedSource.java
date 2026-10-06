@@ -1,9 +1,11 @@
 package net.firedevops.firemud.accountservice.service.session;
 
+import java.io.IOException;
 import java.math.BigInteger;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -656,7 +658,7 @@ public final class AccountJwtJwksTrustedSource
         }
       }
       return Map.copyOf(fingerprints);
-    } catch (Exception malformed) {
+    } catch (IOException | NoSuchAlgorithmException | RuntimeException malformed) {
       throw rejected();
     }
   }

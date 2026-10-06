@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementRequest;
@@ -59,6 +60,55 @@ class AccountDemoTenantEntitlementPersistenceIntegrationTest {
     if (postgresFixture != null) {
       postgresFixture.stop();
     }
+  }
+
+  @Test
+  void sequenceZeroTenantAuthorityHeadCannotCommit() {
+    TestContext context = newTestContext();
+    FreshTenantIdentityAssociationRepository identityRepository =
+        new FreshTenantIdentityAssociationRepository(context.dsl(), TEST_NAMESPACE);
+    AccountAuthorityGenerationRepository generationRepository =
+        new AccountAuthorityGenerationRepository(context.dsl());
+    AccountTenantEntitlementOutboxRepository billingOutbox =
+        new AccountTenantEntitlementOutboxRepository(context.dsl());
+    AccountTenantAuthorityEventRepository tenantAuthorityEvents =
+        new AccountTenantAuthorityEventRepository(
+            context.dsl(),
+            new AccountAuthorityOutboxRepository(context.dsl()),
+            billingOutbox,
+            identityRepository,
+            generationRepository);
+    UUID tenantId = UUID.fromString("88888888-8888-4888-8888-888888888888");
+    UUID requestId = UUID.fromString("88888888-8888-4888-8888-888888888889");
+    FreshTenantCreationEvidence source = evidence(tenantId, 805L);
+    inTransaction(
+        context.transaction(),
+        () -> {
+          identityRepository.importVerified(source);
+          generationRepository.initializeTenantIfAbsent(tenantId);
+          return null;
+        });
+
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    context.transaction(),
+                    () -> {
+                      tenantAuthorityEvents.establishFirstEventSource(
+                          tenantId,
+                          requestId,
+                          source,
+                          generationRepository.read(
+                              AccountAuthorityGenerationRepository.AuthorityScope.tenant(
+                                  tenantId)));
+                      context
+                          .dsl()
+                          .execute(
+                              "SET CONSTRAINTS account_tenant_authority_stream_consistency IMMEDIATE");
+                      return null;
+                    }))
+        .hasRootCauseMessage(
+            "ERROR: Tenant authority outbox head lacks an Account-owned source checkpoint");
   }
 
   @Test
@@ -221,38 +271,46 @@ class AccountDemoTenantEntitlementPersistenceIntegrationTest {
         .hasMessageContaining("changed after its complete evaluation snapshot");
 
     Long legacyIdentityColumnCount =
-        context
-            .dsl()
-            .fetchOne(
-                "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = ? "
-                    + "AND table_name = 'account_demo_tenant_entitlements' "
-                    + "AND column_name IN ('tenant_id', 'legacy_tenant_id')",
-                context.schema())
+        Objects.requireNonNull(
+                context
+                    .dsl()
+                    .fetchOne(
+                        "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = ? "
+                            + "AND table_name = 'account_demo_tenant_entitlements' "
+                            + "AND column_name IN ('tenant_id', 'legacy_tenant_id')",
+                        context.schema()),
+                "Expected information_schema aggregate row")
             .get(0, Long.class);
     assertThat(legacyIdentityColumnCount).isZero();
     Long outboxEventCount =
-        context
-            .dsl()
-            .fetchOne(
-                "SELECT COUNT(*) FROM account_tenant_entitlement_outbox_events WHERE tenant_uuid = ?",
-                tenantId)
+        Objects.requireNonNull(
+                context
+                    .dsl()
+                    .fetchOne(
+                        "SELECT COUNT(*) FROM account_tenant_entitlement_outbox_events WHERE tenant_uuid = ?",
+                        tenantId),
+                "Expected tenant entitlement outbox aggregate row")
             .get(0, Long.class);
     assertThat(outboxEventCount).isEqualTo(2L);
     Long authorityEventCount =
-        context
-            .dsl()
-            .fetchOne(
-                "SELECT COUNT(*) FROM account_authority_outbox_events "
-                    + "WHERE outbox_stream_key = ?",
-                "account:auth-authority:v1:tenant/" + tenantId)
+        Objects.requireNonNull(
+                context
+                    .dsl()
+                    .fetchOne(
+                        "SELECT COUNT(*) FROM account_authority_outbox_events "
+                            + "WHERE outbox_stream_key = ?",
+                        "account:auth-authority:v1:tenant/" + tenantId),
+                "Expected tenant authority outbox aggregate row")
             .get(0, Long.class);
     assertThat(authorityEventCount).isEqualTo(2L);
     Long operationCount =
-        context
-            .dsl()
-            .fetchOne(
-                "SELECT COUNT(*) FROM account_demo_tenant_entitlement_operations WHERE tenant_uuid = ?",
-                tenantId)
+        Objects.requireNonNull(
+                context
+                    .dsl()
+                    .fetchOne(
+                        "SELECT COUNT(*) FROM account_demo_tenant_entitlement_operations WHERE tenant_uuid = ?",
+                        tenantId),
+                "Expected tenant entitlement operation aggregate row")
             .get(0, Long.class);
     assertThat(operationCount).isEqualTo(2L);
 
@@ -347,20 +405,24 @@ class AccountDemoTenantEntitlementPersistenceIntegrationTest {
         .hasMessageContaining("force owner transaction rollback");
     assertTenantHasOnlyGenerationOne(context, rollbackTenant);
     assertThat(
-            context
-                .dsl()
-                .fetchOne(
-                    "SELECT COUNT(*) FROM account_authority_outbox_events "
-                        + "WHERE outbox_stream_key = ?",
-                    "account:auth-authority:v1:tenant/" + rollbackTenant)
+            Objects.requireNonNull(
+                    context
+                        .dsl()
+                        .fetchOne(
+                            "SELECT COUNT(*) FROM account_authority_outbox_events "
+                                + "WHERE outbox_stream_key = ?",
+                            "account:auth-authority:v1:tenant/" + rollbackTenant),
+                    "Expected rolled-back tenant authority outbox aggregate row")
                 .get(0, Long.class))
         .isZero();
     assertThat(
-            context
-                .dsl()
-                .fetchOne(
-                    "SELECT COUNT(*) FROM account_tenant_entitlement_outbox_events WHERE tenant_uuid = ?",
-                    rollbackTenant)
+            Objects.requireNonNull(
+                    context
+                        .dsl()
+                        .fetchOne(
+                            "SELECT COUNT(*) FROM account_tenant_entitlement_outbox_events WHERE tenant_uuid = ?",
+                            rollbackTenant),
+                    "Expected rolled-back tenant billing outbox aggregate row")
                 .get(0, Long.class))
         .isZero();
 
@@ -401,42 +463,50 @@ class AccountDemoTenantEntitlementPersistenceIntegrationTest {
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("advanced without canonical source-event evidence");
     assertThat(
-            context
-                .dsl()
-                .fetchOne(
-                    "SELECT generation FROM account_authority_generations "
-                        + "WHERE scope_kind = 'TENANT' AND tenant_uuid = ?",
-                    retainedTenant)
+            Objects.requireNonNull(
+                    context
+                        .dsl()
+                        .fetchOne(
+                            "SELECT generation FROM account_authority_generations "
+                                + "WHERE scope_kind = 'TENANT' AND tenant_uuid = ?",
+                            retainedTenant),
+                    "Expected retained tenant authority generation row")
                 .get(0, Long.class))
         .isEqualTo(2L);
     assertThat(
-            context
-                .dsl()
-                .fetchOne(
-                    "SELECT COUNT(*) FROM account_fresh_tenant_identity_associations "
-                        + "WHERE canonical_tenant_id = ?",
-                    retainedTenant)
+            Objects.requireNonNull(
+                    context
+                        .dsl()
+                        .fetchOne(
+                            "SELECT COUNT(*) FROM account_fresh_tenant_identity_associations "
+                                + "WHERE canonical_tenant_id = ?",
+                            retainedTenant),
+                    "Expected retained tenant identity association aggregate row")
                 .get(0, Long.class))
         .isEqualTo(1L);
   }
 
   private static void assertTenantHasOnlyGenerationOne(TestContext context, UUID tenantId) {
     assertThat(
-            context
-                .dsl()
-                .fetchOne(
-                    "SELECT generation FROM account_authority_generations "
-                        + "WHERE scope_kind = 'TENANT' AND tenant_uuid = ?",
-                    tenantId)
+            Objects.requireNonNull(
+                    context
+                        .dsl()
+                        .fetchOne(
+                            "SELECT generation FROM account_authority_generations "
+                                + "WHERE scope_kind = 'TENANT' AND tenant_uuid = ?",
+                            tenantId),
+                    "Expected tenant authority generation row")
                 .get(0, Long.class))
         .isEqualTo(1L);
     assertThat(
-            context
-                .dsl()
-                .fetchOne(
-                    "SELECT COUNT(*) FROM account_demo_tenant_entitlement_operations "
-                        + "WHERE tenant_uuid = ?",
-                    tenantId)
+            Objects.requireNonNull(
+                    context
+                        .dsl()
+                        .fetchOne(
+                            "SELECT COUNT(*) FROM account_demo_tenant_entitlement_operations "
+                                + "WHERE tenant_uuid = ?",
+                            tenantId),
+                    "Expected tenant entitlement operation aggregate row")
                 .get(0, Long.class))
         .isZero();
   }

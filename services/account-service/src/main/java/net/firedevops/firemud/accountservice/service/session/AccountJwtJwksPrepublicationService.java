@@ -1,5 +1,6 @@
 package net.firedevops.firemud.accountservice.service.session;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
@@ -85,6 +86,10 @@ public final class AccountJwtJwksPrepublicationService {
   private final MountedProjection mountedProjection;
 
   /** Production instance uses only the fixed Account signer/JWKS mount paths. */
+  @SuppressFBWarnings(
+      value = "DMI_HARDCODED_ABSOLUTE_FILENAME",
+      justification =
+          "The production constructor intentionally fixes Account's protected private-signer and read-only public-JWKS mount roots.")
   public AccountJwtJwksPrepublicationService(
       AccountJwtSignerDesiredStateRepository desiredStateRepository,
       AccountJwtJwksPublicationRepository publicationRepository,
@@ -200,13 +205,11 @@ public final class AccountJwtJwksPrepublicationService {
                     new PublicationRejectedException(
                         "Account JWT JWKS publication evidence is not available"));
     PrepublicationIntent intent = evidence.intent();
-    PublicationReceipt receipt =
-        evidence
-            .receipt()
-            .orElseThrow(
-                () ->
-                    new PublicationRejectedException(
-                        "Account JWT JWKS API readback is not available"));
+    evidence
+        .receipt()
+        .orElseThrow(
+            () ->
+                new PublicationRejectedException("Account JWT JWKS API readback is not available"));
     requireIntentApiIdentity(intent, apiIdentity);
 
     byte[] markerBytes =
@@ -714,7 +717,7 @@ public final class AccountJwtJwksPrepublicationService {
         throw new IOException("Mounted file changed while being read");
       }
       return bytes;
-    } catch (Exception ex) {
+    } catch (IOException | RuntimeException ex) {
       throw new PublicationRejectedException(
           "Mounted Account JWT public projection is unavailable or invalid");
     }

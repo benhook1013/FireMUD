@@ -35,6 +35,10 @@ public class AccountDemoTenantEntitlementRepository {
   private final AccountTenantEntitlementOutboxRepository outboxRepository;
   private final AccountTenantAuthorityEventRepository tenantAuthorityEvents;
 
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification =
+          "Preserve injected collaborator preconditions; Spring must proxy this non-final repository.")
   public AccountDemoTenantEntitlementRepository(
       DSLContext dsl,
       FreshTenantIdentityAssociationRepository tenantIdentityRepository,

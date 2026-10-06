@@ -14,7 +14,8 @@ import java.util.Optional;
 import java.util.Set;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.ScopeKind;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository.CurrentSourceEvidence;
-import net.firedevops.firemud.common.account.authority.IssuerGenerationAuthorityEventV1Codec;
+import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec;
+import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec.IssuerEvent;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 
 /** Closed Account-owned current issuer projection; not recipient or token authorization. */
@@ -85,10 +86,13 @@ public record IssuerGenerationProjection(
         throw new IllegalArgumentException(
             "Advanced issuer projection requires complete event evidence");
       }
-      var event = IssuerGenerationAuthorityEventV1Codec.verify(sourceEvent.orElseThrow());
+      var verified = AccountAuthoritySourceEventV1Codec.verify(sourceEvent.orElseThrow());
+      if (!(verified instanceof IssuerEvent event)) {
+        throw new IllegalArgumentException("Issuer projection source event is not an issuer event");
+      }
       if (!sourceEvent.orElseThrow().equals(event.canonicalJson())
+          || !event.eventId().equals(event.requestId())
           || !issuerId.equals(event.issuerId())
-          || !("issuer/" + issuerId).equals(event.sourceScope())
           || !issuerAuthGeneration.equals(event.issuerAuthGeneration())
           || !sourceVersion.equals(event.sourceVersion())
           || !outboxStreamKey.equals(event.outboxStreamKey())
@@ -116,18 +120,28 @@ public record IssuerGenerationProjection(
       throw new IllegalArgumentException("Issuer source enrollment is unavailable");
     }
     var stored = snapshot.latestEvent().orElseThrow();
-    var event =
-        IssuerGenerationAuthorityEventV1Codec.verify(
+    var verified =
+        AccountAuthoritySourceEventV1Codec.verify(
             new String(stored.payload(), java.nio.charset.StandardCharsets.UTF_8));
+    if (!(verified instanceof IssuerEvent event)) {
+      throw new IllegalArgumentException(
+          "Issuer source checkpoint does not contain an issuer event");
+    }
     if (!java.util.Arrays.equals(stored.payload(), event.canonicalJsonUtf8())
         || !stored.outboxStreamKey().equals(source.checkpoint().outboxStreamKey())
         || stored.outboxSequence() != source.checkpoint().sequence()
+        || !event.outboxStreamKey().equals(source.checkpoint().outboxStreamKey())
+        || !event.outboxSequence().equals(Long.toString(source.checkpoint().sequence()))
+        || !event.issuerId().equals(source.scope().issuerId())
+        || !event.issuerAuthGeneration().equals(Long.toString(source.generation()))
+        || !event.sourceVersion().equals(Long.toString(source.sourceVersion()))
         || !source.checkpoint().sourceEventId().equals(Optional.of(stored.eventId()))
         || !source.checkpoint().sourceEventDigest().equals(Optional.of(stored.eventDigest()))
         || !stored.eventId().equals(event.eventId())
         || !stored.eventDigest().equals(event.eventDigest())
         || !stored.requestId().equals(event.requestId())
-        || !stored.eventId().equals("account-issuer-authority-event-v1:" + stored.requestId())) {
+        || !stored.eventId().equals(stored.requestId())
+        || !event.eventId().equals(event.requestId())) {
       throw new IllegalArgumentException(
           "Issuer projection event differs from the owned checkpoint");
     }

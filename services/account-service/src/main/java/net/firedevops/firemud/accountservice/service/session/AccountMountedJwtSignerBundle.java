@@ -63,6 +63,7 @@ public final class AccountMountedJwtSignerBundle {
   private static final int MAX_JWKS_KEYS = 64;
   private static final int MAX_PRIVATE_KEY_DER_BYTES = 16 * 1024;
   private static final int CHALLENGE_NONCE_BYTES = 32;
+  private static final SecureRandom CHALLENGE_RANDOM = new SecureRandom();
   private static final String ALGORITHM = "RS256";
   static final String READINESS_CANARY_PROFILE = "account-jwt-readiness-canary";
   static final String READINESS_CANARY_TYPE = "account_jwt_readiness_canary";
@@ -644,7 +645,7 @@ public final class AccountMountedJwtSignerBundle {
       }
     } catch (InvalidMountedSignerBundleException ex) {
       throw ex;
-    } catch (Exception ex) {
+    } catch (CharacterCodingException | GeneralSecurityException | RuntimeException ex) {
       throw invalid();
     }
   }
@@ -722,7 +723,7 @@ public final class AccountMountedJwtSignerBundle {
       return Map.copyOf(keys);
     } catch (InvalidMountedSignerBundleException ex) {
       throw ex;
-    } catch (Exception ex) {
+    } catch (CharacterCodingException | GeneralSecurityException | RuntimeException ex) {
       throw invalid();
     }
   }
@@ -853,7 +854,7 @@ public final class AccountMountedJwtSignerBundle {
     byte[] challenge = null;
     byte[] signatureBytes = null;
     try {
-      new SecureRandom().nextBytes(nonce);
+      CHALLENGE_RANDOM.nextBytes(nonce);
       challenge = correspondenceChallenge(nonce);
       Signature signer = Signature.getInstance("SHA256withRSA");
       signer.initSign(privateKey);

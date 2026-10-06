@@ -24,6 +24,10 @@ public class AccountTenantEntitlementOutboxRepository {
   private static final UUID NIL_UUID = new UUID(0L, 0L);
   private final DSLContext dsl;
 
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification =
+          "Preserve the injected DSLContext precondition; Spring must proxy this non-final repository.")
   public AccountTenantEntitlementOutboxRepository(DSLContext dsl) {
     this.dsl = Objects.requireNonNull(dsl);
   }
