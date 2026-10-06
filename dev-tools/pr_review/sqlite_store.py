@@ -17,12 +17,13 @@ import os
 import sqlite3
 import sys
 import tempfile
+import time
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Any
 
-from .state import ReviewState, StateError, _locked, sqlite_state_path
+from .state import ReviewState, StateError, StateLockTimeout, _locked, sqlite_state_path
 
 SQLITE_SCHEMA_VERSION = 1
 WRITER_BUILD = 8
@@ -132,29 +133,38 @@ class SqliteStateStore:
             raise StateError("SQLite review state document must be an object")
         return ReviewState.from_dict(document)
 
-    def update(self, mutate: Callable[[ReviewState], ReviewState]) -> ReviewState:
+    def update(self, mutate: Callable[[ReviewState], ReviewState], *, deadline: float | None = None) -> ReviewState:
         """Apply ``mutate`` and persist its validated result in one transaction."""
 
         if not callable(mutate):
             raise TypeError("mutate must be callable")
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        with self._exclusive_update_lock():
-            return self._update_locked(mutate)
+        with self._exclusive_update_lock(deadline=deadline):
+            return self._update_locked(mutate, deadline=deadline)
 
-    def _update_locked(self, mutate: Callable[[ReviewState], ReviewState]) -> ReviewState:
+    def _update_locked(self, mutate: Callable[[ReviewState], ReviewState], *, deadline: float | None = None) -> ReviewState:
         created_identity = self._create_empty_file_exclusively()
         connection: sqlite3.Connection | None = None
         committed = False
         try:
-            connection = sqlite3.connect(self.path, timeout=self.timeout, isolation_level=None)
-            connection.execute(f"PRAGMA busy_timeout = {int(self.timeout * 1000)}")
-            connection.execute("BEGIN IMMEDIATE")
+            timeout = self._remaining_timeout(deadline)
+            connection = sqlite3.connect(self.path, timeout=timeout, isolation_level=None)
+            self._set_busy_timeout(connection, deadline)
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+            except sqlite3.OperationalError as exc:
+                if deadline is not None and self._is_sqlite_lock_error(exc):
+                    raise StateLockTimeout("timed out waiting for SQLite review-state transaction lock") from exc
+                raise
+            self._check_deadline(deadline)
             if created_identity is not None:
                 self._initialize(connection, self.writer_build)
             else:
                 self._require_compatible(connection)
             current = self._load_from_connection(connection)
+            self._check_deadline(deadline)
             updated = mutate(current)
+            self._check_deadline(deadline)
             if not isinstance(updated, ReviewState):
                 raise TypeError("mutate must return ReviewState")
             if any(
@@ -184,7 +194,13 @@ class SqliteStateStore:
                 f"UPDATE {_STATE_TABLE} SET state_json = ? WHERE singleton = 1",
                 (payload,),
             )
-            connection.commit()
+            self._set_busy_timeout(connection, deadline)
+            try:
+                connection.commit()
+            except sqlite3.OperationalError as exc:
+                if deadline is not None and self._is_sqlite_lock_error(exc):
+                    raise StateLockTimeout("timed out waiting for SQLite review-state transaction lock") from exc
+                raise
             committed = True
             return updated
         except BaseException:
@@ -466,16 +482,58 @@ class SqliteStateStore:
     def _lock_path(self) -> Path:
         return self.path.with_name(f".{self.path.name}.lock")
 
+    @staticmethod
+    def _is_sqlite_lock_error(error: sqlite3.OperationalError) -> bool:
+        message = str(error).lower()
+        return "locked" in message or "busy" in message
+
+    @staticmethod
+    def _check_deadline(deadline: float | None) -> None:
+        if deadline is not None and time.monotonic() >= deadline:
+            raise StateLockTimeout("timed out waiting for SQLite review-state transaction lock")
+
+    def _remaining_timeout(self, deadline: float | None) -> float:
+        if deadline is None:
+            return self.timeout
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise StateLockTimeout("timed out waiting for SQLite review-state transaction lock")
+        return min(self.timeout, remaining)
+
+    def _set_busy_timeout(self, connection: sqlite3.Connection, deadline: float | None) -> None:
+        timeout = self._remaining_timeout(deadline)
+        connection.execute(f"PRAGMA busy_timeout = {int(timeout * 1000)}")
+
     @contextmanager
-    def _exclusive_update_lock(self) -> Iterator[None]:
+    def _exclusive_update_lock(self, *, deadline: float | None = None) -> Iterator[None]:
         descriptor = os.open(self._lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        locked = False
         try:
             os.fchmod(descriptor, 0o600)
-            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            if deadline is None:
+                fcntl.flock(descriptor, fcntl.LOCK_EX)
+                locked = True
+            else:
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise StateLockTimeout("timed out waiting for SQLite review-state file lock")
+                    try:
+                        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        locked = True
+                    except BlockingIOError:
+                        time.sleep(min(0.01, remaining))
+                        continue
+                    if deadline - time.monotonic() <= 0:
+                        fcntl.flock(descriptor, fcntl.LOCK_UN)
+                        locked = False
+                        raise StateLockTimeout("timed out waiting for SQLite review-state file lock")
+                    break
             try:
                 yield
             finally:
-                fcntl.flock(descriptor, fcntl.LOCK_UN)
+                if locked:
+                    fcntl.flock(descriptor, fcntl.LOCK_UN)
         finally:
             os.close(descriptor)
 

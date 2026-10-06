@@ -1402,7 +1402,7 @@ class ControllerStateStore:
                     raise TypeError("mutate must return ReviewState")
                 store._save_unlocked(updated)
                 return updated
-            return store.update(mutate)
+            return store.update(mutate, deadline=lock_deadline)
 
 
 def controller_state_status(path: str | os.PathLike[str] | None = None) -> dict[str, Any]:

@@ -1,10 +1,12 @@
 import concurrent.futures
 import dataclasses
+import fcntl
 import hashlib
 import json
 import sqlite3
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -14,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).parents[1]))
 from pr_review.sqlite_review_records import SqliteReviewRecords
 from pr_review.sqlite_store import SQLITE_SCHEMA_VERSION, WRITER_BUILD, SqliteStateStore
 from pr_review.state import (
+    ControllerStateStore,
     FindingRoute,
     Judgment,
     LegacyEvidenceTransition,
@@ -22,6 +25,7 @@ from pr_review.state import (
     ReviewState,
     StackReconciliationDecision,
     StateError,
+    StateLockTimeout,
     StateStore,
     SummaryFindingDisposition,
 )
@@ -32,6 +36,61 @@ class SqliteStateStoreTest(unittest.TestCase):
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary_directory.cleanup)
         self.root = Path(self.temporary_directory.name)
+
+    def _controller_sqlite_store(self) -> tuple[ControllerStateStore, SqliteStateStore, ReviewState]:
+        path = self.root / "controller-state.json"
+        initial = ReviewState(ordered_prs=(42,))
+        path.write_text(json.dumps(initial.to_dict()), encoding="utf-8")
+        store = SqliteStateStore.migrate_legacy_json(path, path.with_suffix(".sqlite3"))
+        return ControllerStateStore(path), store, initial
+
+    def _assert_lock_available(self, path: Path) -> None:
+        with path.open("a+") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+    def test_controller_update_deadline_bounds_sqlite_file_lock_and_releases_outer_lock(self) -> None:
+        controller_store, sqlite_store, initial = self._controller_sqlite_store()
+        with sqlite_store._lock_path.open("a+") as held_lock:
+            fcntl.flock(held_lock.fileno(), fcntl.LOCK_EX)
+            started = time.monotonic()
+            try:
+                with self.assertRaisesRegex(StateLockTimeout, "SQLite review-state file lock"):
+                    controller_store.update(
+                        lambda state: ReviewState(ordered_prs=state.ordered_prs + (43,)),
+                        lock_deadline=started + 0.05,
+                    )
+            finally:
+                fcntl.flock(held_lock.fileno(), fcntl.LOCK_UN)
+
+        self.assertLess(time.monotonic() - started, 1)
+        self.assertEqual(sqlite_store.load(), initial)
+        self._assert_lock_available(controller_store.lock_path)
+        self._assert_lock_available(sqlite_store._lock_path)
+        controller_store.update(lambda state: ReviewState(ordered_prs=state.ordered_prs + (43,)))
+        self.assertEqual(sqlite_store.load().ordered_prs, (42, 43))
+
+    def test_controller_update_deadline_bounds_sqlite_begin_immediate_and_releases_outer_lock(self) -> None:
+        controller_store, sqlite_store, initial = self._controller_sqlite_store()
+        writer = sqlite3.connect(sqlite_store.path, isolation_level=None)
+        try:
+            writer.execute("BEGIN IMMEDIATE")
+            started = time.monotonic()
+            with self.assertRaisesRegex(StateLockTimeout, "SQLite review-state transaction lock"):
+                controller_store.update(
+                    lambda state: ReviewState(ordered_prs=state.ordered_prs + (43,)),
+                    lock_deadline=started + 0.05,
+                )
+            self.assertLess(time.monotonic() - started, 1)
+            self.assertEqual(sqlite_store.load(), initial)
+            self._assert_lock_available(controller_store.lock_path)
+            self._assert_lock_available(sqlite_store._lock_path)
+        finally:
+            writer.rollback()
+            writer.close()
+
+        controller_store.update(lambda state: ReviewState(ordered_prs=state.ordered_prs + (43,)))
+        self.assertEqual(sqlite_store.load().ordered_prs, (42, 43))
 
     @staticmethod
     def representative_state() -> ReviewState:
