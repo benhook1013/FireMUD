@@ -11,25 +11,27 @@ mode performs the guarded legacy revocation only after a complete proof.
 
 The apply path creates one fresh ``kubernetes.io/service-account-token`` Secret
 per fixed ServiceAccount, waits for the controller to populate its token, and
-builds a private kubeconfig from the selected context's API server and CA.  It
-then verifies the generated identity and a small RBAC boundary before piping
+builds a private kubeconfig from the explicit runner API endpoint and the
+selected context's embedded CA. It then verifies the generated identity and a
+small RBAC boundary before piping
 the kubeconfig directly to ``gh secret set``.  Token and kubeconfig bytes are
 never put in argv, logs, or command diagnostics.
 
 This helper does not install a CA, create an issuer, or modify any workflow or
 manifest.  Only finalization revokes the exact legacy ClusterRoleBinding,
 ServiceAccount, annotated token Secrets, and repository ``PREVIEW_KUBECONFIG``
-secret.  A failed run before GitHub publication removes only the exact new
-token Secrets created by this run.  If GitHub publication has begun, newly
-created Secrets are retained so an already-published kubeconfig cannot be
-invalidated automatically; the caller must inspect the reported failure
-before retrying.
+secret.  Live staging requires an explicit runner-reachable API endpoint; the
+selected admin context supplies only the cluster CA.  An uncertain GitHub
+publication retains created token Secrets and reports the fixed credential and
+Secret names so an operator can retry that credential with the exact retained
+Secret after its owner metadata, CA, identity, and RBAC probes pass.
 """
 
 from __future__ import annotations
 
 import argparse
 import base64
+import ipaddress
 import json
 import re
 import secrets
@@ -41,6 +43,7 @@ import time
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 CONTROL_NAMESPACE = "firemud-system"
 LEGACY_NAMESPACE = "kube-system"
@@ -121,6 +124,10 @@ CREDENTIALS = (
 _CREDENTIALS_BY_NAME = {item.service_account: item for item in CREDENTIALS}
 _CONTEXT_RE = re.compile(r"^[^\x00-\x1f\x7f]+$")
 _KUBERNETES_NAME_RE = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
+_DNS_HOST_RE = re.compile(
+    r"^(?=.{1,253}$)(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)(?:\.(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?))*\.?$"
+)
+_TOKEN_SECRET_RE = re.compile(r"^firemud-(?P<service_account>[a-z0-9-]+)-token-[0-9a-f]{16}$")
 
 
 class ProvisioningError(RuntimeError):
@@ -132,17 +139,18 @@ def _command_description(command: list[str]) -> str:
     return command[0] if command else "command"
 
 
-def run_command(
-    command: list[str], *, input_bytes: bytes | None = None
-) -> bytes:
+def run_command(command: list[str], *, input_bytes: bytes | None = None) -> bytes:
     """Run a command while withholding stdout/stderr from operator logs."""
 
-    result = subprocess.run(
-        command,
-        input=input_bytes,
-        capture_output=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            command,
+            input=input_bytes,
+            capture_output=True,
+            check=False,
+        )
+    except OSError as exc:
+        raise ProvisioningError(f"{_command_description(command)} failed") from exc
     if result.returncode != 0:
         raise ProvisioningError(f"{_command_description(command)} failed")
     return result.stdout
@@ -248,25 +256,73 @@ def build_kubeconfig(
 
     if not token or any(character.isspace() for character in token):
         raise ProvisioningError("service-account token is empty or malformed")
-    if not server.startswith("https://") or not ca_data:
-        raise ProvisioningError("selected context must provide an HTTPS server and embedded CA")
+    validate_runner_api_server(server)
+    if not ca_data:
+        raise ProvisioningError("selected context must provide embedded CA data")
     kubeconfig_context = credential.service_account
     kubeconfig = {
         "apiVersion": "v1",
         "kind": "Config",
-        "clusters": [{"name": cluster_name, "cluster": {
-            "server": server,
-            "certificate-authority-data": ca_data,
-        }}],
-        "contexts": [{"name": kubeconfig_context, "context": {
-            "cluster": cluster_name,
-            "namespace": CONTROL_NAMESPACE,
-            "user": credential.service_account,
-        }}],
+        "clusters": [
+            {
+                "name": cluster_name,
+                "cluster": {
+                    "server": server,
+                    "certificate-authority-data": ca_data,
+                },
+            }
+        ],
+        "contexts": [
+            {
+                "name": kubeconfig_context,
+                "context": {
+                    "cluster": cluster_name,
+                    "namespace": CONTROL_NAMESPACE,
+                    "user": credential.service_account,
+                },
+            }
+        ],
         "current-context": kubeconfig_context,
         "users": [{"name": credential.service_account, "user": {"token": token}}],
     }
     return json.dumps(kubeconfig, separators=(",", ":")).encode("utf-8")
+
+
+def validate_runner_api_server(server: str) -> str:
+    """Validate the explicit HTTPS API endpoint embedded in runner credentials."""
+
+    if not isinstance(server, str) or not server or "?" in server or "#" in server:
+        raise ProvisioningError("--runner-api-server must be an HTTPS URL without query or fragment")
+    try:
+        parsed = urlsplit(server)
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError as exc:
+        raise ProvisioningError("--runner-api-server has an invalid host or port") from exc
+    if (
+        parsed.scheme != "https"
+        or not parsed.netloc
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path
+        or hostname is None
+        or port is None
+        or not 1 <= port <= 65535
+    ):
+        raise ProvisioningError("--runner-api-server must contain only https://host:port with no credentials or path")
+    normalized_host = hostname.rstrip(".").lower()
+    if not normalized_host or "%" in hostname:
+        raise ProvisioningError("--runner-api-server host is malformed")
+    try:
+        address = ipaddress.ip_address(normalized_host)
+    except ValueError:
+        if not _DNS_HOST_RE.fullmatch(hostname):
+            raise ProvisioningError("--runner-api-server host must be a portable DNS name or IP address")
+    else:
+        mapped_address = address.ipv4_mapped if isinstance(address, ipaddress.IPv6Address) else None
+        if address.is_unspecified or (mapped_address is not None and mapped_address.is_unspecified):
+            raise ProvisioningError("--runner-api-server must not use an unspecified address")
+    return server
 
 
 def require_operator(context: str) -> None:
@@ -337,22 +393,16 @@ def verify_environment_policies() -> None:
             "protected_branches": False,
             "custom_branch_policies": True,
         }:
-            raise ProvisioningError(
-                f"GitHub Environment {environment} does not use an exact custom branch policy"
-            )
+            raise ProvisioningError(f"GitHub Environment {environment} does not use an exact custom branch policy")
         policies = gh_json(
             "api",
             f"repos/{REPOSITORY}/environments/{environment}/deployment-branch-policies?per_page=100",
         ).get("branch_policies")
         if not isinstance(policies, list) or len(policies) != 1:
-            raise ProvisioningError(
-                f"GitHub Environment {environment} must have exactly one branch policy"
-            )
+            raise ProvisioningError(f"GitHub Environment {environment} must have exactly one branch policy")
         policy = policies[0]
         if policy.get("name") != DEVELOP_BRANCH or policy.get("type") != "branch":
-            raise ProvisioningError(
-                f"GitHub Environment {environment} branch policy is not exactly develop"
-            )
+            raise ProvisioningError(f"GitHub Environment {environment} branch policy is not exactly develop")
 
 
 def verify_environment_secrets(credentials: Iterable[Credential]) -> None:
@@ -362,9 +412,7 @@ def verify_environment_secrets(credentials: Iterable[Credential]) -> None:
     for environment, names in expected.items():
         missing = names - environment_secret_names(environment)
         if missing:
-            raise ProvisioningError(
-                f"GitHub Environment {environment} is missing a fixed kubeconfig secret"
-            )
+            raise ProvisioningError(f"GitHub Environment {environment} is missing a fixed kubeconfig secret")
 
 
 def require_proof_namespace(context: str, namespace: str) -> None:
@@ -409,12 +457,10 @@ def require_proof_namespace(context: str, namespace: str) -> None:
             }
             or binding.get("subjects") != [expected_subject]
         ):
-            raise ProvisioningError(
-                f"proof namespace RoleBinding {role_name} is not the canonical fixed binding"
-            )
+            raise ProvisioningError(f"proof namespace RoleBinding {role_name} is not the canonical fixed binding")
 
 
-def read_selected_cluster(context: str) -> tuple[str, str, str]:
+def read_selected_cluster(context: str) -> tuple[str, str]:
     config = kubectl_json(context, "config", "view", "--raw", "--minify")
     clusters = config.get("clusters")
     if not isinstance(clusters, list) or len(clusters) != 1:
@@ -422,12 +468,9 @@ def read_selected_cluster(context: str) -> tuple[str, str, str]:
     cluster_entry = clusters[0]
     cluster_name = cluster_entry.get("name")
     cluster = cluster_entry.get("cluster", {})
-    server = cluster.get("server")
     ca_data = cluster.get("certificate-authority-data")
     if not isinstance(cluster_name, str) or not cluster_name:
         raise ProvisioningError("selected context has no cluster name")
-    if not isinstance(server, str) or not server.startswith("https://"):
-        raise ProvisioningError("selected context must use an HTTPS Kubernetes API server")
     if not isinstance(ca_data, str) or not ca_data:
         # Refuse a local CA path: the resulting secret must be portable and
         # must never depend on an operator workstation filesystem.
@@ -436,10 +479,10 @@ def read_selected_cluster(context: str) -> tuple[str, str, str]:
         base64.b64decode(ca_data, validate=True)
     except (ValueError, base64.binascii.Error) as exc:
         raise ProvisioningError("selected context contains malformed CA data") from exc
-    return cluster_name, server, ca_data
+    return cluster_name, ca_data
 
 
-def read_service_account(context: str, credential: Credential) -> None:
+def read_service_account(context: str, credential: Credential) -> str:
     service_account = kubectl_json(
         context,
         "-n",
@@ -449,8 +492,19 @@ def read_service_account(context: str, credential: Credential) -> None:
         credential.service_account,
     )
     metadata = service_account.get("metadata", {})
-    if metadata.get("name") != credential.service_account or metadata.get("namespace") != CONTROL_NAMESPACE:
+    if not isinstance(metadata, dict):
         raise ProvisioningError(f"fixed ServiceAccount {credential.service_account} has unexpected identity")
+    uid = metadata.get("uid")
+    if (
+        service_account.get("apiVersion") != "v1"
+        or service_account.get("kind") != "ServiceAccount"
+        or metadata.get("name") != credential.service_account
+        or metadata.get("namespace") != CONTROL_NAMESPACE
+        or not isinstance(uid, str)
+        or not uid
+    ):
+        raise ProvisioningError(f"fixed ServiceAccount {credential.service_account} has unexpected identity")
+    return uid
 
 
 def ensure_secret_absent(context: str, name: str) -> None:
@@ -470,15 +524,13 @@ def ensure_secret_absent(context: str, name: str) -> None:
 
 
 def create_token_secret(context: str, name: str, credential: Credential) -> None:
-    document = json.dumps(
-        service_account_token_secret(name, credential), separators=(",", ":")
-    ).encode("utf-8")
+    document = json.dumps(service_account_token_secret(name, credential), separators=(",", ":")).encode("utf-8")
     # create (rather than apply) ensures an existing object cannot be
     # overwritten, even if a generated name collision is ever observed.
     run_command(kubectl_command(context, "create", "-f", "-"), input_bytes=document)
 
 
-def read_token_secret(context: str, name: str, credential: Credential) -> tuple[str, str]:
+def read_token_secret(context: str, name: str, credential: Credential, service_account_uid: str) -> tuple[str, str]:
     secret = kubectl_json(
         context,
         "-n",
@@ -488,22 +540,50 @@ def read_token_secret(context: str, name: str, credential: Credential) -> tuple[
         name,
     )
     metadata = secret.get("metadata", {})
+    if not isinstance(metadata, dict):
+        raise ProvisioningError(
+            "token Secret metadata does not prove ownership by the fixed ServiceAccount and provisioner"
+        )
     annotations = metadata.get("annotations", {})
+    labels = metadata.get("labels", {})
+    expected_labels = {
+        "app.kubernetes.io/name": "firemud-trust-bootstrap",
+        "app.kubernetes.io/component": "scoped-kubeconfig-token",
+    }
+    expected_annotations = {
+        "kubernetes.io/service-account.name": credential.service_account,
+        "firemud.dev/provisioned-by": PROVISIONER,
+    }
     if (
-        metadata.get("name") != name
+        not isinstance(annotations, dict)
+        or not isinstance(labels, dict)
+        or secret.get("apiVersion") != "v1"
+        or secret.get("kind") != "Secret"
+        or metadata.get("name") != name
         or metadata.get("namespace") != CONTROL_NAMESPACE
-        or annotations.get("kubernetes.io/service-account.name") != credential.service_account
+        or any(annotations.get(key) != value for key, value in expected_annotations.items())
+        or any(labels.get(key) != value for key, value in expected_labels.items())
         or secret.get("type") != TOKEN_SECRET_TYPE
     ):
-        raise ProvisioningError("created token Secret readback did not match the fixed ServiceAccount")
-    data = secret.get("data", {})
-    if (
-        not isinstance(data, dict)
-        or not data.get("token")
-        or not data.get("ca.crt")
-        or not data.get("namespace")
-    ):
+        raise ProvisioningError(
+            "token Secret metadata does not prove ownership by the fixed ServiceAccount and provisioner"
+        )
+    token_service_account_uid = annotations.get("kubernetes.io/service-account.uid")
+    if token_service_account_uid is None:
         raise ProvisioningError("service-account token Secret was not populated by Kubernetes")
+    if token_service_account_uid != service_account_uid:
+        raise ProvisioningError("token Secret service-account UID does not match the current fixed ServiceAccount")
+
+    data = secret.get("data")
+    if data is None:
+        raise ProvisioningError("service-account token Secret was not populated by Kubernetes")
+    if not isinstance(data, dict):
+        raise ProvisioningError("service-account token Secret contains malformed data")
+    expected_data_keys = {"token", "ca.crt", "namespace"}
+    if not expected_data_keys.issubset(data):
+        raise ProvisioningError("service-account token Secret was not populated by Kubernetes")
+    if set(data) != expected_data_keys:
+        raise ProvisioningError("service-account token Secret contains unexpected data keys")
     try:
         token = base64.b64decode(data["token"], validate=True).decode("ascii")
         ca_data = data["ca.crt"]
@@ -518,13 +598,26 @@ def read_token_secret(context: str, name: str, credential: Credential) -> tuple[
     return token, ca_data
 
 
+def validate_reuse_token_secret_name(name: str, credential: Credential) -> str:
+    match = _TOKEN_SECRET_RE.fullmatch(name)
+    if not match or match.group("service_account") != credential.service_account:
+        raise ProvisioningError(
+            "--reuse-token-secret must name a generated token Secret for the selected fixed ServiceAccount"
+        )
+    return name
+
+
 def wait_for_token(
-    context: str, name: str, credential: Credential, timeout_seconds: float
+    context: str,
+    name: str,
+    credential: Credential,
+    service_account_uid: str,
+    timeout_seconds: float,
 ) -> tuple[str, str]:
     deadline = time.monotonic() + timeout_seconds
     while True:
         try:
-            return read_token_secret(context, name, credential)
+            return read_token_secret(context, name, credential, service_account_uid)
         except ProvisioningError as exc:
             if "was not populated" not in str(exc) or time.monotonic() >= deadline:
                 raise
@@ -558,9 +651,7 @@ def verify_generated_kubeconfig(kubeconfig: bytes, credential: Credential, proof
                 args.extend(["-n", namespace])
             answer = run_auth_can_i(["kubectl", "--kubeconfig", file.name, *args])
             if answer != expected:
-                raise ProvisioningError(
-                    f"RBAC probe for {credential.service_account} returned an unexpected answer"
-                )
+                raise ProvisioningError(f"RBAC probe for {credential.service_account} returned an unexpected answer")
 
 
 def publish_kubeconfig(credential: Credential, kubeconfig: bytes) -> None:
@@ -621,11 +712,7 @@ def repository_secret_names() -> set[str]:
         raise ProvisioningError("gh returned malformed repository secret JSON") from exc
     if not isinstance(values, list):
         raise ProvisioningError("gh returned an unexpected repository secret list")
-    return {
-        value["name"]
-        for value in values
-        if isinstance(value, dict) and isinstance(value.get("name"), str)
-    }
+    return {value["name"] for value in values if isinstance(value, dict) and isinstance(value.get("name"), str)}
 
 
 def legacy_token_secret_refs(context: str) -> list[tuple[str, str]]:
@@ -666,18 +753,13 @@ def legacy_token_secret_refs(context: str) -> list[tuple[str, str]]:
             item.get("type") == TOKEN_SECRET_TYPE
             and annotations.get("kubernetes.io/service-account.name") == LEGACY_SERVICE_ACCOUNT
             and isinstance(metadata.get("name"), str)
-            and (
-                legacy_uid is None
-                or annotations.get("kubernetes.io/service-account.uid") == legacy_uid
-            )
+            and (legacy_uid is None or annotations.get("kubernetes.io/service-account.uid") == legacy_uid)
         ):
             refs.append((LEGACY_NAMESPACE, metadata["name"]))
     return sorted(set(refs))
 
 
-def provisioner_token_secret_refs(
-    context: str, service_accounts: Iterable[str]
-) -> dict[str, list[str]]:
+def provisioner_token_secret_refs(context: str, service_accounts: Iterable[str]) -> dict[str, list[str]]:
     selected = set(service_accounts)
     secrets_object = kubectl_json(context, "-n", CONTROL_NAMESPACE, "get", "secrets")
     refs = {service_account: [] for service_account in selected}
@@ -722,9 +804,7 @@ def rotate_provisioner_tokens(context: str, retained: dict[str, str]) -> None:
     remaining = provisioner_token_secret_refs(context, retained)
     for service_account, retained_name in retained.items():
         if remaining[service_account] != [retained_name]:
-            raise ProvisioningError(
-                f"provisioner token rotation left unexpected token Secrets for {service_account}"
-            )
+            raise ProvisioningError(f"provisioner token rotation left unexpected token Secrets for {service_account}")
 
 
 def verify_legacy_no_privileges(context: str, proof_namespace: str) -> None:
@@ -848,10 +928,18 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="existing canonical pr-N namespace used for positive and negative RBAC probes",
     )
     parser.add_argument(
+        "--runner-api-server",
+        help="explicit HTTPS Kubernetes API endpoint reachable by trusted hosted runners",
+    )
+    parser.add_argument(
         "--credential",
         action="append",
         choices=tuple(_CREDENTIALS_BY_NAME),
         help="fixed ServiceAccount to provision (repeat; default: all five)",
+    )
+    parser.add_argument(
+        "--reuse-token-secret",
+        help="retry one selected credential using its exact retained token Secret",
     )
     parser.add_argument("--apply", action="store_true", help="perform guarded staging and publication")
     parser.add_argument(
@@ -888,8 +976,19 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         parser.error("--confirm-external-deletion requires --finalize")
     if (args.apply or args.finalize) and not args.proof_namespace:
         parser.error("--proof-namespace is required for live staging or finalization")
+    if (args.apply or args.finalize) and not args.runner_api_server:
+        parser.error("--runner-api-server is required for live staging or finalization")
+    if args.runner_api_server:
+        try:
+            validate_runner_api_server(args.runner_api_server)
+        except ProvisioningError as exc:
+            parser.error(str(exc))
     if args.finalize and args.credential:
         parser.error("--finalize always provisions all five fixed ServiceAccounts")
+    if args.reuse_token_secret and not args.apply:
+        parser.error("--reuse-token-secret requires --apply")
+    if args.reuse_token_secret and len(args.credential or ()) != 1:
+        parser.error("--reuse-token-secret requires exactly one --credential")
     return args
 
 
@@ -897,10 +996,13 @@ def apply(
     credentials: tuple[Credential, ...],
     context: str,
     proof_namespace: str,
+    runner_api_server: str,
     timeout_seconds: float,
     *,
+    reuse_token_secret: str | None = None,
     announce: bool = True,
 ) -> int:
+    runner_api_server = validate_runner_api_server(runner_api_server)
     if shutil.which("kubectl") is None or shutil.which("gh") is None:
         raise ProvisioningError("kubectl and gh are required for live provisioning")
     require_operator(context)
@@ -909,47 +1011,66 @@ def apply(
     # publishing any kubeconfig. The target repository is explicit in every
     # gh operation, so a different checkout cannot redirect publication.
     verify_environment_policies()
-    cluster_name, server, ca_data = read_selected_cluster(context)
+    cluster_name, ca_data = read_selected_cluster(context)
 
     created_secrets: list[str] = []
-    published = False
+    publication_started = False
     prepared: list[tuple[Credential, bytes]] = []
     retained_token_secrets: dict[str, str] = {}
     try:
         for credential in credentials:
-            read_service_account(context, credential)
-            secret_name = token_secret_name(credential.service_account)
-            ensure_secret_absent(context, secret_name)
-            create_token_secret(context, secret_name, credential)
-            created_secrets.append(secret_name)
+            service_account_uid = read_service_account(context, credential)
+            if reuse_token_secret is not None:
+                secret_name = validate_reuse_token_secret_name(reuse_token_secret, credential)
+            else:
+                secret_name = token_secret_name(credential.service_account)
+                ensure_secret_absent(context, secret_name)
+                create_token_secret(context, secret_name, credential)
+                created_secrets.append(secret_name)
             retained_token_secrets[credential.service_account] = secret_name
-            token, token_ca_data = wait_for_token(
-                context, secret_name, credential, timeout_seconds
-            )
-            # Prefer the CA material populated alongside this token.  The
-            # selected admin context is used only as the endpoint source and
-            # as a final consistency check.
+            if reuse_token_secret is not None:
+                token, token_ca_data = read_token_secret(context, secret_name, credential, service_account_uid)
+            else:
+                token, token_ca_data = wait_for_token(
+                    context,
+                    secret_name,
+                    credential,
+                    service_account_uid,
+                    timeout_seconds,
+                )
+            # Prefer the CA material populated alongside this token. The
+            # selected admin context supplies the expected cluster CA; the
+            # explicit runner endpoint determines the generated server.
             if token_ca_data != ca_data:
                 raise ProvisioningError("token Secret CA does not match the selected cluster context")
-            kubeconfig = build_kubeconfig(
-                cluster_name, server, token_ca_data, credential, token
-            )
+            kubeconfig = build_kubeconfig(cluster_name, runner_api_server, token_ca_data, credential, token)
             verify_generated_kubeconfig(kubeconfig, credential, proof_namespace)
             prepared.append((credential, kubeconfig))
 
         for credential, kubeconfig in prepared:
+            # gh can accept the secret before a local failure is reported. Once
+            # invoked, retain every token in this run for explicit recovery.
+            publication_started = True
             publish_kubeconfig(credential, kubeconfig)
-            published = True
         verify_environment_secrets(credentials)
         # Rotate only after every selected kubeconfig has been published and
         # verified. On partial publication failure this path is not reached,
         # so the newly created tokens remain available for recovery/inspection.
         rotate_provisioner_tokens(context, retained_token_secrets)
 
-    except ProvisioningError:
-        if created_secrets and not published and not cleanup_created_secrets(
-            context, created_secrets
-        ):
+    except BaseException:
+        if publication_started:
+            for service_account, secret_name in retained_token_secrets.items():
+                credential = _CREDENTIALS_BY_NAME[service_account]
+                print(
+                    "publication may have started for "
+                    f"{credential.environment}/{credential.github_secret}; retained token Secret "
+                    f"{CONTROL_NAMESPACE}/{secret_name}. Recover with --apply --confirm "
+                    f"--credential {service_account} --reuse-token-secret {secret_name} "
+                    "and the same validated --runner-api-server.",
+                    file=sys.stderr,
+                )
+        elif created_secrets and not cleanup_created_secrets(context, created_secrets):
             print(
                 "scoped kubeconfig provisioning warning: cleanup of created token "
                 "Secrets failed; inspect firemud-system before retrying.",
@@ -958,16 +1079,14 @@ def apply(
         raise
 
     if announce:
-        print(
-            "Scoped kubeconfigs staged and published; legacy credential remains until "
-            "explicit finalization."
-        )
+        print("Scoped kubeconfigs staged and published; legacy credential remains until explicit finalization.")
     return 0
 
 
 def finalize(
     context: str,
     proof_namespace: str,
+    runner_api_server: str,
     timeout_seconds: float,
 ) -> int:
     # Re-run the complete stage and proof in this guarded invocation. This
@@ -977,6 +1096,7 @@ def finalize(
         CREDENTIALS,
         context,
         proof_namespace,
+        runner_api_server,
         timeout_seconds,
         announce=False,
     )
@@ -996,17 +1116,22 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.finalize:
             if not args.confirm or not args.confirm_external_deletion:
-                raise ProvisioningError(
-                    "finalization requires --confirm --confirm-external-deletion"
-                )
-            return finalize(args.context, args.proof_namespace, args.token_timeout_seconds)
+                raise ProvisioningError("finalization requires --confirm --confirm-external-deletion")
+            return finalize(
+                args.context,
+                args.proof_namespace,
+                args.runner_api_server,
+                args.token_timeout_seconds,
+            )
         if not args.confirm:
             raise ProvisioningError("live staging requires --apply --confirm")
         return apply(
             credentials,
             args.context,
             args.proof_namespace,
+            args.runner_api_server,
             args.token_timeout_seconds,
+            reuse_token_secret=args.reuse_token_secret,
         )
     except ProvisioningError as exc:
         print(f"scoped kubeconfig provisioning refused: {exc}", file=sys.stderr)
