@@ -94,6 +94,7 @@ class AccountControlUiCredentialAuthenticationPostgresIntegrationTest {
     AccountEmailLoginChallenge challenge = challenge(fixture, account);
     var otp = record(fixture, pending, account, Purpose.INITIAL_ISSUANCE, Optional.of(challenge));
 
+    assertThat(pending.operationId()).isNotEqualTo(UUID.fromString(pending.request().requestId()));
     assertThat(password.operationId()).isEqualTo(pending.operationId());
     assertThat(password.method()).isEqualTo("PASSWORD");
     assertThat(otp.operationId()).isEqualTo(pending.operationId());
@@ -460,15 +461,24 @@ class AccountControlUiCredentialAuthenticationPostgresIntegrationTest {
     var request =
         new AccountControlUiIssuanceRequest(
             UUID.randomUUID().toString(), account.getAccountUuid().toString());
+    UUID operationId = UUID.randomUUID();
     OriginalCapture stipulatedCapture =
         new OriginalCapture(
             account.getId(),
             account.getAccountUuidProvenance(),
             "stipulated-original-source-capture".getBytes(StandardCharsets.UTF_8),
             "stipulated-original-fence-capture".getBytes(StandardCharsets.UTF_8));
-    return tx(
-        fixture,
-        () -> fixture.issuance().claim(request, Optional.of(stipulatedCapture)).operation());
+    AccountControlUiIssuanceOperation operation =
+        tx(
+            fixture,
+            () ->
+                fixture
+                    .issuance()
+                    .claim(operationId, request, Optional.of(stipulatedCapture))
+                    .operation());
+    assertThat(operation.operationId()).isEqualTo(operationId);
+    assertThat(operation.operationId()).isNotEqualTo(UUID.fromString(request.requestId()));
+    return operation;
   }
 
   private AccountControlUiIssuanceOperation committed(
@@ -503,13 +513,16 @@ class AccountControlUiCredentialAuthenticationPostgresIntegrationTest {
     }
     Files.writeString(manifest, String.join("\n", lines) + "\n", StandardCharsets.US_ASCII);
     var envelope = new AccountEnvelopeCrypto(manifest).encryptControlUiResponse(binding, response);
+    UUID retryOperationId = UUID.randomUUID();
     return tx(
         fixture,
         () ->
             fixture
                 .issuance()
                 .complete(
-                    fixture.issuance().claim(operation.request(), Optional.empty()),
+                    fixture
+                        .issuance()
+                        .claim(retryOperationId, operation.request(), Optional.empty()),
                     binding,
                     envelope));
   }

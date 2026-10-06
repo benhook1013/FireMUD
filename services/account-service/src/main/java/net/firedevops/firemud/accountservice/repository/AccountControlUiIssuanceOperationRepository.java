@@ -38,12 +38,20 @@ public final class AccountControlUiIssuanceOperationRepository {
   }
 
   /**
-   * Claims the stable request identity or recovers its original capture. An existing exact retry
-   * may omit a new capture; if it supplies one, it must byte-match the immutable first capture.
+   * Claims the stable request identity with its caller-preallocated internal operation ID, or
+   * recovers the original capture. An existing exact retry returns the stored operation ID even
+   * when the caller's proposed ID differs; a supplied capture must byte-match the immutable first
+   * capture.
    */
   public Claim claim(
-      AccountControlUiIssuanceRequest request, Optional<OriginalCapture> proposedCapture) {
+      UUID operationId,
+      AccountControlUiIssuanceRequest request,
+      Optional<OriginalCapture> proposedCapture) {
     requireWritableOwnerTransaction();
+    Objects.requireNonNull(operationId, "operationId");
+    if (operationId.equals(new UUID(0L, 0L))) {
+      throw new IllegalArgumentException("operationId must be non-nil");
+    }
     Objects.requireNonNull(request, "request");
     Objects.requireNonNull(proposedCapture, "proposedCapture");
     byte[] requestDigest = AccountControlUiIssuanceRequestDigest.digest(request);
@@ -67,7 +75,6 @@ public final class AccountControlUiIssuanceOperationRepository {
         proposedCapture.orElseThrow(
             () -> new IllegalArgumentException("First control-UI claim requires original capture"));
     requireCaptureAssociation(capture, association);
-    UUID proposedOperationId = UUID.randomUUID();
     int inserted =
         dsl.execute(
             "INSERT INTO "
@@ -78,7 +85,7 @@ public final class AccountControlUiIssuanceOperationRepository {
                 + "issuance_fence_digest, status) "
                 + "VALUES (?, ?, ?, ?, ?, 'control-ui', 'control-ui', ?, ?, ?, ?, ?, ?, 'PENDING') "
                 + "ON CONFLICT (request_id) DO NOTHING",
-            proposedOperationId,
+            operationId,
             UUID.fromString(request.requestId()),
             UUID.fromString(request.accountUuid()),
             association.accountId(),
@@ -101,7 +108,7 @@ public final class AccountControlUiIssuanceOperationRepository {
                         "Control-UI issuance claim has no durable operation readback"));
     requireRequestAndAssociation(stored, request, requestDigest, association);
     if (inserted == 1
-        && (!stored.operationId().equals(proposedOperationId)
+        && (!stored.operationId().equals(operationId)
             || !stored.originalCapture().equals(capture))) {
       throw new IllegalStateException("First control-UI claim readback differs from its proposal");
     }
