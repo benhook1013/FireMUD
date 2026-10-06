@@ -419,6 +419,29 @@ class ApprovedLegacyTenantAssociationIntegrationTest {
     return connectScopeId;
   }
 
+  @Test
+  void retainedPayloadReferenceIndexesArePartialOnGeneratedOperationColumns() {
+    var indexes =
+        dsl.fetch(
+            "SELECT indexname, indexdef FROM pg_indexes "
+                + "WHERE schemaname = current_schema() AND indexname IN (?, ?)",
+            "account_tenant_membership_approved_payload_operation_idx",
+            "account_connect_scope_records_approved_payload_operation_idx");
+
+    assertThat(indexes)
+        .extracting(record -> record.get("indexname", String.class))
+        .containsExactlyInAnyOrder(
+            "account_tenant_membership_approved_payload_operation_idx",
+            "account_connect_scope_records_approved_payload_operation_idx");
+    assertThat(indexes)
+        .extracting(record -> record.get("indexdef", String.class))
+        .allSatisfy(
+            definition -> {
+              assertThat(definition).contains("(approved_tenant_payload_operation_id)");
+              assertThat(definition).contains("approved_tenant_payload_operation_id IS NOT NULL");
+            });
+  }
+
   private AccountConnectScopeRepository newConnectScopeRepository() {
     return new AccountConnectScopeRepository(
         dsl,

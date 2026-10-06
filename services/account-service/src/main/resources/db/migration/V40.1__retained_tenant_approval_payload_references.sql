@@ -17,6 +17,10 @@ ALTER TABLE account_tenant_membership
         REFERENCES account_approved_legacy_tenant_association_payload(operation_id)
         ON DELETE RESTRICT;
 
+CREATE INDEX account_tenant_membership_approved_payload_operation_idx
+    ON account_tenant_membership (approved_tenant_payload_operation_id)
+    WHERE approved_tenant_payload_operation_id IS NOT NULL;
+
 ALTER TABLE account_connect_scope_records
     ADD COLUMN approved_tenant_payload_operation_id UUID
         /* [jooq ignore start] */
@@ -33,3 +37,7 @@ ALTER TABLE account_connect_scope_records
         FOREIGN KEY (approved_tenant_payload_operation_id)
         REFERENCES account_approved_legacy_tenant_association_payload(operation_id)
         ON DELETE RESTRICT;
+
+CREATE INDEX account_connect_scope_records_approved_payload_operation_idx
+    ON account_connect_scope_records (approved_tenant_payload_operation_id)
+    WHERE approved_tenant_payload_operation_id IS NOT NULL;
