@@ -6,22 +6,49 @@ import datetime
 import fcntl
 import math
 import os
+import queue
 import secrets
+import select
 import shlex
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
 MARKER = "FIREMUD_GRADLE_RUN_OWNER"
 
 
+# A bounded daemon writer may block on the caller's pipe; supervision never does.
+# Do not change O_NONBLOCK on duplicated descriptors: that would affect the caller
+# and Gradle, which share the underlying open file description.
+DIAGNOSTICS = queue.Queue(maxsize=32)
+
+
+def write_diagnostics():
+    while True:
+        fd, message, completed = DIAGNOSTICS.get()
+        try:
+            os.write(fd, message)
+        except OSError:
+            pass
+        finally:
+            completed.set()
+            DIAGNOSTICS.task_done()
+
+
+threading.Thread(target=write_diagnostics, daemon=True).start()
+LAST_DIAGNOSTIC = None
+
+
 def report(message, *, error=False):
-    """A disappeared caller/output pipe must not interrupt owned cleanup."""
+    global LAST_DIAGNOSTIC
+    completed = threading.Event()
     try:
-        os.write(2 if error else 1, (message + "\n").encode())
-    except OSError:
+        DIAGNOSTICS.put_nowait((2 if error else 1, (message + "\n").encode()[:4096], completed))
+        LAST_DIAGNOSTIC = completed
+    except queue.Full:
         pass
 
 
@@ -39,23 +66,87 @@ def alive(pid, started):
     return current is not None and current[0] == started and current[1] != "Z"
 
 
-def owned_processes(token):
-    marker = f"{MARKER}={token}".encode()
+class OwnedProcess:
+    """A pidfd binds cancellation to one process, even after its PID is reused."""
+
+    def __init__(self, pid, started, descriptor):
+        self.pid = pid
+        self.started = started
+        self.descriptor = descriptor
+
+    def running(self):
+        return not select.select([self.descriptor], [], [], 0)[0]
+
+    def send(self, sig):
+        signal.pidfd_send_signal(self.descriptor, sig)
+
+    def close(self):
+        os.close(self.descriptor)
+
+
+def admit_process(pid, token=None):
+    descriptor = os.pidfd_open(pid)
+    owned = None
+    try:
+        # Every proc observation happens while this exact handle is still live.
+        # If the PID is recycled during the reads, its old pidfd becomes ready
+        # and the replacement's observations cannot admit it as owned.
+        owned = OwnedProcess(pid, None, descriptor)
+        if not owned.running():
+            return None
+        path = Path(f"/proc/{pid}")
+        if path.stat().st_uid != os.getuid():
+            return None
+        current = identity(pid)
+        if current is None or current[1] == "Z":
+            return None
+        if token is not None and f"{MARKER}={token}".encode() not in (path / "environ").read_bytes().split(b"\0"):
+            return None
+        latest = identity(pid)
+        if latest is None or latest[0] != current[0] or latest[1] == "Z":
+            return None
+        if path.stat().st_uid != os.getuid() or not owned.running():
+            return None
+        owned.started = current[0]
+        result, owned = owned, None
+        return result
+    finally:
+        if owned is not None:
+            owned.close()
+
+
+def owned_processes(token, remembered):
     found = {}
-    for path in Path("/proc").iterdir():
-        if not path.name.isdigit():
-            continue
+    try:
+        for path in Path("/proc").iterdir():
+            if not path.name.isdigit() or int(path.name) in remembered:
+                continue
+            try:
+                if path.stat().st_uid != os.getuid():
+                    continue
+                process = admit_process(int(path.name), token)
+                if process is not None:
+                    found[process.pid] = process
+            except (FileNotFoundError, ProcessLookupError, PermissionError):
+                continue
+        return found
+    except OSError:
+        for process in found.values():
+            process.close()
+        raise
+
+
+def require_pidfds():
+    if not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal"):
+        raise ValueError("Local Gradle supervision requires Linux pidfd support in Python and the kernel")
+    try:
+        descriptor = os.pidfd_open(os.getpid())
         try:
-            if path.stat().st_uid != os.getuid():
-                continue
-            if marker not in (path / "environ").read_bytes().split(b"\0"):
-                continue
-            current = identity(int(path.name))
-            if current and current[1] != "Z":
-                found[int(path.name)] = current[0]
-        except (FileNotFoundError, ProcessLookupError, PermissionError):
-            continue
-    return found
+            signal.pidfd_send_signal(descriptor, 0)
+        finally:
+            os.close(descriptor)
+    except OSError as error:
+        raise ValueError(f"Local Gradle supervision requires working Linux pidfds: {error}") from error
 
 
 def positive_env(name, default):
@@ -87,6 +178,9 @@ class Supervisor:
         self.run_deadline = None
         self.cancellation_started = None
         self.local = os.environ.get("CI", "").lower() not in {"true", "1"}
+        self.client_admitted = False
+        if self.local:
+            require_pidfds()
         self.wait = os.environ.get("FIREMUD_LOCK_GRADLE_WAIT", "0")
         if self.wait not in {"0", "1"}:
             raise ValueError("FIREMUD_LOCK_GRADLE_WAIT must be 0 or 1")
@@ -115,8 +209,12 @@ class Supervisor:
     def remaining_owned(self):
         try:
             if self.local:
-                self.owned.update(owned_processes(self.token))
-            return {pid: started for pid, started in self.owned.items() if alive(pid, started)}
+                for pid, process in list(self.owned.items()):
+                    if not process.running():
+                        process.close()
+                        del self.owned[pid]
+                self.owned.update(owned_processes(self.token, self.owned))
+            return dict(self.owned)
         except OSError as error:
             self.fail(error)
             return None
@@ -156,6 +254,9 @@ class Supervisor:
         return True
 
     def release(self):
+        for process in self.owned.values():
+            process.close()
+        self.owned.clear()
         for handle, meta, exclusive in reversed(self.locks):
             if exclusive:
                 try:
@@ -166,16 +267,26 @@ class Supervisor:
             handle.close()
 
     def signal_owned(self, sig):
-        # The marker admits ownership; the remembered start identity survives exec
-        # into a clean environment. Recheck it immediately before every signal.
-        for pid, started in self.owned.items():
+        # Admission validates the marker/UID/start identity against a live
+        # pidfd. The retained handle stays authoritative after environment loss.
+        for process in self.owned.values():
             try:
-                if alive(pid, started):
-                    os.kill(pid, sig)
+                process.send(sig)
             except ProcessLookupError:
                 pass
             except OSError as error:
                 self.fail(error)
+
+    def admit_client(self):
+        if self.local and not self.client_admitted:
+            # Capture before poll/wait can reap our child and free its PID.
+            if self.child.pid in self.owned:
+                self.client_admitted = True
+                return
+            process = admit_process(self.child.pid)
+            if process is not None:
+                self.owned[self.child.pid] = process
+            self.client_admitted = True
 
     def run(self):
         os.setsid()
@@ -205,13 +316,15 @@ class Supervisor:
         if self.local:
             command.append("--no-daemon")
             env[MARKER] = self.token
+        if self.local:
+            # An unreaped direct child cannot have its PID reused before admission.
+            signal.signal(signal.SIGCHLD, signal.SIG_DFL)
         self.child = subprocess.Popen(command, env=env, start_new_session=True, close_fds=True)
         self.run_deadline = time.monotonic() + self.run_seconds if self.run_seconds is not None else None
         try:
-            launched = identity(self.child.pid)
-            if self.local and launched is not None:
-                # Popen proves ownership even if the first exec discards its marker.
-                self.owned[self.child.pid] = launched[0]
+            self.admit_client()
+        except (FileNotFoundError, ProcessLookupError):
+            self.client_admitted = True
         except OSError as error:
             self.fail(error)
         return self.supervise()
@@ -220,10 +333,7 @@ class Supervisor:
         while True:
             remaining = self.remaining_owned()
             try:
-                if self.local and self.child.pid not in self.owned:
-                    launched = identity(self.child.pid)
-                    if launched is not None:
-                        self.owned[self.child.pid] = launched[0]
+                self.admit_client()
                 status = self.child.poll()
                 # Resolve a late fork after the first scan and before client exit.
                 if status is not None and remaining == {}:
@@ -284,6 +394,10 @@ def main():
     finally:
         if supervisor is not None:
             supervisor.release()
+        # Give normal diagnostics a short opportunity to finish only after
+        # cleanup and lock release; an unread pipe must never delay ownership.
+        if LAST_DIAGNOSTIC is not None:
+            LAST_DIAGNOSTIC.wait(0.05)
 
 
 if __name__ == "__main__":

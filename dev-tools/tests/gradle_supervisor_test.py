@@ -75,7 +75,7 @@ time.sleep(float(os.environ.get('FIXTURE_SLEEP', '60')))
             (root / "services" / service).mkdir(parents=True)
         return destination / "run-locked-gradle.sh"
 
-    def launch(self, name, task=":account-service:test", *, checkout_name=None, diagnostic_pipe=False, **settings):
+    def launch(self, name, task=":account-service:test", *, checkout_name=None, diagnostic_pipe=False, diagnostic_fd=None, **settings):
         fixture_dir = self.root / f"fixture-{name}"
         fixture_dir.mkdir()
         env = {**os.environ, "CI": "false", "FIXTURE_DIR": str(fixture_dir),
@@ -86,7 +86,7 @@ time.sleep(float(os.environ.get('FIXTURE_SLEEP', '60')))
         log = (self.root / f"{name}.log").open("w+")
         self.logs.append(log)
         process = subprocess.Popen(["bash", str(self.checkout(checkout_name or name)), task], env=env,
-                                   stdout=log, stderr=subprocess.PIPE if diagnostic_pipe else log,
+                                   stdout=log, stderr=diagnostic_fd if diagnostic_fd is not None else (subprocess.PIPE if diagnostic_pipe else log),
                                    stdin=subprocess.PIPE)
         self.processes.append(process)
         return process, fixture_dir, log
@@ -172,6 +172,73 @@ time.sleep(float(os.environ.get('FIXTURE_SLEEP', '60')))
         self.assertEqual(replacement.wait(timeout=6), 23)
         self.assertFalse(self.running(pid))
 
+    def test_full_unread_diagnostic_pipe_cannot_delay_cleanup(self):
+        reader, writer = os.pipe()
+        try:
+            os.set_blocking(writer, False)
+            with self.assertRaises(BlockingIOError):
+                while True:
+                    os.write(writer, b"x" * 4096)
+            os.set_blocking(writer, True)
+            process, fixture, _ = self.launch("full-pipe", FIXTURE_MODE="worker", diagnostic_fd=writer)
+            pid = self.ready(fixture, "worker")
+            process.kill()
+            process.wait(timeout=5)
+            replacement, _, _ = self.launch("full-pipe-replacement", FIXTURE_MODE="exit",
+                                            FIREMUD_LOCK_GRADLE_WAIT="1", FIREMUD_LOCK_GRADLE_WAIT_SECONDS="4")
+            self.assertEqual(replacement.wait(timeout=6), 23)
+            self.assertFalse(self.running(pid))
+            # The supervisor must not change the shared pipe's blocking policy.
+            self.assertTrue(os.get_blocking(writer))
+        finally:
+            os.close(writer)
+            os.close(reader)
+
+    def test_pid_reuse_during_admission_rejects_replacement(self):
+        # The numerical PID now exposes a replacement with the same marker,
+        # but the original stable handle became ready while procfs was read.
+        with mock.patch.object(SUPERVISOR.os, "pidfd_open", return_value=700), \
+             mock.patch.object(SUPERVISOR.os, "close") as close, \
+             mock.patch.object(SUPERVISOR.OwnedProcess, "running", side_effect=[True, False]), \
+             mock.patch.object(SUPERVISOR, "identity", return_value=("replacement-start", "S")), \
+             mock.patch.object(SUPERVISOR.Path, "stat", return_value=SimpleNamespace(st_uid=os.getuid())), \
+             mock.patch.object(SUPERVISOR.Path, "read_bytes", return_value=b"FIREMUD_GRADLE_RUN_OWNER=token\0"):
+            self.assertIsNone(SUPERVISOR.admit_process(900000003, "token"))
+        close.assert_called_once_with(700)
+
+    def test_admission_requires_same_start_identity_but_allows_state_changes(self):
+        for latest, admitted in ((("original-start", "R"), True), (("replacement-start", "S"), False)):
+            with self.subTest(latest=latest), \
+                 mock.patch.object(SUPERVISOR.os, "pidfd_open", return_value=700), \
+                 mock.patch.object(SUPERVISOR.os, "close") as close, \
+                 mock.patch.object(SUPERVISOR.OwnedProcess, "running", return_value=True), \
+                 mock.patch.object(SUPERVISOR, "identity", side_effect=[("original-start", "S"), latest]), \
+                 mock.patch.object(SUPERVISOR.Path, "stat", return_value=SimpleNamespace(st_uid=os.getuid())), \
+                 mock.patch.object(SUPERVISOR.Path, "read_bytes", return_value=b"FIREMUD_GRADLE_RUN_OWNER=token\0"):
+                process = SUPERVISOR.admit_process(900000003, "token")
+                self.assertEqual(process is not None, admitted)
+                if process is not None:
+                    process.close()
+            close.assert_called_once_with(700)
+
+    def test_signalling_retained_handle_never_uses_recycled_pid(self):
+        process = SUPERVISOR.OwnedProcess(900000003, "old-start", 700)
+        args = SimpleNamespace(root=str(self.root), wrapper_pid=os.getpid(), command=["fixture"], lock=[])
+        with mock.patch.dict(os.environ, {"CI": "false"}):
+            supervisor = SUPERVISOR.Supervisor(args)
+        supervisor.owned[process.pid] = process
+        with mock.patch.object(SUPERVISOR.signal, "pidfd_send_signal") as send, \
+             mock.patch.object(SUPERVISOR.os, "kill") as unsafe_kill, \
+             mock.patch.object(SUPERVISOR, "identity", return_value=("replacement-start", "S")):
+            supervisor.signal_owned(signal.SIGKILL)
+        send.assert_called_once_with(700, signal.SIGKILL)
+        unsafe_kill.assert_not_called()
+
+    def test_missing_pidfd_support_fails_before_launch(self):
+        with mock.patch.object(SUPERVISOR.os, "pidfd_open", side_effect=OSError("unsupported kernel")), \
+             self.assertRaisesRegex(ValueError, "requires working Linux pidfds"):
+            SUPERVISOR.require_pidfds()
+
     def test_interrupt_and_hangup_exit_status(self):
         for sig in (signal.SIGINT, signal.SIGHUP):
             process, fixture, _ = self.launch(f"signal-{sig}")
@@ -213,16 +280,15 @@ time.sleep(float(os.environ.get('FIXTURE_SLEEP', '60')))
         with mock.patch.dict(os.environ, env):
             supervisor = SUPERVISOR.Supervisor(args)
 
-        def scan(_token):
+        worker_handle = SimpleNamespace(running=lambda: state["worker_alive"], close=lambda: None)
+
+        def scan(_token, _remembered):
             state["scans"] += 1
             if transient_error and state["scans"] == 1:
                 raise OSError("temporary procfs read failure")
             if state["scans"] == 1 or not state["worker_alive"]:
                 return {}
-            return {worker_pid: "worker-start"}
-
-        def is_alive(pid, _start):
-            return pid == worker_pid and state["worker_alive"]
+            return {worker_pid: worker_handle}
 
         def cancel(_sig):
             # Cleanup must still own the resource guard when the late worker is found.
@@ -237,8 +303,7 @@ time.sleep(float(os.environ.get('FIXTURE_SLEEP', '60')))
              mock.patch.object(SUPERVISOR.os, "setsid"), \
              mock.patch.object(SUPERVISOR.signal, "signal"), \
              mock.patch.object(SUPERVISOR.subprocess, "Popen", return_value=child), \
-             mock.patch.object(SUPERVISOR, "identity", return_value=("client-start", "Z")), \
-             mock.patch.object(SUPERVISOR, "alive", side_effect=is_alive), \
+             mock.patch.object(SUPERVISOR, "admit_process", return_value=None), \
              mock.patch.object(SUPERVISOR, "owned_processes", side_effect=scan), \
              mock.patch.object(supervisor, "wrapper_gone", side_effect=[False, True]), \
              mock.patch.object(supervisor, "signal_owned", side_effect=cancel), \
