@@ -314,7 +314,7 @@ class IssuerGenerationProjectionPostgresRedisIntegrationTest {
         .defaultSchema(schema)
         .placeholders(Map.of("serviceSchema", schema))
         .locations("classpath:db/migration")
-        .target("67")
+        .target("79")
         .load()
         .migrate();
     DSLContext dsl =

@@ -483,6 +483,17 @@ class AccountControlUiIssuanceIntentPostgresIntegrationTest {
         .target(MigrationVersion.fromVersion("74"))
         .load()
         .migrate();
+    // Preserve the original V74 seed boundary while giving current source collaborators V79's
+    // publication participation schema.
+    Flyway.configure()
+        .dataSource(dataSource)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .placeholders(Map.of("serviceSchema", schema))
+        .locations("classpath:db/migration")
+        .target(MigrationVersion.fromVersion("79"))
+        .load()
+        .migrate();
     DSLContext dsl =
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
     var accounts = new AccountRepository(dsl);

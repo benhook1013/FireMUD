@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package world_management.v1;
+
+option java_package = "net.firedevops.firemud.worldmanagement.v1";
+option java_multiple_files = true;
+
+// Explicit authenticated World owner read, without runtime lifecycle registration.
+service WorldPublicationTerminalReadService {
+  rpc ReadWorldPublicationTerminal(ReadWorldPublicationTerminalRequest)
+      returns (ReadWorldPublicationTerminalResponse);
+}
+
+message ReadWorldPublicationTerminalRequest {
+  bytes canonical_request_bytes = 1;
+}
+
+message ReadWorldPublicationTerminalResponse {
+  // Exact request echo, explicit UNKNOWN or unchanged committed terminal evidence.
+  bytes canonical_response_bytes = 1;
+}
+
+// Authenticated Game Design completion of the exact original publication operation.
+service WorldPublicationTerminalCompletionService {
+  rpc CompleteWorldPublicationTerminal(CompleteWorldPublicationTerminalRequest)
+      returns (CompleteWorldPublicationTerminalResponse);
+}
+
+message CompleteWorldPublicationTerminalRequest {
+  bytes canonical_request_bytes = 1;
+}
+
+message CompleteWorldPublicationTerminalResponse {
+  // Exact original operation and terminal evidence echo after the World owner commit.
+  bytes canonical_response_bytes = 1;
+}

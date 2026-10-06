@@ -26,12 +26,16 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
 import java.security.Security;
 import java.security.cert.X509Certificate;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.Date;
+import java.util.HexFormat;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -53,9 +57,9 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
 import net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup;
 import net.firedevops.firemud.gamedesign.entity.Game;
+import net.firedevops.firemud.gamedesign.entity.GameAsset;
 import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.entity.Version;
-import net.firedevops.firemud.gamedesign.entity.VersionAssetArtifact;
 import net.firedevops.firemud.gamedesign.model.PublishAttemptStatus;
 import net.firedevops.firemud.gamedesign.model.VersionAssetArtifactState;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
@@ -64,12 +68,19 @@ import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperat
 import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationService;
 import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationTerminalReadGrpcService;
 import net.firedevops.firemud.gamedesign.publication.IsolatedPublicationOperationFixtures;
+import net.firedevops.firemud.gamedesign.repository.GameAssetRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactRepository;
+import net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
+import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
+import net.firedevops.firemud.gamedesign.service.PublishedArtifactDigest;
 import net.firedevops.firemud.gamedesign.service.impl.PublishedWorldSelectorFixtures;
+import net.firedevops.firemud.gamedesign.service.impl.VersionAssetArtifactServiceImpl;
+import net.firedevops.firemud.gamedesign.service.impl.VersionAssetExportCandidateServiceImpl;
+import net.firedevops.firemud.gamedesign.service.impl.VersionAssetPublicationServiceImpl;
 import net.firedevops.firemud.gamedesign.v1.ReadGameDesignPublicationTerminalResponse;
 import net.firedevops.firemud.test.TlsTestSupport;
 import org.bouncycastle.asn1.x500.X500Name;
@@ -106,7 +117,6 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
-  private static final String MANIFEST = "sha256:" + "a".repeat(64);
   private static final AtomicLong TEST_CERTIFICATE_SERIAL = new AtomicLong(1);
 
   /**
@@ -569,6 +579,12 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
     public void onCompleted() {}
   }
 
+  private static final String ASSET_FILE_NAME = "publication-operation-logo.png";
+  private static final String ASSET_CONTENT_TYPE = "image/png";
+  private static final byte[] ASSET_BYTES =
+      "isolated publication asset bytes".getBytes(StandardCharsets.UTF_8);
+  private static final String PUBLIC_BASE_URL = "https://assets.example.invalid/assets";
+
   @Test
   void noPublicationReceiptReplaysAfterLostResponseAndExcludesDelayedFinalizerAndRawInsert()
       throws Exception {
@@ -888,17 +904,13 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
     version.setVersionState(VersionLifecycleState.PUBLISHED);
     version.setVersionStateEpoch(version.getVersionStateEpoch() + 1);
     fixture.versions().save(version);
-    var artifact = new VersionAssetArtifact();
-    artifact.setTenantId(op.tenantKey());
-    artifact.setVersionId(op.versionId());
+    var artifact =
+        fixture
+            .artifacts()
+            .findByTenantIdAndVersionIdForUpdate(op.tenantKey(), op.versionId())
+            .orElseThrow();
     artifact.setArtifactState(VersionAssetArtifactState.PUBLISHED);
-    artifact.setStateEpoch(1);
-    artifact.setExportedVersionNumber(version.getVersionNumber());
-    artifact.setManifestHash(MANIFEST);
-    artifact.setLastWorkflowId(op.workflowId());
-    artifact.setManifestSchemaVersion(1);
-    artifact.setArtifactDigestsJson("[]");
-    artifact.setPublishedObjectProofsJson("[]");
+    artifact.setStateEpoch(Math.addExact(artifact.getStateEpoch(), 1L));
     fixture.artifacts().save(artifact);
     var attempt =
         fixture.attempts().findByPublishWorkflowIdForUpdate(op.workflowId()).orElseThrow();
@@ -962,10 +974,12 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
     bundle.setCanonicalVersionId(op.world().request().canonicalVersionId());
     bundle.setAttestationSchemaVersion("v2");
     bundle.setPublishWorkflowId(op.workflowId());
-    bundle.setManifestHash(MANIFEST);
+    bundle.setManifestHash(fixture.candidate().manifestHash());
     bundle.setManifestSchemaVersion(1);
-    bundle.setArtifactDigestsJson("[]");
-    bundle.setRequiredManifestAssetKeysJson("[]");
+    bundle.setArtifactDigestsJson(
+        new ObjectMapper().writeValueAsString(fixture.candidate().artifactDigests()));
+    bundle.setRequiredManifestAssetKeysJson(
+        new ObjectMapper().writeValueAsString(fixture.candidate().requiredManifestAssetKeys()));
     bundle.setCommandDefinitionsJson("[]");
     bundle.setGenerationConfigRevision("generation-1");
     bundle.setParticipantDigestsJson(
@@ -992,7 +1006,7 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
             bundle.getCanonicalVersionId(),
             UUID.randomUUID().toString(),
             bundle.getPublishWorkflowId(),
-            MANIFEST,
+            bundle.getManifestHash(),
             bundle.getGenerationConfigRevision(),
             bundle.getParticipantDigestsJson(),
             bundle.getWorldPublishedStartLocationEvidenceJson());
@@ -1069,16 +1083,71 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
               }
             });
     var operations = new GameDesignPublicationOperationRepository(dsl);
+    var gameAssets = new GameAssetRepository(dsl);
+    var asset =
+        write.execute(
+            status -> {
+              var requested = new GameAsset();
+              requested.setTenantId(game.getTenantId());
+              requested.setFileName(ASSET_FILE_NAME);
+              requested.setContentType(ASSET_CONTENT_TYPE);
+              requested.setData(ASSET_BYTES);
+              return gameAssets.save(requested);
+            });
+    var publicationRepository = new VersionAssetPublicationRepository(dsl);
+    var publicationService =
+        new VersionAssetPublicationServiceImpl(transactions, publicationRepository);
+    publicationService.associateDraftAsset(
+        game.getTenantId(), version.getId(), asset.getId(), "logo");
+    var snapshot =
+        publicationService.freezeOrReadSnapshot(game.getTenantId(), version.getVersionNumber());
+    var artifactService =
+        new VersionAssetArtifactServiceImpl(
+            new VersionAssetArtifactRepository(dsl),
+            null,
+            versions,
+            null,
+            null,
+            null,
+            null,
+            null,
+            new ObjectMapper());
+    write.execute(
+        status ->
+            artifactService.stageExport(
+                game.getTenantId(),
+                version.getId(),
+                version.getVersionNumber(),
+                operation.workflowId()));
+    var artifacts = new VersionAssetArtifactRepository(dsl);
+    var candidateService =
+        new VersionAssetExportCandidateServiceImpl(
+            versions,
+            games,
+            new PublishAttemptRepository(dsl),
+            artifacts,
+            publicationService,
+            transactions,
+            new ObjectMapper());
+    var requestedCandidate = candidate(snapshot);
+    var committedCandidate =
+        candidateService.recordExportCandidate(
+            game.getTenantId(), version.getVersionNumber(), requestedCandidate);
+    var readCandidate =
+        candidateService.readExportCandidate(game.getTenantId(), version.getVersionNumber());
+    assertThat(committedCandidate).isEqualTo(requestedCandidate);
+    assertThat(readCandidate).isEqualTo(committedCandidate);
     return new Fixture(
         dsl,
         write,
         versions,
         new PublishAttemptRepository(dsl),
         new PublishedReleaseBundleRepository(dsl),
-        new VersionAssetArtifactRepository(dsl),
+        artifacts,
         operations,
         new GameDesignPublicationOperationService(operations, transactions),
         operation,
+        readCandidate,
         () ->
             Flyway.configure()
                 .dataSource(source)
@@ -1089,6 +1158,47 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
                 .table("flyway_schema_history_game_design_service")
                 .load()
                 .migrate());
+  }
+
+  private ExportedAssetManifest candidate(
+      VersionAssetPublicationRepository.ExportSnapshot snapshot) {
+    var source = snapshot.items().get(0);
+    String contentDigest = source.contentDigest();
+    String objectKey = "artifacts/sha256/" + contentDigest.substring("sha256:".length());
+    var digest =
+        new PublishedArtifactDigest(
+            source.usageKey(), "BINARY", objectKey, contentDigest, source.contentType(), 1);
+    String url = PUBLIC_BASE_URL + "/" + objectKey;
+    String manifestJson =
+        "{\"schemaVersion\":1,\"assets\":{\""
+            + source.usageKey()
+            + "\":{\"usageKey\":\""
+            + source.usageKey()
+            + "\",\"artifactKind\":\"BINARY\",\"immutableObjectKey\":\""
+            + objectKey
+            + "\",\"contentDigest\":\""
+            + contentDigest
+            + "\",\"contentType\":\""
+            + source.contentType()
+            + "\",\"artifactSchemaVersion\":1,\"producerService\":\"game-design-service\",\"versionId\":\""
+            + snapshot.canonicalVersionId()
+            + "\",\"url\":\""
+            + url
+            + "\"}}}";
+    return new ExportedAssetManifest(
+        sha256(manifestJson.getBytes(StandardCharsets.UTF_8)),
+        1,
+        List.of(source.usageKey()),
+        List.of(digest));
+  }
+
+  private static String sha256(byte[] bytes) {
+    try {
+      return "sha256:"
+          + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+    } catch (NoSuchAlgorithmException exception) {
+      throw new IllegalStateException("SHA-256 is unavailable", exception);
+    }
   }
 
   private static void await(CountDownLatch latch) {
@@ -1111,5 +1221,6 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
       GameDesignPublicationOperationRepository operations,
       GameDesignPublicationOperationService service,
       GameDesignPublicationOperation operation,
+      ExportedAssetManifest candidate,
       Runnable completeMigration) {}
 }

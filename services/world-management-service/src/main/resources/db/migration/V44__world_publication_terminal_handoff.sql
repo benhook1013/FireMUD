@@ -334,7 +334,7 @@ DECLARE
                 AND t.content_digest=capture_row.freeze_request_json::JSONB->>'contentDigest'
                 AND t.digest_schema_version=(capture_row.freeze_request_json::JSONB->>'digestSchemaVersion')::INTEGER
                 AND t.published_release_bundle_ref=binding_row.release_attestation_json::JSONB->>'publishedReleaseBundleRef'
-                AND t.publication_version_state_epoch=(binding_row.release_attestation_json::JSONB->>'versionStateEpoch')::BIGINT
+                AND t.publication_version_state_epoch<=(binding_row.release_attestation_json::JSONB->>'versionStateEpoch')::BIGINT
                 AND t.world_request_json::JSONB=jsonb_set(
                     binding_row.release_attestation_json::JSONB->'worldStartLocationEvidence'->'request',
                     '{versionStateEpoch}',to_jsonb(t.freeze_version_state_epoch::TEXT),FALSE)

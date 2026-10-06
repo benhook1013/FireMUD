@@ -3,7 +3,11 @@ package unit.net.firedevops.firemud.gamedesign.publication;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
 import java.util.UUID;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
@@ -120,6 +124,32 @@ class GameDesignPublicationOperationTest {
         .isInstanceOf(IllegalArgumentException.class);
   }
 
+  @Test
+  void ownerReceiptUsesEmptyByteFrameForNoPublicationAndPreservesExactPublishedTextEvidence()
+      throws Exception {
+    var operation = fixture();
+    byte[] noPublication = invokeReceipt(operation, "NO_PUBLICATION", null);
+    var absentReader = new DraftAuthorizationFenceBinding.FrameReader(noPublication);
+    absentReader.expect("game-design-publication-owner-readback/v1");
+    assertThat(absentReader.bytes()).isEqualTo(operation.canonicalBytes());
+    assertThat(absentReader.text()).isEqualTo("NO_PUBLICATION");
+    assertThat(absentReader.bytes()).isEmpty();
+    absentReader.requireEnd();
+
+    String releaseEvidence = "{\"release\":\"published-雪-🧭\"}";
+    byte[] published = invokeReceipt(operation, "PUBLISHED", releaseEvidence);
+    var publishedReader = new DraftAuthorizationFenceBinding.FrameReader(published);
+    publishedReader.expect("game-design-publication-owner-readback/v1");
+    assertThat(publishedReader.bytes()).isEqualTo(operation.canonicalBytes());
+    assertThat(publishedReader.text()).isEqualTo("PUBLISHED");
+    assertThat(publishedReader.bytes()).isEqualTo(releaseEvidence.getBytes(StandardCharsets.UTF_8));
+    publishedReader.requireEnd();
+
+    assertThatThrownBy(() -> invokeReceipt(operation, "PUBLISHED", ""))
+        .isInstanceOf(InvocationTargetException.class)
+        .hasCauseInstanceOf(IllegalArgumentException.class);
+  }
+
   private GameDesignPublicationOperation fixture() throws Exception {
     return IsolatedPublicationOperationFixtures.fresh(
         new TargetProof(
@@ -130,5 +160,14 @@ class GameDesignPublicationOperationTest {
             3L,
             "ISOLATED-tenant",
             "NEW_GAME_ROW"));
+  }
+
+  private byte[] invokeReceipt(
+      GameDesignPublicationOperation operation, String outcome, String evidence) throws Exception {
+    Method method =
+        GameDesignPublicationOperationRepository.class.getDeclaredMethod(
+            "receipt", GameDesignPublicationOperation.class, String.class, String.class);
+    method.setAccessible(true);
+    return (byte[]) method.invoke(null, operation, outcome, evidence);
   }
 }

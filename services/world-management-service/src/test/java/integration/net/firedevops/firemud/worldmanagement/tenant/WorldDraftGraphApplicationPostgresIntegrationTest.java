@@ -18,6 +18,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -33,10 +34,12 @@ import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvi
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateEvidence;
 import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
+import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalClient;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence.Outcome;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence.Participant;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence.ReleaseContent;
+import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalReadEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
@@ -46,6 +49,9 @@ import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleGrpcCodec;
 import net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence;
+import net.firedevops.firemud.common.world.WorldPublicationTerminalCompletionGrpcCodec;
+import net.firedevops.firemud.common.world.WorldPublicationTerminalReadEvidence;
+import net.firedevops.firemud.common.world.WorldPublicationTerminalReadGrpcCodec;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.v1.WorldDesignMutationRevision;
@@ -59,6 +65,8 @@ import net.firedevops.firemud.worldmanagement.service.WorldLifecycleCommandServi
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceEvidence.OwnerBinding;
 import net.firedevops.firemud.worldmanagement.v1.EntityTemplateReferenceType;
 import net.firedevops.firemud.worldmanagement.v1.GenerationRuleDesignMutation;
+import net.firedevops.firemud.worldmanagement.v1.ReadWorldPublicationTerminalRequest;
+import net.firedevops.firemud.worldmanagement.v1.ReadWorldPublicationTerminalResponse;
 import net.firedevops.firemud.worldmanagement.v1.RegionDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.RoomDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.RoomExitDesignMutation;
@@ -217,6 +225,76 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   }
 
   @Test
+  void canonicalPreparationKeepsOriginalPublicationEpochForLaterReleaseResolution() {
+    Fixture f = fixture();
+    var original = application(generationFreePlan(f));
+    var selectedRoom =
+        original.plan().graph().nodes().stream()
+            .filter(
+                node ->
+                    node.mutation().getAggregateType()
+                        == WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM)
+            .map(node -> node.templateId())
+            .toList()
+            .getLast();
+    var applied = withStartRoom(original, selectedRoom);
+    appliedComponent().apply(applied);
+    var frozen = capture(applied.plan());
+    var selector =
+        publishedEvidence(
+            publishedSelectors().readCommitted(frozen.request().freeze()).orElseThrow());
+
+    long publicationEpoch = 2L;
+    var publicationInput = preparationInput(f, frozen, selector, publicationEpoch);
+    var originalTerminal = isolatedTerminalEvidence(publicationInput);
+    byte[] originalTerminalBytes = originalTerminal.canonicalBytes();
+    assertThat(originalTerminal.publicationVersionStateEpoch()).isEqualTo(publicationEpoch);
+    assertThat(originalTerminal.worldEvidence().request().versionStateEpoch())
+        .isEqualTo(selector.request().versionStateEpoch());
+    publicationTerminalComponent(originalTerminal)
+        .complete(originalTerminal.operationBytes(), originalTerminalBytes);
+    UUID fence = selector.request().publicationFence();
+    assertThat(publicationOwnerPhase(fence)).isEqualTo("PUBLISHED");
+    assertThat(publicationTerminalBytes(fence)).containsExactly(originalTerminalBytes);
+
+    var staleInput = preparationInput(f, frozen, selector, publicationEpoch - 1);
+    // These later descriptor epochs are isolated GD-resolution inputs: this proves World owner
+    // storage and binding only, not a live GD lifecycle/currentness or authorization producer.
+    var laterInput = preparationInput(f, frozen, selector, publicationEpoch + 1);
+    var changedReleaseInput =
+        preparationInput(f, frozen, selector, publicationEpoch + 1, List.of("LOOK", "CHANGED"));
+    var laterRelease = laterInput.completeLaunchBinding().evidence().releaseAttestation();
+    assertThat(laterRelease.versionStateEpoch()).isEqualTo(publicationEpoch + 1);
+    assertThat(isolatedTerminalEvidence(laterInput).releaseContent().canonicalBytes())
+        .containsExactly(originalTerminal.releaseContent().canonicalBytes());
+    assertThat(isolatedTerminalEvidence(changedReleaseInput).releaseContent().canonicalBytes())
+        .isNotEqualTo(originalTerminal.releaseContent().canonicalBytes());
+
+    var repository = preparationRepository();
+    var service = preparationComponentWithRetainedTerminal(repository, originalTerminal);
+    assertThatThrownBy(() -> service.prepare(staleInput))
+        .isInstanceOf(
+            WorldCanonicalInstancePreparationRepository.InvalidPreparationEvidenceException.class)
+        .hasMessageContaining("ReleaseContent differs");
+    assertThatThrownBy(() -> service.prepare(changedReleaseInput))
+        .isInstanceOf(
+            WorldCanonicalInstancePreparationRepository.InvalidPreparationEvidenceException.class)
+        .hasMessageContaining("ReleaseContent differs");
+    assertThat(count(f, "world_instance")).isZero();
+
+    var prepared = service.prepare(laterInput);
+    assertThat(prepared.startLocation().roomTemplateId()).isEqualTo(selectedRoom);
+    assertThat(repository.readOwnerPreparation(laterInput)).contains(prepared);
+    assertThat(publicationOwnerPhase(fence)).isEqualTo("PUBLISHED");
+    assertThat(publicationTerminalBytes(fence)).containsExactly(originalTerminalBytes);
+    assertThat(
+            WorldPublicationTerminal.request(publicationTerminalBytes(fence))
+                .publicationVersionStateEpoch())
+        .isEqualTo(publicationEpoch);
+    assertOrigin();
+  }
+
+  @Test
   void publishedTerminalUsesExactOwnerEvidenceRetriesAndRejectsChangedReleaseContent() {
     Fixture f = fixture();
     var original = application(generationFreePlan(f));
@@ -241,13 +319,250 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     assertThat(publicationOwnerPhase(fence)).isEqualTo("FROZEN");
 
     byte[] originalTerminal = terminal.canonicalBytes();
-    var service = publicationTerminalComponent(terminal);
-    assertThat(service.complete(terminal.operationBytes(), originalTerminal).canonicalBytes())
+    var terminalRepository = new WorldPublicationTerminalRepository(dsl, manager);
+    var terminalReader = new WorldPublicationTerminalReadGrpcService(terminalRepository, NAMESPACE);
+    var readRequest =
+        WorldPublicationTerminalReadEvidence.Request.create(NAMESPACE, originalTerminal);
+    var wireReadRequest = WorldPublicationTerminalReadGrpcCodec.toRequest(readRequest);
+
+    // Absence is an explicit UNKNOWN response; it is not evidence of abort or publication.
+    var unknown = readPublicationTerminalAs(terminalReader, wireReadRequest, NAMESPACE);
+    assertThat(unknown.error).isNull();
+    assertThat(unknown.completed).isTrue();
+    var unknownResult =
+        WorldPublicationTerminalReadGrpcCodec.fromResponse(readRequest, unknown.value);
+    assertThat(unknownResult.status())
+        .isEqualTo(WorldPublicationTerminalReadEvidence.Status.UNKNOWN);
+    assertThat(unknownResult.terminalEvidence()).isEmpty();
+    assertThat(unknownResult.request().canonicalBytes())
+        .containsExactly(readRequest.canonicalBytes());
+
+    var missingOwnerTerminal = terminalWithWorldBinding(terminal, UUID.randomUUID(), null);
+    var missingOwnerRequest =
+        WorldPublicationTerminalReadEvidence.Request.create(
+            NAMESPACE, missingOwnerTerminal.canonicalBytes());
+    var missingOwner =
+        readPublicationTerminalAs(
+            terminalReader,
+            WorldPublicationTerminalReadGrpcCodec.toRequest(missingOwnerRequest),
+            NAMESPACE);
+    assertThat(missingOwner.error).isEqualTo(Status.Code.FAILED_PRECONDITION);
+
+    String substitutedContentDigest =
+        selector.request().contentDigest().startsWith("f") ? "e".repeat(64) : "f".repeat(64);
+    var substitutedPendingTerminal =
+        terminalWithWorldBinding(terminal, null, substitutedContentDigest);
+    var substitutedPendingRequest =
+        WorldPublicationTerminalReadEvidence.Request.create(
+            NAMESPACE, substitutedPendingTerminal.canonicalBytes());
+    var substitutedPending =
+        readPublicationTerminalAs(
+            terminalReader,
+            WorldPublicationTerminalReadGrpcCodec.toRequest(substitutedPendingRequest),
+            NAMESPACE);
+    assertThat(substitutedPending.error).isEqualTo(Status.Code.FAILED_PRECONDITION);
+
+    // Deliberately model an impossible retained state to ensure a missing receipt cannot disguise
+    // a contradictory terminal owner phase as pending UNKNOWN.
+    dsl.execute(
+        "ALTER TABLE world_design_publication_fence_owner "
+            + "DISABLE TRIGGER trg_world_publication_owner_protect");
+    try {
+      assertThat(
+              dsl.execute(
+                  "UPDATE world_design_publication_fence_owner SET owner_freeze_phase='PUBLISHED' "
+                      + "WHERE current_publication_fence=?",
+                  fence))
+          .isEqualTo(1);
+      var contradictoryPhase =
+          readPublicationTerminalAs(terminalReader, wireReadRequest, NAMESPACE);
+      assertThat(contradictoryPhase.error).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    } finally {
+      dsl.execute(
+          "UPDATE world_design_publication_fence_owner SET owner_freeze_phase='FROZEN' "
+              + "WHERE current_publication_fence=?",
+          fence);
+      dsl.execute(
+          "ALTER TABLE world_design_publication_fence_owner "
+              + "ENABLE TRIGGER trg_world_publication_owner_protect");
+    }
+    assertThat(publicationOwnerPhase(fence)).isEqualTo("FROZEN");
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT count(*) FROM world_design_publication_terminal "
+                            + "WHERE publication_fence=?",
+                        fence))
+                .get(0, Long.class))
+        .isZero();
+
+    var wrongPeer =
+        readPublicationTerminalAs(
+            terminalReader, wireReadRequest, "game-design-service", NAMESPACE);
+    var wrongNamespacePeer =
+        readPublicationTerminalAs(terminalReader, wireReadRequest, "account-service", "other");
+    assertThat(wrongPeer.error).isEqualTo(Status.Code.PERMISSION_DENIED);
+    assertThat(wrongNamespacePeer.error).isEqualTo(Status.Code.PERMISSION_DENIED);
+
+    new TransactionTemplate(manager)
+        .execute(
+            status -> {
+              assertThatThrownBy(
+                      () ->
+                          terminalRepository.readCommitted(
+                              WorldPublicationTerminal.request(originalTerminal)))
+                  .isInstanceOf(IllegalStateException.class)
+                  .hasMessageContaining("requires no caller transaction");
+              return null;
+            });
+
+    // The GD client double supplies isolated authenticated-owner evidence; this exercises the
+    // actual World owner transition, not the live GD producer or cross-service mTLS composition.
+    var completionRequest =
+        new WorldPublicationTerminalCompletionGrpcCodec.Request(
+            1, NAMESPACE, terminal.operationBytes(), originalTerminal);
+    var completionService =
+        new WorldPublicationTerminalCompletionGrpcService(
+            terminalRepository, terminalReadClient(terminal), NAMESPACE);
+    var completionWireRequest =
+        WorldPublicationTerminalCompletionGrpcCodec.toRequest(completionRequest);
+
+    var pendingClient = org.mockito.Mockito.mock(GameDesignPublicationTerminalClient.class);
+    org.mockito.Mockito.when(pendingClient.read(org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            invocation ->
+                new GameDesignPublicationTerminalReadEvidence.ReadResult(
+                    invocation.getArgument(
+                        0, GameDesignPublicationTerminalReadEvidence.ReadRequest.class),
+                    GameDesignPublicationTerminalReadEvidence.Status.UNKNOWN,
+                    Optional.empty()));
+    var pendingService =
+        new WorldPublicationTerminalCompletionGrpcService(
+            terminalRepository, pendingClient, NAMESPACE);
+    var pending = completePublicationTerminalAs(pendingService, completionWireRequest, NAMESPACE);
+    assertThat(pending.error).isEqualTo(Status.Code.UNAVAILABLE);
+    assertThat(publicationOwnerPhase(fence)).isEqualTo("FROZEN");
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT count(*) FROM world_design_publication_terminal "
+                            + "WHERE publication_fence=?",
+                        fence))
+                .get(0, Long.class))
+        .isZero();
+
+    var unavailableClient = org.mockito.Mockito.mock(GameDesignPublicationTerminalClient.class);
+    org.mockito.Mockito.when(unavailableClient.read(org.mockito.ArgumentMatchers.any()))
+        .thenThrow(Status.UNAVAILABLE.asRuntimeException());
+    var unavailableService =
+        new WorldPublicationTerminalCompletionGrpcService(
+            terminalRepository, unavailableClient, NAMESPACE);
+    var unavailable =
+        completePublicationTerminalAs(unavailableService, completionWireRequest, NAMESPACE);
+    assertThat(unavailable.error).isEqualTo(Status.Code.UNAVAILABLE);
+    assertThat(publicationOwnerPhase(fence)).isEqualTo("FROZEN");
+
+    for (Status permanentFailure :
+        List.of(Status.FAILED_PRECONDITION, Status.UNAUTHENTICATED, Status.PERMISSION_DENIED)) {
+      var permanentClient = org.mockito.Mockito.mock(GameDesignPublicationTerminalClient.class);
+      org.mockito.Mockito.when(permanentClient.read(org.mockito.ArgumentMatchers.any()))
+          .thenThrow(permanentFailure.asRuntimeException());
+      var permanentService =
+          new WorldPublicationTerminalCompletionGrpcService(
+              terminalRepository, permanentClient, NAMESPACE);
+      var permanent =
+          completePublicationTerminalAs(permanentService, completionWireRequest, NAMESPACE);
+      assertThat(permanent.error).isEqualTo(Status.Code.FAILED_PRECONDITION);
+      assertThat(publicationOwnerPhase(fence)).isEqualTo("FROZEN");
+      assertThat(
+              Objects.requireNonNull(
+                      dsl.fetchOne(
+                          "SELECT count(*) FROM world_design_publication_terminal "
+                              + "WHERE publication_fence=?",
+                          fence))
+                  .get(0, Long.class))
+          .isZero();
+    }
+
+    var invalidEvidenceClient = org.mockito.Mockito.mock(GameDesignPublicationTerminalClient.class);
+    org.mockito.Mockito.when(invalidEvidenceClient.read(org.mockito.ArgumentMatchers.any()))
+        .thenThrow(new IllegalStateException("invalid authenticated response"));
+    var invalidEvidenceService =
+        new WorldPublicationTerminalCompletionGrpcService(
+            terminalRepository, invalidEvidenceClient, NAMESPACE);
+    var invalidEvidence =
+        completePublicationTerminalAs(invalidEvidenceService, completionWireRequest, NAMESPACE);
+    assertThat(invalidEvidence.error).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    assertThat(publicationOwnerPhase(fence)).isEqualTo("FROZEN");
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT count(*) FROM world_design_publication_terminal "
+                            + "WHERE publication_fence=?",
+                        fence))
+                .get(0, Long.class))
+        .isZero();
+
+    var missingResponseClient = org.mockito.Mockito.mock(GameDesignPublicationTerminalClient.class);
+    org.mockito.Mockito.when(missingResponseClient.read(org.mockito.ArgumentMatchers.any()))
+        .thenReturn(null);
+    var missingResponseService =
+        new WorldPublicationTerminalCompletionGrpcService(
+            terminalRepository, missingResponseClient, NAMESPACE);
+    var missingResponse =
+        completePublicationTerminalAs(missingResponseService, completionWireRequest, NAMESPACE);
+    assertThat(missingResponse.error).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    assertThat(publicationOwnerPhase(fence)).isEqualTo("FROZEN");
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT count(*) FROM world_design_publication_terminal "
+                            + "WHERE publication_fence=?",
+                        fence))
+                .get(0, Long.class))
+        .isZero();
+
+    var completion =
+        completePublicationTerminalAs(completionService, completionWireRequest, NAMESPACE);
+    assertThat(completion.error).isNull();
+    assertThat(completion.completed).isTrue();
+    var completionResult =
+        WorldPublicationTerminalCompletionGrpcCodec.fromResponse(
+            completionRequest, completion.value);
+    assertThat(completionResult.request().canonicalBytes())
+        .containsExactly(completionRequest.canonicalBytes());
+    assertThat(completionResult.terminalEvidence().canonicalBytes())
         .containsExactly(originalTerminal);
     assertThat(publicationOwnerPhase(fence)).isEqualTo("PUBLISHED");
     assertThat(publicationTerminalBytes(fence)).containsExactly(originalTerminal);
-    assertThat(service.complete(terminal.operationBytes(), originalTerminal).canonicalBytes())
+
+    // The handler returns only the exact terminal bytes atomically retained with World PUBLISHED.
+    var committedRead = readPublicationTerminalAs(terminalReader, wireReadRequest, NAMESPACE);
+    assertThat(committedRead.error).isNull();
+    assertThat(committedRead.completed).isTrue();
+    var committedResult =
+        WorldPublicationTerminalReadGrpcCodec.fromResponse(readRequest, committedRead.value);
+    assertThat(committedResult.status())
+        .isEqualTo(WorldPublicationTerminalReadEvidence.Status.PUBLISHED);
+    assertThat(committedResult.terminalEvidence()).isPresent();
+    assertThat(committedResult.terminalEvidence().orElseThrow().canonicalBytes())
         .containsExactly(originalTerminal);
+    assertThat(committedResult.request().canonicalBytes())
+        .containsExactly(readRequest.canonicalBytes());
+
+    var retriedCompletion =
+        completePublicationTerminalAs(completionService, completionWireRequest, NAMESPACE);
+    assertThat(retriedCompletion.error).isNull();
+    assertThat(
+            WorldPublicationTerminalCompletionGrpcCodec.fromResponse(
+                    completionRequest, retriedCompletion.value)
+                .canonicalBytes())
+        .containsExactly(completionResult.canonicalBytes());
+    var retryRead = readPublicationTerminalAs(terminalReader, wireReadRequest, NAMESPACE);
+    assertThat(
+            WorldPublicationTerminalReadGrpcCodec.fromResponse(readRequest, retryRead.value)
+                .canonicalBytes())
+        .containsExactly(committedResult.canonicalBytes());
 
     var bundle = terminal.releaseContent();
     var changedBundle =
@@ -272,6 +587,28 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             Outcome.PUBLISHED,
             changedBundle,
             terminal.publicationVersionStateEpoch());
+    var changedCompletionRequest =
+        new WorldPublicationTerminalCompletionGrpcCodec.Request(
+            1, NAMESPACE, changedTerminal.operationBytes(), changedTerminal.canonicalBytes());
+    var changedCompletionService =
+        new WorldPublicationTerminalCompletionGrpcService(
+            terminalRepository, terminalReadClient(terminal), NAMESPACE);
+    var changedCompletion =
+        completePublicationTerminalAs(
+            changedCompletionService,
+            WorldPublicationTerminalCompletionGrpcCodec.toRequest(changedCompletionRequest),
+            NAMESPACE);
+    assertThat(changedCompletion.error).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    var service = publicationTerminalComponent(terminal);
+    var changedReadRequest =
+        WorldPublicationTerminalReadEvidence.Request.create(
+            NAMESPACE, changedTerminal.canonicalBytes());
+    var changedRead =
+        readPublicationTerminalAs(
+            terminalReader,
+            WorldPublicationTerminalReadGrpcCodec.toRequest(changedReadRequest),
+            NAMESPACE);
+    assertThat(changedRead.error).isEqualTo(Status.Code.FAILED_PRECONDITION);
     assertThatThrownBy(
             () ->
                 service.complete(
@@ -360,19 +697,48 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
         new GameDesignPublicationTerminalEvidence(
             published.operationBytes(), Outcome.NO_PUBLICATION, null, null);
     UUID fence = selector.request().publicationFence();
-    var service = publicationTerminalComponent(noPublication);
-    byte[] result =
-        service
-            .complete(noPublication.operationBytes(), noPublication.canonicalBytes())
-            .canonicalBytes();
+    var terminalRepository = new WorldPublicationTerminalRepository(dsl, manager);
+    var completionRequest =
+        new WorldPublicationTerminalCompletionGrpcCodec.Request(
+            1, NAMESPACE, noPublication.operationBytes(), noPublication.canonicalBytes());
+    var completionService =
+        new WorldPublicationTerminalCompletionGrpcService(
+            terminalRepository, terminalReadClient(noPublication), NAMESPACE);
+    var wireCompletionRequest =
+        WorldPublicationTerminalCompletionGrpcCodec.toRequest(completionRequest);
+    var completion =
+        completePublicationTerminalAs(completionService, wireCompletionRequest, NAMESPACE);
+    assertThat(completion.error).isNull();
+    assertThat(completion.completed).isTrue();
+    var completionResult =
+        WorldPublicationTerminalCompletionGrpcCodec.fromResponse(
+            completionRequest, completion.value);
+    byte[] result = completionResult.terminalEvidence().canonicalBytes();
     assertThat(result).containsExactly(noPublication.canonicalBytes());
     assertThat(publicationOwnerPhase(fence)).isEqualTo("ABORTED");
+    var retry = completePublicationTerminalAs(completionService, wireCompletionRequest, NAMESPACE);
+    assertThat(retry.error).isNull();
     assertThat(
-            service
-                .complete(noPublication.operationBytes(), noPublication.canonicalBytes())
+            WorldPublicationTerminalCompletionGrpcCodec.fromResponse(completionRequest, retry.value)
                 .canonicalBytes())
-        .containsExactly(result);
+        .containsExactly(completionResult.canonicalBytes());
     assertThat(publicationTerminalBytes(fence)).containsExactly(result);
+
+    var abortReadRequest = WorldPublicationTerminalReadEvidence.Request.create(NAMESPACE, result);
+    var abortRead =
+        readPublicationTerminalAs(
+            new WorldPublicationTerminalReadGrpcService(
+                new WorldPublicationTerminalRepository(dsl, manager), NAMESPACE),
+            WorldPublicationTerminalReadGrpcCodec.toRequest(abortReadRequest),
+            NAMESPACE);
+    assertThat(abortRead.error).isNull();
+    var abortReadResult =
+        WorldPublicationTerminalReadGrpcCodec.fromResponse(abortReadRequest, abortRead.value);
+    assertThat(abortReadResult.status())
+        .isEqualTo(WorldPublicationTerminalReadEvidence.Status.ABORTED);
+    assertThat(abortReadResult.terminalEvidence()).isPresent();
+    assertThat(abortReadResult.terminalEvidence().orElseThrow().canonicalBytes())
+        .containsExactly(result);
 
     assertThatThrownBy(() -> preparationComponent(preparationRepository()).prepare(input))
         .isInstanceOf(
@@ -1423,6 +1789,23 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
       Fixture f,
       WorldCanonicalFrozenTopology frozen,
       WorldPublishedStartLocationEvidence selector) {
+    return preparationInput(f, frozen, selector, 2L, List.of("LOOK"));
+  }
+
+  private WorldCanonicalInstancePreparation.Input preparationInput(
+      Fixture f,
+      WorldCanonicalFrozenTopology frozen,
+      WorldPublishedStartLocationEvidence selector,
+      long descriptorVersionStateEpoch) {
+    return preparationInput(f, frozen, selector, descriptorVersionStateEpoch, List.of("LOOK"));
+  }
+
+  private WorldCanonicalInstancePreparation.Input preparationInput(
+      Fixture f,
+      WorldCanonicalFrozenTopology frozen,
+      WorldPublishedStartLocationEvidence selector,
+      long descriptorVersionStateEpoch,
+      List<String> commandDefinitions) {
     var source = f.intake().source();
     String control = "prepare-" + UUID.randomUUID();
     var descriptor =
@@ -1449,7 +1832,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             null,
             "{}",
             "generation-free",
-            2L,
+            descriptorVersionStateEpoch,
             97L,
             "release-" + frozen.request().freeze().publicationRequestId(),
             false,
@@ -1491,7 +1874,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
                 1,
                 List.of(),
                 List.of(),
-                List.of("LOOK"),
+                commandDefinitions,
                 descriptor.generationConfigRevision())
             : AuthoredWorldReleaseAttestationEvidence.create(
                 NAMESPACE,
@@ -1511,7 +1894,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
                 1,
                 List.of(),
                 List.of(),
-                List.of("LOOK"),
+                commandDefinitions,
                 descriptor.generationConfigRevision(),
                 selector);
     var evidence = new CompleteLaunchBindingEvidence(descriptor, release);
@@ -1652,6 +2035,42 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
         });
   }
 
+  /**
+   * Isolated fixture verifier that preserves and independently reads an already committed V44
+   * terminal instead of trying to reseal it from a later descriptor resolution.
+   */
+  private WorldCanonicalInstancePreparationService preparationComponentWithRetainedTerminal(
+      WorldCanonicalInstancePreparationRepository repository,
+      GameDesignPublicationTerminalEvidence originalTerminal) {
+    byte[] expectedTerminal = originalTerminal.canonicalBytes();
+    return new WorldCanonicalInstancePreparationService(
+        repository,
+        input -> {
+          var retained =
+              new WorldPublicationTerminalRepository(dsl, manager)
+                  .readCommitted(WorldPublicationTerminal.request(expectedTerminal))
+                  .orElseThrow(
+                      () ->
+                          new IllegalStateException(
+                              "isolated fixture lost its previously committed World terminal"));
+          if (!java.util.Arrays.equals(expectedTerminal, retained.canonicalBytes())) {
+            throw new IllegalStateException(
+                "isolated fixture World terminal differs from original publication result");
+          }
+          return new WorldCanonicalInstancePreparationService.HeldCommitAuthority() {
+            private boolean open = true;
+
+            public void requireHeld() {
+              if (!open) throw new IllegalStateException("closed fixture authority");
+            }
+
+            public void close() {
+              open = false;
+            }
+          };
+        });
+  }
+
   private GameDesignPublicationTerminalEvidence isolatedTerminalEvidence(
       WorldCanonicalInstancePreparation.Input input) {
     var release = input.completeLaunchBinding().evidence().releaseAttestation();
@@ -1724,6 +2143,78 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
         operation.canonicalBytes(), Outcome.PUBLISHED, content, release.versionStateEpoch());
   }
 
+  private static GameDesignPublicationTerminalEvidence terminalWithWorldBinding(
+      GameDesignPublicationTerminalEvidence terminal, UUID publicationFence, String contentDigest) {
+    if (terminal.outcome() != Outcome.PUBLISHED) {
+      throw new IllegalArgumentException("Published terminal fixture required");
+    }
+    var originalWorld = terminal.worldEvidence();
+    var originalRequest = originalWorld.request();
+    var request =
+        new WorldPublishedStartLocationEvidence.Request(
+            originalRequest.targetNamespace(),
+            originalRequest.canonicalTenantId(),
+            originalRequest.canonicalVersionId(),
+            originalRequest.intakeRequestId(),
+            publicationFence == null ? originalRequest.publicationFence() : publicationFence,
+            originalRequest.publicationRequestId(),
+            originalRequest.requestDigest(),
+            originalRequest.versionStateEpoch(),
+            originalRequest.publishWorkflowId(),
+            originalRequest.appliedCommitId(),
+            contentDigest == null ? originalRequest.contentDigest() : contentDigest,
+            originalRequest.digestSchemaVersion(),
+            originalRequest.worldAffectedTuples());
+    var world =
+        new WorldPublishedStartLocationEvidence(
+            request,
+            originalWorld.selectorReceiptBytes(),
+            originalWorld.originalAccountBindingBytes(),
+            originalWorld.appliedResultBytes());
+    var originalOperation =
+        GameDesignPublicationOperationBinding.fromStored(terminal.operationBytes());
+    var operation = new GameDesignPublicationOperationBinding(originalOperation.account(), world);
+    ReleaseContent originalContent = terminal.releaseContent();
+    var participants =
+        originalContent.participantDigests().stream()
+            .map(
+                participant ->
+                    "WORLD_MANAGEMENT".equals(participant.participantKey())
+                        ? new Participant(
+                            participant.participantKey(),
+                            participant.scopeValue(),
+                            participant.baseVersionId(),
+                            participant.appliedCommitId(),
+                            request.contentDigest(),
+                            participant.digestSchemaVersion(),
+                            participant.abilitySchemaDigest(),
+                            participant.errorCode(),
+                            participant.errorMessage())
+                        : participant)
+            .toList();
+    var content =
+        new ReleaseContent(
+            originalContent.canonicalTenantId(),
+            originalContent.canonicalVersionId(),
+            originalContent.publishedReleaseBundleRef(),
+            originalContent.versionNumber(),
+            originalContent.attestationSchemaVersion(),
+            originalContent.publishWorkflowId(),
+            originalContent.manifestHash(),
+            originalContent.manifestSchemaVersion(),
+            originalContent.artifactDigests(),
+            originalContent.requiredManifestAssetKeys(),
+            participants,
+            originalContent.commandDefinitions(),
+            originalContent.generationConfigRevision(),
+            world);
+    return new GameDesignPublicationTerminalEvidence(
+        operation.canonicalBytes(),
+        Outcome.PUBLISHED,
+        content,
+        terminal.publicationVersionStateEpoch());
+  }
+
   private void completeIsolatedPublicationTerminal(WorldCanonicalInstancePreparation.Input input) {
     var evidence = isolatedTerminalEvidence(input);
     publicationTerminalComponent(evidence)
@@ -1749,6 +2240,25 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
                 public void close() {}
               });
         });
+  }
+
+  private GameDesignPublicationTerminalClient terminalReadClient(
+      GameDesignPublicationTerminalEvidence evidence) {
+    var client = org.mockito.Mockito.mock(GameDesignPublicationTerminalClient.class);
+    org.mockito.Mockito.when(client.read(org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            invocation -> {
+              var request =
+                  invocation.getArgument(
+                      0, GameDesignPublicationTerminalReadEvidence.ReadRequest.class);
+              var status =
+                  evidence.outcome() == Outcome.PUBLISHED
+                      ? GameDesignPublicationTerminalReadEvidence.Status.PUBLISHED
+                      : GameDesignPublicationTerminalReadEvidence.Status.NO_PUBLICATION;
+              return new GameDesignPublicationTerminalReadEvidence.ReadResult(
+                  request, status, Optional.of(evidence));
+            });
+    return client;
   }
 
   private AuthoredDraftPublishSelectionBinding publicationSelection(
@@ -3630,6 +4140,106 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     } catch (InterruptedException exception) {
       Thread.currentThread().interrupt();
       throw new IllegalStateException(exception);
+    }
+  }
+
+  private static TerminalReadCollector readPublicationTerminalAs(
+      WorldPublicationTerminalReadGrpcService service,
+      ReadWorldPublicationTerminalRequest request,
+      String peerNamespace) {
+    return readPublicationTerminalAs(service, request, "account-service", peerNamespace);
+  }
+
+  private static TerminalReadCollector readPublicationTerminalAs(
+      WorldPublicationTerminalReadGrpcService service,
+      ReadWorldPublicationTerminalRequest request,
+      String peerService,
+      String peerNamespace) {
+    TerminalReadCollector response = new TerminalReadCollector();
+    Context context =
+        Context.current()
+            .withValue(
+                GrpcPeerIdentity.CONTEXT_KEY,
+                new GrpcPeerIdentity(
+                    "spiffe://firemud/ns/" + peerNamespace + "/sa/" + peerService,
+                    peerNamespace,
+                    peerService));
+    Context previous = context.attach();
+    try {
+      service.readWorldPublicationTerminal(request, response);
+    } finally {
+      context.detach(previous);
+    }
+    return response;
+  }
+
+  private static TerminalCompletionCollector completePublicationTerminalAs(
+      WorldPublicationTerminalCompletionGrpcService service,
+      net.firedevops.firemud.worldmanagement.v1.CompleteWorldPublicationTerminalRequest request,
+      String peerNamespace) {
+    TerminalCompletionCollector response = new TerminalCompletionCollector();
+    Context context =
+        Context.current()
+            .withValue(
+                GrpcPeerIdentity.CONTEXT_KEY,
+                new GrpcPeerIdentity(
+                    "spiffe://firemud/ns/" + peerNamespace + "/sa/game-design-service",
+                    peerNamespace,
+                    "game-design-service"));
+    Context previous = context.attach();
+    try {
+      service.completeWorldPublicationTerminal(request, response);
+    } finally {
+      context.detach(previous);
+    }
+    return response;
+  }
+
+  private static final class TerminalReadCollector
+      implements StreamObserver<ReadWorldPublicationTerminalResponse> {
+    private ReadWorldPublicationTerminalResponse value;
+    private Status.Code error;
+    private boolean completed;
+
+    @Override
+    public void onNext(ReadWorldPublicationTerminalResponse response) {
+      value = response;
+    }
+
+    @Override
+    public void onError(Throwable failure) {
+      error = Status.fromThrowable(failure).getCode();
+    }
+
+    @Override
+    public void onCompleted() {
+      completed = true;
+    }
+  }
+
+  private static final class TerminalCompletionCollector
+      implements StreamObserver<
+          net.firedevops.firemud.worldmanagement.v1.CompleteWorldPublicationTerminalResponse> {
+    private net.firedevops.firemud.worldmanagement.v1.CompleteWorldPublicationTerminalResponse
+        value;
+    private Status.Code error;
+    private boolean completed;
+
+    @Override
+    public void onNext(
+        net.firedevops.firemud.worldmanagement.v1.CompleteWorldPublicationTerminalResponse
+            response) {
+      value = response;
+    }
+
+    @Override
+    public void onError(Throwable failure) {
+      error = Status.fromThrowable(failure).getCode();
+    }
+
+    @Override
+    public void onCompleted() {
+      completed = true;
     }
   }
 
