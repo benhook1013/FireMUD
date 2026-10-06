@@ -51,8 +51,7 @@ class AccountJwtReadinessTlsInterceptorTest {
     ServerCallHandler<String, String> next = mock(ServerCallHandler.class);
     SSLSession session = mock(SSLSession.class);
     java.security.cert.Certificate peer = cert(URI);
-    when(session.getPeerCertificates())
-        .thenReturn(new java.security.cert.Certificate[] {peer});
+    when(session.getPeerCertificates()).thenReturn(new java.security.cert.Certificate[] {peer});
     when(call.getAttributes())
         .thenReturn(Attributes.newBuilder().set(Grpc.TRANSPORT_ATTR_SSL_SESSION, session).build());
     AtomicReference<AccountJwtReadinessTlsInterceptor.AuthenticatedCaller> captured =

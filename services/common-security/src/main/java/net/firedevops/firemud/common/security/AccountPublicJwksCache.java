@@ -6,6 +6,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
+import java.security.GeneralSecurityException;
 import java.security.KeyFactory;
 import java.security.MessageDigest;
 import java.security.interfaces.RSAPublicKey;
@@ -276,7 +277,7 @@ public final class AccountPublicJwksCache {
       return parsed;
     } catch (InvalidJwksException ex) {
       throw ex;
-    } catch (Exception ex) {
+    } catch (GeneralSecurityException | RuntimeException ex) {
       throw new InvalidJwksException();
     }
   }

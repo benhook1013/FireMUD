@@ -15,7 +15,10 @@ public final class GameSessionAccountDelegationJwtProfileValidator {
 
   /** Checks profile shape only; Account registry/currentness evidence is a separate predicate. */
   public static void validateClaims(Map<String, Object> claims) {
-    if (claims != null && claims.containsKey("tenantId")) {
+    if (claims == null) {
+      throw AccountJwtProfileClaimSupport.invalid();
+    }
+    if (claims.containsKey("tenantId")) {
       validatePublicTenantBoundClaims(claims);
       return;
     }

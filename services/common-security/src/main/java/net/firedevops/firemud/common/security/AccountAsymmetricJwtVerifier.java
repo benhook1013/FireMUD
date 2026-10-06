@@ -1,5 +1,6 @@
 package net.firedevops.firemud.common.security;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jws;
 import io.jsonwebtoken.Jwts;
@@ -355,6 +356,16 @@ public final class AccountAsymmetricJwtVerifier {
       Objects.requireNonNull(tokenType, "token type metadata is required");
       Objects.requireNonNull(keyId, "verified key ID is required");
       claims = deepImmutableMap(Objects.requireNonNull(claims, "verified claims are required"));
+    }
+
+    /** The constructor defensively deep-copies this value into immutable maps and lists. */
+    @Override
+    @SuppressFBWarnings(
+        value = "EI_EXPOSE_REP",
+        justification =
+            "VerifiedClaims canonicalizes the input with a recursive defensive copy; every nested map and list is unmodifiable.")
+    public Map<String, Object> claims() {
+      return claims;
     }
   }
 

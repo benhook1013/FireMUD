@@ -131,20 +131,29 @@ class AccountJwtValidatorInventoryPersistenceIntegrationTest {
         new AccountJwtValidatorInventoryRepository(context.dsl());
     InventorySnapshot candidate = snapshot();
     inTransaction(context, () -> repository.persistOrReadback(candidate, BINDING, trust()));
+    Instant observedAt = candidate.observedAt();
+    String environmentId = candidate.environmentId();
+    String namespace = candidate.namespace();
+    String apiBindingRevision = candidate.apiBindingRevision();
+    String apiBindingDigest = candidate.apiBindingDigest();
+    String inventoryBindingRevision = candidate.inventoryBindingRevision();
+    String inventoryBindingDigest = candidate.inventoryBindingDigest();
+    String digest = candidate.digest();
+    byte[] canonicalBytes = candidate.canonicalBytes();
 
     InventorySnapshot wrongIdentity = mock(InventorySnapshot.class);
-    when(wrongIdentity.observedAt()).thenReturn(candidate.observedAt());
-    when(wrongIdentity.environmentId()).thenReturn(candidate.environmentId());
+    when(wrongIdentity.observedAt()).thenReturn(observedAt);
+    when(wrongIdentity.environmentId()).thenReturn(environmentId);
     when(wrongIdentity.clusterId()).thenReturn("other-cluster");
     when(wrongIdentity.clusterIncarnationUid()).thenReturn(CLUSTER_UID);
-    when(wrongIdentity.namespace()).thenReturn(candidate.namespace());
+    when(wrongIdentity.namespace()).thenReturn(namespace);
     when(wrongIdentity.namespaceUid()).thenReturn(NAMESPACE_UID);
-    when(wrongIdentity.apiBindingRevision()).thenReturn(candidate.apiBindingRevision());
-    when(wrongIdentity.apiBindingDigest()).thenReturn(candidate.apiBindingDigest());
-    when(wrongIdentity.inventoryBindingRevision()).thenReturn(candidate.inventoryBindingRevision());
-    when(wrongIdentity.inventoryBindingDigest()).thenReturn(candidate.inventoryBindingDigest());
-    when(wrongIdentity.digest()).thenReturn(candidate.digest());
-    when(wrongIdentity.canonicalBytes()).thenReturn(candidate.canonicalBytes());
+    when(wrongIdentity.apiBindingRevision()).thenReturn(apiBindingRevision);
+    when(wrongIdentity.apiBindingDigest()).thenReturn(apiBindingDigest);
+    when(wrongIdentity.inventoryBindingRevision()).thenReturn(inventoryBindingRevision);
+    when(wrongIdentity.inventoryBindingDigest()).thenReturn(inventoryBindingDigest);
+    when(wrongIdentity.digest()).thenReturn(digest);
+    when(wrongIdentity.canonicalBytes()).thenReturn(canonicalBytes);
 
     assertThatThrownBy(
             () ->

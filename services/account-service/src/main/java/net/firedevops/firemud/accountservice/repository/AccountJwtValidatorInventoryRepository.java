@@ -2,6 +2,7 @@ package net.firedevops.firemud.accountservice.repository;
 
 import java.security.MessageDigest;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.Objects;
 import java.util.UUID;
@@ -222,6 +223,46 @@ public class AccountJwtValidatorInventoryRepository {
     @Override
     public byte[] canonicalBytes() {
       return canonicalBytes.clone();
+    }
+
+    @Override
+    public boolean equals(Object other) {
+      if (this == other) {
+        return true;
+      }
+      if (!(other instanceof StoredSnapshot that)) {
+        return false;
+      }
+      return digest.equals(that.digest)
+          && environmentId.equals(that.environmentId)
+          && clusterId.equals(that.clusterId)
+          && clusterIncarnationUid.equals(that.clusterIncarnationUid)
+          && namespace.equals(that.namespace)
+          && namespaceUid.equals(that.namespaceUid)
+          && apiBindingRevision.equals(that.apiBindingRevision)
+          && apiBindingDigest.equals(that.apiBindingDigest)
+          && inventoryBindingRevision.equals(that.inventoryBindingRevision)
+          && inventoryBindingDigest.equals(that.inventoryBindingDigest)
+          && observedAt.equals(that.observedAt)
+          && Arrays.equals(canonicalBytes, that.canonicalBytes);
+    }
+
+    @Override
+    public int hashCode() {
+      return 31
+              * Objects.hash(
+                  digest,
+                  environmentId,
+                  clusterId,
+                  clusterIncarnationUid,
+                  namespace,
+                  namespaceUid,
+                  apiBindingRevision,
+                  apiBindingDigest,
+                  inventoryBindingRevision,
+                  inventoryBindingDigest,
+                  observedAt)
+          + Arrays.hashCode(canonicalBytes);
     }
   }
 
