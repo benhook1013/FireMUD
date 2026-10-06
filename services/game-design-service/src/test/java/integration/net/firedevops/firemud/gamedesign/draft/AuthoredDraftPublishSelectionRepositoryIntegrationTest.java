@@ -117,7 +117,24 @@ class AuthoredDraftPublishSelectionRepositoryIntegrationTest {
         .usingRecursiveComparison()
         .isEqualTo(coordinatorBeforeLatest);
     assertThat(
+            retained
+                .dsl()
+                .fetch(
+                    "SELECT id, tenant_id, publish_workflow_id, publish_type, status, version_id, "
+                        + "version_number, script_patch_version, failure_code, failure_message, "
+                        + "created_at, completed_at, base_version_id, request_digest "
+                        + "FROM publish_attempt ORDER BY id")
+                .intoMaps())
+        .isEqualTo(before);
+    assertThat(
+            retained
+                .dsl()
+                .fetchCount(DSL.table(DSL.name("publish_attempt")), DSL.field("revision").ne(1L)))
+        .isZero();
+    assertThat(
             retained.dsl().fetchCount(DSL.table(DSL.name("game_design_draft_terminal_operation"))))
+        .isZero();
+    assertThat(retained.dsl().fetchCount(DSL.table(DSL.name("game_design_publication_operation"))))
         .isZero();
     assertThat(reserve(retained, intent)).isEqualTo(selected);
     String workflowId = "selected-attempt-" + UUID.randomUUID();
@@ -141,11 +158,23 @@ class AuthoredDraftPublishSelectionRepositoryIntegrationTest {
     assertThat(
             retained
                 .dsl()
+                .fetchValue(
+                    "SELECT revision FROM publish_attempt WHERE publish_workflow_id = ?",
+                    workflowId))
+        .isEqualTo(1L);
+    assertThat(
+            retained
+                .dsl()
                 .fetch(
-                    "SELECT * FROM publish_attempt WHERE publish_workflow_id <> ? ORDER BY id",
+                    "SELECT id, tenant_id, publish_workflow_id, publish_type, status, version_id, "
+                        + "version_number, script_patch_version, failure_code, failure_message, "
+                        + "created_at, completed_at, base_version_id, request_digest "
+                        + "FROM publish_attempt WHERE publish_workflow_id <> ? ORDER BY id",
                     workflowId)
                 .intoMaps())
         .isEqualTo(before);
+    assertThat(retained.dsl().fetchCount(DSL.table(DSL.name("game_design_publication_operation"))))
+        .isZero();
   }
 
   @Test
