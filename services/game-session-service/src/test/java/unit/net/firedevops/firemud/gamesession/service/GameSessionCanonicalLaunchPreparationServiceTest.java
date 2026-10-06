@@ -10,13 +10,18 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorClient;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec.GetRequest;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
+import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorRequest;
 import net.firedevops.firemud.gamesession.dto.CanonicalLaunchPreparationSnapshot;
 import net.firedevops.firemud.gamesession.dto.CanonicalRealmCatalogSnapshot;
 import net.firedevops.firemud.gamesession.dto.CreateCanonicalLaunchPreparationRequest;
@@ -82,6 +87,143 @@ class GameSessionCanonicalLaunchPreparationServiceTest {
     verifyNoInteractions(
         descriptorClient, catalogRepository, sourceRepository, preparationRepository);
     assertThat(transactionManager.startedWith).isNull();
+  }
+
+  @Test
+  void rejectsAmbientTransactionBeforeCompleteBindingOwnerReadOrNetworkCall() {
+    CanonicalLaunchPreparationSnapshot snapshot = preparedSnapshot();
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
+
+    assertThatThrownBy(() -> service.readCompleteBinding(snapshot))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("ambient transaction");
+
+    verifyNoInteractions(
+        descriptorClient, catalogRepository, sourceRepository, preparationRepository);
+    assertThat(transactionManager.startedWith).isNull();
+  }
+
+  @Test
+  void readsCompleteBindingOnlyForExactCommittedPreparationAndPreservesBothSharedEvidenceValues() {
+    CanonicalLaunchPreparationSnapshot snapshot = preparedSnapshot();
+    CompleteLaunchBindingEvidence binding = completeBinding(snapshot.launchDescriptorEvidence());
+    when(preparationRepository.readByControlPlaneRequestId(NAMESPACE, CONTROL_PLANE_REQUEST))
+        .thenReturn(Optional.of(snapshot));
+    when(descriptorClient.getComplete(any(GetLaunchDescriptorRequest.class))).thenReturn(binding);
+
+    assertThat(service.readCompleteBinding(snapshot)).isEqualTo(binding);
+
+    ArgumentCaptor<GetLaunchDescriptorRequest> request =
+        ArgumentCaptor.forClass(GetLaunchDescriptorRequest.class);
+    verify(descriptorClient).getComplete(request.capture());
+    GetLaunchDescriptorRequest selector = request.getValue();
+    assertThat(UUID.fromString(selector.getRequestId())).isNotEqualTo(SOURCE_OPERATION);
+    assertThat(selector)
+        .isEqualTo(
+            AuthoredWorldLaunchDescriptorGrpcCodec.toGetRequest(
+                new GetRequest(
+                    UUID.fromString(selector.getRequestId()),
+                    snapshot.launchDescriptorEvidence().request(),
+                    snapshot.launchDescriptorEvidence().resultDigest())));
+    assertThat(selector.getCanonicalTenantId()).isEqualTo(TENANT.toString());
+    assertThat(selector.getWorldSlug()).isEqualTo(snapshot.launchDescriptorEvidence().worldSlug());
+    assertThat(selector.getControlPlaneRequestId()).isEqualTo(CONTROL_PLANE_REQUEST);
+    assertThat(selector.getExpectedRequestDigest())
+        .isEqualTo(snapshot.launchDescriptorEvidence().requestDigest());
+    assertThat(selector.getExpectedResultDigest())
+        .isEqualTo(snapshot.launchDescriptorEvidence().resultDigest());
+    verify(preparationRepository).readByControlPlaneRequestId(NAMESPACE, CONTROL_PLANE_REQUEST);
+    verify(descriptorClient, never()).resolve(any());
+    verify(descriptorClient, never()).get(any(GetRequest.class));
+    assertThat(transactionManager.startedWith).isNull();
+  }
+
+  @Test
+  void changedCommittedSourceFailsBeforeCompleteBindingNetworkRead() {
+    CanonicalLaunchPreparationSnapshot requested = preparedSnapshot();
+    AuthoredWorldSourceEvidence changedSource = source("emerald-grove");
+    IntakeReceipt changedIntake = intake(changedSource);
+    CanonicalRealmCatalogSnapshot changedCatalog = catalog(changedIntake);
+    CanonicalLaunchPreparationSnapshot changedCommitted =
+        snapshot(
+            requested.request(),
+            changedCatalog,
+            changedIntake,
+            descriptor(requested.request(), changedCatalog, changedSource));
+    when(preparationRepository.readByControlPlaneRequestId(NAMESPACE, CONTROL_PLANE_REQUEST))
+        .thenReturn(Optional.of(changedCommitted));
+
+    assertThatThrownBy(() -> service.readCompleteBinding(requested))
+        .isInstanceOf(InvalidLaunchPreparationEvidenceException.class)
+        .hasMessageContaining("changed before complete binding read");
+
+    verify(preparationRepository).readByControlPlaneRequestId(NAMESPACE, CONTROL_PLANE_REQUEST);
+    verifyNoInteractions(descriptorClient);
+  }
+
+  @Test
+  void missingCommittedPreparationFailsBeforeCompleteBindingNetworkRead() {
+    CanonicalLaunchPreparationSnapshot snapshot = preparedSnapshot();
+    when(preparationRepository.readByControlPlaneRequestId(NAMESPACE, CONTROL_PLANE_REQUEST))
+        .thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> service.readCompleteBinding(snapshot))
+        .isInstanceOf(InvalidLaunchPreparationEvidenceException.class)
+        .hasMessageContaining("missing before complete binding read");
+
+    verifyNoInteractions(descriptorClient);
+  }
+
+  @Test
+  void namespaceMismatchFailsBeforeCompleteBindingOwnerReadOrNetworkCall() {
+    CanonicalLaunchPreparationSnapshot snapshot = preparedSnapshot();
+    GameSessionCanonicalLaunchPreparationService otherNamespaceService =
+        new GameSessionCanonicalLaunchPreparationService(
+            descriptorClient,
+            catalogRepository,
+            sourceRepository,
+            preparationRepository,
+            transactionManager,
+            NAMESPACE + "-other");
+
+    assertThatThrownBy(() -> otherNamespaceService.readCompleteBinding(snapshot))
+        .isInstanceOf(SecurityException.class)
+        .hasMessageContaining("namespace");
+
+    verifyNoInteractions(
+        descriptorClient, catalogRepository, sourceRepository, preparationRepository);
+  }
+
+  @Test
+  void changedCompleteDescriptorFailsAfterExactCommittedPreparationRead() {
+    CanonicalLaunchPreparationSnapshot snapshot = preparedSnapshot();
+    AuthoredWorldLaunchDescriptorEvidence original = snapshot.launchDescriptorEvidence();
+    AuthoredWorldLaunchDescriptorEvidence changed =
+        AuthoredWorldLaunchDescriptorEvidence.create(
+            original.request(),
+            original.launchDescriptorId() + "-changed",
+            original.versionId(),
+            original.scriptPatchVersionPresent(),
+            original.scriptPatchVersion(),
+            original.runtimeFlagsJson(),
+            original.generationConfigRevision(),
+            original.versionStateEpoch(),
+            original.releaseBundleId(),
+            original.publishedReleaseBundleRef(),
+            original.remapSetIdPresent(),
+            original.remapSetId());
+    when(preparationRepository.readByControlPlaneRequestId(NAMESPACE, CONTROL_PLANE_REQUEST))
+        .thenReturn(Optional.of(snapshot));
+    when(descriptorClient.getComplete(any(GetLaunchDescriptorRequest.class)))
+        .thenReturn(completeBinding(changed));
+
+    assertThatThrownBy(() -> service.readCompleteBinding(snapshot))
+        .isInstanceOf(InvalidLaunchPreparationEvidenceException.class)
+        .hasMessageContaining("differs from the committed launch descriptor");
+
+    verify(preparationRepository).readByControlPlaneRequestId(NAMESPACE, CONTROL_PLANE_REQUEST);
+    verify(descriptorClient).getComplete(any(GetLaunchDescriptorRequest.class));
   }
 
   @Test
@@ -469,6 +611,14 @@ class GameSessionCanonicalLaunchPreparationServiceTest {
         descriptorClient, catalogRepository, sourceRepository, preparationRepository);
   }
 
+  private static CanonicalLaunchPreparationSnapshot preparedSnapshot() {
+    CreateCanonicalLaunchPreparationRequest request = request();
+    AuthoredWorldSourceEvidence source = source();
+    IntakeReceipt intake = intake(source);
+    CanonicalRealmCatalogSnapshot catalog = catalog(intake);
+    return snapshot(request, catalog, intake, descriptor(request, catalog, source));
+  }
+
   private static CreateCanonicalLaunchPreparationRequest request() {
     return request(NAMESPACE, TENANT, CATALOG_REQUEST, 1);
   }
@@ -496,9 +646,12 @@ class GameSessionCanonicalLaunchPreparationServiceTest {
   }
 
   private static AuthoredWorldSourceEvidence source() {
-    String world = "violet-wilds";
+    return source("violet-wilds");
+  }
+
+  private static AuthoredWorldSourceEvidence source(String world) {
     String tenantSlug = "north-star";
-    String displayName = "Violet Wilds";
+    String displayName = "emerald-grove".equals(world) ? "Emerald Grove" : "Violet Wilds";
     UUID registrationId = uuid(10);
     String sourceRequestDigest =
         AuthoredWorldSourceDigest.requestDigest(
@@ -590,6 +743,49 @@ class GameSessionCanonicalLaunchPreparationServiceTest {
         "bundle-73",
         false,
         null);
+  }
+
+  private static CompleteLaunchBindingEvidence completeBinding(
+      AuthoredWorldLaunchDescriptorEvidence descriptor) {
+    String publishCommitId = "publish-commit-902";
+    List<AuthoredWorldReleaseAttestationEvidence.Participant> participants =
+        AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
+            .map(
+                owner ->
+                    new AuthoredWorldReleaseAttestationEvidence.Participant(
+                        owner,
+                        Long.toString(descriptor.versionId()),
+                        false,
+                        null,
+                        publishCommitId,
+                        "c".repeat(64),
+                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                            owner),
+                        "GAME_LOGIC".equals(owner),
+                        "GAME_LOGIC".equals(owner) ? digest("d") : null))
+            .toList();
+    AuthoredWorldReleaseAttestationEvidence releaseAttestation =
+        AuthoredWorldReleaseAttestationEvidence.create(
+            descriptor.targetNamespace(),
+            descriptor.resultDigest(),
+            descriptor.canonicalTenantId(),
+            uuid(15),
+            descriptor.worldSlug(),
+            descriptor.authoredWorldSourceOperationId(),
+            descriptor.authoredWorldSourceEvidenceDigest(),
+            descriptor.launchDescriptorId(),
+            descriptor.publishedReleaseBundleRef(),
+            descriptor.versionStateEpoch(),
+            "publish:tenant:version:request",
+            publishCommitId,
+            participants,
+            digest("b"),
+            1,
+            List.of(),
+            List.of(),
+            List.of(),
+            descriptor.generationConfigRevision());
+    return new CompleteLaunchBindingEvidence(descriptor, releaseAttestation);
   }
 
   private static CanonicalLaunchPreparationSnapshot snapshot(
