@@ -7,7 +7,15 @@ This file is the always-on project, authority, and safety kernel for AI work. Re
 - Read [repository structure](design/architecture/repository-structure.md) when locating a concern; read [system architecture](design/architecture/system-architecture-overview.md) before changing shared contracts or runtime behavior; read [infrastructure](design/architecture/infrastructure/README.md) for deployment, gateway, protocol, environment, or preview work.
 - For service-scoped work, read the matching documentation under `design/architecture/microservices/<service>/` before inferring behavior from another service.
 - Architecture and design documents own target-state technical contracts. The [domain implementation trackers](design/project-management/implementation-tracking/README.md) record capability, code, and proof status; code and tests demonstrate the implemented boundary. Do not make `AGENTS.md` the authority for a technical design rule.
-- Before declaring a slice complete, verify the claimed boundary across its public contract, implementation, and focused proof. Completion reports must distinguish confirmed proof from unrun, partial, or unavailable validation.
+- Before declaring a slice complete, verify the claimed boundary across its public contract, implementation, and focused proof. Follow the communication guidance below when reporting completion.
+
+## Communication
+
+- Lead with the main fact or direct answer.
+- State material failures, unexpected behavior, and stalls upfront, with their impact, what is known or unknown about the cause, and the next action.
+- Keep routine updates plain, concise, and focused on outcomes. Mention PR numbers when relevant; omit fluff, invented reassurance, and low-level test or commit dumps.
+- Put unfinished scope and proof limits beside completion claims, and distinguish confirmed, unrun, partial, or unavailable validation.
+- Correct mistakes directly without deflection. A status question does not stop active authorized work.
 
 ## Working Tree Safety
 
@@ -15,6 +23,10 @@ This file is the always-on project, authority, and safety kernel for AI work. Re
 - Do not run `git restore`, `git checkout`, `git reset`, `git clean`, or `git stash` unless a human explicitly requests that action. Delete an untracked file only when it is unquestionably disposable and in scope; temporary-looking names or lint failures are not sufficient.
 - Edit a modified target in place. If overlapping changes make intent unclear or risky, ask the human. Never revert or clean up unrelated work; changes produced by the repository's canonical automatic formatters are allowed, but preserve unrelated semantic edits.
 - Open and update coherent pull requests autonomously for active implementation work so CI and review can run, subject to active review-safety. While a hosted review is active, prepare review fixes locally and do not publish review-invalidating commits until the hosted review completes; publish them only after it finishes. Use clearly based stacked PRs when that keeps work moving without mixing unrelated changes. In the current Overseer arrangement, the project owner has granted the designated Overseer standing authority to merge or enable auto-merge for PRs it judges ready and to close PRs it verifies are superseded. Implementing workers report readiness and do not independently merge, enable auto-merge, or close PRs.
+
+## Remote Environment Changes
+
+- Before remote provisioning or machine configuration changes, verify existing User authorization covers the environment and action; a technical runbook alone does not grant authority. Honor that authorization across turns, and ask before changing anything it does not cover. Before material remote changes, surface the intended host, purpose, isolation, and cleanup. Read-only inspection and ordinary authorized GitHub PR operations do not require separate authorization under this rule.
 
 ## Development And Documentation
 
@@ -46,7 +58,7 @@ This file is the always-on project, authority, and safety kernel for AI work. Re
 
 Roles are explicit responsibilities, independent of model or title. The Overseer owns project direction, priorities, consequential scope and architecture decisions, evidence adjudication, cross-lane coordination, and user communication. A lane orchestrator owns assigned-lane planning, execution, integration, validation, and PR/review operations. Execution subagents perform bounded investigation, edits, and validation; they may supply alternatives and evidence but do not own product or architecture decisions. The detailed boundaries are in [AI delegation and review](design/developer-workflows/ai-delegation-and-review.md).
 
-Without an explicitly assigned Overseer arrangement, the main lane orchestrator retains project direction and human design discussion and need not create an Overseer task. Preserve the user-selected main task model and reasoning settings and the delegation protection. Subagent routing uses only the latest available Luna and Sol family models, resolved from actual tool model metadata at delegation time under [AI delegation and review](design/developer-workflows/ai-delegation-and-review.md#general-delegation-rules). The allowed tiers are Luna high, Luna xhigh, Sol medium, and Sol high; choose among them autonomously to fit the task, with Sol high as the ceiling. An explicit human model choice takes precedence.
+Without an explicitly assigned Overseer arrangement, the main lane orchestrator retains project direction and human design discussion and need not create an Overseer task. Preserve the user-selected main task model and reasoning settings and the delegation protection. Subagent routing uses only the latest available Luna and Sol family models, resolved from actual tool model metadata at delegation time; permitted tiers and selection follow [AI delegation and review](design/developer-workflows/ai-delegation-and-review.md#general-delegation-rules). An explicit user model choice takes precedence.
 
 - Once the human selects an active workstream, continue through its next unambiguous tracked steps, including implementation, proportionate validation, PR publication, and review fixes, without seeking confirmation at every routine boundary; topology and approval follow [PR lifecycle](design/developer-workflows/pr-lifecycle.md#change-and-merge-policy). Escalate only actual new product or architecture ambiguity, a consequential decision, or an action outside the authorization. Active review safety and the designated Overseer's merge authority remain binding.
 - An explicit pause or stop overrides autonomous continuation. Finish only the stated in-progress boundary, publish any promised safe checkpoint, and do not begin substitute work. For unfinished work that otherwise must yield, follow the continuation rule in [PR lifecycle](design/developer-workflows/pr-lifecycle.md#review-orchestration). Later explicit resumption supersedes an earlier pause or stop for that scope.
