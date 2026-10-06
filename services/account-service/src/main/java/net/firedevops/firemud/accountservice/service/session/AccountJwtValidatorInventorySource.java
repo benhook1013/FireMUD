@@ -1,5 +1,6 @@
 package net.firedevops.firemud.accountservice.service.session;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
@@ -320,9 +321,12 @@ public final class AccountJwtValidatorInventorySource {
       String namespace,
       ValidatorExpectation expected,
       DeploymentObservation deployment) {
-    JsonNode metadata = pod == null ? null : pod.get("metadata");
-    JsonNode spec = pod == null ? null : pod.get("spec");
-    JsonNode status = pod == null ? null : pod.get("status");
+    if (pod == null || pod.isNull()) {
+      throw new InventoryUnavailableException();
+    }
+    JsonNode metadata = pod.get("metadata");
+    JsonNode spec = pod.get("spec");
+    JsonNode status = pod.get("status");
     if (!"v1".equals(text(pod.get("apiVersion")))
         || !"Pod".equals(text(pod.get("kind")))
         || metadata == null
@@ -879,6 +883,10 @@ public final class AccountJwtValidatorInventorySource {
     return value;
   }
 
+  @SuppressFBWarnings(
+      value = "NP_BOOLEAN_RETURN_NULL",
+      justification =
+          "The parser intentionally preserves absent or malformed booleans as unknown; callers require explicit true.")
   private static Boolean booleanValue(JsonNode node) {
     return node != null && node.isBoolean() ? node.booleanValue() : null;
   }

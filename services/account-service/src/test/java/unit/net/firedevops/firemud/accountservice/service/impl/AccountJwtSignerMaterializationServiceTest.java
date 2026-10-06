@@ -703,10 +703,12 @@ class AccountJwtSignerMaterializationServiceTest {
     return sha256(value.getBytes(StandardCharsets.US_ASCII));
   }
 
-  private static void assertStatus(Throwable failure, Status.Code expected) {
-    assertThat(failure).isInstanceOf(StatusRuntimeException.class);
-    assertThat(((StatusRuntimeException) failure).getStatus().getCode()).isEqualTo(expected);
+  private static void assertStatus(ErrorDiagnostic failure, Status.Code expected) {
+    assertThat(failure.exceptionType()).isEqualTo(StatusRuntimeException.class.getName());
+    assertThat(failure.code()).isEqualTo(expected);
   }
+
+  private record ErrorDiagnostic(String exceptionType, Status.Code code) {}
 
   private record PublicJwk(String kid, String json, String fingerprint) {}
 
@@ -721,7 +723,7 @@ class AccountJwtSignerMaterializationServiceTest {
 
   private static final class RecordingObserver<T> implements StreamObserver<T> {
     private T value;
-    private Throwable error;
+    private ErrorDiagnostic error;
     private boolean completed;
 
     @Override
@@ -731,7 +733,11 @@ class AccountJwtSignerMaterializationServiceTest {
 
     @Override
     public void onError(Throwable error) {
-      this.error = error;
+      Status.Code code =
+          error instanceof StatusRuntimeException statusFailure
+              ? statusFailure.getStatus().getCode()
+              : Status.fromThrowable(error).getCode();
+      this.error = new ErrorDiagnostic(error.getClass().getName(), code);
     }
 
     @Override

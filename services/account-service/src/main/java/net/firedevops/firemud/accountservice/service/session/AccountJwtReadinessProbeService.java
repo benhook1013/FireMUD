@@ -1,5 +1,6 @@
 package net.firedevops.firemud.accountservice.service.session;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -34,10 +35,29 @@ import org.springframework.transaction.support.TransactionTemplate;
  * may record an authenticated non-authorizing observation, but neither path can promote a signer.
  */
 public final class AccountJwtReadinessProbeService {
-  private static final Path PRIVATE_MOUNT = Path.of("/var/run/secrets/firemud/jwt");
+  private static final Path PRIVATE_MOUNT = privateSignerMount();
+
   private static final Path PRIVATE_PENDING_BUNDLE = Path.of("pending.key");
-  private static final Path PUBLIC_MOUNT = Path.of("/var/run/secrets/firemud/jwks");
+
+  private static final Path PUBLIC_MOUNT = publicJwksMount();
+
   private static final Path PUBLIC_JWKS = Path.of("jwks.json");
+
+  @SuppressFBWarnings(
+      value = "DMI_HARDCODED_ABSOLUTE_FILENAME",
+      justification =
+          "The interim private signer projection is intentionally fixed to Account's protected read-only mount.")
+  private static Path privateSignerMount() {
+    return Path.of("/var/run/secrets/firemud/jwt");
+  }
+
+  @SuppressFBWarnings(
+      value = "DMI_HARDCODED_ABSOLUTE_FILENAME",
+      justification =
+          "The public JWKS projection is intentionally fixed to Account's read-only validator-consumed mount.")
+  private static Path publicJwksMount() {
+    return Path.of("/var/run/secrets/firemud/jwks");
+  }
 
   private final AccountJwtReadinessProbeRepository repository;
   private final TransactionTemplate accountTransaction;

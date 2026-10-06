@@ -1,5 +1,6 @@
 package net.firedevops.firemud.accountservice.config;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -25,6 +26,7 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.PosixFilePermission;
 import java.security.KeyStore;
 import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
@@ -66,10 +68,13 @@ public final class AccountJwtJwksApiBinding {
   private static final Path TRUST_ROOT = Path.of("/etc/firemud/account-jwt-api");
   private static final Path TRUST_BINDING_PATH = TRUST_ROOT.resolve("binding.json");
   private static final Path TRUST_CA_PATH = TRUST_ROOT.resolve("serving-ca.pem");
-  private static final Path TOKEN_ROOT = Path.of("/var/run/secrets/firemud/account-jwt-api-token");
+
+  private static final Path TOKEN_ROOT = protectedTokenRoot();
+
   private static final Path TOKEN_PATH = TOKEN_ROOT.resolve("token");
-  private static final Path CANONICAL_TOKEN_ROOT =
-      Path.of("/run/secrets/firemud/account-jwt-api-token");
+
+  private static final Path CANONICAL_TOKEN_ROOT = canonicalProjectedTokenRoot();
+
   private static final Pattern ENVIRONMENT =
       Pattern.compile("[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?");
   private static final Pattern NAMESPACE = ENVIRONMENT;
@@ -101,6 +106,22 @@ public final class AccountJwtJwksApiBinding {
           .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
           .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
           .build();
+
+  @SuppressFBWarnings(
+      value = "DMI_HARDCODED_ABSOLUTE_FILENAME",
+      justification =
+          "Account's bearer credential is read only from this fixed protected projected-token root.")
+  private static Path protectedTokenRoot() {
+    return Path.of("/var/run/secrets/firemud/account-jwt-api-token");
+  }
+
+  @SuppressFBWarnings(
+      value = "DMI_HARDCODED_ABSOLUTE_FILENAME",
+      justification =
+          "This exact canonical root remains the only alternate projected-token mount accepted by the protected Account API boundary.")
+  private static Path canonicalProjectedTokenRoot() {
+    return Path.of("/run/secrets/firemud/account-jwt-api-token");
+  }
 
   private final boolean enabled;
   private final String protectedBindingPath;
@@ -434,7 +455,7 @@ public final class AccountJwtJwksApiBinding {
           suppliedDigest);
     } catch (IllegalArgumentException ex) {
       throw ex;
-    } catch (Exception ex) {
+    } catch (RuntimeException ex) {
       throw new IllegalArgumentException("Account JWT JWKS API binding is malformed");
     }
   }
@@ -459,7 +480,7 @@ public final class AccountJwtJwksApiBinding {
       return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(canonical));
     } catch (IllegalArgumentException ex) {
       throw ex;
-    } catch (Exception ex) {
+    } catch (IOException | NoSuchAlgorithmException | RuntimeException ex) {
       throw new IllegalArgumentException("Account JWT JWKS API binding digest is unavailable");
     }
   }
@@ -650,7 +671,7 @@ public final class AccountJwtJwksApiBinding {
         }
       } catch (BindingRejectedException ex) {
         throw ex;
-      } catch (Exception ex) {
+      } catch (RuntimeException ex) {
         throw new BindingRejectedException();
       }
       return;
@@ -699,12 +720,16 @@ public final class AccountJwtJwksApiBinding {
 
     Path target = absolute.toRealPath();
     Path versionDirectory = target.getParent();
+    Path targetFileName = target.getFileName();
+    Path versionDirectoryFileName =
+        versionDirectory == null ? null : versionDirectory.getFileName();
     if (!target.startsWith(canonicalTokenRoot)
         || versionDirectory == null
         || !canonicalTokenRoot.equals(versionDirectory.getParent())
-        || target.getFileName() == null
-        || !"token".equals(target.getFileName().toString())
-        || !versionDirectory.getFileName().toString().matches("\\.\\.[A-Za-z0-9._-]{1,128}")) {
+        || targetFileName == null
+        || !"token".equals(targetFileName.toString())
+        || versionDirectoryFileName == null
+        || !versionDirectoryFileName.toString().matches("\\.\\.[A-Za-z0-9._-]{1,128}")) {
       throw new IOException("Protected Account JWT bearer projection is invalid");
     }
     ProtectedFile targetFile = readProtectedFile(target, MAX_BEARER_BYTES, true);

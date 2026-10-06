@@ -1,5 +1,6 @@
 package net.firedevops.firemud.accountservice.repository;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.Arrays;
@@ -30,6 +31,10 @@ public class AccountJwtValidatorInventoryRepository {
 
   private final DSLContext dsl;
 
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification =
+          "The constructor only validates its trusted injected DSLContext; it performs no I/O or resource acquisition and defines no finalizer.")
   public AccountJwtValidatorInventoryRepository(DSLContext dsl) {
     this.dsl = Objects.requireNonNull(dsl, "DSLContext is required");
   }

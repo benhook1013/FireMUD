@@ -6,6 +6,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
@@ -42,6 +43,9 @@ class AccountJwtReadinessProbeServiceTest {
           "trust-r1");
 
   @Test
+  @SuppressFBWarnings(
+      value = "DMI_HARDCODED_ABSOLUTE_FILENAME",
+      justification = "Missing fixed paths prove retries never read mounted signing material")
   void exactIssuedRetryReadsOnlyStoredEvidenceAndDoesNotRemintOrRedeliver() {
     AccountJwtReadinessProbeRepository repository = mock(AccountJwtReadinessProbeRepository.class);
     UUID operationId = UUID.randomUUID();
@@ -129,6 +133,9 @@ class AccountJwtReadinessProbeServiceTest {
   }
 
   @Test
+  @SuppressFBWarnings(
+      value = "DMI_HARDCODED_ABSOLUTE_FILENAME",
+      justification = "Missing fixed paths prove retries never read mounted signing material")
   void exactVerifiedRetryPreservesReceiptWithoutRemintOrRedelivery() {
     AccountJwtReadinessProbeRepository repository = mock(AccountJwtReadinessProbeRepository.class);
     UUID operationId = UUID.randomUUID();

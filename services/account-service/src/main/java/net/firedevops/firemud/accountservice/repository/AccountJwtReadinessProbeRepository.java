@@ -51,9 +51,6 @@ import tools.jackson.databind.json.JsonMapper;
  * not a second key authority.
  */
 @Repository
-@SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification = "Injected jOOQ and Account repositories are internal collaborators.")
 public class AccountJwtReadinessProbeRepository {
   public static final int MAX_VALIDATOR_CACHE_AGE_SECONDS = 300;
   public static final int PROBE_LIFETIME_SECONDS = 300;
@@ -82,6 +79,10 @@ public class AccountJwtReadinessProbeRepository {
   private final AccountJwtJwksPublicationRepository publicationRepository;
   private final AccountJwtValidatorInventoryRepository inventoryRepository;
 
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification =
+          "The constructor only validates trusted Spring collaborators and constructs an in-memory repository; it performs no I/O or resource acquisition and defines no finalizer.")
   public AccountJwtReadinessProbeRepository(
       DSLContext dsl,
       AccountJwtSignerDesiredStateRepository desiredStateRepository,
@@ -94,6 +95,10 @@ public class AccountJwtReadinessProbeRepository {
   }
 
   @Autowired
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification =
+          "The constructor only validates trusted Spring collaborators; it performs no I/O or resource acquisition and defines no finalizer.")
   public AccountJwtReadinessProbeRepository(
       DSLContext dsl,
       AccountJwtSignerDesiredStateRepository desiredStateRepository,
@@ -370,9 +375,13 @@ public class AccountJwtReadinessProbeRepository {
   }
 
   private boolean readinessPlanOutOfWindow(ReadinessProbePlan plan) {
-    long databaseNow =
+    Long databaseNow =
         dsl.resultQuery("SELECT floor(extract(epoch FROM CURRENT_TIMESTAMP))::bigint")
             .fetchOne(0, Long.class);
+    if (databaseNow == null) {
+      throw new AccountJwtSignerDesiredStateRepository.StorageUnavailableException(
+          "Account readiness database clock readback is unavailable");
+    }
     return databaseNow < plan.notBeforeEpochSecond() || databaseNow >= plan.expiresAtEpochSecond();
   }
 
@@ -687,7 +696,7 @@ public class AccountJwtReadinessProbeRepository {
     long terminalEpoch = exactEpochSecond(terminalAt);
     CurrentEvidence current = lockCurrentEvidence(binding, trust);
     requireCurrentOperation(current, operationId.toString());
-    ReadinessProbePlan plan = requireStoredPlan(current);
+    requireStoredPlan(current);
     ProbeEntry entry =
         selectEntry(operationId, validatorId, tokenProfile, audience, probeKind, true);
     if (entry == null
@@ -2276,9 +2285,10 @@ public class AccountJwtReadinessProbeRepository {
       requireDigest(inventoryEvidenceDigest, "protected readiness inventory digest");
       this.inventoryEvidenceReference = inventoryEvidenceReference;
       this.inventoryEvidenceDigest = inventoryEvidenceDigest;
-      this.verifiedProbes = plan.entries().stream().map(VerifiedProbeEvidence::from).toList();
-      if (this.verifiedProbes.isEmpty()
-          || this.verifiedProbes.size() > MAX_ENTRIES_PER_OPERATION
+      List<VerifiedProbeEvidence> verifiedProbes =
+          plan.entries().stream().map(VerifiedProbeEvidence::from).toList();
+      if (verifiedProbes.isEmpty()
+          || verifiedProbes.size() > MAX_ENTRIES_PER_OPERATION
           || !plan.operationId().equals(generationResult.operationId())
           || !plan.operationDigest().equals(generationResult.operationDigest())
           || !plan.generationRequestDigest().equals(generationResult.generationRequestDigest())
@@ -2291,6 +2301,7 @@ public class AccountJwtReadinessProbeRepository {
         throw new QuarantinedStateException(
             "Readiness proof differs from exact generation and verified probe evidence");
       }
+      this.verifiedProbes = List.copyOf(verifiedProbes);
       this.readinessEvidenceDigest =
           readinessPromotionDigest(
               plan,
@@ -2298,7 +2309,7 @@ public class AccountJwtReadinessProbeRepository {
               publication,
               inventoryEvidenceReference,
               inventoryEvidenceDigest,
-              verifiedProbes);
+              this.verifiedProbes);
     }
 
     public ReadinessProbePlan plan() {

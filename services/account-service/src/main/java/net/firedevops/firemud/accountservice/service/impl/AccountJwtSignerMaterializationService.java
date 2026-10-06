@@ -1,5 +1,6 @@
 package net.firedevops.firemud.accountservice.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
@@ -55,6 +56,10 @@ public class AccountJwtSignerMaterializationService
   private final AccountJwtSignerMaterializerTrustBinding trustBindingProvider;
   private final TransactionTemplate accountTransaction;
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification =
+          "Spring injects the same owner repositories into this gRPC adapter so lifecycle validation and persistence share the Account authority and transaction boundary.")
   public AccountJwtSignerMaterializationService(
       AccountJwtSignerDesiredStateRepository repository,
       AccountJwtReadinessProbeRepository readinessRepository,
