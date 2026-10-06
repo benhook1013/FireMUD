@@ -40,6 +40,7 @@ firemud:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}
     ca-cert: ${FIREMUD_GRPC_CA_CERT_PATH:certs/ca.crt}
+    workload-namespace: ${FIREMUD_GRPC_WORKLOAD_NAMESPACE:}
   account:
     credentials:
       cleanup:
@@ -102,6 +103,7 @@ firemud:
         - account.v1.AccountService/GetTenantEntitlementsForRuntime
         - account.v1.AccountService/IssueDirectTextConnectScope
         - account.v1.AccountService/JoinPublicProductionMembership
+        - account.v1.RuntimeAccountIdentityService/ResolveRuntimeAccountIdentity
 
 management:
   endpoints:
