@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import dataclasses
 import fcntl
+import io
 import json
 import os
 import sqlite3
@@ -53,6 +54,104 @@ PATCH = "c" * 64
 
 
 class RuntimeTest(unittest.TestCase):
+    def test_selected_pr_status_shares_one_budget_across_the_complete_dispatch(self) -> None:
+        class Clock:
+            now = 0.0
+
+            def monotonic(self):
+                return self.now
+
+        for full_scan in (False, True):
+            with self.subTest(full_scan=full_scan):
+                clock = Clock()
+                timeouts = []
+                observed_budgets = []
+
+                def construct(_args, clock=clock, observed_budgets=observed_budgets):
+                    observed_budgets.append(github.active_hosted_preflight_budget())
+                    clock.now += 10
+                    return SimpleNamespace(store=None, status_for_pr=stack_status, status=stack_status), None
+
+                def gh_call(args, *, timeout, clock=clock, timeouts=timeouts, observed_budgets=observed_budgets, **_kwargs):
+                    timeouts.append(timeout)
+                    observed_budgets.append(github.active_hosted_preflight_budget())
+                    clock.now += min(20, timeout)
+                    return CompletedProcess(args, 0, '{"data": {}}', "")
+
+                def read():
+                    github.run_gh_query("query { viewer { login } }", {})
+
+                def pr_status(*_args, **_kwargs):
+                    read()
+                    read()
+                    return {"reasons": [], "mergeability": {}}
+
+                def stack_status(*_args):
+                    for _ in range(3):
+                        read()
+                    return {"prs": []}
+
+                def incoming(*_args):
+                    read()
+                    return [], {"status": "available"}
+
+                stdout, stderr = io.StringIO(), io.StringIO()
+                with (
+                    patch.object(github.time, "monotonic", side_effect=clock.monotonic),
+                    patch.object(github.subprocess, "run", side_effect=gh_call),
+                    patch.object(review_cli, "_controller", side_effect=construct),
+                    patch.object(review_cli.status_module, "status", side_effect=pr_status),
+                    patch.object(review_cli, "_read_record_incoming_routes", side_effect=incoming),
+                    patch.object(sys, "stdout", stdout),
+                    patch.object(sys, "stderr", stderr),
+                ):
+                    result = review_cli.main(["status", "--pr", "42", "--json", *(["--full-scan"] if full_scan else [])])
+
+                self.assertEqual(result, 1)
+                self.assertEqual(stdout.getvalue(), "")
+                self.assertIn("PR status deadline exceeded (phase=incoming_record_routes", stderr.getvalue())
+                self.assertIn("budget=120s", stderr.getvalue())
+                self.assertEqual(timeouts, [30, 30, 30, 30, 30, 10])
+                self.assertTrue(all(budget is observed_budgets[0] for budget in observed_budgets))
+                self.assertIsNone(github.active_hosted_preflight_budget())
+
+    def test_selected_pr_status_checks_deadline_after_report_preparation(self) -> None:
+        def dispatch(_args):
+            budget = github.active_hosted_preflight_budget()
+            self.assertIsNotNone(budget)
+            budget.set_phase("status_projection", total=1)
+            budget.deadline = budget.started_at - 1
+            return {"ready": True}, 0
+
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with (
+            patch.object(review_cli, "_dispatch", side_effect=dispatch),
+            patch.object(sys, "stdout", stdout),
+            patch.object(sys, "stderr", stderr),
+        ):
+            result = review_cli.main(["status", "--pr", "42", "--json"])
+
+        self.assertEqual(result, 1)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertIn("PR status deadline exceeded (phase=status_projection", stderr.getvalue())
+
+    def test_selected_pr_status_completes_within_budget_without_changing_report(self) -> None:
+        expected = {"ready": False, "reasons": ["review remains incomplete"]}
+
+        def dispatch(_args):
+            budget = github.active_hosted_preflight_budget()
+            self.assertIsNotNone(budget)
+            self.assertEqual(budget.preflight_name, "PR status")
+            return expected, 0
+
+        stdout = io.StringIO()
+        with patch.object(review_cli, "_dispatch", side_effect=dispatch), patch.object(sys, "stdout", stdout):
+            result = review_cli.main(["status", "--pr", "42", "--json"])
+
+        self.assertEqual(result, 0)
+        self.assertEqual(json.loads(stdout.getvalue()), expected)
+        self.assertIsNone(github.active_hosted_preflight_budget())
+
     def test_repository_manual_trigger_verification_deadline_preserves_diagnostics_before_post(self) -> None:
         snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
         target = ReviewTarget(snapshot, EffectiveParent("develop", BASE), patch_identity=PATCH, merge_base=BASE)
@@ -4629,6 +4728,41 @@ class RuntimeTest(unittest.TestCase):
             expired_result["terminal_rate_limits"][0]["cooldown_until"],
             expired_cooldown,
         )
+
+        for variant in ("unknown-reset", "not-terminal", "unattributed", "invalid-reset", "missing-reset"):
+            with self.subTest(variant=variant):
+                values = {**vars(state), "cooldown_until": None}
+                if variant == "not-terminal":
+                    values["terminal"] = False
+                elif variant == "unattributed":
+                    values["attributed"] = False
+                elif variant == "invalid-reset":
+                    values["cooldown_until"] = "unparseable"
+                elif variant == "missing-reset":
+                    values.pop("cooldown_until")
+                unknown_state = SimpleNamespace(**values)
+                with (
+                    patch.object(github, "fetch_pull_request", return_value=payload),
+                    patch.object(live, "pull_request", return_value=snapshot),
+                    patch.object(observer, "legacy_transition_reauthorization_audit", return_value=generic_audit),
+                    patch.object(observer, "history", return_value=[]),
+                    patch.object(observer, "_complete_trigger_paths", return_value=[Path("trigger.json")]),
+                    patch.object(hosted, "current_trigger_record_paths", return_value=[Path("trigger.json")]),
+                    patch.object(hosted, "load_trigger_reservation", return_value=record),
+                    patch.object(hosted, "load_trigger_record", return_value=record),
+                    patch.object(hosted, "trigger_state", return_value=unknown_state),
+                    patch.object(observer, "_global_blockers", return_value=[]),
+                ):
+                    result = observer.review_stop_audit(42, anchor)
+                if variant == "unknown-reset":
+                    self.assertEqual(result["active_reservations"], ["review active"])
+                    self.assertEqual(
+                        result["terminal_rate_limits"],
+                        [{**audit["terminal_rate_limits"][0], "cooldown_until": None}],
+                    )
+                else:
+                    self.assertEqual(result["active_reservations"], ["rate_limited", "review active"])
+                    self.assertEqual(result["terminal_rate_limits"], [])
 
         mismatched_audit = {**generic_audit, "active_reservations": ["review active"]}
         mismatched_state = SimpleNamespace(

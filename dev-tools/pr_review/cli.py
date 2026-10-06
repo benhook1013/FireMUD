@@ -1360,10 +1360,11 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
 
     budget = github.active_hosted_preflight_budget()
     starting_cli_run = args.command == "run" and args.run_command == "cli" and budget is not None
-    if starting_cli_run:
+    selected_pr_status = args.command == "status" and args.pr is not None and budget is not None
+    if starting_cli_run or selected_pr_status:
         budget.set_phase("controller_construction", total=1)
     controller, fixture = _controller(args)
-    if starting_cli_run:
+    if starting_cli_run or selected_pr_status:
         budget.set_completed(1)
     if args.command == "stack":
         value = controller.set_stack(args.pr_numbers) if args.stack_command == "set" else controller.show_stack()
@@ -1408,10 +1409,18 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
             return (report if args.as_json else _render_status_overview(report)), 0
         if fixture is not None:
             return fixture.status(controller, args.pr), 0
+        if selected_pr_status:
+            budget.set_phase("pr_review_evidence", total=1)
         state_store = getattr(controller, "store", None)
         summary_dispositions = state_store.load().summary_dispositions if state_store is not None else ()
         report = status_module.status(args.pr, summary_dispositions=summary_dispositions)
+        if selected_pr_status:
+            budget.set_completed(1)
+            budget.set_phase("stack_review_evidence", total=1)
         stack_report = controller.status() if args.full_scan else controller.status_for_pr(args.pr)
+        if selected_pr_status:
+            budget.set_completed(1)
+            budget.set_phase("incoming_record_routes", total=1)
         report["review_stack"] = stack_report
         stack_item = next((item for item in stack_report.get("prs", []) if item.get("pr") == args.pr), None)
         incoming_routes = (
@@ -1423,6 +1432,9 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
         report["incoming_routes"] = incoming_routes
         report["routes_out"] = outgoing_routes
         record_routes, record_route_state = _read_record_incoming_routes(args.pr)
+        if selected_pr_status:
+            budget.set_completed(1)
+            budget.set_phase("status_projection", total=1)
         report["incoming_record_routes"] = record_routes
         report["record_route_store"] = record_route_state
         review_reasons: list[str] = []
@@ -1827,6 +1839,10 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "run" and args.run_command == "cli":
             with github.cli_preflight_budget():
                 result, exit_status = _dispatch(args)
+        elif args.command == "status" and args.pr is not None:
+            with github.activate_hosted_preflight_budget(preflight_name="PR status") as budget:
+                result, exit_status = _dispatch(args)
+                budget.complete()
         else:
             result, exit_status = _dispatch(args)
         print(_render(result, args.command in {"records", "wait"} or getattr(args, "as_json", False)))

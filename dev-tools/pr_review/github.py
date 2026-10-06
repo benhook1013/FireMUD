@@ -49,8 +49,9 @@ class HostedPreflightDeadlineExceeded(TimeoutError):
         self.total = total
         self.preflight_name = preflight_name
         progress = f"{completed}/{total}" if total is not None else str(completed)
+        operation = preflight_name if preflight_name == "PR status" else f"{preflight_name} preflight"
         super().__init__(
-            f"{preflight_name} preflight deadline exceeded (phase={phase}, elapsed={elapsed_seconds:.1f}s, "
+            f"{operation} deadline exceeded (phase={phase}, elapsed={elapsed_seconds:.1f}s, "
             f"completed={progress}, budget={budget_seconds:.0f}s)"
         )
 
