@@ -92,12 +92,16 @@ def _unusable_hosted_title(value: Any) -> bool:
     if not isinstance(value, str) or not value.strip():
         return True
     text = _headline_text(html.unescape(value)).strip()
-    return not text or _is_badge_line(text) or _is_evidence_label(text) or bool(re.fullmatch(r"[\s#>*_~`-]+", text))
+    # Older extraction removed only the outer bold delimiters of a multi-field
+    # header. Recognize that retained projection as well as the provider line.
+    badge = _is_badge_line(text) or _is_badge_line("**" + text + "**")
+    return not text or badge or _is_evidence_label(text) or bool(re.fullmatch(r"[\s#>*_~`-]+", text))
 
 
 def _strip_badge_prefix(line: str, *, allow_two_field: bool = False) -> str:
     for pattern in (
         r"^_[^\n]*?_(?:\s*\|\s*_[^\n]*?_){1,3}",
+        r"^(?:\*\*[^\n]*?\*\*(?:\s*\|\s*\*\*[^\n]*?\*\*){1,3}|__[^\n]*?__(?:\s*\|\s*__[^\n]*?__){1,3})",
         r"^(?:\*\*[^\n]*?\*\*|__[^\n]*?__)",
     ):
         match = re.match(pattern, line)
@@ -288,16 +292,16 @@ def _is_badge_line(line: str, *, allow_two_field: bool = False) -> bool:
 
     candidate = re.sub(r"^#{1,6}\s*", "", line).strip()
     sections = [section.strip() for section in candidate.split("|")]
-    if len(sections) == 2 and all(
-        section.startswith("_") and section.endswith("_") for section in sections
-    ):
+    wrapped_fields = all(
+        any(section.startswith(delimiter) and section.endswith(delimiter)
+            for delimiter in ("_", "**", "__")) for section in sections
+    )
+    if len(sections) == 2 and wrapped_fields:
         known_categories = {"bug", "data integrity & integration", "functional correctness", "maintainability & code quality",
                             "security & privacy", "stability & availability"}
         return (allow_two_field and _badge_label_text(sections[0]).casefold() in known_categories
                 and _explicit_severity_label(sections[1]) is not None)
-    if len(sections) in {3, 4} and all(
-        section.startswith("_") and section.endswith("_") for section in sections
-    ):
+    if len(sections) in {3, 4} and wrapped_fields:
         category = _badge_label_text(sections[0]).casefold()
         if category.startswith("security") and category != "security & privacy":
             return False
@@ -333,7 +337,11 @@ def _hosted_display_severity(value: str) -> str | None:
         if line:
             header_position = False
         # Provider category | severity badge, optionally with tier/effort, including inline prose.
-        match = re.match(r"^_[^\n]*?_(?:\s*\|\s*_[^\n]*?_){1,3}", line)
+        match = re.match(
+            r"^(?:_[^\n]*?_(?:\s*\|\s*_[^\n]*?_){1,3}|"
+            r"\*\*[^\n]*?\*\*(?:\s*\|\s*\*\*[^\n]*?\*\*){1,3}|"
+            r"__[^\n]*?__(?:\s*\|\s*__[^\n]*?__){1,3})", line
+        )
         fields = match.group().split("|") if match and _is_badge_line(
             match.group(), allow_two_field=allow_two_field
         ) else []
