@@ -202,6 +202,22 @@ class HostedCliPreflightBudgetTests(unittest.TestCase):
         with patch.object(cli_module, "_controller", side_effect=status_controller), patch("builtins.print"):
             self.assertEqual(cli_module.main(["status"]), 0)
 
+    def test_main_starts_one_cli_budget_before_controller_construction(self):
+        observed = []
+
+        def cli_controller(_args):
+            budget = github.active_hosted_preflight_budget()
+            self.assertIsNotNone(budget)
+            observed.append(budget)
+            return SimpleNamespace(run_cli=lambda **_kwargs: {"status": "completed"}), None
+
+        with patch.object(cli_module, "_controller", side_effect=cli_controller), patch("builtins.print"):
+            self.assertEqual(cli_module.main(["run", "cli", "--expect-pr", "42"]), 0)
+
+        self.assertEqual(len(observed), 1)
+        self.assertEqual(observed[0].preflight_name, "CLI")
+        self.assertIsNone(github.active_hosted_preflight_budget())
+
 
 def _git(root, *args, input_text=None):
     return subprocess.run(
@@ -501,6 +517,190 @@ def cli_anchor(*, parent_identity="develop", parent_head=PARENT, merge_base=PARE
 
 
 class CliReviewRunnerTests(unittest.TestCase):
+    def test_cli_lock_acquisition_checks_the_shared_deadline_and_reports_progress(self):
+        class Clock:
+            now = 0.0
+
+            def monotonic(self):
+                return self.now
+
+        clock = Clock()
+        original_flock = fcntl.flock
+
+        def acquire_then_expire(fd, operation):
+            original_flock(fd, operation)
+            if operation & fcntl.LOCK_EX:
+                clock.now = 121
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            commands = FakeCommands(root)
+            with (
+                patch.object(github.time, "monotonic", side_effect=clock.monotonic),
+                patch.object(cli_runner.fcntl, "flock", side_effect=acquire_then_expire),
+                github.cli_preflight_budget(),
+                self.assertRaisesRegex(
+                    github.HostedPreflightDeadlineExceeded,
+                    r"CLI preflight deadline exceeded \(phase=lock_acquisition, elapsed=121.0s, completed=1/2, budget=120s\)",
+                ),
+            ):
+                run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands)
+
+        self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
+        self.assertFalse(commands.test_worktrees)
+
+    def test_cli_gh_metadata_read_uses_the_shared_remaining_deadline(self):
+        class Clock:
+            now = 0.0
+
+            def monotonic(self):
+                return self.now
+
+        clock = Clock()
+        timeouts = []
+
+        def slow_gh(args, **kwargs):
+            timeouts.append(kwargs["timeout"])
+            clock.now += 9
+            return CompletedProcess(args, 0, '{"number":42}', "")
+
+        with (
+            patch.object(github.time, "monotonic", side_effect=clock.monotonic),
+            patch.object(github.subprocess, "run", side_effect=slow_gh),
+            github.cli_preflight_budget(timeout_seconds=8) as budget,
+            self.assertRaisesRegex(
+                github.HostedPreflightDeadlineExceeded,
+                r"CLI preflight deadline exceeded \(phase=live_github_preflight, elapsed=9.0s, completed=0/3, budget=8s\)",
+            ) as raised,
+        ):
+            budget.set_phase("live_github_preflight", total=3)
+            github.fetch_pr_metadata("owner/repo", 42)
+
+        self.assertEqual(timeouts, [8])
+        self.assertEqual(raised.exception.preflight_name, "CLI")
+
+    def test_cumulative_git_preflight_delays_share_the_cli_deadline(self):
+        class Clock:
+            now = 0.0
+
+            def monotonic(self):
+                return self.now
+
+        clock = Clock()
+
+        class SlowGitCommands(FakeCommands):
+            def run(self, args, **kwargs):
+                result = super().run(args, **kwargs)
+                if args[0] == "git":
+                    clock.now += 4
+                return result
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            commands = SlowGitCommands(root)
+            with (
+                patch.object(github.time, "monotonic", side_effect=clock.monotonic),
+                github.cli_preflight_budget(timeout_seconds=10),
+                self.assertRaisesRegex(
+                    github.HostedPreflightDeadlineExceeded,
+                    r"CLI preflight deadline exceeded \(phase=candidate_git_preflight, elapsed=12.0s, completed=1, budget=10s\)",
+                ),
+            ):
+                run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands)
+
+        git_timeouts = [timeout for args, timeout, _text in commands.timeout_calls if args[0] == "git"]
+        self.assertEqual(git_timeouts, [10, 6, 2])
+        self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
+
+    def test_preflight_timeout_after_sqlite_attempt_start_fails_attempt_and_cleans_candidate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / ".git" / "firemud" / "records.sqlite3"
+            database.parent.mkdir()
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            commands = FakeCommands(root)
+            commands.records = records
+
+            def expire_during_final_identity(*_args, **_kwargs):
+                budget = github.active_hosted_preflight_budget()
+                self.assertIsNotNone(budget)
+                budget.deadline = time.monotonic() - 1
+                budget.remaining_seconds()
+
+            with (
+                github.cli_preflight_budget(),
+                patch.object(cli_runner, "_verify_target_still_current", side_effect=expire_during_final_identity),
+                self.assertRaisesRegex(
+                    github.HostedPreflightDeadlineExceeded,
+                    r"CLI preflight deadline exceeded \(phase=final_identity_check, .*completed=0/1, budget=120s\)",
+                ),
+            ):
+                run_cli_review(
+                    target(),
+                    github=FakeGitHub(),
+                    source_root=root,
+                    runner=commands,
+                    records=records,
+                )
+
+            attempts = records.attempt_history(42)
+            self.assertEqual(len(attempts), 1)
+            self.assertEqual(attempts[0]["state"], "failed")
+            self.assertIn("final_identity_check", attempts[0]["diagnostic"])
+            run_dirs = list((root / ".git" / "firemud" / "pr-review" / "runs").glob("run.*"))
+            self.assertEqual(len(run_dirs), 1)
+            self.assertIn("CLI preflight deadline exceeded", (run_dirs[0] / "error").read_text())
+            self.assertFalse((run_dirs[0] / "capture-complete").exists())
+            self.assertFalse(commands.test_worktrees)
+            self.assertTrue(
+                any(
+                    args[:2] == ("git", "-C") and args[2:] and args[-2:-1] == ("-d",)
+                    for args, _cwd in commands.calls
+                )
+            )
+            self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
+
+    def test_cli_budget_is_suspended_before_provider_and_keeps_provider_timeout(self):
+        class BudgetInspectingCommands(FakeCommands):
+            budget_at_provider = "unset"
+
+            def run(self, args, **kwargs):
+                if args[0] == "coderabbit":
+                    self.budget_at_provider = github.active_hosted_preflight_budget()
+                return super().run(args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            commands = BudgetInspectingCommands(
+                root,
+                review_output=(
+                    '{"type":"start","reviewType":"full"}\n'
+                    '{"type":"complete","status":"review_completed",'
+                    '"findings":0,"reviewedFiles":["src/Representative.java"]}\n'
+                ),
+            )
+            with github.cli_preflight_budget(timeout_seconds=30):
+                result = run_cli_review(
+                    target(),
+                    github=FakeGitHub(),
+                    source_root=root,
+                    runner=commands,
+                    review_timeout_seconds=777,
+                )
+
+        self.assertEqual(result.exit_status, 0)
+        self.assertIsNone(commands.budget_at_provider)
+        self.assertEqual(
+            [timeout for args, timeout, _text in commands.timeout_calls if args[0] == "coderabbit"],
+            [777],
+        )
+
     def test_admission_callback_must_reserve_before_attempt_or_provider(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

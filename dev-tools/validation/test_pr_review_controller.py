@@ -116,6 +116,8 @@ class FakeGit:
     def __init__(self, heads=None):
         self.heads = {"develop": BASE, **(heads or {})}
         self.remote_heads_calls = 0
+        self.merge_base_calls = []
+        self.patch_identity_calls = []
         self.test_merge_calls = []
         self.test_merge_error = None
 
@@ -133,9 +135,11 @@ class FakeGit:
         return True
 
     def merge_base(self, left, right):
+        self.merge_base_calls.append((left, right))
         return BASE
 
     def patch_identity(self, merge_base, head):
+        self.patch_identity_calls.append((merge_base, head))
         return f"patch-{head[:4]}"
 
     def test_merge_tree(self, base, head):
@@ -257,6 +261,7 @@ def _batch_identity(item):
         "mergedAt": "2026-09-26T00:00:00Z" if item.merged else None,
         "baseRefName": item.base_ref,
         "baseRefOid": item.base_tip,
+        "changedFiles": item.changed_files,
         "headRefName": item.head_ref,
         "headRefOid": item.head,
         "mergeable": item.mergeable,
@@ -322,6 +327,28 @@ class ControllerTests(unittest.TestCase):
             controller.run_hosted()
 
         self.assertEqual(observed_phases, ["target_selection"])
+        self.assertEqual(adapter_calls, [])
+
+    def test_cli_preflight_deadline_covers_target_selection_before_adapter(self):
+        controller = self.make({})
+        adapter_calls = []
+        controller.cli_adapter = lambda *args, **kwargs: adapter_calls.append((args, kwargs))
+
+        def stall_selection(*_args, **_kwargs):
+            budget = github.active_hosted_preflight_budget()
+            self.assertIsNotNone(budget)
+            budget.deadline = budget.started_at - 1
+            raise OSError("selection read failed after the deadline")
+
+        with (
+            patch.object(controller, "_target", side_effect=stall_selection),
+            self.assertRaisesRegex(
+                ControllerError,
+                r"CLI preflight deadline exceeded \(phase=target_selection, .*completed=0/1, budget=120s\)",
+            ),
+        ):
+            controller.run_cli()
+
         self.assertEqual(adapter_calls, [])
 
     def test_held_state_database_during_target_selection_keeps_preflight_diagnostics(self):
@@ -7275,7 +7302,60 @@ class ControllerTests(unittest.TestCase):
         self.assertTrue(all(pr_number <= 6 for pr_number, _ in evidence.history_reads))
         self.assertEqual(report["scope"], "selected PR and configured ancestors")
 
-    def test_review_action_preflights_do_not_use_overview_batch_or_tail_scope(self):
+    def test_target_selection_reuses_the_exact_anchor_computed_by_reconciliation(self):
+        values, heads = _stacked_prs(1)
+        controller = self.make(values, heads=heads)
+        controller.set_stack([1])
+
+        target = controller.resolve_cli_target()
+
+        self.assertEqual(target.snapshot.number, 1)
+        self.assertEqual(controller.git.merge_base_calls, [(BASE, values[1].head)])
+        self.assertEqual(controller.git.patch_identity_calls, [(BASE, values[1].head)])
+
+    def test_cli_run_batches_fresh_identity_for_the_entire_configured_stack(self):
+        values, heads = _stacked_prs(3)
+        evidence = CountingEvidence()
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        batch_calls = []
+        selected = []
+
+        def fetch(numbers):
+            batch_calls.append(tuple(numbers))
+            return {number: _batch_identity(values[number]) for number in numbers}
+
+        controller.github.batch_pull_requests = fetch
+        controller.cli_adapter = lambda target, **_kwargs: selected.append(target.snapshot.number) or "prepared"
+
+        result = controller.run_cli()
+
+        self.assertEqual(result, "prepared")
+        self.assertEqual(batch_calls, [(1, 2, 3)])
+        self.assertEqual(selected, [1])
+        self.assertEqual({number for number, _channel in evidence.history_reads}, {1, 2, 3})
+
+    def test_cli_run_fails_closed_when_a_batched_stack_identity_is_missing(self):
+        values, heads = _stacked_prs(2)
+        controller = self.make(values, heads=heads)
+        controller.set_stack(list(values))
+        controller.github.batch_pull_requests = lambda _numbers: {1: _batch_identity(values[1])}
+        controller.cli_adapter = lambda *_args, **_kwargs: self.fail("incomplete stack identity must not run CLI")
+
+        with self.assertRaisesRegex(ControllerError, "fresh live identity is incomplete"):
+            controller.run_cli()
+
+    def test_live_identity_batch_includes_the_file_count_used_by_cli_runner_validation(self):
+        values, _heads = _stacked_prs(1)
+        payload = {"data": {"repository": {"pr_1": _batch_identity(values[1])}}}
+
+        with patch.object(github, "run_gh_query", return_value=payload) as query:
+            result = github.fetch_pr_identity_batch("owner/repo", (1,))
+
+        self.assertEqual(result[1]["changedFiles"], values[1].changed_files)
+        self.assertIn("changedFiles", query.call_args.args[0])
+
+    def test_hosted_review_action_preflight_does_not_use_overview_batch_or_tail_scope(self):
         values, heads = _stacked_prs(3)
         evidence = CountingEvidence()
         controller = self.make(values, evidence, heads=heads)

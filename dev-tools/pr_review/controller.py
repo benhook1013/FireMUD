@@ -1294,6 +1294,8 @@ class ReviewController:
         def is_ancestor(parent: str, child: str) -> bool:
             try:
                 return self.git.is_ancestor(parent, child)
+            except github.HostedPreflightDeadlineExceeded:
+                raise
             except (ControllerError, OSError, subprocess.SubprocessError, ValueError):
                 ancestry_errors.add((parent.casefold(), child.casefold()))
                 return False
@@ -1325,6 +1327,8 @@ class ReviewController:
                 continue
             try:
                 merge_tree = self._test_merge_tree(item.base_tip, item.head)
+            except github.HostedPreflightDeadlineExceeded:
+                raise
             except (ControllerError, OSError, subprocess.SubprocessError, ValueError) as error:
                 reason = f"current default-base test merge is unproven: {error}"
                 default_test_merge_failures[pr] = reason
@@ -1396,6 +1400,8 @@ class ReviewController:
                         phase_timings["local_anchors_ms"] = (
                             phase_timings.get("local_anchors_ms", 0.0) + (time.perf_counter() - anchor_started) * 1000
                         )
+            except github.HostedPreflightDeadlineExceeded:
+                raise
             except (ControllerError, OSError, subprocess.SubprocessError, ValueError) as error:
                 anchor_failures[pr] = f"could not compute current Git anchor: {type(error).__name__}: {error}"
                 continue
@@ -1571,6 +1577,8 @@ class ReviewController:
                                 phase_timings.get("local_anchors_ms", 0.0)
                                 + (time.perf_counter() - anchor_started) * 1000
                             )
+                except github.HostedPreflightDeadlineExceeded:
+                    raise
                 except (ControllerError, OSError, subprocess.SubprocessError, ValueError) as error:
                     reason = f"could not compute current Git anchor: {type(error).__name__}: {error}"
                     anchor_failures[pr] = reason
@@ -4343,7 +4351,41 @@ class ReviewController:
         for allocation in state.allocations.values():
             if allocation.pr in state.ordered_prs and allocation.stop_basis is not None:
                 cache_request_history(allocation.pr, allocation.channel)
-        live, reconciliation = self._reconciliation(state, history_cache=history_cache)
+        live_identities = None
+        use_current_batch = (
+            selected == policy.Channel.CLI
+            and github.active_hosted_preflight_budget() is not None
+            and callable(getattr(self._require_github(), "batch_pull_requests", None))
+        )
+        if use_current_batch:
+            budget = github.active_hosted_preflight_budget()
+            identity_batch_count = (len(state.ordered_prs) + 24) // 25
+            if budget is not None:
+                budget.set_phase("target_identity_batch", total=identity_batch_count)
+            live_identities = self._require_github().batch_pull_requests(state.ordered_prs)
+            if budget is not None:
+                budget.set_completed(identity_batch_count)
+            if (
+                not isinstance(live_identities, Mapping)
+                or set(live_identities) != set(state.ordered_prs)
+                or any(not isinstance(live_identities[pr], Mapping) for pr in state.ordered_prs)
+                or any(
+                    type(live_identities[pr].get("number")) is not int
+                    or live_identities[pr]["number"] != pr
+                    or type(live_identities[pr].get("changedFiles")) is not int
+                    or live_identities[pr]["changedFiles"] < 0
+                    for pr in state.ordered_prs
+                )
+            ):
+                raise ControllerError("fresh live identity is incomplete for the configured CLI review stack")
+            if budget is not None:
+                budget.set_phase("target_reconciliation", total=1)
+        live, reconciliation = self._reconciliation(
+            state,
+            live_identities=live_identities,
+            refresh_prs=set() if live_identities is not None else None,
+            history_cache=history_cache,
+        )
         for pr in state.ordered_prs:
             problem = self._head_repository_problem(live[pr])
             if problem:
@@ -4442,7 +4484,9 @@ class ReviewController:
             raise WrongStackTarget(f"expected PR #{expected_pr}, but selected PR #{pr}")
         item = live[pr]
         link = reconciliation.links[pr]
-        anchor = self._anchor(pr, item, link)
+        anchor = self._reconciled_anchor(pr, item, reconciliation)
+        if anchor is None:
+            anchor = self._anchor(pr, item, link)
         target_reconciliation = reconciliation.status_for(pr, selected.value)
         candidate_warnings = ()
         if target_reconciliation in {
@@ -5876,29 +5920,57 @@ class ReviewController:
         **kwargs: Any,
     ) -> Any:
         self._validate_force_options(force, reason)
-        selected = self._target(policy.Channel.CLI, expected_pr)
-        for attempt in range(MAX_BASE_RESELECTIONS + 1):
-            self._ensure_runnable(selected, force=force, require_force_for_warnings=True)
-            if self.cli_adapter is None:
-                raise ControllerError("CLI adapter is not configured")
-            try:
-                return self.cli_adapter(
-                    selected.target,
-                    force=force,
-                    reason=reason,
-                    admit=lambda reserve, selected=selected: self._admit_review(
-                        selected.pr, "cli", reserve, selection_inputs=selected.selection_inputs
-                    ),
-                    **kwargs,
-                )
-            except _SelectionChanged:
-                if attempt == MAX_BASE_RESELECTIONS:
+        with github.cli_preflight_budget() as budget:
+            def preflight_phase(phase: str, operation: Callable[[], Any]) -> Any:
+                budget.set_phase(phase, total=1)
+                try:
+                    result = operation()
+                except github.HostedPreflightDeadlineExceeded:
                     raise
-                selected = self._target(policy.Channel.CLI, expected_pr)
-            except StaleReviewTargetError as error:
-                if not selected.target.default_base_front or attempt == MAX_BASE_RESELECTIONS:
-                    raise ControllerError(str(error)) from error
-                selected = self._target(policy.Channel.CLI, selected.pr)
+                except Exception as error:
+                    try:
+                        budget.remaining_seconds()
+                    except github.HostedPreflightDeadlineExceeded as deadline_error:
+                        raise deadline_error from error
+                    raise
+                budget.set_completed(1)
+                return result
+
+            try:
+                selected = preflight_phase("target_selection", lambda: self._target(policy.Channel.CLI, expected_pr))
+                for attempt in range(MAX_BASE_RESELECTIONS + 1):
+                    preflight_phase(
+                        "runnable_check",
+                        lambda selected=selected: self._ensure_runnable(
+                            selected, force=force, require_force_for_warnings=True
+                        ),
+                    )
+                    if self.cli_adapter is None:
+                        raise ControllerError("CLI adapter is not configured")
+                    try:
+                        return self.cli_adapter(
+                            selected.target,
+                            force=force,
+                            reason=reason,
+                            admit=lambda reserve, selected=selected: self._admit_review(
+                                selected.pr, "cli", reserve, selection_inputs=selected.selection_inputs
+                            ),
+                            **kwargs,
+                        )
+                    except _SelectionChanged:
+                        if attempt == MAX_BASE_RESELECTIONS:
+                            raise
+                        selected = preflight_phase(
+                            "target_reselection", lambda: self._target(policy.Channel.CLI, expected_pr)
+                        )
+                    except StaleReviewTargetError as error:
+                        if not selected.target.default_base_front or attempt == MAX_BASE_RESELECTIONS:
+                            raise ControllerError(str(error)) from error
+                        selected = preflight_phase(
+                            "target_reselection", lambda selected=selected: self._target(policy.Channel.CLI, selected.pr)
+                        )
+            except github.HostedPreflightDeadlineExceeded as error:
+                raise ControllerError(str(error)) from error
         raise AssertionError("bounded CLI reselection loop exhausted unexpectedly")
 
     def evidence(self, pr: int | None = None) -> dict[str, Any]:

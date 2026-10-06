@@ -31,28 +31,43 @@ HOSTED_PREFLIGHT_BUDGET_SECONDS = 120
 
 
 class HostedPreflightDeadlineExceeded(TimeoutError):
-    """A bounded Hosted preflight ran out of its shared GitHub-read budget."""
+    """A bounded provider preflight ran out of its shared preparation budget."""
 
-    def __init__(self, phase: str, elapsed_seconds: float, budget_seconds: float, completed: int, total: int | None):
+    def __init__(
+        self,
+        phase: str,
+        elapsed_seconds: float,
+        budget_seconds: float,
+        completed: int,
+        total: int | None,
+        preflight_name: str = "Hosted",
+    ):
         self.phase = phase
         self.elapsed_seconds = elapsed_seconds
         self.budget_seconds = budget_seconds
         self.completed = completed
         self.total = total
+        self.preflight_name = preflight_name
         progress = f"{completed}/{total}" if total is not None else str(completed)
         super().__init__(
-            f"Hosted preflight deadline exceeded (phase={phase}, elapsed={elapsed_seconds:.1f}s, "
+            f"{preflight_name} preflight deadline exceeded (phase={phase}, elapsed={elapsed_seconds:.1f}s, "
             f"completed={progress}, budget={budget_seconds:.0f}s)"
         )
 
 
 class HostedPreflightBudget:
-    """One monotonic budget shared across target selection and pre-POST GitHub reads."""
+    """One monotonic budget shared across target selection and provider preparation."""
 
-    def __init__(self, timeout_seconds: float = HOSTED_PREFLIGHT_BUDGET_SECONDS) -> None:
+    def __init__(
+        self,
+        timeout_seconds: float = HOSTED_PREFLIGHT_BUDGET_SECONDS,
+        *,
+        preflight_name: str = "Hosted",
+    ) -> None:
         if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)) or timeout_seconds <= 0:
             raise ValueError("Hosted preflight budget must be a positive number of seconds")
         self.timeout_seconds = float(timeout_seconds)
+        self.preflight_name = preflight_name
         self.started_at = time.monotonic()
         self.deadline = self.started_at + self.timeout_seconds
         self.current_phase = "starting"
@@ -102,11 +117,23 @@ class HostedPreflightBudget:
     def exceeded(self) -> HostedPreflightDeadlineExceeded:
         elapsed = max(0.0, time.monotonic() - self.started_at)
         return HostedPreflightDeadlineExceeded(
-            self.current_phase, elapsed, self.timeout_seconds, self.completed, self.total
+            self.current_phase,
+            elapsed,
+            self.timeout_seconds,
+            self.completed,
+            self.total,
+            self.preflight_name,
         )
 
     def complete(self) -> None:
         self.remaining_seconds()
+        self.suspend()
+
+    def suspend(self) -> None:
+        """Stop enforcing preflight after success or before bounded local cleanup."""
+
+        if not self.active:
+            return
         now = time.monotonic()
         self._close_phase(now)
         self._finished_at = now
@@ -136,8 +163,10 @@ _HOSTED_PREFLIGHT_BUDGET: ContextVar[HostedPreflightBudget | None] = ContextVar(
 @contextmanager
 def activate_hosted_preflight_budget(
     timeout_seconds: float = HOSTED_PREFLIGHT_BUDGET_SECONDS,
+    *,
+    preflight_name: str = "Hosted",
 ) -> Iterator[HostedPreflightBudget]:
-    budget = HostedPreflightBudget(timeout_seconds)
+    budget = HostedPreflightBudget(timeout_seconds, preflight_name=preflight_name)
     token = _HOSTED_PREFLIGHT_BUDGET.set(budget)
     try:
         yield budget
@@ -156,6 +185,20 @@ def hosted_preflight_budget(
         yield current
         return
     with activate_hosted_preflight_budget(timeout_seconds) as budget:
+        yield budget
+
+
+@contextmanager
+def cli_preflight_budget(
+    timeout_seconds: float = HOSTED_PREFLIGHT_BUDGET_SECONDS,
+) -> Iterator[HostedPreflightBudget]:
+    """Use the shared preflight budget for CLI target and candidate preparation."""
+
+    current = active_hosted_preflight_budget()
+    if current is not None:
+        yield current
+        return
+    with activate_hosted_preflight_budget(timeout_seconds, preflight_name="CLI") as budget:
         yield budget
 
 
@@ -723,6 +766,7 @@ def fetch_pr_identity_batch(repo: str, pr_numbers: Sequence[int]) -> dict[int, d
     result: dict[int, dict[str, Any] | None] = {number: None for number in numbers}
     if not numbers:
         return result
+    budget = active_hosted_preflight_budget()
 
     # Keep each request comfortably within GitHub GraphQL's query-cost limit
     # while ensuring every configured number is covered without list truncation.
@@ -731,7 +775,7 @@ def fetch_pr_identity_batch(repo: str, pr_numbers: Sequence[int]) -> dict[int, d
         selections = "\n".join(
             f"pr_{number}: pullRequest(number:{number}) {{ "
             "number state isDraft mergedAt baseRefName baseRefOid headRefName headRefOid mergeable "
-            "headRepository { nameWithOwner } "
+            "changedFiles headRepository { nameWithOwner } "
             "comments(last:5) { nodes { databaseId author { login } body createdAt url } } "
             "reviews(last:5) { nodes { databaseId author { login } body state submittedAt url commit { oid } } } "
             "}"
@@ -778,6 +822,8 @@ query($owner:String!, $repo:String!) {{
                     break
             else:
                 result[number] = item
+        if budget is not None and budget.current_phase == "target_identity_batch":
+            budget.set_completed(offset // 25 + 1)
     return result
 
 
