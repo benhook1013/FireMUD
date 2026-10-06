@@ -1841,7 +1841,14 @@ def main(argv: list[str] | None = None) -> int:
                 result, exit_status = _dispatch(args)
         elif args.command == "status" and args.pr is not None:
             with github.activate_hosted_preflight_budget(preflight_name="PR status") as budget:
-                result, exit_status = _dispatch(args)
+                try:
+                    result, exit_status = _dispatch(args)
+                except Exception as error:
+                    try:
+                        budget.remaining_seconds()
+                    except github.HostedPreflightDeadlineExceeded as expired:
+                        raise expired from error
+                    raise
                 budget.complete()
         else:
             result, exit_status = _dispatch(args)

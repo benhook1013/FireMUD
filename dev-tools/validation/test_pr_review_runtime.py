@@ -9,6 +9,7 @@ import io
 import json
 import os
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import threading
@@ -135,6 +136,62 @@ class RuntimeTest(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertEqual(stdout.getvalue(), "")
         self.assertIn("PR status deadline exceeded (phase=status_projection", stderr.getvalue())
+
+    def test_selected_pr_status_failed_github_read_preserves_early_error_or_expired_budget(self) -> None:
+        for elapsed in (118, 120):
+            with self.subTest(elapsed=elapsed):
+                clock = {"now": 0.0}
+                errors = []
+
+                def construct(_args, clock=clock):
+                    clock["now"] = 117
+                    return SimpleNamespace(repository="owner/repo", store=None), None
+
+                def failed_read(args, *, timeout, clock=clock, elapsed=elapsed, **_kwargs):
+                    self.assertEqual(args[:3], ["gh", "api", "graphql"])
+                    self.assertEqual(timeout, 3)
+                    clock["now"] = elapsed
+                    raise subprocess.CalledProcessError(1, args, stderr="GitHub read failed")
+
+                def render_error(error, errors=errors):
+                    errors.append(error)
+                    return str(error)
+
+                stdout, stderr = io.StringIO(), io.StringIO()
+                with (
+                    patch.object(github.time, "monotonic", side_effect=lambda clock=clock: clock["now"]),
+                    patch.object(github.subprocess, "run", side_effect=failed_read) as read,
+                    patch.object(review_cli, "_controller", side_effect=construct),
+                    patch.object(review_cli, "format_exception_notes", side_effect=render_error),
+                    patch.object(sys, "stdout", stdout),
+                    patch.object(sys, "stderr", stderr),
+                ):
+                    result = review_cli.main(["status", "--pr", "42", "--json"])
+
+                self.assertEqual(result, 1)
+                self.assertEqual(stdout.getvalue(), "")
+                read.assert_called_once()
+                if elapsed == 120:
+                    self.assertIsInstance(errors[0], github.HostedPreflightDeadlineExceeded)
+                    self.assertIn("PR status deadline exceeded (phase=pr_review_evidence", stderr.getvalue())
+                    self.assertIn("completed=0/1, budget=120s", stderr.getvalue())
+                    self.assertEqual(str(errors[0].__cause__), "GitHub read failed")
+                    self.assertIsInstance(errors[0].__cause__.__cause__, subprocess.CalledProcessError)
+                else:
+                    self.assertIsInstance(errors[0], RuntimeError)
+                    self.assertEqual(stderr.getvalue(), "error: GitHub read failed\n")
+                    self.assertIsInstance(errors[0].__cause__, subprocess.CalledProcessError)
+                self.assertIsNone(github.active_hosted_preflight_budget())
+
+    def test_selected_pr_status_does_not_replace_keyboard_interrupt_with_deadline(self) -> None:
+        def dispatch(_args):
+            budget = github.active_hosted_preflight_budget()
+            budget.deadline = budget.started_at - 1
+            raise KeyboardInterrupt
+
+        with patch.object(review_cli, "_dispatch", side_effect=dispatch), self.assertRaises(KeyboardInterrupt):
+            review_cli.main(["status", "--pr", "42", "--json"])
+        self.assertIsNone(github.active_hosted_preflight_budget())
 
     def test_selected_pr_status_completes_within_budget_without_changing_report(self) -> None:
         expected = {"ready": False, "reasons": ["review remains incomplete"]}
