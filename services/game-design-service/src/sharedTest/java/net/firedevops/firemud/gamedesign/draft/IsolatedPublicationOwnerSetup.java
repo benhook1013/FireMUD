@@ -17,6 +17,7 @@ import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperat
 import net.firedevops.firemud.gamedesign.publication.IsolatedPublicationOperationFixtures;
 import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactRepository;
+import net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import org.jooq.DSLContext;
 
@@ -123,7 +124,21 @@ public final class IsolatedPublicationOwnerSetup {
         versions
             .findByTenantIdAndIdForUpdate(operation.tenantKey(), operation.versionId())
             .orElseThrow();
+    var snapshot =
+        new VersionAssetPublicationRepository(dsl)
+            .freezeOrReadSnapshot(operation.tenantKey(), version.getVersionNumber());
     PublishedReleaseBundle bundle = releaseWrite.get();
+    if (snapshot.versionId() != operation.versionId()
+        || !snapshot.items().isEmpty()
+        || bundle.getManifestSchemaVersion() == null
+        || bundle.getManifestSchemaVersion() != 1
+        || !"[]".equals(bundle.getArtifactDigestsJson())
+        || !"[]".equals(bundle.getRequiredManifestAssetKeysJson())
+        || bundle.getManifestHash() == null
+        || !bundle.getManifestHash().matches("sha256:[0-9a-f]{64}")) {
+      throw new IllegalStateException(
+          "Isolated publication fixture requires the exact empty asset candidate for its Version");
+    }
     version.setVersionState(VersionLifecycleState.PUBLISHED);
     version.setVersionStateEpoch(Math.addExact(version.getVersionStateEpoch(), 1));
     versions.save(version);
@@ -137,7 +152,15 @@ public final class IsolatedPublicationOwnerSetup {
     artifact.setLastWorkflowId(operation.workflowId());
     artifact.setManifestSchemaVersion(bundle.getManifestSchemaVersion());
     artifact.setArtifactDigestsJson(bundle.getArtifactDigestsJson());
-    artifact.setPublishedObjectProofsJson("[]");
+    artifact.setExportedManifestAssetKeysJson(bundle.getRequiredManifestAssetKeysJson());
+    String manifestDigest = bundle.getManifestHash();
+    artifact.setPublishedObjectProofsJson(
+        "[{\"immutableObjectKey\":\"manifests/sha256/"
+            + manifestDigest.substring("sha256:".length())
+            + "\",\"contentDigest\":\""
+            + manifestDigest
+            + "\"}]");
+    artifact.setCandidateSnapshotVersionId(snapshot.versionId());
     new VersionAssetArtifactRepository(dsl).save(artifact);
     attempt.setStatus(PublishAttemptStatus.SUCCEEDED);
     attempts.save(attempt);
