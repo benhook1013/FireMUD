@@ -2145,6 +2145,28 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Capture World definitive Draft abort PostgreSQL raw XML
+        if: ${{ always() && matrix.module == 'world-management-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: world-definitive-draft-abort-postgresql-proof-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: services/world-management-service/build/test-results/integrationTest/TEST-*WorldDraftTerminalOutcomePostgresIntegrationTest.xml
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Verify World definitive Draft abort PostgreSQL execution
+        if: ${{ !cancelled() && matrix.module == 'world-management-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOutcomePostgresIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOutcomePostgresIntegrationTest#abortBlocksDelayedTopologyAndRawRegionWritesAndExactRetrySurvivesFreeze()' \
+            --require-case 'integration.net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOutcomePostgresIntegrationTest#retainedUnverifiedTopologyOrRegionOutputCannotBeRelabeledAsAborted()' \
+            --require-case 'integration.net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOutcomePostgresIntegrationTest#topologyCommitAndAbortSerializeToExactlyOneImmutableTerminalResult()' \
+            --require-case 'integration.net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOutcomePostgresIntegrationTest#rawRegionCommitAndAbortSerializeOnTheSameV25Row()' \
+            --require-case 'integration.net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOutcomePostgresIntegrationTest#absentReadbackIsUnknownChangedBindingsConflictAndRolledBackAbortLeavesNoRow()' \
+            world-management-service
+
       - name: Capture Account authored-draft publication PostgreSQL XML
         if: ${{ always() && matrix.module == 'account-service' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

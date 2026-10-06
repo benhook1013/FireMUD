@@ -33,18 +33,6 @@ CREATE TABLE world_draft_terminal_outcome (
         octet_length(target_namespace) BETWEEN 1 AND 63
         AND target_namespace ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
     ),
-    CONSTRAINT ck_world_draft_terminal_binding CHECK (
-        jsonb_typeof(binding_json::jsonb) = 'object'
-        AND binding_json::jsonb->>'canonicalTenantId' = canonical_tenant_id::TEXT
-        AND binding_json::jsonb->>'canonicalVersionId' = canonical_version_id::TEXT
-        AND binding_json::jsonb->>'requestId' = request_id::TEXT
-        AND binding_json::jsonb->>'commitId' = commit_id::TEXT
-        AND jsonb_typeof(owner_binding_json::jsonb) = 'object'
-        AND owner_binding_json::jsonb->>'targetNamespace' = target_namespace
-        AND owner_binding_json::jsonb->>'canonicalTenantId' = canonical_tenant_id::TEXT
-        AND owner_binding_json::jsonb->>'canonicalVersionId' = canonical_version_id::TEXT
-        AND owner_binding_json::jsonb->>'versionIdentityOperationId' = version_identity_operation_id::TEXT
-    ),
     CONSTRAINT fk_world_draft_terminal_version_identity FOREIGN KEY (
         version_identity_operation_id,
         target_namespace,
@@ -63,6 +51,19 @@ CREATE INDEX idx_world_draft_terminal_scope
     ON world_draft_terminal_outcome (target_namespace, canonical_tenant_id, canonical_version_id);
 
 -- [jooq ignore start]
+-- Preserve the PostgreSQL binding constraint; jOOQ's H2 DDL simulation cannot render ->>.
+ALTER TABLE world_draft_terminal_outcome ADD CONSTRAINT ck_world_draft_terminal_binding CHECK (
+    jsonb_typeof(binding_json::jsonb) = 'object'
+    AND binding_json::jsonb->>'canonicalTenantId' = canonical_tenant_id::TEXT
+    AND binding_json::jsonb->>'canonicalVersionId' = canonical_version_id::TEXT
+    AND binding_json::jsonb->>'requestId' = request_id::TEXT
+    AND binding_json::jsonb->>'commitId' = commit_id::TEXT
+    AND jsonb_typeof(owner_binding_json::jsonb) = 'object'
+    AND owner_binding_json::jsonb->>'targetNamespace' = target_namespace
+    AND owner_binding_json::jsonb->>'canonicalTenantId' = canonical_tenant_id::TEXT
+    AND owner_binding_json::jsonb->>'canonicalVersionId' = canonical_version_id::TEXT
+    AND owner_binding_json::jsonb->>'versionIdentityOperationId' = version_identity_operation_id::TEXT
+);
 REVOKE ALL ON world_draft_terminal_outcome FROM PUBLIC;
 
 CREATE FUNCTION world_draft_terminal_outcome_guard() RETURNS TRIGGER

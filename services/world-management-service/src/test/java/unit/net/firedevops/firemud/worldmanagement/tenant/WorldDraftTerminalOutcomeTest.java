@@ -24,8 +24,8 @@ import org.junit.jupiter.api.Test;
 class WorldDraftTerminalOutcomeTest {
   @Test
   void operationRetainsAndStrictlyCrossChecksTheCompleteV57AccountBinding() {
-    DraftCommitBinding binding = binding();
     Ids ids = ids();
+    DraftCommitBinding binding = binding(ids);
     byte[] accountBytes = accountBinding(binding, ids).canonicalBytes();
     WorldDraftTerminalOperation operation = operation(binding, accountBytes, ids);
 
@@ -37,8 +37,8 @@ class WorldDraftTerminalOutcomeTest {
 
   @Test
   void changedOperationFenceTargetOrGameDesignBytesCannotReuseTheAccountBinding() {
-    DraftCommitBinding binding = binding();
     Ids ids = ids();
+    DraftCommitBinding binding = binding(ids);
     byte[] accountBytes = accountBinding(binding, ids).canonicalBytes();
 
     assertThatThrownBy(
@@ -46,7 +46,8 @@ class WorldDraftTerminalOutcomeTest {
                 operation(
                     binding,
                     accountBytes,
-                    new Ids(UUID.randomUUID(), ids.request(), ids.commit(), ids.fence(), ids.actor())))
+                    new Ids(
+                        UUID.randomUUID(), ids.request(), ids.commit(), ids.fence(), ids.actor())))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("V57 Account binding");
     assertThatThrownBy(
@@ -54,7 +55,12 @@ class WorldDraftTerminalOutcomeTest {
                 operation(
                     binding,
                     accountBytes,
-                    new Ids(ids.operation(), ids.request(), ids.commit(), UUID.randomUUID(), ids.actor())))
+                    new Ids(
+                        ids.operation(),
+                        ids.request(),
+                        ids.commit(),
+                        UUID.randomUUID(),
+                        ids.actor())))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("V57 Account binding");
     assertThatThrownBy(
@@ -70,13 +76,13 @@ class WorldDraftTerminalOutcomeTest {
                     ownerBinding(binding),
                     accountBytes))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("exact World operation");
+        .hasMessageContaining("complete Draft binding");
   }
 
   @Test
   void abortEvidenceRequiresEveryExactWorldEpochAndRejectsSubstitutionOrMalformedFrames() {
-    DraftCommitBinding binding = binding();
     Ids ids = ids();
+    DraftCommitBinding binding = binding(ids);
     WorldDraftTerminalOperation operation =
         operation(binding, accountBinding(binding, ids).canonicalBytes(), ids);
     List<AffectedUnit> units = binding.affectedUnits(Owner.WORLD_MANAGEMENT);
@@ -85,18 +91,19 @@ class WorldDraftTerminalOutcomeTest {
             .map(unit -> new WorldDraftTerminalOutcome.ObservedEpoch(unit, unit.expectedEpoch()))
             .toList();
     WorldDraftTerminalOutcome outcome =
-        WorldDraftTerminalOutcome.create(operation, observed, java.time.OffsetDateTime.parse("2026-01-01T00:00:00Z"));
+        WorldDraftTerminalOutcome.create(
+            operation, observed, java.time.OffsetDateTime.parse("2026-01-01T00:00:00Z"));
     WorldDraftTerminalOutcome replay =
         WorldDraftTerminalOutcome.fromStored(
-            operation,
-            outcome.canonicalBytes(),
-            outcome.digest(),
-            outcome.recordedAt());
+            operation, outcome.canonicalBytes(), outcome.digest(), outcome.recordedAt());
 
     assertThat(replay.canonicalBytes()).containsExactly(outcome.canonicalBytes());
     assertThat(replay.digest()).isEqualTo(outcome.digest());
     assertThat(replay.observedEpochs()).isEqualTo(observed);
-    assertThatThrownBy(() -> WorldDraftTerminalOutcome.create(operation, observed.subList(0, 1), outcome.recordedAt()))
+    assertThatThrownBy(
+            () ->
+                WorldDraftTerminalOutcome.create(
+                    operation, observed.subList(0, 1), outcome.recordedAt()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("complete affected set");
     assertThatThrownBy(
@@ -108,7 +115,8 @@ class WorldDraftTerminalOutcomeTest {
                     outcome.recordedAt()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("not exact canonical evidence");
-    byte[] trailing = java.util.Arrays.copyOf(outcome.canonicalBytes(), outcome.canonicalBytes().length + 1);
+    byte[] trailing =
+        java.util.Arrays.copyOf(outcome.canonicalBytes(), outcome.canonicalBytes().length + 1);
     assertThatThrownBy(
             () ->
                 WorldDraftTerminalOutcome.fromStored(
@@ -155,27 +163,44 @@ class WorldDraftTerminalOutcomeTest {
                 new byte[] {1, 2, 3})));
   }
 
-  private DraftCommitBinding binding() {
+  private DraftCommitBinding binding(Ids ids) {
     UUID tenant = UUID.randomUUID();
     UUID version = UUID.randomUUID();
     UUID aggregate = UUID.randomUUID();
     UUID worldRevision = UUID.randomUUID();
     UUID gdRevision = UUID.randomUUID();
-    UUID request = UUID.randomUUID();
-    UUID commit = UUID.randomUUID();
-    TargetProof target = new TargetProof(tenant, version, 11, "gd-tenant", 12, "gd-tenant", "NEW_GAME_ROW");
+    TargetProof target =
+        new TargetProof(tenant, version, 11, "gd-tenant", 12, "gd-tenant", "NEW_GAME_ROW");
     return DraftCommitBinding.create(
         target,
-        request,
-        commit,
+        ids.request(),
+        ids.commit(),
         "base-commit",
         List.of(
             new RevisionPayload("0", worldRevision, Owner.WORLD_MANAGEMENT, "world mutation"),
             new RevisionPayload("1", gdRevision, Owner.GAME_DESIGN_CONTROL_PLANE, "game mutation")),
         List.of(
-            new AffectedUnit(Owner.WORLD_MANAGEMENT, "REGION", aggregate.toString(), "AGGREGATE", aggregate.toString(), "0"),
-            new AffectedUnit(Owner.WORLD_MANAGEMENT, "REGION", aggregate.toString(), "REGION_SUBTREE", aggregate.toString(), "0"),
-            new AffectedUnit(Owner.GAME_DESIGN_CONTROL_PLANE, "VERSION", version.toString(), "AGGREGATE", version.toString(), "0")));
+            new AffectedUnit(
+                Owner.WORLD_MANAGEMENT,
+                "REGION",
+                aggregate.toString(),
+                "AGGREGATE",
+                aggregate.toString(),
+                "0"),
+            new AffectedUnit(
+                Owner.WORLD_MANAGEMENT,
+                "REGION",
+                aggregate.toString(),
+                "REGION_SUBTREE",
+                aggregate.toString(),
+                "0"),
+            new AffectedUnit(
+                Owner.GAME_DESIGN_CONTROL_PLANE,
+                "VERSION",
+                version.toString(),
+                "AGGREGATE",
+                version.toString(),
+                "0")));
   }
 
   private OwnerBinding ownerBinding(DraftCommitBinding binding) {
@@ -194,12 +219,18 @@ class WorldDraftTerminalOutcomeTest {
   }
 
   private Ids ids() {
-    return new Ids(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
+    return new Ids(
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        UUID.randomUUID());
   }
 
   private String digest(byte[] bytes) {
     try {
-      return "sha256:" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+      return "sha256:"
+          + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
     } catch (java.security.NoSuchAlgorithmException impossible) {
       throw new IllegalStateException(impossible);
     }

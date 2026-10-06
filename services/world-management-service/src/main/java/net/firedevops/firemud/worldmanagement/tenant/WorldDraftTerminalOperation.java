@@ -15,7 +15,9 @@ import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceEvidence.OwnerBinding;
 
-/** Exact identity for a World-local terminal result; the retained Account bytes are not permission. */
+/**
+ * Exact identity for a World-local terminal result; the retained Account bytes are not permission.
+ */
 public final class WorldDraftTerminalOperation {
   private static final UUID NIL_UUID = new UUID(0L, 0L);
   private static final String SCHEMA = "world-draft-terminal-operation/v1";
@@ -65,7 +67,8 @@ public final class WorldDraftTerminalOperation {
         || !binding.requiredOwners().contains(DraftCommitBinding.Owner.WORLD_MANAGEMENT)
         || !binding.requiredOwners().contains(DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE)
         || binding.affectedUnits(DraftCommitBinding.Owner.WORLD_MANAGEMENT).isEmpty()) {
-      throw new IllegalArgumentException("World terminal identity differs from the complete Draft binding");
+      throw new IllegalArgumentException(
+          "World terminal identity differs from the complete Draft binding");
     }
     if (!operationId.equals(accountBinding.operationId())
         || !requestId.equals(accountBinding.requestId())

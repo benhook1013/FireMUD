@@ -12,8 +12,6 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
-import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
-import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.SourceChange;
 import net.firedevops.firemud.accountservice.dto.AccountSecurityStateMutationRequest;
@@ -34,6 +32,8 @@ import net.firedevops.firemud.accountservice.service.AccountAuthoritySourceEvent
 import net.firedevops.firemud.accountservice.service.AccountAuthoritySourceReader;
 import net.firedevops.firemud.common.account.authority.AccountSecurityStateAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.AccountSecurityStateAuthorityEventV1Codec.AccountState;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;

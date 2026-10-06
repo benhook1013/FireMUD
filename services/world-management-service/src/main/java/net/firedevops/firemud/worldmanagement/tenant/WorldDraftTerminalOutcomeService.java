@@ -25,11 +25,9 @@ public final class WorldDraftTerminalOutcomeService {
    * holding the shared V25 row. This method does not authenticate the supplied Account bytes,
    * authorize a caller, or release Account's fence.
    */
-  public WorldDraftTerminalOutcome recordDefinitiveAbort(
-      WorldDraftTerminalOperation operation) {
+  public WorldDraftTerminalOutcome recordDefinitiveAbort(WorldDraftTerminalOperation operation) {
     Objects.requireNonNull(operation, "operation");
-    Optional<WorldDraftTerminalOutcome> original =
-        repository.readDefinitiveAbort(operation);
+    Optional<WorldDraftTerminalOutcome> original = repository.readDefinitiveAbort(operation);
     if (original.isPresent()) {
       return original.orElseThrow();
     }

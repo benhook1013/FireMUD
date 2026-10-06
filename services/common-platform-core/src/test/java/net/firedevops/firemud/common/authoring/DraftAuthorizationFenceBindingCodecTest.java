@@ -123,8 +123,7 @@ class DraftAuthorizationFenceBindingCodecTest {
 
   @Test
   void rejectsReorderedSourceVectorAndMalformedStoredFrames() {
-    DraftAuthorizationFenceBinding twoSources =
-        binding(List.of(source(), accountSource()));
+    DraftAuthorizationFenceBinding twoSources = binding(List.of(source(), accountSource()));
     List<byte[]> reversedSources = readFrames(twoSources.canonicalBytes());
     byte[] firstSource = reversedSources.get(15);
     reversedSources.set(15, reversedSources.get(16));
@@ -176,8 +175,7 @@ class DraftAuthorizationFenceBindingCodecTest {
       assertThat(actualSource.generation()).isEqualTo(expectedSource.generation());
       assertThat(actualSource.sourceVersion()).isEqualTo(expectedSource.sourceVersion());
       assertThat(actualSource.checkpointStream()).isEqualTo(expectedSource.checkpointStream());
-      assertThat(actualSource.checkpointSequence())
-          .isEqualTo(expectedSource.checkpointSequence());
+      assertThat(actualSource.checkpointSequence()).isEqualTo(expectedSource.checkpointSequence());
       assertThat(actualSource.evidence()).containsExactly(expectedSource.evidence());
     }
   }
@@ -203,19 +201,15 @@ class DraftAuthorizationFenceBindingCodecTest {
 
   private static DraftCommitBinding gameDesignBinding() {
     return DraftCommitBinding.create(
-        new TargetProof(TENANT_ID, VERSION_ID, 19L, "tenant-key", 42L, "tenant-key", "NEW_GAME_ROW"),
+        new TargetProof(
+            TENANT_ID, VERSION_ID, 19L, "tenant-key", 42L, "tenant-key", "NEW_GAME_ROW"),
         REQUEST_ID,
         COMMIT_ID,
         "base-source-1",
         List.of(new RevisionPayload("0", REVISION_ID, Owner.WORLD_MANAGEMENT, "{}")),
         List.of(
             new AffectedUnit(
-                Owner.WORLD_MANAGEMENT,
-                "WORLD_TEMPLATE",
-                "world-1",
-                "ROOM_SCOPE",
-                "room-1",
-                "0")));
+                Owner.WORLD_MANAGEMENT, "WORLD_TEMPLATE", "world-1", "ROOM_SCOPE", "room-1", "0")));
   }
 
   private static SourceEvidence source() {

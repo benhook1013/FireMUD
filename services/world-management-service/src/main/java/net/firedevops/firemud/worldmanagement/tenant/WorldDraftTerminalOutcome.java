@@ -18,7 +18,9 @@ import java.util.Objects;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 
-/** Immutable World-local definitive no-commit evidence; it is never an APPLIED result or permission. */
+/**
+ * Immutable World-local definitive no-commit evidence; it is never an APPLIED result or permission.
+ */
 public final class WorldDraftTerminalOutcome {
   private static final String SCHEMA = "world-draft-terminal-outcome/v1";
   private static final String ABORTED = "DEFINITIVELY_ABORTED";
@@ -54,7 +56,8 @@ public final class WorldDraftTerminalOutcome {
     requireCompleteEpochVector(operation, this.observedEpochs);
     if (!digest(this.canonicalBytes).equals(digest)
         || !Arrays.equals(this.canonicalBytes, encode(operation, this.observedEpochs))) {
-      throw new IllegalArgumentException("Stored World terminal outcome is not exact canonical evidence");
+      throw new IllegalArgumentException(
+          "Stored World terminal outcome is not exact canonical evidence");
     }
   }
 
@@ -137,12 +140,7 @@ public final class WorldDraftTerminalOutcome {
       DraftCommitBinding.Owner owner = DraftCommitBinding.Owner.valueOf(reader.text());
       AffectedUnit unit =
           new AffectedUnit(
-              owner,
-              reader.text(),
-              reader.text(),
-              reader.text(),
-              reader.text(),
-              reader.text());
+              owner, reader.text(), reader.text(), reader.text(), reader.text(), reader.text());
       result.add(new ObservedEpoch(unit, reader.text()));
     }
     reader.requireEnd();
@@ -155,12 +153,14 @@ public final class WorldDraftTerminalOutcome {
     List<AffectedUnit> expected =
         operation.binding().affectedUnits(DraftCommitBinding.Owner.WORLD_MANAGEMENT);
     if (observedEpochs.size() != expected.size()) {
-      throw new IllegalArgumentException("Definitive World abort requires the complete affected set");
+      throw new IllegalArgumentException(
+          "Definitive World abort requires the complete affected set");
     }
     for (int index = 0; index < expected.size(); index++) {
       if (!expected.get(index).equals(observedEpochs.get(index).unit())
           || !expected.get(index).expectedEpoch().equals(observedEpochs.get(index).epoch())) {
-        throw new IllegalArgumentException("World abort epoch vector differs from exact Draft binding");
+        throw new IllegalArgumentException(
+            "World abort epoch vector differs from exact Draft binding");
       }
     }
   }
@@ -224,7 +224,8 @@ public final class WorldDraftTerminalOutcome {
             .decode(ByteBuffer.wrap(bytes))
             .toString();
       } catch (CharacterCodingException invalidUtf8) {
-        throw new IllegalArgumentException("World terminal evidence contains invalid UTF-8", invalidUtf8);
+        throw new IllegalArgumentException(
+            "World terminal evidence contains invalid UTF-8", invalidUtf8);
       }
     }
 

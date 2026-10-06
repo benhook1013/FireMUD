@@ -179,7 +179,9 @@ public record DraftAuthorizationFenceBinding(
     HOSTED_TERMS
   }
 
-  /** Independent owner counters/checkpoints and exact existing source evidence; no inferred epochs. */
+  /**
+   * Independent owner counters/checkpoints and exact existing source evidence; no inferred epochs.
+   */
   public record SourceEvidence(
       SourceKind kind,
       String scopeId,

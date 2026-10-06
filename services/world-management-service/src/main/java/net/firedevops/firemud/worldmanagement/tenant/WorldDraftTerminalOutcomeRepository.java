@@ -1,6 +1,5 @@
 package net.firedevops.firemud.worldmanagement.tenant;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.sql.Connection;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -18,7 +17,9 @@ import org.jooq.Record;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import tools.jackson.databind.ObjectMapper;
 
-/** Internal immutable no-commit storage. It does not authenticate or authorize a Draft operation. */
+/**
+ * Internal immutable no-commit storage. It does not authenticate or authorize a Draft operation.
+ */
 public final class WorldDraftTerminalOutcomeRepository {
   private static final String TABLE = "world_draft_terminal_outcome";
 
@@ -26,9 +27,6 @@ public final class WorldDraftTerminalOutcomeRepository {
   private final WorldDesignPublicationFenceRepository fence;
   private final ObjectMapper mapper;
 
-  @SuppressFBWarnings(
-      value = "EI_EXPOSE_REP2",
-      justification = "Injected DSL, owner-fence, and mapper collaborators are internal service dependencies.")
   public WorldDraftTerminalOutcomeRepository(
       DSLContext dsl, WorldDesignPublicationFenceRepository fence, ObjectMapper mapper) {
     this.dsl = Objects.requireNonNull(dsl, "dsl");
@@ -92,9 +90,7 @@ public final class WorldDraftTerminalOutcomeRepository {
   }
 
   private void insert(
-      WorldDraftTerminalOperation operation,
-      OpenOwner owner,
-      WorldDraftTerminalOutcome outcome) {
+      WorldDraftTerminalOperation operation, OpenOwner owner, WorldDraftTerminalOutcome outcome) {
     try {
       dsl.execute(
           "INSERT INTO "
@@ -119,7 +115,8 @@ public final class WorldDraftTerminalOutcomeRepository {
           operation.binding().digest(),
           operation.accountBindingBytes(),
           operation.accountBindingDigest(),
-          encodeAffectedUnits(operation.binding().affectedUnits(DraftCommitBinding.Owner.WORLD_MANAGEMENT)),
+          encodeAffectedUnits(
+              operation.binding().affectedUnits(DraftCommitBinding.Owner.WORLD_MANAGEMENT)),
           outcome.outcome(),
           outcome.canonicalBytes(),
           outcome.digest(),
@@ -155,18 +152,29 @@ public final class WorldDraftTerminalOutcomeRepository {
         operation.authorizationFenceId());
   }
 
-  private WorldDraftTerminalOutcome readExact(
-      WorldDraftTerminalOperation operation, Record row) {
+  private WorldDraftTerminalOutcome readExact(WorldDraftTerminalOperation operation, Record row) {
     if (!operation.operationId().equals(row.get("operation_id", java.util.UUID.class))
         || !operation.requestId().equals(row.get("request_id", java.util.UUID.class))
         || !operation.commitId().equals(row.get("commit_id", java.util.UUID.class))
-        || !operation.authorizationFenceId().equals(row.get("authorization_fence_id", java.util.UUID.class))
-        || !operation.canonicalTenantId().equals(row.get("canonical_tenant_id", java.util.UUID.class))
-        || !operation.canonicalVersionId().equals(row.get("canonical_version_id", java.util.UUID.class))
-        || !operation.ownerBinding().targetNamespace().equals(row.get("target_namespace", String.class))
-        || !mapper.writeValueAsString(operation.ownerBinding())
+        || !operation
+            .authorizationFenceId()
+            .equals(row.get("authorization_fence_id", java.util.UUID.class))
+        || !operation
+            .canonicalTenantId()
+            .equals(row.get("canonical_tenant_id", java.util.UUID.class))
+        || !operation
+            .canonicalVersionId()
+            .equals(row.get("canonical_version_id", java.util.UUID.class))
+        || !operation
+            .ownerBinding()
+            .targetNamespace()
+            .equals(row.get("target_namespace", String.class))
+        || !mapper
+            .writeValueAsString(operation.ownerBinding())
             .equals(row.get("owner_binding_json", String.class))
-        || !operation.ownerBinding().versionIdentityOperationId()
+        || !operation
+            .ownerBinding()
+            .versionIdentityOperationId()
             .equals(row.get("version_identity_operation_id", java.util.UUID.class))
         || !operation.binding().canonicalJson().equals(row.get("binding_json", String.class))
         || !operation.binding().digest().equals(row.get("binding_digest", String.class))
@@ -174,7 +182,8 @@ public final class WorldDraftTerminalOutcomeRepository {
             operation.accountBindingBytes(), row.get("account_binding_bytes", byte[].class))
         || !operation.accountBindingDigest().equals(row.get("account_binding_digest", String.class))
         || !"DEFINITIVELY_ABORTED".equals(row.get("outcome", String.class))) {
-      throw new ConflictException("World terminal identity was reused with changed binding or evidence");
+      throw new ConflictException(
+          "World terminal identity was reused with changed binding or evidence");
     }
     return WorldDraftTerminalOutcome.fromStored(
         operation,
@@ -227,7 +236,8 @@ public final class WorldDraftTerminalOutcomeRepository {
     return List.copyOf(observed);
   }
 
-  private long aggregateEpoch(AffectedUnit unit, WorldDraftTerminalOperation operation, OpenOwner owner) {
+  private long aggregateEpoch(
+      AffectedUnit unit, WorldDraftTerminalOperation operation, OpenOwner owner) {
     long aggregateKey;
     if (unit.aggregateId().matches("[1-9][0-9]*")) {
       try {
@@ -240,7 +250,8 @@ public final class WorldDraftTerminalOutcomeRepository {
       try {
         templateId = java.util.UUID.fromString(unit.aggregateId());
       } catch (IllegalArgumentException malformed) {
-        throw new ConflictException("World aggregate identity is neither canonical UUID nor private key");
+        throw new ConflictException(
+            "World aggregate identity is neither canonical UUID nor private key");
       }
       if (!templateId.toString().equals(unit.aggregateId())) {
         throw new ConflictException("World aggregate UUID is not canonical");
