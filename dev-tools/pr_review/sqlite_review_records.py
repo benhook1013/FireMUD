@@ -1318,6 +1318,131 @@ class SqliteReviewRecords:
             result[index] = (decision, reason)
         return result
 
+    @_translate_database_errors
+    def correct_subagent_record(
+        self, run_id: str, source_finding_key: str, *, actor: str, reason: str
+    ) -> dict[str, Any]:
+        """Retain a rejected non-finding as a note without rewriting its evidence."""
+
+        run_id = _safe_identifier(run_id, "run ID", maximum=100)
+        source_finding_key = _safe_identifier(source_finding_key, "finding key", maximum=200)
+        actor = _bounded_text(actor, "actor", maximum=100)
+        reason = _bounded_text(reason, "correction reason", maximum=300)
+        with self._write_connection() as connection:
+            row = connection.execute(
+                "SELECT a.metadata_json FROM review_attempts a JOIN review_runs r ON r.run_id = a.run_id "
+                "WHERE a.attempt_id = ? AND a.run_id = ? AND a.channel = 'subagent' "
+                "AND a.state = 'completed' AND r.channel = 'subagent' AND r.outcome = 'completed' "
+                "AND r.finalized = 1 AND a.source_pr = r.source_pr",
+                (run_id, run_id),
+            ).fetchone()
+            if row is None:
+                raise ReviewRecordsError("correction requires a completed linked finalized subagent run")
+            metadata = json.loads(row[0])
+            if not isinstance(metadata, dict):
+                raise ReviewRecordsError("review attempt metadata is not an object")
+            existing = self._subagent_record_corrections(connection, run_id)
+            prior = next((item for item in existing if item["source_finding_key"] == source_finding_key), None)
+            if prior is not None:
+                if prior["actor"] != actor or prior["reason"] != reason:
+                    raise ReviewRecordsError("non-finding correction already has different provenance")
+                replay = True
+            else:
+                self._subagent_non_finding_observation(connection, run_id, source_finding_key)
+                corrections = metadata.setdefault("record_corrections", [])
+                if len(corrections) >= 200:
+                    raise ReviewRecordsError("a subagent run may record at most 200 non-finding corrections")
+                correction = {
+                    "source_finding_key": source_finding_key,
+                    "actor": actor,
+                    "reason": reason,
+                    "corrected_at": _timestamp(None, "correction time"),
+                }
+                corrections.append(correction)
+                serialized = _json(metadata)
+                _, _, redactions = _archive_artifact("metadata", serialized)
+                if redactions:
+                    raise ReviewRecordsError("correction provenance contains credential-shaped material")
+                connection.execute(
+                    "UPDATE review_attempts SET metadata_json = ? WHERE attempt_id = ?", (serialized, run_id)
+                )
+                replay = False
+            source_pr = connection.execute(
+                "SELECT source_pr FROM review_runs WHERE run_id = ?", (run_id,)
+            ).fetchone()[0]
+            run = next(item for item in self.history(source_pr, _connection=connection)["runs"]
+                       if item["run_id"] == run_id)
+        return {"run_id": run_id, "source_finding_key": source_finding_key,
+                "counts": run["counts"], "original_counts": run["original_counts"],
+                "idempotent_replay": replay}
+
+    def _subagent_non_finding_observation(
+        self, connection: sqlite3.Connection, run_id: str, source_finding_key: str
+    ) -> dict[str, Any]:
+        row = connection.execute(
+            "SELECT o.run_id, o.finding_id, o.source_pr, o.source_channel, f.source_finding_key, "
+            "o.title, o.detail, o.disposition, o.route_id, o.display_severity "
+            "FROM finding_observations o JOIN findings f USING (finding_id) JOIN review_runs r USING (run_id) "
+            "WHERE o.run_id = ? AND f.source_finding_key = ? "
+            "AND o.source_pr = r.source_pr AND o.source_channel = r.channel",
+            (run_id, source_finding_key),
+        ).fetchone()
+        if row is None or row[3] != "subagent" or row[7] != "rejected" or row[8] is not None:
+            raise ReviewRecordsError("only an exact rejected subagent observation may become a non-finding note")
+        if connection.execute(
+            "SELECT 1 FROM routes WHERE finding_id = ? UNION ALL "
+            "SELECT 1 FROM source_finding_resolutions WHERE finding_id = ? UNION ALL "
+            "SELECT 1 FROM decisions WHERE run_id = ? AND finding_id = ? AND decision != 'rejected' UNION ALL "
+            "SELECT 1 FROM source_decision_corrections WHERE run_id = ? AND finding_id = ? "
+            "AND decision != 'rejected'",
+            (row[1], row[1], run_id, row[1], run_id, row[1]),
+        ).fetchone():
+            raise ReviewRecordsError("a finding with route, accepted decision, or fix evidence cannot become a note")
+        if connection.execute(
+            "SELECT COUNT(*) FROM decisions WHERE decision_scope = 'source' AND run_id = ? AND finding_id = ? "
+            "AND decision = 'rejected'", (run_id, row[1])
+        ).fetchone()[0] != 1:
+            raise ReviewRecordsError("non-finding correction requires the exact rejected source decision")
+        return self._observation_record(row)
+
+    def _subagent_record_corrections(
+        self, connection: sqlite3.Connection, run_id: str
+    ) -> list[dict[str, Any]]:
+        row = connection.execute(
+            "SELECT a.metadata_json, a.state, a.source_pr, r.source_pr, r.channel, r.finalized "
+            "FROM review_attempts a JOIN review_runs r ON r.run_id = a.run_id "
+            "WHERE a.attempt_id = ? AND a.run_id = ? AND a.channel = 'subagent'", (run_id, run_id)
+        ).fetchone()
+        if row is None:
+            return []
+        metadata = json.loads(row[0])
+        if not isinstance(metadata, dict):
+            raise ReviewRecordsError("review attempt metadata is not an object")
+        corrections = metadata.get("record_corrections", [])
+        if not isinstance(corrections, list) or len(corrections) > 200:
+            raise ReviewRecordsError("subagent record correction history is malformed")
+        if corrections and (row[1] != "completed" or row[2] != row[3] or row[4] != "subagent" or not row[5]):
+            raise ReviewRecordsError("subagent record corrections require a completed finalized association")
+        result = []
+        keys = set()
+        for correction in corrections:
+            if not isinstance(correction, dict) or set(correction) != {
+                "source_finding_key", "actor", "reason", "corrected_at"
+            }:
+                raise ReviewRecordsError("subagent record correction history is malformed")
+            key = _safe_identifier(correction["source_finding_key"], "finding key", maximum=200)
+            if key in keys:
+                raise ReviewRecordsError("subagent record correction history repeats a finding")
+            keys.add(key)
+            _bounded_text(correction["actor"], "actor", maximum=100)
+            _bounded_text(correction["reason"], "correction reason", maximum=300)
+            if not isinstance(correction["corrected_at"], str):
+                raise ReviewRecordsError("stored subagent correction time is malformed")
+            _timestamp(correction["corrected_at"], "correction time")
+            observation = self._subagent_non_finding_observation(connection, run_id, key)
+            result.append({"run_id": run_id, **correction, "original_observation": observation})
+        return result
+
     def correct_source_decision(
         self,
         run_id: str,
@@ -1355,6 +1480,9 @@ class SqliteReviewRecords:
                 ).fetchone()
                 if row is None:
                     raise ReviewRecordsError("source finding was not observed in that run")
+                if any(item["source_finding_key"] == source_finding_key
+                       for item in self._subagent_record_corrections(connection, run_id)):
+                    raise ReviewRecordsError("a retained non-finding note cannot change its source decision")
                 finding_id, old_decision, finalized = row
                 if old_decision not in {"accepted", "rejected"}:
                     raise ReviewRecordsError("routed and unresolved source findings need owner adjudication")
@@ -2654,6 +2782,8 @@ class SqliteReviewRecords:
                     )
                 else:
                     finalized_at = run[1]
+                counts = (counts[0] - len(self._subagent_record_corrections(connection, run_id)),
+                          counts[1], counts[2])
         except ReviewRecordsError:
             raise
         except sqlite3.DatabaseError as exc:
@@ -2986,6 +3116,7 @@ class SqliteReviewRecords:
                         }
                     )
                 attempts = []
+                corrected_subagent_runs = set()
                 for row in connection.execute(
                     "SELECT attempt_id, channel, candidate_sha, state, started_at, finished_at, "
                     "duration_seconds, exit_status, trigger_id, provider_review_id, checkpoint_id, run_id, "
@@ -2999,6 +3130,10 @@ class SqliteReviewRecords:
                         raise ReviewRecordsError("review attempt metadata is malformed") from exc
                     if not isinstance(metadata, dict):
                         raise ReviewRecordsError("review attempt metadata is not an object")
+                    if row[1] == "subagent" and metadata.get("record_corrections") != [] and "record_corrections" in metadata:
+                        if row[0] != row[11] or row[3] != "completed":
+                            raise ReviewRecordsError("subagent record corrections have no completed exact run association")
+                        corrected_subagent_runs.add(row[11])
                     attempts.append(
                         {
                             "attempt_id": row[0],
@@ -3107,6 +3242,21 @@ class SqliteReviewRecords:
                         (pr,),
                     )
                 ]
+                record_corrections = []
+                for run in runs:
+                    if run["channel"] != "subagent" or run["run_id"] not in corrected_subagent_runs:
+                        continue
+                    retained_notes = self._subagent_record_corrections(connection, run["run_id"])
+                    if not retained_notes:
+                        continue
+                    record_corrections.extend(retained_notes)
+                    run["original_counts"] = dict(run["counts"])
+                    run["counts"] = {**run["counts"], "found": run["counts"]["found"] - len(retained_notes)}
+                    if run["counts"]["found"] < run["counts"]["accepted"] + run["counts"]["routed"]:
+                        raise ReviewRecordsError("subagent non-finding corrections conflict with retained counts")
+                    excluded_keys = {item["source_finding_key"] for item in retained_notes}
+                    observations = [item for item in observations if item["run_id"] != run["run_id"]
+                                    or item["source_finding_key"] not in excluded_keys]
                 if include_display:
                     self._add_hosted_display_titles(connection, observations, routes)
                     self._add_run_durations(connection, runs)
@@ -3120,6 +3270,7 @@ class SqliteReviewRecords:
                     "source_resolution_corrections": source_resolution_corrections,
                     "attempts": attempts,
                     "corrections": corrections,
+                    "record_corrections": record_corrections,
                     "provider_origins": provider_origins,
                     "imported_artifacts": imported_artifacts,
                     "historical_gaps": historical_gaps,

@@ -347,6 +347,14 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     records_database(subagent_complete)
+    subagent_correct = subagent_commands.add_parser(
+        "correct", help="retain an incorrectly recorded rejected finding as a non-finding note"
+    )
+    subagent_correct.add_argument("--run-id", required=True)
+    subagent_correct.add_argument("--finding-key", required=True)
+    subagent_correct.add_argument("--actor", required=True)
+    subagent_correct.add_argument("--reason", required=True)
+    records_database(subagent_correct)
     subagent_fail = subagent_commands.add_parser("fail", help="record a failed pass without review credit")
     subagent_fail.add_argument("--run-id", required=True)
     subagent_fail.add_argument("--reason", required=True)
@@ -1195,7 +1203,11 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
             attempt = store.attempt(args.run_id)
             if attempt["channel"] != "subagent":
                 raise CliError("run ID does not identify a subagent pass")
-            if args.subagent_command == "fail":
+            if args.subagent_command == "correct":
+                result = store.correct_subagent_record(
+                    args.run_id, args.finding_key, actor=args.actor, reason=args.reason
+                )
+            elif args.subagent_command == "fail":
                 if attempt["state"] != "started":
                     raise CliError("only a started subagent pass can fail")
                 result = store.finish_attempt(
@@ -1230,6 +1242,11 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
                 if attempt["state"] == "started":
                     store.finish_attempt(args.run_id, state="completed", finished_at=finished_at)
                 store.link_attempt_run(args.run_id, args.run_id)
+                effective = next(run for run in store.history(attempt["source_pr"])["runs"]
+                                 if run["run_id"] == args.run_id)
+                if "original_counts" in effective:
+                    recorded["counts"] = effective["counts"]
+                    recorded["original_counts"] = effective["original_counts"]
                 result = {"attempt_id": args.run_id, "run": recorded}
         return {"api_version": 1, "result": result}, 0
     if args.records_command == "route":

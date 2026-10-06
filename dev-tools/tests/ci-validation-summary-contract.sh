@@ -201,6 +201,13 @@ async function run(currentPullRequest, comments, deleteStatus = null) {
       created_at: "2026-01-02T00:00:00Z",
     },
   ];
+  const unchangedCalls = await run(currentPullRequest, duplicateComments.map((comment) =>
+    comment.id === 2 ? { ...comment, body: currentCalls.updates[0].body } : comment
+  ));
+  assert.deepEqual(unchangedCalls.updates, [], "identical summaries must not PATCH");
+  assert.deepEqual(unchangedCalls.creates, [], "identical summaries must retain the canonical comment");
+  assert.deepEqual(unchangedCalls.deletes.map((request) => request.comment_id), [3], "unchanged summaries still remove duplicates");
+
   const notFoundCalls = await run(currentPullRequest, duplicateComments, 404);
   assert.deepEqual(
     notFoundCalls.deletes.map((request) => request.comment_id),
