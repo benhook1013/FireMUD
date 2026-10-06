@@ -419,8 +419,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             selectedZonePlan.region().templateId(),
             selectedRoomPlan.zone().templateId(),
             selectedRoom);
-    UUID operationalRegionId =
-        materializedRegion.get("operational_region_id", UUID.class);
+    UUID operationalRegionId = materializedRegion.get("operational_region_id", UUID.class);
     UUID canonicalRegionInstanceId =
         materializedRegion.get("canonical_region_instance_id", UUID.class);
     assertThat(operationalRegionId).isNotNull().isNotEqualTo(new UUID(0L, 0L));
@@ -437,8 +436,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
         .isEqualTo(materializedRegion.get("zone_region_instance_id", Long.class));
     assertThat(materializedRegion.get("zone_row_id", Long.class))
         .isEqualTo(materializedRegion.get("room_zone_instance_id", Long.class));
-    String retainedOperationalRegionRow =
-        materializedRegion.get("region_row_json", String.class);
+    String retainedOperationalRegionRow = materializedRegion.get("region_row_json", String.class);
 
     var mappedRoom =
         Objects.requireNonNull(

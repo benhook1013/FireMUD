@@ -60,8 +60,10 @@ class WorldOperationalRegionAssignmentPostgresIntegrationTest {
   @Autowired private RegionInstanceRepository regionInstances;
 
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
+
   @MockitoBean(enforceOverride = true)
   private GrpcGameSessionInitialAdmissionBindProofClient bindProofClient;
+
   @MockitoBean private EntityManagementClient entityManagementClient;
   @MockitoBean private GameDesignClient gameDesignClient;
   @MockitoBean private GameSessionClient gameSessionClient;
@@ -227,7 +229,8 @@ class WorldOperationalRegionAssignmentPostgresIntegrationTest {
         String worldBefore =
             Objects.requireNonNull(
                     retained.fetchOne(
-                        "SELECT to_jsonb(w) AS row_json FROM world_instance w WHERE id = ?", worldId))
+                        "SELECT to_jsonb(w) AS row_json FROM world_instance w WHERE id = ?",
+                        worldId))
                 .get("row_json", JSONB.class)
                 .data();
         var functionBefore = preparationFunction(retained, schema);
@@ -354,7 +357,8 @@ class WorldOperationalRegionAssignmentPostgresIntegrationTest {
 
   private Fixture fixture() {
     long tenantId = 740_000L + Math.abs(UUID.randomUUID().getLeastSignificantBits() % 100_000L);
-    long gameInstanceId = 741_000L + Math.abs(UUID.randomUUID().getLeastSignificantBits() % 100_000L);
+    long gameInstanceId =
+        741_000L + Math.abs(UUID.randomUUID().getLeastSignificantBits() % 100_000L);
     long worldInstanceId =
         Objects.requireNonNull(
                 dsl.fetchOne(
