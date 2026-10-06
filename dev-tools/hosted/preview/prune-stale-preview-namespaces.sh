@@ -13,14 +13,23 @@ if ! [[ "$preview_delete_timeout" =~ ^[1-9][0-9]*$ ]] ||
 fi
 
 if [[ "${1:-}" == "--delete-runtime" ]]; then
-  if [[ $# -ne 2 ]]; then
-    echo "usage: $0 --delete-runtime <runtime_namespace>" >&2
+  if [[ $# -ne 2 && $# -ne 3 ]]; then
+    echo "usage: $0 --delete-runtime <runtime_namespace> [expected_namespace_uid]" >&2
     exit 1
   fi
   runtime_namespace="$2"
   if [[ ! "$runtime_namespace" =~ ^pr-[1-9][0-9]{0,50}$ ]]; then
     echo "runtime namespace must match canonical pr-[1-9][0-9]{0,50} identity" >&2
     exit 2
+  fi
+  if [[ $# -eq 3 ]]; then
+    if [[ -z "$3" ]]; then
+      echo "expected namespace UID must not be empty" >&2
+      exit 2
+    fi
+    export PREVIEW_EXPECTED_NAMESPACE_UID="$3"
+  else
+    unset PREVIEW_EXPECTED_NAMESPACE_UID
   fi
   PREVIEW_NAMESPACE_DELETE_TIMEOUT_SECONDS="$preview_delete_timeout" \
     bash "$delete_script" "$runtime_namespace" "$runtime_namespace"

@@ -2379,9 +2379,15 @@ class ControllerTests(unittest.TestCase):
             ],
         }
 
-        for cooldown_until in ("2999-01-01T00:00:00Z", "2000-01-01T00:00:00Z"):
+        for cooldown_until in ("2999-01-01T00:00:00Z", "2000-01-01T00:00:00Z", None):
             with self.subTest(cooldown_until=cooldown_until):
                 rate_limit["cooldown_until"] = cooldown_until
+                rate_limit["held"] = rate_limit["unstable"] = cooldown_until is None
+                rate_limit["reason"] = (
+                    "Hosted cooldown has no attributable reset time"
+                    if cooldown_until is None
+                    else "Hosted cooldown remains active"
+                )
                 audit["terminal_rate_limits"][0]["cooldown_until"] = cooldown_until
                 evidence = AuditedEvidence(
                     {
@@ -2412,9 +2418,65 @@ class ControllerTests(unittest.TestCase):
 
                 self.assertEqual(allocation["status"], "CAP_ACTIVE")
                 self.assertEqual(controller.resolve_cli_target().snapshot.number, 1)
-                if cooldown_until.startswith("2999"):
+                if cooldown_until is None or cooldown_until.startswith("2999"):
                     with self.assertRaisesRegex(ControllerError, "RATE_LIMITED"):
                         controller.resolve_hosted_target()
+                if cooldown_until is None:
+                    observation = evidence[(1, "hosted")][0]
+                    for fence in ("unrelated-hold", "unreconciled", "parent_moved", "over_ceiling", "response-id"):
+                        with self.subTest(fence=fence):
+                            changed = observation.copy()
+                            if fence == "unrelated-hold":
+                                changed["reason"] = "unrelated evidence ambiguity"
+                            elif fence == "response-id":
+                                changed["response_id"] = 99
+                            else:
+                                changed[fence] = True
+                            evidence[(1, "hosted")][0] = changed
+                            self.assertEqual(
+                                controller.status()["prs"][0]["allocations"]["cli"]["status"],
+                                "CAP_FINDINGS_PENDING",
+                            )
+                    evidence[(1, "hosted")][0] = observation
+
+    def test_unknown_reset_terminal_rate_limit_proof_keeps_identity_validation(self):
+        proof = {
+            "trigger_id": 42,
+            "response_id": 43,
+            "captured_head": HEAD_1,
+            "cooldown_until": None,
+            "terminal": True,
+            "attributable": True,
+        }
+        for field, value in (
+            ("cooldown_until", "invalid"),
+            ("cooldown_until", "missing"),
+            ("trigger_id", 0),
+            ("response_id", False),
+            ("captured_head", "abbreviated"),
+            ("terminal", False),
+            ("attributable", False),
+            ("duplicate", True),
+        ):
+            with self.subTest(field=field, value=value):
+                changed = {**proof, field: value}
+                if value == "missing":
+                    changed.pop(field)
+                limits = [proof.copy(), proof.copy()] if field == "duplicate" else [changed]
+                provider = AuditedEvidence({}, audit={
+                    "complete": True,
+                    "active_reservations": [],
+                    "unmatched_responses": [],
+                    "ambiguous_responses": [],
+                    "unresolved_findings": [],
+                    "terminal_rate_limits": limits,
+                })
+                controller = self.make({1: pr(1, HEAD_1)}, provider, heads={"feature-1": HEAD_1})
+                controller.set_stack([1])
+                live, reconciliation = controller._reconciliation(controller._state())
+                current = controller._anchor(1, live[1], reconciliation.links[1])
+                with self.assertRaisesRegex(ControllerError, "malformed terminal rate-limit identity"):
+                    controller._stop_audit(1, current, ())
 
     def test_audited_rate_limit_does_not_waive_active_ambiguity_or_unpublished_fixes(self):
         rate_limit = {

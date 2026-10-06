@@ -62,8 +62,15 @@ expected = {
 assert set(module._CREDENTIALS_BY_NAME) == set(expected)
 for name, credential in module._CREDENTIALS_BY_NAME.items():
     assert (credential.environment, credential.github_secret) == expected[name]
-    assert len(credential.rbac_probes) == 2
+    expected_probe_count = 3 if name == "firemud-preview-namespace-manager" else 2
+    assert len(credential.rbac_probes) == expected_probe_count
     assert {probe[3] for probe in credential.rbac_probes} == {"yes", "no"}
+manager = module._CREDENTIALS_BY_NAME["firemud-preview-namespace-manager"]
+assert manager.rbac_probes == (
+    ("get", "namespaces", None, "yes"),
+    ("delete", "namespaces", None, "yes"),
+    ("get", "secrets", "proof", "no"),
+)
 
 assert module.REPOSITORY == "benhook1013/FireMUD"
 assert module.REPOSITORY_LEGACY_SECRET == "PREVIEW_KUBECONFIG"
@@ -374,6 +381,36 @@ with (
     probe_commands = [entry.args[0] for entry in probes.call_args_list]
     assert len(probe_commands) == len(credential.rbac_probes)
     assert all(command[3] == "auth" and command[4] == "can-i" for command in probe_commands)
+
+manager = module._CREDENTIALS_BY_NAME["firemud-preview-namespace-manager"]
+manager_identity_json = json.dumps({
+    "status": {
+        "userInfo": {
+            "username": f"system:serviceaccount:{module.CONTROL_NAMESPACE}:{manager.service_account}"
+        }
+    }
+}).encode("utf-8")
+with (
+    patch.object(module, "run_command", return_value=manager_identity_json),
+    patch.object(module, "run_auth_can_i", side_effect=["yes", "yes", "no"]) as probes,
+):
+    module.verify_generated_kubeconfig(
+        module.build_kubeconfig(
+            "cluster",
+            "https://api.preview.example:6443",
+            "Y2E=",
+            manager,
+            "probe-token",
+        ),
+        manager,
+        "pr-42",
+    )
+    probe_commands = [entry.args[0] for entry in probes.call_args_list]
+    assert [command[5:] for command in probe_commands] == [
+        ["get", "namespaces"],
+        ["delete", "namespaces"],
+        ["get", "secrets", "-n", "pr-42"],
+    ]
 
 write_offset = source.index("file.write(kubeconfig)")
 chmod_offset = source.index("Path(file.name).chmod(0o600)")

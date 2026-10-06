@@ -2,9 +2,9 @@ self-hosted-runner:
   labels:
     - preview
 
-# GitHub Actions added concurrency.queue in May 2026. This repository's pinned
-# the repository-pinned actionlint release does not parse it, so suppress only that known parser lag
-# in the three workflows that use the shared preview lifecycle queue.
+# GitHub Actions added concurrency.queue in May 2026. The repository-pinned
+# actionlint release does not parse it, so suppress only that known parser lag
+# in workflows that use the shared preview lifecycle queue.
 paths:
   .github/workflows/preview.yml:
     ignore:
@@ -13,5 +13,8 @@ paths:
     ignore:
       - 'unexpected key "queue" for "concurrency" section'
   .github/workflows/hosted-identity-request.yml:
+    ignore:
+      - 'unexpected key "queue" for "concurrency" section'
+  .github/workflows/preview-cleanup-proof.yml:
     ignore:
       - 'unexpected key "queue" for "concurrency" section'
