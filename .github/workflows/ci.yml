@@ -2316,11 +2316,11 @@ jobs:
         run: |
           bash dev-tools/validation/inspect-test-results.sh \
             --strict \
-            --require-suite net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest \
-            --require-case 'net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#noPublicationReceiptReplaysAfterLostResponseAndExcludesDelayedFinalizerAndRawInsert()' \
-            --require-case 'net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#publishedReceiptCannotBeDemotedByStaleFailureAndRetainsOriginalFreezeEpoch()' \
-            --require-case 'net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#failedAtomicCommitLeavesAttemptOperationVersionAndReleasePendingForExactRetry()' \
-            --require-case 'net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#noPublicationSerializesAgainstAnAlreadyScheduledLatePublisher()' \
+            --require-suite integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#noPublicationReceiptReplaysAfterLostResponseAndExcludesDelayedFinalizerAndRawInsert()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#publishedReceiptCannotBeDemotedByStaleFailureAndRetainsOriginalFreezeEpoch()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#failedAtomicCommitLeavesAttemptOperationVersionAndReleasePendingForExactRetry()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#noPublicationSerializesAgainstAnAlreadyScheduledLatePublisher()' \
             game-design-service
 
       - name: Capture World authored-graph snapshot PostgreSQL XML
