@@ -65,10 +65,7 @@ public final class AccountControlUiCurrentSourceRepository {
    */
   @Transactional(propagation = Propagation.MANDATORY)
   public CurrentSourceObservation inspectUnscopedCurrent(InspectedToken candidate) {
-    if (!TransactionSynchronizationManager.isActualTransactionActive()
-        || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
-      throw invalid();
-    }
+    requireWritableOwnerTransaction();
     Objects.requireNonNull(candidate);
     Map<String, Object> claims = candidate.claims();
     if (!Map.of().equals(claims.get("scopedRoles"))
@@ -76,56 +73,16 @@ public final class AccountControlUiCurrentSourceRepository {
         || (claims.containsKey("globalRoles") && !List.of().equals(claims.get("globalRoles")))) {
       throw invalid();
     }
-    // Lock issuer first, preserving the composite source-writer lock order. Both issuer history
-    // and recipient evidence remain fenced until this same Account transaction finishes.
-    IssuerAuthoritySnapshot issuer =
-        issuerSource.readCurrentInAccountSnapshot(ControlUiJwtProfileValidator.ISSUER);
-    FreshEmptySource roles = globalRoles.readFreshEmptySourceForUpdate(candidate.accountId());
-    Account account =
-        accounts
-            .findByAccountUuidForUpdate(candidate.accountId())
-            .orElseThrow(AccountControlUiCurrentSourceRepository::invalid);
-    if (account.getLifecycleState() != AccountLifecycleState.ACTIVE
-        || !roles.accountUuid().equals(account.getAccountUuid())
-        || account.getAccountUuidSourceNumericId() == null
-        || roles.accountUuidSourceNumericId() != account.getAccountUuidSourceNumericId()
-        || roles.accountUuidProvenance() != account.getAccountUuidProvenance()
-        || account.getId() == null
-        || roles.accountRowId() != account.getId()) throw invalid();
-    CompositeSnapshot current =
-        generations.readCompositeSnapshot(
-            ControlUiJwtProfileValidator.ISSUER, candidate.accountId(), List.of(), List.of());
-    if (issuer.issuerAuthGeneration() != current.issuer().generation()
-        || issuer.sourceVersion() != current.issuer().sourceVersion()) {
-      throw invalid();
-    }
-    var latest = accountSource.requireCurrentLatest(account, current.account());
-    String stream = "account:auth-authority:v1:account/" + candidate.accountId();
-    if (latest.outboxSequence() == 0L) {
-      Long events =
-          Objects.requireNonNull(
-                  dsl.fetchOne(
-                      "SELECT COUNT(*) AS event_count FROM account_authority_outbox_events "
-                          + "WHERE outbox_stream_key = ?",
-                      stream),
-                  "Account source event count returned no row")
-              .get("event_count", Long.class);
-      if (events == null || events != 0L) throw invalid();
-    }
-    AccountSourceSnapshot source =
-        new AccountSourceSnapshot(
-            candidate.accountId(),
-            current.account(),
-            stream,
-            latest.outboxSequence(),
-            latest.latestEvent());
+    CurrentSourceObservation observation = readUnscopedCurrent(candidate.accountId());
+    CompositeSnapshot current = observation.authority();
     Map<String, Object> tuple = new java.util.LinkedHashMap<>();
     tuple.put("issuerAuthGeneration", Long.toString(current.issuer().generation()));
     tuple.put("accountAuthorityGeneration", Long.toString(current.account().generation()));
     tuple.put("tenantAuthorityGeneration", Map.of());
     tuple.put("membershipAuthorityGeneration", Map.of());
     tuple.put("privateRealmGrantVersions", List.of());
-    latest
+    observation
+        .accountSource()
         .latestEvent()
         .ifPresent(
             event -> {
@@ -145,8 +102,67 @@ public final class AccountControlUiCurrentSourceRepository {
             "accountSourceVersion", current.account().sourceVersion(),
             "issuanceFenceSourceVersion", current.issuanceFence().sourceVersion());
     requireEqual(expectedVersions, candidate.registryRecord().get("authoritySourceVersions"));
+    return observation;
+  }
+
+  /**
+   * Reads existing unscoped source rows before signing in the caller's writable Account
+   * transaction. The Account identity is a lookup key, not an authenticated principal. This
+   * observation is not a complete evidence bundle, current Coordination projection, credential or
+   * token authority.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public CurrentSourceObservation readUnscopedCurrent(UUID accountId) {
+    requireWritableOwnerTransaction();
+    Objects.requireNonNull(accountId);
+    // Lock issuer first, preserving the composite source-writer lock order. Both issuer history
+    // and recipient evidence remain fenced until this same Account transaction finishes.
+    IssuerAuthoritySnapshot issuer =
+        issuerSource.readCurrentInAccountSnapshot(ControlUiJwtProfileValidator.ISSUER);
+    FreshEmptySource roles = globalRoles.readFreshEmptySourceForUpdate(accountId);
+    Account account =
+        accounts
+            .findByAccountUuidForUpdate(accountId)
+            .orElseThrow(AccountControlUiCurrentSourceRepository::invalid);
+    if (account.getLifecycleState() != AccountLifecycleState.ACTIVE
+        || !roles.accountUuid().equals(account.getAccountUuid())
+        || account.getAccountUuidSourceNumericId() == null
+        || roles.accountUuidSourceNumericId() != account.getAccountUuidSourceNumericId()
+        || roles.accountUuidProvenance() != account.getAccountUuidProvenance()
+        || account.getId() == null
+        || roles.accountRowId() != account.getId()) throw invalid();
+    CompositeSnapshot current =
+        generations.readCompositeSnapshot(
+            ControlUiJwtProfileValidator.ISSUER, accountId, List.of(), List.of());
+    if (issuer.issuerAuthGeneration() != current.issuer().generation()
+        || issuer.sourceVersion() != current.issuer().sourceVersion()) {
+      throw invalid();
+    }
+    var latest = accountSource.requireCurrentLatest(account, current.account());
+    String stream = "account:auth-authority:v1:account/" + accountId;
+    if (latest.outboxSequence() == 0L) {
+      Long events =
+          Objects.requireNonNull(
+                  dsl.fetchOne(
+                      "SELECT COUNT(*) AS event_count FROM account_authority_outbox_events "
+                          + "WHERE outbox_stream_key = ?",
+                      stream),
+                  "Account source event count returned no row")
+              .get("event_count", Long.class);
+      if (events == null || events != 0L) throw invalid();
+    }
+    AccountSourceSnapshot source =
+        new AccountSourceSnapshot(
+            accountId, current.account(), stream, latest.outboxSequence(), latest.latestEvent());
     return new CurrentSourceObservation(
-        candidate.accountId(), current, issuer, source, roles.globalRoleSourceVersion());
+        accountId, current, issuer, source, roles.globalRoleSourceVersion());
+  }
+
+  private static void requireWritableOwnerTransaction() {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
+      throw invalid();
+    }
   }
 
   private static void requireEqual(Object left, Object right) {
