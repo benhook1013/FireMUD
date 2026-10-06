@@ -757,7 +757,7 @@ public final class AccountGameplayDelegationResponseEnvelopeRepository {
         || !identity.callerContextId().toString().equals(operationFields.get("callerContextId"))
         || !accountId.toString().equals(operationFields.get("accountId"))
         || !identity.tokenJti().toString().equals(token.get("jti"))
-        || numberValue(token.get("tokenGeneration")) != 1L
+        || !Long.valueOf(1L).equals(numberFromString(token.get("tokenGeneration")))
         || numberValue(token.get("iat")) != identity.issuedAtEpochSecond()
         || numberValue(token.get("nbf")) != identity.notBeforeEpochSecond()
         || numberValue(token.get("exp")) != identity.expiresAtEpochSecond()

@@ -15,6 +15,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -629,6 +630,24 @@ class AccountGameplayDelegationResponseEnvelopeRepositoryTest {
   }
 
   @Test
+  void tokenGenerationRequiresCanonicalOneStringAndRejectsOtherWireValues() throws Exception {
+    AccountAuthEvidenceBundle bundle = fixture(NOW).bundle();
+    Object tokenGeneration =
+        ((Map<?, ?>) bundle.fields().get("tokenIdentity")).get("tokenGeneration");
+
+    assertThat(tokenGeneration).isInstanceOf(String.class).isEqualTo("1");
+    assertThat(AccountAuthEvidenceBundle.parseCanonical(bundle.canonicalBytes())).isEqualTo(bundle);
+
+    for (Object invalidTokenGeneration : List.of(1L, "01", "2")) {
+      assertThatThrownBy(
+              () ->
+                  AccountAuthEvidenceBundle.parseCanonical(
+                      bundleBytesWithTokenGeneration(bundle, invalidTokenGeneration)))
+          .isInstanceOf(AccountAuthEvidenceBundle.InvalidBundleException.class);
+    }
+  }
+
+  @Test
   void mismatchedStoredEnvelopeExpiryIsNotReplayed() throws Exception {
     Fixture fixture = fixture(NOW);
     Record mismatchedExpiry =
@@ -765,9 +784,9 @@ class AccountGameplayDelegationResponseEnvelopeRepositoryTest {
     when(row.get("request_digest_version")).thenReturn((short) 2);
     when(row.get("credential_request_digest_version"))
         .thenReturn((short) intent.credentialRequestBinding().digestSchemaVersion());
-    when(row.get("credential_digest_key_id"))
+    when(row.get("credential_digest_key_id", String.class))
         .thenReturn(intent.credentialRequestBinding().digestKeyId());
-    when(row.get("credential_request_digest"))
+    when(row.get("credential_request_digest", String.class))
         .thenReturn(intent.credentialRequestBinding().credentialRequestDigest());
     when(row.get("token_generation")).thenReturn(1L);
     when(row.get("issued_at_epoch_second")).thenReturn(intent.issuedAtEpochSecond());
@@ -842,6 +861,17 @@ class AccountGameplayDelegationResponseEnvelopeRepositoryTest {
                     accountStream, 10L, "fixture-account-event", "sha256:" + "a".repeat(64)),
                 new OutboxCheckpoint(
                     issuerStream, 6L, "fixture-issuer-event", "sha256:" + "b".repeat(64)))));
+  }
+
+  private static byte[] bundleBytesWithTokenGeneration(
+      AccountAuthEvidenceBundle bundle, Object tokenGeneration) {
+    Map<String, Object> fields = new LinkedHashMap<>(bundle.fields());
+    Map<String, Object> tokenIdentity = new LinkedHashMap<>();
+    ((Map<?, ?>) fields.get("tokenIdentity"))
+        .forEach((field, value) -> tokenIdentity.put((String) field, value));
+    tokenIdentity.put("tokenGeneration", tokenGeneration);
+    fields.put("tokenIdentity", tokenIdentity);
+    return canonicalJson(fields);
   }
 
   private static IssuerAccountSourceSnapshot sourceSnapshot(long accountGeneration) {

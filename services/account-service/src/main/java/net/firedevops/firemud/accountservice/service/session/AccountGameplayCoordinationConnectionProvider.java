@@ -64,7 +64,6 @@ public final class AccountGameplayCoordinationConnectionProvider
           || !connection.isOpen()
           || connection.getOptions() == null
           || connection.getOptions().isAutoReconnect()) {
-        closeQuietly(connection);
         throw unavailable();
       }
       return connection;

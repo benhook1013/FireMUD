@@ -140,18 +140,22 @@ class AccountCanonicalGameplayLoginConfigurationTest {
         .run(
             context -> {
               assertThat(context).hasNotFailed();
-              assertThat(context).hasBean("accountGameplayCanonicalLoginOwner");
+              var beanFactory = context.getBeanFactory();
+              assertThat(beanFactory.containsBeanDefinition("accountGameplayCanonicalLoginOwner"))
+                  .isTrue();
               assertThat(context).doesNotHaveBean("accountInitialGameplayLoginIssuanceService");
               assertThat(context).doesNotHaveBean("accountCanonicalGameplayAdmissionService");
               assertThat(
-                      context
-                          .getBeanFactory()
+                      beanFactory
                           .getBeanDefinition("accountGameplayCanonicalLoginOwner")
                           .isLazyInit())
                   .isTrue();
               assertThat(
-                      context
-                          .getBeanFactory()
+                      beanFactory.containsBeanDefinition(
+                          "accountCanonicalGameplayLoginCoordinationConnectionProvider"))
+                  .isTrue();
+              assertThat(
+                      beanFactory
                           .getBeanDefinition(
                               "accountCanonicalGameplayLoginCoordinationConnectionProvider")
                           .isLazyInit())

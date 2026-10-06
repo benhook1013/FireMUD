@@ -197,7 +197,14 @@ class AccountMountedGameplayCredentialDigestKeySourceTest {
     AccountMountedGameplayCredentialDigestKeySource.KeyUnavailableException failure =
         unavailable(() -> source(missing).currentKey());
     assertThat(failure.errorCode()).isEqualTo("AUTH_UNAVAILABLE");
-    assertThat(failure.getMessage()).doesNotContain(missing.toString(), "keyring");
+    assertThat(failure.getMessage())
+        .isEqualTo("Account credential-request digest keyring is unavailable")
+        .doesNotContain(
+            missing.toString(),
+            "active-2",
+            "prior-1",
+            encoded(keyMaterial(0x11)),
+            encoded(keyMaterial(0x22)));
     assertThat(failure).hasNoCause();
   }
 

@@ -2,13 +2,19 @@ package net.firedevops.firemud.accountservice.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.mock;
 
 import io.lettuce.core.ClientOptions;
 import io.lettuce.core.RedisURI;
+import io.lettuce.core.TimeoutOptions;
+import io.lettuce.core.codec.ByteArrayCodec;
+import io.lettuce.core.output.StatusOutput;
+import io.lettuce.core.protocol.Command;
+import io.lettuce.core.protocol.CommandType;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.KeyStore;
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import javax.net.ssl.TrustManagerFactory;
@@ -117,7 +123,13 @@ class AccountGameplayCoordinationRedisBindingTest {
   void clientConfigurationPinsTlsHostAndFiniteNoReconnectOptionsWithoutEmittingCredentials()
       throws Exception {
     var parsed = AccountGameplayCoordinationRedisBinding.parseProtectedBytes(configBytes());
-    TrustManagerFactory trustManagers = mock(TrustManagerFactory.class);
+    // A real empty trust store supplies a rejecting trust manager without network or host setup.
+    KeyStore emptyTrustStore = KeyStore.getInstance(KeyStore.getDefaultType());
+    emptyTrustStore.load(null, null);
+    TrustManagerFactory trustManagers =
+        TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+    trustManagers.init(emptyTrustStore);
+    assertThat(trustManagers.getTrustManagers()).isNotEmpty();
     char[] password = "Q".repeat(48).toCharArray();
     ClientConfiguration config;
     try {
@@ -142,7 +154,17 @@ class AccountGameplayCoordinationRedisBindingTest {
     assertThat(config.options().getSocketOptions().getConnectTimeout())
         .isEqualTo(AccountGameplayCoordinationRedisBinding.CONNECT_TIMEOUT);
     assertThat(config.options().getSslOptions()).isNotNull();
-    assertThat(config.options().getTimeoutOptions()).isNotNull();
+    TimeoutOptions timeoutOptions = config.options().getTimeoutOptions();
+    assertThat(timeoutOptions.isTimeoutCommands()).isTrue();
+    var timeoutSource = timeoutOptions.getSource();
+    assertThat(timeoutSource).isNotNull();
+    var timeoutProbe =
+        new Command<byte[], byte[], String>(
+            CommandType.PING, new StatusOutput<>(ByteArrayCodec.INSTANCE));
+    assertThat(
+            Duration.ofNanos(
+                timeoutSource.getTimeUnit().toNanos(timeoutSource.getTimeout(timeoutProbe))))
+        .isEqualTo(AccountGameplayCoordinationRedisBinding.COMMAND_TIMEOUT);
     assertThat(config.toString()).doesNotContain("Q".repeat(48));
   }
 

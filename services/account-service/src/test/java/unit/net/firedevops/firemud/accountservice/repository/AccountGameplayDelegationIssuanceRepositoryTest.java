@@ -137,7 +137,7 @@ class AccountGameplayDelegationIssuanceRepositoryTest {
     var pair =
         net.firedevops.firemud.accountservice.service.session
             .AccountGameplayDelegationAuthorityProjection.canonicalProjectionPair(source);
-    var issuer =
+    var issuerProjectionValue =
         net.firedevops.firemud.accountservice.service.session
             .AccountGameplayDelegationAuthorityProjection.ProjectionValue.decode(
             pair[0], "issuer", GameSessionAccountDelegationProfile.ISSUER);
@@ -156,7 +156,7 @@ class AccountGameplayDelegationIssuanceRepositoryTest {
         null,
         new net.firedevops.firemud.accountservice.service.session
             .AccountGameplayDelegationAuthorityProjection.ProjectionObservation(
-            issuer.digest(), canonicalAccount.digest(), 7L, 1L),
+            issuerProjectionValue.digest(), canonicalAccount.digest(), 7L, 1L),
         source);
     assertThatThrownBy(
             () ->
@@ -164,7 +164,7 @@ class AccountGameplayDelegationIssuanceRepositoryTest {
                     null,
                     new net.firedevops.firemud.accountservice.service.session
                         .AccountGameplayDelegationAuthorityProjection.ProjectionObservation(
-                        issuer.digest(), "b".repeat(64), 7L, 1L),
+                        issuerProjectionValue.digest(), "b".repeat(64), 7L, 1L),
                     source))
         .hasCauseInstanceOf(
             AccountGameplayDelegationIssuanceRepository.StaleAuthorityException.class);
@@ -459,7 +459,14 @@ class AccountGameplayDelegationIssuanceRepositoryTest {
     order
         .verify(dsl)
         .fetchOne(
-            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.eq(
+                "SELECT * FROM account_gameplay_delegation_issuance_operations WHERE request_id = ?"),
+            org.mockito.ArgumentMatchers.any(Object[].class));
+    order
+        .verify(dsl)
+        .fetchOne(
+            org.mockito.ArgumentMatchers.eq(
+                "SELECT account_uuid FROM accounts WHERE account_uuid = ? FOR UPDATE"),
             org.mockito.ArgumentMatchers.any(Object[].class));
     order
         .verify(sources)
@@ -467,10 +474,12 @@ class AccountGameplayDelegationIssuanceRepositoryTest {
     order
         .verify(dsl)
         .fetchOne(
-            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.eq(
+                "SELECT * FROM account_gameplay_delegation_issuance_operations WHERE request_id = ? FOR UPDATE"),
             org.mockito.ArgumentMatchers.any(Object[].class));
     order.verify(bundles).captureAndPersist(REQUEST_ID);
     order.verify(bundles).readStoredNonAuthorizingValue(OPERATION_ID);
+    order.verifyNoMoreInteractions();
   }
 
   @Test

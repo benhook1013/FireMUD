@@ -204,7 +204,7 @@ public final class AccountGameplayCoordinationRedisBinding implements AutoClosea
           ClientOptions.builder()
               .autoReconnect(false)
               .socketOptions(SocketOptions.builder().connectTimeout(CONNECT_TIMEOUT).build())
-              .timeoutOptions(TimeoutOptions.builder().timeoutCommands().build())
+              .timeoutOptions(TimeoutOptions.builder().fixedTimeout(COMMAND_TIMEOUT).build())
               .sslOptions(SslOptions.builder().trustManager(trustManagerFactory).build())
               .build();
       return factory.create(endpoint, options);

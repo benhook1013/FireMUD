@@ -2193,7 +2193,9 @@ class AccountServiceImplTest {
     inOrder.verify(accountEmailLoginChallengeRepository).lockAccountChallenge(9L);
     inOrder.verify(accountEmailLoginChallengeRepository).findByAccountId(9L);
     inOrder.verify(accountEmailLoginChallengeRepository).delete(challenge);
-    verifyNoInteractions(accountRepository, sessionService);
+    org.mockito.Mockito.verify(accountRepository).findByAccountUuid(account.getAccountUuid());
+    org.mockito.Mockito.verifyNoMoreInteractions(accountRepository);
+    verifyNoInteractions(sessionService);
   }
 
   @Test
