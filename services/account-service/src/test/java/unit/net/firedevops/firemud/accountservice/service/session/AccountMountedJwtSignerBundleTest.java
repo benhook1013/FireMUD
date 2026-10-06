@@ -24,6 +24,7 @@ import java.util.HexFormat;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.accountservice.repository.AccountGameplayCredentialRequestBindingFixture;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationPendingIdentity;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationRegistryRecord;
@@ -268,6 +269,7 @@ class AccountMountedJwtSignerBundleTest {
             accountId,
             "spiffe://firemud/ns/firemud/sa/game-session-service",
             contextId,
+            AccountGameplayCredentialRequestBindingFixture.binding(),
             requestDigest,
             jti,
             issuedAt,
@@ -365,6 +367,7 @@ class AccountMountedJwtSignerBundleTest {
             account,
             "spiffe://firemud/ns/firemud/sa/game-session-service",
             UUID.randomUUID(),
+            AccountGameplayCredentialRequestBindingFixture.binding(),
             "a".repeat(64),
             UUID.randomUUID(),
             issued,
@@ -448,6 +451,7 @@ class AccountMountedJwtSignerBundleTest {
             accountId,
             "spiffe://firemud/ns/firemud/sa/game-session-service",
             UUID.fromString("e16fdce5-96eb-49e9-a1bd-3f429816cbf0"),
+            AccountGameplayCredentialRequestBindingFixture.binding(),
             "ab".repeat(32),
             UUID.fromString("1a7c3d0c-ab15-4f86-b5af-9e29bc7d3543"),
             issuedAt,

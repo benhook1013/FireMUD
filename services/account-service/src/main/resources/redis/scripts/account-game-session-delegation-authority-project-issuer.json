@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "account-game-session-delegation-authority-project-issuer/v1",
+  "owner": "account-service",
+  "scriptResource": "redis/lua/account-game-session-delegation-authority-project.lua",
+  "sourceSha256": "ae5a0a23b2712c7509fbe9ff2448a688f26635efde26d2d9981cc6016eafc36d",
+  "redisRole": "coordination",
+  "category": "account_auth_generation_projection",
+  "keys": [
+    {
+      "name": "authorityProjection",
+      "allowedPrefix": "session:auth:generation:issuer:",
+      "requiredHashTag": ""
+    }
+  ],
+  "arguments": ["canonicalProjectionUtf8"],
+  "resetSensitivity": "requires_cluster_reset",
+  "lossOutcomeClass": "session",
+  "tailLossBehavior": "Missing or stale source projection denies delegation use until Account reprojects exact owner evidence.",
+  "outcomes": {
+    "1": "projection_advanced",
+    "0": "exact_projection_retry",
+    "-1": "stale_generation",
+    "-2": "equal_generation_conflict",
+    "-3": "conditional_store_failed",
+    "-4": "invalid_arguments",
+    "-5": "stored_projection_malformed"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "id": "account-game-session-delegation-pending-register/v1",
+  "owner": "account-service",
+  "scriptResource": "redis/lua/account-game-session-delegation-pending-register.lua",
+  "sourceSha256": "a35fe1e46e6ebdd6522a17daaefd8a3773fbe8e3a0eaf405d5abce5cdeedc3a2",
+  "redisRole": "coordination",
+  "category": "account_auth_token_registry",
+  "keys": [
+    {
+      "name": "tokenRecord",
+      "allowedPrefix": "session:auth:token:",
+      "requiredHashTag": ""
+    }
+  ],
+  "arguments": ["canonicalPendingRecordUtf8", "absoluteExpiryEpochMillis"],
+  "resetSensitivity": "requires_cluster_reset",
+  "lossOutcomeClass": "session",
+  "tailLossBehavior": "A missing token registry projection denies token use; Account recovery requires exact durable issuance evidence.",
+  "outcomes": {
+    "1": "pending_created",
+    "0": "exact_pending_retry",
+    "-1": "conflicting_record",
+    "-2": "expiry_mismatch",
+    "-3": "conditional_store_failed",
+    "-4": "invalid_arguments"
+  }
+}
