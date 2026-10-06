@@ -53,6 +53,141 @@ PATCH = "c" * 64
 
 
 class RuntimeTest(unittest.TestCase):
+    def test_repository_manual_trigger_verification_deadline_preserves_diagnostics_before_post(self) -> None:
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        target = ReviewTarget(snapshot, EffectiveParent("develop", BASE), patch_identity=PATCH, merge_base=BASE)
+        live = LiveGitHub("owner/repo")
+        manual = {
+            "databaseId": 10, "author": {"login": "maintainer"}, "body": hosted.FULL_COMMAND,
+            "createdAt": "2026-09-30T12:00:00Z", "url": "https://example.test/10",
+        }
+        other_payload = self._payload(comments=[manual])
+
+        def api_endpoint(endpoint):
+            if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
+                return [{"number": 42, "state": "open"}, {"number": 99, "state": "open"}]
+            if endpoint == "repos/owner/repo/issues/99/comments?per_page=100":
+                return [self._rest_issue_comment(manual)]
+            raise AssertionError(endpoint)
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            path = hosted.default_trigger_record_path("owner/repo", 42, common)
+
+            def git_common_dir():
+                budget = github.active_hosted_preflight_budget()
+                if budget is not None and budget.current_phase == "manual_trigger_verification":
+                    budget.deadline = budget.started_at - 1
+                    return _REAL_EVIDENCE_GIT_COMMON_DIR()
+                return common
+
+            with (
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(live, "branch_head", return_value=BASE),
+                patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
+                patch.object(github, "fetch_pull_request", side_effect=lambda _repo, number:
+                             other_payload if number == 99 else self._payload()),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(evidence, "git_common_dir", side_effect=git_common_dir),
+                patch.object(HostedRunner, "_authenticated_login", return_value="maintainer"),
+                patch("pr_review.runtime.subprocess.run") as post,
+                self.assertRaises(ControllerError) as raised,
+            ):
+                HostedRunner("owner/repo", live)(target, expect_pr=42)
+            error = raised.exception.__cause__
+            self.assertIsInstance(error, github.HostedPreflightDeadlineExceeded)
+            self.assertEqual(error.phase, "manual_trigger_verification")
+            self.assertEqual((error.completed, error.total), (0, 1))
+            self.assertGreaterEqual(error.elapsed_seconds, 0)
+            post.assert_not_called()
+            self.assertFalse(path.exists())
+
+    def test_selected_pr_terminal_capture_deadline_precedes_cooldown_and_post(self) -> None:
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        target = ReviewTarget(snapshot, EffectiveParent("develop", BASE), patch_identity=PATCH, merge_base=BASE)
+        live = LiveGitHub("owner/repo")
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            path = hosted.default_trigger_record_path("owner/repo", 42, common)
+            records = self._new_review_records(common / "controller.sqlite3")
+            records.start_attempt(attempt_id="prior-terminal", source_pr=42, channel="hosted", candidate_sha=HEAD)
+            record = self._trigger_record()
+            record["sqlite_attempt_id"] = "prior-terminal"
+            state = SimpleNamespace(terminal=True, state="rate_limited", cooldown_until="2099-01-01T00:00:00Z")
+            with sqlite3.connect(records.path, isolation_level=None) as writer:
+                writer.execute("BEGIN EXCLUSIVE")
+                with (
+                    github.activate_hosted_preflight_budget(timeout_seconds=0.05),
+                    patch.object(live, "pull_request", return_value=snapshot),
+                    patch.object(live, "branch_head", return_value=BASE),
+                    patch.object(github, "fetch_pull_request", return_value=self._payload()),
+                    patch.object(hosted, "default_trigger_record_path", return_value=path),
+                    patch.object(evidence, "git_common_dir", return_value=common),
+                    patch.object(hosted, "current_trigger_record_paths", return_value=[path]),
+                    patch.object(hosted, "load_trigger_reservation", return_value=record),
+                    patch.object(hosted, "trigger_state", return_value=state),
+                    patch("pr_review.runtime.subprocess.run") as post,
+                    self.assertRaises(github.HostedPreflightDeadlineExceeded) as raised,
+                ):
+                    HostedRunner("owner/repo", live, records=records)(target, expect_pr=42)
+                writer.rollback()
+            self.assertEqual(raised.exception.phase, "selected_pr_current_trigger_history")
+            self.assertEqual((raised.exception.completed, raised.exception.total), (1, 1))
+            self.assertGreaterEqual(raised.exception.elapsed_seconds, 0.05)
+            post.assert_not_called()
+            self.assertFalse(path.exists())
+            self.assertEqual(records.attempt("prior-terminal")["state"], "started")
+
+    def test_summary_disposition_state_read_deadline_preserves_target_selection_diagnostics(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = ControllerStateStore(Path(directory) / "state.json")
+            store.save(ReviewState())
+            sqlite_store.SqliteStateStore.migrate_legacy_json(store.path, store.path.with_suffix(".sqlite3"))
+            observer = LiveEvidence("owner/repo", LiveGitHub("owner/repo"), state_store=store)
+            with sqlite3.connect(store._active_store().path, isolation_level=None) as writer:
+                writer.execute("BEGIN EXCLUSIVE")
+                with (
+                    github.activate_hosted_preflight_budget(timeout_seconds=0.05) as budget,
+                    self.assertRaises(github.HostedPreflightDeadlineExceeded) as raised,
+                ):
+                    budget.set_phase("target_selection", completed=1, total=2)
+                    observer._global_blockers(42, HEAD, self._payload())
+                writer.rollback()
+            self.assertEqual(raised.exception.phase, "target_selection")
+            self.assertEqual((raised.exception.completed, raised.exception.total), (1, 2))
+
+    def test_optional_attempt_start_deadline_preserves_diagnostics_before_reservation(self) -> None:
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        target = ReviewTarget(snapshot, EffectiveParent("develop", BASE), patch_identity=PATCH, merge_base=BASE)
+        live = LiveGitHub("owner/repo")
+
+        def expire_attempt_start(*_args, **_kwargs):
+            budget = github.active_hosted_preflight_budget()
+            budget.deadline = budget.started_at - 1
+            budget.remaining_seconds()
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            path = hosted.default_trigger_record_path("owner/repo", 42, common)
+            records = self._new_review_records(common / "controller.sqlite3")
+            with (
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(live, "branch_head", return_value=BASE),
+                patch.object(github, "fetch_pull_request", return_value=self._payload()),
+                patch.object(evidence, "git_common_dir", return_value=common),
+                patch.object(HostedRunner, "_authenticated_login", return_value="maintainer"),
+                patch.object(HostedRunner, "_assert_no_other_active_reservations"),
+                patch.object(sqlite_hosted_capture, "start_hosted_attempt", side_effect=expire_attempt_start),
+                patch("pr_review.runtime.subprocess.run") as post,
+                self.assertRaises(github.HostedPreflightDeadlineExceeded) as raised,
+            ):
+                HostedRunner("owner/repo", live, records=records)(target, expect_pr=42)
+            self.assertEqual(raised.exception.phase, "selected_pr_final_identity")
+            self.assertEqual((raised.exception.completed, raised.exception.total), (1, 1))
+            post.assert_not_called()
+            self.assertFalse(path.exists())
+            self.assertEqual(records.attempt_history(42), [])
+
     def test_selected_pr_manual_trigger_check_preserves_preflight_deadline_diagnostics(self) -> None:
         class Clock:
             now = 0.0
@@ -245,19 +380,29 @@ class RuntimeTest(unittest.TestCase):
             run_id=None,
             hosted_review_id=901,
         )
-        with tempfile.TemporaryDirectory() as directory:
-            records = self._new_review_records(Path(directory) / "controller.sqlite3")
-            observer = LiveEvidence("owner/repo", LiveGitHub("owner/repo"), records=records)
-            with sqlite3.connect(records.path, isolation_level=None) as writer:
-                writer.execute("BEGIN EXCLUSIVE")
-                started = time.monotonic()
-                with (
-                    github.activate_hosted_preflight_budget(timeout_seconds=0.05),
-                    self.assertRaises(github.HostedPreflightDeadlineExceeded),
-                ):
-                    observer._source_resolution_status(42, "hosted", checkpoint, HEAD)
-                self.assertLess(time.monotonic() - started, 1)
-                writer.rollback()
+        for read_boundary in ("history", "source_resolution"):
+            with self.subTest(boundary=read_boundary), tempfile.TemporaryDirectory() as directory:
+                records = self._new_review_records(Path(directory) / "controller.sqlite3")
+                observer = LiveEvidence("owner/repo", LiveGitHub("owner/repo"), records=records)
+                if read_boundary == "source_resolution":
+                    observer._records_histories[42] = {"provider_origins": [{
+                        "source_pr": 42, "checkpoint_id": 55, "channel": "hosted",
+                        "provider_id": "901", "repository": "owner/repo", "run_id": "cached-run",
+                    }], "attempts": []}
+                with sqlite3.connect(records.path, isolation_level=None) as writer:
+                    writer.execute("BEGIN EXCLUSIVE")
+                    started = time.monotonic()
+                    with (
+                        github.activate_hosted_preflight_budget(timeout_seconds=0.05) as budget,
+                        self.assertRaises(github.HostedPreflightDeadlineExceeded) as raised,
+                    ):
+                        budget.set_phase("target_selection", completed=1, total=2)
+                        observer._source_resolution_status(42, "hosted", checkpoint, HEAD)
+                    self.assertEqual(raised.exception.phase, "target_selection")
+                    self.assertEqual((raised.exception.completed, raised.exception.total), (1, 2))
+                    self.assertGreaterEqual(raised.exception.elapsed_seconds, 0.05)
+                    self.assertLess(time.monotonic() - started, 1)
+                    writer.rollback()
 
     def test_unposted_attempt_cleanup_uses_configured_sqlite_bound_after_budget_expires(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -2469,14 +2614,25 @@ class RuntimeTest(unittest.TestCase):
                 writer.execute("BEGIN EXCLUSIVE")
                 started = time.monotonic()
                 with github.activate_hosted_preflight_budget(timeout_seconds=0.05) as budget:
-                    warning = runner._capture_terminal_attempt(42, record, self._payload(), current_path)
-                    self.assertIn("HostedPreflightDeadlineExceeded", warning or "")
-                    with self.assertRaises(github.HostedPreflightDeadlineExceeded):
-                        budget.remaining_seconds()
+                    budget.set_phase("selected_pr_current_trigger_history", completed=1, total=1)
+                    with self.assertRaises(github.HostedPreflightDeadlineExceeded) as raised:
+                        runner._capture_terminal_attempt(42, record, self._payload(), current_path)
+                    self.assertEqual(raised.exception.phase, "selected_pr_current_trigger_history")
+                    self.assertEqual((raised.exception.completed, raised.exception.total), (1, 1))
                 self.assertLess(time.monotonic() - started, 1)
                 writer.rollback()
 
             self.assertEqual(records.attempt(attempt_id)["state"], "started")
+
+            for failure in (RuntimeError("optional capture unavailable"), budget.exceeded()):
+                with (
+                    self.subTest(post_reservation_failure=type(failure).__name__),
+                    github.activate_hosted_preflight_budget() as completed_budget,
+                    patch.object(sqlite_hosted_capture, "record_hosted_terminal_result", side_effect=failure),
+                ):
+                    completed_budget.complete()
+                    warning = runner._capture_terminal_attempt(42, record, self._payload(), current_path)
+                    self.assertIn(type(failure).__name__, warning or "")
 
     def test_status_history_does_not_mutate_hosted_attempt_records(self) -> None:
         scenarios = (

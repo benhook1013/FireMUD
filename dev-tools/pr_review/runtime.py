@@ -1391,6 +1391,8 @@ class LiveEvidence:
                     pr=pr,
                     dispositions=dispositions,
                 )
+            except github.HostedPreflightDeadlineExceeded:
+                raise
             except (OSError, StateError, TypeError, ValueError):
                 outside, duplicate, url = 1, 1, None
             if outside or duplicate:
@@ -1883,6 +1885,8 @@ class LiveEvidence:
             )
         except RecordsNotBootstrapped:
             return None
+        except github.HostedPreflightDeadlineExceeded:
+            raise
         except (ReviewRecordsError, OSError):
             return "unavailable"
 
@@ -2191,7 +2195,10 @@ class HostedRunner:
                 payload=payload,
                 current_record_path=record_path,
             )
-        except Exception as exc:  # noqa: BLE001 - archive failures cannot block review admission
+        except Exception as exc:
+            if (isinstance(exc, github.HostedPreflightDeadlineExceeded)
+                    and github.active_hosted_preflight_budget() is not None):
+                raise
             # This history write is secondary to the terminal observation
             # already used for admission and must not block the next request.
             return f"SQLite Hosted terminal capture failed ({type(exc).__name__})."
@@ -2874,7 +2881,7 @@ class HostedRunner:
                     record,
                     hosted.default_trigger_record_path(self.repo, other_pr, common),
                 )
-            except ControllerError:
+            except (ControllerError, github.HostedPreflightDeadlineExceeded):
                 raise
             except (
                 OSError,
@@ -3149,6 +3156,8 @@ class HostedRunner:
                         deadline=budget.deadline,
                     )
                     sqlite_attempt_started = True
+                except github.HostedPreflightDeadlineExceeded:
+                    raise
                 except Exception as exc:  # noqa: BLE001 - optional capture cannot block provider POST
                     # SQLite is optional for provider posting. Keep the ID in
                     # the reservation so explicit sync can adopt or backfill it.
