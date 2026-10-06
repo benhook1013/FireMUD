@@ -619,6 +619,10 @@ class RetainedActorIdentityIntegrationTest {
   @Test
   void destinationOnlyOwnerResolvedAuditDoesNotBlockCleanupWithoutRuntimeRows() {
     String auditOnlyInstance = "GI-RETAINED-AUDIT-OWNER-RESOLVED";
+    insertNamespace(
+        UUID.fromString("43000000-0000-4000-8000-000000000003"),
+        UUID.fromString("43000000-0000-4000-8000-000000000004"),
+        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
     long ownerResolvedActorId =
         insertActor(
             "owner-resolved audit destination fixture",
