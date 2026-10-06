@@ -4,9 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
 import net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2;
@@ -27,8 +29,10 @@ import org.jooq.Record;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
@@ -43,6 +47,7 @@ class AccountCanonicalJoinScopePersistenceIntegrationTest {
 
   private static final AccountPostgresIntegrationFixture postgres =
       new AccountPostgresIntegrationFixture();
+  private final Set<String> schemas = new HashSet<>();
 
   @BeforeAll
   static void startPostgres() {
@@ -54,9 +59,22 @@ class AccountCanonicalJoinScopePersistenceIntegrationTest {
     postgres.stop();
   }
 
+  @AfterEach
+  void dropTestOwnedSchemas() {
+    JdbcTemplate jdbc = new JdbcTemplate(postgres.dataSource());
+    for (String schema : schemas) {
+      if (!(schema.matches("canonical_join_scope_[a-f0-9]{32}")
+          || schema.matches("canonical_scope_cleanup_[a-f0-9]{32}"))) {
+        throw new IllegalStateException("Refusing to clean an unowned PostgreSQL schema");
+      }
+      jdbc.execute("DROP SCHEMA IF EXISTS \"" + schema + "\" CASCADE");
+    }
+    schemas.clear();
+  }
+
   @Test
   void migrationRetainsV1AndStoresExactV2ScopeAndPendingIntentWithoutMembershipOrEvent() {
-    String schema = "canonical_join_scope_" + UUID.randomUUID().toString().replace("-", "");
+    String schema = createSchema("canonical_join_scope_");
     DriverManagerDataSource dataSource = postgres.dataSource(schema);
     Flyway.configure()
         .dataSource(dataSource)
@@ -265,7 +283,7 @@ class AccountCanonicalJoinScopePersistenceIntegrationTest {
 
   @Test
   void expiredScopeCleanupSkipsImmutableV2BeforeLimitingV1Batch() {
-    String schema = "canonical_scope_cleanup_" + UUID.randomUUID().toString().replace("-", "");
+    String schema = createSchema("canonical_scope_cleanup_");
     DriverManagerDataSource dataSource = postgres.dataSource(schema);
     Flyway.configure()
         .dataSource(dataSource)
@@ -351,6 +369,16 @@ class AccountCanonicalJoinScopePersistenceIntegrationTest {
                 "SELECT COUNT(*) FROM account_connect_scope_records WHERE scope_token_hash = ?",
                 AccountJoinDigest.tokenHash(connectScopeId)))
         .get(0, Long.class);
+  }
+
+  private String createSchema(String prefix) {
+    String schema = prefix + UUID.randomUUID().toString().replace("-", "");
+    if (!(schema.matches("canonical_join_scope_[a-f0-9]{32}")
+        || schema.matches("canonical_scope_cleanup_[a-f0-9]{32}"))) {
+      throw new IllegalStateException("Generated PostgreSQL schema name is invalid");
+    }
+    schemas.add(schema);
+    return schema;
   }
 
   private static FreshTenantCreationEvidence freshTenantEvidence() {

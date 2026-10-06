@@ -1,0 +1,150 @@
+name: Preview Runtime Cleanup Proof
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Closed same-repository PR number for the disposable proof namespace
+        required: true
+        type: string
+      expected_head_sha:
+        description: Exact current PR head SHA captured during fixture preparation
+        required: true
+        type: string
+      expected_namespace_uid:
+        description: Namespace UID captured after creating and labeling the disposable fixture
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  cleanup-proof:
+    name: Delete One Marked Proof Namespace
+    if: ${{ github.ref == 'refs/heads/develop' }}
+    timeout-minutes: 20
+    runs-on:
+      - self-hosted
+      - preview
+      - linux
+      - x64
+    environment: trusted-hosted-cluster
+    concurrency:
+      group: preview-allocation-lifecycle
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: develop
+          persist-credentials: false
+
+      - name: Set up canonical Python
+        uses: ./.github/actions/setup-python
+
+      - name: Set up canonical GitHub CLI
+        uses: ./.github/actions/setup-gh
+
+      - name: Set up kubectl
+        uses: ./.github/actions/setup-kubectl
+
+      - name: Write trusted namespace-manager kubeconfig
+        uses: ./.github/actions/write-kubeconfig
+        with:
+          content: ${{ secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG }}
+          path: ${{ runner.temp }}/preview-cleanup-proof.kubeconfig
+          export-to-github-env: 'false'
+
+      - name: Verify runner API access and namespace-delete RBAC
+        env:
+          KUBECONFIG: ${{ runner.temp }}/preview-cleanup-proof.kubeconfig
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]{0,50}$ ]] || {
+            echo "::error::PR number is not canonical" >&2
+            exit 1
+          }
+          proof_namespace="pr-${PR_NUMBER}"
+          kubectl get namespace kube-system >/dev/null
+          username="$(kubectl auth whoami -o json | jq -er '.status.userInfo.username')"
+          [[ "$username" == system:serviceaccount:firemud-system:firemud-preview-namespace-manager ]] || {
+            echo "::error::runner kubeconfig is not the namespace-manager identity" >&2
+            exit 1
+          }
+          [[ "$(kubectl auth can-i get namespaces)" == yes ]]
+          [[ "$(kubectl auth can-i delete namespaces)" == yes ]]
+          [[ "$(kubectl auth can-i get secrets -n "$proof_namespace")" == no ]]
+          bash ./dev-tools/hosted/shared/check-kubectl-version-skew.sh
+
+      - name: Revalidate and delete the exact proof namespace
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REF: ${{ github.ref }}
+          KUBECONFIG: ${{ runner.temp }}/preview-cleanup-proof.kubeconfig
+          PR_NUMBER: ${{ inputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ inputs.expected_head_sha }}
+          EXPECTED_NAMESPACE_UID: ${{ inputs.expected_namespace_uid }}
+        run: |
+          set -euo pipefail
+
+          fail() {
+            echo "::error::$1" >&2
+            exit 1
+          }
+
+          [[ "$GITHUB_REF" == refs/heads/develop ]] || fail "proof workflow must run from develop"
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]{0,50}$ ]] || fail "PR number is not canonical"
+          [[ "$EXPECTED_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "expected PR head SHA is not canonical"
+          [[ "$EXPECTED_NAMESPACE_UID" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$ ]] ||
+            fail "expected namespace UID is malformed"
+
+          namespace="pr-${PR_NUMBER}"
+
+          verify_closed_pr() {
+            local metadata state head_repository base_repository head_sha
+            metadata="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" \
+              --jq '[.state, .head.repo.full_name, .base.repo.full_name, .head.sha] | @tsv')" ||
+              fail "could not verify PR metadata"
+            IFS=$'\t' read -r state head_repository base_repository head_sha <<<"$metadata"
+            [[ "$state" == closed ]] || fail "PR is not closed"
+            [[ "$head_repository" == "$GITHUB_REPOSITORY" ]] || fail "PR head repository is not this repository"
+            [[ "$base_repository" == "$GITHUB_REPOSITORY" ]] || fail "PR base repository is not this repository"
+            [[ "$head_sha" == "$EXPECTED_HEAD_SHA" ]] || fail "PR head SHA changed"
+          }
+
+          verify_fixture_namespace() {
+            local observed_uid
+            observed_uid="$(kubectl get namespace "$namespace" -o json | jq -er \
+              --arg namespace "$namespace" \
+              --arg pr_number "$PR_NUMBER" \
+              --arg expected_uid "$EXPECTED_NAMESPACE_UID" '
+                (.metadata.labels // {}) as $labels
+                | (.metadata.annotations // {}) as $annotations
+                | select(.metadata.name == $namespace)
+                | select(.metadata.uid == $expected_uid)
+                | select($labels["firemud.dev/preview"] == "true")
+                | select($labels["firemud.dev/pr-number"] == $pr_number)
+                | select($annotations["firemud.dev/cleanup-proof"] == "true")
+                | .metadata.uid
+              ')" || fail "namespace identity, ownership labels, UID, or cleanup-proof marker do not match"
+            [[ "$observed_uid" == "$EXPECTED_NAMESPACE_UID" ]] || fail "namespace UID changed"
+          }
+
+          # Recheck both external identities immediately before the existing UID-fenced delete helper.
+          verify_closed_pr
+          verify_fixture_namespace
+          bash ./dev-tools/hosted/preview/prune-stale-preview-namespaces.sh \
+            --delete-runtime "$namespace" "$EXPECTED_NAMESPACE_UID"
+
+          remaining="$(kubectl get namespace "$namespace" --ignore-not-found -o name)" ||
+            fail "could not verify namespace deletion"
+          [[ -z "$remaining" ]] || fail "proof namespace still exists after deletion"
+          echo "Closed PR proof namespace ${namespace} with the captured UID is absent."
+
+      - name: Remove namespace-manager kubeconfig
+        if: ${{ always() }}
+        run: rm -f -- "$RUNNER_TEMP/preview-cleanup-proof.kubeconfig"

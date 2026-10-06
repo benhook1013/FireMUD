@@ -7,7 +7,9 @@ import integration.net.firedevops.firemud.accountservice.repository.AccountPostg
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
@@ -37,8 +39,10 @@ import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
@@ -46,11 +50,13 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /** PostgreSQL proof fixture for the unwired canonical first-JOIN event/first-pair composition. */
 class AccountCanonicalFirstJoinEventIntegrationTest {
+  private static final String SCHEMA_PREFIX = "canonical_join_event_";
   private static final String TEST_NAMESPACE = "canonical-join-event-proof";
   private static final String ACCOUNT_ISSUER = "firemud-account-service";
 
   private static final AccountPostgresIntegrationFixture postgres =
       new AccountPostgresIntegrationFixture();
+  private final Set<String> runOwnedSchemas = ConcurrentHashMap.newKeySet();
 
   @BeforeAll
   static void startPostgres() {
@@ -60,6 +66,18 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
   @AfterAll
   static void stopPostgres() {
     postgres.stop();
+  }
+
+  @AfterEach
+  void dropRunOwnedSchemas() {
+    JdbcTemplate rootJdbc = new JdbcTemplate(postgres.dataSource());
+    for (String schema : runOwnedSchemas) {
+      if (!schema.startsWith(SCHEMA_PREFIX) || !schema.matches("[a-z][a-z0-9_]{0,62}")) {
+        throw new IllegalStateException("Refusing to clean an unowned PostgreSQL schema");
+      }
+      rootJdbc.execute("DROP SCHEMA IF EXISTS \"" + schema + "\" CASCADE");
+    }
+    runOwnedSchemas.clear();
   }
 
   @Test
@@ -240,8 +258,9 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
     return new Fixture(newTestContext());
   }
 
-  private static TestContext newTestContext() {
-    String schema = "canonical_join_event_" + UUID.randomUUID().toString().replace("-", "");
+  private TestContext newTestContext() {
+    String schema = SCHEMA_PREFIX + UUID.randomUUID().toString().replace("-", "");
+    runOwnedSchemas.add(schema);
     DriverManagerDataSource dataSource = postgres.dataSource(schema);
     Flyway.configure()
         .dataSource(dataSource)
