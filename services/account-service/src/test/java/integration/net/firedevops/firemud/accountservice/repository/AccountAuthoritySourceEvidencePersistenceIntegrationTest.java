@@ -127,7 +127,10 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
             manager); // remote clients/JWT/session are not used by reset
     UUID accountUuid = accounts.findById(accountId).orElseThrow().getAccountUuid();
     var beforeToken =
-        dsl.fetchOne("SELECT * FROM password_reset_token WHERE token = ?", tokenValue).intoMap();
+        Objects.requireNonNull(
+                dsl.fetchOne("SELECT * FROM password_reset_token WHERE token = ?", tokenValue),
+                "expected retained reset token")
+            .intoMap();
     var beforeEvents = dsl.fetch("SELECT * FROM account_authority_outbox_events").intoMaps();
     assertThatThrownBy(
             () ->
@@ -141,7 +144,9 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
     assertThat(accounts.findById(accountId).orElseThrow().getPasswordHash())
         .isEqualTo(originalHash);
     assertThat(
-            dsl.fetchOne("SELECT * FROM password_reset_token WHERE token = ?", tokenValue)
+            Objects.requireNonNull(
+                    dsl.fetchOne("SELECT * FROM password_reset_token WHERE token = ?", tokenValue),
+                    "expected retained reset token after rollback")
                 .intoMap())
         .isEqualTo(beforeToken);
     assertThat(dsl.fetch("SELECT * FROM account_authority_outbox_events").intoMaps())
@@ -157,9 +162,11 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
                     .where("scope_kind = 'ACCOUNT' AND account_uuid = ?", accountUuid)))
         .isZero();
     assertThat(
-            dsl.fetchOne(
-                    "SELECT account_repository_insert_transaction_id FROM accounts WHERE id = ?",
-                    accountId)
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT account_repository_insert_transaction_id FROM accounts WHERE id = ?",
+                        accountId),
+                    "expected account after reset rollback")
                 .get(0, Long.class))
         .isNull();
   }
