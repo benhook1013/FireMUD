@@ -4,6 +4,7 @@ import io.micrometer.core.annotation.Timed;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.gamedesign.client.WorldManagementClient;
 import net.firedevops.firemud.gamedesign.dto.AppliedWorldDesignMutationDto;
 import net.firedevops.firemud.gamedesign.dto.RevisionDto;
@@ -57,6 +58,7 @@ public class RevisionServiceImpl implements RevisionService {
       throw new IllegalArgumentException("INVALID_ARGUMENT: published versions are immutable");
     }
     validateCommandDefinitionIfPresent(dto);
+    validateRealmEntryPolicyIfPresent(dto, version.isScriptOnly());
     AppliedWorldDesignMutationDto appliedWorldDesignMutation =
         applyWorldDesignMutationIfPresent(dto);
     Revision entity = revisionMapper.toEntity(dto);
@@ -124,6 +126,17 @@ public class RevisionServiceImpl implements RevisionService {
     } catch (Exception ex) {
       throw invalidCommandDefinition("must be valid JSON");
     }
+  }
+
+  private void validateRealmEntryPolicyIfPresent(RevisionDto dto, boolean scriptOnlyVersion) {
+    if (!RealmEntryPolicy.REVISION_KIND.equals(dto.revisionKind())) {
+      return;
+    }
+    if (scriptOnlyVersion) {
+      throw new IllegalArgumentException(
+          "INVALID_ARGUMENT: realmEntryPolicy requires a full version");
+    }
+    RealmEntryPolicy.parse(dto.data(), objectMapper);
   }
 
   private void requireText(JsonNode definition, String field) {

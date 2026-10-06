@@ -82,6 +82,13 @@ class GameTenantIdentityRepositoryIntegrationTest {
               .fetchOne(CANONICAL_TENANT_ID);
 
       assertThat(retainedTenantId).isNotNull();
+      assertThat(repository.findRuntimeTenantIdentityByCanonicalTenantId(retainedTenantId))
+          .contains(
+              new GameTenantIdentity(
+                  retainedTenantId,
+                  GameTenantIdentity.ProvenanceKind.RETAINED_GAME_V29,
+                  retainedGameId,
+                  "legacy-owner-alpha"));
       assertThat(repository.findRuntimeTenantIdentityByTenantKey("legacy-owner-alpha"))
           .contains(
               new GameTenantIdentity(
@@ -103,12 +110,23 @@ class GameTenantIdentityRepositoryIntegrationTest {
                 assertThat(row.get(SOURCE_GAME_ID)).isNull();
                 assertThat(row.get(SOURCE_LEGACY_TENANT_ID)).isNull();
               });
+      assertThat(repository.findRuntimeTenantIdentityByCanonicalTenantId(UUID.randomUUID()))
+          .isEmpty();
+
       Game newGame = new Game();
       newGame.setTenantId("new-owner-key");
       newGame.setName("New");
       Game saved = repository.save(newGame);
       assertThat(saved.getCanonicalTenantId()).isNotNull();
       assertThat(saved.getId()).isPositive();
+      assertThat(
+              repository.findRuntimeTenantIdentityByCanonicalTenantId(saved.getCanonicalTenantId()))
+          .contains(
+              new GameTenantIdentity(
+                  saved.getCanonicalTenantId(),
+                  GameTenantIdentity.ProvenanceKind.NEW_GAME_ROW,
+                  saved.getId(),
+                  "new-owner-key"));
       assertThat(repository.findRuntimeTenantIdentityByTenantKey("new-owner-key"))
           .contains(
               new GameTenantIdentity(

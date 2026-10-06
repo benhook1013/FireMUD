@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.time.Instant;
+import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.gamesession.entity.InitialAdmissionBindAttempt;
 import net.firedevops.firemud.gamesession.entity.InitialAdmissionBindAttempt.Status;
@@ -16,6 +17,86 @@ import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
 
 class InitialAdmissionBindAttemptRepositoryTest {
+  @Test
+  void insertAndReadPreservesHistoricalAndPublishedCatalogSources() throws Exception {
+    try (Connection connection =
+        DriverManager.getConnection(
+            "jdbc:h2:mem:initial-admission-catalog-sources;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1")) {
+      DSLContext dsl = DSL.using(connection, SQLDialect.H2);
+      createSchema(dsl);
+      InitialAdmissionBindAttemptRepository repository =
+          new InitialAdmissionBindAttemptRepository(dsl);
+
+      UUID historicalRealmId = UUID.randomUUID();
+      InitialAdmissionBindAttempt historical =
+          repository.insertPending(attempt("request-historical", historicalRealmId));
+
+      assertEquals("V9_FIXTURE", historical.catalogSourceKind());
+      assertEquals(Instant.parse("2026-10-01T00:00:00Z"), historical.createdAt());
+      assertNull(historical.publishedTargetNamespace());
+      assertNull(historical.canonicalTenantId());
+      assertEquals(
+          historicalRealmId,
+          Objects.requireNonNull(
+                  dsl.fetchOne(
+                      "SELECT fixture_catalog_realm_id FROM gameplay_initial_admission_bind_attempt "
+                          + "WHERE initial_admission_request_id = ?",
+                      "request-historical"))
+              .get(0, UUID.class));
+
+      UUID publishedRealmId = UUID.randomUUID();
+      UUID canonicalTenantId = UUID.randomUUID();
+      InitialAdmissionBindAttempt published =
+          repository.insertPending(
+              new InitialAdmissionBindAttempt(
+                  UUID.randomUUID(),
+                  17L,
+                  "request-published",
+                  "b".repeat(64),
+                  publishedRealmId,
+                  UUID.randomUUID(),
+                  "SHARED",
+                  true,
+                  3L,
+                  93L,
+                  44L,
+                  8L,
+                  null,
+                  null,
+                  Status.PENDING,
+                  null,
+                  null,
+                  Instant.parse("2026-10-03T00:00:00Z"),
+                  Instant.parse("2026-10-03T00:00:00Z"),
+                  null,
+                  "V14_PUBLISHED",
+                  "prod-west",
+                  canonicalTenantId,
+                  51L,
+                  "launch-descriptor-51",
+                  62L,
+                  "bundle-ref-62",
+                  9L));
+
+      assertEquals("V14_PUBLISHED", published.catalogSourceKind());
+      assertEquals(Instant.parse("2026-10-03T00:00:00Z"), published.createdAt());
+      assertNull(
+          Objects.requireNonNull(
+                  dsl.fetchOne(
+                      "SELECT fixture_catalog_realm_id FROM gameplay_initial_admission_bind_attempt "
+                          + "WHERE initial_admission_request_id = ?",
+                      "request-published"))
+              .get(0, UUID.class));
+      assertEquals("prod-west", published.publishedTargetNamespace());
+      assertEquals(canonicalTenantId, published.canonicalTenantId());
+      assertEquals(51L, published.gameTemplateId());
+      assertEquals("launch-descriptor-51", published.launchDescriptorId());
+      assertEquals(62L, published.releaseBundleId());
+      assertEquals("bundle-ref-62", published.publishedReleaseBundleRef());
+      assertEquals(9L, published.versionStateEpoch());
+    }
+  }
+
   @Test
   void attachHoldOnlyAttachesToPendingAttemptWithNoExistingHold() throws Exception {
     try (Connection connection =
@@ -115,6 +196,15 @@ class InitialAdmissionBindAttemptRepositoryTest {
           created_at TIMESTAMP NOT NULL,
           updated_at TIMESTAMP NOT NULL,
           terminal_at TIMESTAMP,
+          catalog_source_kind VARCHAR(16) NOT NULL DEFAULT 'V9_FIXTURE',
+          fixture_catalog_realm_id UUID,
+          published_target_namespace VARCHAR(63),
+          canonical_tenant_id UUID,
+          game_template_id BIGINT,
+          launch_descriptor_id VARCHAR(128),
+          release_bundle_id BIGINT,
+          published_release_bundle_ref VARCHAR(200),
+          version_state_epoch BIGINT,
           UNIQUE (tenant_id, initial_admission_request_id)
         )
         """);

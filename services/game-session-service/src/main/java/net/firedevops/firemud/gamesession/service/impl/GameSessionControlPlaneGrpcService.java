@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -14,13 +15,24 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.publication.PublishedRealmEntryPolicyEvidence;
+import net.firedevops.firemud.common.publication.PublishedRealmEntryPolicySetEvidence;
+import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.gamedesign.v1.ListPublishedRealmEntryPoliciesResponse;
+import net.firedevops.firemud.gamedesign.v1.PublishedRealmEntryPolicyKind;
+import net.firedevops.firemud.gamedesign.v1.PublishedRealmEntryStateScope;
+import net.firedevops.firemud.gamedesign.v1.ResolvePublishedRealmEntryPolicyResponse;
 import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
 import net.firedevops.firemud.gamesession.service.InitialAdmissionBindHoldBinding;
 import net.firedevops.firemud.gamesession.service.InitialAdmissionBindOwnerProof;
 import net.firedevops.firemud.gamesession.service.InitialAdmissionBindOwnerProofReader;
+import net.firedevops.firemud.gamesession.service.PublishedRealmAdmissionOwnerReadProof;
+import net.firedevops.firemud.gamesession.service.PublishedRealmAdmissionOwnerReadRequest;
+import net.firedevops.firemud.gamesession.service.PublishedRealmAdmissionOwnerReadService;
 import net.firedevops.firemud.gamesession.service.impl.GameSessionAdmissionPointerControlPlaneService.AdmissionPointerMutationPreconditionException;
 import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentRequest;
 import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentResponse;
@@ -39,6 +51,8 @@ import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionRequest;
 import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamesession.v1.GetPreparedVersionUpgradeRequest;
 import net.firedevops.firemud.gamesession.v1.GetPreparedVersionUpgradeResponse;
+import net.firedevops.firemud.gamesession.v1.GetPublishedRealmAdmissionOwnerReadRequest;
+import net.firedevops.firemud.gamesession.v1.GetPublishedRealmAdmissionOwnerReadResponse;
 import net.firedevops.firemud.gamesession.v1.GetRemoteCommandCoordinatorRequest;
 import net.firedevops.firemud.gamesession.v1.GetRemoteCommandCoordinatorResponse;
 import net.firedevops.firemud.gamesession.v1.GetRemoteFollowupRequest;
@@ -62,6 +76,8 @@ import net.firedevops.firemud.gamesession.v1.PauseTicksForScopeRequest;
 import net.firedevops.firemud.gamesession.v1.PauseTicksForScopeResponse;
 import net.firedevops.firemud.gamesession.v1.PrepareVersionUpgradeRequest;
 import net.firedevops.firemud.gamesession.v1.PrepareVersionUpgradeResponse;
+import net.firedevops.firemud.gamesession.v1.PublishedRealmAdmissionAttemptStatus;
+import net.firedevops.firemud.gamesession.v1.PublishedRealmAdmissionOwnerReadEvidence;
 import net.firedevops.firemud.gamesession.v1.PurgeQueuedTickCommandsForPluginVersionRequest;
 import net.firedevops.firemud.gamesession.v1.PurgeQueuedTickCommandsForPluginVersionResponse;
 import net.firedevops.firemud.gamesession.v1.PurgeQueuedTickCommandsForScriptPatchRequest;
@@ -112,8 +128,12 @@ public final class GameSessionControlPlaneGrpcService
   private final MeterRegistry meterRegistry;
   private InitialAdmissionBindOwnerProofReader initialAdmissionBindOwnerProofReader;
   private InitialAdmissionBindOwnerReadWorkloadGuard initialAdmissionBindOwnerReadWorkloadGuard;
+  private PublishedRealmAdmissionOwnerReadService publishedRealmAdmissionOwnerReadService;
+  private PublishedRealmAdmissionOwnerReadWorkloadGuard
+      publishedRealmAdmissionOwnerReadWorkloadGuard;
 
   private static final Pattern SHA_256 = Pattern.compile("[0-9a-f]{64}");
+  private static final int MAX_PUBLISHED_REALM_ADMISSION_OWNER_READ_REQUEST_BYTES = 512;
 
   @Value("${game.tick-duration-ms:1000}")
   private long tickDurationMs = 1000L;
@@ -143,6 +163,15 @@ public final class GameSessionControlPlaneGrpcService
     this.initialAdmissionBindOwnerProofReader = proofReader;
     this.initialAdmissionBindOwnerReadWorkloadGuard =
         new InitialAdmissionBindOwnerReadWorkloadGuard(workloadNamespace);
+  }
+
+  @Autowired
+  public void configurePublishedRealmAdmissionOwnerReadBoundary(
+      PublishedRealmAdmissionOwnerReadService ownerReadService,
+      @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace) {
+    this.publishedRealmAdmissionOwnerReadService = ownerReadService;
+    this.publishedRealmAdmissionOwnerReadWorkloadGuard =
+        new PublishedRealmAdmissionOwnerReadWorkloadGuard(workloadNamespace);
   }
 
   private long parseTenantId(String tenantId) {
@@ -285,6 +314,106 @@ public final class GameSessionControlPlaneGrpcService
     responseObserver.onCompleted();
   }
 
+  @Override
+  @Timed(value = "gamesessionGrpc.controlPlane.getPublishedRealmAdmissionOwnerRead")
+  public void getPublishedRealmAdmissionOwnerRead(
+      GetPublishedRealmAdmissionOwnerReadRequest request,
+      StreamObserver<GetPublishedRealmAdmissionOwnerReadResponse> responseObserver) {
+    if (request == null) {
+      failPublishedRealmAdmissionOwnerRead(
+          responseObserver,
+          Status.INVALID_ARGUMENT,
+          "Invalid published realm admission owner read request");
+      return;
+    }
+
+    try {
+      if (publishedRealmAdmissionOwnerReadWorkloadGuard == null) {
+        throw new AdminAuthorizationException(
+            "Published realm admission owner read boundary is not configured");
+      }
+      publishedRealmAdmissionOwnerReadWorkloadGuard.requireEntityManagementOwnerReadCaller();
+    } catch (AdminAuthorizationException exception) {
+      failPublishedRealmAdmissionOwnerRead(
+          responseObserver,
+          Status.PERMISSION_DENIED,
+          "Published realm admission owner read caller is not authorized");
+      return;
+    }
+
+    PublishedRealmAdmissionOwnerReadRequest target;
+    try {
+      target = parsePublishedRealmAdmissionOwnerReadRequest(request);
+    } catch (IllegalArgumentException exception) {
+      failPublishedRealmAdmissionOwnerRead(
+          responseObserver,
+          Status.INVALID_ARGUMENT,
+          "Invalid published realm admission owner read request");
+      return;
+    }
+    try {
+      publishedRealmAdmissionOwnerReadWorkloadGuard.requireConfiguredTargetNamespace(
+          target.targetNamespace());
+    } catch (AdminAuthorizationException exception) {
+      failPublishedRealmAdmissionOwnerRead(
+          responseObserver,
+          Status.PERMISSION_DENIED,
+          "Published realm admission owner read target namespace is not authorized");
+      return;
+    }
+
+    if (publishedRealmAdmissionOwnerReadService == null) {
+      failPublishedRealmAdmissionOwnerRead(
+          responseObserver,
+          Status.UNAVAILABLE,
+          "Published realm admission owner authority is unavailable");
+      return;
+    }
+
+    PublishedRealmAdmissionOwnerReadEvidence wireProof;
+    try {
+      PublishedRealmAdmissionOwnerReadProof proof =
+          publishedRealmAdmissionOwnerReadService.read(target);
+      if (proof == null || !matchesPublishedRealmAdmissionOwnerReadRequest(target, proof)) {
+        throw new IllegalStateException(
+            "Published realm admission owner read returned mismatched authority");
+      }
+      wireProof = toWirePublishedRealmAdmissionOwnerReadEvidence(request, proof);
+    } catch (IllegalArgumentException | IllegalStateException exception) {
+      failPublishedRealmAdmissionOwnerRead(
+          responseObserver,
+          Status.UNAVAILABLE,
+          "Published realm admission owner authority is unavailable");
+      return;
+    } catch (Exception exception) {
+      logger.error("GetPublishedRealmAdmissionOwnerRead failed", exception);
+      boolean unavailable = isPersistenceAvailabilityFailure(exception);
+      failPublishedRealmAdmissionOwnerRead(
+          responseObserver,
+          unavailable ? Status.UNAVAILABLE : Status.INTERNAL,
+          unavailable
+              ? "Published realm admission owner authority is unavailable"
+              : "Published realm admission owner read failed");
+      return;
+    }
+    responseObserver.onNext(
+        GetPublishedRealmAdmissionOwnerReadResponse.newBuilder().setProof(wireProof).build());
+    responseObserver.onCompleted();
+  }
+
+  private void failPublishedRealmAdmissionOwnerRead(
+      StreamObserver<GetPublishedRealmAdmissionOwnerReadResponse> responseObserver,
+      Status status,
+      String description) {
+    GrpcAppErrors.error(
+        meterRegistry,
+        logger,
+        "GetPublishedRealmAdmissionOwnerRead",
+        status.getCode().name(),
+        description);
+    responseObserver.onError(status.withDescription(description).asRuntimeException());
+  }
+
   private GetInitialAdmissionBindProofResponse.Builder echoInitialAdmissionBindTuple(
       GetInitialAdmissionBindProofRequest request) {
     return GetInitialAdmissionBindProofResponse.newBuilder()
@@ -371,6 +500,171 @@ public final class GameSessionControlPlaneGrpcService
     } catch (IllegalArgumentException exception) {
       throw new IllegalArgumentException(fieldName + " must be a canonical UUID", exception);
     }
+  }
+
+  private PublishedRealmAdmissionOwnerReadRequest parsePublishedRealmAdmissionOwnerReadRequest(
+      GetPublishedRealmAdmissionOwnerReadRequest request) {
+    if (request.getSerializedSize() > MAX_PUBLISHED_REALM_ADMISSION_OWNER_READ_REQUEST_BYTES
+        || !request.getUnknownFields().asMap().isEmpty()) {
+      throw new IllegalArgumentException("request is oversized or contains unsupported fields");
+    }
+    String targetNamespace = request.getTargetNamespace();
+    if (!GrpcPeerIdentity.isValidNamespace(targetNamespace)) {
+      throw new IllegalArgumentException("target_namespace is invalid");
+    }
+    if (request.getCanonicalTenantId().length() != 36) {
+      throw new IllegalArgumentException("canonical_tenant_id must be a canonical UUID");
+    }
+    String canonicalTenantId =
+        requireCanonicalUuid(request.getCanonicalTenantId(), "canonical_tenant_id");
+    long gameSessionTenantId =
+        parseCanonicalPositiveLong(request.getGameSessionTenantId(), "game_session_tenant_id");
+    if (!RealmEntryPolicy.isCanonicalSlug(request.getWorldSlug())) {
+      throw new IllegalArgumentException("world_slug must be a canonical published realm selector");
+    }
+    if (!RealmEntryPolicy.isCanonicalSlug(request.getRealmSlug())) {
+      throw new IllegalArgumentException("realm_slug must be a canonical published realm selector");
+    }
+    return new PublishedRealmAdmissionOwnerReadRequest(
+        targetNamespace,
+        UUID.fromString(canonicalTenantId),
+        gameSessionTenantId,
+        request.getWorldSlug(),
+        request.getRealmSlug(),
+        ControlPlaneRequestParser.requirePositive(
+            request.getExpectedCatalogRevision(), "expected_catalog_revision"),
+        ControlPlaneRequestParser.requirePositive(
+            request.getExpectedPointerVersion(), "expected_pointer_version"));
+  }
+
+  private long parseCanonicalPositiveLong(String value, String fieldName) {
+    if (value == null || value.isBlank() || value.length() > 19) {
+      throw new IllegalArgumentException(fieldName + " is invalid");
+    }
+    long parsed = ControlPlaneRequestParser.parsePositiveLong(value, fieldName);
+    if (!Long.toString(parsed).equals(value)) {
+      throw new IllegalArgumentException(fieldName + " must use canonical decimal form");
+    }
+    return parsed;
+  }
+
+  private boolean matchesPublishedRealmAdmissionOwnerReadRequest(
+      PublishedRealmAdmissionOwnerReadRequest request,
+      PublishedRealmAdmissionOwnerReadProof proof) {
+    return request.canonicalTenantId().equals(proof.canonicalTenantId())
+        && request.gameSessionTenantId() == proof.gameSessionTenantId()
+        && request.expectedCatalogRevision() == proof.catalogRevision()
+        && request.expectedPointerVersion() == proof.pointerVersion()
+        && request.worldSlug().equals(proof.selectedPolicyEvidence().policy().worldSlug())
+        && request.realmSlug().equals(proof.selectedPolicyEvidence().policy().realmSlug())
+        && proof.publishedVersionId() == proof.publishedPolicySet().versionId()
+        && proof.publishedPolicySet().canonicalTenantId().equals(request.canonicalTenantId())
+        && proof.publishedPolicySet().policies().contains(proof.selectedPolicyEvidence());
+  }
+
+  private PublishedRealmAdmissionOwnerReadEvidence toWirePublishedRealmAdmissionOwnerReadEvidence(
+      GetPublishedRealmAdmissionOwnerReadRequest request,
+      PublishedRealmAdmissionOwnerReadProof proof) {
+    return PublishedRealmAdmissionOwnerReadEvidence.newBuilder()
+        .setTargetNamespace(request.getTargetNamespace())
+        .setCanonicalTenantId(proof.canonicalTenantId().toString())
+        .setGameSessionTenantId(Long.toString(proof.gameSessionTenantId()))
+        .setWorldSlug(proof.selectedPolicyEvidence().policy().worldSlug())
+        .setRealmSlug(proof.selectedPolicyEvidence().policy().realmSlug())
+        .setCatalogRevision(proof.catalogRevision())
+        .setExpectedPointerVersion(proof.pointerVersion())
+        .setRealmId(proof.realmId().toString())
+        .setPlayableStateNamespaceId(proof.playableStateNamespaceId().toString())
+        .setPlayableStateScope(toWireStateScope(proof.playableStateScope()))
+        .setPublishedPolicySet(
+            toWirePublishedPolicySet(request.getTargetNamespace(), proof.publishedPolicySet()))
+        .setSelectedPolicyEvidence(
+            toWirePublishedRealmAdmissionPolicy(
+                request.getTargetNamespace(), proof.selectedPolicyEvidence()))
+        .setPointerVersion(proof.pointerVersion())
+        .setGameInstanceId(Long.toString(proof.gameInstanceId()))
+        .setPublishedVersionId(Long.toString(proof.publishedVersionId()))
+        .setActiveLifecycleEpoch(proof.activeLifecycleEpoch())
+        .setGameTemplateId(Long.toString(proof.gameTemplateId()))
+        .setLaunchDescriptorId(proof.launchDescriptorId())
+        .setReleaseBundleId(Long.toString(proof.releaseBundleId()))
+        .setPublishedReleaseBundleRef(proof.publishedReleaseBundleRef())
+        .setVersionStateEpoch(proof.versionStateEpoch())
+        .setInitialAdmissionRequestId(proof.initialAdmissionRequestId())
+        .setRequestDigest(proof.requestDigest())
+        .setInitialAdmissionAttemptId(proof.initialAdmissionAttemptId().toString())
+        .setPointerAuditId(Long.toString(proof.pointerAuditId()))
+        .setPointerAuditRequestId(proof.initialAdmissionRequestId())
+        .setPointerAuditRequestDigest(proof.requestDigest())
+        .setInitialAdmissionAttemptStatus(
+            PublishedRealmAdmissionAttemptStatus.PUBLISHED_REALM_ADMISSION_ATTEMPT_STATUS_COMMITTED)
+        .build();
+  }
+
+  private ListPublishedRealmEntryPoliciesResponse toWirePublishedPolicySet(
+      String targetNamespace, PublishedRealmEntryPolicySetEvidence evidence) {
+    ListPublishedRealmEntryPoliciesResponse.Builder result =
+        ListPublishedRealmEntryPoliciesResponse.newBuilder()
+            .setSchemaVersion(RealmEntryPolicy.SCHEMA_VERSION)
+            .setTargetNamespace(targetNamespace)
+            .setCanonicalTenantId(evidence.canonicalTenantId().toString())
+            .setVersionId(evidence.versionId())
+            .setVersionNumber(evidence.versionNumber())
+            .setReleaseBundleIdentity(evidence.releaseBundleIdentity())
+            .setPublishWorkflowId(evidence.publishWorkflowId())
+            .setManifestHash(evidence.manifestHash())
+            .setPolicyCount(evidence.policies().size())
+            .setPolicySetDigest(evidence.policySetDigest());
+    evidence
+        .policies()
+        .forEach(
+            policy ->
+                result.addPolicies(toWirePublishedRealmAdmissionPolicy(targetNamespace, policy)));
+    return result.build();
+  }
+
+  private ResolvePublishedRealmEntryPolicyResponse toWirePublishedRealmAdmissionPolicy(
+      String targetNamespace, PublishedRealmEntryPolicyEvidence evidence) {
+    RealmEntryPolicy policy = evidence.policy();
+    return ResolvePublishedRealmEntryPolicyResponse.newBuilder()
+        .setSchemaVersion(policy.schemaVersion())
+        .setTargetNamespace(targetNamespace)
+        .setCanonicalTenantId(evidence.canonicalTenantId().toString())
+        .setVersionId(evidence.versionId())
+        .setVersionNumber(evidence.versionNumber())
+        .setPolicyId(evidence.policyId().toString())
+        .setSourceRevisionId(evidence.sourceRevisionId())
+        .setSourceGameRowId(evidence.sourceGameRowId())
+        .setSourceGameTenantKey(evidence.sourceGameTenantKey())
+        .setTenantIdentityProvenanceKind(evidence.tenantIdentityProvenanceKind())
+        .setReleaseBundleIdentity(evidence.releaseBundleIdentity())
+        .setPublishWorkflowId(evidence.publishWorkflowId())
+        .setManifestHash(evidence.manifestHash())
+        .setWorldSlug(policy.worldSlug())
+        .setWorldDisplayName(policy.worldDisplayName())
+        .setRealmSlug(policy.realmSlug())
+        .setRealmDisplayName(policy.realmDisplayName())
+        .setVisible(policy.visible())
+        .setPublicProduction(policy.publicProduction())
+        .setStateScope(toWireStateScope(policy.stateScope()))
+        .setEntryPolicy(toWireEntryPolicy(policy.entryPolicy()))
+        .setPolicyJson(policy.canonicalJson())
+        .setPolicyDigest(evidence.policyDigest())
+        .build();
+  }
+
+  private PublishedRealmEntryStateScope toWireStateScope(RealmEntryPolicy.StateScope scope) {
+    return switch (scope) {
+      case SHARED -> PublishedRealmEntryStateScope.PUBLISHED_REALM_ENTRY_STATE_SCOPE_SHARED;
+      case ISOLATED -> PublishedRealmEntryStateScope.PUBLISHED_REALM_ENTRY_STATE_SCOPE_ISOLATED;
+    };
+  }
+
+  private PublishedRealmEntryPolicyKind toWireEntryPolicy(RealmEntryPolicy.EntryPolicy policy) {
+    return switch (policy) {
+      case PRESEEDED_ONLY ->
+          PublishedRealmEntryPolicyKind.PUBLISHED_REALM_ENTRY_POLICY_KIND_PRESEEDED_ONLY;
+    };
   }
 
   private InitialAdmissionBindOwnerProofOutcome toWireOutcome(
