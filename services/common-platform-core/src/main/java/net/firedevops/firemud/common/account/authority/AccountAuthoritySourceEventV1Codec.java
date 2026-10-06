@@ -365,9 +365,13 @@ public final class AccountAuthoritySourceEventV1Codec {
 
   private static String canonicalUuid(ObjectNode object, String field) {
     String value = text(object, field);
-    if (!UUID_PATTERN.matcher(value).matches()
-        || !UUID.fromString(value).toString().equals(value)) {
-      throw invalid(field, "must be a canonical lowercase UUID");
+    if (!UUID_PATTERN.matcher(value).matches()) {
+      throw invalid(field, "must be a canonical lowercase non-nil UUID");
+    }
+    UUID uuid = UUID.fromString(value);
+    if (!uuid.toString().equals(value)
+        || uuid.getMostSignificantBits() == 0L && uuid.getLeastSignificantBits() == 0L) {
+      throw invalid(field, "must be a canonical lowercase non-nil UUID");
     }
     return value;
   }

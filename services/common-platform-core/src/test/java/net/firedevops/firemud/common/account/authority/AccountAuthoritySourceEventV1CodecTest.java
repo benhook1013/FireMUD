@@ -38,9 +38,34 @@ class AccountAuthoritySourceEventV1CodecTest {
 
     assertThat(AccountAuthoritySourceEventV1Codec.verify(expected.canonicalJson()))
         .isEqualTo(expected);
+    assertThat(expected.accountId()).isEqualTo(ACCOUNT_ID);
     assertThat(expected.canonicalJson())
         .contains("\"issuanceFenceSourceVersion\":\"9223372036854775807\"")
         .contains("\"accountSecurityCutoff\"");
+  }
+
+  @Test
+  void accountEventRejectsNilAccountUuid() {
+    String nilAccountId = "00000000-0000-0000-0000-000000000000";
+    String nilAccountStream =
+        AccountAuthoritySourceEventV1Codec.EVENT_STREAM_PREFIX + "account/" + nilAccountId;
+    var nilAccount =
+        new AccountAuthoritySourceEventV1Codec.AccountPreimage(
+            "event-1",
+            "request-1",
+            nilAccountStream,
+            "4",
+            nilAccountId,
+            "5",
+            "5",
+            "5",
+            "5",
+            List.of("PASSWORD_RESET"),
+            state("player"));
+
+    assertThatThrownBy(() -> AccountAuthoritySourceEventV1Codec.sealAccount(nilAccount))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("canonical lowercase non-nil UUID");
   }
 
   @Test

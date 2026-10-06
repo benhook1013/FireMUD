@@ -233,6 +233,38 @@ class AccountGrpcServiceTest {
   }
 
   @Test
+  void verifyEmailMapsMissingSourceToSafeUnavailableAndPreservesOtherExceptions() {
+    var owner = Mockito.mock(AccountService.class);
+    var service = new AccountGrpcService(Mockito.mock(PingService.class), owner);
+    var request =
+        net.firedevops.firemud.account.v1.VerifyEmailRequest.newBuilder()
+            .setToken("retained-verification-token")
+            .build();
+    Mockito.doThrow(
+            new net.firedevops.firemud.accountservice.repository
+                .AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException())
+        .when(owner)
+        .verifyEmail(Mockito.any());
+    var unavailable =
+        new RecordingObserver<net.firedevops.firemud.account.v1.VerifyEmailResponse>();
+    service.verifyEmail(request, unavailable);
+    assertTrue(unavailable.completed());
+    assertFalse(unavailable.response().getSuccess());
+    assertEquals("AUTH_UNAVAILABLE", unavailable.response().getError().getCode());
+    assertEquals(
+        "Account authority is unavailable", unavailable.response().getError().getMessage());
+
+    Mockito.doThrow(new IllegalArgumentException("Invalid token"))
+        .when(owner)
+        .verifyEmail(Mockito.any());
+    var invalid = new RecordingObserver<net.firedevops.firemud.account.v1.VerifyEmailResponse>();
+    service.verifyEmail(request, invalid);
+    assertTrue(invalid.completed());
+    assertFalse(invalid.response().getSuccess());
+    assertEquals("INVALID_ARGUMENT", invalid.response().getError().getCode());
+  }
+
+  @Test
   void joinPublicProductionMembershipPreservesStoredFailureOutcome() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
