@@ -224,7 +224,19 @@ public class AccountAuthorityOutboxRepository {
     if (stream == null) {
       return Optional.empty();
     }
-    long sequence = requiredPositive(stream, "last_sequence");
+    long sequence = requiredNonnegative(stream, "last_sequence");
+    if (sequence == 0L) {
+      Record event =
+          dsl.fetchOne(
+              "SELECT outbox_sequence FROM account_authority_outbox_events "
+                  + "WHERE outbox_stream_key = ? LIMIT 1",
+              outboxStreamKey);
+      if (event != null) {
+        throw new IllegalStateException(
+            "Account authority outbox zero checkpoint has event evidence");
+      }
+      return Optional.empty();
+    }
     Event event =
         findEvent(outboxStreamKey, sequence)
             .orElseThrow(
