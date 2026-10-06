@@ -18,7 +18,7 @@ from typing import Any
 from . import acceptance, cli_attempts, github, hosted, hosted_wait, sqlite_hosted_capture, sqlite_records_repair, stack
 from . import evidence as evidence_module
 from . import status as status_module
-from .cli_runner import PullRequestSnapshot
+from .cli_runner import PullRequestSnapshot, format_exception_notes
 from .controller import LivePullRequest, ReviewController
 from .runtime import default_controller
 from .sqlite_review_records import FindingObservation, RecordsNotBootstrapped, ReviewRecordsError, SqliteReviewRecords
@@ -1358,7 +1358,13 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
             ),
         )
 
+    budget = github.active_hosted_preflight_budget()
+    starting_cli_run = args.command == "run" and args.run_command == "cli" and budget is not None
+    if starting_cli_run:
+        budget.set_phase("controller_construction", total=1)
     controller, fixture = _controller(args)
+    if starting_cli_run:
+        budget.set_completed(1)
     if args.command == "stack":
         value = controller.set_stack(args.pr_numbers) if args.stack_command == "set" else controller.show_stack()
         return value, 0
@@ -1818,15 +1824,18 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "run" and args.run_command == "hosted":
             with github.hosted_preflight_budget():
                 result, exit_status = _dispatch(args)
+        elif args.command == "run" and args.run_command == "cli":
+            with github.cli_preflight_budget():
+                result, exit_status = _dispatch(args)
         else:
             result, exit_status = _dispatch(args)
         print(_render(result, args.command in {"records", "wait"} or getattr(args, "as_json", False)))
         return exit_status
     except (CliError, ValueError) as error:
-        print(f"error: {error}", file=sys.stderr)
+        print(f"error: {format_exception_notes(error)}", file=sys.stderr)
         return 2
     except Exception as error:  # noqa: BLE001 - final operator boundary
-        print(f"error: {error}", file=sys.stderr)
+        print(f"error: {format_exception_notes(error)}", file=sys.stderr)
         return 1
 
 

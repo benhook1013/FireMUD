@@ -192,6 +192,7 @@
     {"name": "null-optional-tenant-cutoff", "op": "replace", "path": "/authorityTuple/tenantBillingCutoff", "value": null},
     {"name": "empty-present-tenant-cutoff", "op": "replace", "path": "/authorityTuple/tenantBillingCutoff", "value": {}},
     {"name": "json-number-counter", "op": "replace", "path": "/outboxSequence", "value": 7},
+    {"name": "outbox-sequence-owner-overflow", "op": "replace", "path": "/outboxSequence", "value": "9223372036854775808"},
     {"name": "membership-version-scalar", "op": "replace", "path": "/membershipVersion", "value": "43"},
     {"name": "membership-version-empty-map", "op": "replace", "path": "/membershipVersion", "value": {}},
     {"name": "membership-version-extra-tenant", "op": "add", "path": "/membershipVersion/018f8f0a-3c8d-7b35-ad26-7b0c9d8e6f4a", "value": "1"},
