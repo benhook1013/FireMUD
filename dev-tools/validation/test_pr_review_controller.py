@@ -7758,6 +7758,27 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(reservations, [])
         self.assertEqual(posts, [])
 
+    def test_direct_sqlite_state_read_uses_remaining_preflight_budget_under_exclusive_lock(self):
+        controller = self.make({1: pr(1, HEAD_1)}, sqlite=True)
+        controller.set_stack([1])
+        with sqlite3.connect(controller.store.path) as holder:
+            holder.execute("BEGIN EXCLUSIVE")
+            try:
+                with github.activate_hosted_preflight_budget(timeout_seconds=0.25) as budget:
+                    budget.set_phase("target_selection", completed=2, total=3)
+                    time.sleep(0.18)
+                    started = time.monotonic()
+                    with self.assertRaises(github.HostedPreflightDeadlineExceeded) as raised:
+                        controller._state()
+                    self.assertLess(time.monotonic() - started, 0.2)
+                    error = raised.exception
+                    self.assertEqual(error.phase, "target_selection")
+                    self.assertEqual((error.completed, error.total), (2, 3))
+                    self.assertEqual(error.budget_seconds, 0.25)
+                    self.assertGreaterEqual(error.elapsed_seconds, 0.25)
+            finally:
+                holder.rollback()
+
     def test_direct_sqlite_store_suspends_deadline_after_successful_reservation(self):
         controller = self.make({1: pr(1, HEAD_1)}, sqlite=True)
         controller.set_stack([1])
@@ -7773,6 +7794,7 @@ class ControllerTests(unittest.TestCase):
 
             controller._admit_review(1, "hosted", reserve)
             self.assertGreater(time.monotonic(), budget.deadline)
+            self.assertEqual(controller._state().ordered_prs, (1,))
 
         self.assertGreater(time.monotonic() - started, 0.05)
         self.assertEqual(reservation_path.read_text(encoding="utf-8"), "durable reservation")

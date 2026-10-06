@@ -2287,6 +2287,8 @@ class HostedRunner:
                     and hosted.normalize_command(str(trigger.get("command") or "")) == hosted.FULL_COMMAND
                 ):
                     tracked_ids.add(trigger_id)
+        except github.HostedPreflightDeadlineExceeded:
+            raise
         except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
             raise ControllerError("private Hosted trigger records cannot be verified before posting") from exc
 

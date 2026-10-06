@@ -602,6 +602,13 @@ class ReviewController:
         return self.github
 
     def _state(self) -> ReviewState:
+        budget = github.active_hosted_preflight_budget()
+        if budget is not None and isinstance(self.store, SqliteStateStore):
+            try:
+                return self.store.load(deadline=budget.deadline)
+            except StateLockTimeout:
+                ControllerStateStore._check_hosted_deadline(budget.deadline, lock_timeout=True)
+                raise
         return self.store.load()
 
     @staticmethod

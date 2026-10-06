@@ -53,6 +53,55 @@ PATCH = "c" * 64
 
 
 class RuntimeTest(unittest.TestCase):
+    def test_selected_pr_manual_trigger_check_preserves_preflight_deadline_diagnostics(self) -> None:
+        class Clock:
+            now = 0.0
+
+            def monotonic(self):
+                return self.now
+
+        clock = Clock()
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        target = ReviewTarget(snapshot, EffectiveParent("develop", BASE), patch_identity=PATCH, merge_base=BASE)
+        live = LiveGitHub("owner/repo")
+        payload = self._payload(comments=[{
+            "databaseId": 10,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": "2026-09-30T12:00:00Z",
+        }])
+
+        def git_call(args, **_kwargs):
+            clock.now = 13
+            return CompletedProcess(args, 0, ".git\n", "")
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            path = common / "trigger.json"
+            common_reads = iter([lambda: common, _REAL_EVIDENCE_GIT_COMMON_DIR])
+            with (
+                patch.object(github.time, "monotonic", side_effect=clock.monotonic),
+                github.activate_hosted_preflight_budget(timeout_seconds=12),
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(live, "branch_head", return_value=BASE),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(hosted, "current_trigger_record_paths", return_value=[]),
+                patch.object(evidence, "git_common_dir", side_effect=lambda: next(common_reads)()),
+                patch.object(evidence.subprocess, "run", side_effect=git_call) as run,
+                self.assertRaises(github.HostedPreflightDeadlineExceeded) as raised,
+            ):
+                HostedRunner("owner/repo", live)(target, expect_pr=42)
+
+            error = raised.exception
+            self.assertEqual(error.phase, "selected_pr_current_trigger_history")
+            self.assertEqual(error.elapsed_seconds, 13)
+            self.assertEqual((error.completed, error.total), (1, 1))
+            self.assertEqual(error.budget_seconds, 12)
+            run.assert_called_once()
+            self.assertEqual(run.call_args.args[0][:2], ["git", "rev-parse"])
+            self.assertFalse(path.exists())
+
     def test_evidence_git_common_dir_uses_remaining_hosted_preflight_budget(self) -> None:
         class Clock:
             now = 0.0
