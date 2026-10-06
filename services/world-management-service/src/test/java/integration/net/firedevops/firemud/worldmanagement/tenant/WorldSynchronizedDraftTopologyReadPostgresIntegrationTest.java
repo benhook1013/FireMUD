@@ -37,10 +37,13 @@ import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.springframework.aop.framework.ProxyFactory;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource;
+import org.springframework.transaction.interceptor.TransactionInterceptor;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -84,8 +87,15 @@ class WorldSynchronizedDraftTopologyReadPostgresIntegrationTest {
     var manager = new DataSourceTransactionManager(dataSource);
     TransactionTemplate transaction = new TransactionTemplate(manager);
     transaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    // Match the production proxy's NOT_SUPPORTED source-intake reads inside owner transactions.
+    TransactionInterceptor intakeTransactions = new TransactionInterceptor();
+    intakeTransactions.setTransactionManager(manager);
+    intakeTransactions.setTransactionAttributeSource(new AnnotationTransactionAttributeSource());
+    ProxyFactory intakeProxy = new ProxyFactory(new WorldAuthoredSourceIntakeRepository(dsl));
+    intakeProxy.setProxyTargetClass(true);
+    intakeProxy.addAdvice(intakeTransactions);
     WorldAuthoredSourceIntakeRepository intakeRepository =
-        new WorldAuthoredSourceIntakeRepository(dsl);
+        (WorldAuthoredSourceIntakeRepository) intakeProxy.getProxy();
     WorldDesignPublicationFenceRepository fence =
         new WorldDesignPublicationFenceRepository(dsl, intakeRepository);
     ObjectMapper mapper = new ObjectMapper();
