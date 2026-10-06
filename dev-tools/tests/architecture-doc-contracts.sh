@@ -2648,7 +2648,8 @@ require_contains(
 require_contains(
     "design/architecture/microservices/game-design-service/operations.md",
     [
-        "`VersionPublishCommandServiceImpl` normally records terminal `FAILED` and returns the attempt snapshot for publication failures; `TemporalVersionPublishActivitiesImpl` catches only `PendingReconciliationException` and returns `PENDING`.",
+        "For a definitive publication failure, `VersionPublishCommandServiceImpl` returns the attempt snapshot as terminal `FAILED` only after exact owner-transaction readback confirms there is no release, any exported candidate has exact staged evidence, and the same transaction records the failure and `NO_PUBLICATION` seal.",
+        "If transaction settlement, readback, or sealing is uncertain or contradictory, the outcome remains reconciliation-required; `TemporalVersionPublishActivitiesImpl` maps only `PendingReconciliationException` to `PENDING`.",
     ],
 )
 require_contains(
