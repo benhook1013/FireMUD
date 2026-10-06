@@ -162,6 +162,40 @@ policy_text = str(policy["spec"])
 assert "reserved-ca-secret-or-recovery-caller" in policy_text
 assert "system:serviceaccount:firemud-system:firemud-preview-ca-recovery" in policy_text
 assert policy_text.count("firemud-grpc-ca") >= 2
+match_expression = policy["spec"]["matchConditions"][0]["expression"]
+authorization_expression = policy["spec"]["validations"][0]["expression"]
+shape_expression = policy["spec"]["validations"][1]["expression"]
+normalized_authorization = " ".join(authorization_expression.split())
+recovery_write_clause = " ".join(
+    """
+    (request.namespace in ['firemud-system', 'cert-manager'] &&
+     (request.operation == 'DELETE' ? request.name : object.metadata.name) == 'firemud-grpc-ca' &&
+     request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-preview-ca-recovery' &&
+     request.operation in ['CREATE', 'UPDATE'] && request.subResource == '')
+    """.split()
+)
+runtime_gc_delete_clause = " ".join(
+    """
+    (request.operation == 'DELETE' && request.subResource == '' &&
+     request.name == 'firemud-grpc-ca' &&
+     (request.namespace == 'dev' || request.namespace.matches('^pr-[1-9][0-9]{0,50}$')) &&
+     (request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-preview-runtime' ||
+      request.userInfo.username == 'system:serviceaccount:kube-system:namespace-controller'))
+    """.split()
+)
+assert recovery_write_clause in normalized_authorization
+assert runtime_gc_delete_clause in normalized_authorization
+operator_clause = "request.userInfo.groups.exists(group, group == 'system:masters')"
+assert normalized_authorization == " || ".join(
+    (operator_clause, recovery_write_clause, runtime_gc_delete_clause)
+)
+assert "request.namespace == 'kube-system'" not in normalized_authorization
+assert "request.operation == 'DELETE' ? request.name : object.metadata.name" in match_expression
+assert "request.operation == 'DELETE' ||" in shape_expression
+assert "request.namespace in ['firemud-system', 'cert-manager']" in shape_expression
+assert "object.type == (request.namespace == 'firemud-system' ? 'Opaque' : 'kubernetes.io/tls')" in shape_expression
+assert "object.data.size() == 2" in shape_expression
+assert "system:masters" not in shape_expression
 assert binding["spec"]["validationActions"] == ["Deny"]
 assert binding["spec"]["policyName"] == policy["metadata"]["name"]
 

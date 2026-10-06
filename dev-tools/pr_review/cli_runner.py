@@ -19,6 +19,7 @@ import os
 import shutil
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import time
 import unicodedata
@@ -258,17 +259,30 @@ def _git(
     check: bool = True,
     text: bool = True,
     timeout: float = GIT_TIMEOUT_SECONDS,
+    enforce_preflight_budget: bool = True,
 ) -> subprocess.CompletedProcess[str] | subprocess.CompletedProcess[bytes]:
+    budget = github_api.active_hosted_preflight_budget() if enforce_preflight_budget else None
+    command_timeout = budget.request_timeout(timeout) if budget is not None else timeout
     try:
-        return runner.run(
+        result = runner.run(
             ["git", "-C", str(source_root), *args],
             capture_output=capture_output,
             check=check,
             text=text,
-            timeout=timeout,
+            timeout=command_timeout,
         )
     except subprocess.TimeoutExpired as error:
+        if budget is not None:
+            try:
+                budget.remaining_seconds()
+            except github_api.HostedPreflightDeadlineExceeded as deadline_error:
+                raise deadline_error from error
         raise ReviewRunnerError(f"git command timed out after {timeout} seconds") from error
+    if budget is not None:
+        budget.remaining_seconds()
+        if budget.total is None:
+            budget.set_completed(budget.completed + 1)
+    return result
 
 
 def _git_output(
@@ -279,6 +293,56 @@ def _git_output(
 ) -> str:
     result = _git(runner, source_root, *args, timeout=timeout)
     return result.stdout.strip()
+
+
+def _check_cleanup_result(result: subprocess.CompletedProcess[str], operation: str) -> None:
+    if result.returncode == 0:
+        return
+    stderr = (result.stderr or "").strip()
+    detail = f": {stderr}" if stderr else ""
+    raise ReviewRunnerError(f"CLI {operation} cleanup failed with exit status {result.returncode}{detail}")
+
+
+def _add_exception_note(error: Exception, note: str) -> None:
+    add_note = getattr(error, "add_note", None)
+    if callable(add_note):
+        add_note(note)
+        return
+    notes = getattr(error, "__notes__", None)
+    if notes is None:
+        notes = []
+        error.__notes__ = notes
+    notes.append(note)
+
+
+def format_exception_notes(error: BaseException) -> str:
+    """Render an error and its unique notes without exposing a traceback."""
+
+    rendered = str(error)
+    notes: list[str] = []
+    seen_errors: set[int] = set()
+    seen_notes: set[str] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen_errors:
+        seen_errors.add(id(current))
+        error_notes = getattr(current, "__notes__", ())
+        if isinstance(error_notes, (list, tuple)):
+            for note in error_notes:
+                if isinstance(note, str):
+                    safe_note = "".join(
+                        " " if unicodedata.category(character) == "Cc" else character for character in note
+                    )
+                    if safe_note not in seen_notes:
+                        seen_notes.add(safe_note)
+                        notes.append(safe_note)
+        current = (
+            current.__cause__
+            if current.__cause__ is not None
+            else current.__context__ if not current.__suppress_context__ else None
+        )
+    if not notes:
+        return rendered
+    return "; ".join((rendered, *(f"note: {note}" for note in notes)))
 
 
 def _sha(value: str, label: str) -> str:
@@ -369,13 +433,29 @@ def _test_merge_commit(
     """Create an isolated local merge commit for one exact base/head pair."""
 
     def run_git(args, *, check, text, timeout):
-        return runner.run(
-            args,
-            capture_output=True,
-            check=check,
-            text=text,
-            timeout=timeout,
-        )
+        cleanup = "worktree" in args and "remove" in args
+        budget = github_api.active_hosted_preflight_budget() if not cleanup else None
+        command_timeout = budget.request_timeout(timeout) if budget is not None else timeout
+        try:
+            result = runner.run(
+                args,
+                capture_output=True,
+                check=check,
+                text=text,
+                timeout=command_timeout,
+            )
+        except subprocess.TimeoutExpired as error:
+            if budget is not None:
+                try:
+                    budget.remaining_seconds()
+                except github_api.HostedPreflightDeadlineExceeded as deadline_error:
+                    raise deadline_error from error
+            raise
+        if budget is not None:
+            budget.remaining_seconds()
+            if budget.total is None:
+                budget.set_completed(budget.completed + 1)
+        return result
 
     try:
         tree = test_merge_tree(
@@ -655,6 +735,8 @@ def _select_candidate_for_hosted_overlap(
                 "rate_limited",
             }:
                 raise hold(state.state, reservation_sha=state.head_sha)
+    except github_api.HostedPreflightDeadlineExceeded:
+        raise
     except ReviewRunnerError:
         raise
     except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
@@ -885,11 +967,18 @@ def run_cli_review(
     if not force and (not target.reconciled or not target.ancestor_links_valid):
         raise UnreconciledReviewError("stack identity warnings require --force for a CLI review")
     runner = runner or SubprocessRunner()
+    budget = github_api.active_hosted_preflight_budget()
+    if budget is not None:
+        budget.set_phase("repository_preflight", total=2)
     source_root = (
         source_root
         or Path(_git_output(runner, Path.cwd(), "rev-parse", "--show-toplevel", timeout=git_timeout_seconds))
     ).resolve()
+    if budget is not None:
+        budget.set_completed(1)
     common_dir = _common_dir(runner, source_root, timeout=git_timeout_seconds)
+    if budget is not None:
+        budget.set_completed(2)
     private_root = common_dir / "firemud" / "pr-review"
     capture_root = private_root / "runs"
     private_root.mkdir(parents=True, exist_ok=True)
@@ -911,6 +1000,8 @@ def run_cli_review(
     # Keep review anchors out of branch listings: this temporary ref is an
     # implementation detail of the review run, not a user-visible branch.
     pinned_ref = f"refs/firemud/pr-review-base/{run_id}"
+    if budget is not None:
+        budget.set_phase("lock_acquisition", total=2)
     lock_path.touch(mode=0o600, exist_ok=True)
     with lock_path.open("r+") as lock_handle:
         try:
@@ -921,6 +1012,8 @@ def run_cli_review(
         hosted_lock_acquired = False
         temp_root: Path | None = None
         try:
+            if budget is not None:
+                budget.set_completed(1)
             try:
                 _write_cli_lock_owner(lock_handle, run_id)
             except OSError as error:
@@ -941,11 +1034,24 @@ def run_cli_review(
                     f"another review request is active for PR #{target.snapshot.number} (lock: {hosted_lock_path})"
                 ) from error
             hosted_lock_acquired = True
+            if budget is not None:
+                budget.set_completed(2)
+                budget.set_phase("capture_setup", total=1)
             capture_dir.mkdir(mode=0o700)
+            if budget is not None:
+                budget.set_completed(1)
+                budget.set_phase("live_github_preflight", total=3)
             live = github.pull_request(target.snapshot.number)
+            if budget is not None:
+                budget.set_completed(1)
             live_files = github.pull_request_files(target.snapshot.number)
+            if budget is not None:
+                budget.set_completed(2)
             review_base_ref = live.base_ref_name if force else target.parent.ref_name
             review_base_tip = github.branch_head(review_base_ref)
+            if budget is not None:
+                budget.set_completed(3)
+                budget.set_phase("candidate_git_preflight")
             _ensure_commit(runner, source_root, live.base_sha, "pull request base", timeout=git_timeout_seconds)
             _ensure_commit(runner, source_root, review_base_tip, "review base branch tip", timeout=git_timeout_seconds)
             _ensure_commit(runner, source_root, live.head_sha, "pull request head", timeout=git_timeout_seconds)
@@ -1017,6 +1123,8 @@ def run_cli_review(
                     "merge_base": published_merge_base,
                     "patch_id": published_patch_identity,
                 }
+            if budget is not None:
+                budget.set_phase("hosted_overlap_preflight", total=1)
             selected_candidate_sha = _select_candidate_for_hosted_overlap(
                 repository,
                 target.snapshot.number,
@@ -1025,7 +1133,11 @@ def run_cli_review(
                 candidate_sha=candidate_sha,
                 expected_anchor=expected_anchor,
             )
+            if budget is not None:
+                budget.set_completed(1)
             if selected_candidate_sha != candidate_sha:
+                if budget is not None:
+                    budget.set_phase("candidate_git_preflight")
                 candidate_sha = selected_candidate_sha
                 merge_base, published_files, candidate_files, child_head, review_context_sha = _validate_target(
                     target,
@@ -1039,6 +1151,8 @@ def run_cli_review(
                     git_timeout_seconds=git_timeout_seconds,
                 )
                 candidate_patch_identity = published_patch_identity
+            if budget is not None:
+                budget.set_phase("candidate_git_preflight")
             if candidate_sha == child_head:
                 published_status = "published-head"
             else:
@@ -1057,21 +1171,29 @@ def run_cli_review(
             # cleanup boundary: either setup step can fail, but a successful pin
             # must never outlive a failed temporary-root allocation.
             try:
+                if budget is not None:
+                    budget.set_phase("candidate_context_setup")
                 review_base_sha = (
                     target.parent.head_sha if target.default_base_front and not force else merge_base
                 )
                 _git(runner, source_root, "update-ref", pinned_ref, review_base_sha, timeout=git_timeout_seconds)
                 temp_root = Path(tempfile.mkdtemp(prefix="firemud-pr-review-"))
-            except Exception:
-                _git(
-                    runner,
-                    source_root,
-                    "update-ref",
-                    "-d",
-                    pinned_ref,
-                    check=False,
-                    timeout=git_timeout_seconds,
-                )
+            except Exception as primary_error:
+                try:
+                    cleanup_result = _git(
+                        runner,
+                        source_root,
+                        "update-ref",
+                        "-d",
+                        pinned_ref,
+                        check=False,
+                        timeout=git_timeout_seconds,
+                        enforce_preflight_budget=False,
+                    )
+                    _check_cleanup_result(cleanup_result, "pinned-ref")
+                except (OSError, subprocess.SubprocessError, ReviewRunnerError) as cleanup_error:
+                    note = f"CLI pinned-ref cleanup also failed: {cleanup_error}"
+                    _add_exception_note(primary_error, note)
                 if temp_root is not None:
                     shutil.rmtree(temp_root, ignore_errors=True)
                 raise
@@ -1166,6 +1288,8 @@ def run_cli_review(
                     _atomic_json(capture_dir / "metadata.json", metadata)
                     reservation_saved = True
 
+                if budget is not None:
+                    budget.set_phase("controller_admission", total=1)
                 if admit is None:
                     reserve()
                 else:
@@ -1184,6 +1308,8 @@ def run_cli_review(
                             started_at=attempt_started_at,
                             metadata=metadata,
                         )
+                    except github_api.HostedPreflightDeadlineExceeded:
+                        raise
                     except (ReviewRecordsError, OSError, sqlite3.DatabaseError):
                         records = None
                         records_warning = (
@@ -1192,6 +1318,8 @@ def run_cli_review(
                         )
                     else:
                         attempt_started = True
+                if budget is not None:
+                    budget.set_completed(1)
                 # Hosted posting and CLI preflight share request.lock. Release it
                 # only after the candidate and durable capture are pinned; the
                 # repository-wide CLI lock remains held through provider execution.
@@ -1201,7 +1329,14 @@ def run_cli_review(
                         hosted_lock_acquired = False
                     hosted_lock_handle.close()
                     hosted_lock_handle = None
+                if budget is not None:
+                    budget.set_phase("final_identity_check", total=1)
                 _verify_target_still_current(target, github, force=force)
+                if budget is not None:
+                    budget.set_completed(1)
+                    budget.set_phase("provider_boundary", total=1)
+                    budget.set_completed(1)
+                    budget.complete()
                 started = monotonic_ns()
                 try:
                     process = runner.run(
@@ -1379,37 +1514,71 @@ def run_cli_review(
                     force_reason=reason,
                 )
             finally:
+                primary_error = sys.exc_info()[1]
+                had_primary_error = primary_error is not None
+                cleanup_errors: list[Exception] = []
                 if candidate_worktree is not None:
-                    _git(
+                    try:
+                        cleanup_result = _git(
+                            runner,
+                            source_root,
+                            "worktree",
+                            "remove",
+                            "--force",
+                            str(candidate_worktree),
+                            check=False,
+                            timeout=git_timeout_seconds,
+                            enforce_preflight_budget=False,
+                        )
+                        _check_cleanup_result(cleanup_result, "worktree")
+                    except Exception as error:  # noqa: BLE001 - attempt pinned-ref cleanup even after any worktree failure
+                        cleanup_errors.append(error)
+                try:
+                    cleanup_result = _git(
                         runner,
                         source_root,
-                        "worktree",
-                        "remove",
-                        "--force",
-                        str(candidate_worktree),
+                        "update-ref",
+                        "-d",
+                        pinned_ref,
                         check=False,
                         timeout=git_timeout_seconds,
+                        enforce_preflight_budget=False,
                     )
-                _git(runner, source_root, "update-ref", "-d", pinned_ref, check=False, timeout=git_timeout_seconds)
+                    _check_cleanup_result(cleanup_result, "pinned-ref")
+                except Exception as error:  # noqa: BLE001 - preserve primary failure while recording all cleanup failures
+                    cleanup_errors.append(error)
                 if temp_root is not None:
                     shutil.rmtree(temp_root, ignore_errors=True)
+                if cleanup_errors:
+                    if not had_primary_error:
+                        primary_error = cleanup_errors.pop(0)
+                    for cleanup_error in cleanup_errors:
+                        _add_exception_note(primary_error, f"CLI candidate cleanup also failed: {cleanup_error}")
+                    if not had_primary_error:
+                        raise primary_error
         except Exception as error:
-            if capture_dir.exists():
-                (capture_dir / "error").write_text(f"{error}\n", encoding="utf-8")
-            if records is not None and attempt_started and not attempt_finished and not provider_result_saved:
-                try:
-                    records.finish_attempt(
-                        run_id,
-                        state="failed",
-                        diagnostic="CLI setup or capture failed",
-                        artifacts={"cli_diagnostic": str(error)},
-                    )
-                except (ReviewRecordsError, OSError, sqlite3.DatabaseError) as archive_error:
-                    # Keep the original provider failure while surfacing the
-                    # separate archive failure to the caller.
-                    add_note = getattr(error, "add_note", None)
-                    if callable(add_note):
-                        add_note(f"SQLite review-attempt archival also failed: {archive_error}")
+            failure_text = format_exception_notes(error)
+            with github_api.without_hosted_preflight_budget():
+                if capture_dir.exists():
+                    try:
+                        (capture_dir / "error").write_text(f"{failure_text}\n", encoding="utf-8")
+                    except OSError as capture_error:
+                        _add_exception_note(
+                            error,
+                            f"CLI failure diagnostic could not be written to its capture: {capture_error}",
+                        )
+                if records is not None and attempt_started and not attempt_finished and not provider_result_saved:
+                    try:
+                        records.finish_attempt(
+                            run_id,
+                            state="failed",
+                            diagnostic=f"CLI setup or preflight failed: {failure_text}",
+                            artifacts={"cli_diagnostic": failure_text},
+                        )
+                    except (ReviewRecordsError, OSError, sqlite3.DatabaseError) as archive_error:
+                        # Keep the original provider failure while surfacing the
+                        # separate archive failure to the caller.
+                        _add_exception_note(error, f"SQLite review-attempt archival also failed: {archive_error}")
             raise
         finally:
             try:
