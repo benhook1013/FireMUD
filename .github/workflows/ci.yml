@@ -2614,6 +2614,29 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountControlUiCredentialAuthenticationPostgresIntegrationTest#credentialEvidenceRejectsUpdateDeleteAndTruncateAndPreservesExactStoredRows()' \
             account-service
 
+      - name: Capture Account canonical issuer projection PostgreSQL and Redis raw XML
+        if: ${{ always() && matrix.module == 'account-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: account-canonical-issuer-projection-postgresql-redis-proof-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: services/account-service/build/test-results/integrationTest/TEST-*IssuerGenerationProjectionPostgresRedisIntegrationTest.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Verify Account canonical issuer projection PostgreSQL and Redis proof cases
+        if: ${{ !cancelled() && matrix.module == 'account-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.accountservice.IssuerGenerationProjectionPostgresRedisIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerGenerationProjectionPostgresRedisIntegrationTest#installsActualIssuerBaselineThenLatestAdvanceAndExactRetryWithoutSqlMutationOrTtl()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerGenerationProjectionPostgresRedisIntegrationTest#malformedProjectionAndTtlDenyWithoutRepairingStoredBytes()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerGenerationProjectionPostgresRedisIntegrationTest#aheadSourceAndSameCheckpointDifferentActualEventDenyWithoutOverwrite()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerGenerationProjectionPostgresRedisIntegrationTest#actualCommittedSourceAdvanceBetweenOwnerReadsReturnsSourceChangedWithoutImplicitRetry()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerGenerationProjectionPostgresRedisIntegrationTest#missingAndContradictoryOwnerHistoryDenyWithoutEnrollmentOrRedisWrite()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerGenerationProjectionPostgresRedisIntegrationTest#explicitInitKnownIssuerEndpointSeparationAndAclPreventRoleOrDirectEvalSubstitution()' \
+            account-service
+
       - name: Verify Account generation projection PostgreSQL and Redis proof cases
         if: ${{ !cancelled() && matrix.module == 'account-service' }}
         run: |
