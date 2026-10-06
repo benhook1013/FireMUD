@@ -35,7 +35,7 @@ previewStack:
 
   seed:
     enabled: true
-    image: postgres:16
+    image: postgres:16@sha256:65b16a8b326e0cfbdf33fa7e783f2a0cb352a61448616ccccfd616ef42aa0f65
 
   grpcTls:
     createSecret: false
@@ -55,7 +55,7 @@ previewStack:
     trustEnvironment: pr-preview
 
   postgres:
-    image: postgres:16
+    image: postgres:16@sha256:65b16a8b326e0cfbdf33fa7e783f2a0cb352a61448616ccccfd616ef42aa0f65
     database: firemud
 
   redis:
