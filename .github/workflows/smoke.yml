@@ -530,6 +530,8 @@ jobs:
             let pollIteration = 0;
             let identityDiagnostic = "current PR identity has not been resolved";
 
+            class TerminalGitHubRequestError extends Error {}
+
             async function withTransientGitHubRetry(label, operation) {
               const maxAttempts = 4;
               let retryDelayMs = 1000;
@@ -550,6 +552,9 @@ jobs:
                   const remainingMs = timeoutMs - (Date.now() - started);
                   const retryable = quotaExhausted || status == null || retryableStatuses.has(status);
                   if (!retryable || attempt === maxAttempts || delayMs >= remainingMs) {
+                    if (status === 403) {
+                      throw new TerminalGitHubRequestError(`${label}: ${error.message ?? "GitHub refused the request"}`, { cause: error });
+                    }
                     throw error;
                   }
                   core.warning(
@@ -663,6 +668,7 @@ jobs:
                   })
                 ));
               } catch (error) {
+                if (error instanceof TerminalGitHubRequestError) throw error;
                 identityDiagnostic = `${label} could not resolve the current pull request: ${error.message}`;
                 core.warning(identityDiagnostic);
                 return null;
@@ -739,6 +745,7 @@ jobs:
                   sourceEvent: "repository_dispatch",
                 };
               } catch (error) {
+                if (error instanceof TerminalGitHubRequestError) throw error;
                 identityDiagnostic = `${label} could not verify the event or trusted current-base test merge: ${error.message}`;
                 core.warning(identityDiagnostic);
                 return null;

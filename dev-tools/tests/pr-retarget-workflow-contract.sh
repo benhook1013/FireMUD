@@ -1633,7 +1633,7 @@ const quota = (reset, remaining = "0") => ({ status: 403, response: { headers: {
     const helper = make();
     let attempts = 0;
     const waits = delays.length;
-    await assert.rejects(helper.withTransientGitHubRetry("refused", async () => { attempts++; throw error; }), (caught) => caught === error);
+    await assert.rejects(helper.withTransientGitHubRetry("refused", async () => { attempts++; throw error; }), (caught) => caught.cause === error);
     assert.equal(attempts, 1, "invalid/nonquota or beyond-budget 403 must fail immediately");
     assert.equal(delays.length, waits, "refused 403 must not sleep or hammer the API");
   }
@@ -1814,8 +1814,57 @@ async function check(conclusion, expectedFailure, expectedFailureText) {
     throw new Error(`successful smoke step was rejected: ${JSON.stringify(failures)}`);
   }
 }
-setExactEventRun(101);
-check("skipped", true, "credential-free full-stack smoke step did not pass")
+async function checkIdentityQuotaFailures() {
+  const originalGet = github.rest.pulls.get;
+  const originalCommit = github.rest.repos.getCommit;
+  const originalSleep = onSmokeSleep;
+  const core = { info: () => {}, warning: () => {}, setFailed: (message) => { throw new Error(message); } };
+  setExactEventRun(100);
+  smokeStepConclusion = "success";
+  try {
+    for (const target of ["pull", "commit"]) {
+      for (const headers of [
+        { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(Math.floor(fakeNow / 1000) + 5400) },
+        { "x-ratelimit-remaining": "1", "x-ratelimit-reset": String(Math.floor(fakeNow / 1000) + 60) },
+      ]) {
+        let calls = 0, sleeps = 0;
+        const error = { status: 403, response: { headers }, message: "quota or permission refusal" };
+        const refused = async () => { calls++; throw error; };
+        github.rest.pulls.get = target === "pull" ? refused : originalGet;
+        github.rest.repos.getCommit = target === "commit" ? refused : originalCommit;
+        onSmokeSleep = () => { sleeps++; };
+        const queries = workflowRunQueries.length;
+        try {
+          await run(github, context, core);
+          throw new Error("terminal identity refusal was swallowed");
+        } catch (caught) {
+          if (caught.cause !== error) throw caught;
+        }
+        if (calls !== 1 || sleeps !== 0 || workflowRunQueries.length !== queries) throw new Error("terminal identity refusal must stop the complete gate without sleep or producer queries");
+      }
+    }
+    let calls = 0;
+    const reset = Math.floor(fakeNow / 1000) + 60;
+    const delays = [];
+    github.rest.pulls.get = async (...args) => {
+      if (++calls === 1) throw { status: 403, response: { headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(reset) } } };
+      return originalGet(...args);
+    };
+    github.rest.repos.getCommit = originalCommit;
+    onSmokeSleep = (delay) => { delays.push(delay); };
+    const jobs = jobQueries.length;
+    await run(github, context, core);
+    if (delays.length !== 1 || delays[0] < 60000 || jobQueries.length !== jobs + 1 || jobQueries.at(-1).run_id !== 100) throw new Error("within-budget identity quota reset must resume the same exact producer proof");
+  } finally {
+    github.rest.pulls.get = originalGet;
+    github.rest.repos.getCommit = originalCommit;
+    onSmokeSleep = originalSleep;
+  }
+}
+checkIdentityQuotaFailures().then(() => {
+  setExactEventRun(101);
+  return check("skipped", true, "credential-free full-stack smoke step did not pass");
+})
   .then(() => check("success", false))
   .then(() => {
     const eventRun = {
