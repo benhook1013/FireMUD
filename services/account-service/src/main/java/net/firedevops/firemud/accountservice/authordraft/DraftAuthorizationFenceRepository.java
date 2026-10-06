@@ -410,6 +410,73 @@ public final class DraftAuthorizationFenceRepository {
     return snapshot(requireExact(readOperation(binding.operationId()), binding));
   }
 
+  /** Original immutable capture only. An absent operation is UNKNOWN, never abort proof. */
+  public Optional<DraftAuthorizationFenceBinding> readOriginalBinding(UUID operationId) {
+    requireTransaction();
+    DraftAuthorizationFenceBinding.requireUuid(operationId);
+    Record row = readOperation(operationId);
+    return row == null ? Optional.empty() : Optional.of(originalBinding(row));
+  }
+
+  /** Stable keyset position, independent of mutable ordering or participant outcomes. */
+  public record RecoveryCursor(OffsetDateTime reservedAt, UUID operationId) {
+    public RecoveryCursor {
+      Objects.requireNonNull(reservedAt);
+      DraftAuthorizationFenceBinding.requireUuid(operationId);
+    }
+  }
+
+  public record UnresolvedOperation(
+      DraftAuthorizationFenceBinding binding, Ordering ordering, RecoveryCursor cursor) {}
+
+  /**
+   * Bounded discovery of original unsettled operations. Resume after the last returned cursor; an
+   * empty page ends this pass. Later passes start again to revisit still-pending operations.
+   * Discovery grants no owner permission and never captures new sources or infers expiry.
+   * Participant outcomes can advance concurrently: consumers re-read settlement before acting.
+   */
+  public List<UnresolvedOperation> readUnresolvedOperations(RecoveryCursor after, int limit) {
+    requireTransaction();
+    if (limit < 1 || limit > 100) {
+      throw new IllegalArgumentException("Recovery page limit must be between 1 and 100");
+    }
+    String pending =
+        " (f.ordering = 'RESERVED' OR (f.ordering = 'COMMIT_ORDER' AND"
+            + " (SELECT count(*) FROM "
+            + READBACKS
+            + " r WHERE r.operation_id = f.operation_id) < 2) OR"
+            + " (f.ordering = 'REVOKE_ORDER' AND (SELECT count(*) FROM "
+            + READBACKS
+            + " r WHERE r.operation_id = f.operation_id AND"
+            + " r.outcome = 'DEFINITIVELY_ABORTED') < 2))";
+    String sql = "SELECT f.* FROM " + FENCES + " f WHERE" + pending;
+    Object[] parameters;
+    if (after == null) {
+      parameters = new Object[] {limit};
+    } else {
+      sql += " AND (f.reserved_at, f.operation_id) > (?::timestamptz, ?::uuid)";
+      parameters = new Object[] {after.reservedAt(), after.operationId(), limit};
+    }
+    sql += " ORDER BY f.reserved_at, f.operation_id LIMIT ? FOR UPDATE OF f";
+    return dsl.fetch(sql, parameters).stream()
+        .map(
+            row ->
+                new UnresolvedOperation(
+                    originalBinding(row),
+                    Ordering.valueOf(row.get("ordering", String.class)),
+                    new RecoveryCursor(
+                        row.get("reserved_at", OffsetDateTime.class),
+                        row.get("operation_id", UUID.class))))
+        .toList();
+  }
+
+  private DraftAuthorizationFenceBinding originalBinding(Record row) {
+    DraftAuthorizationFenceBinding binding =
+        DraftAuthorizationFenceBinding.fromStored(row.get("binding", byte[].class));
+    requireExact(row, binding);
+    return binding;
+  }
+
   /** Derived exact settlement only; original ordering and owner readbacks remain immutable. */
   public Settlement readSettlement(DraftAuthorizationFenceBinding binding) {
     requireTransaction();
@@ -429,6 +496,14 @@ public final class DraftAuthorizationFenceRepository {
                 + " WHERE operation_id = ? AND owner = ?",
             binding.operationId(),
             owner.name());
+    if (row != null) {
+      OwnerReadback readback = OwnerReadback.fromStored(row.get("readback", byte[].class));
+      readback.requireBinding(binding);
+      if (readback.owner() != owner
+          || !readback.outcome().name().equals(row.get("outcome", String.class))) {
+        throw new IllegalStateException("Owner readback differs from persisted columns");
+      }
+    }
     return row == null
         ? Optional.empty()
         : Optional.of(
@@ -585,6 +660,7 @@ public final class DraftAuthorizationFenceRepository {
 
   private Record requireExact(Record row, DraftAuthorizationFenceBinding binding) {
     if (row == null
+        || !binding.operationId().equals(row.get("operation_id", UUID.class))
         || !Arrays.equals(row.get("binding", byte[].class), binding.canonicalBytes())
         || !binding.requestId().equals(row.get("request_id", UUID.class))
         || !binding.commitId().equals(row.get("commit_id", UUID.class))

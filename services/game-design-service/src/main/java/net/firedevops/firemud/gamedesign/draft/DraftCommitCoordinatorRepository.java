@@ -18,6 +18,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
@@ -52,6 +53,7 @@ public class DraftCommitCoordinatorRepository {
           .thenComparing(AppliedEpoch::scopeId);
 
   private final DSLContext dsl;
+  private final GameDesignDraftTerminalOutcomeRepository terminalOutcomes;
 
   @SuppressFBWarnings(
       value = "CT_CONSTRUCTOR_THROW",
@@ -59,6 +61,7 @@ public class DraftCommitCoordinatorRepository {
           "Internal collaborator only; no resources are acquired and no finalizer is used.")
   public DraftCommitCoordinatorRepository(DSLContext dsl) {
     this.dsl = Objects.requireNonNull(dsl, "dsl");
+    this.terminalOutcomes = new GameDesignDraftTerminalOutcomeRepository(dsl);
   }
 
   /**
@@ -128,6 +131,25 @@ public class DraftCommitCoordinatorRepository {
     return snapshot(persisted);
   }
 
+  /**
+   * Claims a complete Account operation alongside its coordinator binding before dispatch. The
+   * Account bytes are exact source material only; this storage operation does not authenticate them
+   * or authorize owner writes.
+   */
+  @Transactional(propagation = Propagation.MANDATORY, isolation = Isolation.READ_COMMITTED)
+  public CommitSnapshot claim(
+      DraftCommitBinding binding, DraftAuthorizationFenceBinding originalAccountBinding) {
+    requireWritableReadCommittedTransaction();
+    GameDesignDraftTerminalOperation operation =
+        new GameDesignDraftTerminalOperation(originalAccountBinding, binding);
+    LockedVersion lockedVersion = lockVersionTarget(binding.target());
+    terminalOutcomes.requireNotDefinitivelyAborted(binding);
+    terminalOutcomes.validateClaim(operation, lockedVersion);
+    CommitSnapshot snapshot = claim(binding);
+    terminalOutcomes.claim(operation, lockedVersion);
+    return snapshot;
+  }
+
   /** Reads one durable binding and its exact per-owner status vector. */
   public Optional<CommitSnapshot> read(DraftCommitBinding.TargetProof target, UUID requestId) {
     requireTargetAndRequest(target, requestId);
@@ -151,6 +173,7 @@ public class DraftCommitCoordinatorRepository {
     requireWritableReadCommittedTransaction();
     Objects.requireNonNull(binding, "binding");
     LockedVersion version = lockVersionTarget(binding.target());
+    terminalOutcomes.requireNotDefinitivelyAborted(binding);
     requireDraftVersion(version);
     requireNoPublicationSelection(binding.target());
     CommitRecord commit = findCommit(binding, true);
@@ -199,6 +222,7 @@ public class DraftCommitCoordinatorRepository {
   public OwnerState markOwnerInProgress(DraftCommitBinding binding, Owner owner) {
     requireWritableReadCommittedTransaction();
     LockedVersion version = lockVersionTarget(binding.target());
+    terminalOutcomes.requireNotDefinitivelyAborted(binding);
     requireDraftVersion(version);
     requireNoPublicationSelection(binding.target());
     requireExactCommitInTransaction(binding);
@@ -242,6 +266,7 @@ public class DraftCommitCoordinatorRepository {
     requireWritableReadCommittedTransaction();
     Objects.requireNonNull(outcome, "outcome");
     LockedVersion version = lockVersionTarget(binding.target());
+    terminalOutcomes.requireNotDefinitivelyAborted(binding);
     requireExactCommitInTransaction(binding);
     requireOutcomeMatches(binding, outcome);
     OwnerState current = requireOwnerState(binding, outcome.owner(), true);
@@ -301,6 +326,7 @@ public class DraftCommitCoordinatorRepository {
     requireWritableReadCommittedTransaction();
     Objects.requireNonNull(coordinatorProof, "coordinatorProof");
     LockedVersion version = lockVersionTarget(binding.target());
+    terminalOutcomes.requireNotDefinitivelyAborted(binding);
     CommitRecord commit = requireCommit(binding, true);
     requireExactBinding(binding, commit.binding());
     if (!coordinatorProof.matches(binding)) {
@@ -317,6 +343,7 @@ public class DraftCommitCoordinatorRepository {
         throw new DraftCommitIdentityConflictException(
             "A Draft commit visibility fence already retains different owner evidence");
       }
+      terminalOutcomes.recordCommitted(binding, existing, resultVectorJson, false);
       return existing;
     }
     if (commit.workflowState() == WorkflowState.SYNCHRONIZED
@@ -352,6 +379,12 @@ public class DraftCommitCoordinatorRepository {
         throw new DraftCommitIdentityConflictException(
             "A concurrent Draft visibility fence retained different owner evidence");
       }
+      CommitRecord concurrent = requireCommit(binding, true);
+      if (concurrent.workflowState() != WorkflowState.SYNCHRONIZED) {
+        throw new DraftCommitStateConflictException(
+            "A pre-existing visibility fence is not paired with synchronized workflow state");
+      }
+      terminalOutcomes.recordCommitted(binding, persisted, resultVectorJson, false);
       return persisted;
     }
     dsl.execute(
@@ -367,6 +400,7 @@ public class DraftCommitCoordinatorRepository {
         binding.commitId(),
         binding.digest());
     updateWorkflowState(binding, WorkflowState.SYNCHRONIZED);
+    terminalOutcomes.recordCommitted(binding, persisted, resultVectorJson, true);
     return persisted;
   }
 
@@ -519,6 +553,10 @@ public class DraftCommitCoordinatorRepository {
         throw new DraftCommitStateConflictException(
             "A rejected Draft commit with any applied owner requires reconciliation");
       }
+      if (terminalOutcomes.isAccountBound(binding)) {
+        throw new DraftCommitStateConflictException(
+            "An Account-bound Draft commit requires its exact final-abort tombstone and complete owner vector");
+      }
       if (commit.workflowState() != WorkflowState.APPLYING
           && commit.workflowState() != WorkflowState.RECONCILIATION_REQUIRED) {
         throw new DraftCommitStateConflictException(
@@ -572,9 +610,15 @@ public class DraftCommitCoordinatorRepository {
             "Durable final-abort evidence is not paired with terminal nonpublication state");
       }
       requireFinalAbortSlotRelease(binding, commit);
+      terminalOutcomes.recordAborted(
+          binding,
+          toFinalAbortReceipt(binding, existingAbort),
+          exactTerminalAbortResultVector(binding, lockAndReadOwnerStates(binding)),
+          false);
       return toFinalAbortReceipt(binding, existingAbort);
     }
 
+    terminalOutcomes.requireNotDefinitivelyAborted(binding);
     requireDraftVersion(version);
     requireNoPublicationSelection(binding.target());
     if (slotRecord == null) {
@@ -620,10 +664,20 @@ public class DraftCommitCoordinatorRepository {
         throw new DraftCommitStateConflictException(
             "Concurrent final-abort evidence has no terminal nonpublication state");
       }
+      terminalOutcomes.recordAborted(
+          binding,
+          toFinalAbortReceipt(binding, persisted),
+          exactTerminalAbortResultVector(binding, ownerStates),
+          false);
       return toFinalAbortReceipt(binding, persisted);
     }
 
     updateWorkflowState(binding, WorkflowState.FAILED_NONPUBLICATION);
+    terminalOutcomes.recordAborted(
+        binding,
+        toFinalAbortReceipt(binding, persisted),
+        exactTerminalAbortResultVector(binding, ownerStates),
+        true);
     return toFinalAbortReceipt(binding, persisted);
   }
 
@@ -673,6 +727,24 @@ public class DraftCommitCoordinatorRepository {
                           "Definitive final-abort evidence requires durable owner result bytes"));
       requireOutcomeMatches(binding, outcome);
     }
+  }
+
+  private String exactTerminalAbortResultVector(
+      DraftCommitBinding binding, List<OwnerState> ownerStates) {
+    requireCompleteTerminalAbortVector(binding, ownerStates);
+    List<Map<String, Object>> resultVector = new ArrayList<>();
+    for (Owner owner : binding.requiredOwners()) {
+      OwnerState state =
+          ownerStates.stream()
+              .filter(candidate -> candidate.owner() == owner)
+              .findFirst()
+              .orElseThrow(
+                  () ->
+                      new DraftCommitStateConflictException(
+                          "Definitive final-abort evidence cannot omit a required owner result"));
+      resultVector.add(ownerResultJson(state.outcome().orElseThrow()));
+    }
+    return canonicalJson(resultVector);
   }
 
   private void updateWorkflowStateAfterOwnerOutcome(

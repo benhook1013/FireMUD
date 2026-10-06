@@ -159,6 +159,55 @@ public class AccountTenantCreationBootstrapService {
     return returned;
   }
 
+  /**
+   * Reads an already committed creator-control source under the existing Account/source locks. This
+   * immutable source capture authenticates no caller and grants no authoring or gameplay
+   * permission. Historical receipt recovery is verified separately from current source equality.
+   */
+  @Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
+  public AccountMembershipAuthorityEventProducer.CreatorControlCaptureSources
+      readExistingCreatorControlCaptureSources(UUID accountUuid, UUID tenantUuid) {
+    requireWritableOwnerTransaction();
+    return eventProducer.readExistingCreatorControlCaptureSources(
+        accountUuid,
+        tenantUuid,
+        () -> {
+          UUID requestId =
+              operationRepository
+                  .findRequestIdByTenantForUpdate(tenantUuid)
+                  .orElseThrow(
+                      () ->
+                          new IllegalStateException(
+                              "Committed creator-bootstrap operation is absent"));
+          StoredOperation operation =
+              operationRepository
+                  .findForUpdate(requestId)
+                  .orElseThrow(
+                      () ->
+                          new IllegalStateException(
+                              "Committed creator-bootstrap receipt is absent"));
+          FreshTenantCreationEvidence creation =
+              tenantAssociationRepository
+                  .read(tenantUuid)
+                  .orElseThrow(
+                      () -> new IllegalStateException("Creator fresh tenant source is absent"));
+          if (!accountUuid.equals(operation.initiatingAccountUuid())) {
+            throw new IllegalStateException("Creator-bootstrap receipt belongs to another Account");
+          }
+          FreshTenantCreatorEvidence evidence =
+              new FreshTenantCreatorEvidence(
+                  1,
+                  creation,
+                  accountUuid,
+                  operation.accountAuthorizationOperationId(),
+                  operation.accountAuthorizationDigest(),
+                  operation.creatorEvidenceDigest());
+          replayExactOriginal(evidence, operation);
+          operationRepository.assertNoContradictoryMembershipHistory(accountUuid, tenantUuid);
+          return operation;
+        });
+  }
+
   private AccountTenantCreationBootstrapResult commitNew(
       FreshTenantCreatorEvidence evidence, Account creator) {
     requireWritableOwnerTransaction();

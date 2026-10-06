@@ -139,7 +139,8 @@ class WorldDraftTopologyCommitRepositoryTest {
             UUID.randomUUID(),
             List.of(
                 new WorldDraftTopologyInputGraph.Node(
-                    "4", revision, template, template, parsed.build(), null)));
+                    "4", revision, template, template, parsed.build(), null)),
+            null);
     when(plan.graph()).thenReturn(graph);
     var projection = repository.executionRevisions(plan);
     assertThat(projection).hasSize(1);

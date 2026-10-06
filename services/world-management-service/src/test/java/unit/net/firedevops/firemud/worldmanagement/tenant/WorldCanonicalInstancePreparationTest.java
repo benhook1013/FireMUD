@@ -14,6 +14,7 @@ import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.gamedesign.v1.WorldDesignMutationRevision;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredGraphSnapshot.CaptureRequest;
@@ -29,6 +30,166 @@ import org.junit.jupiter.api.Test;
 import org.springframework.dao.DuplicateKeyException;
 
 class WorldCanonicalInstancePreparationTest {
+  @Test
+  void exactReleaseGraphJoinAcceptsMatchingCheckpointAndDistinctPublishedEpoch() throws Exception {
+    var fixture = releaseGraphFixture();
+    WorldCanonicalInstancePreparation.requireExactReleaseGraph(fixture.release(), fixture.plan());
+    assertThat(fixture.release().versionStateEpoch())
+        .isGreaterThan(fixture.plan().sourceBinding().freeze().versionStateEpoch());
+  }
+
+  @Test
+  void exactReleaseGraphJoinRejectsChangedCommitDigestSchemaVersionAndWorkflow() throws Exception {
+    var fixture = releaseGraphFixture();
+    var source = fixture.plan().sourceBinding();
+    var freeze = source.freeze();
+    for (var changed :
+        List.of(
+            releaseFor(
+                source,
+                UUID.randomUUID(),
+                freeze.appliedCommitId(),
+                freeze.contentDigest(),
+                freeze.publishWorkflowId()),
+            releaseFor(
+                source,
+                freeze.canonicalVersionId(),
+                UUID.randomUUID().toString(),
+                freeze.contentDigest(),
+                freeze.publishWorkflowId()),
+            releaseFor(
+                source,
+                freeze.canonicalVersionId(),
+                freeze.appliedCommitId(),
+                "6".repeat(64),
+                freeze.publishWorkflowId()),
+            releaseFor(
+                source,
+                freeze.canonicalVersionId(),
+                freeze.appliedCommitId(),
+                freeze.contentDigest(),
+                "another-workflow"))) {
+      assertThatThrownBy(
+              () ->
+                  WorldCanonicalInstancePreparation.requireExactReleaseGraph(
+                      changed, fixture.plan()))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+    var changedSchema =
+        new CaptureRequest(
+            freeze.targetNamespace(),
+            freeze.canonicalTenantId(),
+            freeze.canonicalVersionId(),
+            freeze.intakeRequestId(),
+            freeze.publicationFence(),
+            freeze.publicationRequestId(),
+            freeze.requestDigest(),
+            freeze.versionStateEpoch(),
+            freeze.publishWorkflowId(),
+            freeze.appliedCommitId(),
+            freeze.contentDigest(),
+            2,
+            freeze.suppliedOwnedAffectedTuples());
+    when(fixture.plan().sourceBinding()).thenReturn(new Request(source.plan(), changedSchema));
+    assertThatThrownBy(
+            () ->
+                WorldCanonicalInstancePreparation.requireExactReleaseGraph(
+                    fixture.release(), fixture.plan()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("World participant differs");
+  }
+
+  private record ReleaseGraphFixture(
+      AuthoredWorldReleaseAttestationEvidence release, WorldCanonicalInstanceTopologyPlan plan) {}
+
+  private static ReleaseGraphFixture releaseGraphFixture() throws Exception {
+    UUID tenant = UUID.randomUUID();
+    UUID version = UUID.randomUUID();
+    UUID commit = UUID.randomUUID();
+    UUID revision = UUID.randomUUID();
+    UUID region = UUID.randomUUID();
+    var owner = ownerBinding(tenant, version);
+    var binding =
+        DraftCommitBinding.create(
+            new DraftCommitBinding.TargetProof(
+                tenant, version, 41L, "gd-tenant", 42L, "gd-tenant", "NEW_GAME_ROW"),
+            UUID.randomUUID(),
+            commit,
+            "base",
+            List.of(
+                new DraftCommitBinding.RevisionPayload(
+                    "0",
+                    revision,
+                    Owner.WORLD_MANAGEMENT,
+                    JsonFormat.printer()
+                        .print(regionMutation(commit, revision, region, "Region")))),
+            List.of(
+                new AffectedUnit(
+                    Owner.WORLD_MANAGEMENT,
+                    "REGION",
+                    region.toString(),
+                    "AGGREGATE",
+                    region.toString(),
+                    "0"),
+                new AffectedUnit(
+                    Owner.WORLD_MANAGEMENT,
+                    "REGION",
+                    region.toString(),
+                    "REGION_SUBTREE",
+                    region.toString(),
+                    "0")));
+    var freeze = freezeRequest(owner, binding);
+    var source = new Request(WorldDraftTopologyCommitPlan.create(binding, owner), freeze);
+    var plan = mock(WorldCanonicalInstanceTopologyPlan.class);
+    when(plan.sourceBinding()).thenReturn(source);
+    when(plan.tenantId()).thenReturn(tenant);
+    when(plan.versionId()).thenReturn(version);
+    return new ReleaseGraphFixture(
+        releaseFor(
+            source, version, commit.toString(), freeze.contentDigest(), freeze.publishWorkflowId()),
+        plan);
+  }
+
+  private static AuthoredWorldReleaseAttestationEvidence releaseFor(
+      Request source, UUID version, String commit, String worldDigest, String workflow) {
+    var participants =
+        AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
+            .map(
+                owner ->
+                    new AuthoredWorldReleaseAttestationEvidence.Participant(
+                        owner,
+                        Long.toString(source.plan().ownerBinding().gameDesignVersionId()),
+                        false,
+                        null,
+                        commit,
+                        "WORLD_MANAGEMENT".equals(owner) ? worldDigest : "a".repeat(64),
+                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                            owner),
+                        "GAME_LOGIC".equals(owner),
+                        "GAME_LOGIC".equals(owner) ? "sha256:" + "b".repeat(64) : null))
+            .toList();
+    return AuthoredWorldReleaseAttestationEvidence.create(
+        source.freeze().targetNamespace(),
+        "sha256:" + "1".repeat(64),
+        source.freeze().canonicalTenantId(),
+        version,
+        "synthetic-world",
+        UUID.randomUUID(),
+        "sha256:" + "2".repeat(64),
+        "descriptor",
+        "release",
+        8L,
+        workflow,
+        commit,
+        participants,
+        "sha256:" + "3".repeat(64),
+        1,
+        List.of(),
+        List.of(),
+        List.of(),
+        "generation");
+  }
+
   @Test
   void translatesV35DifferentPreparationConflictAndPreservesCause() {
     DuplicateKeyException databaseFailure =
@@ -354,13 +515,17 @@ class WorldCanonicalInstancePreparationTest {
             new WorldDraftTopologyInputGraph.Node(
                 "0", revisionId, regionId, regionId, mutation, null),
             new WorldDraftTopologyInputGraph.Node(
-                "1", secondRevisionId, secondRegionId, secondRegionId, secondMutation, null)));
+                "1", secondRevisionId, secondRegionId, secondRegionId, secondMutation, null)),
+        null);
   }
 
   private static WorldDraftTopologyInputGraph reverseTopologyGraph(
       WorldDraftTopologyInputGraph graph) {
     return new WorldDraftTopologyInputGraph(
-        graph.tenantId(), graph.versionId(), List.of(graph.nodes().get(1), graph.nodes().get(0)));
+        graph.tenantId(),
+        graph.versionId(),
+        List.of(graph.nodes().get(1), graph.nodes().get(0)),
+        graph.freshGraphDeclaration().orElse(null));
   }
 
   private static OwnerBinding ownerBinding(UUID tenantId, UUID versionId) {

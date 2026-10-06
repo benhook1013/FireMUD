@@ -464,3 +464,15 @@ Entry format:
   - Context: Document erroneously passed an implementation completion note as a rejected finding when completing controller attempt `gd-versionless-creation-reservation-r1-20261006`. The helper found no independent obligation, but the resulting record displays one finding. A second completion without that note is rejected because imported content is immutable.
   - Expected pattern: complete a zero-finding helper with no `--finding-json`; record its implementation output and limits in the job, not as a fabricated finding. Read back counts immediately. Do not edit SQLite directly to conceal a mistake.
   - Outcome: Document reported the exact erroneous attempt and correction-command gap to Overseer in controller message `6d42f60d-c5b5-4e75-ace6-f1449287267e`. The actual discovery count is zero; an audited controller correction remains pending.
+
+- `2026-10-06`: Independently decoded authority evidence needs semantic or byte-exact comparison
+  - Context: Account creator-bootstrap readback denied a valid independently decoded membership event because the event class used Java identity equality. A new terminal-read fixture also initially compared records containing byte arrays through default record equality, which has the same reference-equality limitation.
+  - Outcome: Account checkpoint `5105c4fbb22e49e7910a13b7e888af6e57b8bdb5` compares the complete canonical event JSON after independent binding/digest validation. Terminal fixtures compare complete canonical bytes and binding/result bytes, retaining all negative checks. Do not infer equality of independently reconstructed evidence from default class, array, record or `Optional.contains` equality; compare the owning complete canonical representation.
+
+- `2026-10-07`: Plain-SQL recovery cursors need PostgreSQL parameter-type proof
+  - Context: #3021's Docker-free checks passed, but exact-source PostgreSQL CI37458361299 rejected the second Account recovery page because its `OffsetDateTime` cursor parameter arrived as varchar in a tuple comparison against `TIMESTAMPTZ`.
+  - Outcome: the prepared query adds explicit timestamp and UUID casts while preserving the original keyset ordering and operation checks. Corrected execution remains required; compilation, mocked SQL and schema generation do not prove parameter binding. Include a non-initial-page case in the owning database proof.
+
+- `2026-10-07`: Do not feed truncated command captures into a mechanical patch
+  - Context: a source-stage preservation attempt read a large CI workflow through a bounded command capture. The truncation notice entered the proposed patch; `apply_patch` rejected it before modifying the isolated worktree.
+  - Outcome: use the bounded actual diff for tracked files, check captures for truncation before constructing a patch, and read complete content only for small new files. The retry preserved the source stage without changing the concurrently prepared carrier.

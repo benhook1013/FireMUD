@@ -48,6 +48,7 @@ import net.firedevops.firemud.accountservice.repository.AccountMembershipTransit
 import net.firedevops.firemud.accountservice.repository.AccountMembershipTransitionReceiptRepository.TransitionReceiptEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantCreationBootstrapOperationRepository.StoredOperation;
 import net.firedevops.firemud.accountservice.repository.AccountTenantIdentityResolver;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository.JoinMembershipProof;
@@ -1182,6 +1183,201 @@ public class AccountMembershipAuthorityEventProducer {
         roleSource,
         Optional.ofNullable(retainedAssociation),
         freshAssociation);
+  }
+
+  /**
+   * Distinct creator-control source composition. Only the bootstrap owner supplies the locked,
+   * verified original receipt; this package-local path never constructs a gameplay snapshot.
+   */
+  CreatorControlCaptureSources readExistingCreatorControlCaptureSources(
+      UUID accountUuid, UUID tenantUuid, Supplier<StoredOperation> verifiedOriginalReceipt) {
+    requireWritableOwnerTransaction();
+    requireCanonicalUuidInput(accountUuid, "Account UUID");
+    requireCanonicalUuidInput(tenantUuid, "tenant UUID");
+    Account account =
+        accountRepository
+            .findByAccountUuid(accountUuid)
+            .orElseThrow(() -> new IllegalStateException("Creator Account source is absent"));
+    requirePersistedAccountIdentity(account, accountUuid);
+    joinOperationRepository.lockAccount(account.getId());
+    CompositeSnapshot authority = readSnapshot(accountUuid, tenantUuid);
+    CurrentSourceEvidence upstream =
+        readCurrentUpstreamSourceEvidence(accountUuid, tenantUuid, authority);
+    FreshTenantCreationEvidence creation =
+        freshTenantIdentityAssociationRepository
+            .read(tenantUuid)
+            .orElseThrow(() -> new IllegalStateException("Creator fresh tenant source is absent"));
+    var receipt = Objects.requireNonNull(verifiedOriginalReceipt.get());
+    var provenance = freshTenantProvenance(creation);
+    Identity identity = new Identity(account.getId(), null, accountUuid, tenantUuid, provenance);
+    PairAuthority pair =
+        pairAuthorityRepository
+            .readForUpdate(accountUuid, tenantUuid)
+            .orElseThrow(() -> new IllegalStateException("Creator pair source is absent"));
+    AccountTenantMembership membership =
+        membershipRepository
+            .findCanonicalMembershipForUpdate(accountUuid, tenantUuid)
+            .orElseThrow(
+                () -> new IllegalStateException("Creator control membership source is absent"));
+    if (membership.getAccount() == null) {
+      throw new IllegalStateException("Creator control membership Account is absent");
+    }
+    requirePersistedAccountIdentity(membership.getAccount(), accountUuid);
+    ScopeState memberSource = only(authority.memberships(), "membership");
+    requireMatchingFence(authority, memberSource, accountUuid);
+    if (!"COMMITTED".equals(receipt.status())
+        || !accountUuid.equals(receipt.initiatingAccountUuid())
+        || !tenantUuid.equals(receipt.tenantUuid())
+        || !creation.operationId().equals(receipt.creationOperationId())
+        || !creation.creationRequestId().equals(receipt.creationRequestId())
+        || !Objects.equals(account.getId(), membership.getAccount().getId())
+        || !tenantUuid.equals(membership.getTenantUuid())
+        || membership.getTenantId() != null
+        || !provenance.kind().name().equals(membership.getTenantProvenanceKind())
+        || !provenance.sourceOperationId().equals(membership.getTenantSourceOperationId())
+        || !provenance.digest().equals(membership.getTenantProvenanceDigest())
+        || !"TENANT_CREATION".equals(membership.getAuthorityProvenance())
+        || !"ACTIVE".equals(membership.getLifecycleState())
+        || membership.isGameplayAdmissionAllowed()
+        || !Objects.equals(receipt.membershipId(), membership.getId())
+        || !Objects.equals(receipt.membershipVersion(), membership.getMembershipVersion())
+        || !Objects.equals(
+            receipt.membershipAuthorityGeneration(), membership.getMembershipAuthorityGeneration())
+        || receipt.baselineEventSequence() != 0L
+        || membership.getMembershipVersion()
+            != Math.incrementExact(receipt.baselineMembershipVersion())
+        || membership.getMembershipAuthorityGeneration()
+            != receipt.baselineMembershipAuthorityGeneration()
+        || memberSource.generation() != membership.getMembershipAuthorityGeneration()) {
+      throw new IllegalStateException(
+          "Creator control membership differs from its exact bootstrap source");
+    }
+    RoleSnapshot roles =
+        roleSnapshotRepository
+            .findForCanonicalUpdate(
+                accountUuid,
+                tenantUuid,
+                provenance,
+                membership.getId(),
+                membership.getMembershipVersion())
+            .orElseThrow(() -> new IllegalStateException("Creator control role source is absent"));
+    if (!List.of("tenantAdmin").equals(roles.roles())
+        || roles.accountId() != account.getId()
+        || roles.tenantId() != null
+        || !accountUuid.equals(roles.accountUuid())
+        || !tenantUuid.equals(roles.tenantUuid())
+        || !provenance.equals(roles.tenantProvenance())
+        || roles.membershipId() != membership.getId()
+        || roles.snapshotVersion() != membership.getMembershipVersion()
+        || !Arrays.equals(
+            receipt.membershipRolesPayload(),
+            "[\"tenantAdmin\"]".getBytes(StandardCharsets.UTF_8))) {
+      throw new IllegalStateException(
+          "Creator control roles differ from the exact bootstrap receipt");
+    }
+    String stream = membershipStreamKey(identity);
+    Checkpoint checkpoint =
+        authorityOutboxRepository
+            .readCheckpoint(stream)
+            .orElseThrow(
+                () -> new IllegalStateException("Creator current event checkpoint is absent"));
+    Event event =
+        authorityOutboxRepository
+            .findEvent(stream, checkpoint.outboxSequence())
+            .orElseThrow(() -> new IllegalStateException("Creator current event source is absent"));
+    MembershipEvent verified = verifyStoredEvent(event, identity, receipt.eventRequestId());
+    if (checkpoint.outboxSequence() != 1L
+        || !checkpointMatches(checkpoint, event)
+        || !stream.equals(receipt.eventStreamKey())
+        || !Objects.equals(receipt.eventSequence(), 1L)
+        || !event.eventId().equals(receipt.eventId())
+        || !event.eventDigest().equals(receipt.eventDigest())
+        || !Arrays.equals(event.payload(), receipt.eventPayload())
+        || !pair.equals(
+            new PairAuthority(
+                accountUuid,
+                tenantUuid,
+                provenance,
+                true,
+                membership.getMembershipVersion(),
+                membership.getMembershipAuthorityGeneration(),
+                1L,
+                event.eventId(),
+                event.eventDigest(),
+                false))) {
+      throw new IllegalStateException(
+          "Creator control event or pair differs from the bootstrap receipt");
+    }
+    List<OutboxCheckpointEntry> checkpoints = new ArrayList<>(upstream.checkpoints());
+    checkpoints.add(new OutboxCheckpointEntry(stream, "1"));
+    List<OutboxSourceEvidence> sources = new ArrayList<>(upstream.sourceEvidence());
+    sources.add(sourceEvidence(checkpoint, event));
+    AuthorityTuple tuple = currentAuthorityTuple(tenantUuid, authority, upstream);
+    Map<String, String> version =
+        Map.of(tenantUuid.toString(), Long.toString(membership.getMembershipVersion()));
+    var boundEvent =
+        RuntimeMembershipAuthorityEvidenceValidator.validate(
+            validatorSnapshot(
+                accountUuid.toString(),
+                tenantUuid.toString(),
+                true,
+                "ACTIVE",
+                false,
+                version,
+                Long.toString(memberSource.generation()),
+                List.of("tenantAdmin"),
+                tuple,
+                decimal(authority.issuanceFence().value()),
+                orderedCheckpoints(checkpoints),
+                orderedSourceEvidence(sources)));
+    if (boundEvent.isEmpty()
+        || !verified.canonicalJson().equals(boundEvent.orElseThrow().canonicalJson())
+        || verified.callerBoundAuthorityInvalidated()) {
+      throw new IllegalStateException(
+          "Creator control event does not bind the current source capture");
+    }
+    requireUnchangedAccountIdentity(account, accountUuid);
+    if (!Optional.of(creation).equals(freshTenantIdentityAssociationRepository.read(tenantUuid))) {
+      throw new IllegalStateException("Creator fresh tenant source changed during capture");
+    }
+    return new CreatorControlCaptureSources(
+        accountUuid,
+        tenantUuid,
+        authority,
+        version,
+        tuple,
+        decimal(authority.issuanceFence().value()),
+        pair,
+        roles,
+        creation,
+        receipt,
+        verified,
+        orderedCheckpoints(checkpoints),
+        orderedSourceEvidence(sources),
+        Instant.now());
+  }
+
+  /** Existing control-only source evidence, never a runtime admission or authoring permission. */
+  public record CreatorControlCaptureSources(
+      UUID accountUuid,
+      UUID tenantUuid,
+      CompositeSnapshot authoritySnapshot,
+      Map<String, String> membershipVersion,
+      AuthorityTuple authorityTuple,
+      String issuanceFence,
+      PairAuthority pairSource,
+      RoleSnapshot roleSource,
+      FreshTenantCreationEvidence creationSource,
+      StoredOperation bootstrapReceipt,
+      MembershipEvent sourceEvent,
+      List<OutboxCheckpointEntry> outboxCheckpoints,
+      List<OutboxSourceEvidence> outboxSourceEvidence,
+      Instant evaluatedAt) {
+    public CreatorControlCaptureSources {
+      membershipVersion = Map.copyOf(membershipVersion);
+      outboxCheckpoints = List.copyOf(outboxCheckpoints);
+      outboxSourceEvidence = List.copyOf(outboxSourceEvidence);
+    }
   }
 
   private Optional<RoleSnapshot> readExactExistingRoleSource(

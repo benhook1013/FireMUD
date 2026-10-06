@@ -668,7 +668,7 @@ class GameAuthoredWorldSourceDeliveryMtlsIntegrationTest {
       throws Exception {
     Path clientCertificate = temporaryDirectory.resolve(label + "-client.crt");
     Path clientPrivateKey = temporaryDirectory.resolve(label + "-client.key");
-    Path caCertificate = temporaryDirectory.resolve("test-ca.crt");
+    Path caCertificate = temporaryDirectory.resolve(label + "-ca.crt");
     Files.writeString(
         clientCertificate, pem("CERTIFICATE", certificate.certificate().getEncoded()));
     Files.writeString(clientPrivateKey, pem("PRIVATE KEY", certificate.privateKey().getEncoded()));

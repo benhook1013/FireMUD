@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -21,6 +22,7 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
+import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection.PublishIntent;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepository.SelectionSnapshot;
 import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository.ApplicationSlot;
@@ -29,6 +31,8 @@ import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository.
 import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository.DraftCommitStateConflictException;
 import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository.OwnerOutcome;
 import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository.OwnerStatus;
+import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository.PublicationEvidence;
+import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository.VisibilityFence;
 import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository.WorkflowState;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.Version;
@@ -71,6 +75,9 @@ class AuthoredDraftPublishSelectionRepositoryIntegrationTest {
   void v45PreservesRetainedAttemptDigestsAndStoresExactSelectionDigest() {
     Fixture retained = createFixture("44");
     VersionFixture version = retained.newVersion(1L);
+    DraftCommitBinding commit = binding(version.target(), UUID.randomUUID(), UUID.randomUUID());
+    PublishIntent intent = intent(version, commit, "exact selection");
+    SelectionSnapshot selected = insertHistoricalSelection(retained, version, commit, intent);
     for (int index = 0; index < 3; index++) {
       retained
           .dsl()
@@ -103,9 +110,16 @@ class AuthoredDraftPublishSelectionRepositoryIntegrationTest {
                         + "AND column_name = 'request_digest'",
                     retained.schema()))
         .isEqualTo(71);
-    DraftCommitBinding commit = binding(version.target(), UUID.randomUUID(), UUID.randomUUID());
-    retained.synchronize(commit);
-    SelectionSnapshot selected = reserve(retained, intent(version, commit, "exact selection"));
+    Map<String, List<Map<String, Object>>> coordinatorBeforeLatest =
+        retainedCoordinatorRows(retained);
+    migrate(retained.dataSource(), retained.schema(), null);
+    assertThat(retainedCoordinatorRows(retained))
+        .usingRecursiveComparison()
+        .isEqualTo(coordinatorBeforeLatest);
+    assertThat(
+            retained.dsl().fetchCount(DSL.table(DSL.name("game_design_draft_terminal_operation"))))
+        .isZero();
+    assertThat(reserve(retained, intent)).isEqualTo(selected);
     String workflowId = "selected-attempt-" + UUID.randomUUID();
     retained
         .dsl()
@@ -145,16 +159,16 @@ class AuthoredDraftPublishSelectionRepositoryIntegrationTest {
         binding(second.target(), UUID.randomUUID(), UUID.randomUUID());
     DraftCommitBinding otherCommit =
         binding(otherTenant.target(), UUID.randomUUID(), UUID.randomUUID());
-    retained.synchronize(firstCommit);
-    retained.synchronize(secondCommit);
-    retained.synchronize(otherCommit);
     PublishIntent firstIntent = intent(first, firstCommit, "retained notes \"quoted\"\n世界");
     PublishIntent secondIntent = intent(second, secondCommit, "second retained selection");
     PublishIntent otherIntent =
         sameRequestIntent(otherTenant, otherCommit, firstIntent.publishRequestId());
-    SelectionSnapshot firstSelection = reserve(retained, firstIntent);
-    SelectionSnapshot secondSelection = reserve(retained, secondIntent);
-    SelectionSnapshot otherSelection = reserve(retained, otherIntent);
+    SelectionSnapshot firstSelection =
+        insertHistoricalSelection(retained, first, firstCommit, firstIntent);
+    SelectionSnapshot secondSelection =
+        insertHistoricalSelection(retained, second, secondCommit, secondIntent);
+    SelectionSnapshot otherSelection =
+        insertHistoricalSelection(retained, otherTenant, otherCommit, otherIntent);
     List<Map<String, Object>> before = retainedSelectionRows(retained);
     assertThat(before).hasSize(3);
 
@@ -164,15 +178,27 @@ class AuthoredDraftPublishSelectionRepositoryIntegrationTest {
     assertRetainedSelection(retained, firstSelection);
     assertRetainedSelection(retained, secondSelection);
     assertRetainedSelection(retained, otherSelection);
-    assertThat(reserve(retained, firstIntent)).isEqualTo(firstSelection);
-    assertThat(reserve(retained, secondIntent)).isEqualTo(secondSelection);
-    assertThat(reserve(retained, otherIntent)).isEqualTo(otherSelection);
     assertThat(retainedSelectionRows(retained)).isEqualTo(before);
     assertThat(
             retained
                 .dsl()
                 .fetchCount(DSL.table(DSL.name(FLYWAY_TABLE)), DSL.field("version").eq("44")))
         .isEqualTo(1);
+
+    Map<String, List<Map<String, Object>>> coordinatorBeforeLatest =
+        retainedCoordinatorRows(retained);
+    migrate(retained.dataSource(), retained.schema(), null);
+    assertThat(retainedCoordinatorRows(retained))
+        .usingRecursiveComparison()
+        .isEqualTo(coordinatorBeforeLatest);
+
+    assertThat(
+            retained.dsl().fetchCount(DSL.table(DSL.name("game_design_draft_terminal_operation"))))
+        .isZero();
+    assertThat(reserve(retained, firstIntent)).isEqualTo(firstSelection);
+    assertThat(reserve(retained, secondIntent)).isEqualTo(secondSelection);
+    assertThat(reserve(retained, otherIntent)).isEqualTo(otherSelection);
+    assertThat(retainedSelectionRows(retained)).isEqualTo(before);
   }
 
   @Test
@@ -183,15 +209,14 @@ class AuthoredDraftPublishSelectionRepositoryIntegrationTest {
     DraftCommitBinding firstCommit = binding(first.target(), UUID.randomUUID(), UUID.randomUUID());
     DraftCommitBinding secondCommit =
         binding(second.target(), UUID.randomUUID(), UUID.randomUUID());
-    retained.synchronize(firstCommit);
-    retained.synchronize(secondCommit);
     PublishIntent firstIntent = intent(first, firstCommit, "first retained history");
     PublishIntent secondIntent =
         sameRequestIntent(second, secondCommit, firstIntent.publishRequestId());
-    SelectionSnapshot firstSelection = reserve(retained, firstIntent);
+    SelectionSnapshot firstSelection =
+        insertHistoricalSelection(retained, first, firstCommit, firstIntent);
     // V43 permitted this exact tenant/request reuse across Versions. The current repository
     // prevents it, so insert the historically valid second selection under V43's real triggers.
-    insertPreV44Selection(retained, second, secondIntent);
+    insertPreV44Selection(retained, second, secondCommit, secondIntent);
     SelectionSnapshot secondSelection =
         retained
             .selections()
@@ -236,6 +261,54 @@ class AuthoredDraftPublishSelectionRepositoryIntegrationTest {
         .intoMaps();
   }
 
+  private static Map<String, List<Map<String, Object>>> retainedCoordinatorRows(Fixture retained) {
+    return Map.of(
+        "game_design_draft_commit",
+        retained
+            .dsl()
+            .fetch(
+                "SELECT * FROM game_design_draft_commit "
+                    + "ORDER BY canonical_tenant_id, canonical_version_id, request_id")
+            .intoMaps(),
+        "game_design_draft_commit_owner_result",
+        retained
+            .dsl()
+            .fetch(
+                "SELECT * FROM game_design_draft_commit_owner_result "
+                    + "ORDER BY canonical_tenant_id, canonical_version_id, request_id, owner")
+            .intoMaps(),
+        "game_design_draft_commit_visibility_fence",
+        retained
+            .dsl()
+            .fetch(
+                "SELECT * FROM game_design_draft_commit_visibility_fence "
+                    + "ORDER BY canonical_tenant_id, canonical_version_id, request_id, commit_id")
+            .intoMaps(),
+        "game_design_draft_commit_visibility",
+        retained
+            .dsl()
+            .fetch(
+                "SELECT * FROM game_design_draft_commit_visibility "
+                    + "ORDER BY canonical_tenant_id, canonical_version_id")
+            .intoMaps(),
+        "game_design_draft_commit_application_slot",
+        retained
+            .dsl()
+            .fetch(
+                "SELECT * FROM game_design_draft_commit_application_slot "
+                    + "ORDER BY canonical_tenant_id, canonical_version_id")
+            .intoMaps(),
+        "game_design_draft_commit_final_abort",
+        retained
+            .dsl()
+            .fetch(
+                "SELECT * FROM game_design_draft_commit_final_abort "
+                    + "ORDER BY canonical_tenant_id, canonical_version_id, request_id, commit_id")
+            .intoMaps(),
+        "game_design_authored_draft_publish_selection",
+        retainedSelectionRows(retained));
+  }
+
   private static void assertRetainedSelection(Fixture retained, SelectionSnapshot expected) {
     assertRetainedTargetSelection(retained, expected);
     PublishIntent intent = expected.selection().intent();
@@ -262,52 +335,210 @@ class AuthoredDraftPublishSelectionRepositoryIntegrationTest {
   }
 
   private static void insertPreV44Selection(
-      Fixture retained, VersionFixture version, PublishIntent intent) {
+      Fixture retained, VersionFixture version, DraftCommitBinding commit, PublishIntent intent) {
+    insertHistoricalSelection(retained, version, commit, intent);
+  }
+
+  private static SelectionSnapshot insertHistoricalSelection(
+      Fixture retained, VersionFixture version, DraftCommitBinding binding, PublishIntent intent) {
+    SelectionSnapshot selected =
+        retained
+            .ownerTransaction()
+            .execute(
+                status -> {
+                  VisibilityFence fence = insertHistoricalSynchronizedCommit(retained, binding);
+                  AuthoredDraftPublishSelection selection =
+                      AuthoredDraftPublishSelection.capture(
+                          intent, version.target(), new PublicationEvidence(binding, fence));
+                  insertSelectionRow(retained, selection);
+                  return retained
+                      .selections()
+                      .read(
+                          intent.canonicalTenantId(),
+                          intent.canonicalVersionId(),
+                          intent.publishRequestId())
+                      .orElseThrow();
+                });
+    return Objects.requireNonNull(selected);
+  }
+
+  private static VisibilityFence insertHistoricalSynchronizedCommit(
+      Fixture retained, DraftCommitBinding binding) {
+    TargetProof target = binding.target();
+    OwnerOutcome outcome = appliedOutcome(binding);
+    String appliedUnits =
+        "[{\"aggregateType\":\""
+            + binding.affectedUnits(Owner.WORLD_MANAGEMENT).getFirst().aggregateType()
+            + "\",\"aggregateId\":\""
+            + binding.affectedUnits(Owner.WORLD_MANAGEMENT).getFirst().aggregateId()
+            + "\",\"scopeType\":\""
+            + binding.affectedUnits(Owner.WORLD_MANAGEMENT).getFirst().scopeType()
+            + "\",\"scopeId\":\""
+            + binding.affectedUnits(Owner.WORLD_MANAGEMENT).getFirst().scopeId()
+            + "\",\"expectedEpoch\":\""
+            + binding.affectedUnits(Owner.WORLD_MANAGEMENT).getFirst().expectedEpoch()
+            + "\",\"resultingEpoch\":\""
+            + outcome.appliedEpochs().getFirst().resultingEpoch()
+            + "\"}]";
+    String resultVector =
+        "[{\"owner\":\"WORLD_MANAGEMENT\",\"status\":\"APPLIED\",\"commitId\":\""
+            + outcome.commitId()
+            + "\",\"bindingDigest\":\""
+            + outcome.bindingDigest()
+            + "\",\"resultIdentity\":\""
+            + outcome.resultIdentity()
+            + "\",\"resultBytesBase64\":\""
+            + java.util.Base64.getEncoder().encodeToString(outcome.resultBytes())
+            + "\",\"appliedEpochs\":"
+            + appliedUnits
+            + "}]";
+    try {
+      appliedUnits =
+          new String(Rfc8785CanonicalJson.canonicalizeUtf8(appliedUnits), StandardCharsets.UTF_8);
+      resultVector =
+          new String(Rfc8785CanonicalJson.canonicalizeUtf8(resultVector), StandardCharsets.UTF_8);
+    } catch (java.io.IOException exception) {
+      throw new IllegalStateException(
+          "Unable to encode historical coordinator evidence", exception);
+    }
+
     retained
-        .ownerTransaction()
-        .executeWithoutResult(
-            status -> {
-              retained
-                  .coordinator()
-                  .lockVersionTarget(intent.canonicalTenantId(), intent.canonicalVersionId());
-              AuthoredDraftPublishSelection selection =
-                  AuthoredDraftPublishSelection.capture(
-                      intent,
-                      version.target(),
-                      retained
-                          .coordinator()
-                          .requireSynchronizedPublicationEvidence(
-                              version.target(),
-                              intent.selectedCommitRequestId(),
-                              intent.selectedCommitId(),
-                              intent.selectedCommitDigest()));
-              TargetProof target = selection.target();
-              assertThat(
-                      retained
-                          .dsl()
-                          .execute(
-                              "INSERT INTO game_design_authored_draft_publish_selection "
-                                  + "(canonical_tenant_id, canonical_version_id, game_design_version_row_id, "
-                                  + "game_design_version_tenant_key, source_game_row_id, source_game_tenant_key, "
-                                  + "source_provenance_kind, publish_request_id, version_state_epoch, "
-                                  + "selected_commit_request_id, selected_commit_id, selected_commit_digest, "
-                                  + "selection_digest, selection_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                              target.canonicalTenantId(),
-                              target.canonicalVersionId(),
-                              target.gameDesignVersionRowId(),
-                              target.gameDesignVersionTenantKey(),
-                              target.sourceGameRowId(),
-                              target.sourceGameTenantKey(),
-                              target.sourceProvenanceKind(),
-                              intent.publishRequestId(),
-                              Long.parseLong(intent.expectedVersionStateEpoch()),
-                              intent.selectedCommitRequestId(),
-                              intent.selectedCommitId(),
-                              intent.selectedCommitDigest(),
-                              selection.digest(),
-                              selection.canonicalJson()))
-                  .isEqualTo(1);
-            });
+        .dsl()
+        .execute(
+            "INSERT INTO game_design_draft_commit "
+                + "(canonical_tenant_id, canonical_version_id, game_design_version_row_id, "
+                + "game_design_version_tenant_key, source_game_row_id, source_game_tenant_key, "
+                + "source_provenance_kind, request_id, commit_id, base_commit_id, input_digest, "
+                + "binding_json, workflow_state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'QUEUED')",
+            target.canonicalTenantId(),
+            target.canonicalVersionId(),
+            target.gameDesignVersionRowId(),
+            target.gameDesignVersionTenantKey(),
+            target.sourceGameRowId(),
+            target.sourceGameTenantKey(),
+            target.sourceProvenanceKind(),
+            binding.requestId(),
+            binding.commitId(),
+            binding.baseCommitId(),
+            binding.digest(),
+            binding.canonicalJson());
+    retained
+        .dsl()
+        .execute(
+            "INSERT INTO game_design_draft_commit_owner_result "
+                + "(canonical_tenant_id, canonical_version_id, request_id, owner, status) "
+                + "VALUES (?, ?, ?, 'WORLD_MANAGEMENT', 'NOT_ATTEMPTED')",
+            target.canonicalTenantId(),
+            target.canonicalVersionId(),
+            binding.requestId());
+    retained
+        .dsl()
+        .execute(
+            "UPDATE game_design_draft_commit SET workflow_state = 'APPLYING' "
+                + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? AND request_id = ?",
+            target.canonicalTenantId(),
+            target.canonicalVersionId(),
+            binding.requestId());
+    retained
+        .dsl()
+        .execute(
+            "UPDATE game_design_draft_commit_owner_result SET status = 'IN_PROGRESS' "
+                + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? AND request_id = ? "
+                + "AND owner = 'WORLD_MANAGEMENT'",
+            target.canonicalTenantId(),
+            target.canonicalVersionId(),
+            binding.requestId());
+    retained
+        .dsl()
+        .execute(
+            "UPDATE game_design_draft_commit_owner_result SET status = 'APPLIED', "
+                + "result_commit_id = ?, result_binding_digest = ?, result_identity = ?, "
+                + "result_bytes = ?, applied_units_json = ? WHERE canonical_tenant_id = ? "
+                + "AND canonical_version_id = ? AND request_id = ? AND owner = 'WORLD_MANAGEMENT'",
+            outcome.commitId(),
+            outcome.bindingDigest(),
+            outcome.resultIdentity(),
+            outcome.resultBytes(),
+            appliedUnits,
+            target.canonicalTenantId(),
+            target.canonicalVersionId(),
+            binding.requestId());
+    retained
+        .dsl()
+        .execute(
+            "INSERT INTO game_design_draft_commit_visibility_fence "
+                + "(canonical_tenant_id, canonical_version_id, request_id, commit_id, input_digest, result_vector_json) "
+                + "VALUES (?, ?, ?, ?, ?, ?)",
+            target.canonicalTenantId(),
+            target.canonicalVersionId(),
+            binding.requestId(),
+            binding.commitId(),
+            binding.digest(),
+            resultVector);
+    retained
+        .dsl()
+        .execute(
+            "UPDATE game_design_draft_commit SET workflow_state = 'SYNCHRONIZED' "
+                + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? AND request_id = ?",
+            target.canonicalTenantId(),
+            target.canonicalVersionId(),
+            binding.requestId());
+    retained
+        .dsl()
+        .execute(
+            "INSERT INTO game_design_draft_commit_visibility "
+                + "(canonical_tenant_id, canonical_version_id, request_id, commit_id, input_digest) "
+                + "VALUES (?, ?, ?, ?, ?)",
+            target.canonicalTenantId(),
+            target.canonicalVersionId(),
+            binding.requestId(),
+            binding.commitId(),
+            binding.digest());
+    OffsetDateTime createdAt =
+        retained
+            .dsl()
+            .resultQuery(
+                "SELECT created_at FROM game_design_draft_commit_visibility_fence "
+                    + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? "
+                    + "AND request_id = ? AND commit_id = ?",
+                target.canonicalTenantId(),
+                target.canonicalVersionId(),
+                binding.requestId(),
+                binding.commitId())
+            .fetchOne(0, OffsetDateTime.class);
+    return new VisibilityFence(
+        target, binding.requestId(), binding.commitId(), binding.digest(), resultVector, createdAt);
+  }
+
+  private static void insertSelectionRow(
+      Fixture retained, AuthoredDraftPublishSelection selection) {
+    TargetProof target = selection.target();
+    PublishIntent intent = selection.intent();
+    assertThat(
+            retained
+                .dsl()
+                .execute(
+                    "INSERT INTO game_design_authored_draft_publish_selection "
+                        + "(canonical_tenant_id, canonical_version_id, game_design_version_row_id, "
+                        + "game_design_version_tenant_key, source_game_row_id, source_game_tenant_key, "
+                        + "source_provenance_kind, publish_request_id, version_state_epoch, "
+                        + "selected_commit_request_id, selected_commit_id, selected_commit_digest, "
+                        + "selection_digest, selection_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    target.canonicalTenantId(),
+                    target.canonicalVersionId(),
+                    target.gameDesignVersionRowId(),
+                    target.gameDesignVersionTenantKey(),
+                    target.sourceGameRowId(),
+                    target.sourceGameTenantKey(),
+                    target.sourceProvenanceKind(),
+                    intent.publishRequestId(),
+                    Long.parseLong(intent.expectedVersionStateEpoch()),
+                    intent.selectedCommitRequestId(),
+                    intent.selectedCommitId(),
+                    intent.selectedCommitDigest(),
+                    selection.digest(),
+                    selection.canonicalJson()))
+        .isEqualTo(1);
   }
 
   @Test

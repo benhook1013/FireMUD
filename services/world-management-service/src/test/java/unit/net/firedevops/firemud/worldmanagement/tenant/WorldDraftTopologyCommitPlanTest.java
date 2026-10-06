@@ -27,6 +27,8 @@ import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationOperation;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeMutationPolicy;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeType;
 import net.firedevops.firemud.worldmanagement.v1.WorldEntitySpawnBindingDesignMutation;
+import net.firedevops.firemud.worldmanagement.v1.WorldFreshGraphDeclaration;
+import net.firedevops.firemud.worldmanagement.v1.WorldFreshGraphFamilyCount;
 import net.firedevops.firemud.worldmanagement.v1.WorldGenerationSubtreeDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.ZoneDesignMutation;
 import org.junit.jupiter.api.Test;
@@ -117,6 +119,107 @@ class WorldDraftTopologyCommitPlanTest {
         .extracting(WorldDraftTopologyInputGraph.Node::mutation)
         .containsExactlyElementsOf(mutations);
     assertThat(plan.binding().canonicalBytes()).isEqualTo(original.canonicalBytes());
+  }
+
+  @Test
+  void completeDeclarationPreservesTypedStartRoomAndExplicitZeroOptionalFamilies() {
+    List<WorldDesignMutationRevision> mutations = new ArrayList<>(fresh().subList(0, 3));
+    var plan = WorldDraftTopologyCommitPlan.create(binding(mutations), owner());
+    var declaration = plan.graph().freshGraphDeclaration().orElseThrow();
+
+    assertThat(declaration.tenantId()).isEqualTo(TENANT);
+    assertThat(declaration.versionId()).isEqualTo(VERSION);
+    assertThat(declaration.startLocation())
+        .isEqualTo(new net.firedevops.firemud.common.world.RoomTemplateRef(TENANT, VERSION, ROOM));
+    assertThat(declaration.familyCounts())
+        .extracting(WorldDraftTopologyInputGraph.FamilyCount::count)
+        .containsExactly(1, 1, 1, 0, 0, 0);
+    assertThat(plan.graph().nodes())
+        .extracting(node -> node.mutation().getAggregateType())
+        .containsExactly(
+            WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION,
+            WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ZONE,
+            WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM);
+  }
+
+  @Test
+  void rejectsAbsentZeroCountDuplicateDeclarationAndChangedSelectorIdentity() {
+    List<WorldDesignMutationRevision> mutations = new ArrayList<>(fresh().subList(0, 3));
+    DraftCommitBinding binding = binding(mutations);
+    rejected(
+        changeDeclaration(
+            binding,
+            declaration ->
+                declaration.setFamilyCounts(
+                    3, declaration.getFamilyCounts(3).toBuilder().clearCount().build())));
+    rejected(
+        changeDeclaration(
+            binding,
+            declaration ->
+                declaration.setFamilyCounts(
+                    0, declaration.getFamilyCounts(0).toBuilder().setCount(2).build())));
+    rejected(
+        changeDeclaration(
+            binding,
+            declaration -> {
+              var first = declaration.getFamilyCounts(0);
+              var second = declaration.getFamilyCounts(1);
+              return declaration.setFamilyCounts(0, second).setFamilyCounts(1, first);
+            }));
+    rejected(changeDeclaration(binding, declaration -> declaration.setTenantId(id(99).toString())));
+    rejected(
+        changeDeclaration(
+            binding,
+            declaration ->
+                declaration.setStartLocation(
+                    declaration.getStartLocation().toBuilder().setVersionId(id(99).toString()))));
+    rejected(
+        changeDeclaration(
+            binding,
+            declaration ->
+                declaration.setStartLocation(
+                    declaration.getStartLocation().toBuilder().setTenantId(id(99).toString()))));
+    rejected(changeDeclaration(binding, WorldFreshGraphDeclaration.Builder::clearStartLocation));
+    rejected(
+        changeDeclaration(
+            binding,
+            declaration ->
+                declaration.setStartLocation(
+                    declaration.getStartLocation().toBuilder()
+                        .setRoomTemplateId(id(99).toString()))));
+    rejected(
+        changeDeclaration(
+            binding,
+            declaration ->
+                declaration.setStartLocation(
+                    declaration.getStartLocation().toBuilder()
+                        .setRoomTemplateId(ZONE.toString()))));
+    rejected(
+        changeDeclaration(
+            binding,
+            declaration ->
+                declaration.setStartLocation(
+                    declaration.getStartLocation().toBuilder()
+                        .setRoomTemplateId("00000000-0000-0000-0000-000000000000"))));
+
+    List<DraftCommitBinding.RevisionPayload> duplicate = new ArrayList<>(binding.revisions());
+    var roomRevision = duplicate.get(3);
+    try {
+      var roomMutation = WorldDesignMutationRevision.newBuilder();
+      JsonFormat.parser().merge(roomRevision.payload(), roomMutation);
+      duplicate.set(
+          3,
+          new DraftCommitBinding.RevisionPayload(
+              roomRevision.revisionOrder(),
+              roomRevision.revisionId(),
+              roomRevision.owner(),
+              JsonFormat.printer()
+                  .print(
+                      roomMutation.setFreshGraphDeclaration(bindingDeclaration(binding)).build())));
+    } catch (InvalidProtocolBufferException exception) {
+      throw new IllegalStateException(exception);
+    }
+    rejected(copy(binding, duplicate));
   }
 
   @Test
@@ -587,6 +690,10 @@ class WorldDraftTopologyCommitPlanTest {
 
   private static DraftCommitBinding binding(
       List<WorldDesignMutationRevision> mutations, List<AffectedUnit> units) {
+    if (!mutations.isEmpty()) {
+      var first = mutations.getFirst();
+      mutations.set(0, first.toBuilder().setFreshGraphDeclaration(declaration(mutations)).build());
+    }
     List<DraftCommitBinding.RevisionPayload> revisions = new ArrayList<>();
     revisions.add(
         new DraftCommitBinding.RevisionPayload(
@@ -613,6 +720,105 @@ class WorldDraftTopologyCommitPlanTest {
         "reviewed-base",
         revisions,
         units);
+  }
+
+  private static WorldFreshGraphDeclaration declaration(
+      List<WorldDesignMutationRevision> mutations) {
+    return WorldFreshGraphDeclaration.newBuilder()
+        .setTenantId(TENANT.toString())
+        .setVersionId(VERSION.toString())
+        .setStartLocation(
+            net.firedevops.firemud.worldmanagement.v1.RoomTemplateRef.newBuilder()
+                .setTenantId(TENANT.toString())
+                .setVersionId(VERSION.toString())
+                .setRoomTemplateId(ROOM.toString()))
+        .addFamilyCounts(
+            count(mutations, WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION))
+        .addFamilyCounts(
+            count(mutations, WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ZONE))
+        .addFamilyCounts(
+            count(mutations, WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM))
+        .addFamilyCounts(
+            count(mutations, WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM_EXIT))
+        .addFamilyCounts(
+            count(mutations, WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_GENERATION_RULE))
+        .addFamilyCounts(
+            count(
+                mutations,
+                WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING))
+        .build();
+  }
+
+  private static WorldFreshGraphFamilyCount count(
+      List<WorldDesignMutationRevision> mutations, WorldDesignAggregateType family) {
+    int count =
+        (int) mutations.stream().filter(mutation -> mutation.getAggregateType() == family).count();
+    return WorldFreshGraphFamilyCount.newBuilder().setFamily(family).setCount(count).build();
+  }
+
+  private static DraftCommitBinding changeDeclaration(
+      DraftCommitBinding binding, UnaryOperator<WorldFreshGraphDeclaration.Builder> change) {
+    List<DraftCommitBinding.RevisionPayload> revisions = new ArrayList<>(binding.revisions());
+    for (int index = 0; index < revisions.size(); index++) {
+      var revision = revisions.get(index);
+      if (revision.owner() != Owner.WORLD_MANAGEMENT) {
+        continue;
+      }
+      try {
+        var mutation = WorldDesignMutationRevision.newBuilder();
+        JsonFormat.parser().merge(revision.payload(), mutation);
+        if (!mutation.hasFreshGraphDeclaration()) {
+          continue;
+        }
+        revisions.set(
+            index,
+            new DraftCommitBinding.RevisionPayload(
+                revision.revisionOrder(),
+                revision.revisionId(),
+                revision.owner(),
+                JsonFormat.printer()
+                    .print(
+                        mutation
+                            .setFreshGraphDeclaration(
+                                change
+                                    .apply(mutation.getFreshGraphDeclaration().toBuilder())
+                                    .build())
+                            .build())));
+        return copy(binding, revisions);
+      } catch (InvalidProtocolBufferException exception) {
+        throw new IllegalStateException(exception);
+      }
+    }
+    throw new IllegalArgumentException("Test binding has no fresh graph declaration");
+  }
+
+  private static WorldFreshGraphDeclaration bindingDeclaration(DraftCommitBinding binding) {
+    for (var revision : binding.revisions()) {
+      if (revision.owner() != Owner.WORLD_MANAGEMENT) {
+        continue;
+      }
+      try {
+        var mutation = WorldDesignMutationRevision.newBuilder();
+        JsonFormat.parser().merge(revision.payload(), mutation);
+        if (mutation.hasFreshGraphDeclaration()) {
+          return mutation.getFreshGraphDeclaration();
+        }
+      } catch (InvalidProtocolBufferException exception) {
+        throw new IllegalStateException(exception);
+      }
+    }
+    throw new IllegalArgumentException("Test binding has no fresh graph declaration");
+  }
+
+  private static DraftCommitBinding copy(
+      DraftCommitBinding original, List<DraftCommitBinding.RevisionPayload> revisions) {
+    return DraftCommitBinding.create(
+        original.target(),
+        original.requestId(),
+        original.commitId(),
+        original.baseCommitId(),
+        revisions,
+        original.affectedUnits());
   }
 
   private static List<AffectedUnit> units(List<WorldDesignMutationRevision> mutations) {

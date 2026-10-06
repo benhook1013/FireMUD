@@ -5,6 +5,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.util.JsonFormat;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import io.grpc.Context;
+import io.grpc.Status;
+import io.grpc.stub.StreamObserver;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -28,7 +32,10 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
+import net.firedevops.firemud.common.authoring.WorldDraftTerminalReadEvidence;
+import net.firedevops.firemud.common.authoring.WorldDraftTerminalReadGrpcCodec;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateEvidence;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
@@ -47,6 +54,7 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFence
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceEvidence.Checkpoint;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceEvidence.OwnerBinding;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceRepository;
+import net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftRegionCommitPlan;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftRegionCommitRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftRegionCommitService;
@@ -54,13 +62,16 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOperation
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOutcome;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOutcomeRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOutcomeService;
+import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalReadGrpcService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyCommitPlan;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyCommitRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyCommitService;
+import net.firedevops.firemud.worldmanagement.v1.ReadWorldDraftTerminalOutcomeResponse;
 import net.firedevops.firemud.worldmanagement.v1.RegionDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignAggregateType;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationOperation;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeType;
+import net.firedevops.firemud.worldmanagement.v1.WorldDraftTerminalReadStatus;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -365,6 +376,87 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
         .hasMessageContaining("changed binding");
     assertThat(service.readDefinitiveAbort(operation).orElseThrow().canonicalBytes())
         .containsExactly(original.canonicalBytes());
+  }
+
+  @Test
+  void authenticatedReadReturnsUnknownThenExactAbortAcrossFreezeAndRejectsSubstitution() {
+    Fixture f = fixture(false);
+    WorldDraftTopologyCommitPlan plan = topologyPlan(f, UUID.randomUUID(), UUID.randomUUID());
+    WorldDraftTerminalOperation operation = operation(f, plan.binding());
+    WorldDraftTerminalOutcomeRepository repository = terminalRepository();
+    WorldDraftTerminalReadGrpcService receiver =
+        new WorldDraftTerminalReadGrpcService(
+            repository, new WorldDraftGraphApplicationRepository(dsl, fence, mapper), NAMESPACE);
+
+    var absentRequest =
+        WorldDraftTerminalReadEvidence.Request.create(NAMESPACE, operation.accountBindingBytes());
+    ReadResult absentCall = readAsAccount(receiver, absentRequest, "account-service");
+    ReadWorldDraftTerminalOutcomeResponse absent = absentCall.response();
+    assertThat(absentCall.error()).isNull();
+    assertThat(absent.getStatus())
+        .isEqualTo(WorldDraftTerminalReadStatus.WORLD_DRAFT_TERMINAL_READ_STATUS_UNKNOWN);
+    assertThat(absent.getOwnerReadbackBytes()).isEmpty();
+
+    WorldDraftTerminalOutcome stored = terminalService().recordDefinitiveAbort(operation);
+    var appliedRequest =
+        WorldDraftTerminalReadEvidence.Request.create(NAMESPACE, operation.accountBindingBytes());
+    var appliedCall = readAsAccount(receiver, appliedRequest, "account-service");
+    assertThat(appliedCall.error()).isNull();
+    var appliedResponse = appliedCall.response();
+    var appliedEvidence =
+        WorldDraftTerminalReadGrpcCodec.fromResponse(appliedRequest, appliedResponse);
+    var abort = appliedEvidence.ownerReadback().orElseThrow();
+    assertThat(abort.owner()).isEqualTo(DraftAuthorizationFenceBinding.Owner.WORLD);
+    assertThat(abort.outcome())
+        .isEqualTo(DraftAuthorizationFenceBinding.Outcome.DEFINITIVELY_ABORTED);
+    assertThat(abort.fullBinding()).containsExactly(operation.accountBindingBytes());
+    assertThat(abort.result()).containsExactly(stored.canonicalBytes());
+
+    byte[] changedAccount =
+        accountBinding(f, plan.binding(), operationIds(operation), new byte[] {9}).canonicalBytes();
+    var changedBindingRequest =
+        WorldDraftTerminalReadEvidence.Request.create(NAMESPACE, changedAccount);
+    var changedBindingCall = readAsAccount(receiver, changedBindingRequest, "account-service");
+    assertThat(Status.fromThrowable(changedBindingCall.error()).getCode())
+        .isEqualTo(Status.Code.FAILED_PRECONDITION);
+
+    var changedNamespaceRequest =
+        WorldDraftTerminalReadEvidence.Request.create("other", operation.accountBindingBytes());
+    var changedNamespaceCall = readAsAccount(receiver, changedNamespaceRequest, "account-service");
+    assertThat(Status.fromThrowable(changedNamespaceCall.error()).getCode())
+        .isEqualTo(Status.Code.PERMISSION_DENIED);
+
+    freeze(f);
+    var postFreezeRequest =
+        WorldDraftTerminalReadEvidence.Request.create(NAMESPACE, operation.accountBindingBytes());
+    var postFreezeCall = readAsAccount(receiver, postFreezeRequest, "account-service");
+    assertThat(postFreezeCall.error()).isNull();
+    var postFreeze = postFreezeCall.response();
+    var postFreezeEvidence =
+        WorldDraftTerminalReadGrpcCodec.fromResponse(postFreezeRequest, postFreeze);
+    assertThat(postFreezeEvidence.ownerReadback().orElseThrow().canonicalBytes())
+        .containsExactly(abort.canonicalBytes());
+    assertThat(postFreezeEvidence.ownerReadback().orElseThrow().result())
+        .containsExactly(stored.canonicalBytes());
+  }
+
+  private ReadResult readAsAccount(
+      WorldDraftTerminalReadGrpcService receiver,
+      WorldDraftTerminalReadEvidence.Request request,
+      String peerService) {
+    Collector observer = new Collector();
+    GrpcPeerIdentity peer =
+        new GrpcPeerIdentity(
+            "spiffe://firemud/ns/" + NAMESPACE + "/sa/" + peerService, NAMESPACE, peerService);
+    Context context = Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer);
+    Context previous = context.attach();
+    try {
+      receiver.readWorldDraftTerminalOutcome(
+          WorldDraftTerminalReadGrpcCodec.toRequest(request), observer);
+    } finally {
+      context.detach(previous);
+    }
+    return new ReadResult(observer.value, observer.error);
   }
 
   private Race race(ThrowingRunnable commit, ThrowingRunnable abort) throws Exception {
@@ -1033,6 +1125,30 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
   }
 
   private record Race(boolean commitWon, boolean abortWon) {}
+
+  private record ReadResult(ReadWorldDraftTerminalOutcomeResponse response, Throwable error) {}
+
+  private static final class Collector
+      implements StreamObserver<ReadWorldDraftTerminalOutcomeResponse> {
+    private ReadWorldDraftTerminalOutcomeResponse value;
+    private Throwable error;
+
+    @Override
+    public void onNext(ReadWorldDraftTerminalOutcomeResponse response) {
+      value = response;
+    }
+
+    @Override
+    @SuppressFBWarnings(
+        value = "EI_EXPOSE_REP2",
+        justification = "The test recorder retains the original throwable for assertion.")
+    public void onError(Throwable failure) {
+      error = failure;
+    }
+
+    @Override
+    public void onCompleted() {}
+  }
 
   private record OperationIds(UUID operation, UUID request, UUID commit, UUID fence, UUID actor) {}
 
