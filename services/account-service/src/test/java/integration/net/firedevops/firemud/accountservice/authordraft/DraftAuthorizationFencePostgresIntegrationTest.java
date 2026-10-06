@@ -473,6 +473,194 @@ class DraftAuthorizationFencePostgresIntegrationTest {
     }
   }
 
+  @Test
+  void originalBindingSurvivesRestartAndAbsenceRemainsUnknownUnderOwnerTransaction() {
+    Context context = context();
+    var binding = binding();
+    tx(context, () -> context.repository().reserve(binding));
+    Context restarted =
+        new Context(
+            context.dsl(),
+            new DraftAuthorizationFenceRepository(context.dsl()),
+            context.transaction());
+    var restored =
+        tx(restarted, () -> restarted.repository().readOriginalBinding(binding.operationId()))
+            .orElseThrow();
+    assertThat(restored.canonicalBytes()).containsExactly(binding.canonicalBytes());
+    assertThat(tx(restarted, () -> restarted.repository().readOriginalBinding(UUID.randomUUID())))
+        .isEmpty();
+    assertThatThrownBy(() -> restarted.repository().readOriginalBinding(binding.operationId()))
+        .isInstanceOf(IllegalStateException.class);
+    restarted.transaction().setReadOnly(true);
+    try {
+      assertThatThrownBy(
+              () ->
+                  tx(
+                      restarted,
+                      () -> restarted.repository().readOriginalBinding(binding.operationId())))
+          .isInstanceOf(IllegalStateException.class);
+    } finally {
+      restarted.transaction().setReadOnly(false);
+    }
+    assertThatThrownBy(
+            () -> tx(restarted, () -> restarted.repository().readUnresolvedOperations(null, 0)))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () -> tx(restarted, () -> restarted.repository().readUnresolvedOperations(null, 101)))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void discoveryPagesOriginalPendingOperationsAndExcludesEverySettledVector() {
+    Context context = context();
+    var reserved = binding();
+    var committedUnknown = binding();
+    var revokedUnknown = binding();
+    var revokedContradiction = binding();
+    var committed = binding();
+    var mixed = binding();
+    var aborted = binding();
+    var revokedAborted = binding();
+    List<DraftAuthorizationFenceBinding> all =
+        List.of(
+            reserved,
+            committedUnknown,
+            revokedUnknown,
+            revokedContradiction,
+            committed,
+            mixed,
+            aborted,
+            revokedAborted);
+    // One timestamp tests the UUID tie-breaker rather than relying on clock resolution.
+    tx(
+        context,
+        () -> {
+          for (var b : all) context.repository().reserve(b);
+          return null;
+        });
+    for (var b : List.of(committedUnknown, committed, mixed, aborted)) {
+      tx(context, () -> context.repository().claimCommitOrder(b));
+    }
+    for (var b : List.of(revokedUnknown, revokedContradiction, revokedAborted)) {
+      tx(context, () -> context.repository().requestSourceChange(change(b)));
+    }
+    owner(context, committedUnknown, Owner.WORLD, Outcome.COMMITTED, new byte[] {1});
+    owner(context, revokedContradiction, Owner.WORLD, Outcome.COMMITTED, new byte[] {1});
+    owner(
+        context,
+        revokedContradiction,
+        Owner.GAME_DESIGN,
+        Outcome.DEFINITIVELY_ABORTED,
+        new byte[] {2});
+    for (var b : List.of(committed, mixed, aborted, revokedAborted)) {
+      owner(
+          context,
+          b,
+          Owner.WORLD,
+          b == committed || b == mixed ? Outcome.COMMITTED : Outcome.DEFINITIVELY_ABORTED,
+          new byte[] {1});
+      owner(
+          context,
+          b,
+          Owner.GAME_DESIGN,
+          b == committed ? Outcome.COMMITTED : Outcome.DEFINITIVELY_ABORTED,
+          new byte[] {2});
+    }
+    var expected =
+        List.of(reserved, committedUnknown, revokedUnknown, revokedContradiction).stream()
+            .sorted(java.util.Comparator.comparing(b -> b.operationId().toString()))
+            .toList();
+    var first = tx(context, () -> context.repository().readUnresolvedOperations(null, 2));
+    var second =
+        tx(
+            context,
+            () -> context.repository().readUnresolvedOperations(first.getLast().cursor(), 2));
+    assertThat(first).hasSize(2);
+    assertThat(second).hasSize(2);
+    var combined = java.util.stream.Stream.concat(first.stream(), second.stream()).toList();
+    assertThat(combined.stream().map(item -> item.binding().operationId()).toList())
+        .containsExactlyElementsOf(
+            expected.stream().map(DraftAuthorizationFenceBinding::operationId).toList());
+    for (int i = 0; i < expected.size(); i++) {
+      assertThat(combined.get(i).binding().canonicalBytes())
+          .containsExactly(expected.get(i).canonicalBytes());
+    }
+    assertThat(
+            tx(
+                context,
+                () -> context.repository().readUnresolvedOperations(second.getLast().cursor(), 2)))
+        .isEmpty();
+    owner(context, committedUnknown, Owner.GAME_DESIGN, Outcome.COMMITTED, new byte[] {2});
+    assertThat(tx(context, () -> context.repository().readUnresolvedOperations(null, 100)))
+        .extracting(item -> item.binding().operationId())
+        .doesNotContain(committedUnknown.operationId());
+  }
+
+  @Test
+  void originalRecoveryRejectsMalformedBytesAndEveryConflictingIdentityColumn() {
+    for (int field = 0; field < 5; field++) {
+      Context context = context();
+      var b = binding();
+      UUID operation = field == 0 ? UUID.randomUUID() : b.operationId();
+      UUID request = field == 1 ? UUID.randomUUID() : b.requestId();
+      UUID commit = field == 2 ? UUID.randomUUID() : b.commitId();
+      UUID fence = field == 3 ? UUID.randomUUID() : b.fenceId();
+      byte[] stored = field == 4 ? new byte[] {1} : b.canonicalBytes();
+      // The production guard permits first insertion of opaque bytes; recovery must verify them.
+      tx(
+          context,
+          () ->
+              context
+                  .dsl()
+                  .execute(
+                      "INSERT INTO account_draft_authorization_fences"
+                          + " (operation_id, request_id, commit_id, fence_id, binding, ordering)"
+                          + " VALUES (?, ?, ?, ?, ?, 'RESERVED')",
+                      operation,
+                      request,
+                      commit,
+                      fence,
+                      stored));
+      assertThatThrownBy(
+              () -> tx(context, () -> context.repository().readOriginalBinding(operation)))
+          .isInstanceOf(IllegalArgumentException.class);
+      assertThatThrownBy(
+              () -> tx(context, () -> context.repository().readUnresolvedOperations(null, 10)))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+  }
+
+  @Test
+  void ownerRecoveryRejectsReadbackThatContradictsItsOutcomeColumn() {
+    Context context = context();
+    var b = binding();
+    tx(context, () -> context.repository().reserve(b));
+    tx(context, () -> context.repository().claimCommitOrder(b));
+    var readback =
+        new OwnerReadback(
+            Owner.WORLD,
+            Outcome.COMMITTED,
+            b.operationId(),
+            b.commitId(),
+            b.fenceId(),
+            b.inputDigest(),
+            b.canonicalBytes(),
+            new byte[] {1});
+    tx(
+        context,
+        () ->
+            context
+                .dsl()
+                .execute(
+                    "INSERT INTO account_draft_authorization_owner_readbacks"
+                        + " (operation_id, owner, outcome, readback) VALUES (?, 'WORLD', 'DEFINITIVELY_ABORTED', ?)",
+                    b.operationId(),
+                    readback.canonicalBytes()));
+    assertThatThrownBy(
+            () -> tx(context, () -> context.repository().readOwnerResult(b, Owner.WORLD)))
+        .isInstanceOf(IllegalStateException.class);
+  }
+
   private void assertSourceGuardBlocked(Context context, SourceChange change) {
     assertThatThrownBy(
             () ->

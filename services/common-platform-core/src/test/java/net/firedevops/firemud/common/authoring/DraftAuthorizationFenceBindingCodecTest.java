@@ -152,6 +152,85 @@ class DraftAuthorizationFenceBindingCodecTest {
     assertInvalid(oversizedLength);
   }
 
+  @Test
+  void ownerReadbackRoundTripsExactBytesAndOriginalBindingForEveryOutcome() {
+    var binding = binding(List.of(source()));
+    for (var owner : DraftAuthorizationFenceBinding.Owner.values()) {
+      for (var outcome : DraftAuthorizationFenceBinding.Outcome.values()) {
+        var original =
+            new DraftAuthorizationFenceBinding.OwnerReadback(
+                owner,
+                outcome,
+                binding.operationId(),
+                binding.commitId(),
+                binding.fenceId(),
+                binding.inputDigest(),
+                binding.canonicalBytes(),
+                new byte[] {1, 2, 3});
+        var decoded =
+            DraftAuthorizationFenceBinding.OwnerReadback.fromStored(original.canonicalBytes());
+        decoded.requireBinding(binding);
+        assertThat(decoded.owner()).isEqualTo(owner);
+        assertThat(decoded.outcome()).isEqualTo(outcome);
+        assertThat(decoded.result()).containsExactly(new byte[] {1, 2, 3});
+        assertThat(decoded.canonicalBytes()).containsExactly(original.canonicalBytes());
+      }
+    }
+  }
+
+  @Test
+  void ownerReadbackRejectsCorruptFramingNoncanonicalFieldsAndContradictoryBinding() {
+    var binding = binding(List.of(source()));
+    var original =
+        new DraftAuthorizationFenceBinding.OwnerReadback(
+            DraftAuthorizationFenceBinding.Owner.WORLD,
+            DraftAuthorizationFenceBinding.Outcome.COMMITTED,
+            binding.operationId(),
+            binding.commitId(),
+            binding.fenceId(),
+            binding.inputDigest(),
+            binding.canonicalBytes(),
+            new byte[] {1});
+    byte[] bytes = original.canonicalBytes();
+    for (int field : List.of(0, 1, 2, 3, 4, 5, 6, 7, 8)) {
+      var fields = readFrames(bytes);
+      fields.set(
+          field,
+          switch (field) {
+            case 0 -> utf8("account-draft-owner-readback/v2");
+            case 1 -> utf8("world");
+            case 2 -> utf8("UNKNOWN");
+            case 3 -> utf8(binding.operationId().toString().toUpperCase(java.util.Locale.ROOT));
+            case 4, 5 -> utf8("99999999-9999-4999-8999-999999999999");
+            case 6 -> utf8("sha256:" + "f".repeat(64));
+            case 7 -> new byte[] {1};
+            default -> new byte[0];
+          });
+      assertThatThrownBy(
+              () -> DraftAuthorizationFenceBinding.OwnerReadback.fromStored(writeFrames(fields)))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+    assertThatThrownBy(
+            () ->
+                DraftAuthorizationFenceBinding.OwnerReadback.fromStored(
+                    Arrays.copyOf(bytes, bytes.length - 1)))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                DraftAuthorizationFenceBinding.OwnerReadback.fromStored(
+                    Arrays.copyOf(bytes, bytes.length + 1)))
+        .isInstanceOf(IllegalArgumentException.class);
+    byte[] negative = bytes.clone();
+    ByteBuffer.wrap(negative).putInt(-1);
+    assertThatThrownBy(() -> DraftAuthorizationFenceBinding.OwnerReadback.fromStored(negative))
+        .isInstanceOf(IllegalArgumentException.class);
+    var invalidUtf8 = readFrames(bytes);
+    invalidUtf8.set(1, new byte[] {(byte) 0xc3, 0x28});
+    assertThatThrownBy(
+            () -> DraftAuthorizationFenceBinding.OwnerReadback.fromStored(writeFrames(invalidUtf8)))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
   private static void assertBindingValues(
       DraftAuthorizationFenceBinding expected, DraftAuthorizationFenceBinding actual) {
     assertThat(actual.operationId()).isEqualTo(expected.operationId());

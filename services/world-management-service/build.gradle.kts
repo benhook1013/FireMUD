@@ -16,4 +16,5 @@ dependencies {
     implementation(project(":common-security"))
     testImplementation(libs.bouncycastle.pkix)
     testCompileOnly(libs.spotbugs.annotations)
+    add("integrationTestCompileOnly", libs.spotbugs.annotations)
 }

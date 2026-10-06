@@ -8,6 +8,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceRepository.ConflictException;
@@ -49,6 +50,70 @@ public final class WorldDraftTerminalOutcomeRepository {
       throw new ConflictException("World terminal identities resolve to conflicting outcomes");
     }
     return Optional.of(readExact(operation, rows.getFirst()));
+  }
+
+  /**
+   * Reconstructs an exact read only from retained World terminal/source identity rows. Absence is
+   * UNKNOWN; conflicts or incomplete retained associations are never translated to an abort.
+   */
+  public Optional<WorldDraftTerminalOutcome> readDefinitiveAbort(
+      String targetNamespace, byte[] originalAccountBinding) {
+    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new ConflictException("World terminal readback requires a committed read");
+    }
+    if (!net.firedevops.firemud.common.grpc.GrpcPeerIdentity.isValidNamespace(targetNamespace)) {
+      throw new IllegalArgumentException("Canonical World workload namespace is required");
+    }
+    byte[] original = DraftAuthorizationFenceBinding.bytes(originalAccountBinding);
+    DraftAuthorizationFenceBinding account = DraftAuthorizationFenceBinding.fromStored(original);
+    List<Record> rows = find(account);
+    if (rows.isEmpty()) {
+      return Optional.empty();
+    }
+    if (rows.size() != 1) {
+      throw new ConflictException("World terminal identities resolve to conflicting outcomes");
+    }
+
+    Record row = rows.getFirst();
+    DraftCommitBinding binding;
+    WorldDesignPublicationFenceEvidence.OwnerBinding owner;
+    try {
+      binding =
+          DraftCommitBinding.fromStored(
+              row.get("binding_json", String.class), row.get("binding_digest", String.class));
+      owner =
+          mapper.readValue(
+              row.get("owner_binding_json", String.class),
+              WorldDesignPublicationFenceEvidence.OwnerBinding.class);
+    } catch (RuntimeException invalidStoredBinding) {
+      throw new ConflictException("World terminal row has an invalid retained operation binding");
+    }
+
+    WorldDraftTerminalOperation operation;
+    try {
+      operation =
+          new WorldDraftTerminalOperation(
+              account.operationId(),
+              account.requestId(),
+              account.commitId(),
+              account.fenceId(),
+              account.tenantId(),
+              account.versionId(),
+              binding,
+              owner,
+              original);
+    } catch (RuntimeException invalidRetainedEvidence) {
+      throw new ConflictException(
+          "World terminal row differs from the complete original Account binding");
+    }
+    requireRetainedSourceAssociation(targetNamespace, operation, row);
+    try {
+      return Optional.of(readExact(operation, row));
+    } catch (ConflictException conflict) {
+      throw conflict;
+    } catch (RuntimeException invalidRetainedOutcome) {
+      throw new ConflictException("World terminal outcome failed immutable integrity readback");
+    }
   }
 
   /** Caller owns a short writable READ_COMMITTED transaction. */
@@ -150,6 +215,89 @@ public final class WorldDraftTerminalOutcomeRepository {
         operation.requestId(),
         operation.commitId(),
         operation.authorizationFenceId());
+  }
+
+  private List<Record> find(DraftAuthorizationFenceBinding account) {
+    return dsl.fetch(
+        "SELECT * FROM "
+            + TABLE
+            + " WHERE operation_id = ? OR request_id = ? OR commit_id = ? OR authorization_fence_id = ?",
+        account.operationId(),
+        account.requestId(),
+        account.commitId(),
+        account.fenceId());
+  }
+
+  private void requireRetainedSourceAssociation(
+      String targetNamespace, WorldDraftTerminalOperation operation, Record row) {
+    var owner = operation.ownerBinding();
+    if (!targetNamespace.equals(owner.targetNamespace())
+        || !targetNamespace.equals(row.get("target_namespace", String.class))) {
+      throw new ConflictException("World terminal read uses another workload namespace");
+    }
+    Long localTenantKey = row.get("local_tenant_key", Long.class);
+    Long localVersionKey = row.get("local_version_key", Long.class);
+    if (localTenantKey == null || localVersionKey == null) {
+      throw new ConflictException("World terminal source association is incomplete");
+    }
+
+    Record identity =
+        dsl.fetchOne(
+            "SELECT * FROM world_authored_version_identity WHERE operation_id = ?",
+            owner.versionIdentityOperationId());
+    if (identity == null
+        || !owner
+            .versionIdentityOperationId()
+            .equals(identity.get("operation_id", java.util.UUID.class))
+        || !targetNamespace.equals(identity.get("target_namespace", String.class))
+        || !owner
+            .canonicalTenantId()
+            .equals(identity.get("canonical_tenant_id", java.util.UUID.class))
+        || !owner
+            .canonicalVersionId()
+            .equals(identity.get("canonical_version_id", java.util.UUID.class))
+        || !Objects.equals(
+            owner.gameDesignVersionId(), identity.get("game_design_version_id", Long.class))
+        || !Objects.equals(localTenantKey, identity.get("local_tenant_key", Long.class))
+        || !Objects.equals(localVersionKey, identity.get("local_version_key", Long.class))
+        || !owner.intakeRequestId().equals(identity.get("intake_request_id", java.util.UUID.class))
+        || !owner
+            .intakeOperationId()
+            .equals(identity.get("intake_operation_id", java.util.UUID.class))
+        || !owner.intakeRequestDigest().equals(identity.get("intake_request_digest", String.class))
+        || !owner
+            .sourceOperationId()
+            .equals(identity.get("source_operation_id", java.util.UUID.class))
+        || !owner
+            .sourceEvidenceDigest()
+            .equals(identity.get("source_evidence_digest", String.class))
+        || !owner
+            .intakeReceiptDigest()
+            .equals(identity.get("intake_receipt_digest", String.class))) {
+      throw new ConflictException(
+          "World terminal source binding differs from the retained V27 identity");
+    }
+
+    Record versionOwner =
+        dsl.fetchOne(
+            "SELECT target_namespace, canonical_tenant_id, local_tenant_key, version_id "
+                + "FROM world_design_publication_fence_owner "
+                + "WHERE target_namespace = ? AND canonical_tenant_id = ? "
+                + "AND local_tenant_key = ? AND version_id = ?",
+            targetNamespace,
+            owner.canonicalTenantId(),
+            localTenantKey,
+            localVersionKey);
+    if (versionOwner == null
+        || !targetNamespace.equals(versionOwner.get("target_namespace", String.class))
+        || !owner
+            .canonicalTenantId()
+            .equals(versionOwner.get("canonical_tenant_id", java.util.UUID.class))
+        || !Objects.equals(localTenantKey, versionOwner.get("local_tenant_key", Long.class))
+        || !Objects.equals(localVersionKey, versionOwner.get("version_id", Long.class))) {
+      throw new ConflictException(
+          "World terminal source binding differs from the retained V25 owner association");
+    }
   }
 
   private WorldDraftTerminalOutcome readExact(WorldDraftTerminalOperation operation, Record row) {

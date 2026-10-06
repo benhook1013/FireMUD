@@ -2052,11 +2052,12 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.accountservice.IssuerProjectionAcknowledgmentPostgresIntegrationTest#storedAcknowledgmentRejectsDirectUpdateAndDelete()' \
             account-service
 
-      - name: Run Account fresh-tenant reservation client physical socket mTLS proof
+      - name: Run Account reservation and Draft terminal clients physical socket mTLS proof
         if: ${{ matrix.module == 'account-service' }}
         run: |
           ./gradlew :account-service:test \
             --tests unit.net.firedevops.firemud.accountservice.client.GameDesignFreshTenantReservationMtlsTest \
+            --tests unit.net.firedevops.firemud.accountservice.client.WorldDraftTerminalReadMtlsTest \
             -PfullCheck --no-build-cache --no-configuration-cache
           bash dev-tools/validation/inspect-test-results.sh \
             --strict \
@@ -2064,14 +2065,21 @@ jobs:
             --require-case 'unit.net.firedevops.firemud.accountservice.client.GameDesignFreshTenantReservationMtlsTest#authenticServerReturnsExactReservationAndConfirmsAccountClientCertificate(Path)' \
             --require-case 'unit.net.firedevops.firemud.accountservice.client.GameDesignFreshTenantReservationMtlsTest#wrongTrustedServerWorkloadAndNamespaceReceiveNoRequestMetadataOrBody(Path)' \
             --require-case 'unit.net.firedevops.firemud.accountservice.client.GameDesignFreshTenantReservationMtlsTest#authenticatedServerCannotSubstituteACompleteDifferentReservedTarget(Path)' \
+            --require-suite unit.net.firedevops.firemud.accountservice.client.WorldDraftTerminalReadMtlsTest \
+            --require-case 'unit.net.firedevops.firemud.accountservice.client.WorldDraftTerminalReadMtlsTest#physicallyReadsUnknownAndReplaysExactCanonicalWorldAbort(Path)' \
+            --require-case 'unit.net.firedevops.firemud.accountservice.client.WorldDraftTerminalReadMtlsTest#wrongTrustedWorldWorkloadAndNamespaceSeeNoAuthorizationMetadataOrRequestBody(Path)' \
+            --require-case 'unit.net.firedevops.firemud.accountservice.client.WorldDraftTerminalReadMtlsTest#rejectsChangedEchoedReadIdentityAndOriginalBinding(Path)' \
+            --require-case 'unit.net.firedevops.firemud.accountservice.client.WorldDraftTerminalReadMtlsTest#plaintextAndMissingCertificateCustodyAreUnavailableBeforeTransport(Path)' \
             account-service
 
-      - name: Preserve Account fresh-tenant reservation client physical mTLS XML
+      - name: Preserve Account reservation and Draft terminal client physical mTLS XML
         if: ${{ always() && matrix.module == 'account-service' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: account-fresh-tenant-reservation-client-physical-mtls-proof-${{ github.sha }}-${{ github.run_attempt }}
-          path: services/account-service/build/test-results/test/TEST-*GameDesignFreshTenantReservationMtlsTest.xml
+          path: |
+            services/account-service/build/test-results/test/TEST-*GameDesignFreshTenantReservationMtlsTest.xml
+            services/account-service/build/test-results/test/TEST-*WorldDraftTerminalReadMtlsTest.xml
           if-no-files-found: error
           retention-days: 7
 
@@ -2165,6 +2173,7 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOutcomePostgresIntegrationTest#topologyCommitAndAbortSerializeToExactlyOneImmutableTerminalResult()' \
             --require-case 'integration.net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOutcomePostgresIntegrationTest#rawRegionCommitAndAbortSerializeOnTheSameV25Row()' \
             --require-case 'integration.net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOutcomePostgresIntegrationTest#absentReadbackIsUnknownChangedBindingsConflictAndRolledBackAbortLeavesNoRow()' \
+            --require-case 'integration.net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOutcomePostgresIntegrationTest#authenticatedReadReturnsUnknownThenExactAbortAcrossFreezeAndRejectsSubstitution()' \
             world-management-service
 
       - name: Capture Account authored-draft publication PostgreSQL XML
@@ -2367,6 +2376,10 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#concurrentCommitOrderAndRevocationChooseExactlyOneDurableOrdering()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#distinctPendingChangesCannotRetainTwoOldCapturesForTheSameSource()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#concurrentDistinctSourceClaimsAdmitOnlyOnePendingCaptureWithoutBlockingDisjointSources()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#originalBindingSurvivesRestartAndAbsenceRemainsUnknownUnderOwnerTransaction()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#discoveryPagesOriginalPendingOperationsAndExcludesEverySettledVector()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#originalRecoveryRejectsMalformedBytesAndEveryConflictingIdentityColumn()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest#ownerRecoveryRejectsReadbackThatContradictsItsOutcomeColumn()' \
             account-service
 
       - name: Verify Game Design authored-draft publication PostgreSQL proof

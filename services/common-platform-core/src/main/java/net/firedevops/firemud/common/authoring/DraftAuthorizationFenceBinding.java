@@ -365,6 +365,29 @@ public record DraftAuthorizationFenceBinding(
       result = bytes(result);
     }
 
+    /** Reads only canonical original evidence; decoding does not authenticate its producer. */
+    public static OwnerReadback fromStored(byte[] original) {
+      byte[] stored = bytes(original);
+      FrameReader reader = new FrameReader(stored);
+      reader.expect("account-draft-owner-readback/v1");
+      OwnerReadback readback =
+          new OwnerReadback(
+              Owner.valueOf(reader.text()),
+              Outcome.valueOf(reader.text()),
+              canonicalUuidValue(reader.text()),
+              canonicalUuidValue(reader.text()),
+              canonicalUuidValue(reader.text()),
+              reader.text(),
+              reader.bytes(),
+              reader.bytes());
+      reader.requireEnd();
+      readback.requireBinding(DraftAuthorizationFenceBinding.fromStored(readback.fullBinding()));
+      if (!Arrays.equals(stored, readback.canonicalBytes())) {
+        throw new IllegalArgumentException("Noncanonical stored owner readback");
+      }
+      return readback;
+    }
+
     @Override
     public byte[] fullBinding() {
       return fullBinding.clone();
