@@ -1624,7 +1624,8 @@ class AccountRepositoryIntegrationTest {
             + "- 'join_audit_event_id' - 'join_audit_payload_digest' "
             + "- 'join_audit_occurred_at')::text";
     String connectScopeProjection =
-        "(to_jsonb(s) - 'scope_digest_version' - 'account_uuid' - 'tenant_uuid' "
+        "(to_jsonb(s) - 'scope_digest_version' - 'approved_tenant_payload_operation_id' "
+            + "- 'account_uuid' - 'tenant_uuid' "
             + "- 'tenant_slug' - 'playable_state_namespace_uuid' - 'game_instance_uuid' "
             + "- 'tenant_provenance_kind' - 'tenant_provenance_legacy_tenant_id' "
             + "- 'tenant_source_operation_id' - 'tenant_provenance_digest')::text";
