@@ -248,7 +248,7 @@ expected_job_if = {
     "security-gate": "${{ always() }}",
     "license-gate": "${{ always() }}",
     "smoke-gate": "${{ always() && github.event_name == 'pull_request' }}",
-    "codeql-gate": "${{ always() && github.event_name == 'pull_request' && (github.base_ref == 'develop' || github.base_ref == 'main') }}",
+    "codeql-gate": "${{ always() && github.event_name == 'pull_request' }}",
 }
 result_step_names = {
     "validation-gate": "Enforce validation success",
@@ -479,10 +479,7 @@ grep -Fq 'needs: [changes, analyze]' "$CODEQL_WORKFLOW" || {
   echo "CodeQL gate must depend directly on change detection" >&2
   exit 1
 }
-grep -Fq "(github.base_ref == 'develop' || github.base_ref == 'main')" "$CODEQL_WORKFLOW" || {
-  echo "CodeQL gate must run for both protected pull request bases" >&2
-  exit 1
-}
+# The structured caller check above requires CodeQL Gate for every PR base.
 grep -Fq 'types: [opened, synchronize, reopened, edited]' "$OVERLAY_WORKFLOW" || {
   echo "Overlay validation must rerun when a pull request base is edited" >&2
   exit 1
