@@ -7,6 +7,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.google.protobuf.util.JsonFormat;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -25,8 +26,68 @@ import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationOperation;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeMutationPolicy;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeType;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DuplicateKeyException;
 
 class WorldCanonicalInstancePreparationTest {
+  @Test
+  void translatesV35DifferentPreparationConflictAndPreservesCause() {
+    DuplicateKeyException databaseFailure =
+        duplicateKeyFailure(
+            "23505", "Canonical gameInstanceId is already bound to a different preparation");
+
+    RuntimeException translated =
+        WorldCanonicalInstancePreparationRepository.translateCanonicalPreparationConflict(
+            databaseFailure);
+
+    assertThat(translated)
+        .isInstanceOf(
+            WorldCanonicalInstancePreparationRepository.ConflictingPreparationException.class);
+    assertThat(translated.getCause()).isSameAs(databaseFailure);
+  }
+
+  @Test
+  void translatesV35ReservedIdentityConflictAndPreservesCause() {
+    DuplicateKeyException databaseFailure =
+        duplicateKeyFailure(
+            "23505",
+            "ERROR: Canonical game instance or request identity is already reserved\n  Where: owner function");
+
+    RuntimeException translated =
+        WorldCanonicalInstancePreparationRepository.translateCanonicalPreparationConflict(
+            databaseFailure);
+
+    assertThat(translated)
+        .isInstanceOf(
+            WorldCanonicalInstancePreparationRepository.ConflictingPreparationException.class);
+    assertThat(translated.getCause()).isSameAs(databaseFailure);
+  }
+
+  @Test
+  void preservesUnrelatedDuplicateKeyFailures() {
+    DuplicateKeyException wrongSqlState =
+        duplicateKeyFailure(
+            "23503", "Canonical game instance or request identity is already reserved");
+    DuplicateKeyException unrelatedUniqueViolation =
+        duplicateKeyFailure("23505", "Unexpected unique constraint violation");
+    DuplicateKeyException unrelatedViolationWithMatchingDetail =
+        duplicateKeyFailure(
+            "23505",
+            "ERROR: duplicate key violates a different constraint\nDetail: Canonical game instance or request identity is already reserved");
+
+    assertThat(
+            WorldCanonicalInstancePreparationRepository.translateCanonicalPreparationConflict(
+                wrongSqlState))
+        .isSameAs(wrongSqlState);
+    assertThat(
+            WorldCanonicalInstancePreparationRepository.translateCanonicalPreparationConflict(
+                unrelatedUniqueViolation))
+        .isSameAs(unrelatedUniqueViolation);
+    assertThat(
+            WorldCanonicalInstancePreparationRepository.translateCanonicalPreparationConflict(
+                unrelatedViolationWithMatchingDetail))
+        .isSameAs(unrelatedViolationWithMatchingDetail);
+  }
+
   @Test
   void defaultServiceDeniesBeforeRepositoryAccess() {
     WorldCanonicalInstancePreparationRepository repository =
@@ -44,6 +105,11 @@ class WorldCanonicalInstancePreparationTest {
         .hasMessageContaining("no authenticated source/release and Account commit verifier");
 
     verifyNoInteractions(repository);
+  }
+
+  private static DuplicateKeyException duplicateKeyFailure(String sqlState, String message) {
+    return new DuplicateKeyException(
+        "Database rejected canonical preparation", new SQLException(message, sqlState));
   }
 
   @Test
