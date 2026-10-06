@@ -4059,7 +4059,7 @@ class ReviewController:
                 pr: view["reason"] for pr, view in channel_allocations.items() if view["status"] == "INVALID"
             },
             allocation_holds={
-                pr: view["reason"]
+                pr: view.get("details") or view["reason"]
                 for pr, view in channel_allocations.items()
                 if view["status"]
                 in {
