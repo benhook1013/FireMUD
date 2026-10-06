@@ -100,7 +100,10 @@ BEGIN
         OR selection->>'requestDigest' !~ '^[0-9a-f]{64}$'
         OR selection->>'contentDigest' !~ '^[0-9a-f]{64}$'
         OR selection->>'versionStateEpoch' !~ '^[1-9][0-9]*$'
-        OR jsonb_typeof(selection->'versionStateEpoch') IS DISTINCT FROM 'number'
+        OR jsonb_typeof(selection->'versionStateEpoch') IS DISTINCT FROM 'string'
+        OR length(selection->>'versionStateEpoch') > 19
+        OR (length(selection->>'versionStateEpoch') = 19
+            AND selection->>'versionStateEpoch' > '9223372036854775807')
         OR jsonb_typeof(selection->'digestSchemaVersion') IS DISTINCT FROM 'number'
         OR selection->>'digestSchemaVersion' IS DISTINCT FROM '3'
         OR jsonb_typeof(selection->'worldAffectedTuples') IS DISTINCT FROM 'array' THEN

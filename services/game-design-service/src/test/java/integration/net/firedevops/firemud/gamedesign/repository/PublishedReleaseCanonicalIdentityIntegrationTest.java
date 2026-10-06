@@ -659,9 +659,30 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
     String participants =
         json.writeValueAsString(
             PublishedWorldSelectorFixtures.participants(version.getId(), evidence));
+    var originalRequest = json.readTree(original).path("request");
+    assertThat(originalRequest.path("versionStateEpoch").isTextual()).isTrue();
+    assertThat(originalRequest.path("versionStateEpoch").asText()).matches("[1-9][0-9]*");
     assertThatThrownBy(() -> insertRawSelector(fixture, version, "v2", null, participants))
         .isInstanceOf(DataAccessException.class);
     assertThatThrownBy(() -> insertRawSelector(fixture, version, "v1", original, participants))
+        .isInstanceOf(DataAccessException.class);
+    for (String invalidEpoch : List.of("0", "01", "-1", "9223372036854775808")) {
+      var root = (tools.jackson.databind.node.ObjectNode) json.readTree(original);
+      ((tools.jackson.databind.node.ObjectNode) root.get("request"))
+          .put("versionStateEpoch", invalidEpoch);
+      assertThatThrownBy(
+              () ->
+                  insertRawSelector(
+                      fixture, version, "v2", json.writeValueAsString(root), participants))
+          .isInstanceOf(DataAccessException.class);
+    }
+    var numericEpoch = (tools.jackson.databind.node.ObjectNode) json.readTree(original);
+    ((tools.jackson.databind.node.ObjectNode) numericEpoch.get("request"))
+        .put("versionStateEpoch", 1L);
+    assertThatThrownBy(
+            () ->
+                insertRawSelector(
+                    fixture, version, "v2", json.writeValueAsString(numericEpoch), participants))
         .isInstanceOf(DataAccessException.class);
     for (String field :
         List.of(

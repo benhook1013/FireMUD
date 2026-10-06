@@ -231,7 +231,7 @@ public final class WorldCanonicalInstancePreparationRepository {
       Record selected =
           dsl.fetchOne(
               "SELECT s.*, m.runtime_room_instance_id AS mapped_room_instance_id, "
-                  + "r.room_instance_id AS actual_room_instance_id,r.tenant_id AS room_tenant_key,r.game_instance_id AS room_game_instance_key "
+                  + "r.room_instance_row_id AS actual_room_instance_id,r.tenant_id AS room_tenant_key,r.game_instance_id AS room_game_instance_key "
                   + "FROM world_canonical_preparation_start_location s "
                   + "JOIN world_canonical_instance_topology_identity m ON m.world_instance_id=s.world_instance_id "
                   + "AND m.canonical_game_instance_id=s.canonical_game_instance_id AND m.family='ROOM' "

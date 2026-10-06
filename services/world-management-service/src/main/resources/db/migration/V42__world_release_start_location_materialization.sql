@@ -27,8 +27,9 @@ DECLARE
     graph "${serviceSchema}".world_topology_draft_commit%ROWTYPE;
     evidence JSONB;
     selected JSONB;
-    freeze JSONB;
+    publication_request JSONB;
     retained JSONB;
+    retained_version_state_epoch BIGINT;
     expected_tuples JSONB;
 BEGIN
     IF input->>'schemaVersion' = '1' THEN
@@ -46,28 +47,36 @@ BEGIN
     evidence := convert_from(decode(input->>'worldStartLocationEvidenceBase64', 'base64'), 'UTF8')::JSONB;
     selected := evidence->'request';
     retained := binding->'worldStartLocationEvidence';
+    IF jsonb_typeof(retained->'request') IS DISTINCT FROM 'object'
+        OR jsonb_typeof(retained->'request'->'versionStateEpoch') IS DISTINCT FROM 'number'
+        OR retained->'request'->>'versionStateEpoch' !~ '^[1-9][0-9]*$' THEN
+        RAISE EXCEPTION 'Retained full release selector epoch must be a canonical positive JSON number'
+            USING ERRCODE = '23514';
+    END IF;
+    retained_version_state_epoch := (retained->'request'->>'versionStateEpoch')::BIGINT;
     SELECT * INTO STRICT frozen FROM "${serviceSchema}".world_canonical_frozen_topology WHERE capture_id=capture;
-    freeze := frozen.freeze_request_json::JSONB;
+    publication_request := frozen.freeze_request_json::JSONB;
     SELECT coalesce(jsonb_agg(value ORDER BY value->>'owner',value->>'aggregateType',value->>'aggregateId',
         value->>'scopeType',value->>'scopeId',value->>'expectedEpoch'), '[]'::JSONB)
-        INTO expected_tuples FROM jsonb_array_elements(freeze->'suppliedOwnedAffectedTuples');
+        INTO expected_tuples FROM jsonb_array_elements(publication_request->'suppliedOwnedAffectedTuples');
     IF evidence->>'schema' IS DISTINCT FROM 'world-published-start-location-evidence/v1'
         OR (SELECT count(*) FROM jsonb_object_keys(evidence)) <> 5
-        OR selected IS DISTINCT FROM retained->'request'
+        OR selected IS DISTINCT FROM jsonb_set(
+            retained->'request', '{versionStateEpoch}', to_jsonb(retained_version_state_epoch::TEXT), FALSE)
         OR (SELECT count(*) FROM jsonb_object_keys(selected)) <> 13
-        OR selected->>'targetNamespace' IS DISTINCT FROM freeze->>'targetNamespace'
-        OR selected->>'canonicalTenantId' IS DISTINCT FROM freeze->>'canonicalTenantId'
-        OR selected->>'canonicalVersionId' IS DISTINCT FROM freeze->>'canonicalVersionId'
-        OR selected->>'intakeRequestId' IS DISTINCT FROM freeze->>'intakeRequestId'
-        OR selected->>'publicationFence' IS DISTINCT FROM freeze->>'publicationFence'
-        OR selected->>'publicationRequestId' IS DISTINCT FROM freeze->>'publicationRequestId'
-        OR selected->>'requestDigest' IS DISTINCT FROM freeze->>'requestDigest'
-        OR selected->>'versionStateEpoch' IS DISTINCT FROM freeze->>'versionStateEpoch'
-        OR selected->>'publishWorkflowId' IS DISTINCT FROM freeze->>'publishWorkflowId'
-        OR selected->>'appliedCommitId' IS DISTINCT FROM freeze->>'appliedCommitId'
-        OR selected->>'contentDigest' IS DISTINCT FROM freeze->>'contentDigest'
+        OR selected->>'targetNamespace' IS DISTINCT FROM publication_request->>'targetNamespace'
+        OR selected->>'canonicalTenantId' IS DISTINCT FROM publication_request->>'canonicalTenantId'
+        OR selected->>'canonicalVersionId' IS DISTINCT FROM publication_request->>'canonicalVersionId'
+        OR selected->>'intakeRequestId' IS DISTINCT FROM publication_request->>'intakeRequestId'
+        OR selected->>'publicationFence' IS DISTINCT FROM publication_request->>'publicationFence'
+        OR selected->>'publicationRequestId' IS DISTINCT FROM publication_request->>'publicationRequestId'
+        OR selected->>'requestDigest' IS DISTINCT FROM publication_request->>'requestDigest'
+        OR selected->>'versionStateEpoch' IS DISTINCT FROM publication_request->>'versionStateEpoch'
+        OR selected->>'publishWorkflowId' IS DISTINCT FROM publication_request->>'publishWorkflowId'
+        OR selected->>'appliedCommitId' IS DISTINCT FROM publication_request->>'appliedCommitId'
+        OR selected->>'contentDigest' IS DISTINCT FROM publication_request->>'contentDigest'
         OR selected->>'digestSchemaVersion' IS DISTINCT FROM '3'
-        OR selected->>'digestSchemaVersion' IS DISTINCT FROM freeze->>'digestSchemaVersion'
+        OR selected->>'digestSchemaVersion' IS DISTINCT FROM publication_request->>'digestSchemaVersion'
         OR selected->'worldAffectedTuples' IS DISTINCT FROM expected_tuples
         OR decode(evidence->>'selectorReceiptBytesBase64','base64') IS DISTINCT FROM decode(retained->>'selectorReceiptBytes','base64')
         OR decode(evidence->>'originalAccountBindingBytesBase64','base64') IS DISTINCT FROM decode(retained->>'originalAccountBindingBytes','base64')
@@ -201,7 +210,7 @@ BEGIN
             JOIN "${serviceSchema}".world_instance w ON w.id=m.world_instance_id
             WHERE m.world_instance_id=prepared.world_instance_id AND m.canonical_game_instance_id=NEW.canonical_game_instance_id
                 AND m.family='ROOM' AND m.template_id=NEW.room_template_id
-                AND m.runtime_room_instance_id=NEW.runtime_room_instance_id AND r.room_instance_id=NEW.runtime_room_instance_id
+                AND m.runtime_room_instance_id=NEW.runtime_room_instance_id AND r.room_instance_row_id=NEW.runtime_room_instance_id
                 AND r.tenant_id=w.tenant_id AND r.game_instance_id=w.game_instance_id) THEN
         RAISE EXCEPTION 'Original preparation selector differs from exact authored/runtime ROOM mapping' USING ERRCODE='23514';
     END IF;

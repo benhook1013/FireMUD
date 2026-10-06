@@ -81,6 +81,20 @@ public class WorldAuthoredVersionIdentityRepository {
   public Optional<WorldAuthoredVersionIdentityReceipt> readByCanonicalVersion(
       String namespace, UUID canonicalTenantId, String worldSlug, UUID canonicalVersionId) {
     requireNoActiveTransaction("World authored-Version identity read");
+    return readByCanonicalVersionValidated(
+        namespace, canonicalTenantId, worldSlug, canonicalVersionId);
+  }
+
+  /** Reads the exact immutable Version receipt within a verified owner snapshot. */
+  Optional<WorldAuthoredVersionIdentityReceipt> readByCanonicalVersionInOwnerReadOnlyRepeatableRead(
+      String namespace, UUID canonicalTenantId, String worldSlug, UUID canonicalVersionId) {
+    requireReadOnlyRepeatableReadOwnerTransaction();
+    return readByCanonicalVersionValidated(
+        namespace, canonicalTenantId, worldSlug, canonicalVersionId);
+  }
+
+  private Optional<WorldAuthoredVersionIdentityReceipt> readByCanonicalVersionValidated(
+      String namespace, UUID canonicalTenantId, String worldSlug, UUID canonicalVersionId) {
     validateIdentityKey(namespace, canonicalTenantId, worldSlug);
     requireNonNil(canonicalVersionId, "canonicalVersionId");
     Record row =
@@ -348,6 +362,27 @@ public class WorldAuthoredVersionIdentityRepository {
   private static void requireNoActiveTransaction(String label) {
     if (TransactionSynchronizationManager.isActualTransactionActive()) {
       throw new IllegalStateException(label + " requires an independent committed owner read");
+    }
+  }
+
+  private void requireReadOnlyRepeatableReadOwnerTransaction() {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || !TransactionSynchronizationManager.isCurrentTransactionReadOnly()
+        || !Integer.valueOf(Connection.TRANSACTION_REPEATABLE_READ)
+            .equals(TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())) {
+      throw new IllegalStateException(
+          "World authored-Version snapshot read requires a read-only REPEATABLE READ owner transaction");
+    }
+    Record state =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT current_setting('transaction_isolation') AS isolation, "
+                    + "current_setting('transaction_read_only') AS read_only"),
+            "World transaction state query returned no row");
+    if (!"repeatable read".equals(state.get("isolation", String.class))
+        || !"on".equals(state.get("read_only", String.class))) {
+      throw new IllegalStateException(
+          "World authored-Version snapshot read requires a read-only REPEATABLE READ owner transaction");
     }
   }
 
