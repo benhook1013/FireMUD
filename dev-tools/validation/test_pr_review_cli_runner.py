@@ -2,6 +2,7 @@ import contextlib
 import dataclasses
 import fcntl
 import hashlib
+import io
 import json
 import sqlite3
 import subprocess
@@ -38,7 +39,7 @@ from pr_review.cli_runner import (
     run_cli_review,
     target_from_resolver,
 )
-from pr_review.controller import _SelectionChanged
+from pr_review.controller import ControllerError, _SelectionChanged
 from pr_review.patch_identity import patch_diff_args
 from pr_review.policy import Channel, taper_satisfied
 from pr_review.runtime import LiveEvidence, LiveGitHub
@@ -653,6 +654,138 @@ class CliReviewRunnerTests(unittest.TestCase):
             self.assertTrue(any("CLI worktree cleanup failed with exit status 1: worktree is busy" in note for note in notes))
             self.assertTrue(any("CLI pinned-ref cleanup failed with exit status 1: pinned ref is busy" in note for note in notes))
             self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
+
+    def test_deadline_cleanup_notes_reach_capture_sqlite_and_wrapped_cli_boundary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / ".git" / "firemud" / "records.sqlite3"
+            database.parent.mkdir(parents=True)
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            commands = FakeCommands(root)
+            original_run = commands.run
+
+            def fail_cleanup(args, **kwargs):
+                if args[0] == "git" and "-C" in args:
+                    git_args = args[args.index("-C") + 2 :]
+                    if git_args[:2] == ["worktree", "remove"]:
+                        return CompletedProcess(args, 1, "", "worktree is busy\n")
+                    if git_args[:2] == ["update-ref", "-d"]:
+                        return CompletedProcess(args, 1, "", "pinned ref is busy\n")
+                return original_run(args, **kwargs)
+
+            commands.run = fail_cleanup
+            deadline = github.HostedPreflightDeadlineExceeded(
+                "final_identity_check", 121.5, 120, 0, 1, "CLI"
+            )
+            with (
+                github.cli_preflight_budget(),
+                patch.object(cli_runner, "_verify_target_still_current", side_effect=deadline),
+                self.assertRaises(github.HostedPreflightDeadlineExceeded) as raised,
+            ):
+                run_cli_review(
+                    target(),
+                    github=FakeGitHub(),
+                    source_root=root,
+                    runner=commands,
+                    records=records,
+                )
+
+            self.assertIs(raised.exception, deadline)
+            attempts = records.attempt_history(42)
+            self.assertEqual(len(attempts), 1)
+            attempt = attempts[0]
+            self.assertEqual(attempt["state"], "failed")
+            run_id = attempt["attempt_id"]
+            capture_dir = root / ".git" / "firemud" / "pr-review" / "runs" / run_id
+            diagnostic = (capture_dir / "error").read_text(encoding="utf-8")
+            self.assertIn("phase=final_identity_check", diagnostic)
+            self.assertIn("CLI worktree cleanup failed with exit status 1: worktree is busy", diagnostic)
+            self.assertIn("CLI pinned-ref cleanup failed with exit status 1: pinned ref is busy", diagnostic)
+            self.assertEqual(attempt["diagnostic"], f"CLI setup or preflight failed: {diagnostic.rstrip()}")
+
+            wrapped = ControllerError(str(deadline))
+            wrapped.__cause__ = deadline
+            duplicate = getattr(deadline, "__notes__", [None])[0]
+            cli_runner._add_exception_note(wrapped, duplicate)
+            stderr = io.StringIO()
+            with patch.object(cli_module, "_dispatch", side_effect=wrapped), patch("sys.stderr", stderr):
+                self.assertEqual(cli_module.main(["run", "cli", "--expect-pr", "42"]), 1)
+            command_text = stderr.getvalue()
+            self.assertIn("error: CLI preflight deadline exceeded (phase=final_identity_check", command_text)
+            self.assertIn("CLI worktree cleanup failed with exit status 1: worktree is busy", command_text)
+            self.assertEqual(command_text.count(duplicate), 1)
+
+    def test_exception_note_renderer_keeps_cleanup_only_primary_and_plain_errors_unchanged(self):
+        primary = ReviewRunnerError("CLI worktree cleanup failed with exit status 1: worktree is busy")
+        cli_runner._add_exception_note(
+            primary,
+            "CLI candidate cleanup also failed: CLI pinned-ref cleanup failed with exit status 1: pinned ref is busy",
+        )
+        self.assertEqual(
+            cli_runner.format_exception_notes(primary),
+            "CLI worktree cleanup failed with exit status 1: worktree is busy; "
+            "note: CLI candidate cleanup also failed: CLI pinned-ref cleanup failed with exit status 1: pinned ref is busy",
+        )
+        self.assertEqual(cli_runner.format_exception_notes(RuntimeError("ordinary failure")), "ordinary failure")
+
+        older_runtime_error = RuntimeError("wrapped failure")
+        older_runtime_error.__notes__ = ["cleanup\nwarning", "cleanup warning"]
+        outer_error = ControllerError("wrapped failure")
+        outer_error.__cause__ = older_runtime_error
+        older_runtime_error.__cause__ = outer_error
+        self.assertEqual(cli_runner.format_exception_notes(outer_error), "wrapped failure; note: cleanup warning")
+
+    def test_capture_and_sqlite_archive_failures_remain_notes_on_python310_style_exceptions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / ".git" / "firemud" / "records.sqlite3"
+            database.parent.mkdir(parents=True)
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            original_finish = records.finish_attempt
+
+            def fail_failed_archive(*args, **kwargs):
+                if kwargs.get("state") == "failed":
+                    raise ReviewRecordsError("archive unavailable")
+                return original_finish(*args, **kwargs)
+
+            records.finish_attempt = fail_failed_archive
+            deadline = github.HostedPreflightDeadlineExceeded(
+                "final_identity_check", 121.5, 120, 0, 1, "CLI"
+            )
+            if callable(getattr(deadline, "add_note", None)):
+                deadline.add_note = None
+            original_write_text = Path.write_text
+
+            def fail_error_capture(path, *args, **kwargs):
+                if path.name == "error":
+                    raise OSError("capture unavailable")
+                return original_write_text(path, *args, **kwargs)
+
+            with (
+                github.cli_preflight_budget(),
+                patch.object(cli_runner, "_verify_target_still_current", side_effect=deadline),
+                patch.object(Path, "write_text", new=fail_error_capture),
+                self.assertRaises(github.HostedPreflightDeadlineExceeded) as raised,
+            ):
+                run_cli_review(
+                    target(),
+                    github=FakeGitHub(),
+                    source_root=root,
+                    runner=FakeCommands(root),
+                    records=records,
+                )
+
+            self.assertIs(raised.exception, deadline)
+            rendered = cli_runner.format_exception_notes(deadline)
+            self.assertIn("phase=final_identity_check", rendered)
+            self.assertIn("CLI failure diagnostic could not be written to its capture: capture unavailable", rendered)
+            self.assertIn("SQLite review-attempt archival also failed: archive unavailable", rendered)
 
     def test_selection_retry_failure_preserves_the_original_cli_budget_and_capture(self):
         with tempfile.TemporaryDirectory() as directory:

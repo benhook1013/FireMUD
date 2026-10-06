@@ -18,7 +18,7 @@ from typing import Any
 from . import acceptance, cli_attempts, github, hosted, hosted_wait, sqlite_hosted_capture, sqlite_records_repair, stack
 from . import evidence as evidence_module
 from . import status as status_module
-from .cli_runner import PullRequestSnapshot
+from .cli_runner import PullRequestSnapshot, format_exception_notes
 from .controller import LivePullRequest, ReviewController
 from .runtime import default_controller
 from .sqlite_review_records import FindingObservation, RecordsNotBootstrapped, ReviewRecordsError, SqliteReviewRecords
@@ -1832,10 +1832,10 @@ def main(argv: list[str] | None = None) -> int:
         print(_render(result, args.command in {"records", "wait"} or getattr(args, "as_json", False)))
         return exit_status
     except (CliError, ValueError) as error:
-        print(f"error: {error}", file=sys.stderr)
+        print(f"error: {format_exception_notes(error)}", file=sys.stderr)
         return 2
     except Exception as error:  # noqa: BLE001 - final operator boundary
-        print(f"error: {error}", file=sys.stderr)
+        print(f"error: {format_exception_notes(error)}", file=sys.stderr)
         return 1
 
 

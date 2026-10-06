@@ -315,6 +315,36 @@ def _add_exception_note(error: Exception, note: str) -> None:
     notes.append(note)
 
 
+def format_exception_notes(error: BaseException) -> str:
+    """Render an error and its unique notes without exposing a traceback."""
+
+    rendered = str(error)
+    notes: list[str] = []
+    seen_errors: set[int] = set()
+    seen_notes: set[str] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen_errors:
+        seen_errors.add(id(current))
+        error_notes = getattr(current, "__notes__", ())
+        if isinstance(error_notes, (list, tuple)):
+            for note in error_notes:
+                if isinstance(note, str):
+                    safe_note = "".join(
+                        " " if unicodedata.category(character) == "Cc" else character for character in note
+                    )
+                    if safe_note not in seen_notes:
+                        seen_notes.add(safe_note)
+                        notes.append(safe_note)
+        current = (
+            current.__cause__
+            if current.__cause__ is not None
+            else current.__context__ if not current.__suppress_context__ else None
+        )
+    if not notes:
+        return rendered
+    return "; ".join((rendered, *(f"note: {note}" for note in notes)))
+
+
 def _sha(value: str, label: str) -> str:
     if len(value) != 40 or any(character not in "0123456789abcdefABCDEF" for character in value):
         raise ReviewRunnerError(f"{label} must be a full 40-character commit SHA")
@@ -1527,28 +1557,28 @@ def run_cli_review(
                     if not had_primary_error:
                         raise primary_error
         except Exception as error:
+            failure_text = format_exception_notes(error)
             with github_api.without_hosted_preflight_budget():
                 if capture_dir.exists():
                     try:
-                        (capture_dir / "error").write_text(f"{error}\n", encoding="utf-8")
+                        (capture_dir / "error").write_text(f"{failure_text}\n", encoding="utf-8")
                     except OSError as capture_error:
-                        add_note = getattr(error, "add_note", None)
-                        if callable(add_note):
-                            add_note(f"CLI failure diagnostic could not be written to its capture: {capture_error}")
+                        _add_exception_note(
+                            error,
+                            f"CLI failure diagnostic could not be written to its capture: {capture_error}",
+                        )
                 if records is not None and attempt_started and not attempt_finished and not provider_result_saved:
                     try:
                         records.finish_attempt(
                             run_id,
                             state="failed",
-                            diagnostic=f"CLI setup or preflight failed: {error}",
-                            artifacts={"cli_diagnostic": str(error)},
+                            diagnostic=f"CLI setup or preflight failed: {failure_text}",
+                            artifacts={"cli_diagnostic": failure_text},
                         )
                     except (ReviewRecordsError, OSError, sqlite3.DatabaseError) as archive_error:
                         # Keep the original provider failure while surfacing the
                         # separate archive failure to the caller.
-                        add_note = getattr(error, "add_note", None)
-                        if callable(add_note):
-                            add_note(f"SQLite review-attempt archival also failed: {archive_error}")
+                        _add_exception_note(error, f"SQLite review-attempt archival also failed: {archive_error}")
             raise
         finally:
             try:
