@@ -41,6 +41,9 @@ jobs:
           ref: develop
           persist-credentials: false
 
+      - name: Set up canonical Python
+        uses: ./.github/actions/setup-python
+
       - name: Set up canonical GitHub CLI
         uses: ./.github/actions/setup-gh
 

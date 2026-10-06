@@ -45,6 +45,10 @@ if ! namespace_json="$(
   exit 1
 fi
 if [[ -z "$namespace_json" ]]; then
+  if [[ -n "$expected_namespace_uid" ]]; then
+    echo "expected hosted namespace ${namespace} disappeared before proof deletion" >&2
+    exit 1
+  fi
   echo "Hosted namespace ${namespace} is already absent."
   exit 0
 fi
@@ -90,6 +94,10 @@ delete_status=0
 printf '%s\n' "$delete_options" |
   kubectl delete --raw "/api/v1/namespaces/${namespace}" -f - >/dev/null || delete_status=$?
 if ((delete_status != 0)); then
+  if [[ -n "$expected_namespace_uid" ]]; then
+    echo "unable to request UID-fenced deletion of hosted namespace ${namespace}" >&2
+    exit "$delete_status"
+  fi
   if ! namespace_lookup="$(
     kubectl get namespace "$namespace" --ignore-not-found -o name
   )"; then

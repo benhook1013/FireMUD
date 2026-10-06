@@ -29,6 +29,7 @@ for required in (
     "self-hosted",
     "group: preview-allocation-lifecycle",
     "pull-requests: read",
+    "uses: ./.github/actions/setup-python",
     "secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG",
     "kubectl auth whoami -o json",
     "kubectl auth can-i get namespaces",
@@ -89,6 +90,9 @@ elif args[:2] == ["get","namespace"]:
             count_path = state / "lookups"
             count = int(count_path.read_text() if count_path.exists() else "0") + 1
             count_path.write_text(str(count))
+            if count >= 2 and env("MOCK_HELPER_NAMESPACE_ABSENT") == "yes":
+                print("")
+                raise SystemExit(0)
             uid = env("MOCK_NAMESPACE_UID","uid-original")
             if count >= 2: uid = env("MOCK_HELPER_NAMESPACE_UID",uid)
             obj = {"metadata":{"name":name,"uid":uid,
@@ -103,6 +107,9 @@ elif args[:2] == ["version","--output=json"]:
 elif args[:2] == ["delete","--raw"]:
     payload = json.load(sys.stdin)
     (state / "delete-options").write_text(json.dumps(payload))
+    if env("MOCK_DELETE_FAIL_GONE") == "yes":
+        (state / "deleted").write_text("yes")
+        raise SystemExit(1)
     if payload.get("preconditions",{}).get("uid") != env("MOCK_NAMESPACE_UID","uid-original"):
         raise SystemExit("unexpected DELETE UID precondition")
     (state / "deleted").write_text("yes")
@@ -171,6 +178,10 @@ with tempfile.TemporaryDirectory(prefix="preview-cleanup-proof-contract-") as tm
     assert result.returncode != 0
     result,_=scenario("replacement-race",delete={"MOCK_HELPER_NAMESPACE_UID":"uid-recreated"})
     assert result.returncode != 0
+    result,_=scenario("disappeared-before-helper-get",delete={"MOCK_HELPER_NAMESPACE_ABSENT":"yes"})
+    assert result.returncode != 0, "a proof fixture absent before the helper GET was treated as deleted by this proof"
+    result,_=scenario("failed-delete-then-absent",delete={"MOCK_DELETE_FAIL_GONE":"yes"},should_delete=True)
+    assert result.returncode != 0, "a failed API DELETE followed by NotFound was treated as successful proof"
     result,state=scenario("positive",runner={"MOCK_GET_SECRETS":"no"},should_delete=True)
     assert result.returncode == 0, (result.stdout,result.stderr)
     options=json.loads((state/"delete-options").read_text())
