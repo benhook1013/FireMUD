@@ -11,6 +11,13 @@ import org.junit.jupiter.api.Test;
 
 class GameSessionAccountDelegationJwtProfileValidatorTest {
   @Test
+  void rejectsNullClaimsBeforeSelectingEitherDelegationForm() {
+    assertThatThrownBy(() -> GameSessionAccountDelegationJwtProfileValidator.validateClaims(null))
+        .isInstanceOf(AccountAsymmetricJwtVerifier.VerificationException.class)
+        .hasNoCause();
+  }
+
+  @Test
   void independentlyScopedAccountAndTenantUuidsMayEqualWithoutRelaxingExactMapKeys() {
     var claims = validClaims();
     var tuple = object(claims.get("authorityTuple"));

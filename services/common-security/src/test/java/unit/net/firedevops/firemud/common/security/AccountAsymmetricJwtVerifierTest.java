@@ -14,6 +14,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.util.Base64;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -113,6 +114,41 @@ class AccountAsymmetricJwtVerifierTest {
     assertThat(verified.claims().get("iat")).isInstanceOf(Number.class);
     assertThat(verified.claims().get("tokenGeneration")).isEqualTo("1");
     assertThat(verified.claims().get("issuanceFence")).isEqualTo("1");
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void verifiedClaimsDeepCopyAndFreezeCallerOwnedNestedValues() {
+    Map<String, Object> nested = new LinkedHashMap<>();
+    List<Object> nestedList = new java.util.ArrayList<>();
+    Map<String, Object> listEntry = new LinkedHashMap<>();
+    listEntry.put("value", "before");
+    nestedList.add(listEntry);
+    nested.put("items", nestedList);
+    Map<String, Object> source = new LinkedHashMap<>();
+    source.put("nested", nested);
+
+    AccountAsymmetricJwtVerifier.VerifiedClaims verified =
+        new AccountAsymmetricJwtVerifier.VerifiedClaims("route", "profile", "type", "kid", source);
+
+    listEntry.put("value", "after");
+    nestedList.add("after");
+    nested.put("added", true);
+    source.put("added", true);
+
+    Map<?, ?> copiedNested = (Map<?, ?>) verified.claims().get("nested");
+    List<?> copiedList = (List<?>) copiedNested.get("items");
+    Map<?, ?> copiedListEntry = (Map<?, ?>) copiedList.get(0);
+    assertThat(copiedListEntry.get("value")).isEqualTo("before");
+    assertThat(copiedList).hasSize(1);
+    assertThat(copiedNested.containsKey("added")).isFalse();
+    assertThat(verified.claims()).doesNotContainKey("added");
+    assertThatThrownBy(() -> ((Map<Object, Object>) copiedNested).put("added", true))
+        .isInstanceOf(UnsupportedOperationException.class);
+    assertThatThrownBy(() -> ((List<Object>) copiedList).add("value"))
+        .isInstanceOf(UnsupportedOperationException.class);
+    assertThatThrownBy(() -> ((Map<Object, Object>) copiedListEntry).put("value", "after"))
+        .isInstanceOf(UnsupportedOperationException.class);
   }
 
   @Test
