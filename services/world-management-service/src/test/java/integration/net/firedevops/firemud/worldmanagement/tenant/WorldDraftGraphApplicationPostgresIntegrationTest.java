@@ -265,9 +265,12 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
         preparationInput(f, frozen, selector, publicationEpoch + 1, List.of("LOOK", "CHANGED"));
     var laterRelease = laterInput.completeLaunchBinding().evidence().releaseAttestation();
     assertThat(laterRelease.versionStateEpoch()).isEqualTo(publicationEpoch + 1);
-    assertThat(isolatedTerminalEvidence(laterInput).releaseContent().canonicalBytes())
+    // Compare the later descriptor's immutable content directly. Its later resolution epoch
+    // cannot be wrapped in a new publication terminal because the terminal keeps the original
+    // publication operation epoch.
+    assertThat(isolatedReleaseContent(laterInput).canonicalBytes())
         .containsExactly(originalTerminal.releaseContent().canonicalBytes());
-    assertThat(isolatedTerminalEvidence(changedReleaseInput).releaseContent().canonicalBytes())
+    assertThat(isolatedReleaseContent(changedReleaseInput).canonicalBytes())
         .isNotEqualTo(originalTerminal.releaseContent().canonicalBytes());
 
     var repository = preparationRepository();
@@ -2106,6 +2109,16 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
                     null,
                     new byte[] {1})));
     var operation = new GameDesignPublicationOperationBinding(account, world);
+    return new GameDesignPublicationTerminalEvidence(
+        operation.canonicalBytes(),
+        Outcome.PUBLISHED,
+        isolatedReleaseContent(input),
+        release.versionStateEpoch());
+  }
+
+  private ReleaseContent isolatedReleaseContent(WorldCanonicalInstancePreparation.Input input) {
+    var release = input.completeLaunchBinding().evidence().releaseAttestation();
+    var world = Objects.requireNonNull(release.worldStartLocationEvidence());
     var participants =
         release.participantDigests().stream()
             .map(
@@ -2123,24 +2136,21 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
                         null,
                         null))
             .toList();
-    var content =
-        new ReleaseContent(
-            release.canonicalTenantId(),
-            release.canonicalVersionId(),
-            release.publishedReleaseBundleRef(),
-            1,
-            "v2",
-            release.publishWorkflowId(),
-            release.manifestHash(),
-            release.manifestSchemaVersion(),
-            release.artifactDigests(),
-            release.requiredManifestAssetKeys(),
-            participants,
-            release.commandDefinitions(),
-            release.generationConfigRevision(),
-            world);
-    return new GameDesignPublicationTerminalEvidence(
-        operation.canonicalBytes(), Outcome.PUBLISHED, content, release.versionStateEpoch());
+    return new ReleaseContent(
+        release.canonicalTenantId(),
+        release.canonicalVersionId(),
+        release.publishedReleaseBundleRef(),
+        1,
+        "v2",
+        release.publishWorkflowId(),
+        release.manifestHash(),
+        release.manifestSchemaVersion(),
+        release.artifactDigests(),
+        release.requiredManifestAssetKeys(),
+        participants,
+        release.commandDefinitions(),
+        release.generationConfigRevision(),
+        world);
   }
 
   private static GameDesignPublicationTerminalEvidence terminalWithWorldBinding(
