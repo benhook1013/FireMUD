@@ -4,13 +4,16 @@ import json
 import sqlite3
 import sys
 import tempfile
+import threading
+import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
-from pr_review import sqlite_backup, sqlite_hosted_capture, sqlite_provider_imports, sqlite_review_records
+from pr_review import github, sqlite_backup, sqlite_hosted_capture, sqlite_provider_imports, sqlite_review_records
 from pr_review.evidence import Checkpoint
 from pr_review.sqlite_finding_text import _hosted_aggregate_display_detail, _safe_finding_detail
 from pr_review.sqlite_review_records import (
@@ -23,7 +26,7 @@ from pr_review.sqlite_review_records import (
     _archive_artifact,
 )
 from pr_review.sqlite_store import SQLITE_SCHEMA_VERSION, WRITER_BUILD, SqliteStateStore
-from pr_review.state import FindingRoute, StateError
+from pr_review.state import FindingRoute, StateError, StateLockTimeout
 
 
 class SqliteReviewRecordsTest(unittest.TestCase):
@@ -907,6 +910,142 @@ class SqliteReviewRecordsTest(unittest.TestCase):
                 metadata={"unsupported": object()},
             )
         self.assertIsInstance(raised.exception.__cause__, TypeError)
+
+    def test_start_attempt_bounds_preflight_transaction_wait_to_remaining_deadline(self) -> None:
+        self.bootstrap()
+        writer = sqlite3.connect(self.database, isolation_level=None)
+        try:
+            writer.execute("BEGIN IMMEDIATE")
+            started = time.monotonic()
+            with self.assertRaisesRegex(StateLockTimeout, "SQLite review-records transaction lock"):
+                self.records.start_attempt(
+                    attempt_id="attempt-preflight-lock",
+                    source_pr=2890,
+                    channel="hosted",
+                    deadline=started + 0.05,
+                )
+            self.assertLess(time.monotonic() - started, 1)
+            self.assertEqual(self.records.attempt_history(2890), [])
+        finally:
+            writer.rollback()
+            writer.close()
+
+        self.assertEqual(
+            self.records.start_attempt(
+                attempt_id="attempt-preflight-lock",
+                source_pr=2890,
+                channel="hosted",
+            )["state"],
+            "started",
+        )
+
+    def test_compatibility_reads_refresh_remaining_deadline_after_lock_reacquisition(self) -> None:
+        self.bootstrap()
+        started = time.monotonic()
+        deadline = started + 0.4
+        connection = self.records._connect(read_only=True, deadline=deadline)
+        holder_acquired = threading.Event()
+        release_holder = threading.Event()
+        contender: sqlite3.Connection | None = None
+        original_query = self.records._compatibility_query
+
+        def hold_exclusive_lock() -> None:
+            writer = sqlite3.connect(self.database, isolation_level=None)
+            try:
+                writer.execute("BEGIN EXCLUSIVE")
+                holder_acquired.set()
+                release_holder.wait(0.25)
+                writer.rollback()
+            finally:
+                writer.close()
+
+        def reacquire_before_next_read(conn, statement, *, deadline):
+            nonlocal contender
+            if statement.startswith("SELECT name FROM sqlite_master"):
+                contender = sqlite3.connect(self.database, isolation_level=None)
+                contender.execute("BEGIN EXCLUSIVE")
+            return original_query(conn, statement, deadline=deadline)
+
+        try:
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                holder = executor.submit(hold_exclusive_lock)
+                self.assertTrue(holder_acquired.wait(1))
+                with (
+                    patch.object(self.records, "_compatibility_query", side_effect=reacquire_before_next_read),
+                    self.assertRaisesRegex(StateLockTimeout, "SQLite review-records deadline"),
+                ):
+                    self.records._require_compatible(connection, deadline=deadline)
+                self.assertLess(time.monotonic() - started, 0.5)
+                release_holder.set()
+                holder.result(timeout=1)
+        finally:
+            release_holder.set()
+            if contender is not None:
+                contender.rollback()
+                contender.close()
+            connection.close()
+
+    def test_connection_setup_failure_closes_connection_and_preserves_original_error(self) -> None:
+        class TrackingConnection:
+            def __init__(self) -> None:
+                self.connection = sqlite3.connect(":memory:")
+                self.closed = False
+
+            def execute(self, statement: str):
+                return self.connection.execute(statement)
+
+            def close(self) -> None:
+                self.closed = True
+                self.connection.close()
+
+        connection = TrackingConnection()
+        setup_error = RuntimeError("injected connection setup failure")
+        with (
+            patch.object(sqlite_review_records.sqlite3, "connect", return_value=connection),
+            patch.object(self.records, "_set_busy_timeout", side_effect=setup_error),
+            self.assertRaisesRegex(RuntimeError, "injected connection setup failure") as raised,
+        ):
+            self.records._connect(read_only=True, deadline=time.monotonic() + 1)
+
+        self.assertIs(raised.exception, setup_error)
+        self.assertTrue(connection.closed)
+
+    def test_unparameterized_record_operations_inherit_only_an_active_hosted_budget(self) -> None:
+        self.bootstrap()
+        writer = sqlite3.connect(self.database, isolation_level=None)
+        try:
+            writer.execute("BEGIN IMMEDIATE")
+            started = time.monotonic()
+            with (
+                github.activate_hosted_preflight_budget(timeout_seconds=0.05) as budget,
+                self.assertRaises(github.HostedPreflightDeadlineExceeded),
+            ):
+                def register_attempt_in_worker():
+                    with github.bind_hosted_preflight_budget(budget):
+                        self.records.start_attempt(
+                            attempt_id="attempt-inherited-hosted-budget",
+                            source_pr=2890,
+                            channel="hosted",
+                        )
+
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    pool.submit(register_attempt_in_worker).result()
+            self.assertLess(time.monotonic() - started, 1)
+            self.assertIsNone(github.active_hosted_preflight_budget())
+        finally:
+            writer.rollback()
+            writer.close()
+
+        bounded_records = SqliteReviewRecords(self.database, timeout=0.05)
+        with sqlite3.connect(self.database, isolation_level=None) as writer:
+            writer.execute("BEGIN EXCLUSIVE")
+            started = time.monotonic()
+            with self.assertRaisesRegex(ReviewRecordsError, "SQLite failure in attempt_history"):
+                bounded_records.attempt_history(2890)
+            self.assertLess(time.monotonic() - started, 1)
+            writer.rollback()
+
+        self.assertEqual(self.records.attempt_history(2890), [])
 
     def test_history_validates_attempt_metadata_once_as_an_object(self) -> None:
         self.bootstrap()

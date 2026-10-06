@@ -490,11 +490,27 @@ def collect_evidence(comments: list[dict[str, Any]], limit: int = 0) -> dict[str
 
 def git_common_dir() -> Path:
     try:
+        from . import github
+    except ImportError:  # pragma: no cover - direct script module execution
+        import github  # type: ignore[no-redef]
+
+    budget = github.active_hosted_preflight_budget()
+    timeout = budget.request_timeout(30) if budget is not None else 30
+    try:
         completed = subprocess.run(
-            ["git", "rev-parse", "--git-common-dir"], check=True, capture_output=True, text=True, timeout=30
+            ["git", "rev-parse", "--git-common-dir"], check=True, capture_output=True, text=True, timeout=timeout
         )
-    except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+    except subprocess.TimeoutExpired as exc:
+        if budget is not None:
+            try:
+                budget.remaining_seconds()
+            except github.HostedPreflightDeadlineExceeded as deadline_error:
+                raise deadline_error from exc
         raise CaptureUnavailable("could not resolve shared Git common directory") from exc
+    except (FileNotFoundError, subprocess.CalledProcessError) as exc:
+        raise CaptureUnavailable("could not resolve shared Git common directory") from exc
+    if budget is not None:
+        budget.remaining_seconds()
     value = Path(completed.stdout.strip())
     return value if value.is_absolute() else (Path.cwd() / value).resolve()
 

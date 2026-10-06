@@ -17,12 +17,13 @@ import os
 import sqlite3
 import sys
 import tempfile
+import time
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Any
 
-from .state import ReviewState, StateError, _locked, sqlite_state_path
+from .state import ReviewState, StateError, StateLockTimeout, _locked, sqlite_state_path
 
 SQLITE_SCHEMA_VERSION = 1
 WRITER_BUILD = 8
@@ -111,17 +112,23 @@ class SqliteStateStore:
         self.writer_build = writer_build
         self.timeout = timeout
 
-    def load(self) -> ReviewState:
+    def load(self, *, deadline: float | None = None) -> ReviewState:
         """Load state without creating a missing database."""
 
+        self._check_deadline(deadline)
         if not self.path.exists():
+            self._check_deadline(deadline)
             return ReviewState()
         try:
-            with closing(self._connect_read_only()) as connection:
-                self._require_compatible(connection)
+            with closing(self._connect_read_only(deadline=deadline)) as connection:
+                self._require_compatible(connection, deadline=deadline)
+                self._set_busy_timeout(connection, deadline)
                 row = connection.execute(f"SELECT state_json FROM {_STATE_TABLE} WHERE singleton = 1").fetchone()
         except sqlite3.DatabaseError as exc:
+            if deadline is not None and self._is_sqlite_lock_error(exc):
+                raise StateLockTimeout("timed out waiting for SQLite review-state read lock") from exc
             raise StateError("cannot read SQLite review-state database") from exc
+        self._check_deadline(deadline)
         if row is None or not isinstance(row[0], str):
             raise StateError("SQLite review state is missing its validated state document")
         try:
@@ -132,29 +139,58 @@ class SqliteStateStore:
             raise StateError("SQLite review state document must be an object")
         return ReviewState.from_dict(document)
 
-    def update(self, mutate: Callable[[ReviewState], ReviewState]) -> ReviewState:
+    def update(
+        self,
+        mutate: Callable[[ReviewState], ReviewState],
+        *,
+        deadline: float | None = None,
+        deadline_active: Callable[[], bool] | None = None,
+    ) -> ReviewState:
         """Apply ``mutate`` and persist its validated result in one transaction."""
 
         if not callable(mutate):
             raise TypeError("mutate must be callable")
+        if deadline_active is not None and not callable(deadline_active):
+            raise TypeError("deadline_active must be callable")
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        with self._exclusive_update_lock():
-            return self._update_locked(mutate)
+        with self._exclusive_update_lock(deadline=deadline):
+            return self._update_locked(mutate, deadline=deadline, deadline_active=deadline_active)
 
-    def _update_locked(self, mutate: Callable[[ReviewState], ReviewState]) -> ReviewState:
+    def _update_locked(
+        self,
+        mutate: Callable[[ReviewState], ReviewState],
+        *,
+        deadline: float | None = None,
+        deadline_active: Callable[[], bool] | None = None,
+    ) -> ReviewState:
         created_identity = self._create_empty_file_exclusively()
         connection: sqlite3.Connection | None = None
         committed = False
         try:
-            connection = sqlite3.connect(self.path, timeout=self.timeout, isolation_level=None)
-            connection.execute(f"PRAGMA busy_timeout = {int(self.timeout * 1000)}")
-            connection.execute("BEGIN IMMEDIATE")
+            timeout = self._remaining_timeout(deadline)
+            connection = sqlite3.connect(self.path, timeout=timeout, isolation_level=None)
+            self._set_busy_timeout(connection, deadline)
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+            except sqlite3.OperationalError as exc:
+                if deadline is not None and self._is_sqlite_lock_error(exc):
+                    raise StateLockTimeout("timed out waiting for SQLite review-state transaction lock") from exc
+                raise
+            self._check_deadline(deadline)
             if created_identity is not None:
                 self._initialize(connection, self.writer_build)
             else:
-                self._require_compatible(connection)
+                self._require_compatible(connection, deadline=deadline)
             current = self._load_from_connection(connection)
+            self._check_deadline(deadline)
             updated = mutate(current)
+            if deadline is not None and deadline_active is not None and not deadline_active():
+                # Hosted admission has durably crossed the POST boundary. Keep
+                # SQLite completion independently bounded, but do not roll
+                # back the reservation because its fsync crossed preflight.
+                deadline = None
+            else:
+                self._check_deadline(deadline)
             if not isinstance(updated, ReviewState):
                 raise TypeError("mutate must return ReviewState")
             if any(
@@ -184,7 +220,13 @@ class SqliteStateStore:
                 f"UPDATE {_STATE_TABLE} SET state_json = ? WHERE singleton = 1",
                 (payload,),
             )
-            connection.commit()
+            self._set_busy_timeout(connection, deadline)
+            try:
+                connection.commit()
+            except sqlite3.OperationalError as exc:
+                if deadline is not None and self._is_sqlite_lock_error(exc):
+                    raise StateLockTimeout("timed out waiting for SQLite review-state transaction lock") from exc
+                raise
             committed = True
             return updated
         except BaseException:
@@ -200,9 +242,10 @@ class SqliteStateStore:
             if connection is not None:
                 connection.close()
 
-    def status(self) -> dict[str, Any]:
+    def status(self, *, deadline: float | None = None) -> dict[str, Any]:
         """Return local schema/build compatibility without creating or changing files."""
 
+        self._check_deadline(deadline)
         base: dict[str, Any] = {
             "status_version": STATUS_VERSION,
             "format": "missing",
@@ -215,20 +258,27 @@ class SqliteStateStore:
             "reason": "database does not exist",
         }
         if not self.path.exists():
+            self._check_deadline(deadline)
             return base
         try:
-            with closing(self._connect_read_only()) as connection:
+            with closing(self._connect_read_only(deadline=deadline)) as connection:
+                self._set_busy_timeout(connection, deadline)
                 base["format"] = "sqlite"
                 base["schema_version"] = int(connection.execute("PRAGMA user_version").fetchone()[0])
+                self._check_deadline(deadline)
+                self._set_busy_timeout(connection, deadline)
                 tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
                 if _METADATA_TABLE not in tables:
                     base["reason"] = "controller metadata table is missing"
+                    self._check_deadline(deadline)
                     return base
+                self._set_busy_timeout(connection, deadline)
                 row = connection.execute(
                     f"SELECT data_model_version, min_writer_build FROM {_METADATA_TABLE} WHERE singleton = 1"
                 ).fetchone()
                 if row is None:
                     base["reason"] = "controller metadata row is missing"
+                    self._check_deadline(deadline)
                     return base
                 data_model_version, min_writer_build = row
                 base["data_model_version"] = data_model_version
@@ -246,8 +296,12 @@ class SqliteStateStore:
                 else:
                     base["compatible"] = True
                     base["reason"] = None
+                self._check_deadline(deadline)
                 return base
         except (OSError, sqlite3.DatabaseError) as exc:
+            if deadline is not None and self._is_sqlite_lock_error(exc):
+                raise StateLockTimeout("timed out waiting for SQLite review-state status lock") from exc
+            self._check_deadline(deadline)
             base["format"] = "unknown"
             base["reason"] = f"database cannot be inspected read-only: {exc.__class__.__name__}"
             return base
@@ -466,16 +520,58 @@ class SqliteStateStore:
     def _lock_path(self) -> Path:
         return self.path.with_name(f".{self.path.name}.lock")
 
+    @staticmethod
+    def _is_sqlite_lock_error(error: sqlite3.OperationalError) -> bool:
+        message = str(error).lower()
+        return "locked" in message or "busy" in message
+
+    @staticmethod
+    def _check_deadline(deadline: float | None) -> None:
+        if deadline is not None and time.monotonic() >= deadline:
+            raise StateLockTimeout("timed out waiting for SQLite review-state transaction lock")
+
+    def _remaining_timeout(self, deadline: float | None) -> float:
+        if deadline is None:
+            return self.timeout
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise StateLockTimeout("timed out waiting for SQLite review-state transaction lock")
+        return min(self.timeout, remaining)
+
+    def _set_busy_timeout(self, connection: sqlite3.Connection, deadline: float | None) -> None:
+        timeout = self._remaining_timeout(deadline)
+        connection.execute(f"PRAGMA busy_timeout = {int(timeout * 1000)}")
+
     @contextmanager
-    def _exclusive_update_lock(self) -> Iterator[None]:
+    def _exclusive_update_lock(self, *, deadline: float | None = None) -> Iterator[None]:
         descriptor = os.open(self._lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        locked = False
         try:
             os.fchmod(descriptor, 0o600)
-            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            if deadline is None:
+                fcntl.flock(descriptor, fcntl.LOCK_EX)
+                locked = True
+            else:
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise StateLockTimeout("timed out waiting for SQLite review-state file lock")
+                    try:
+                        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        locked = True
+                    except BlockingIOError:
+                        time.sleep(min(0.01, remaining))
+                        continue
+                    if deadline - time.monotonic() <= 0:
+                        fcntl.flock(descriptor, fcntl.LOCK_UN)
+                        locked = False
+                        raise StateLockTimeout("timed out waiting for SQLite review-state file lock")
+                    break
             try:
                 yield
             finally:
-                fcntl.flock(descriptor, fcntl.LOCK_UN)
+                if locked:
+                    fcntl.flock(descriptor, fcntl.LOCK_UN)
         finally:
             os.close(descriptor)
 
@@ -498,20 +594,26 @@ class SqliteStateStore:
         if (current.st_dev, current.st_ino) == identity and not self.path.is_symlink():
             self.path.unlink()
 
-    def _connect_read_only(self) -> sqlite3.Connection:
+    def _connect_read_only(self, *, deadline: float | None = None) -> sqlite3.Connection:
         if self.path.is_symlink():
             raise StateError("SQLite review-state path must not be a symlink")
         uri = f"{self.path.resolve().as_uri()}?mode=ro"
-        connection = sqlite3.connect(uri, uri=True, timeout=self.timeout, isolation_level=None)
+        timeout = self._remaining_timeout(deadline)
+        connection = sqlite3.connect(uri, uri=True, timeout=timeout, isolation_level=None)
+        connection.execute(f"PRAGMA busy_timeout = {int(timeout * 1000)}")
         connection.execute("PRAGMA query_only = ON")
         return connection
 
-    def _require_compatible(self, connection: sqlite3.Connection) -> None:
-        schema_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+    def _require_compatible(self, connection: sqlite3.Connection, *, deadline: float | None = None) -> None:
+        schema_version = int(
+            self._compatibility_query(connection, "PRAGMA user_version", deadline=deadline).fetchone()[0]
+        )
         if schema_version != SQLITE_SCHEMA_VERSION:
             raise StateError(f"unsupported SQLite review-state schema version: {schema_version}")
-        row = connection.execute(
-            f"SELECT data_model_version, min_writer_build FROM {_METADATA_TABLE} WHERE singleton = 1"
+        row = self._compatibility_query(
+            connection,
+            f"SELECT data_model_version, min_writer_build FROM {_METADATA_TABLE} WHERE singleton = 1",
+            deadline=deadline,
         ).fetchone()
         if row is None:
             raise StateError("SQLite review-state metadata is missing")
@@ -522,6 +624,21 @@ class SqliteStateStore:
             raise StateError("SQLite review-state minimum writer build is invalid")
         if self.writer_build < min_writer_build:
             raise StateError(f"SQLite review state requires writer build {min_writer_build}")
+
+    def _compatibility_query(
+        self,
+        connection: sqlite3.Connection,
+        statement: str,
+        *,
+        deadline: float | None,
+    ) -> sqlite3.Cursor:
+        self._set_busy_timeout(connection, deadline)
+        try:
+            return connection.execute(statement)
+        except sqlite3.DatabaseError as exc:
+            if deadline is not None and self._is_sqlite_lock_error(exc):
+                raise StateLockTimeout("timed out waiting for SQLite review-state transaction lock") from exc
+            raise
 
     @staticmethod
     def _initialize(connection: sqlite3.Connection, writer_build: int) -> None:

@@ -275,6 +275,57 @@ class InboxStore:
             ).fetchall()
             return [self._message_dict(row) for row in rows]
 
+    def messages_page(self, worker: str, limit: int = 50, offset: int = 0) -> dict[str, Any]:
+        """List incoming and outgoing messages, newest first, without marking them."""
+
+        selected_worker = _worker(worker, "worker")
+        selected_limit = _limit(limit)
+        selected_offset = _offset(offset)
+        with self._read() as connection:
+            rows = connection.execute(
+                f"SELECT {', '.join(INBOX_COLUMNS['inbox_messages'])} FROM inbox_messages "
+                "WHERE recipient = ? OR author = ? "
+                "ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?",
+                (selected_worker, selected_worker, selected_limit + 1, selected_offset),
+            ).fetchall()
+            return {"messages": [self._message_dict(row) for row in rows[:selected_limit]],
+                    "offset": selected_offset, "has_more": len(rows) > selected_limit}
+
+    def conversations_page(self, worker: str, limit: int = 50, offset: int = 0) -> dict[str, Any]:
+        """Page reply roots by the worker's latest incoming or outgoing activity.
+
+        Group the complete reply trees before paging. Counts include the full
+        conversation, but only participation by this worker determines recency.
+        """
+
+        selected_worker = _worker(worker, "worker")
+        selected_limit = _limit(limit)
+        selected_offset = _offset(offset)
+        columns = ", ".join(f"message.{column}" for column in INBOX_COLUMNS["inbox_messages"])
+        with self._read() as connection:
+            rows = connection.execute(
+                "WITH RECURSIVE conversations(root_id, id) AS ("
+                "SELECT id, id FROM inbox_messages WHERE reply_to IS NULL "
+                "UNION SELECT parent.root_id, message.id FROM inbox_messages AS message "
+                "JOIN conversations AS parent ON message.reply_to = parent.id), "
+                "counts AS (SELECT root_id, COUNT(*) AS message_count, "
+                "SUM(CASE WHEN message.recipient = ? AND message.seen_at IS NULL THEN 1 ELSE 0 END) AS unread_count "
+                "FROM conversations JOIN inbox_messages AS message ON message.id = conversations.id "
+                "GROUP BY root_id), "
+                f"activity AS (SELECT root_id, {columns}, message.rowid AS activity_order, "
+                "ROW_NUMBER() OVER (PARTITION BY root_id ORDER BY message.created_at DESC, message.rowid DESC) AS position "
+                "FROM conversations JOIN inbox_messages AS message ON message.id = conversations.id "
+                "WHERE message.recipient = ? OR message.author = ?) "
+                "SELECT activity.*, counts.message_count, counts.unread_count "
+                "FROM activity JOIN counts ON counts.root_id = activity.root_id WHERE position = 1 "
+                "ORDER BY created_at DESC, activity_order DESC LIMIT ? OFFSET ?",
+                (selected_worker, selected_worker, selected_worker, selected_limit + 1, selected_offset),
+            ).fetchall()
+            conversations = [{"root_id": row["root_id"], "latest_message": self._message_dict(row),
+                              "message_count": row["message_count"], "unread_count": row["unread_count"]}
+                             for row in rows[:selected_limit]]
+            return {"conversations": conversations, "offset": selected_offset, "has_more": len(rows) > selected_limit}
+
     def thread(
         self,
         message_id: str,
@@ -292,6 +343,7 @@ class InboxStore:
         offset: int = 0,
         *,
         focus_id: str | None = None,
+        worker: str | None = None,
     ) -> dict[str, Any]:
         """Return one bounded chronological page, optionally focused on a message.
 
@@ -303,8 +355,18 @@ class InboxStore:
         selected_limit = _limit(limit)
         selected_offset = _offset(offset)
         selected_focus = None if focus_id is None else _text(focus_id, "focus message id", maximum=100)
+        selected_worker = None if worker is None else _worker(worker, "worker")
         with self._read() as connection:
             root_id = self._thread_root(connection, selected_id)
+            if selected_worker is not None and connection.execute(
+                "WITH RECURSIVE thread(id) AS ("
+                "SELECT id FROM inbox_messages WHERE id = ? UNION "
+                "SELECT message.id FROM inbox_messages AS message JOIN thread ON message.reply_to = thread.id) "
+                "SELECT 1 FROM inbox_messages WHERE id IN (SELECT id FROM thread) "
+                "AND (recipient = ? OR author = ?) LIMIT 1",
+                (root_id, selected_worker, selected_worker),
+            ).fetchone() is None:
+                raise MessageNotFound(f"conversation was not found for worker {selected_worker}")
             if selected_focus is not None:
                 focus = connection.execute(
                     "WITH RECURSIVE thread(id) AS ("
@@ -339,9 +401,10 @@ class InboxStore:
                 "JOIN thread AS parent ON message.reply_to = parent.id) "
                 f"SELECT {', '.join(INBOX_COLUMNS['inbox_messages'])} FROM inbox_messages "
                 "WHERE id IN (SELECT id FROM thread) ORDER BY created_at ASC, rowid ASC LIMIT ? OFFSET ?",
-                (root_id, selected_limit, selected_offset),
+                (root_id, selected_limit + 1, selected_offset),
             ).fetchall()
-            return {"messages": [self._message_dict(row) for row in rows], "offset": selected_offset}
+            return {"messages": [self._message_dict(row) for row in rows[:selected_limit]],
+                    "offset": selected_offset, "has_more": len(rows) > selected_limit}
 
     def read(self, message_id: str, recipient: str | None = None) -> dict[str, Any]:
         """Mark one message seen and return it; recipient is an optional selector."""
