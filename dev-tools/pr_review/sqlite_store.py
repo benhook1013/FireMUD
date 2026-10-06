@@ -121,7 +121,7 @@ class SqliteStateStore:
             return ReviewState()
         try:
             with closing(self._connect_read_only(deadline=deadline)) as connection:
-                self._require_compatible(connection)
+                self._require_compatible(connection, deadline=deadline)
                 self._set_busy_timeout(connection, deadline)
                 row = connection.execute(f"SELECT state_json FROM {_STATE_TABLE} WHERE singleton = 1").fetchone()
         except sqlite3.DatabaseError as exc:
@@ -180,7 +180,7 @@ class SqliteStateStore:
             if created_identity is not None:
                 self._initialize(connection, self.writer_build)
             else:
-                self._require_compatible(connection)
+                self._require_compatible(connection, deadline=deadline)
             current = self._load_from_connection(connection)
             self._check_deadline(deadline)
             updated = mutate(current)
@@ -604,12 +604,16 @@ class SqliteStateStore:
         connection.execute("PRAGMA query_only = ON")
         return connection
 
-    def _require_compatible(self, connection: sqlite3.Connection) -> None:
-        schema_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+    def _require_compatible(self, connection: sqlite3.Connection, *, deadline: float | None = None) -> None:
+        schema_version = int(
+            self._compatibility_query(connection, "PRAGMA user_version", deadline=deadline).fetchone()[0]
+        )
         if schema_version != SQLITE_SCHEMA_VERSION:
             raise StateError(f"unsupported SQLite review-state schema version: {schema_version}")
-        row = connection.execute(
-            f"SELECT data_model_version, min_writer_build FROM {_METADATA_TABLE} WHERE singleton = 1"
+        row = self._compatibility_query(
+            connection,
+            f"SELECT data_model_version, min_writer_build FROM {_METADATA_TABLE} WHERE singleton = 1",
+            deadline=deadline,
         ).fetchone()
         if row is None:
             raise StateError("SQLite review-state metadata is missing")
@@ -620,6 +624,21 @@ class SqliteStateStore:
             raise StateError("SQLite review-state minimum writer build is invalid")
         if self.writer_build < min_writer_build:
             raise StateError(f"SQLite review state requires writer build {min_writer_build}")
+
+    def _compatibility_query(
+        self,
+        connection: sqlite3.Connection,
+        statement: str,
+        *,
+        deadline: float | None,
+    ) -> sqlite3.Cursor:
+        self._set_busy_timeout(connection, deadline)
+        try:
+            return connection.execute(statement)
+        except sqlite3.DatabaseError as exc:
+            if deadline is not None and self._is_sqlite_lock_error(exc):
+                raise StateLockTimeout("timed out waiting for SQLite review-state transaction lock") from exc
+            raise
 
     @staticmethod
     def _initialize(connection: sqlite3.Connection, writer_build: int) -> None:

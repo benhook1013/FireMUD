@@ -4,6 +4,7 @@ import json
 import sqlite3
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -937,6 +938,52 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             )["state"],
             "started",
         )
+
+    def test_compatibility_reads_refresh_remaining_deadline_after_lock_reacquisition(self) -> None:
+        self.bootstrap()
+        started = time.monotonic()
+        deadline = started + 0.4
+        connection = self.records._connect(read_only=True, deadline=deadline)
+        holder_acquired = threading.Event()
+        release_holder = threading.Event()
+        contender: sqlite3.Connection | None = None
+        original_query = self.records._compatibility_query
+
+        def hold_exclusive_lock() -> None:
+            writer = sqlite3.connect(self.database, isolation_level=None)
+            try:
+                writer.execute("BEGIN EXCLUSIVE")
+                holder_acquired.set()
+                release_holder.wait(0.25)
+                writer.rollback()
+            finally:
+                writer.close()
+
+        def reacquire_before_next_read(conn, statement, *, deadline):
+            nonlocal contender
+            if statement.startswith("SELECT name FROM sqlite_master"):
+                contender = sqlite3.connect(self.database, isolation_level=None)
+                contender.execute("BEGIN EXCLUSIVE")
+            return original_query(conn, statement, deadline=deadline)
+
+        try:
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                holder = executor.submit(hold_exclusive_lock)
+                self.assertTrue(holder_acquired.wait(1))
+                with (
+                    patch.object(self.records, "_compatibility_query", side_effect=reacquire_before_next_read),
+                    self.assertRaisesRegex(StateLockTimeout, "SQLite review-records deadline"),
+                ):
+                    self.records._require_compatible(connection, deadline=deadline)
+                self.assertLess(time.monotonic() - started, 0.5)
+                release_holder.set()
+                holder.result(timeout=1)
+        finally:
+            release_holder.set()
+            if contender is not None:
+                contender.rollback()
+                contender.close()
+            connection.close()
 
     def test_unparameterized_record_operations_inherit_only_an_active_hosted_budget(self) -> None:
         self.bootstrap()

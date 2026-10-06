@@ -4079,6 +4079,22 @@ class SqliteReviewRecords:
         milliseconds = math.ceil(timeout * 1000) if deadline is not None else int(timeout * 1000)
         connection.execute(f"PRAGMA busy_timeout = {milliseconds}")
 
+    def _compatibility_query(
+        self,
+        connection: sqlite3.Connection,
+        statement: str,
+        *,
+        deadline: float | None,
+    ) -> sqlite3.Cursor:
+        self._set_busy_timeout(connection, deadline)
+        try:
+            return connection.execute(statement)
+        except sqlite3.DatabaseError as exc:
+            if deadline is not None and self._is_sqlite_lock_error(exc):
+                self._raise_hosted_deadline_if_expired(deadline, error=exc)
+                raise StateLockTimeout("timed out waiting for SQLite review-records deadline") from exc
+            raise
+
     @staticmethod
     def _is_sqlite_lock_error(error: sqlite3.DatabaseError) -> bool:
         message = str(error).lower()
@@ -4131,9 +4147,18 @@ class SqliteReviewRecords:
         if not self.path.is_file():
             raise ReviewRecordsError("controller SQLite database must already exist")
 
-    @staticmethod
-    def _table_names(connection: sqlite3.Connection) -> set[str]:
-        return {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    def _table_names(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        deadline: float | None = None,
+    ) -> set[str]:
+        rows = self._compatibility_query(
+            connection,
+            "SELECT name FROM sqlite_master WHERE type = 'table'",
+            deadline=deadline,
+        )
+        return {row[0] for row in rows}
 
     def _require_controller_compatible(
         self,
@@ -4142,14 +4167,18 @@ class SqliteReviewRecords:
         deadline: float | None = None,
     ) -> None:
         deadline = self._effective_deadline(deadline)
-        schema_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+        schema_version = int(
+            self._compatibility_query(connection, "PRAGMA user_version", deadline=deadline).fetchone()[0]
+        )
         if schema_version != SQLITE_SCHEMA_VERSION:
             raise RecordsSchemaIncompatible(f"unsupported controller SQLite schema version {schema_version}")
-        if "controller_metadata" not in self._table_names(connection):
+        if "controller_metadata" not in self._table_names(connection, deadline=deadline):
             raise RecordsSchemaIncompatible("controller SQLite metadata is missing")
         try:
-            row = connection.execute(
-                "SELECT data_model_version, min_writer_build FROM controller_metadata WHERE singleton = 1"
+            row = self._compatibility_query(
+                connection,
+                "SELECT data_model_version, min_writer_build FROM controller_metadata WHERE singleton = 1",
+                deadline=deadline,
             ).fetchone()
         except sqlite3.DatabaseError as exc:
             self._raise_hosted_deadline_if_expired(deadline, error=exc)
@@ -4176,15 +4205,17 @@ class SqliteReviewRecords:
     def _require_compatible(self, connection: sqlite3.Connection, *, deadline: float | None = None) -> None:
         deadline = self._effective_deadline(deadline)
         self._require_controller_compatible(connection, deadline=deadline)
-        tables = self._table_names(connection)
+        tables = self._table_names(connection, deadline=deadline)
         if _RECORDS_METADATA_TABLE not in tables:
             if tables & _RECORDS_TABLES:
                 raise RecordsSchemaIncompatible("review-records schema is partial: metadata table is missing")
             raise RecordsNotBootstrapped("review-records schema is not bootstrapped; call bootstrap() explicitly")
         try:
-            row = connection.execute(
+            row = self._compatibility_query(
+                connection,
                 f"SELECT records_schema_version, controller_schema_version, controller_data_model_version, "
-                f"min_writer_build FROM {_RECORDS_METADATA_TABLE} WHERE singleton = 1"
+                f"min_writer_build FROM {_RECORDS_METADATA_TABLE} WHERE singleton = 1",
+                deadline=deadline,
             ).fetchone()
         except sqlite3.DatabaseError as exc:
             self._raise_hosted_deadline_if_expired(deadline, error=exc)
