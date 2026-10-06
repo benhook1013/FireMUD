@@ -74,7 +74,7 @@ dev-tools/pr-review records repair-provider \
 
 `records import-run --input <file>` remains an exceptional recovery/import path for old curated manual or subagent evidence. Routine new subagent passes use the start/complete/fail commands. Do not put credentials in review findings or evidence files.
 
-These history and route queries, `state status`, and controller `status` are read-only. `records history` and `records routes` read structured review records and read through migrated legacy controller routes from the same SQLite snapshot. Returned routes label their origin as `review_records` or `legacy_controller`, keeping the two sources distinct:
+These history and route queries, `state status`, and controller `status` are read-only. The normal `routes --target-pr <number>` and `routes --unassigned` worklists include structured review records and migrated legacy controller routes after review-records schema bootstrap. Before that schema is bootstrapped, the worklist contains legacy controller routes only. The listing keeps its existing top-level query/count/routes shape, and each returned route identifies its `review_records` or `legacy_controller` origin. `records routes` provides the same combined read path with source and status filters:
 
 `records history` and `records history-batch` read completed runs, attempts, decisions, routes, and historical evidence gaps from one SQLite snapshot. Failed and rate-limited attempts are visible but never enter taper counts. Full source artifacts are kept in SQLite with recognizable credentials redacted; the ordinary history response exposes bounded metadata and findings, not the raw archive bytes.
 
@@ -85,6 +85,8 @@ Hosted findings and their associated source/incoming routes expose `display_seve
 Provider runs may include `duration_seconds` from an exact completed attempt or an identity-validated retained checkpoint/capture; evaluated missing, invalid or conflicting duration evidence returns `duration_seconds: null`, which is authoritative unknown. Consumers may use legacy fallback only when the field is absent, never when it is null. Import event timestamps are never treated as elapsed review time. Reads make no provider requests or historical corrections.
 
 ```sh
+dev-tools/pr-review routes --target-pr <number>
+dev-tools/pr-review routes --unassigned
 dev-tools/pr-review records history --pr <number>
 dev-tools/pr-review records routes
 dev-tools/pr-review records routes --status resolved --target-pr <number>

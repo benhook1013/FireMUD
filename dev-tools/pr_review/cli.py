@@ -21,7 +21,7 @@ from . import status as status_module
 from .cli_runner import PullRequestSnapshot
 from .controller import LivePullRequest, ReviewController
 from .runtime import default_controller
-from .sqlite_review_records import FindingObservation, ReviewRecordsError, SqliteReviewRecords
+from .sqlite_review_records import FindingObservation, RecordsNotBootstrapped, ReviewRecordsError, SqliteReviewRecords
 from .sqlite_store import SqliteStateStore
 from .state import (
     ControllerStateStore,
@@ -135,9 +135,14 @@ def _parser() -> argparse.ArgumentParser:
 
     routes = commands.add_parser(
         "routes", help="list open incoming or unassigned finding routes",
-        description=("List open incoming or unassigned finding routes. For native SQLite receiving-owner outcomes, "
-                     "use records route resolve; records routes --status all also shows resolved history."),
-        epilog="Example: firemud-controller reviews routes --target-pr 123 --json",
+        description=(
+            "List open incoming or unassigned finding routes from structured SQLite records and migrated legacy "
+            "controller state. Before review-records schema bootstrap, lists legacy controller routes only."
+        ),
+        epilog=(
+            "Example: firemud-controller reviews routes --target-pr 123 --json\n"
+            "Use records routes for source filters or resolved history; records route resolve records an outcome."
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     route_query = routes.add_mutually_exclusive_group(required=True)
@@ -1342,7 +1347,32 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
         return value, 0
 
     if args.command == "routes":
-        return controller.list_routes(target_pr=args.target_pr, unassigned=args.unassigned), 0
+        legacy_listing = controller.list_routes(target_pr=args.target_pr, unassigned=args.unassigned)
+        if fixture is not None:
+            return legacy_listing, 0
+
+        active_store = getattr(controller, "store", None)
+        if isinstance(active_store, ControllerStateStore):
+            active_store = active_store._active_store()
+        if isinstance(active_store, SqliteStateStore):
+            try:
+                routes = SqliteReviewRecords(active_store.path).list_routes(
+                    status="open",
+                    target_pr=args.target_pr,
+                    unassigned=args.unassigned,
+                    include_legacy_routes=True,
+                )
+            except RecordsNotBootstrapped:
+                # Before structured review records are enabled, controller state
+                # remains the only route source and the legacy listing is complete.
+                return legacy_listing, 0
+            return {
+                "query": "unassigned" if args.unassigned else "target_pr",
+                "target_pr": args.target_pr,
+                "routes": routes,
+                "count": len(routes),
+            }, 0
+        return legacy_listing, 0
 
     if args.command == "status":
         if args.pr is None:

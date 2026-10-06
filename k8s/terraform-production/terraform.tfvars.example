@@ -7,6 +7,8 @@ postgres_superuser_password = "replace-with-a-real-superuser-password"
 postgres_app_username    = "firemud"
 postgres_app_password    = "replace-with-a-real-app-password"
 postgres_database        = "firemud"
+# Required: select an exact supported PostgreSQL HA chart after packaging validation.
+# postgres_chart_version = "MAJOR.MINOR.PATCH"
 velero_provider          = "aws"
 velero_bucket            = "firemud-backups"
 velero_bucket_prefix     = "postgres"

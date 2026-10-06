@@ -571,9 +571,9 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
         () -> fixture.dsl.execute("TRUNCATE game_session_retained_tenant_association CASCADE"));
     assertThat(fixture.dsl.fetchCount(ASSOCIATIONS)).isEqualTo(1);
     assertThat(
-            fixture
-                .dsl
-                .fetchOne("SELECT count(*) FROM game_session_retained_tenant_association_payload")
+            Objects.requireNonNull(
+                    fixture.dsl.fetchOne(
+                        "SELECT count(*) FROM game_session_retained_tenant_association_payload"))
                 .get(0, Long.class))
         .isEqualTo(1L);
   }

@@ -20,15 +20,12 @@ import org.jooq.SQLDialect;
 import org.jooq.Table;
 import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
-@Testcontainers(disabledWithoutDocker = true)
 class GameTenantIdentityRepositoryIntegrationTest {
-  private static final String SERVICE_SCHEMA = "game_design_service";
   private static final String FLYWAY_TABLE = "flyway_schema_history_game_design_service";
   private static final Table<?> GAME = DSL.table(DSL.name("game"));
   private static final org.jooq.Field<Long> ID = DSL.field(DSL.name("id"), Long.class);
@@ -44,27 +41,38 @@ class GameTenantIdentityRepositoryIntegrationTest {
   private static final org.jooq.Field<String> SOURCE_LEGACY_TENANT_ID =
       DSL.field(DSL.name("tenant_identity_source_legacy_tenant_id"), String.class);
 
-  @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  private static final GameDesignPostgresIntegrationFixture postgres =
+      new GameDesignPostgresIntegrationFixture();
+
+  @BeforeAll
+  static void startPostgres() {
+    postgres.start();
+  }
+
+  @AfterAll
+  static void stopPostgres() {
+    postgres.stop();
+  }
 
   @Test
   void migratesOnlyExactOwnerKeysAndReadsImmutableGameRowProvenance() throws Exception {
+    String serviceSchema = "game_design_identity_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = dataSource();
-    migrate(dataSource, MigrationVersion.fromVersion("28"));
+    migrate(dataSource, MigrationVersion.fromVersion("28"), serviceSchema);
 
     long retainedGameId;
     long quarantinedGameId;
     try (Connection connection = dataSource.getConnection()) {
-      setSearchPath(connection);
+      setSearchPath(connection, serviceSchema);
       DSLContext dsl = DSL.using(connection, SQLDialect.POSTGRES);
       retainedGameId = insertLegacyGame(dsl, "legacy-owner-alpha", "Alpha");
       quarantinedGameId = insertLegacyGame(dsl, "   ", "Unproven");
     }
 
-    migrate(dataSource, null);
+    migrate(dataSource, null, serviceSchema);
 
     try (Connection connection = dataSource.getConnection()) {
-      setSearchPath(connection);
+      setSearchPath(connection, serviceSchema);
       DSLContext dsl = DSL.using(connection, SQLDialect.POSTGRES);
       GameRepository repository = new GameRepository(dsl);
       UUID retainedTenantId =
@@ -153,21 +161,18 @@ class GameTenantIdentityRepositoryIntegrationTest {
   }
 
   private DriverManagerDataSource dataSource() {
-    DriverManagerDataSource dataSource = new DriverManagerDataSource();
-    dataSource.setUrl(postgres.getJdbcUrl());
-    dataSource.setUsername(postgres.getUsername());
-    dataSource.setPassword(postgres.getPassword());
-    return dataSource;
+    return postgres.dataSource();
   }
 
-  private void migrate(DriverManagerDataSource dataSource, MigrationVersion target) {
+  private void migrate(
+      DriverManagerDataSource dataSource, MigrationVersion target, String serviceSchema) {
     FluentConfiguration configuration =
         Flyway.configure()
             .dataSource(dataSource)
-            .schemas(SERVICE_SCHEMA)
-            .defaultSchema(SERVICE_SCHEMA)
+            .schemas(serviceSchema)
+            .defaultSchema(serviceSchema)
             .table(FLYWAY_TABLE)
-            .placeholders(Map.of("serviceSchema", SERVICE_SCHEMA))
+            .placeholders(Map.of("serviceSchema", serviceSchema))
             .locations(
                 "filesystem:"
                     + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize());
@@ -177,9 +182,9 @@ class GameTenantIdentityRepositoryIntegrationTest {
     configuration.load().migrate();
   }
 
-  private void setSearchPath(Connection connection) throws Exception {
+  private void setSearchPath(Connection connection, String serviceSchema) throws Exception {
     try (Statement statement = connection.createStatement()) {
-      statement.execute("SET search_path TO game_design_service");
+      statement.execute("SET search_path TO " + serviceSchema);
     }
   }
 

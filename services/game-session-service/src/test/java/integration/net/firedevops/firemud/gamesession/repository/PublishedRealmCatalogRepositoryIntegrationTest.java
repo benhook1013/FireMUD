@@ -484,37 +484,6 @@ class PublishedRealmCatalogRepositoryIntegrationTest {
       String realmDisplayName,
       boolean visible,
       boolean publicProduction,
-      String stateScope) {
-    return evidence(
-        canonicalTenantId,
-        sourceGameRowId,
-        sourceGameTenantKey,
-        versionId,
-        versionNumber,
-        workflow,
-        manifest,
-        releaseIdentity,
-        realmSlug,
-        realmDisplayName,
-        visible,
-        publicProduction,
-        stateScope,
-        "firemud");
-  }
-
-  private static PublishedRealmEntryPolicyEvidence evidence(
-      UUID canonicalTenantId,
-      long sourceGameRowId,
-      String sourceGameTenantKey,
-      long versionId,
-      int versionNumber,
-      String workflow,
-      String manifest,
-      String releaseIdentity,
-      String realmSlug,
-      String realmDisplayName,
-      boolean visible,
-      boolean publicProduction,
       String stateScope,
       String worldSlug) {
     String policyJson =

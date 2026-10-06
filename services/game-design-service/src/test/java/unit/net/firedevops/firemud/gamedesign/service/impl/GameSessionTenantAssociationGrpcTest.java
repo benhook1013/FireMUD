@@ -20,6 +20,7 @@ import net.firedevops.firemud.common.tenant.GameSessionTenantAssociationEvidence
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepository;
 import net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepository.AssociationReceipt;
+import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository;
 import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyGameSessionTenantAssociationRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyGameSessionTenantAssociationResponse;
@@ -38,6 +39,7 @@ class GameSessionTenantAssociationGrpcTest {
       mock(GameSessionTenantAssociationRepository.class);
   private final TenantIdentityGrpcService service =
       new TenantIdentityGrpcService(
+          mock(GameTenantCreationRepository.class),
           mock(GameRepository.class),
           repository,
           mock(PublishedReleaseBundleService.class),

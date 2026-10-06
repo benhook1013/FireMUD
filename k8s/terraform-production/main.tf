@@ -25,6 +25,7 @@ resource "helm_release" "postgresql" {
   name       = "firemud-postgresql"
   repository = "https://charts.bitnami.com/bitnami"
   chart      = "postgresql-ha"
+  version    = var.postgres_chart_version
   namespace  = var.namespace
   values = [
     templatefile("${path.module}/postgres-values.yaml.tftpl", {

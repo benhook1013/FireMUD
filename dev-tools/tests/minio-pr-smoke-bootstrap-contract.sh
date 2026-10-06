@@ -120,4 +120,44 @@ require_contains "$(<"$VERIFY_SMOKE")" 'service.get("pull_policy") != "never"'
 require_contains "$(<"$VERIFY_SMOKE")" 'bash "$WS_SMOKE_SCRIPT"'
 require_contains "$(<"$VERIFY_SMOKE")" 'bash "$TCP_SMOKE_SCRIPT"'
 
+require_contains "$(<"$ROOT_DIR/dev-tools/minio/build-and-smoke-images.sh")" 'trusted_base_images(Path(os.environ["MINIO_SOURCE_WORKSPACE"]))'
+require_contains "$(<"$TRUSTED_PUBLISH_WORKFLOW")" 'trusted_base_images(Path(os.environ["GITHUB_WORKSPACE"]))'
+require_contains "$(<"$TRUSTED_PUBLISH_WORKFLOW")" 'ref: ${{ github.event.workflow_run.head_sha }}'
+python3 - "$ROOT_DIR" <<'PY_PROOF'
+import importlib.util
+from pathlib import Path
+import re
+import sys
+import tempfile
+
+root = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("minio_base_images", root / "dev-tools/minio/base_image_refs.py")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+refs = module.trusted_base_images(root)
+assert set(refs) == {"builder", "runtime"}
+assert all(re.fullmatch(r"[^ ]+@sha256:[0-9a-f]{64}", ref) for ref in refs.values())
+with tempfile.TemporaryDirectory() as temporary:
+    candidate = Path(temporary)
+    (candidate / "docker/minio").mkdir(parents=True)
+    original = {name: (root / f"docker/minio/{name}.Dockerfile").read_text() for name in ("server", "client")}
+    cases = {
+        "missing-stage": "FROM alpine:3.0@sha256:" + "a" * 64 + "\n",
+        "floating": original["server"].replace(refs["builder"], "golang:latest"),
+        "unsupported": original["server"].replace(refs["builder"], "evil/golang:1@sha256:" + "a" * 64),
+        "malformed-digest": original["server"].replace(refs["builder"], "golang:1@sha256:bad"),
+        "disagreement": original["server"].replace(refs["builder"], "golang:1@sha256:" + "a" * 64),
+    }
+    for name, content in cases.items():
+        for service in ("server", "client"):
+            (candidate / f"docker/minio/{service}.Dockerfile").write_text(original[service])
+        (candidate / "docker/minio/server.Dockerfile").write_text(content)
+        try:
+            module.trusted_base_images(candidate)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"accepted unsafe MinIO base image authority: {name}")
+PY_PROOF
+
 echo "PR pinned-source MinIO full-stack smoke contract checks passed"

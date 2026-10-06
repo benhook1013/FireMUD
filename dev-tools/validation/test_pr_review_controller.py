@@ -447,6 +447,150 @@ class ControllerTests(unittest.TestCase):
         with self.assertRaisesRegex(ControllerError, "broken archived checkpoint"):
             controller.status()
 
+    def test_merged_history_is_not_read_for_requests_but_is_retained_for_status(self):
+        values, heads = _stacked_prs(2, merged=(1,))
+        controller = self.make(values, heads=heads)
+        controller.set_stack([1, 2])
+        reads, operational_reads = [], []
+
+        class Provider:
+            def history(self, pr, channel):
+                reads.append((pr, channel))
+                if pr == 1:
+                    raise ControllerError("broken merged archive")
+                return []
+
+            def request_history(self, pr, channel):
+                operational_reads.append((pr, channel))
+                return []
+
+        controller._evidence_provider = Provider()
+        for channel in ("hosted", "cli"):
+            self.assertEqual(controller._target(channel, expected_pr=2).pr, 2)
+        self.assertEqual(set(operational_reads), {(1, "hosted"), (1, "cli")})
+        self.assertTrue(reads)
+        self.assertTrue(all(number == 2 for number, _ in reads))
+        with self.assertRaisesRegex(ControllerError, "broken merged archive"):
+            controller.status()
+        # Closing without merging is not authority to omit policy history.
+        values[1] = dataclasses.replace(values[1], merged=False, state="CLOSED")
+        for channel in ("hosted", "cli"):
+            with self.assertRaisesRegex(ControllerError, "broken merged archive"):
+                controller._target(channel)
+
+    def test_merged_request_history_preserves_cooldown_and_current_activity(self):
+        for channel, signal, expected in (
+            ("hosted", {"rate_limited": True}, ReviewStatus.RATE_LIMITED),
+            ("hosted", {"active_reservation": True}, ReviewStatus.HELD),
+            ("cli", {"active_review": True}, ReviewStatus.HELD),
+        ):
+            with self.subTest(channel=channel, signal=signal):
+                values, heads = _stacked_prs(2, merged=(1,))
+                controller = self.make(values, heads=heads)
+                controller.set_stack([1, 2])
+
+                class Provider:
+                    def request_history(self, pr, requested_channel, channel=channel, signal=signal):
+                        if pr == 1 and requested_channel == channel and "rate_limited" in signal:
+                            return [{"pr": 1, "checkpoint": "current-cooldown", **signal}]
+                        return []
+
+                    def history(self, pr, requested_channel, channel=channel, signal=signal, values=values):
+                        if pr == 1:
+                            raise ControllerError("merged archive must not be consulted")
+                        if requested_channel == channel and "rate_limited" not in signal:
+                            return [{"pr": 2, "head": values[2].head, "checkpoint": "current", **signal}]
+                        return []
+
+                controller._evidence_provider = Provider()
+                target = controller._target(channel)
+                self.assertEqual((target.pr, target.status), (2, expected))
+                if "rate_limited" in signal:
+                    self.assertIn("cooldown remains active on PR #1", target.reason)
+                    self.assertNotEqual(controller._target("cli").status, ReviewStatus.RATE_LIMITED)
+
+    def test_merged_request_history_failure_does_not_fall_back_to_assumed_idle(self):
+        for channel in ("hosted", "cli"):
+            with self.subTest(channel=channel):
+                values, heads = _stacked_prs(2, merged=(1,))
+                controller = self.make(values, heads=heads)
+                controller.set_stack([1, 2])
+
+                class Provider:
+                    def request_history(self, pr, requested_channel, channel=channel):
+                        if requested_channel == channel:
+                            raise ControllerError("current admission state cannot be verified")
+                        return []
+
+                    def history(self, pr, requested_channel):
+                        return []
+
+                controller._evidence_provider = Provider()
+                with self.assertRaisesRegex(ControllerError, "current admission state cannot be verified"):
+                    controller._target(channel)
+
+    def test_merged_history_fallback_preserves_cooldown_and_read_failure(self):
+        for broken in (False, True):
+            with self.subTest(broken=broken):
+                values, heads = _stacked_prs(2, merged=(1,))
+                controller = self.make(values, heads=heads)
+                controller.set_stack([1, 2])
+                reads = []
+
+                class Provider:
+                    def history(self, pr, channel, reads=reads, broken=broken):
+                        reads.append((pr, channel))
+                        if pr == 1:
+                            if broken:
+                                raise ControllerError("merged safety evidence unavailable")
+                            if channel == "hosted":
+                                return [{"pr": 1, "checkpoint": "cooldown", "rate_limited": True}]
+                        return []
+
+                controller._evidence_provider = Provider()
+                if broken:
+                    for channel in ("hosted", "cli"):
+                        with self.assertRaisesRegex(ControllerError, "merged safety evidence unavailable"):
+                            controller._target(channel)
+                else:
+                    target = controller._target("hosted")
+                    self.assertEqual((target.pr, target.status), (2, ReviewStatus.RATE_LIMITED))
+                    self.assertNotEqual(controller._target("cli").status, ReviewStatus.RATE_LIMITED)
+                    self.assertIn((1, "hosted"), reads)
+                    self.assertIn((1, "cli"), reads)
+
+    def test_merged_operational_history_keeps_unidentified_shared_cli_lock_held(self):
+        values, heads = _stacked_prs(2, merged=(1,))
+        controller = self.make(values, heads=heads)
+        controller.set_stack([1, 2])
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            lock_path = common / "firemud" / "pr-review" / "cli.lock"
+            lock_path.parent.mkdir(parents=True)
+            live_evidence = LiveEvidence("owner/repo", SimpleNamespace())
+
+            class Provider:
+                def request_history(self, pr, channel):
+                    return live_evidence.request_history(pr, channel) if channel == "cli" else []
+
+                def history(self, pr, channel):
+                    if pr == 1:
+                        raise ControllerError("merged archive must not be consulted")
+                    return self.request_history(pr, channel)
+
+            controller._evidence_provider = Provider()
+            with (
+                lock_path.open("w+") as handle,
+                patch("pr_review.runtime.evidence.resolve_cli_capture_context", return_value=(common, common)),
+            ):
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                target = controller._target("cli")
+                self.assertEqual((target.pr, target.status), (2, ReviewStatus.HELD))
+                self.assertIn("active review or reservation", target.reason)
+                current = live_evidence.request_history(1, "cli")
+                self.assertTrue(current[0]["active_review"])
+                self.assertIn("reservation cannot be identified", current[0]["reason"])
+
     def test_stopped_current_activity_and_hosted_cooldown_still_control_requests(self):
         for channel, signal, expected in (
             ("cli", {"active_review": True}, ReviewStatus.HELD),

@@ -241,10 +241,11 @@ class InitialAdmissionBindPostgresIntegrationTest {
                             attempt.attemptId())))
         .isInstanceOf(RuntimeException.class);
     assertThat(
-            dsl.fetchOne(
-                    "SELECT playable_state_namespace_id "
-                        + "FROM gameplay_initial_admission_bind_attempt WHERE attempt_id = ?",
-                    attempt.attemptId())
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT playable_state_namespace_id "
+                            + "FROM gameplay_initial_admission_bind_attempt WHERE attempt_id = ?",
+                        attempt.attemptId()))
                 .get("playable_state_namespace_id", UUID.class))
         .isEqualTo(entry.playableStateNamespaceId());
     assertThatThrownBy(
@@ -297,15 +298,17 @@ class InitialAdmissionBindPostgresIntegrationTest {
     assertThat(proof.pointerAuditRequestDigest()).isEqualTo(digest);
     assertThat(dsl.fetchCount(DSL.table("gameplay_initial_admission_bind_catalog"))).isZero();
     assertThat(
-            dsl.fetchOne(
-                    "SELECT character_creation_policy, requires_character_selection, state_scope "
-                        + "FROM gameplay_admission_pointer WHERE tenant_id = 41")
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT character_creation_policy, requires_character_selection, state_scope "
+                            + "FROM gameplay_admission_pointer WHERE tenant_id = 41"))
                 .get("character_creation_policy", String.class))
         .isEqualTo("PRESEEDED_ONLY");
     assertThat(
-            dsl.fetchOne(
-                    "SELECT requires_character_selection FROM gameplay_admission_pointer "
-                        + "WHERE tenant_id = 41")
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT requires_character_selection FROM gameplay_admission_pointer "
+                            + "WHERE tenant_id = 41"))
                 .get("requires_character_selection", Boolean.class))
         .isTrue();
     assertThat(dsl.fetchCount(DSL.table("gameplay_admission_pointer"))).isEqualTo(1);

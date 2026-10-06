@@ -5,8 +5,11 @@ package gamedesign.v1;
 option java_package = "net.firedevops.firemud.gamedesign.v1";
 option java_multiple_files = true;
 
-// Authenticated owner-local read of Game Design's persisted tenant identity.
+// Authenticated owner-local reads of persisted runtime and fresh-creation tenant evidence.
 service TenantIdentityService {
+  // Exact same-namespace Account/Game Session read of owner-created tenant evidence.
+  rpc ResolveFreshTenantCreation(ResolveFreshTenantCreationRequest)
+      returns (ResolveFreshTenantCreationResponse);
   rpc ResolveRuntimeTenantIdentity(ResolveRuntimeTenantIdentityRequest)
       returns (ResolveRuntimeTenantIdentityResponse);
   // Exact audited retained Game Session association; never an Account manifest or admission.
@@ -130,4 +133,22 @@ message ListPublishedRealmEntryPoliciesResponse {
   uint32 policy_count = 9;
   string policy_set_digest = 10;
   repeated ResolvePublishedRealmEntryPolicyResponse policies = 11;
+}
+
+message ResolveFreshTenantCreationRequest {
+  string creation_request_id = 1;
+  string expected_request_digest = 2;
+}
+
+message ResolveFreshTenantCreationResponse {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string creation_request_id = 3;
+  string operation_id = 4;
+  string request_digest = 5;
+  string canonical_tenant_id = 6;
+  int64 source_game_row_id = 7;
+  string source_game_tenant_key = 8;
+  string provenance_kind = 9;
+  string evidence_digest = 10;
 }
