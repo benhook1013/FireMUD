@@ -59,9 +59,11 @@ class AccountControlUiIssuanceOperationPostgresIntegrationTest {
   void claimRequiresAnActiveWritableOwnerTransaction() {
     TestContext context = newTestContext();
     AccountControlUiIssuanceRequest request = request(context.account().uuid());
+    UUID operationId = UUID.randomUUID();
+    OriginalCapture originalCapture = capture(context.account());
 
     assertThatThrownBy(
-            () -> context.repository().claim(request, Optional.of(capture(context.account()))))
+            () -> context.repository().claim(operationId, request, Optional.of(originalCapture)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("writable caller-owned Account transaction");
   }
@@ -70,18 +72,27 @@ class AccountControlUiIssuanceOperationPostgresIntegrationTest {
   void exactClaimsRecoverOriginalCaptureAndChangedAccountOrCaptureConflicts() {
     TestContext context = newTestContext();
     AccountControlUiIssuanceRequest request = request(context.account().uuid());
+    UUID proposedOperationId = UUID.randomUUID();
+    UUID retryOperationId = UUID.randomUUID();
     OriginalCapture originalCapture = capture(context.account());
 
     var first =
         inTransaction(
             context.transaction(),
-            () -> context.repository().claim(request, Optional.of(originalCapture)));
+            () ->
+                context
+                    .repository()
+                    .claim(proposedOperationId, request, Optional.of(originalCapture)));
     var retry =
         inTransaction(
-            context.transaction(), () -> context.repository().claim(request, Optional.empty()));
+            context.transaction(),
+            () -> context.repository().claim(retryOperationId, request, Optional.empty()));
 
     assertThat(first.created()).isTrue();
     assertThat(retry.created()).isFalse();
+    assertThat(first.operation().operationId()).isEqualTo(proposedOperationId);
+    assertThat(proposedOperationId).isNotEqualTo(UUID.fromString(request.requestId()));
+    assertThat(retryOperationId).isNotEqualTo(proposedOperationId);
     assertThat(retry.operation().operationId()).isEqualTo(first.operation().operationId());
     assertThat(retry.operation().lifecycle())
         .isEqualTo(AccountControlUiIssuanceOperation.Lifecycle.PENDING);
@@ -94,9 +105,13 @@ class AccountControlUiIssuanceOperationPostgresIntegrationTest {
             () ->
                 inTransaction(
                     context.transaction(),
-                    () -> context.repository().claim(changedAccount, Optional.empty())))
+                    () ->
+                        context
+                            .repository()
+                            .claim(UUID.randomUUID(), changedAccount, Optional.empty())))
         .isInstanceOf(AccountControlUiIssuanceOperationRepository.OperationConflictException.class);
 
+    UUID conflictingCaptureOperationId = UUID.randomUUID();
     OriginalCapture changedCapture =
         new OriginalCapture(
             originalCapture.accountId(),
@@ -107,7 +122,13 @@ class AccountControlUiIssuanceOperationPostgresIntegrationTest {
             () ->
                 inTransaction(
                     context.transaction(),
-                    () -> context.repository().claim(request, Optional.of(changedCapture))))
+                    () ->
+                        context
+                            .repository()
+                            .claim(
+                                conflictingCaptureOperationId,
+                                request,
+                                Optional.of(changedCapture))))
         .isInstanceOf(AccountControlUiIssuanceOperationRepository.OperationConflictException.class);
     assertThat(
             inTransaction(
@@ -120,12 +141,15 @@ class AccountControlUiIssuanceOperationPostgresIntegrationTest {
   void simultaneousExactClaimsAllocateOneOperationAndRetainTheFirstCapture() throws Exception {
     TestContext context = newTestContext();
     AccountControlUiIssuanceRequest request = request(context.account().uuid());
+    UUID firstOperationId = UUID.randomUUID();
+    UUID secondOperationId = UUID.randomUUID();
+    assertThat(secondOperationId).isNotEqualTo(firstOperationId);
     OriginalCapture originalCapture = capture(context.account());
     CountDownLatch ready = new CountDownLatch(2);
     CountDownLatch start = new CountDownLatch(1);
     ExecutorService executor = Executors.newFixedThreadPool(2);
     try {
-      Callable<AccountControlUiIssuanceOperationRepository.Claim> attempt =
+      Callable<AccountControlUiIssuanceOperationRepository.Claim> firstAttempt =
           () -> {
             ready.countDown();
             if (!start.await(5, TimeUnit.SECONDS)) {
@@ -133,10 +157,28 @@ class AccountControlUiIssuanceOperationPostgresIntegrationTest {
             }
             return inTransaction(
                 context.transaction(),
-                () -> context.repository().claim(request, Optional.of(originalCapture)));
+                () ->
+                    context
+                        .repository()
+                        .claim(firstOperationId, request, Optional.of(originalCapture)));
           };
-      Future<AccountControlUiIssuanceOperationRepository.Claim> first = executor.submit(attempt);
-      Future<AccountControlUiIssuanceOperationRepository.Claim> second = executor.submit(attempt);
+      Callable<AccountControlUiIssuanceOperationRepository.Claim> secondAttempt =
+          () -> {
+            ready.countDown();
+            if (!start.await(5, TimeUnit.SECONDS)) {
+              throw new IllegalStateException("Control-UI claim race did not start");
+            }
+            return inTransaction(
+                context.transaction(),
+                () ->
+                    context
+                        .repository()
+                        .claim(secondOperationId, request, Optional.of(originalCapture)));
+          };
+      Future<AccountControlUiIssuanceOperationRepository.Claim> first =
+          executor.submit(firstAttempt);
+      Future<AccountControlUiIssuanceOperationRepository.Claim> second =
+          executor.submit(secondAttempt);
       assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
       start.countDown();
       List<AccountControlUiIssuanceOperationRepository.Claim> claims =
@@ -147,9 +189,17 @@ class AccountControlUiIssuanceOperationPostgresIntegrationTest {
       assertThat(claims)
           .extracting(claim -> claim.operation().operationId())
           .containsOnly(claims.get(0).operation().operationId());
+      assertThat(claims.get(0).operation().operationId())
+          .isIn(firstOperationId, secondOperationId)
+          .isNotEqualTo(UUID.fromString(request.requestId()));
       assertThat(claims)
           .extracting(claim -> claim.operation().originalCapture())
           .containsOnly(originalCapture);
+      assertThat(
+              inTransaction(
+                  context.transaction(),
+                  () -> context.repository().findByRequest(request).orElseThrow()))
+          .isEqualTo(claims.get(0).operation());
     } finally {
       start.countDown();
       executor.shutdownNow();
@@ -160,10 +210,12 @@ class AccountControlUiIssuanceOperationPostgresIntegrationTest {
   void abandonedPendingClaimCannotBeReportedCommittedWithoutExactEnvelope() {
     TestContext context = newTestContext();
     AccountControlUiIssuanceRequest request = request(context.account().uuid());
+    UUID operationId = UUID.randomUUID();
+    OriginalCapture originalCapture = capture(context.account());
     var claim =
         inTransaction(
             context.transaction(),
-            () -> context.repository().claim(request, Optional.of(capture(context.account()))));
+            () -> context.repository().claim(operationId, request, Optional.of(originalCapture)));
 
     assertThatThrownBy(
             () ->
@@ -233,17 +285,19 @@ class AccountControlUiIssuanceOperationPostgresIntegrationTest {
       throws Exception {
     TestContext context = newTestContext();
     AccountControlUiIssuanceRequest request = request(context.account().uuid());
+    UUID operationId = UUID.randomUUID();
+    OriginalCapture originalCapture = capture(context.account());
     var claim =
         inTransaction(
             context.transaction(),
-            () -> context.repository().claim(request, Optional.of(capture(context.account()))));
+            () -> context.repository().claim(operationId, request, Optional.of(originalCapture)));
     byte[] exactResponse =
         "{\"accountId\":\""
             .concat(request.accountUuid())
             .concat("\",\"token\":\"synthetic-original-token\"}")
             .getBytes(StandardCharsets.UTF_8);
     String tokenHash = hex(sha256("synthetic-original-token".getBytes(StandardCharsets.UTF_8)));
-    OriginalCapture originalCapture = claim.operation().originalCapture();
+    assertThat(claim.operation().originalCapture()).isEqualTo(originalCapture);
     AccountControlUiResponseEnvelopeBinding binding =
         new AccountControlUiResponseEnvelopeBinding(
             request.accountUuid(),
@@ -331,10 +385,12 @@ class AccountControlUiIssuanceOperationPostgresIntegrationTest {
   void lateRollbackLeavesOriginalPendingCaptureAndNoEncryptedResult() throws Exception {
     TestContext context = newTestContext();
     AccountControlUiIssuanceRequest request = request(context.account().uuid());
+    UUID operationId = UUID.randomUUID();
+    OriginalCapture originalCapture = capture(context.account());
     var claim =
         inTransaction(
             context.transaction(),
-            () -> context.repository().claim(request, Optional.of(capture(context.account()))));
+            () -> context.repository().claim(operationId, request, Optional.of(originalCapture)));
     byte[] response =
         "synthetic response held only by this fixture".getBytes(StandardCharsets.UTF_8);
     AccountControlUiResponseEnvelopeBinding binding = binding(claim.operation(), response);

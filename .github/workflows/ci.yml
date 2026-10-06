@@ -2481,6 +2481,7 @@ jobs:
             services/account-service/build/test-results/integrationTest/TEST-*AccountSecurityStateOperationPostgresIntegrationTest.xml
             services/account-service/build/test-results/integrationTest/TEST-*AccountControlUiIssuanceOperationPostgresIntegrationTest.xml
             services/account-service/build/test-results/integrationTest/TEST-*AccountControlUiCurrentSourcePostgresIntegrationTest.xml
+            services/account-service/build/test-results/integrationTest/TEST-*AccountControlUiIssuanceIntentPostgresIntegrationTest.xml
           if-no-files-found: warn
           retention-days: 7
 
@@ -2492,8 +2493,18 @@ jobs:
             --require-suite integration.net.firedevops.firemud.accountservice.AccountSecurityStateOperationPostgresIntegrationTest \
             --require-suite integration.net.firedevops.firemud.accountservice.AccountControlUiIssuanceOperationPostgresIntegrationTest \
             --require-suite integration.net.firedevops.firemud.accountservice.repository.AccountControlUiCurrentSourcePostgresIntegrationTest \
+            --require-suite integration.net.firedevops.firemud.accountservice.AccountControlUiIssuanceIntentPostgresIntegrationTest \
             --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountControlUiCurrentSourcePostgresIntegrationTest#unsignedInitialObservationReadsExactExistingAccountSourcesAndFenceWithoutEnrollment()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountControlUiCurrentSourcePostgresIntegrationTest#unsignedObservationRetainsAdvancedIssuerEventAndSignedInspectionStillChecksCorrespondence()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountControlUiIssuanceIntentPostgresIntegrationTest#ownerSourceCapturePrecedesSigningAndRestartRecoversOriginalReservationWithoutRecapture()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountControlUiIssuanceIntentPostgresIntegrationTest#differentHashIdentityOrFenceCannotReplaceOriginalAndSqlCannotMutateReservation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountControlUiIssuanceIntentPostgresIntegrationTest#changedCurrentIssuerDeniesProgressionAndPreservesHistoricalCaptureAndHash()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountControlUiIssuanceIntentPostgresIntegrationTest#advancedIssuerEventIsCapturedExactlyAndMissingAuthorityNeverEnrolls()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountControlUiIssuanceIntentPostgresIntegrationTest#abortedPresignAndPostsignTransactionsDoNotLeavePartialProgress()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountControlUiIssuanceIntentPostgresIntegrationTest#preexistingV66OperationWithoutSigningReservationIsNeverRepairedOnRetry()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountControlUiIssuanceIntentPostgresIntegrationTest#postSignCasSerializesWithIssuerWriterAndRetainsOriginalHash()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountControlUiIssuanceIntentPostgresIntegrationTest#concurrentPresignRetriesRecoverOneOriginalIdentityAndDifferentHashCasHasOneWinner()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountControlUiIssuanceIntentPostgresIntegrationTest#committedAccountLifecycleChangeSerializesWithPostSignCasAndDeniesHashBinding()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountSecurityStateOperationPostgresIntegrationTest#pendingClaimAndExactRetryRetainOneOriginalCaptureWithoutSourceMutation()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountSecurityStateOperationPostgresIntegrationTest#originalCallerAndFamilyBindingsCannotBeChangedOnRetry()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountSecurityStateOperationPostgresIntegrationTest#concurrentExactClaimsSerializeToOneOriginalRequest()' \

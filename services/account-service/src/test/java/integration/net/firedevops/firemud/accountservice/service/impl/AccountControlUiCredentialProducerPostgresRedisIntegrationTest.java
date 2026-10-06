@@ -154,6 +154,8 @@ class AccountControlUiCredentialProducerPostgresRedisIntegrationTest {
     assertThat(authentication.requestId())
         .isEqualTo(UUID.fromString(original.request().requestId()));
     assertThat(authentication.operationId()).isEqualTo(original.operationId());
+    assertThat(original.operationId())
+        .isNotEqualTo(UUID.fromString(original.request().requestId()));
     assertThat(authentication.authenticationMethod()).isEqualTo("PASSWORD");
     assertThat(readOperation(original.request())).isEqualTo(original);
     assertThat(attemptCount(original.operationId())).isEqualTo(1L);
@@ -292,6 +294,7 @@ class AccountControlUiCredentialProducerPostgresRedisIntegrationTest {
     AccountControlUiIssuanceRequest request =
         new AccountControlUiIssuanceRequest(
             UUID.randomUUID().toString(), account.getAccountUuid().toString());
+    UUID operationId = UUID.randomUUID();
     OriginalCapture stipulatedCapture =
         new OriginalCapture(
             account.getId(),
@@ -300,8 +303,15 @@ class AccountControlUiCredentialProducerPostgresRedisIntegrationTest {
                 .getBytes(StandardCharsets.UTF_8),
             ("stipulated-original-issuance-fence-capture:" + request.requestId())
                 .getBytes(StandardCharsets.UTF_8));
-    return inTransaction(
-        () -> issuanceOperations.claim(request, Optional.of(stipulatedCapture)).operation());
+    AccountControlUiIssuanceOperation operation =
+        inTransaction(
+            () ->
+                issuanceOperations
+                    .claim(operationId, request, Optional.of(stipulatedCapture))
+                    .operation());
+    assertThat(operation.operationId()).isEqualTo(operationId);
+    assertThat(operation.operationId()).isNotEqualTo(UUID.fromString(request.requestId()));
+    return operation;
   }
 
   private AccountEmailLoginChallenge createChallenge(Account account, String otp) {
@@ -352,10 +362,13 @@ class AccountControlUiCredentialProducerPostgresRedisIntegrationTest {
     Path manifest = tempDirectory.resolve("control-ui-ring-" + UUID.randomUUID() + ".v1");
     writeFixtureKeyRing(manifest);
     var envelope = new AccountEnvelopeCrypto(manifest).encryptControlUiResponse(binding, response);
+    UUID retryOperationId = UUID.randomUUID();
     return inTransaction(
         () ->
             issuanceOperations.complete(
-                issuanceOperations.claim(pending.request(), Optional.empty()), binding, envelope));
+                issuanceOperations.claim(retryOperationId, pending.request(), Optional.empty()),
+                binding,
+                envelope));
   }
 
   private static void writeFixtureKeyRing(Path manifest) throws Exception {
