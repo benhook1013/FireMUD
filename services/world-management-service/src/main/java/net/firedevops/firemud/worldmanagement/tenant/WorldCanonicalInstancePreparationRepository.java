@@ -527,7 +527,7 @@ public final class WorldCanonicalInstancePreparationRepository {
         || !bundle.canonicalTenantId().equals(release.canonicalTenantId())
         || !bundle.canonicalVersionId().equals(release.canonicalVersionId())
         || !bundle.publishedReleaseBundleRef().equals(release.publishedReleaseBundleRef())
-        || terminal.publicationVersionStateEpoch() != release.versionStateEpoch()
+        || terminal.publicationVersionStateEpoch() > release.versionStateEpoch()
         || !bundle.publishWorkflowId().equals(release.publishWorkflowId())
         || !bundle
             .publishWorkflowId()

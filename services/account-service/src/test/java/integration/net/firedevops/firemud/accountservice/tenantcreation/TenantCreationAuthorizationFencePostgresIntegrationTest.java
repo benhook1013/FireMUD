@@ -57,7 +57,7 @@ class TenantCreationAuthorizationFencePostgresIntegrationTest {
 
   @Test
   void revokeFirstRetainsBothFamilyFencesUntilExactAborts() {
-    Context c = context("67");
+    Context c = context("79");
     var b = binding();
     var draft = draft(b.sources().getFirst());
     var change = new SourceChange(UUID.randomUUID(), b.sources(), new byte[] {7});
@@ -94,7 +94,7 @@ class TenantCreationAuthorizationFencePostgresIntegrationTest {
 
   @Test
   void commitFirstRequiresBothExactOutcomesAndMixedVectorDoesNotQualifySuccess() {
-    Context c = context("67");
+    Context c = context("79");
     var b = binding();
     var change = new SourceChange(UUID.randomUUID(), b.sources(), new byte[] {8});
     tx(
@@ -143,7 +143,7 @@ class TenantCreationAuthorizationFencePostgresIntegrationTest {
 
   @Test
   void contradictoryRevokeOutcomeNeverReleasesSourceOrdering() {
-    Context c = context("67");
+    Context c = context("79");
     var b = binding();
     var change = new SourceChange(UUID.randomUUID(), b.sources(), new byte[] {9});
     tx(c, () -> c.creation.reserve(b));
@@ -157,7 +157,7 @@ class TenantCreationAuthorizationFencePostgresIntegrationTest {
 
   @Test
   void exactRetryAndDatabaseGuardsPreserveBindingAndFinalizedResults() {
-    Context c = context("67");
+    Context c = context("79");
     var b = binding();
     tx(c, () -> c.creation.reserve(b));
     assertThatThrownBy(() -> owner(c, b, Owner.ACCOUNT, Outcome.COMMITTED))
@@ -213,7 +213,7 @@ class TenantCreationAuthorizationFencePostgresIntegrationTest {
 
   @Test
   void lateFailureRollsBackSourceTransitionWithOwnersRemainingImmutable() {
-    Context c = context("67");
+    Context c = context("79");
     var b = binding();
     var change = new SourceChange(UUID.randomUUID(), b.sources(), new byte[] {10});
     tx(
@@ -247,7 +247,7 @@ class TenantCreationAuthorizationFencePostgresIntegrationTest {
   @Test
   void sharedSourceLocksSerializeBothCompetingInterleavings() throws Exception {
     for (boolean commitFirst : List.of(true, false)) {
-      Context c = context("67");
+      Context c = context("79");
       var b = binding();
       var change = new SourceChange(UUID.randomUUID(), b.sources(), new byte[] {11});
       tx(c, () -> c.creation.reserve(b));
@@ -296,7 +296,7 @@ class TenantCreationAuthorizationFencePostgresIntegrationTest {
     var b = binding();
     var draft = draft(b.sources().getFirst());
     // These existing Draft-only methods do not call the common source-change/settlement engine.
-    // Keep V66's populated image intact before migrating; current source interactions require V67.
+    // Keep V66's populated image intact before migrating; current source interactions require V79.
     tx(
         c,
         () -> {
@@ -358,6 +358,8 @@ class TenantCreationAuthorizationFencePostgresIntegrationTest {
         });
     Map<String, List<String>> images = retainedImages(c);
     migration(c.source, c.schema, "67").migrate();
+    assertThat(retainedImages(c)).isEqualTo(images);
+    migration(c.source, c.schema, "79").migrate();
     assertThat(retainedImages(c)).isEqualTo(images);
     assertThat(tx(c, () -> c.draft.read(draft).binding())).containsExactly(draft.canonicalBytes());
     assertThat(tx(c, () -> c.draft.readSettlement(draft)))
