@@ -450,3 +450,8 @@ Entry format:
 - `2026-10-06`: A terminal CI failure may contain no acquired test runner
   - Context: exact #3007 source `a6f10921` Validation run 37369680372 ended after about 45 minutes without an Account or World matrix job, raw XML or artifacts. The detector's check annotation explicitly reports that the hosted runner was not acquired despite multiple attempts; its steps are empty.
   - Expected pattern: inspect terminal job annotations before attributing an aggregate failure to code. Record zero execution credit and the concrete runner-acquisition failure, retain local skipped-test limits, and continue independent implementation. A failed or cancelled detector is neither a database failure nor successful proof.
+
+- `2026-10-06`: Successful commits can coexist with failed background Git housekeeping
+  - Context: commits and normal parent merges in the Unit 1B worktrees succeeded, but Git reported an earlier `gc.log` failure and excessive unreachable loose objects, then disabled automatic cleanup. The shared repository's root cause and object-retention needs are not established.
+  - Expected pattern: distinguish successful publication from housekeeping health. Do not delete the warning log or run destructive object pruning as an implementation workaround; preserve unmerged branches, worktrees and unpublished objects until separately authorized maintenance establishes safe retention.
+  - Outcome: commit/push and byte-exact patch-preservation checks succeeded. Housekeeping remains a nonblocking maintenance concern; no cleanup or pruning was attempted.
