@@ -7,9 +7,12 @@ import dataclasses
 import fcntl
 import hashlib
 import json
+import sqlite3
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from subprocess import CompletedProcess
@@ -19,7 +22,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "dev-tools"))
 
-from pr_review import cli_runner, evidence, hosted, sqlite_provider_imports, stack
+from pr_review import cli_runner, evidence, github, hosted, sqlite_provider_imports, stack
 from pr_review.cli import _parser
 from pr_review.controller import (
     HOSTED_ACTIVE_RESPONSE_REASON,
@@ -52,8 +55,10 @@ from pr_review.runtime import LiveEvidence, LiveGitHub
 from pr_review.sqlite_review_records import FindingObservation, ReviewRecordsError, SqliteReviewRecords
 from pr_review.sqlite_store import SqliteStateStore
 from pr_review.state import (
+    ControllerStateStore,
     Judgment,
     LegacyEvidenceTransition,
+    ReviewState,
     StackReconciliationDecision,
     StateStore,
     SummaryFindingDisposition,
@@ -295,6 +300,63 @@ def hosted_anchor(*, parent_identity="develop", parent_head=BASE, merge_base=BAS
 
 
 class ControllerTests(unittest.TestCase):
+    def test_hosted_preflight_deadline_covers_target_selection_before_adapter(self):
+        controller = self.make({})
+        adapter_calls = []
+        observed_phases = []
+        controller.hosted_adapter = lambda *args, **kwargs: adapter_calls.append((args, kwargs))
+
+        def expire_during_selection(*_args, **_kwargs):
+            budget = github.active_hosted_preflight_budget()
+            self.assertIsNotNone(budget)
+            observed_phases.append(budget.current_phase)
+            budget.deadline = budget.started_at - 1
+
+        with (
+            patch.object(controller, "_target", side_effect=expire_during_selection),
+            self.assertRaisesRegex(
+                ControllerError,
+                r"Hosted preflight deadline exceeded \(phase=target_selection, .*budget=120s\)",
+            ),
+        ):
+            controller.run_hosted()
+
+        self.assertEqual(observed_phases, ["target_selection"])
+        self.assertEqual(adapter_calls, [])
+
+    def test_held_state_database_during_target_selection_keeps_preflight_diagnostics(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = Path(directory) / "firemud" / "pr-review-stack.json"
+            state_path.parent.mkdir(parents=True)
+            state_path.write_text(json.dumps(ReviewState(ordered_prs=(1,)).to_dict()), encoding="utf-8")
+            database = state_path.with_suffix(".sqlite3")
+            SqliteStateStore.migrate_legacy_json(state_path, database)
+            controller = ReviewController(
+                store=ControllerStateStore(state_path),
+                github=FakeGitHub({1: pr(1, HEAD_1)}),
+                git=FakeGit(),
+                evidence={},
+                repository="owner/repo",
+                hosted_adapter=lambda *_args, **_kwargs: self.fail("preflight must fail before adapter"),
+            )
+            with sqlite3.connect(database, isolation_level=None) as writer:
+                writer.execute("BEGIN EXCLUSIVE")
+                started = time.monotonic()
+                with (
+                    patch.object(
+                        github,
+                        "hosted_preflight_budget",
+                        side_effect=lambda: github.activate_hosted_preflight_budget(timeout_seconds=0.05),
+                    ),
+                    self.assertRaisesRegex(
+                        ControllerError,
+                        r"Hosted preflight deadline exceeded \(phase=target_selection, elapsed=.*completed=0, budget=0s\)",
+                    ),
+                ):
+                    controller.run_hosted(expected_pr=1)
+                self.assertLess(time.monotonic() - started, 1)
+                writer.rollback()
+
     def test_summary_decision_race_reselects_and_holds_before_reservation(self):
         evidence = {(1, "hosted"): [self.allocation_evidence(checkpoint="baseline")]}
         values = {1: pr(1, HEAD_1)}
@@ -6034,6 +6096,32 @@ class ControllerTests(unittest.TestCase):
             provider.branch_exists("develop")
         self.assertEqual(run.call_args.kwargs["timeout"], 7)
 
+    def test_default_git_provider_uses_hosted_budget_and_checks_after_process_returns(self):
+        class Clock:
+            now = 0.0
+
+            def monotonic(self):
+                return self.now
+
+        clock = Clock()
+
+        def git_call(args, **_kwargs):
+            clock.now = 13
+            return CompletedProcess(args, 0, b"", b"")
+
+        with (
+            patch.object(github.time, "monotonic", side_effect=clock.monotonic),
+            github.activate_hosted_preflight_budget(timeout_seconds=12),
+            patch("pr_review.controller.subprocess.run", side_effect=git_call) as run,
+            self.assertRaisesRegex(
+                github.HostedPreflightDeadlineExceeded,
+                r"phase=starting, elapsed=13.0s.*budget=12s",
+            ),
+        ):
+            DefaultGitProvider(timeout_seconds=30)._run_process(["git", "status"])
+
+        self.assertEqual(run.call_args.kwargs["timeout"], 12)
+
     def test_default_git_provider_hashes_raw_diff_bytes(self):
         raw_diff = b"diff --git a/file b/file\n\xff\x80\x00\n"
         results = [
@@ -6078,6 +6166,79 @@ class ControllerTests(unittest.TestCase):
                 DefaultGitProvider(root, timeout_seconds=11).test_merge_tree(base, head)
 
             self.assertEqual(_git(root, "worktree", "list", "--porcelain"), worktrees_before)
+
+    def test_default_git_provider_cleans_fallback_worktree_after_preflight_deadline(self):
+        cleanup_calls = []
+
+        def git_call(args, **kwargs):
+            git_args = args[args.index("-C") + 2 :]
+            if git_args[:2] == ["merge-tree", "--write-tree"]:
+                return CompletedProcess(args, 129, "", "unsupported option")
+            if git_args[:2] == ["worktree", "add"]:
+                return CompletedProcess(args, 0, "", "")
+            if git_args[:2] == ["worktree", "remove"]:
+                cleanup_calls.append(kwargs)
+                return CompletedProcess(args, 0, "", "")
+            if "merge" in git_args:
+                budget = github.active_hosted_preflight_budget()
+                self.assertIsNotNone(budget)
+                budget.deadline = budget.started_at - 1
+                budget.remaining_seconds()
+            return CompletedProcess(args, 0, "", "")
+
+        with (
+            github.hosted_preflight_budget(timeout_seconds=120),
+            patch.object(DefaultGitProvider, "_run_process", side_effect=git_call),
+            self.assertRaises(github.HostedPreflightDeadlineExceeded),
+        ):
+            DefaultGitProvider().test_merge_tree(BASE, HEAD_1)
+
+        self.assertEqual(len(cleanup_calls), 1)
+        self.assertFalse(cleanup_calls[0]["enforce_preflight_budget"])
+        self.assertLessEqual(cleanup_calls[0]["timeout_seconds"], 10)
+
+    def test_default_git_provider_gives_fallback_cleanup_its_bounded_timeout_near_deadline(self):
+        calls = []
+
+        def git_call(args, **kwargs):
+            calls.append((args, kwargs))
+            git_args = args[args.index("-C") + 2 :]
+            if git_args[:2] == ["merge-tree", "--write-tree"]:
+                return CompletedProcess(args, 129, "", "unsupported option")
+            if git_args[:2] == ["worktree", "add"]:
+                return CompletedProcess(args, 0, "", "")
+            if git_args == ["write-tree"]:
+                return CompletedProcess(args, 0, "9" * 40 + "\n", "")
+            if git_args[:2] == ["cat-file", "-t"]:
+                return CompletedProcess(args, 0, "tree\n", "")
+            if "merge" in git_args:
+                budget = github.active_hosted_preflight_budget()
+                self.assertIsNotNone(budget)
+                budget.deadline = budget.started_at + 0.5
+            if git_args[:2] == ["worktree", "remove"]:
+                budget = github.active_hosted_preflight_budget()
+                self.assertIsNotNone(budget)
+                self.assertGreater(budget.remaining_seconds(), 0)
+                return CompletedProcess(args, 0, "", "")
+            return CompletedProcess(args, 0, "", "")
+
+        with (
+            github.hosted_preflight_budget(timeout_seconds=120),
+            patch.object(DefaultGitProvider, "_run_process", side_effect=git_call),
+        ):
+            DefaultGitProvider().test_merge_tree(BASE, HEAD_1)
+
+        cleanup = [(args, kwargs) for args, kwargs in calls if args[-4:-2] == ["worktree", "remove"]]
+        self.assertEqual(len(cleanup), 1)
+        self.assertFalse(cleanup[0][1]["enforce_preflight_budget"])
+        self.assertEqual(cleanup[0][1]["timeout_seconds"], 10)
+        self.assertTrue(
+            all(
+                kwargs.get("enforce_preflight_budget", True)
+                for args, kwargs in calls
+                if args[-4:-2] != ["worktree", "remove"]
+            )
+        )
 
     def test_test_merge_falls_back_without_lfs_smudge_when_merge_tree_is_unavailable(self):
         tree = "9" * 40
@@ -7553,6 +7714,90 @@ class ControllerTests(unittest.TestCase):
 
         self.assertEqual(len(attempts), 3)
         self.assertEqual([call.args[0] for call in sleep.call_args_list], [0.05, 0.1])
+
+    def test_direct_sqlite_store_admission_lock_is_bounded_before_reservation(self):
+        controller = self.make({1: pr(1, HEAD_1)}, heads={"develop": BASE, "feature-1": HEAD_1}, sqlite=True)
+        controller.set_stack([1])
+        reservations = []
+        posts = []
+        lock_acquired = threading.Event()
+        release_lock = threading.Event()
+        lock_path = controller.store._lock_path
+
+        def hold_state_lock() -> None:
+            with lock_path.open("a+") as handle:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                lock_acquired.set()
+                release_lock.wait(2)
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+        def adapter(_target, *, admit, **_kwargs):
+            holder = threading.Thread(target=hold_state_lock)
+            holder.start()
+            try:
+                self.assertTrue(lock_acquired.wait(1))
+                admit(lambda: reservations.append("reserved"))
+                posts.append("posted")
+            finally:
+                release_lock.set()
+                holder.join(timeout=1)
+
+        controller.hosted_adapter = adapter
+        started = time.monotonic()
+        with (
+            patch.object(
+                github,
+                "hosted_preflight_budget",
+                side_effect=lambda: github.activate_hosted_preflight_budget(timeout_seconds=0.25),
+            ),
+            self.assertRaisesRegex(ControllerError, r"Hosted preflight deadline exceeded \(phase=runnable_check"),
+        ):
+            controller.run_hosted(expected_pr=1)
+
+        self.assertLess(time.monotonic() - started, 1)
+        self.assertEqual(reservations, [])
+        self.assertEqual(posts, [])
+
+    def test_direct_sqlite_state_read_uses_remaining_preflight_budget_under_exclusive_lock(self):
+        controller = self.make({1: pr(1, HEAD_1)}, sqlite=True)
+        controller.set_stack([1])
+        with sqlite3.connect(controller.store.path) as holder:
+            holder.execute("BEGIN EXCLUSIVE")
+            try:
+                with github.activate_hosted_preflight_budget(timeout_seconds=0.25) as budget:
+                    budget.set_phase("target_selection", completed=2, total=3)
+                    time.sleep(0.18)
+                    started = time.monotonic()
+                    with self.assertRaises(github.HostedPreflightDeadlineExceeded) as raised:
+                        controller._state()
+                    self.assertLess(time.monotonic() - started, 0.2)
+                    error = raised.exception
+                    self.assertEqual(error.phase, "target_selection")
+                    self.assertEqual((error.completed, error.total), (2, 3))
+                    self.assertEqual(error.budget_seconds, 0.25)
+                    self.assertGreaterEqual(error.elapsed_seconds, 0.25)
+            finally:
+                holder.rollback()
+
+    def test_direct_sqlite_store_suspends_deadline_after_successful_reservation(self):
+        controller = self.make({1: pr(1, HEAD_1)}, sqlite=True)
+        controller.set_stack([1])
+        store = controller.store
+        reservation_path = store.path.with_suffix(".reservation")
+        started = time.monotonic()
+
+        with github.activate_hosted_preflight_budget(timeout_seconds=0.05) as budget:
+            def reserve() -> None:
+                budget.complete()
+                reservation_path.write_text("durable reservation", encoding="utf-8")
+                time.sleep(0.08)
+
+            controller._admit_review(1, "hosted", reserve)
+            self.assertGreater(time.monotonic(), budget.deadline)
+            self.assertEqual(controller._state().ordered_prs, (1,))
+
+        self.assertGreater(time.monotonic() - started, 0.05)
+        self.assertEqual(reservation_path.read_text(encoding="utf-8"), "durable reservation")
 
     def test_hosted_admission_retries_only_typed_lock_contention(self):
         controller = self.make({1: pr(1, HEAD_1)}, heads={"develop": BASE, "feature-1": HEAD_1})

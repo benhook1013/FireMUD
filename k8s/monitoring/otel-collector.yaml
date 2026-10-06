@@ -21,7 +21,7 @@ spec:
     spec:
       containers:
         - name: otel-collector
-          image: otel/opentelemetry-collector:latest
+          image: otel/opentelemetry-collector:latest@sha256:310a800ad69ee430e7c541796852a242c9c7db97aaad4daa5ccf843c525fbdb2
           args: ["--config=/etc/otel/config.yaml"]
           volumeMounts:
             - name: config

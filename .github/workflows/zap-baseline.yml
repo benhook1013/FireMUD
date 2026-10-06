@@ -7,7 +7,6 @@ on:
       - '.github/workflows/zap-baseline.yml'
       - 'web-client/**'
   pull_request:
-    branches: [main, develop]
     paths:
       - '.github/workflows/zap-baseline.yml'
       - 'web-client/**'
