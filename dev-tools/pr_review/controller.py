@@ -235,19 +235,15 @@ class DefaultGitProvider:
         self._ensure_commit(normalized_head)
 
         def run_git(args, *, check, text, timeout):
-            if "worktree" in args and "remove" in args:
-                budget = github.active_hosted_preflight_budget()
-                if budget is not None:
-                    try:
-                        budget.remaining_seconds()
-                    except github.HostedPreflightDeadlineExceeded:
-                        return self._run_process(
-                            args,
-                            check=check,
-                            text=text,
-                            timeout_seconds=timeout,
-                            enforce_preflight_budget=False,
-                        )
+            command = args[args.index("-C") + 2 :] if "-C" in args else []
+            if len(command) == 4 and command[:3] == ["worktree", "remove", "--force"]:
+                return self._run_process(
+                    args,
+                    check=check,
+                    text=text,
+                    timeout_seconds=timeout,
+                    enforce_preflight_budget=False,
+                )
             return self._run_process(args, check=check, text=text)
 
         try:

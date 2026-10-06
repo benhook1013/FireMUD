@@ -6159,6 +6159,49 @@ class ControllerTests(unittest.TestCase):
         self.assertFalse(cleanup_calls[0]["enforce_preflight_budget"])
         self.assertLessEqual(cleanup_calls[0]["timeout_seconds"], 10)
 
+    def test_default_git_provider_gives_fallback_cleanup_its_bounded_timeout_near_deadline(self):
+        calls = []
+
+        def git_call(args, **kwargs):
+            calls.append((args, kwargs))
+            git_args = args[args.index("-C") + 2 :]
+            if git_args[:2] == ["merge-tree", "--write-tree"]:
+                return CompletedProcess(args, 129, "", "unsupported option")
+            if git_args[:2] == ["worktree", "add"]:
+                return CompletedProcess(args, 0, "", "")
+            if git_args == ["write-tree"]:
+                return CompletedProcess(args, 0, "9" * 40 + "\n", "")
+            if git_args[:2] == ["cat-file", "-t"]:
+                return CompletedProcess(args, 0, "tree\n", "")
+            if "merge" in git_args:
+                budget = github.active_hosted_preflight_budget()
+                self.assertIsNotNone(budget)
+                budget.deadline = budget.started_at + 0.5
+            if git_args[:2] == ["worktree", "remove"]:
+                budget = github.active_hosted_preflight_budget()
+                self.assertIsNotNone(budget)
+                self.assertGreater(budget.remaining_seconds(), 0)
+                return CompletedProcess(args, 0, "", "")
+            return CompletedProcess(args, 0, "", "")
+
+        with (
+            github.hosted_preflight_budget(timeout_seconds=120),
+            patch.object(DefaultGitProvider, "_run_process", side_effect=git_call),
+        ):
+            DefaultGitProvider().test_merge_tree(BASE, HEAD_1)
+
+        cleanup = [(args, kwargs) for args, kwargs in calls if args[-4:-2] == ["worktree", "remove"]]
+        self.assertEqual(len(cleanup), 1)
+        self.assertFalse(cleanup[0][1]["enforce_preflight_budget"])
+        self.assertEqual(cleanup[0][1]["timeout_seconds"], 10)
+        self.assertTrue(
+            all(
+                kwargs.get("enforce_preflight_budget", True)
+                for args, kwargs in calls
+                if args[-4:-2] != ["worktree", "remove"]
+            )
+        )
+
     def test_test_merge_falls_back_without_lfs_smudge_when_merge_tree_is_unavailable(self):
         tree = "9" * 40
         calls = []
