@@ -8,6 +8,7 @@ import java.util.HexFormat;
 import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
+import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -42,14 +43,31 @@ public final class WorldPublicationTerminalRepository {
           + "AND o.canonical_tenant_id=a.canonical_tenant_id "
           + "AND o.local_tenant_key=a.local_tenant_key AND o.version_id=a.version_id "
           + "WHERE t.publication_fence=?";
+  private static final String ORIGINAL_OWNER_READ =
+      "SELECT a.*, o.owner_freeze_phase, o.current_publication_fence "
+          + "FROM world_design_publication_fence_attempt a "
+          + "JOIN world_design_publication_fence_owner o "
+          + "ON o.target_namespace=a.target_namespace "
+          + "AND o.canonical_tenant_id=a.canonical_tenant_id "
+          + "AND o.local_tenant_key=a.local_tenant_key AND o.version_id=a.version_id "
+          + "WHERE a.publication_fence=? AND a.target_namespace=? "
+          + "AND a.canonical_tenant_id=? AND a.canonical_version_id=? "
+          + "AND o.current_publication_fence=a.publication_fence";
 
   private final DSLContext dsl;
+  private final TransactionTemplate independentReadTransaction;
   private final TransactionTemplate ownerTransaction;
 
   public WorldPublicationTerminalRepository(
       DSLContext dsl, PlatformTransactionManager transactionManager) {
     this.dsl = Objects.requireNonNull(dsl, "dsl");
-    ownerTransaction = new TransactionTemplate(Objects.requireNonNull(transactionManager));
+    PlatformTransactionManager manager = Objects.requireNonNull(transactionManager);
+    independentReadTransaction = new TransactionTemplate(manager);
+    independentReadTransaction.setPropagationBehavior(
+        TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    independentReadTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
+    independentReadTransaction.setReadOnly(true);
+    ownerTransaction = new TransactionTemplate(manager);
     ownerTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     ownerTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
   }
@@ -131,7 +149,16 @@ public final class WorldPublicationTerminalRepository {
       WorldPublicationTerminal.Request request) {
     Objects.requireNonNull(request, "request");
     requireNoAmbientTransaction("World publication terminal readback");
-    Record row = readTerminalWithOwner(request, false);
+    Record row =
+        independentReadTransaction.execute(
+            status -> {
+              requireReadOnlyRepeatableReadTransaction();
+              Record terminal = readTerminalWithOwner(request, false);
+              if (terminal == null) {
+                requirePendingOwner(request);
+              }
+              return terminal;
+            });
     if (row == null) return Optional.empty();
     return Optional.of(exactReadback(request, row));
   }
@@ -140,19 +167,37 @@ public final class WorldPublicationTerminalRepository {
     var world = request.worldEvidence().request();
     Record row =
         dsl.fetchOne(
-            "SELECT a.*,o.owner_freeze_phase,o.current_publication_fence "
-                + "FROM world_design_publication_fence_attempt a "
-                + "JOIN world_design_publication_fence_owner o "
-                + "ON o.target_namespace=a.target_namespace "
-                + "AND o.canonical_tenant_id=a.canonical_tenant_id "
-                + "AND o.local_tenant_key=a.local_tenant_key AND o.version_id=a.version_id "
-                + "WHERE a.publication_fence=? AND a.target_namespace=? "
-                + "AND a.canonical_tenant_id=? AND a.canonical_version_id=? "
-                + "AND o.current_publication_fence=a.publication_fence FOR UPDATE OF o",
+            ORIGINAL_OWNER_READ + " FOR UPDATE OF o",
             world.publicationFence(),
             world.targetNamespace(),
             world.canonicalTenantId(),
             world.canonicalVersionId());
+    requireOriginalOwnerBinding(world, row);
+    return row;
+  }
+
+  private void requirePendingOwner(WorldPublicationTerminal.Request request) {
+    var world = request.worldEvidence().request();
+    Record owner =
+        dsl.fetchOne(
+            ORIGINAL_OWNER_READ,
+            world.publicationFence(),
+            world.targetNamespace(),
+            world.canonicalTenantId(),
+            world.canonicalVersionId());
+    if (owner == null) {
+      throw new PublicationTerminalConflictException(
+          "World terminal request has no exact retained V25 attempt and current owner association");
+    }
+    requireOriginalOwnerBinding(world, owner);
+    if (!"FROZEN".equals(required(owner, "owner_freeze_phase", String.class))) {
+      throw new PublicationTerminalConflictException(
+          "Missing World publication terminal conflicts with the retained owner phase");
+    }
+  }
+
+  private static void requireOriginalOwnerBinding(
+      WorldPublishedStartLocationEvidence.Request world, Record row) {
     if (row == null) {
       throw new PublicationTerminalConflictException(
           "World terminal request has no exact retained V25 attempt and current owner association");
@@ -174,7 +219,6 @@ public final class WorldPublicationTerminalRepository {
       throw new PublicationTerminalConflictException(
           "World terminal evidence differs from its exact immutable V25 publication checkpoint");
     }
-    return row;
   }
 
   private void insertTerminal(WorldPublicationTerminal.Request request) {
@@ -361,6 +405,26 @@ public final class WorldPublicationTerminalRepository {
         || !"off".equalsIgnoreCase(required(settings, "read_only", String.class))) {
       throw new IllegalStateException(
           "World publication terminal requires writable READ COMMITTED");
+    }
+  }
+
+  private void requireReadOnlyRepeatableReadTransaction() {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || !TransactionSynchronizationManager.isCurrentTransactionReadOnly()
+        || !Integer.valueOf(Connection.TRANSACTION_REPEATABLE_READ)
+            .equals(TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())) {
+      throw new IllegalStateException(
+          "World publication terminal read requires a read-only REPEATABLE READ transaction");
+    }
+    Record settings =
+        dsl.fetchOne(
+            "SELECT current_setting('transaction_isolation') AS isolation, "
+                + "current_setting('transaction_read_only') AS read_only");
+    if (settings == null
+        || !"repeatable read".equalsIgnoreCase(required(settings, "isolation", String.class))
+        || !"on".equalsIgnoreCase(required(settings, "read_only", String.class))) {
+      throw new IllegalStateException(
+          "World publication terminal read requires a read-only REPEATABLE READ transaction");
     }
   }
 

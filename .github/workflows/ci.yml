@@ -2204,12 +2204,22 @@ jobs:
             --require-case 'net.firedevops.firemud.gamedesign.draft.GameDesignDraftTerminalOutcomePostgresIntegrationTest#migrationDoesNotInventAccountOutcomesForRetainedStatusOnlyRows()' \
             game-design-service
 
+      - name: Run Account publication settlement and consumer component proof
+        if: ${{ !cancelled() && matrix.module == 'account-service' }}
+        run: |
+          ./gradlew :account-service:integrationTest \
+            --tests integration.net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFencePostgresIntegrationTest \
+            --tests integration.net.firedevops.firemud.accountservice.authorpublication.AccountPublicationTerminalReconciliationServiceTest \
+            -PfullCheck --no-build-cache --no-configuration-cache
+
       - name: Capture Account publication participation PostgreSQL raw XML
         if: ${{ always() && matrix.module == 'account-service' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: account-publication-participation-postgresql-proof-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: services/account-service/build/test-results/integrationTest/TEST-*PublicationAuthorizationFencePostgresIntegrationTest.xml
+          path: |
+            services/account-service/build/test-results/integrationTest/TEST-*PublicationAuthorizationFencePostgresIntegrationTest.xml
+            services/account-service/build/test-results/integrationTest/TEST-*AccountPublicationTerminalReconciliationServiceTest.xml
           if-no-files-found: error
           retention-days: 7
 
@@ -2231,6 +2241,18 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFencePostgresIntegrationTest#rawSqlCannotReserveIncompleteSourceParticipationOrSubstituteRequestIdentity()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFencePostgresIntegrationTest#sqlPreservesJavaSourceLockOrderingForSupplementaryUnicodeScopes()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFencePostgresIntegrationTest#missingCurrentSchemaFailsClosedAndUpgradePreservesOriginalDraftEvidence()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFencePostgresIntegrationTest#exactIdenticalOwnerReadbacksSettleOnlyAfterBothOwnersAndPreserveRetryIdentity()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFencePostgresIntegrationTest#publishedOwnerPairSettlesPublicationOrderAndAllowsSourceTransition()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFencePostgresIntegrationTest#revokeOrderRequiresExactNoPublicationPairBeforeDefinitiveSourceAbort()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFencePostgresIntegrationTest#lateRuntimeRollbackRetainsValidOwnerPairAndWaitingSourceIntent()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFencePostgresIntegrationTest#directSqlSourceTransitionNeedsTwoMatchingPublicationOwnerRowsAndImmutableRetries()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFencePostgresIntegrationTest#revokeOrderAcceptsOnlyTwoMatchingNoPublicationRowsForDefinitiveAbort()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFencePostgresIntegrationTest#lateSourceTransitionRollbackRetainsWaitingChangeAndOwnerRows()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFencePostgresIntegrationTest#v79PublicationOrderAndWaitingSourceChangeSurviveV80WithoutInventedOwnerResults()' \
+            --require-suite integration.net.firedevops.firemud.accountservice.authorpublication.AccountPublicationTerminalReconciliationServiceTest \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authorpublication.AccountPublicationTerminalReconciliationServiceTest#concreteOwnerClientsRunOutsideReadCommittedAccountTransactionsAndExactPairIsRetained()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authorpublication.AccountPublicationTerminalReconciliationServiceTest#gameDesignUnknownNeverFabricatesWorldRequestOrOwnerResult()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authorpublication.AccountPublicationTerminalReconciliationServiceTest#ambientOwnerTransactionRejectsRecoveryBeforeRepositoryOrClientUse()' \
             account-service
 
       - name: Capture World Account-bound graph application PostgreSQL raw XML
@@ -2248,6 +2270,7 @@ jobs:
           bash dev-tools/validation/inspect-test-results.sh \
             --strict \
             --require-suite net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#canonicalPreparationKeepsOriginalPublicationEpochForLaterReleaseResolution()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#publishedTerminalUsesExactOwnerEvidenceRetriesAndRejectsChangedReleaseContent()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#rawTerminalReceiptCannotCommitWithoutMatchingOwnerPhaseCas()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#onlyPositiveNoPublicationEvidenceCanSealWorldAsAbortedAndCannotPrepare()' \
