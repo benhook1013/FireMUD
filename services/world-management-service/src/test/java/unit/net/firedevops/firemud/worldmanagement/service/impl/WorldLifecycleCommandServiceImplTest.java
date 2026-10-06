@@ -49,6 +49,7 @@ import net.firedevops.firemud.worldmanagement.repository.WorldEventRepository;
 import net.firedevops.firemud.worldmanagement.repository.WorldInstanceRepository;
 import net.firedevops.firemud.worldmanagement.repository.ZoneInstanceRepository;
 import net.firedevops.firemud.worldmanagement.repository.ZoneRepository;
+import org.jooq.DSLContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -68,6 +69,7 @@ class WorldLifecycleCommandServiceImplTest {
   private WorldEventRepository worldEventRepository;
   private EntityManagementClient entityManagementClient;
   private GameDesignClient gameDesignClient;
+  private DSLContext dsl;
   private AtomicBoolean localTransactionActive;
   private AtomicBoolean worldInstanceReadInLocalTransaction;
   private WorldLifecycleCommandServiceImpl service;
@@ -85,6 +87,7 @@ class WorldLifecycleCommandServiceImplTest {
     worldEventRepository = mock(WorldEventRepository.class);
     entityManagementClient = mock(EntityManagementClient.class);
     gameDesignClient = mock(GameDesignClient.class);
+    dsl = mock(DSLContext.class);
     localTransactionActive = new AtomicBoolean();
     worldInstanceReadInLocalTransaction = new AtomicBoolean();
     TransactionOperations transactionOperations =
@@ -117,7 +120,8 @@ class WorldLifecycleCommandServiceImplTest {
             gameDesignClient,
             entityManagementClient,
             new SimpleMeterRegistry(),
-            transactionOperations);
+            transactionOperations,
+            dsl);
     service.initMetrics();
     when(gameDesignClient.getPublishedReleaseBundle(42L, 11L))
         .thenReturn(
@@ -476,6 +480,37 @@ class WorldLifecycleCommandServiceImplTest {
 
     assertEquals("ACTIVE", snapshot.status());
     assertEquals(2L, snapshot.lifecycleEpoch());
+  }
+
+  @Test
+  void legacyNumericActivationDeniesCanonicalAssociationBeforeReleaseRpcOrMutation() {
+    WorldInstance instance = new WorldInstance();
+    instance.setId(201L);
+    instance.setTenantId(42L);
+    instance.setGameInstanceId(101L);
+    instance.setLifecycleEpoch(1L);
+    instance.setStatus("PREPARING");
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
+        .thenReturn(Optional.of(instance));
+    org.jooq.Record associationRow = mock(org.jooq.Record.class);
+    when(dsl.fetchOne(
+            "SELECT canonical_game_instance_id FROM world_canonical_instance_association "
+                + "WHERE world_instance_id=?",
+            201L))
+        .thenReturn(associationRow);
+    when(associationRow.get(0, java.util.UUID.class))
+        .thenReturn(java.util.UUID.fromString("11111111-1111-4111-8111-111111111111"));
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.activatePreparedWorldInstance(42L, 101L, 1L));
+
+    assertTrue(error.getMessage().startsWith("CANONICAL_LIFECYCLE_OPERATION_REQUIRED:"));
+    assertEquals("PREPARING", instance.getStatus());
+    assertEquals(1L, instance.getLifecycleEpoch());
+    verify(worldInstanceRepository, never()).save(any(WorldInstance.class));
+    verifyNoInteractions(gameDesignClient);
   }
 
   @Test

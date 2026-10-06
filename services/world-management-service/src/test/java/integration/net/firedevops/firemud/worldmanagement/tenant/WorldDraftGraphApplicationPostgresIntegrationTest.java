@@ -9,7 +9,10 @@ import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -20,6 +23,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
@@ -403,6 +407,364 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     assertThat(response.completed).isTrue();
     assertThat(WorldCanonicalInstanceLifecycleGrpcCodec.fromResponse(request, response.value))
         .isEqualTo(afterRetry);
+    assertOrigin();
+  }
+
+  @Test
+  void canonicalActivationCommitsOneOwnerCasAndReplaysItsImmutableResultAfterLaterLifecycleMove()
+      throws Exception {
+    PreparedLifecycleFixture fixture = materializedLifecycleFixture();
+    byte[] preparationBefore = preparationRows(fixture.input().canonicalGameInstanceId());
+    var rawCommitRequest =
+        new WorldCanonicalInstanceActivation.Request(UUID.randomUUID(), fixture.preparing());
+    var rawPredictedActive =
+        new WorldCanonicalInstanceLifecycleEvidence(
+            fixture.preparing().request(),
+            fixture.preparing().launchBinding(),
+            fixture.preparing().startLocation(),
+            fixture.preparing().runtimeRoomInstanceId(),
+            "ACTIVE",
+            fixture.preparing().lifecycleEpoch() + 1L,
+            fixture.preparing().rowVersion() + 1L,
+            fixture.preparing().captureId(),
+            fixture.preparing().graphSha256(),
+            fixture.preparing().preparationInputDigest());
+    var rawCommittedResult =
+        new WorldCanonicalInstanceActivation.Result(
+            rawCommitRequest,
+            WorldCanonicalInstanceActivation.Outcome.COMMITTED,
+            null,
+            rawPredictedActive);
+    byte[] rawRequestBytes = rawCommitRequest.canonicalRequestBytes();
+    byte[] rawResultBytes = rawCommittedResult.canonicalBytes();
+    assertThatThrownBy(
+            () ->
+                ownerTransaction()
+                    .execute(
+                        status -> {
+                          dsl.execute(
+                              "INSERT INTO world_canonical_instance_activation_operation "
+                                  + "(activation_request_id,request_digest,request_bytes,preparing_evidence_bytes,"
+                                  + "canonical_game_instance_id,world_instance_id,expected_lifecycle_epoch,expected_row_version,"
+                                  + "outcome,terminal_code,result_lifecycle_epoch,result_row_version,result_bytes,result_digest) "
+                                  + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                              rawCommitRequest.activationRequestId(),
+                              rawCommitRequest.requestDigest(),
+                              rawRequestBytes,
+                              rawCommitRequest.preparingEvidenceBytes(),
+                              rawCommitRequest.canonicalGameInstanceId(),
+                              fixture.materialized().association().worldInstanceId(),
+                              rawCommitRequest.expectedLifecycleEpoch(),
+                              rawCommitRequest.expectedRowVersion(),
+                              "COMMITTED",
+                              null,
+                              rawCommittedResult.lifecycleEvidence().lifecycleEpoch(),
+                              rawCommittedResult.lifecycleEvidence().rowVersion(),
+                              rawResultBytes,
+                              sha256Digest(rawResultBytes));
+                          return null;
+                        }))
+        .hasMessageContaining("must include its exact ACTIVE lifecycle CAS before commit");
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT count(*) FROM world_canonical_instance_activation_operation WHERE activation_request_id=?",
+                        rawCommitRequest.activationRequestId()))
+                .get(0, Long.class))
+        .isZero();
+
+    var first =
+        new WorldCanonicalInstanceActivation.Request(UUID.randomUUID(), fixture.preparing());
+    var second =
+        new WorldCanonicalInstanceActivation.Request(UUID.randomUUID(), fixture.preparing());
+    CountDownLatch bothAuthoritiesChecked = new CountDownLatch(2);
+    AtomicInteger verifierCalls = new AtomicInteger();
+    var service =
+        canonicalActivationService(
+            fixture,
+            request -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              verifierCalls.incrementAndGet();
+              bothAuthoritiesChecked.countDown();
+              await(bothAuthoritiesChecked);
+              return stipulatedActivationAuthority();
+            });
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    WorldCanonicalInstanceActivation.Result firstResult;
+    WorldCanonicalInstanceActivation.Result secondResult;
+    try {
+      Future<WorldCanonicalInstanceActivation.Result> firstFuture =
+          executor.submit(() -> service.activate(first));
+      Future<WorldCanonicalInstanceActivation.Result> secondFuture =
+          executor.submit(() -> service.activate(second));
+      firstResult = firstFuture.get(45, TimeUnit.SECONDS);
+      secondResult = secondFuture.get(45, TimeUnit.SECONDS);
+    } finally {
+      executor.shutdownNow();
+    }
+
+    assertThat(verifierCalls).hasValue(2);
+    assertThat(List.of(firstResult.outcome(), secondResult.outcome()))
+        .containsExactlyInAnyOrder(
+            WorldCanonicalInstanceActivation.Outcome.COMMITTED,
+            WorldCanonicalInstanceActivation.Outcome.ABORTED);
+    var committed =
+        firstResult.outcome() == WorldCanonicalInstanceActivation.Outcome.COMMITTED
+            ? firstResult
+            : secondResult;
+    var aborted = committed == firstResult ? secondResult : firstResult;
+    assertThat(committed.lifecycleEvidence().lifecycleStatus()).isEqualTo("ACTIVE");
+    assertThat(committed.lifecycleEvidence().lifecycleEpoch())
+        .isEqualTo(fixture.preparing().lifecycleEpoch() + 1L);
+    assertThat(committed.lifecycleEvidence().rowVersion())
+        .isEqualTo(fixture.preparing().rowVersion() + 1L);
+    assertThat(aborted.terminalCode()).isEqualTo("PRECONDITION_FAILED");
+    var active = fixture.lifecycleRepository().read(fixture.readRequest()).orElseThrow();
+    assertThat(active.lifecycleStatus()).isEqualTo("ACTIVE");
+    assertThat(active.lifecycleEpoch()).isEqualTo(committed.lifecycleEvidence().lifecycleEpoch());
+    assertThat(active.rowVersion()).isEqualTo(committed.lifecycleEvidence().rowVersion());
+
+    var repository =
+        new WorldCanonicalInstanceActivationRepository(dsl, manager, fixture.lifecycleRepository());
+    assertThat(repository.readResult(committed.request()).orElseThrow().canonicalBytes())
+        .containsExactly(committed.canonicalBytes());
+    int callsAfterFirstAttempt = verifierCalls.get();
+    assertThat(service.activate(committed.request()).canonicalBytes())
+        .containsExactly(committed.canonicalBytes());
+    assertThat(verifierCalls).hasValue(callsAfterFirstAttempt);
+    var changedExpectedVersion =
+        new WorldCanonicalInstanceLifecycleEvidence(
+            fixture.preparing().request(),
+            fixture.preparing().launchBinding(),
+            fixture.preparing().startLocation(),
+            fixture.preparing().runtimeRoomInstanceId(),
+            "PREPARING",
+            fixture.preparing().lifecycleEpoch(),
+            fixture.preparing().rowVersion() + 1L,
+            fixture.preparing().captureId(),
+            fixture.preparing().graphSha256(),
+            fixture.preparing().preparationInputDigest());
+    var changedRetry =
+        new WorldCanonicalInstanceActivation.Request(
+            committed.request().activationRequestId(), changedExpectedVersion);
+    assertThatThrownBy(() -> service.activate(changedRetry))
+        .isInstanceOf(WorldCanonicalInstanceActivationRepository.ActivationConflictException.class)
+        .hasMessageContaining("reused with changed immutable bindings");
+    assertThat(verifierCalls).hasValue(callsAfterFirstAttempt);
+
+    // A raw ACTIVE write cannot manufacture the committed operation that guards this CAS.
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE world_instance SET status='ACTIVE',lifecycle_epoch=lifecycle_epoch+1,"
+                        + "row_version=row_version+1 WHERE id=?",
+                    fixture.materialized().association().worldInstanceId()))
+        .hasMessageContaining("requires its exact activation operation");
+
+    var privateKeys = fixture.materialized().association().worldPrepareFields();
+    lifecycleCommandService.terminateWorldInstance(
+        privateKeys.privateTenantKey(),
+        privateKeys.privateGameInstanceKey(),
+        active.lifecycleEpoch(),
+        "activation-replay-terminal-move",
+        "integration lifecycle movement");
+    var terminalRow =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT status,lifecycle_epoch FROM world_instance WHERE id=?",
+                fixture.materialized().association().worldInstanceId()));
+    assertThat(terminalRow.get("status", String.class)).isEqualTo("TERMINATED");
+    assertThat(service.activate(committed.request()).canonicalBytes())
+        .containsExactly(committed.canonicalBytes());
+    assertThat(verifierCalls).hasValue(callsAfterFirstAttempt);
+    assertThat(preparationRows(fixture.input().canonicalGameInstanceId()))
+        .containsExactly(preparationBefore);
+    assertOrigin();
+  }
+
+  @Test
+  void canonicalActivationStoresStaleFailedOutcomeAndFreshLifecycleReadRemainsCurrent() {
+    PreparedLifecycleFixture fixture = materializedLifecycleFixture();
+    var staleRequest =
+        new WorldCanonicalInstanceActivation.Request(UUID.randomUUID(), fixture.preparing());
+    var privateKeys = fixture.materialized().association().worldPrepareFields();
+    lifecycleCommandService.failPreparedWorldInstance(
+        privateKeys.privateTenantKey(),
+        privateKeys.privateGameInstanceKey(),
+        fixture.preparing().lifecycleEpoch(),
+        "stale activation proof");
+    var failed = fixture.lifecycleRepository().read(fixture.readRequest()).orElseThrow();
+    assertThat(failed.lifecycleStatus()).isEqualTo("FAILED_PRE_ACTIVATION");
+    var service = canonicalActivationService(fixture, ignored -> stipulatedActivationAuthority());
+
+    var aborted = service.activate(staleRequest);
+
+    assertThat(aborted.outcome()).isEqualTo(WorldCanonicalInstanceActivation.Outcome.ABORTED);
+    assertThat(aborted.terminalCode()).isEqualTo("PRECONDITION_FAILED");
+    assertThat(aborted.lifecycleEvidence().canonicalBytes())
+        .containsExactly(failed.canonicalBytes());
+    assertThat(fixture.lifecycleRepository().read(fixture.readRequest()).orElseThrow())
+        .isEqualTo(failed);
+    assertThat(service.activate(staleRequest).canonicalBytes())
+        .containsExactly(aborted.canonicalBytes());
+    assertOrigin();
+  }
+
+  @Test
+  void canonicalActivationRejectsSelfConsistentForgedOwnerBindingsBeforeActiveCas()
+      throws Exception {
+    PreparedLifecycleFixture fixture = materializedLifecycleFixture();
+    var activationRequest =
+        new WorldCanonicalInstanceActivation.Request(UUID.randomUUID(), fixture.preparing());
+
+    var forgedPreparing =
+        (tools.jackson.databind.node.ObjectNode)
+            mapper.readTree(fixture.preparing().canonicalBytes());
+    ((tools.jackson.databind.node.ObjectNode) forgedPreparing.get("request"))
+        .put("targetNamespace", "forged-world-namespace");
+    byte[] forgedPreparingBytes =
+        net.firedevops.firemud.common.json.Rfc8785CanonicalJson.canonicalizeUtf8(
+            mapper.writeValueAsString(forgedPreparing));
+
+    var normalizedRequest =
+        (tools.jackson.databind.node.ObjectNode)
+            mapper.readTree(activationRequest.canonicalRequestBytes());
+    var normalizedPreparing =
+        (tools.jackson.databind.node.ObjectNode) mapper.readTree(forgedPreparingBytes);
+    ((tools.jackson.databind.node.ObjectNode) normalizedPreparing.get("request"))
+        .remove("readRequestId");
+    normalizedRequest.set("preparingEvidence", normalizedPreparing);
+    byte[] forgedRequestBytes =
+        net.firedevops.firemud.common.json.Rfc8785CanonicalJson.canonicalizeUtf8(
+            mapper.writeValueAsString(normalizedRequest));
+    String forgedRequestDigest = sha256Digest(forgedRequestBytes);
+
+    var forgedActive =
+        (tools.jackson.databind.node.ObjectNode) mapper.readTree(forgedPreparingBytes);
+    forgedActive.put("lifecycleStatus", "ACTIVE");
+    forgedActive.put("lifecycleEpoch", Long.toString(fixture.preparing().lifecycleEpoch() + 1L));
+    forgedActive.put("rowVersion", Long.toString(fixture.preparing().rowVersion() + 1L));
+    byte[] forgedActiveBytes =
+        net.firedevops.firemud.common.json.Rfc8785CanonicalJson.canonicalizeUtf8(
+            mapper.writeValueAsString(forgedActive));
+
+    Map<String, Object> forgedResult = new LinkedHashMap<>();
+    forgedResult.put("schema", "world-canonical-instance-activation-result/v1");
+    forgedResult.put("activationRequestId", activationRequest.activationRequestId().toString());
+    forgedResult.put("requestDigest", forgedRequestDigest);
+    forgedResult.put(
+        "requestBytesBase64", java.util.Base64.getEncoder().encodeToString(forgedRequestBytes));
+    forgedResult.put(
+        "preparingEvidenceBytesBase64",
+        java.util.Base64.getEncoder().encodeToString(forgedPreparingBytes));
+    forgedResult.put("outcome", "COMMITTED");
+    forgedResult.put("terminalCode", null);
+    forgedResult.put(
+        "lifecycleEvidenceBytesBase64",
+        java.util.Base64.getEncoder().encodeToString(forgedActiveBytes));
+    byte[] forgedResultBytes =
+        net.firedevops.firemud.common.json.Rfc8785CanonicalJson.canonicalizeUtf8(
+            mapper.writeValueAsString(forgedResult));
+
+    ownerTransaction()
+        .execute(
+            status -> {
+              dsl.execute("SAVEPOINT forged_world_activation");
+              assertThatThrownBy(
+                      () ->
+                          dsl.execute(
+                              "INSERT INTO world_canonical_instance_activation_operation "
+                                  + "(activation_request_id,request_digest,request_bytes,preparing_evidence_bytes,"
+                                  + "canonical_game_instance_id,world_instance_id,expected_lifecycle_epoch,expected_row_version,"
+                                  + "outcome,terminal_code,result_lifecycle_epoch,result_row_version,result_bytes,result_digest) "
+                                  + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                              activationRequest.activationRequestId(),
+                              forgedRequestDigest,
+                              forgedRequestBytes,
+                              forgedPreparingBytes,
+                              activationRequest.canonicalGameInstanceId(),
+                              fixture.materialized().association().worldInstanceId(),
+                              activationRequest.expectedLifecycleEpoch(),
+                              activationRequest.expectedRowVersion(),
+                              "COMMITTED",
+                              null,
+                              activationRequest.expectedLifecycleEpoch() + 1L,
+                              activationRequest.expectedRowVersion() + 1L,
+                              forgedResultBytes,
+                              sha256Digest(forgedResultBytes)))
+                  .hasMessageContaining("differs from immutable World association");
+              dsl.execute("ROLLBACK TO SAVEPOINT forged_world_activation");
+              dsl.execute("SAVEPOINT forged_active_cas");
+              assertThatThrownBy(
+                      () ->
+                          dsl.execute(
+                              "UPDATE world_instance SET status='ACTIVE',lifecycle_epoch=lifecycle_epoch+1,"
+                                  + "row_version=row_version+1 WHERE id=?",
+                              fixture.materialized().association().worldInstanceId()))
+                  .hasMessageContaining("requires its exact activation operation");
+              dsl.execute("ROLLBACK TO SAVEPOINT forged_active_cas");
+              return null;
+            });
+
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT count(*) FROM world_canonical_instance_activation_operation WHERE activation_request_id=?",
+                        activationRequest.activationRequestId()))
+                .get(0, Long.class))
+        .isZero();
+    var lifecycle = fixture.lifecycleRepository().read(fixture.readRequest()).orElseThrow();
+    assertThat(lifecycle.lifecycleStatus()).isEqualTo("PREPARING");
+    assertThat(lifecycle.lifecycleEpoch()).isEqualTo(activationRequest.expectedLifecycleEpoch());
+    assertThat(lifecycle.rowVersion()).isEqualTo(activationRequest.expectedRowVersion());
+    assertOrigin();
+  }
+
+  @Test
+  void lostHeldAuthorityAfterOperationInsertRollsBackActivationAndLedger() {
+    PreparedLifecycleFixture fixture = materializedLifecycleFixture();
+    var request =
+        new WorldCanonicalInstanceActivation.Request(UUID.randomUUID(), fixture.preparing());
+    AtomicInteger checks = new AtomicInteger();
+    var service =
+        canonicalActivationService(
+            fixture,
+            ignored -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              return new WorldCanonicalInstanceActivationService.HeldActivationAuthority() {
+                public void requireHeld() {
+                  int count = checks.incrementAndGet();
+                  if (count == 4) {
+                    assertThat(TransactionSynchronizationManager.isActualTransactionActive())
+                        .isTrue();
+                    assertThat(
+                            Objects.requireNonNull(
+                                    dsl.fetchOne(
+                                        "SELECT count(*) FROM world_canonical_instance_activation_operation WHERE activation_request_id=?",
+                                        request.activationRequestId()))
+                                .get(0, Long.class))
+                        .isEqualTo(1L);
+                    throw new IllegalStateException("stipulated activation authority loss");
+                  }
+                }
+
+                public void close() {}
+              };
+            });
+
+    assertThatThrownBy(() -> service.activate(request))
+        .hasMessageContaining("stipulated activation authority loss");
+    var current = fixture.lifecycleRepository().read(fixture.readRequest()).orElseThrow();
+    assertThat(current.lifecycleStatus()).isEqualTo("PREPARING");
+    assertThat(current.lifecycleEpoch()).isEqualTo(fixture.preparing().lifecycleEpoch());
+    assertThat(current.rowVersion()).isEqualTo(fixture.preparing().rowVersion());
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT count(*) FROM world_canonical_instance_activation_operation WHERE activation_request_id=?",
+                        request.activationRequestId()))
+                .get(0, Long.class))
+        .isZero();
     assertOrigin();
   }
 
@@ -1049,6 +1411,72 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
                 open = false;
               }
             });
+  }
+
+  private PreparedLifecycleFixture materializedLifecycleFixture() {
+    Fixture f = fixture();
+    var original = application(generationFreePlan(f));
+    var selectedRoom =
+        original.plan().graph().nodes().stream()
+            .filter(
+                node ->
+                    node.mutation().getAggregateType()
+                        == WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM)
+            .map(node -> node.templateId())
+            .toList()
+            .getLast();
+    var applied = withStartRoom(original, selectedRoom);
+    appliedComponent().apply(applied);
+    var frozen = capture(applied.plan());
+    var selector =
+        publishedEvidence(
+            publishedSelectors().readCommitted(frozen.request().freeze()).orElseThrow());
+    var input = preparationInput(f, frozen, selector);
+    var materialized = preparationComponent(preparationRepository()).prepare(input);
+    var lifecycleRepository =
+        new WorldCanonicalInstanceLifecycleReadRepository(dsl, manager, associationRepository());
+    var readRequest = lifecycleReadRequest(input);
+    var preparing = lifecycleRepository.read(readRequest).orElseThrow();
+    assertThat(preparing.lifecycleStatus()).isEqualTo("PREPARING");
+    assertThat(preparing.startLocation().roomTemplateId()).isEqualTo(selectedRoom);
+    assertThat(preparing.runtimeRoomInstanceId()).isEqualTo(materialized.runtimeRoomInstanceId());
+    return new PreparedLifecycleFixture(
+        input, materialized, lifecycleRepository, readRequest, preparing);
+  }
+
+  private WorldCanonicalInstanceActivationService canonicalActivationService(
+      PreparedLifecycleFixture fixture,
+      WorldCanonicalInstanceActivationService.ActivationAuthorityVerifier verifier) {
+    return new WorldCanonicalInstanceActivationService(
+        new WorldCanonicalInstanceActivationRepository(dsl, manager, fixture.lifecycleRepository()),
+        verifier);
+  }
+
+  /**
+   * Synthetic fixture fence only; it does not authenticate live source, release, or Account state.
+   */
+  private static WorldCanonicalInstanceActivationService.HeldActivationAuthority
+      stipulatedActivationAuthority() {
+    return new WorldCanonicalInstanceActivationService.HeldActivationAuthority() {
+      private boolean open = true;
+
+      public void requireHeld() {
+        assertThat(open).isTrue();
+      }
+
+      public void close() {
+        open = false;
+      }
+    };
+  }
+
+  private static String sha256Digest(byte[] bytes) {
+    try {
+      return "sha256:"
+          + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+    } catch (NoSuchAlgorithmException unavailable) {
+      throw new AssertionError(unavailable);
+    }
   }
 
   private byte[] preparationRows(UUID instance) {
@@ -2870,4 +3298,11 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
       WorldAuthoredSourceIntakeReceipt intake,
       WorldAuthoredVersionIdentityReceipt version,
       OwnerBinding owner) {}
+
+  private record PreparedLifecycleFixture(
+      WorldCanonicalInstancePreparation.Input input,
+      WorldCanonicalInstancePreparation.Result materialized,
+      WorldCanonicalInstanceLifecycleReadRepository lifecycleRepository,
+      WorldCanonicalInstanceLifecycleEvidence.Request readRequest,
+      WorldCanonicalInstanceLifecycleEvidence preparing) {}
 }

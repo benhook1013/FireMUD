@@ -2249,6 +2249,10 @@ jobs:
             --strict \
             --require-suite net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#lifecycleReadFollowsCurrentWorldEpochAndReturnsExactCanonicalServiceEcho()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#canonicalActivationCommitsOneOwnerCasAndReplaysItsImmutableResultAfterLaterLifecycleMove()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#canonicalActivationStoresStaleFailedOutcomeAndFreshLifecycleReadRemainsCurrent()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#canonicalActivationRejectsSelfConsistentForgedOwnerBindingsBeforeActiveCas()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#lostHeldAuthorityAfterOperationInsertRollsBackActivationAndLedger()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#releaseSelectorMaterializesItsOriginalRoomAndExactlyRetriesWithSeparateRuntimeMapping()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#releaseSelectorRejectsChangedFrozenRequestAndSqlSubstitutionWithoutRuntimeWrites()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#inertV1PreparationRetainsOriginalBytesAndCannotGainSelectorOnRetry()' \
