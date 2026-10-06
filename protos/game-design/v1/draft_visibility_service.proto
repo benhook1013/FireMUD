@@ -1,0 +1,52 @@
+syntax = "proto3";
+
+package gamedesign.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option java_package = "net.firedevops.firemud.gamedesign.v1";
+option java_multiple_files = true;
+
+// Opt-in owner-to-owner read of the durable synchronized Draft visibility fence.
+service DraftSynchronizedVisibilityService {
+  rpc ReadDraftSynchronizedVisibility(ReadDraftSynchronizedVisibilityRequest)
+      returns (ReadDraftSynchronizedVisibilityResponse);
+}
+
+message DraftVisibilityTarget {
+  string canonical_tenant_id = 1;
+  string canonical_version_id = 2;
+  int64 game_design_version_row_id = 3;
+  string game_design_version_tenant_key = 4;
+  int64 source_game_row_id = 5;
+  string source_game_tenant_key = 6;
+  string source_provenance_kind = 7;
+}
+
+message ReadDraftSynchronizedVisibilityRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string read_request_id = 3;
+  DraftVisibilityTarget target = 4;
+}
+
+message DraftSynchronizedVisibilityFence {
+  string request_id = 1;
+  string commit_id = 2;
+  string input_digest = 3;
+  // Exact immutable owner-result vector stored with the durable visibility fence.
+  string result_vector_json = 4;
+  google.protobuf.Timestamp created_at = 5;
+}
+
+message ReadDraftSynchronizedVisibilityResponse {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string read_request_id = 3;
+  DraftVisibilityTarget target = 4;
+  // Exact canonical DraftCommitBinding JSON and its full digest.
+  string binding_json = 5;
+  string binding_digest = 6;
+  string workflow_state = 7;
+  DraftSynchronizedVisibilityFence fence = 8;
+}
