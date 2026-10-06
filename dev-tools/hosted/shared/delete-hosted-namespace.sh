@@ -9,6 +9,7 @@ fi
 namespace="$1"
 release_name="$2"
 wait_seconds="${PREVIEW_NAMESPACE_DELETE_TIMEOUT_SECONDS:-180}"
+expected_namespace_uid="${PREVIEW_EXPECTED_NAMESPACE_UID:-}"
 
 if [[ "$namespace" == "dev" ]]; then
   if [[ "$release_name" != "dev" ]]; then
@@ -29,6 +30,11 @@ if ! [[ "$wait_seconds" =~ ^[1-9][0-9]*$ ]] ||
   ((${#wait_seconds} > 4)) ||
   ((10#$wait_seconds > 3600)); then
   echo "PREVIEW_NAMESPACE_DELETE_TIMEOUT_SECONDS must be an integer between 1 and 3600" >&2
+  exit 2
+fi
+if [[ -n "$expected_namespace_uid" ]] &&
+  ! [[ "$expected_namespace_uid" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$ ]]; then
+  echo "expected namespace UID is malformed" >&2
   exit 2
 fi
 
@@ -69,10 +75,15 @@ if ! namespace_uid="$(
   echo "hosted namespace ${namespace} identity or ownership metadata is invalid" >&2
   exit 1
 fi
+if [[ -n "$expected_namespace_uid" && "$namespace_uid" != "$expected_namespace_uid" ]]; then
+  echo "hosted namespace ${namespace} UID changed before deletion" >&2
+  exit 1
+fi
+delete_uid="${expected_namespace_uid:-$namespace_uid}"
 
 delete_options="$(
   jq -cn \
-    --arg uid "$namespace_uid" \
+    --arg uid "$delete_uid" \
     '{apiVersion:"v1",kind:"DeleteOptions",preconditions:{uid:$uid}}'
 )"
 delete_status=0
