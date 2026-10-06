@@ -2,16 +2,21 @@ package net.firedevops.firemud.gamedesign.service.impl;
 
 import static net.firedevops.firemud.gamedesign.service.impl.CommandDefinitionFixtures.commandDefinition;
 import static net.firedevops.firemud.gamedesign.service.impl.CommandDefinitionFixtures.validCommandDefinition;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
+import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
@@ -38,6 +43,188 @@ class PublishedReleaseBundleServiceImplTest {
   @Mock private VersionRepository versionRepository;
 
   private PublishedReleaseBundleServiceImpl service;
+
+  @Test
+  void selectorV2PersistsActualOriginalBytesAndRetryReturnsStoredEvidenceWithoutResolvingDefaults()
+      throws Exception {
+    var evidence = selectorEvidence();
+    var participants = PublishedWorldSelectorFixtures.participants(7L, evidence);
+    when(repository.save(any(PublishedReleaseBundle.class)))
+        .thenAnswer(
+            invocation -> {
+              PublishedReleaseBundle saved = invocation.getArgument(0);
+              saved.setId(11L);
+              saved.setPublishedReleaseBundleRef("owner-release");
+              when(repository.findByTenantIdAndVersionId("tenant-1", 7L))
+                  .thenReturn(Optional.of(saved));
+              return saved;
+            });
+    var first =
+        service.createFullVersionBundle(
+            selectorVersion(),
+            "publish-workflow",
+            emptyManifest(),
+            "genrev-1",
+            participants,
+            evidence);
+    assertEquals("v2", first.attestationSchemaVersion());
+    assertThat(first.worldPublishedStartLocationEvidence().canonicalBytes())
+        .containsExactly(evidence.canonicalBytes());
+    org.mockito.Mockito.clearInvocations(versionRepository, revisionRepository, repository);
+    when(versionRepository.findByTenantIdAndId("tenant-1", 7L)).thenReturn(Optional.empty());
+    var retry =
+        service.createFullVersionBundle(
+            selectorVersion(),
+            "publish-workflow",
+            emptyManifest(),
+            "genrev-1",
+            participants,
+            WorldPublishedStartLocationEvidence.fromStored(evidence.canonicalBytes()));
+    assertEquals(first.id(), retry.id());
+    assertThat(retry.worldPublishedStartLocationEvidence().canonicalBytes())
+        .containsExactly(first.worldPublishedStartLocationEvidence().canonicalBytes());
+    org.mockito.Mockito.verifyNoInteractions(versionRepository, revisionRepository);
+    org.mockito.Mockito.verify(repository, org.mockito.Mockito.never()).save(any());
+    assertThatThrownBy(
+            () ->
+                service.createFullVersionBundle(
+                    selectorVersion(),
+                    "publish-workflow",
+                    emptyManifest(),
+                    "changed",
+                    participants,
+                    evidence))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("IDEMPOTENCY_CONFLICT");
+    assertThatThrownBy(() -> PublishedReleaseBundleContract.requireSupportedSchemaForLaunch(first))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("SCHEMA_VERSION_UNSUPPORTED");
+    assertThatThrownBy(
+            () -> PublishedReleaseBundleContract.requireExactRepairMatch(first, emptyManifest()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("SCHEMA_VERSION_UNSUPPORTED");
+  }
+
+  @Test
+  void selectorV2RejectsMissingEvidenceWrongWorkflowIncompleteOwnersAndChangedWorldDigest()
+      throws Exception {
+    var evidence = selectorEvidence();
+    var participants = PublishedWorldSelectorFixtures.participants(7L, evidence);
+    assertThatThrownBy(
+            () ->
+                service.createFullVersionBundle(
+                    selectorVersion(),
+                    "publish-workflow",
+                    emptyManifest(),
+                    "genrev-1",
+                    participants,
+                    null))
+        .isInstanceOf(NullPointerException.class);
+    assertThatThrownBy(
+            () ->
+                service.createFullVersionBundle(
+                    selectorVersion(),
+                    "wrong-workflow",
+                    emptyManifest(),
+                    "genrev-1",
+                    participants,
+                    evidence))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                service.createFullVersionBundle(
+                    selectorVersion(),
+                    "publish-workflow",
+                    emptyManifest(),
+                    "genrev-1",
+                    participants.subList(0, 4),
+                    evidence))
+        .isInstanceOf(IllegalArgumentException.class);
+    var world = participants.getFirst();
+    var changed = new java.util.ArrayList<>(participants);
+    changed.set(
+        0,
+        new PublishParticipantDigestDto(
+            world.participantKey(),
+            world.scopeValue(),
+            null,
+            world.appliedCommitId(),
+            "e".repeat(64),
+            3,
+            null,
+            null,
+            null));
+    assertThatThrownBy(
+            () ->
+                service.createFullVersionBundle(
+                    selectorVersion(),
+                    "publish-workflow",
+                    emptyManifest(),
+                    "genrev-1",
+                    changed,
+                    evidence))
+        .isInstanceOf(IllegalArgumentException.class);
+    org.mockito.Mockito.verify(repository, org.mockito.Mockito.never()).save(any());
+  }
+
+  @Test
+  void historicalReleaseNeverGainsSelectorAndCorruptedStoredCarrierFailsReadback()
+      throws Exception {
+    PublishedReleaseBundle retained = new PublishedReleaseBundle();
+    retained.setAttestationSchemaVersion("v1");
+    retained.setTenantId("tenant-1");
+    retained.setVersionId(7L);
+    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.of(retained));
+    assertNull(
+        service.getPublishedReleaseBundle("tenant-1", 7L).worldPublishedStartLocationEvidence());
+    var evidence = selectorEvidence();
+    assertThatThrownBy(
+            () ->
+                service.createFullVersionBundle(
+                    selectorVersion(),
+                    "publish-workflow",
+                    emptyManifest(),
+                    "genrev-1",
+                    PublishedWorldSelectorFixtures.participants(7L, evidence),
+                    evidence))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("selector-ineligible");
+    retained.setWorldPublishedStartLocationEvidenceJson(
+        new String(evidence.canonicalBytes(), StandardCharsets.UTF_8));
+    assertThatThrownBy(() -> service.getPublishedReleaseBundle("tenant-1", 7L))
+        .isInstanceOf(IllegalArgumentException.class);
+    retained.setAttestationSchemaVersion("v2");
+    retained.setWorldPublishedStartLocationEvidenceJson("{}");
+    assertThatThrownBy(() -> service.getPublishedReleaseBundle("tenant-1", 7L))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  private WorldPublishedStartLocationEvidence selectorEvidence() throws Exception {
+    return PublishedWorldSelectorFixtures.evidence(
+        new TargetProof(
+            sourceIdentity().getCanonicalTenantId(),
+            sourceIdentity().getCanonicalVersionId(),
+            7L,
+            "tenant-1",
+            42L,
+            "tenant-1",
+            "NEW_GAME_ROW"));
+  }
+
+  private VersionDto selectorVersion() {
+    return new VersionDto(
+        7L,
+        "tenant-1",
+        8,
+        VersionLifecycleState.PUBLISHED,
+        2L,
+        null,
+        null,
+        false,
+        "notes",
+        LocalDateTime.now(),
+        LocalDateTime.now());
+  }
 
   @BeforeEach
   void setUp() {

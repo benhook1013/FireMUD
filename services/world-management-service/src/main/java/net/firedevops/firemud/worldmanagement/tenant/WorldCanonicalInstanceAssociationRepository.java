@@ -369,15 +369,27 @@ public final class WorldCanonicalInstanceAssociationRepository {
   public Optional<WorldCanonicalInstanceAssociation> readOwnerAssociation(
       UUID canonicalGameInstanceId) {
     requireNoActiveTransaction("World canonical instance association read");
+    return readOwnerAssociation(canonicalGameInstanceId, false);
+  }
+
+  /** Reconstructs the association without leaving the lifecycle owner's verified snapshot. */
+  Optional<WorldCanonicalInstanceAssociation> readOwnerAssociationInOwnerTransaction(
+      UUID canonicalGameInstanceId) {
+    requireReadOnlyRepeatableReadOwnerTransaction();
+    return readOwnerAssociation(canonicalGameInstanceId, true);
+  }
+
+  private Optional<WorldCanonicalInstanceAssociation> readOwnerAssociation(
+      UUID canonicalGameInstanceId, boolean inOwnerSnapshot) {
     requireNonNil(canonicalGameInstanceId, "canonicalGameInstanceId");
     Record row = findByCanonicalGameInstance(canonicalGameInstanceId);
     if (row == null) {
       return Optional.empty();
     }
-    return Optional.of(toAssociation(row));
+    return Optional.of(toAssociation(row, inOwnerSnapshot));
   }
 
-  private WorldCanonicalInstanceAssociation toAssociation(Record row) {
+  private WorldCanonicalInstanceAssociation toAssociation(Record row, boolean inOwnerSnapshot) {
     try {
       short schemaVersion = required(row, SCHEMA_VERSION);
       if (schemaVersion != 1) {
@@ -391,8 +403,10 @@ public final class WorldCanonicalInstanceAssociationRepository {
       UUID bindingOperationId = required(row, LAUNCH_BINDING_OPERATION_ID);
       UUID intakeRequestId = required(row, INTAKE_REQUEST_ID);
       WorldCompleteLaunchBindingRepository.StoredBinding storedBinding =
-          launchBindingRepository
-              .read(namespace, tenantId, controlRequestId)
+          (inOwnerSnapshot
+                  ? launchBindingRepository.readInOwnerReadOnlyRepeatableRead(
+                      namespace, tenantId, controlRequestId)
+                  : launchBindingRepository.read(namespace, tenantId, controlRequestId))
               .orElseThrow(
                   () ->
                       new InvalidAssociationEvidenceException(
@@ -402,8 +416,10 @@ public final class WorldCanonicalInstanceAssociationRepository {
             "World canonical association substituted its complete launch binding");
       }
       WorldAuthoredSourceIntakeReceipt sourceReceipt =
-          sourceIntakeRepository
-              .read(namespace, intakeRequestId)
+          (inOwnerSnapshot
+                  ? sourceIntakeRepository.readInOwnerReadOnlyRepeatableRead(
+                      namespace, intakeRequestId)
+                  : sourceIntakeRepository.read(namespace, intakeRequestId))
               .orElseThrow(
                   () ->
                       new InvalidAssociationEvidenceException(
@@ -412,8 +428,11 @@ public final class WorldCanonicalInstanceAssociationRepository {
           launchBindingRepository.toReceipt(storedBinding, sourceReceipt);
       UUID canonicalVersionId = required(row, CANONICAL_VERSION_ID);
       WorldAuthoredVersionIdentityReceipt versionIdentity =
-          versionIdentityRepository
-              .readByCanonicalVersion(namespace, tenantId, worldSlug, canonicalVersionId)
+          (inOwnerSnapshot
+                  ? versionIdentityRepository.readByCanonicalVersionInOwnerReadOnlyRepeatableRead(
+                      namespace, tenantId, worldSlug, canonicalVersionId)
+                  : versionIdentityRepository.readByCanonicalVersion(
+                      namespace, tenantId, worldSlug, canonicalVersionId))
               .orElseThrow(
                   () ->
                       new InvalidAssociationEvidenceException(
@@ -810,6 +829,27 @@ public final class WorldCanonicalInstanceAssociationRepository {
   private static void requireNoActiveTransaction(String label) {
     if (TransactionSynchronizationManager.isActualTransactionActive()) {
       throw new IllegalStateException(label + " requires an independent committed owner read");
+    }
+  }
+
+  private void requireReadOnlyRepeatableReadOwnerTransaction() {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || !TransactionSynchronizationManager.isCurrentTransactionReadOnly()
+        || !Integer.valueOf(Connection.TRANSACTION_REPEATABLE_READ)
+            .equals(TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())) {
+      throw new IllegalStateException(
+          "World canonical association snapshot read requires a read-only REPEATABLE READ owner transaction");
+    }
+    Record state =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT current_setting('transaction_isolation') AS isolation, "
+                    + "current_setting('transaction_read_only') AS read_only"),
+            "World transaction state query returned no row");
+    if (!"repeatable read".equals(state.get("isolation", String.class))
+        || !"on".equals(state.get("read_only", String.class))) {
+      throw new IllegalStateException(
+          "World canonical association snapshot read requires a read-only REPEATABLE READ owner transaction");
     }
   }
 

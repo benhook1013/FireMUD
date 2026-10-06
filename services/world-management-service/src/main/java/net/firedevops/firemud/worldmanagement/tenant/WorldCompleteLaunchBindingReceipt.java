@@ -38,6 +38,12 @@ public record WorldCompleteLaunchBindingReceipt(
     AuthoredWorldLaunchDescriptorEvidence descriptor = evidence.descriptor();
     descriptor.requireValid();
     evidence.releaseAttestation().requireValid(descriptor);
+    var selector = evidence.releaseAttestation().worldStartLocationEvidence();
+    if (selector != null
+        && !selector.request().intakeRequestId().equals(sourceIntakeReceipt.intakeRequestId())) {
+      throw new IllegalArgumentException(
+          "World release selector differs from the exact original source intake");
+    }
     if (!targetNamespace.equals(descriptor.targetNamespace())
         || !canonicalTenantId.equals(descriptor.canonicalTenantId())
         || !worldSlug.equals(descriptor.worldSlug())

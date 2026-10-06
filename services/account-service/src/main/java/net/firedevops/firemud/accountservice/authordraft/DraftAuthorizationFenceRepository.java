@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFenceRepository;
 import net.firedevops.firemud.accountservice.tenantcreation.TenantCreationAuthorizationFenceRepository;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.Outcome;
@@ -280,6 +281,7 @@ public final class DraftAuthorizationFenceRepository {
       }
     }
     new TenantCreationAuthorizationFenceRepository(dsl).revokeAffected(change.sources());
+    new PublicationAuthorizationFenceRepository(dsl).revokeAffected(change.sources());
     return allAffectedSettled(change.sources());
   }
 
@@ -622,7 +624,8 @@ public final class DraftAuthorizationFenceRepository {
         return false;
       }
     }
-    return new TenantCreationAuthorizationFenceRepository(dsl).allAffectedSettled(sources);
+    return new TenantCreationAuthorizationFenceRepository(dsl).allAffectedSettled(sources)
+        && new PublicationAuthorizationFenceRepository(dsl).allAffectedSettled(sources);
   }
 
   private Settlement settlement(UUID operation, Ordering ordering) {

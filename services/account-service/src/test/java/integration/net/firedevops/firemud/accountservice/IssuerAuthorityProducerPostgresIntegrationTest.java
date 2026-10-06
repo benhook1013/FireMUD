@@ -502,8 +502,8 @@ class IssuerAuthorityProducerPostgresIntegrationTest {
     assertThat(SourceChange.fromStored(retainedBinding).canonicalBytes())
         .containsExactly(oldChange.canonicalBytes());
 
-    // V59's retained-data proof is complete above. Current source ordering also consumes the
-    // distinct CREATE_TENANT family, so advance to V67 before current producer interactions.
+    // V59's retained-data proof is complete above. Current source ordering consumes the distinct
+    // CREATE_TENANT family, and current fence participation also requires V79.
     Flyway.configure()
         .dataSource(dataSource)
         .schemas(schema)
@@ -511,6 +511,15 @@ class IssuerAuthorityProducerPostgresIntegrationTest {
         .placeholders(Map.of("serviceSchema", schema))
         .locations("classpath:db/migration")
         .target("67")
+        .load()
+        .migrate();
+    Flyway.configure()
+        .dataSource(dataSource)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .placeholders(Map.of("serviceSchema", schema))
+        .locations("classpath:db/migration")
+        .target("79")
         .load()
         .migrate();
 

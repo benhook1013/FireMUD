@@ -421,6 +421,8 @@ class VersionAssetPublicationMinioPostgresIntegrationTest {
     VersionAssetExportCandidateServiceImpl candidateService =
         new VersionAssetExportCandidateServiceImpl(
             versionRepository,
+            gameRepository,
+            new net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository(dsl),
             artifactRepository,
             publicationService,
             transactionManager,

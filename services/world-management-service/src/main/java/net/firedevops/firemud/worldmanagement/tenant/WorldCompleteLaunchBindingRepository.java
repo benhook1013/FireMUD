@@ -1,6 +1,7 @@
 package net.firedevops.firemud.worldmanagement.tenant;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.sql.Connection;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -75,6 +76,18 @@ public class WorldCompleteLaunchBindingRepository {
   public Optional<StoredBinding> read(
       String namespace, UUID canonicalTenantId, String controlPlaneRequestId) {
     requireNoActiveTransaction("World complete launch binding read");
+    return readValidated(namespace, canonicalTenantId, controlPlaneRequestId);
+  }
+
+  /** Reads the same immutable row inside the lifecycle repository's verified owner snapshot. */
+  Optional<StoredBinding> readInOwnerReadOnlyRepeatableRead(
+      String namespace, UUID canonicalTenantId, String controlPlaneRequestId) {
+    requireReadOnlyRepeatableReadOwnerTransaction();
+    return readValidated(namespace, canonicalTenantId, controlPlaneRequestId);
+  }
+
+  private Optional<StoredBinding> readValidated(
+      String namespace, UUID canonicalTenantId, String controlPlaneRequestId) {
     validateKey(namespace, canonicalTenantId, controlPlaneRequestId);
     Record row = find(namespace, canonicalTenantId, controlPlaneRequestId);
     return row == null ? Optional.empty() : Optional.of(toStoredBinding(row));
@@ -371,6 +384,27 @@ public class WorldCompleteLaunchBindingRepository {
   private static void requireNoActiveTransaction(String label) {
     if (TransactionSynchronizationManager.isActualTransactionActive()) {
       throw new IllegalStateException(label + " requires an independent committed owner read");
+    }
+  }
+
+  private void requireReadOnlyRepeatableReadOwnerTransaction() {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || !TransactionSynchronizationManager.isCurrentTransactionReadOnly()
+        || !Integer.valueOf(Connection.TRANSACTION_REPEATABLE_READ)
+            .equals(TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())) {
+      throw new IllegalStateException(
+          "World complete launch binding snapshot read requires a read-only REPEATABLE READ owner transaction");
+    }
+    Record state =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT current_setting('transaction_isolation') AS isolation, "
+                    + "current_setting('transaction_read_only') AS read_only"),
+            "World transaction state query returned no row");
+    if (!"repeatable read".equals(state.get("isolation", String.class))
+        || !"on".equals(state.get("read_only", String.class))) {
+      throw new IllegalStateException(
+          "World complete launch binding snapshot read requires a read-only REPEATABLE READ owner transaction");
     }
   }
 

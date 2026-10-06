@@ -177,12 +177,19 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
       throw denial(
           "RELEASE_BUNDLE_NOT_FOUND", "release bundle is not owned by the resolved source version");
     }
-    if (!PublishedReleaseBundleContract.SUPPORTED_ATTESTATION_SCHEMA_VERSION.equals(
-        bundle.attestationSchemaVersion())) {
-      throw denial(
-          PublishedReleaseBundleContract.SCHEMA_VERSION_UNSUPPORTED,
-          "unsupported published release bundle attestation schema "
-              + bundle.attestationSchemaVersion());
+    try {
+      PublishedReleaseBundleContract.requireSupportedSchemaForLaunchDescriptor(bundle);
+    } catch (IllegalArgumentException invalid) {
+      if (invalid.getMessage() != null
+          && invalid
+              .getMessage()
+              .startsWith(PublishedReleaseBundleContract.SCHEMA_VERSION_UNSUPPORTED + ":")) {
+        throw denial(
+            PublishedReleaseBundleContract.SCHEMA_VERSION_UNSUPPORTED,
+            "unsupported published release bundle attestation schema "
+                + bundle.attestationSchemaVersion());
+      }
+      throw invalid;
     }
     if (bundle.publishedReleaseBundleRef() == null
         || bundle.publishedReleaseBundleRef().isBlank()) {

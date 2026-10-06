@@ -2,10 +2,12 @@ package net.firedevops.firemud.gamedesign.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.LocalDateTime;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection.PublishIntent;
@@ -149,6 +151,7 @@ public class VersionPublishCommandServiceImpl {
       // Failed legacy attempts may retain only terminal evidence after their draft was deleted.
       // Validate their stable scope before entering the draft-dependent compatibility backfill.
       validateTerminalFullVersionAttempt(attempt, request);
+      if (request.intent() != null) publishAttemptRepository.requireNoPublicationOperation(attempt);
       return new PublishWorkflowSnapshot(
           attempt.getVersionId() == null ? 0L : attempt.getVersionId(),
           attempt.getVersionNumber(),
@@ -325,9 +328,12 @@ public class VersionPublishCommandServiceImpl {
   }
 
   private PublishAttempt createDraftAttempt(PublishWorkflowRequest request) {
+    if (gameRepository.findByTenantIdForUpdate(request.tenantId()) == null) {
+      throw new IllegalArgumentException("game not found");
+    }
     AuthoredDraftPublishSelection selection = requireSelectedIntent(request);
     Optional<PublishAttempt> existingAttempt =
-        publishAttemptRepository.findByPublishWorkflowId(request.publishWorkflowId());
+        publishAttemptRepository.findByPublishWorkflowIdForUpdate(request.publishWorkflowId());
     if (existingAttempt.isPresent()) {
       validateFullVersionAttempt(existingAttempt.get(), request);
       return existingAttempt.get();
@@ -363,10 +369,11 @@ public class VersionPublishCommandServiceImpl {
     }
     PublishAttempt attempt =
         publishAttemptRepository
-            .findByPublishWorkflowId(request.publishWorkflowId())
+            .findByPublishWorkflowIdForUpdate(request.publishWorkflowId())
             .orElseThrow(() -> new PendingReconciliationException("publish attempt not found"));
     validateFullVersionAttempt(attempt, request);
     if (attempt.getStatus() == PublishAttemptStatus.SUCCEEDED) {
+      publishAttemptRepository.requirePublishedOperation(attempt);
       PublicationReadback readback = readPublication(request, attempt);
       if (!readback.isComplete()) {
         throw pendingReconciliation(
@@ -379,6 +386,8 @@ public class VersionPublishCommandServiceImpl {
       throw pendingReconciliation("full-version attempt is no longer pending");
     }
 
+    var publicationOperation = publishAttemptRepository.requirePublicationPending(attempt);
+
     Version version = requireAttemptVersionForUpdate(attempt, request);
     PublicationReadback existingPublication = readPublication(request, attempt);
     if (existingPublication.isComplete()) {
@@ -389,6 +398,7 @@ public class VersionPublishCommandServiceImpl {
           request.publishWorkflowId(),
           existingPublication.bundle().participantDigests());
       publishAttemptService.markFullVersionSucceeded(request.publishWorkflowId());
+      publishAttemptRepository.sealPublication(attempt, true);
       return succeededSnapshot(attempt);
     }
     if (existingPublication.isPartial()) {
@@ -422,7 +432,8 @@ public class VersionPublishCommandServiceImpl {
         request.publishWorkflowId(),
         exportedManifest,
         generationConfigRevision,
-        participantDigests);
+        participantDigests,
+        publicationOperation);
     version.setVersionState(VersionLifecycleState.PUBLISHED);
     version.setVersionStateEpoch(Math.addExact(version.getVersionStateEpoch(), 1L));
     version.setUpdatedAt(LocalDateTime.now());
@@ -436,6 +447,7 @@ public class VersionPublishCommandServiceImpl {
     recordedParticipantDigestService.recordVerifiedDigests(
         dto.tenantId(), PublishType.FULL_VERSION, request.publishWorkflowId(), participantDigests);
     publishAttemptService.markFullVersionSucceeded(request.publishWorkflowId());
+    publishAttemptRepository.sealPublication(attempt, true);
     return succeededSnapshot(attempt);
   }
 
@@ -452,6 +464,7 @@ public class VersionPublishCommandServiceImpl {
 
   private PublishWorkflowSnapshot replaySucceededAttempt(
       PublishWorkflowRequest request, PublishAttempt attempt) {
+    if (request.intent() != null) publishAttemptRepository.requirePublishedOperation(attempt);
     PublishedReleaseBundleDto bundle;
     try {
       bundle = readPublishedReleaseBundle(request.tenantId(), attempt.getVersionId());
@@ -485,13 +498,18 @@ public class VersionPublishCommandServiceImpl {
             }
             PublishAttempt current =
                 publishAttemptRepository
-                    .findByPublishWorkflowId(request.publishWorkflowId())
+                    .findByPublishWorkflowIdForUpdate(request.publishWorkflowId())
                     .orElseThrow(
                         () -> new PendingReconciliationException("publish attempt not found"));
             validateFullVersionAttempt(current, request);
             if (current.getStatus() != PublishAttemptStatus.PENDING
                 && current.getStatus() != PublishAttemptStatus.SUCCEEDED) {
               throw pendingReconciliation("full-version attempt is no longer pending");
+            }
+            if (current.getStatus() == PublishAttemptStatus.PENDING) {
+              publishAttemptRepository.requirePublicationPending(current);
+            } else {
+              publishAttemptRepository.requirePublishedOperation(current);
             }
             requireAttemptVersionForUpdate(current, request);
             PublicationReadback currentReadback = readPublication(request, current);
@@ -510,6 +528,7 @@ public class VersionPublishCommandServiceImpl {
                 currentReadback.bundle().participantDigests());
             if (current.getStatus() == PublishAttemptStatus.PENDING) {
               publishAttemptService.markFullVersionSucceeded(request.publishWorkflowId());
+              publishAttemptRepository.sealPublication(current, true);
             }
             return null;
           });
@@ -537,7 +556,7 @@ public class VersionPublishCommandServiceImpl {
           "published release evidence is incomplete; readback/reconciliation is required");
     }
     VersionDto versionDto = versionMapper.toDto(readback.version());
-    PublishedReleaseBundleContract.requireSupportedSchemaForRead(readback.bundle());
+    PublishedReleaseBundleContract.requireSupportedSchemaForPublicationRead(readback.bundle());
     assertSelectedCommit(request, readback.bundle().participantDigests());
     publishGateService.assertGatePassed(versionDto, readback.bundle().participantDigests());
     recordedParticipantDigestService.assertMatchesRecordedDigests(
@@ -560,13 +579,14 @@ public class VersionPublishCommandServiceImpl {
             }
             PublishAttempt current =
                 publishAttemptRepository
-                    .findByPublishWorkflowId(request.publishWorkflowId())
+                    .findByPublishWorkflowIdForUpdate(request.publishWorkflowId())
                     .orElseThrow(
                         () -> new PendingReconciliationException("publish attempt not found"));
             validateFullVersionAttempt(current, request);
             if (current.getStatus() != PublishAttemptStatus.PENDING) {
               throw pendingReconciliation("full-version attempt is no longer pending");
             }
+            publishAttemptRepository.requirePublicationPending(current);
             Version currentVersion = requireAttemptVersionForUpdate(current, request);
             PublicationReadback readback = readPublication(request, current);
             if (!readback.isAbsent()) {
@@ -596,10 +616,13 @@ public class VersionPublishCommandServiceImpl {
             }
             publishAttemptService.markFullVersionFailed(
                 request.publishWorkflowId(), failureCode, failureMessage);
+            publishAttemptRepository.sealPublication(current, false);
             // Approved launch remap sets may reference this failed candidate, so retain the row.
             return Boolean.TRUE;
           });
     } catch (PublishAttemptService.FullVersionTransactionException ex) {
+      PublicationReadback winningPublication = readPublication(request, attempt);
+      if (winningPublication.isComplete()) return reconcileCommittedAttempt(request, attempt);
       throw pendingReconciliation(
           "full-version failure marking commit outcome is unknown; readback/reconciliation is required",
           ex.causeException());
@@ -744,7 +767,7 @@ public class VersionPublishCommandServiceImpl {
       return PublicationReadback.partial();
     }
     try {
-      PublishedReleaseBundleContract.requireSupportedSchemaForRead(bundle);
+      PublishedReleaseBundleContract.requireSupportedSchemaForPublicationRead(bundle);
       requireExactBundleEvidence(request, attempt, version.get(), bundle);
       requireExactArtifactEvidence(request, attempt, bundle, artifact);
     } catch (RuntimeException ex) {
@@ -803,7 +826,12 @@ public class VersionPublishCommandServiceImpl {
     requireExactCommittedBundleIdentity(request, attempt, bundle);
     if (!Objects.equals(version.getTenantId(), bundle.tenantId())
         || version.getVersionNumber() != bundle.versionNumber()
-        || version.isScriptOnly()) {
+        || version.isScriptOnly()
+        || (PublishedReleaseBundleContract.SELECTOR_ATTESTATION_SCHEMA_VERSION.equals(
+                bundle.attestationSchemaVersion())
+            && (!Objects.equals(version.getCanonicalTenantId(), bundle.canonicalTenantId())
+                || !Objects.equals(
+                    version.getCanonicalVersionId(), bundle.canonicalVersionId())))) {
       throw new IllegalStateException("PUBLISH_ATTEMPT_BUNDLE_SCOPE_MISMATCH");
     }
   }
@@ -817,6 +845,39 @@ public class VersionPublishCommandServiceImpl {
         || bundle.scriptOnly()
         || bundle.scriptPatchVersion() != null) {
       throw new IllegalStateException("PUBLISH_ATTEMPT_BUNDLE_SCOPE_MISMATCH");
+    }
+    if (PublishedReleaseBundleContract.SELECTOR_ATTESTATION_SCHEMA_VERSION.equals(
+        bundle.attestationSchemaVersion())) {
+      PublishedReleaseBundleContract.requireSupportedSchemaForPublicationRead(bundle);
+      requireExactSelectedWorldEvidence(request, bundle);
+    }
+  }
+
+  private void requireExactSelectedWorldEvidence(
+      PublishWorkflowRequest request, PublishedReleaseBundleDto bundle) {
+    // The stored owner payload is historical readback. It does not reconstruct a missing current
+    // owner freeze/Account permission producer or authorize another publication.
+    AuthoredDraftPublishSelection selected = requireSelectedIntent(request);
+    var evidence = bundle.worldPublishedStartLocationEvidence();
+    var worldRequest = evidence.request();
+    var account = DraftAuthorizationFenceBinding.fromStored(evidence.originalAccountBindingBytes());
+    byte[] originalDraft = account.gameDesignBinding();
+    if (!Arrays.equals(originalDraft, selected.selectedCommit().canonicalBytes())
+        || !Arrays.equals(account.normalizedInput(), originalDraft)
+        || !selected.intent().selectedCommitDigest().equals(account.inputDigest())
+        || !selected.intent().selectedCommitRequestId().equals(account.requestId())
+        || !selected.intent().selectedCommitId().equals(account.commitId())
+        || !selected.target().canonicalTenantId().equals(worldRequest.canonicalTenantId())
+        || !selected.target().canonicalVersionId().equals(worldRequest.canonicalVersionId())
+        || !selected.target().canonicalTenantId().equals(bundle.canonicalTenantId())
+        || !selected.target().canonicalVersionId().equals(bundle.canonicalVersionId())
+        || !selected.intent().publishRequestId().equals(worldRequest.publicationRequestId())
+        || !request.publishWorkflowId().equals(worldRequest.publishWorkflowId())
+        || !selected
+            .intent()
+            .expectedVersionStateEpoch()
+            .equals(Long.toString(worldRequest.versionStateEpoch()))) {
+      throw new IllegalStateException("PUBLISH_ATTEMPT_WORLD_SELECTION_MISMATCH");
     }
   }
 

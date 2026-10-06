@@ -193,6 +193,18 @@ public class WorldAuthoredSourceIntakeRepository {
       throw new IllegalStateException(
           "World authored-source intake read requires a committed-outcome owner read");
     }
+    return readValidated(namespace, intakeRequestId);
+  }
+
+  /** Reads the same immutable intake and tenant reservation within a verified owner snapshot. */
+  Optional<WorldAuthoredSourceIntakeReceipt> readInOwnerReadOnlyRepeatableRead(
+      String namespace, UUID intakeRequestId) {
+    requireReadOnlyRepeatableReadOwnerTransaction();
+    return readValidated(namespace, intakeRequestId);
+  }
+
+  private Optional<WorldAuthoredSourceIntakeReceipt> readValidated(
+      String namespace, UUID intakeRequestId) {
     validateReadKey(namespace, intakeRequestId);
     Record record = findByRequest(namespace, intakeRequestId);
     if (record == null) {
@@ -482,6 +494,27 @@ public class WorldAuthoredSourceIntakeRepository {
     if (!TransactionSynchronizationManager.isActualTransactionActive()) {
       throw new IllegalStateException(
           "World authored-source intake requires an active World owner transaction");
+    }
+  }
+
+  private void requireReadOnlyRepeatableReadOwnerTransaction() {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || !TransactionSynchronizationManager.isCurrentTransactionReadOnly()
+        || !Integer.valueOf(Connection.TRANSACTION_REPEATABLE_READ)
+            .equals(TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())) {
+      throw new IllegalStateException(
+          "World authored-source snapshot read requires a read-only REPEATABLE READ owner transaction");
+    }
+    Record state =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT current_setting('transaction_isolation') AS isolation, "
+                    + "current_setting('transaction_read_only') AS read_only"),
+            "World transaction state query returned no row");
+    if (!"repeatable read".equals(state.get("isolation", String.class))
+        || !"on".equals(state.get("read_only", String.class))) {
+      throw new IllegalStateException(
+          "World authored-source snapshot read requires a read-only REPEATABLE READ owner transaction");
     }
   }
 

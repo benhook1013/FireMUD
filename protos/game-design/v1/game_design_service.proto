@@ -657,6 +657,8 @@ message AuthoredWorldReleaseAttestationEvidence {
   repeated string command_definitions = 19;
   string generation_config_revision = 20;
   string evidence_digest = 21;
+  // Closed original World Account/APPLIED/receipt evidence. Absent in schema 1, required in 2.
+  optional bytes world_start_location_evidence = 22;
 }
 
 message TemplateRemapSet {

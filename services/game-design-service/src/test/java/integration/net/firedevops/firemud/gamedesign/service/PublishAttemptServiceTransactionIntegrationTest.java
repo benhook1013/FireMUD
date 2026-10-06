@@ -12,19 +12,12 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
-import net.firedevops.firemud.common.authoring.DraftCommitBinding;
-import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
-import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
-import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
-import net.firedevops.firemud.common.temporal.FiremudWorkflowIds;
 import net.firedevops.firemud.gamedesign.GameDesignServiceApplication;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection.PublishIntent;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepository;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepository.SelectionSnapshot;
-import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository.PublicationEvidence;
-import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository.VisibilityFence;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.Game;
@@ -49,7 +42,6 @@ import net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactReposito
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionTemplateRemapSetRepository;
 import net.firedevops.firemud.gamedesign.service.impl.PublishAttemptServiceImpl;
-import net.firedevops.firemud.gamedesign.service.impl.TemporalVersionPublishWorkflow;
 import net.firedevops.firemud.gamedesign.service.impl.VersionPublishCommandServiceImpl;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
@@ -378,15 +370,8 @@ class PublishAttemptServiceTransactionIntegrationTest {
         .thenAnswer(
             invocation -> {
               VersionDto version = invocation.getArgument(0);
-              return List.of(
-                  new PublishParticipantDigestDto(
-                      "GAME_DESIGN_CONTROL_PLANE",
-                      String.valueOf(version.id()),
-                      fixture.selection().selectedCommit().commitId().toString(),
-                      "transaction-proof-design-digest",
-                      1,
-                      null,
-                      null));
+              return net.firedevops.firemud.gamedesign.service.impl.PublishedWorldSelectorFixtures
+                  .participants(version.id(), fixture.operation().world());
             });
     Mockito.when(assetExportService.exportAssets(tenantId, 1))
         .thenAnswer(
@@ -522,15 +507,8 @@ class PublishAttemptServiceTransactionIntegrationTest {
               VersionDto candidate = invocation.getArgument(0);
               candidateVersionId.set(candidate.id());
               candidateVersionNumber.set(candidate.versionNumber());
-              return List.of(
-                  new PublishParticipantDigestDto(
-                      "GAME_DESIGN_CONTROL_PLANE",
-                      String.valueOf(candidate.id()),
-                      fixture.selection().selectedCommit().commitId().toString(),
-                      "failed-remap-design-digest",
-                      1,
-                      null,
-                      null));
+              return net.firedevops.firemud.gamedesign.service.impl.PublishedWorldSelectorFixtures
+                  .participants(candidate.id(), fixture.operation().world());
             });
     Mockito.doAnswer(
             invocation -> {
@@ -689,8 +667,9 @@ class PublishAttemptServiceTransactionIntegrationTest {
   }
 
   /**
-   * Stipulates synthetic exact selection evidence for the internal transaction-mechanics fixture.
-   * The repository and current-owner publication-carrier boundary are intentionally not proved.
+   * ISOLATED upstream source/freeze authority; actual GD synchronized selection and immutable
+   * operation rows are retained before exercising the real selected finalizer. Runtime authority
+   * and authenticated upstream production remain unproved.
    */
   private SelectedDraftFixture createSelectedDraftFixture(
       Game game, int versionNumber, String notes) {
@@ -711,76 +690,35 @@ class PublishAttemptServiceTransactionIntegrationTest {
             game.getId(),
             game.getTenantId(),
             "NEW_GAME_ROW");
-    String publishRequestId = UUID.randomUUID().toString();
-    UUID selectedCommitRequestId = UUID.randomUUID();
-    UUID selectedCommitId = UUID.randomUUID();
-    List<RevisionPayload> revisions =
-        java.util.stream.IntStream.range(0, Owner.values().length)
-            .mapToObj(
-                index ->
-                    new RevisionPayload(
-                        Integer.toString(index),
-                        UUID.randomUUID(),
-                        Owner.values()[index],
-                        "{\"fixture\":\"transaction-proof\"}"))
-            .toList();
-    List<AffectedUnit> affectedUnits =
-        java.util.Arrays.stream(Owner.values())
-            .map(
-                owner ->
-                    new AffectedUnit(
-                        owner,
-                        "VERSION",
-                        savedVersion.getCanonicalVersionId().toString(),
-                        "VERSION",
-                        savedVersion.getCanonicalVersionId().toString(),
-                        "1"))
-            .toList();
-    DraftCommitBinding selectedCommit =
-        DraftCommitBinding.create(
-            target,
-            selectedCommitRequestId,
-            selectedCommitId,
-            UUID.randomUUID().toString(),
-            revisions,
-            affectedUnits);
-    PublishIntent intent =
-        new PublishIntent(
-            game.getCanonicalTenantId(),
-            savedVersion.getCanonicalVersionId(),
-            publishRequestId,
-            savedVersion.getVersionStateEpoch().toString(),
-            notes,
-            selectedCommitRequestId,
-            selectedCommitId,
-            selectedCommit.digest());
-    VisibilityFence visibilityFence =
-        new VisibilityFence(
-            target,
-            selectedCommitRequestId,
-            selectedCommitId,
-            selectedCommit.digest(),
-            "[]",
-            OffsetDateTime.now(ZoneOffset.UTC));
+    var operation =
+        publishAttemptService.executeFullVersionTransaction(
+            () -> {
+              try {
+                return net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup.retain(
+                    dsl, target, savedVersion.getVersionStateEpoch(), notes);
+              } catch (Exception failure) {
+                throw new IllegalStateException(failure);
+              }
+            });
+    var retained = operation.account().input().selection();
     AuthoredDraftPublishSelection selection =
-        AuthoredDraftPublishSelection.capture(
-            intent, target, new PublicationEvidence(selectedCommit, visibilityFence));
+        AuthoredDraftPublishSelection.fromStored(retained.canonicalJson(), retained.digest());
+    String publishRequestId = selection.intent().publishRequestId();
     Mockito.when(
             authoredSelectionRepository.readByPublishRequest(
                 game.getCanonicalTenantId(), publishRequestId))
         .thenReturn(
             Optional.of(new SelectionSnapshot(selection, OffsetDateTime.now(ZoneOffset.UTC))));
 
-    String workflowId =
-        FiremudWorkflowIds.workflowId(
-            TemporalVersionPublishWorkflow.WORKFLOW_FAMILY,
-            game.getCanonicalTenantId().toString(),
-            "publish-request",
-            publishRequestId);
-    publishAttemptService.createFullVersionAttempt(
-        versionMapper.toDto(savedVersion), workflowId, selection.digest());
+    String workflowId = operation.workflowId();
     return new SelectedDraftFixture(
-        game.getTenantId(), notes, publishRequestId, workflowId, savedVersion, selection);
+        game.getTenantId(),
+        notes,
+        publishRequestId,
+        workflowId,
+        savedVersion,
+        selection,
+        operation);
   }
 
   private Object invokeSelectedPublicationMechanics(SelectedDraftFixture fixture) {
@@ -825,7 +763,8 @@ class PublishAttemptServiceTransactionIntegrationTest {
       String publishRequestId,
       String publishWorkflowId,
       Version version,
-      AuthoredDraftPublishSelection selection) {}
+      AuthoredDraftPublishSelection selection,
+      net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperation operation) {}
 
   private static String firstStackFrame(Throwable failure) {
     if (failure == null || failure.getStackTrace().length == 0) {
