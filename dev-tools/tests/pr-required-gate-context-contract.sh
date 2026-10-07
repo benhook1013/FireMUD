@@ -1131,34 +1131,33 @@ run_action() {
 }
 
 # Incomplete or inconsistent successful API responses cannot manufacture proof.
-for coverage_mode in assess; do
-  for coverage_case in truncated missing-total malformed-total overcount invalid-id empty-pages duplicate inconsistent-total; do
-    coverage_scenario="check-coverage-$coverage_case"
-    coverage_count="$tmp_dir/$coverage_mode-$coverage_scenario-count"
-    coverage_output="$tmp_dir/$coverage_mode-$coverage_scenario-output"
-    coverage_log="$tmp_dir/$coverage_mode-$coverage_scenario-log"
-    if GITHUB_OUTPUT="$coverage_output" \
-      run_action "$coverage_count" none "$coverage_scenario" >"$coverage_log" 2>&1; then
-      echo "required-gate $coverage_mode accepted invalid check coverage: $coverage_case" >&2
-      exit 1
-    fi
-    [[ "$(<"$coverage_count")" == 1 && ! -s "$coverage_output" ]] || {
-      echo "invalid check coverage was retried or emitted an assessment: $coverage_case" >&2
-      exit 1
-    }
-    grep -Fq 'malformed or incomplete check-run data' "$coverage_log" || {
-      echo "invalid check coverage did not fail at the coverage boundary: $coverage_case" >&2
-      exit 1
-    }
-  done
-  coverage_output="$tmp_dir/$coverage_mode-complete-multi-output"
-  GITHUB_OUTPUT="$coverage_output" \
-    run_action "$tmp_dir/$coverage_mode-complete-multi-count" none check-coverage-multi
-  [[ "$(<"$coverage_output")" == assessment=success ]] || {
-    echo "complete multi-page check coverage lost successful proof" >&2
+coverage_mode=assess
+for coverage_case in truncated missing-total malformed-total overcount invalid-id empty-pages duplicate inconsistent-total; do
+  coverage_scenario="check-coverage-$coverage_case"
+  coverage_count="$tmp_dir/$coverage_mode-$coverage_scenario-count"
+  coverage_output="$tmp_dir/$coverage_mode-$coverage_scenario-output"
+  coverage_log="$tmp_dir/$coverage_mode-$coverage_scenario-log"
+  if GITHUB_OUTPUT="$coverage_output" \
+    run_action "$coverage_count" none "$coverage_scenario" >"$coverage_log" 2>&1; then
+    echo "required-gate $coverage_mode accepted invalid check coverage: $coverage_case" >&2
+    exit 1
+  fi
+  [[ "$(<"$coverage_count")" == 1 && ! -s "$coverage_output" ]] || {
+    echo "invalid check coverage was retried or emitted an assessment: $coverage_case" >&2
+    exit 1
+  }
+  grep -Fq 'malformed or incomplete check-run data' "$coverage_log" || {
+    echo "invalid check coverage did not fail at the coverage boundary: $coverage_case" >&2
     exit 1
   }
 done
+coverage_output="$tmp_dir/$coverage_mode-complete-multi-output"
+GITHUB_OUTPUT="$coverage_output" \
+  run_action "$tmp_dir/$coverage_mode-complete-multi-count" none check-coverage-multi
+[[ "$(<"$coverage_output")" == assessment=success ]] || {
+  echo "complete multi-page check coverage lost successful proof" >&2
+  exit 1
+}
 
 # API uncertainty is an error, never dependency deferral or a retry.
 for failure_mode in transient network rate-limit permanent permission; do
@@ -1209,9 +1208,9 @@ for guard in event head output; do
     export GITHUB_EVENT_NAME=pull_request GITHUB_REPOSITORY=example/firemud GITHUB_RUN_ID=999 GH_TOKEN=test-token
     export BASE_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb HEAD_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa PR_NUMBER=123
     export REQUIRED_GATE_NAME='Validation Gate' EXPECTED_WORKFLOW_NAME='CI — Validation' EXPECTED_WORKFLOW_FILE=ci.yml EXPECTED_WORKFLOW_PATH=.github/workflows/ci.yml
-    export GITHUB_OUTPUT="$tmp_dir/guard-output-$guard" GH_RETRY_COUNT_FILE="$count_file" GH_SCENARIO=no-local-workflow-file GH_FAILURE_MODE=none PATH="$tmp_dir:$PATH"
+    export GITHUB_OUTPUT="$tmp_dir/guard-output-$guard" GH_RETRY_COUNT_FILE="$count_file" GH_SCENARIO=no-local-workflow-file GH_FAILURE_MODE=none
     case "$guard" in event) export GITHUB_EVENT_NAME=push ;; head) export HEAD_SHA=' ' ;; output) unset GITHUB_OUTPUT ;; esac
-    bash "$ASSESS_SCRIPT"
+    PATH="$tmp_dir:$PATH" bash "$ASSESS_SCRIPT"
   ) >"$tmp_dir/guard-log-$guard" 2>&1; then
     echo "assessment accepted invalid $guard context" >&2; exit 1
   fi

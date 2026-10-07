@@ -444,7 +444,7 @@ elif ((${#pending_rows[@]} > 0)); then
 else
   prior_row=$'none\tnone\tnone\tnone\tnone\t'
 fi
-IFS=$'\t' read -r _prior_sort _prior_run _prior_check _prior_job prior_status prior_conclusion prior_preserve_step <<< "${prior_row}"
+IFS=$'\t' read -r _prior_sort _prior_run _prior_check _prior_job prior_status prior_conclusion _prior_preserve_step <<< "${prior_row}"
 if [ "${prior_status}" = "completed" ]; then
   if [ "${prior_conclusion}" = "success" ]; then
     report_assessment success
