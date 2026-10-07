@@ -719,6 +719,7 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
                 dsl.execute(
                     "INSERT INTO account_gameplay_delegation_issuance_operations ("
                         + "operation_id, request_id, account_uuid, caller_workload, caller_context_id, "
+                        + "credential_request_digest_version, credential_digest_key_id, credential_request_digest, "
                         + "request_digest_version, request_digest, token_jti, token_generation, "
                         + "issued_at_epoch_second, not_before_epoch_second, expires_at_epoch_second, "
                         + "authority_issuer_generation, authority_issuer_source_version, "
@@ -729,6 +730,7 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
                         + "pending_registry_candidate_bytes, commit_proof_version, commit_proof_sha256, "
                         + "commit_proof_canonical_bytes, committed_at) "
                         + "SELECT operation_id, request_id, account_uuid, caller_workload, caller_context_id, "
+                        + "credential_request_digest_version, credential_digest_key_id, credential_request_digest, "
                         + "request_digest_version, request_digest, token_jti, token_generation, "
                         + "issued_at_epoch_second, not_before_epoch_second, expires_at_epoch_second, "
                         + "authority_issuer_generation, authority_issuer_source_version, "

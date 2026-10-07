@@ -524,7 +524,7 @@ public class AccountJwtReadinessProbeRepository {
             jti,
             plan.planDigest(),
             entry.entryVersion(),
-            plan.targetGeneration(),
+            Long.parseLong(plan.targetGeneration()),
             plan.targetKid(),
             observation.compactTokenSha256());
     if (changed != 1) {

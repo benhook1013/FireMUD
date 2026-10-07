@@ -449,7 +449,7 @@ public final class AccountGameplayDelegationCommitSignerFixture {
         + "\","
         + "\"algorithm\":\"RS256\","
         + "\"privateKeyPkcs8\":\""
-        + Base64.getEncoder().encodeToString(((RSAPrivateCrtKey) pair.getPrivate()).getEncoded())
+        + base64Url(((RSAPrivateCrtKey) pair.getPrivate()).getEncoded())
         + "\",\"publicKeyFingerprint\":\""
         + identity.publicKeyFingerprint()
         + "\"}";

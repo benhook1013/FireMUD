@@ -361,6 +361,7 @@ class AccountDemoTenantEntitlementPersistenceIntegrationTest {
     assertThat(
             inTransaction(
                 context.transaction(), () -> tenantAuthorityEvents.readCurrentByTenant(tenantId)))
+        .usingRecursiveComparison()
         .isEqualTo(updatedAuthorityReadback);
   }
 
