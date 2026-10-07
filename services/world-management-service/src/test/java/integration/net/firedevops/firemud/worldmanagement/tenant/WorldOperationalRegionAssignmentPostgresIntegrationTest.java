@@ -21,11 +21,11 @@ import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
 import org.jooq.JSONB;
 import org.jooq.SQLDialect;
-import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -120,7 +120,8 @@ class WorldOperationalRegionAssignmentPostgresIntegrationTest {
             default -> UUID.randomUUID();
           };
       assertThatThrownBy(() -> dsl.execute(statement, replacement, updated.getId()))
-          .isInstanceOf(DataAccessException.class);
+          .isInstanceOf(DataIntegrityViolationException.class)
+          .hasMessageContaining("operational assignment tuple is immutable");
     }
   }
 

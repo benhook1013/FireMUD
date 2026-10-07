@@ -2393,6 +2393,8 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     PlacementFixture fixture = initialPlayerLocationFixture();
     fixture.service().place(fixture.request());
     var reader = currentLocationReadService(fixture);
+    String locationBefore = initialLocationSnapshot(fixture.request().canonicalGameInstanceId());
+    Record operationBefore = initialLocationOperation(fixture.request().operationId());
 
     var changedActor =
         initialLocationRequest(
@@ -2404,7 +2406,8 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             fixture.activeEvidence());
     assertThatThrownBy(() -> reader.read(changedActor))
         .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("exact actor or assignment binding");
+        .hasMessageContaining(
+            "World operation result differs from its exact request or retained proof");
 
     var changedAssignment =
         initialLocationRequest(
@@ -2416,7 +2419,8 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             fixture.activeEvidence());
     assertThatThrownBy(() -> reader.read(changedAssignment))
         .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("exact actor or assignment binding");
+        .hasMessageContaining(
+            "World operation result differs from its exact request or retained proof");
 
     var original = fixture.activeEvidence().request();
     var changedNamespaceRead =
@@ -2459,6 +2463,13 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("exact canonical World lifecycle association is missing");
 
+    assertThat(initialLocationSnapshot(fixture.request().canonicalGameInstanceId()))
+        .isEqualTo(locationBefore);
+    assertThat(initialLocationOperation(fixture.request().operationId()).intoMap())
+        .usingRecursiveComparison()
+        .isEqualTo(operationBefore.intoMap());
+    assertThat(countInitialLocationOperations(fixture.request().canonicalGameInstanceId()))
+        .isEqualTo(1L);
     assertThat(countInitialLocations(fixture.request().canonicalGameInstanceId())).isEqualTo(1L);
     assertOrigin();
   }
@@ -2688,6 +2699,74 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
           .isZero();
     }
     assertThat(countInitialLocations(fixture.request().canonicalGameInstanceId())).isZero();
+    assertOrigin();
+  }
+
+  @Test
+  void sqlRejectsNullOrUnknownInitialAdmissionOriginsWithoutWritingOperation() throws Exception {
+    PlacementFixture fixture = initialPlayerLocationFixture();
+    for (String invalidOrigin : new String[] {null, "UNKNOWN"}) {
+      var request =
+          initialLocationRequest(
+              fixture,
+              UUID.randomUUID(),
+              UUID.randomUUID(),
+              UUID.randomUUID(),
+              "f".repeat(64),
+              fixture.activeEvidence());
+      var invalidRequest =
+          (tools.jackson.databind.node.ObjectNode) mapper.readTree(request.canonicalRequestBytes());
+      if (invalidOrigin == null) {
+        invalidRequest.putNull("initialAdmissionOrigin");
+      } else {
+        invalidRequest.put("initialAdmissionOrigin", invalidOrigin);
+      }
+      byte[] invalidRequestBytes =
+          net.firedevops.firemud.common.json.Rfc8785CanonicalJson.canonicalizeUtf8(
+              mapper.writeValueAsString(invalidRequest));
+
+      var invalidResult =
+          (tools.jackson.databind.node.ObjectNode)
+              mapper.readTree(
+                  WorldCanonicalInitialPlayerLocation.Result.conflict(request, "FIXTURE_CONFLICT")
+                      .canonicalBytes());
+      invalidResult.put("requestDigest", sha256Digest(invalidRequestBytes));
+      invalidResult.put(
+          "requestBytesBase64", java.util.Base64.getEncoder().encodeToString(invalidRequestBytes));
+      byte[] invalidResultBytes =
+          net.firedevops.firemud.common.json.Rfc8785CanonicalJson.canonicalizeUtf8(
+              mapper.writeValueAsString(invalidResult));
+
+      assertThatThrownBy(
+              () ->
+                  ownerTransaction()
+                      .execute(
+                          status -> {
+                            dsl.execute(
+                                "INSERT INTO world_canonical_initial_player_location_operation "
+                                    + "(canonical_tenant_id, playable_state_namespace_id, canonical_game_instance_id, "
+                                    + "operation_id, world_instance_id, request_digest, request_bytes, "
+                                    + "original_lifecycle_evidence_bytes, outcome, conflict_code, result_bytes, result_digest) "
+                                    + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'CONFLICT', ?, ?, ?)",
+                                request.canonicalTenantId(),
+                                request.playableStateNamespaceId(),
+                                request.canonicalGameInstanceId(),
+                                request.operationId(),
+                                fixture.lifecycle().materialized().association().worldInstanceId(),
+                                sha256Digest(invalidRequestBytes),
+                                invalidRequestBytes,
+                                request.originalLifecycleEvidenceBytes(),
+                                "FIXTURE_CONFLICT",
+                                invalidResultBytes,
+                                sha256Digest(invalidResultBytes));
+                            return null;
+                          }))
+          .hasMessageContaining(
+              "World initial-location operation differs from its canonical request/result");
+      assertThat(countInitialLocationOperations(fixture.request().canonicalGameInstanceId()))
+          .isZero();
+      assertThat(countInitialLocations(fixture.request().canonicalGameInstanceId())).isZero();
+    }
     assertOrigin();
   }
 
