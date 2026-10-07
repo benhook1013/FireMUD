@@ -1,0 +1,45 @@
+syntax = "proto3";
+
+package world_management.v1;
+
+option java_package = "net.firedevops.firemud.worldmanagement.v1";
+option java_multiple_files = true;
+
+// Standalone canonical World initial-admission hold owner operations. This service is not
+// registered in the runtime server.
+service WorldCanonicalInitialAdmissionHoldService {
+  rpc AcquireCanonicalInitialAdmissionHold(AcquireCanonicalInitialAdmissionHoldRequest)
+      returns (AcquireCanonicalInitialAdmissionHoldResponse);
+  rpc ReadCanonicalInitialAdmissionHoldIdentity(ReadCanonicalInitialAdmissionHoldIdentityRequest)
+      returns (ReadCanonicalInitialAdmissionHoldIdentityResponse);
+}
+
+message AcquireCanonicalInitialAdmissionHoldRequest {
+  // Complete closed canonical World initial-admission hold request bytes.
+  bytes canonical_hold_request_bytes = 1;
+
+  // Complete closed canonical World lifecycle read request bytes for the exact target.
+  bytes canonical_lifecycle_read_request_bytes = 2;
+}
+
+message AcquireCanonicalInitialAdmissionHoldResponse {
+  // Immutable World-issued hold identity, including the exact request bytes and binding digest.
+  bytes hold_identity_bytes = 1;
+}
+
+message ReadCanonicalInitialAdmissionHoldIdentityRequest {
+  // Fresh non-nil UUID correlation for this read, in canonical lowercase form.
+  string read_request_id = 1;
+
+  // Complete closed canonical World initial-admission hold request bytes.
+  bytes canonical_hold_request_bytes = 2;
+}
+
+message ReadCanonicalInitialAdmissionHoldIdentityResponse {
+  // Exact correlation echoed from this read request.
+  string read_request_id = 1;
+
+  // Historical immutable acquisition identity only; this is not terminal state, current
+  // admission, or an absence checkpoint.
+  bytes hold_identity_bytes = 2;
+}
