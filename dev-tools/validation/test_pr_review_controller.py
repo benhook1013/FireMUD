@@ -7575,6 +7575,96 @@ class ControllerTests(unittest.TestCase):
                         self.assertEqual(rebuilt_row["taper_complete"],
                                          change in {"new_completed", "audit_note"})
 
+    def test_bounded_clearance_reassesses_scope_markers_discovered_during_audit(self):
+        for channel in ("hosted", "cli"):
+            for malformed in (False, True):
+                for operation in ("status", "selection"):
+                    with self.subTest(channel=channel, malformed=malformed, operation=operation):
+                        values, heads = _stacked_prs(2)
+                        evidence = CountingEvidence()
+                        evidence[(1, channel)] = [self.allocation_evidence(
+                            head=values[1].head, checkpoint="baseline", channel=channel,
+                            accepted=1, raw=1, source_resolution_status="finding_pending",
+                            observed_at="2026-09-20T00:00:00Z", comment_id=200)]
+                        controller = self.grant_bounded_allocation(
+                            channel=channel, checkpoint="baseline", cap=6, minimum=3,
+                            evidence=evidence, values=values, heads=heads, sqlite=True)
+                        evidence[(1, channel)].extend(self.allocation_evidence(
+                            head=values[1].head, checkpoint=f"dry-{index}", channel=channel)
+                            for index in (1, 2, 3))
+                        evidence.audit.update(
+                            unresolved_findings=[], finding_only_findings=[], unknown_review_evidence=[])
+                        marker = {
+                            "pr": 1, "head": values[1].head, "channel": channel,
+                            "kind": "scope_change", "scope_changed": True,
+                            "checkpoint": "scope-change:201", "comment_id": 201,
+                            "created_at": "2026-09-21T00:00:00Z", "updated_at": None,
+                            "observed_at": "invalid" if malformed else "2026-09-21T00:00:00Z",
+                            "completed": False, "attributable": False,
+                            "accepted": 0, "raw": 0, "non_counting": True,
+                        }
+
+                        def refresh_scope(provider=evidence, selected=channel, row=marker):
+                            if not any(item.get("checkpoint") == row["checkpoint"]
+                                       for item in provider[(1, selected)]):
+                                provider[(1, selected)].append(row)
+
+                        evidence.on_audit = refresh_scope
+                        self._enable_batch_status(controller, values)
+                        allocation = controller.store.load().allocations[f"1:{channel}"]
+                        saved_allocation = allocation.to_dict()
+                        credit_before = controller._review_credit_projection(evidence[(1, channel)])
+                        if operation == "status":
+                            report = controller.status_overview()
+                            front = report["review_fronts"][channel]
+                            row = report["prs"][0]["allocations"][channel]
+                            self.assertEqual(row["status"], "INVALID")
+                            self.assertFalse(row["finding_only_pending"])
+                            self.assertEqual(front["pr"], 1)
+                            self.assertIn(front["status"], ("HELD", "JUDGMENT_REQUIRED"))
+                        else:
+                            target = controller._target(channel)
+                            self.assertEqual(target.pr, 1)
+                            self.assertEqual(target.status, ReviewStatus.JUDGMENT_REQUIRED)
+                        fresh = controller._bounded_allocation_evidence(allocation, evidence[(1, channel)])
+                        self.assertIn("scope", fresh["error"])
+                        self.assertEqual(controller._review_credit_projection(evidence[(1, channel)]), credit_before)
+                        self.assertEqual(controller.store.load().allocations[f"1:{channel}"].to_dict(),
+                                         saved_allocation)
+
+    def test_hosted_clearance_refresh_keeps_newly_active_cli_front(self):
+        values, heads = _stacked_prs(2)
+        evidence = CountingEvidence()
+        evidence[(1, "hosted")] = [self.allocation_evidence(
+            head=values[1].head, checkpoint="hosted-dry", channel="hosted"), {
+            "pr": 1, "head": values[1].head, "checkpoint": "review-threads:1:0",
+            "held": True, "finding_only_hold": True}]
+        evidence[(1, "cli")] = [self.allocation_evidence(
+            head=values[1].head, checkpoint=f"cli-dry-{index}", channel="cli")
+            for index in (1, 2, 3)]
+        evidence.audit.update(
+            unresolved_findings=["known finding"], finding_only_findings=["known finding"],
+            unknown_review_evidence=[])
+
+        def discover_cli_activity():
+            if not any(item.get("active_review") is True for item in evidence[(1, "cli")]):
+                evidence[(1, "cli")].append({
+                    "pr": 1, "head": values[1].head, "checkpoint": "active-cli:fresh",
+                    "active_review": True, "held": True, "completed": False, "attributable": False})
+
+        evidence.on_audit = discover_cli_activity
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        self._enable_batch_status(controller, values)
+        credit_before = controller._review_credit_projection(evidence[(1, "cli")])
+
+        report = controller.status_overview()
+
+        self.assertTrue(evidence.stop_audit_calls)
+        self.assertEqual(report["review_fronts"]["cli"]["pr"], 1)
+        self.assertEqual(report["review_fronts"]["cli"]["status"], "HELD")
+        self.assertEqual(controller._review_credit_projection(evidence[(1, "cli")]), credit_before)
+
     def test_safety_classification_uses_histories_refreshed_during_audit(self):
         for movement in (False, True):
             for fresh_blocker in ("provisional", "held"):

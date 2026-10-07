@@ -4293,10 +4293,24 @@ class ReviewController:
             refreshed_history = self._policy_history(
                 state, pr, channel, reconciliation, history_cache=refreshed_history_cache,
             )
+            # Scope markers carry no review credit, but still invalidate a
+            # bounded allowance. Assess them again after the clearance audit.
+            if refreshed_history != histories[pr]:
+                bounded_snapshot = self._bounded_allocation_evidence(allocation, refreshed_history)
+                if bounded_evidence_cache is not None:
+                    bounded_evidence_cache[cache_key] = bounded_snapshot
             projection_current = credit_projection == self._review_credit_projection(refreshed_history)
             view["history_projection_current"] = projection_current
             if not projection_current:
                 reason = "review count or taper evidence changed during audit; refresh status before release"
+                view.update(status="INVALID", reason=reason, details=reason,
+                            finding_only_pending=False, request_preparation_only=False,
+                            selection_control="unresolved_work")
+            elif (allocation.stop_basis is None
+                  and (allocation.min_additional_completed is not None
+                       or allocation.max_additional_completed is not None)
+                  and bounded_snapshot["error"] is not None):
+                reason = bounded_snapshot["error"]
                 view.update(status="INVALID", reason=reason, details=reason,
                             finding_only_pending=False, request_preparation_only=False,
                             selection_control="unresolved_work")
@@ -4683,13 +4697,57 @@ class ReviewController:
     ) -> dict[str, dict[str, Any]]:
         result: dict[str, dict[str, Any]] = {}
         for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
+            # A prior channel's clearance audit refreshes both cache entries.
+            # Reproject those local snapshots before selecting this channel.
+            current_histories = {
+                selected: {
+                    pr: self._policy_history(
+                        state, pr, selected, reconciliation, history_cache=history_cache,
+                    )
+                    for pr in candidate_prs
+                }
+                for selected in (policy.Channel.HOSTED, policy.Channel.CLI)
+            }
+            current_histories[policy.Channel.CLI] = {
+                pr: self._project_cli_streak_lineage(
+                    self._project_cli_hosted_reservations(
+                        current_histories[policy.Channel.CLI][pr],
+                        current_histories[policy.Channel.HOSTED][pr],
+                        pr, live[pr].head, self._reconciled_anchor(pr, live[pr], reconciliation),
+                    ),
+                    pr, state, self._reconciled_anchor(pr, live[pr], reconciliation),
+                )
+                for pr in candidate_prs
+            }
+            current_allocations = dict(allocations[channel])
+            for pr in candidate_prs:
+                fresh_history = current_histories[channel][pr]
+                allocation = state.allocations.get(f"{pr}:{channel.value}")
+                reason = None
+                if (allocation is not None and allocation.stop_basis is None
+                    and (allocation.min_additional_completed is not None
+                         or allocation.max_additional_completed is not None)):
+                    snapshot = bounded_evidence_cache.get((pr, channel.value))
+                    if snapshot is None or fresh_history != histories[channel].get(pr, ()):
+                        snapshot = self._bounded_allocation_evidence(allocation, fresh_history)
+                    reason = snapshot["error"]
+                if self._review_credit_projection(histories[channel].get(pr, ())) != self._review_credit_projection(
+                    fresh_history
+                ):
+                    reason = "review count or taper evidence changed during audit; refresh status before release"
+                if reason is not None:
+                    current_allocations[pr] = dict(
+                        current_allocations.get(pr, {}), status="INVALID", reason=reason, details=reason,
+                        history_projection_current=False, finding_only_pending=False,
+                        request_preparation_only=False,
+                    )
             decision = self._select_review_decision(
                 state,
                 channel,
                 live,
                 reconciliation,
-                histories,
-                allocations[channel],
+                current_histories,
+                current_allocations,
                 candidate_prs,
                 bounded_evidence_cache=bounded_evidence_cache,
                 stop_audit_cache=stop_audit_cache,
@@ -4701,8 +4759,8 @@ class ReviewController:
                 decision,
                 live,
                 reconciliation,
-                histories,
-                allocations[channel],
+                current_histories,
+                current_allocations,
                 stop_audit_cache=stop_audit_cache,
                 history_cache=history_cache,
             )
