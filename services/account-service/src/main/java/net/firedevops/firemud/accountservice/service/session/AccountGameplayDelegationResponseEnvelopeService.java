@@ -5,6 +5,7 @@ import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationResponseEnvelopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationResponseEnvelopeRepository.CallerIdentity;
+import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationResponseEnvelopeRepository.PendingCandidateCredential;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationResponseEnvelopeRepository.SealedCandidateObservation;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -39,5 +40,11 @@ public class AccountGameplayDelegationResponseEnvelopeService {
   public SealedCandidateObservation sealPendingCandidate(
       UUID requestId, CallerIdentity caller, String exactCompactJwt) {
     return responseEnvelopes.sealPendingCandidate(requestId, caller, exactCompactJwt);
+  }
+
+  /** Opens exact durable PENDING bytes only for the internal signer verification retry. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public PendingCandidateCredential openPendingCandidate(UUID requestId, CallerIdentity caller) {
+    return responseEnvelopes.openPendingCandidate(requestId, caller);
   }
 }

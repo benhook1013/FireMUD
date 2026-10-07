@@ -10,6 +10,7 @@ import java.time.Clock;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
@@ -298,9 +299,10 @@ public class AccountGameplayDelegationIssuanceRepository {
   }
 
   /**
-   * Reads the exact current owner identity and persisted full evidence bundle before signing.
-   * Account and authority rows are locked before the immutable operation row; the canonical bundle
-   * owner re-evaluates and returns its persisted bytes in this same Account transaction.
+   * Reads the exact current owner identity and persisted full evidence bundle before signing or
+   * resuming a previously signed candidate. Account and authority rows are locked before the
+   * immutable operation row; the canonical bundle owner re-evaluates and returns its persisted
+   * bytes in this same Account transaction.
    */
   @Transactional(propagation = Propagation.MANDATORY)
   public PendingSigningIdentity readPendingSigningIdentity(UUID requestId) {
@@ -323,10 +325,7 @@ public class AccountGameplayDelegationIssuanceRepository {
         || !preliminaryOperationId.equals(operation.get("operation_id", UUID.class))
         || !"PENDING".equals(operation.get("status", String.class))
         || !Objects.equals(operation.get("token_generation", Long.class), 1L)
-        || operation.get("token_hash", String.class) != null
-        || operation.get("signer_kid", String.class) != null
-        || operation.get("signer_generation", String.class) != null
-        || operation.get("pending_registry_candidate_bytes", byte[].class) != null) {
+        || !hasConsistentCandidateBinding(operation)) {
       throw new PendingCandidateUnavailableException();
     }
 
@@ -364,7 +363,21 @@ public class AccountGameplayDelegationIssuanceRepository {
       throw new PendingCandidateUnavailableException();
     }
     requireExactSigningBundle(stored, identity, authority, current);
-    return new PendingSigningIdentity(identity, authority, stored);
+    Optional<PendingRegistryCandidate> persistedCandidate =
+        operation.get("token_hash", String.class) == null
+            ? Optional.empty()
+            : Optional.of(decodePendingRegistryCandidate(operation, current, stored));
+    return new PendingSigningIdentity(identity, authority, stored, persistedCandidate);
+  }
+
+  private static boolean hasConsistentCandidateBinding(Record operation) {
+    String tokenHash = operation.get("token_hash", String.class);
+    String kid = operation.get("signer_kid", String.class);
+    String generation = operation.get("signer_generation", String.class);
+    byte[] candidateBytes = operation.get("pending_registry_candidate_bytes", byte[].class);
+    boolean any = tokenHash != null || kid != null || generation != null || candidateBytes != null;
+    boolean all = tokenHash != null && kid != null && generation != null && candidateBytes != null;
+    return !any || all;
   }
 
   /**
@@ -2264,14 +2277,17 @@ public class AccountGameplayDelegationIssuanceRepository {
     private final AccountGameplayDelegationPendingIdentity identity;
     private final AccountAuthoritySnapshot authoritySnapshot;
     private final AccountAuthEvidenceBundle evidenceBundle;
+    private final Optional<PendingRegistryCandidate> persistedCandidate;
 
     private PendingSigningIdentity(
         AccountGameplayDelegationPendingIdentity identity,
         AccountAuthoritySnapshot authoritySnapshot,
-        AccountAuthEvidenceBundle evidenceBundle) {
+        AccountAuthEvidenceBundle evidenceBundle,
+        Optional<PendingRegistryCandidate> persistedCandidate) {
       this.identity = Objects.requireNonNull(identity);
       this.authoritySnapshot = Objects.requireNonNull(authoritySnapshot);
       this.evidenceBundle = Objects.requireNonNull(evidenceBundle);
+      this.persistedCandidate = Objects.requireNonNull(persistedCandidate);
       if (!identity.accountId().equals(authoritySnapshot.accountId())) {
         throw new PendingCandidateUnavailableException();
       }
@@ -2319,6 +2335,11 @@ public class AccountGameplayDelegationIssuanceRepository {
 
     public AccountAuthEvidenceBundle evidenceBundle() {
       return evidenceBundle;
+    }
+
+    /** Exact persisted PENDING candidate, when a prior signing attempt bound it successfully. */
+    public Optional<PendingRegistryCandidate> persistedCandidate() {
+      return persistedCandidate;
     }
 
     @Override

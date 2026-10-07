@@ -214,39 +214,148 @@ public class AccountGameplayDelegationResponseEnvelopeRepository {
     } catch (RuntimeException ex) {
       throw new OwnerEvidenceUnavailableException();
     }
-    EncryptedResponseEnvelope sealed =
-        responseCryptography.encrypt(
-            binding, exactCompactJwt.getBytes(StandardCharsets.US_ASCII), recoveryExpiry);
-    byte[] envelopeBytes = sealed.bytes();
-    String envelopeHash = sha256(envelopeBytes);
-    String bundleHash = bundle.canonicalSha256();
-    int inserted =
-        dsl.execute(
-            "INSERT INTO "
-                + RESPONSE_TABLE
-                + " (operation_id, request_id, token_hash, signer_kid, signer_generation, "
-                + "authority_evidence_bundle_sha256, issuance_fence, "
-                + "response_recovery_expiry_epoch_ms, envelope_sha256, envelope_bytes) "
-                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
-            identity.operationId(),
-            identity.requestId(),
-            candidate.tokenHash(),
-            candidate.kid(),
-            candidate.signerGeneration(),
-            bundleHash,
-            identity.issuanceFence(),
-            immutableExpiryMillis,
-            envelopeHash,
-            envelopeBytes);
-    if (inserted != 1) throw new StorageUnavailableException();
-    Record readback = selectEnvelope(operationId);
-    if (readback == null) throw new StorageUnavailableException();
-    SealedCandidateObservation observation =
-        exactReadback(readback, identity, candidate, bundle, immutableExpiryMillis);
-    if (!MessageDigest.isEqual(envelopeBytes, bytes(readback, "envelope_bytes"))) {
-      throw new StorageUnavailableException();
+    byte[] plaintext = exactCompactJwt.getBytes(StandardCharsets.US_ASCII);
+    final EncryptedResponseEnvelope sealed;
+    try {
+      sealed = responseCryptography.encrypt(binding, plaintext, recoveryExpiry);
+    } finally {
+      Arrays.fill(plaintext, (byte) 0);
     }
-    return observation;
+    byte[] envelopeBytes = sealed.bytes();
+    try {
+      String envelopeHash = sha256(envelopeBytes);
+      String bundleHash = bundle.canonicalSha256();
+      int inserted =
+          dsl.execute(
+              "INSERT INTO "
+                  + RESPONSE_TABLE
+                  + " (operation_id, request_id, token_hash, signer_kid, signer_generation, "
+                  + "authority_evidence_bundle_sha256, issuance_fence, "
+                  + "response_recovery_expiry_epoch_ms, envelope_sha256, envelope_bytes) "
+                  + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
+              identity.operationId(),
+              identity.requestId(),
+              candidate.tokenHash(),
+              candidate.kid(),
+              candidate.signerGeneration(),
+              bundleHash,
+              identity.issuanceFence(),
+              immutableExpiryMillis,
+              envelopeHash,
+              envelopeBytes);
+      if (inserted != 1) throw new StorageUnavailableException();
+      Record readback = selectEnvelope(operationId);
+      if (readback == null) throw new StorageUnavailableException();
+      SealedCandidateObservation observation =
+          exactReadback(readback, identity, candidate, bundle, immutableExpiryMillis);
+      byte[] readbackBytes = bytes(readback, "envelope_bytes");
+      try {
+        if (!MessageDigest.isEqual(envelopeBytes, readbackBytes)) {
+          throw new StorageUnavailableException();
+        }
+      } finally {
+        Arrays.fill(readbackBytes, (byte) 0);
+      }
+      return observation;
+    } finally {
+      Arrays.fill(envelopeBytes, (byte) 0);
+    }
+  }
+
+  /**
+   * Opens one exact, still-current PENDING candidate for Account's internal signer verification
+   * retry. This is not caller recovery: no gameplay caller or public response boundary receives a
+   * credential, and the returned bytes are consumed only by the signer before commit.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public PendingCandidateCredential openPendingCandidate(UUID requestId, CallerIdentity caller) {
+    requireWritableAccountTransaction();
+    requireV4(requestId, "request ID");
+    Objects.requireNonNull(caller, "Caller identity comparison is required");
+
+    Record preliminary = selectOperation(requestId, false);
+    if (preliminary == null) throw new OperationUnavailableException();
+    PendingIdentity preliminaryIdentity = identity(preliminary);
+    requireCallerMatch(preliminaryIdentity, caller);
+    CandidateIdentity preliminaryCandidate = candidate(preliminary, preliminaryIdentity);
+    long immutableExpiryMillis = expiryEpochMillis(preliminaryIdentity.expiresAtEpochSecond());
+    requirePendingCandidateUnexpired(immutableExpiryMillis);
+
+    final IssuerAccountSourceSnapshot current;
+    try {
+      current =
+          sourceEvidence.readCurrentIssuerAccountSources(
+              GameSessionAccountDelegationProfile.ISSUER, preliminaryIdentity.accountId());
+    } catch (RuntimeException unavailable) {
+      throw new AuthorityChangedException();
+    }
+    Record operation = selectOperation(requestId, true);
+    if (operation == null) throw new OperationUnavailableException();
+    PendingIdentity identity = identity(operation);
+    requireCallerMatch(identity, caller);
+    CandidateIdentity persistedCandidate = candidate(operation, identity);
+    if (!preliminaryIdentity.equals(identity)
+        || !preliminaryCandidate.tokenHash().equals(persistedCandidate.tokenHash())
+        || !preliminaryCandidate.kid().equals(persistedCandidate.kid())
+        || !preliminaryCandidate.signerGeneration().equals(persistedCandidate.signerGeneration())
+        || !Arrays.equals(
+            preliminaryCandidate
+                .record()
+                .toCanonicalJsonBytes(
+                    GameSessionAccountDelegationProfile.MAX_REGISTRY_RECORD_BYTES),
+            persistedCandidate
+                .record()
+                .toCanonicalJsonBytes(
+                    GameSessionAccountDelegationProfile.MAX_REGISTRY_RECORD_BYTES))) {
+      throw new IdempotencyConflictException();
+    }
+    requireCurrentAuthority(operation, current, identity.accountId());
+    requireCandidateMatchesBoundRows(persistedCandidate.record(), identity, operation, current);
+
+    final AccountAuthEvidenceBundle bundle;
+    try {
+      bundle = evidenceBundles.readStoredNonAuthorizingValue(identity.operationId());
+    } catch (RuntimeException unavailable) {
+      throw new OwnerEvidenceUnavailableException();
+    }
+    requireExactBundle(bundle, identity, operation, current, identity.accountId());
+    if (!bundle
+        .canonicalSha256()
+        .equals(persistedCandidate.record().evidenceBundleReference().canonicalSha256())) {
+      throw new OwnerEvidenceUnavailableException();
+    }
+
+    Record envelope = selectEnvelopeForRecovery(identity.operationId());
+    if (envelope == null) throw new StorageUnavailableException();
+    byte[] envelopeBytes = bytes(envelope, "envelope_bytes");
+    byte[] plaintext = null;
+    try {
+      SealedCandidateObservation sealed =
+          exactReadback(envelope, identity, persistedCandidate, bundle, immutableExpiryMillis);
+      requirePendingCandidateUnexpired(immutableExpiryMillis);
+      plaintext =
+          responseCryptography.decrypt(
+              new EncryptedResponseEnvelope(envelopeBytes),
+              binding(identity, operation, bundle),
+              Instant.ofEpochMilli(immutableExpiryMillis));
+      validateRecoveredCompactJwt(plaintext, persistedCandidate.tokenHash());
+      return new PendingCandidateCredential(plaintext, sealed);
+    } catch (AccountResponseEnvelopeCryptography.ResponseRecoveryExpiredException expired) {
+      throw new ResponseRecoveryExpiredException();
+    } catch (RuntimeException failure) {
+      if (failure instanceof ResponseRecoveryExpiredException expired) throw expired;
+      throw new StorageUnavailableException();
+    } finally {
+      if (plaintext != null) Arrays.fill(plaintext, (byte) 0);
+      Arrays.fill(envelopeBytes, (byte) 0);
+    }
+  }
+
+  private void requirePendingCandidateUnexpired(long immutableExpiryMillis) {
+    long nowMillis = clock.millis();
+    if (nowMillis <= 0L || nowMillis >= immutableExpiryMillis) {
+      throw new ResponseRecoveryExpiredException();
+    }
   }
 
   /**
@@ -586,30 +695,34 @@ public class AccountGameplayDelegationResponseEnvelopeRepository {
       long expiryMillis) {
     byte[] envelope = bytes(row, "envelope_bytes");
     String storedEnvelopeHash = text(row, "envelope_sha256");
-    if (!identity.operationId().equals(uuid(row, "operation_id"))
-        || !identity.requestId().equals(uuid(row, "request_id"))
-        || !candidate.tokenHash().equals(text(row, "token_hash"))
-        || !candidate.kid().equals(text(row, "signer_kid"))
-        || !candidate.signerGeneration().equals(text(row, "signer_generation"))
-        || !bundle.canonicalSha256().equals(text(row, "authority_evidence_bundle_sha256"))
-        || identity.issuanceFence() != positive(row, "issuance_fence")
-        || expiryMillis != positive(row, "response_recovery_expiry_epoch_ms")
-        || envelope.length == 0
-        || envelope.length > 65_610
-        || !SHA256.matcher(storedEnvelopeHash).matches()
-        || !MessageDigest.isEqual(
-            sha256(envelope).getBytes(StandardCharsets.US_ASCII),
-            storedEnvelopeHash.getBytes(StandardCharsets.US_ASCII))) {
-      throw new StorageUnavailableException();
+    try {
+      if (!identity.operationId().equals(uuid(row, "operation_id"))
+          || !identity.requestId().equals(uuid(row, "request_id"))
+          || !candidate.tokenHash().equals(text(row, "token_hash"))
+          || !candidate.kid().equals(text(row, "signer_kid"))
+          || !candidate.signerGeneration().equals(text(row, "signer_generation"))
+          || !bundle.canonicalSha256().equals(text(row, "authority_evidence_bundle_sha256"))
+          || identity.issuanceFence() != positive(row, "issuance_fence")
+          || expiryMillis != positive(row, "response_recovery_expiry_epoch_ms")
+          || envelope.length == 0
+          || envelope.length > 65_610
+          || !SHA256.matcher(storedEnvelopeHash).matches()
+          || !MessageDigest.isEqual(
+              sha256(envelope).getBytes(StandardCharsets.US_ASCII),
+              storedEnvelopeHash.getBytes(StandardCharsets.US_ASCII))) {
+        throw new StorageUnavailableException();
+      }
+      return new SealedCandidateObservation(
+          identity.operationId(),
+          identity.requestId(),
+          bundle.canonicalSha256(),
+          identity.issuanceFence(),
+          expiryMillis,
+          storedEnvelopeHash,
+          envelope.length);
+    } finally {
+      Arrays.fill(envelope, (byte) 0);
     }
-    return new SealedCandidateObservation(
-        identity.operationId(),
-        identity.requestId(),
-        bundle.canonicalSha256(),
-        identity.issuanceFence(),
-        expiryMillis,
-        storedEnvelopeHash,
-        envelope.length);
   }
 
   private static Binding binding(
@@ -1158,6 +1271,44 @@ public class AccountGameplayDelegationResponseEnvelopeRepository {
     @Override
     public String toString() {
       return "RecoveredCredential[secret,redacted]";
+    }
+  }
+
+  /**
+   * Transient exact plaintext readback for the Account signer retry path. This value is not a
+   * caller response or authorization proof and must be closed as soon as signature verification
+   * finishes.
+   */
+  public static final class PendingCandidateCredential implements AutoCloseable {
+    private byte[] compactJwtBytes;
+    private final SealedCandidateObservation sealedCandidate;
+
+    private PendingCandidateCredential(
+        byte[] compactJwtBytes, SealedCandidateObservation sealedCandidate) {
+      this.compactJwtBytes = Objects.requireNonNull(compactJwtBytes).clone();
+      this.sealedCandidate = Objects.requireNonNull(sealedCandidate);
+    }
+
+    public byte[] compactJwtBytes() {
+      if (compactJwtBytes == null) throw new StorageUnavailableException();
+      return compactJwtBytes.clone();
+    }
+
+    public SealedCandidateObservation sealedCandidate() {
+      return sealedCandidate;
+    }
+
+    @Override
+    public void close() {
+      if (compactJwtBytes != null) {
+        Arrays.fill(compactJwtBytes, (byte) 0);
+        compactJwtBytes = null;
+      }
+    }
+
+    @Override
+    public String toString() {
+      return "PendingCandidateCredential[secret,redacted]";
     }
   }
 

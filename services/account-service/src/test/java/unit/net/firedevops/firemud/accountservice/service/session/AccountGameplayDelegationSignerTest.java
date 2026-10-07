@@ -57,6 +57,7 @@ import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegatio
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository.PendingSigningIdentity;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationPendingIdentity;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationResponseEnvelopeRepository.CallerIdentity;
+import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationResponseEnvelopeRepository.PendingCandidateCredential;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationResponseEnvelopeRepository.SealedCandidateObservation;
 import net.firedevops.firemud.accountservice.repository.AccountJwtJwksPublicationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository;
@@ -658,6 +659,40 @@ class AccountGameplayDelegationSignerTest {
     verify(fixture.issuance).readPendingSigningIdentity(REQUEST_ID);
     verifyNoInteractions(fixture.trustedJwksSource, fixture.envelopeService);
     verify(fixture.issuance, never()).bindSignedCandidate(any(), anyString(), anyString());
+  }
+
+  @Test
+  void closesOpenedPendingCredentialWhenAcquisitionTransactionCommitFails() throws Exception {
+    Fixture fixture = new Fixture(temporaryDirectory, false);
+    PendingRegistryCandidate persisted =
+        new PendingRegistryCandidate(
+            fixture.pendingIdentity,
+            "d".repeat(64),
+            KID,
+            GENERATION,
+            fixture.pendingIdentity.expiresAtEpochSecond(),
+            new byte[0],
+            fixture.authoritySnapshot,
+            fixture.evidenceReference);
+    when(fixture.pendingSigningIdentity.persistedCandidate()).thenReturn(Optional.of(persisted));
+    PendingCandidateCredential opened = mock(PendingCandidateCredential.class);
+    when(opened.sealedCandidate())
+        .thenReturn(
+            sealedObservation(
+                ISSUANCE_OPERATION_ID,
+                REQUEST_ID,
+                fixture.evidenceBundle,
+                Math.multiplyExact(fixture.pendingIdentity.expiresAtEpochSecond(), 1_000L)));
+    when(fixture.envelopeService.openPendingCandidate(eq(REQUEST_ID), any(CallerIdentity.class)))
+        .thenReturn(opened);
+    ((InertTransactionManager) fixture.transactionManager).failNextCommit();
+
+    assertThrows(
+        AccountGameplayDelegationSigner.SigningUnavailableException.class,
+        () -> fixture.signer.signPendingCandidate(REQUEST_ID));
+
+    verify(opened).close();
+    verifyNoInteractions(fixture.trustedJwksSource);
   }
 
   @Test
@@ -1384,6 +1419,8 @@ class AccountGameplayDelegationSignerTest {
   }
 
   private static final class InertTransactionManager extends AbstractPlatformTransactionManager {
+    private final AtomicBoolean failNextCommit = new AtomicBoolean();
+
     @Override
     protected Object doGetTransaction() {
       return new Object();
@@ -1398,7 +1435,14 @@ class AccountGameplayDelegationSignerTest {
     protected void doBegin(Object transaction, TransactionDefinition definition) {}
 
     @Override
-    protected void doCommit(DefaultTransactionStatus status) {}
+    protected void doCommit(DefaultTransactionStatus status) {
+      if (failNextCommit.getAndSet(false))
+        throw new IllegalStateException("Injected commit failure");
+    }
+
+    private void failNextCommit() {
+      failNextCommit.set(true);
+    }
 
     @Override
     protected void doRollback(DefaultTransactionStatus status) {}
