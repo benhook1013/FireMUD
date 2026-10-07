@@ -199,7 +199,6 @@ while (( source_listing_attempt < source_listing_read_limit )); do
       ;;
   esac
 done
-history_start="$(jq -er '[.workflow_runs[].created_at] | min' <<<"${run_pages}")"
 target_ids="$(jq -er '.workflow_runs[].id' <<<"${run_pages}")"
 
 # Native resolver job/step evidence carries the conservative recovery boundary
@@ -335,16 +334,12 @@ assert_no_ambiguous_admission() {
   done <<<"${prior_ids}"
 }
 declare -A previously_admitted_jobs=()
-if [[ "${resolution_phase}" == admit ]]; then
-  assert_no_ambiguous_admission
-fi
-
-# Return a gate job ID only from a completed first attempt with the distinct
+# Return a gate job identity only from a completed first attempt with the distinct
 # deferred failure, created no later than this resolver. This keeps every
 # admitting resolver inside the retained target's history window even when an
 # older source expires. Per-attempt lookup avoids mistaking old jobs for a current
 # attempt; any human rerun also consumes the automatic allowance.
-deferred_job_id() {
+deferred_job_identity() {
   local target_run_id="$1" target_json jobs_json
   target_json="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/actions/runs/${target_run_id}")" || return 1
   if ! jq -e --argjson id "${target_run_id}" --argjson workflow_id "${workflow_id}" \
@@ -367,7 +362,8 @@ deferred_job_id() {
   fi
   jobs_json="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/actions/runs/${target_run_id}/attempts/1/jobs" \
     -f per_page=100 --paginate --slurp)" || return 1
-  jq -er --arg name "${gate_name}" --arg head "${head_sha}" --argjson run_id "${target_run_id}" '
+  jq -er --arg name "${gate_name}" --arg head "${head_sha}" --argjson run_id "${target_run_id}" \
+    --arg created "$(jq -er .created_at <<<"${target_json}")" '
     if type != "array" or length == 0 then error("malformed or incomplete target jobs")
     elif any(.[]; type != "object" or (.jobs | type) != "array") then error("malformed or incomplete target jobs")
     else
@@ -387,21 +383,43 @@ deferred_job_id() {
         .status == "completed" and .conclusion == "success")] | length == 1)
     | select([.steps[]? | select(.name == "Report dependency-deferred required gate" and
         .status == "completed" and .conclusion == "failure")] | length == 1)
-    | .id | select(type == "number" and . > 0 and . == floor)' <<<"${jobs_json}" || {
+    | select(.id | type == "number" and . > 0 and . == floor)
+    | [.id, $created] | @tsv' <<<"${jobs_json}" || {
       local jq_status=$?
       # jq exits 4 for an empty selection: an ordinary failure is not deferred.
       [[ "${jq_status}" == 4 ]] || return "${jq_status}"
     }
 }
 
+# Freeze eligible native run/job identities before choosing the history floor.
+# Later eligibility changes cannot introduce a target outside this covered set.
+declare -A candidate_identities=()
+candidate_ids=()
+candidate_created=()
+while IFS= read -r target_run_id; do
+  [[ -n "${target_run_id}" ]] || continue
+  identity="$(deferred_job_identity "${target_run_id}")"
+  [[ -n "${identity}" ]] || continue
+  candidate_ids+=("${target_run_id}")
+  candidate_identities["${target_run_id}"]="${identity}"
+  candidate_created+=("${identity#*$'\t'}")
+done <<<"${target_ids}"
+if (( ${#candidate_ids[@]} == 0 )); then
+  report_eligible false
+  exit 0
+fi
+history_start="$(jq -nr --args '$ARGS.positional | min_by(fromdateiso8601)' "${candidate_created[@]}")"
+if [[ "${resolution_phase}" == admit ]]; then
+  assert_no_ambiguous_admission
+fi
+
 assessment_output="$(mktemp)"
 trap 'rm -f "$assessment_output"' EXIT
 eligible=false
 admitted_job_ids=()
-while IFS= read -r target_run_id; do
-  [[ -n "${target_run_id}" ]] || continue
-  job_id="$(deferred_job_id "${target_run_id}")"
-  [[ -n "${job_id}" ]] || continue
+for target_run_id in "${candidate_ids[@]}"; do
+  identity="${candidate_identities["${target_run_id}"]}"
+  job_id="${identity%%$'\t'*}"
   [[ "${previously_admitted_jobs["${job_id}"]:-}" != true ]] || continue
   : >"${assessment_output}"
   # The child assesses an already-validated target pull_request context. It
@@ -419,8 +437,8 @@ while IFS= read -r target_run_id; do
   pr_is_current "${pr_json}" || continue
   # Immediate re-read under workflow-level serialization. This suppresses
   # duplicates practically; the API does not document conditional POSTs.
-  fresh_job_id="$(deferred_job_id "${target_run_id}")"
-  [[ "${fresh_job_id}" == "${job_id}" ]] || continue
+  fresh_identity="$(deferred_job_identity "${target_run_id}")"
+  [[ "${fresh_identity}" == "${identity}" ]] || continue
   eligible=true
   [[ "${resolution_phase}" != preflight ]] || continue
   if ! gh api --method POST "/repos/${GITHUB_REPOSITORY}/actions/jobs/${job_id}/rerun" >/dev/null; then
@@ -429,7 +447,7 @@ while IFS= read -r target_run_id; do
   admitted_job_ids+=("${job_id}")
   previously_admitted_jobs["${job_id}"]=true
   echo "Admitted one targeted rerun of deferred gate job ${job_id} in run ${target_run_id}."
-done <<<"${target_ids}"
+done
 if [[ "${resolution_phase}" == preflight ]]; then
   report_eligible "${eligible}"
 else
