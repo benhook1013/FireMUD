@@ -309,7 +309,7 @@ class WorldAuthoredSourceIntakeIntegrationTest {
         .isEmpty();
 
     AuthoredWorldSourceEvidence retainedSource =
-        source(tenant, tenantSlug, "retained-world", sourceRowId, "Retained", "RETAINED_GAME_V30");
+        source(tenant, tenantSlug, "retained-world", sourceRowId, "Retained", "RETAINED_GAME_V29");
     assertThat(
             repository.readBySource(
                 NAMESPACE,
@@ -463,7 +463,7 @@ class WorldAuthoredSourceIntakeIntegrationTest {
             "retained-world",
             sourceRowId(retainedTenantId),
             "Retained",
-            "RETAINED_GAME_V30");
+            "RETAINED_GAME_V29");
     assertThatThrownBy(() -> accept(UUID.randomUUID(), retainedSource))
         .isInstanceOf(WorldAuthoredSourceIntakeRepository.InvalidIntakeEvidenceException.class);
     assertThat(read(requestId)).contains(first);
