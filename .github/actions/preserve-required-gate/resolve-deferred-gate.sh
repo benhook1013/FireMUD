@@ -78,6 +78,27 @@ jq -e --argjson id "${source_run_id}" --argjson workflow_id "${workflow_id}" --a
   and .workflow_run.event == "pull_request"' "${GITHUB_EVENT_PATH}" >/dev/null ||
   fail_closed "Completion event does not match the source workflow."
 
+# Resolver reruns retain their ID, and latest job snapshots can hide an older
+# ambiguous admission. Neither the current nor historical resolver may rerun
+# automatically; explicit recovery must establish a separate safe boundary.
+resolver_path='.github/workflows/resolve-required-gates.yml'
+resolver_json="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/actions/workflows/resolve-required-gates.yml")"
+resolver_id="$(jq -er --arg path "${resolver_path}" '
+  select(.name == "Resolve Required Gates" and .path == $path)
+  | .id | select(type == "number" and . > 0 and . == floor)' <<<"${resolver_json}")"
+current_resolver_json="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}")"
+jq -e --argjson id "${GITHUB_RUN_ID}" --argjson workflow_id "${resolver_id}" \
+  --arg repository "${GITHUB_REPOSITORY}" --arg path "${resolver_path}" \
+  --arg title "Resolve Required Gates workflow-${workflow_id} head-${head_sha} source-${source_run_id}" '
+  .id == $id and .workflow_id == $workflow_id and .repository.full_name == $repository and
+  .event == "workflow_run" and (.name == "Resolve Required Gates" or .name == $title) and
+  (.path == $path or (.path | startswith($path + "@") and length > ($path | length) + 1)) and
+  .display_title == $title and .run_attempt == 1 and .status == "in_progress" and
+  (.head_sha | type) == "string" and (.head_sha | test("^[0-9A-Fa-f]{40}$")) and
+  (try (.created_at | fromdateiso8601 | type == "number") catch false)' <<<"${current_resolver_json}" >/dev/null ||
+  fail_closed "Current resolver identity or first attempt is unproved; explicit recovery is required."
+current_resolver_created="$(jq -er '.created_at' <<<"${current_resolver_json}")"
+
 current_pr() {
   gh api --method GET "/repos/${GITHUB_REPOSITORY}/pulls/${pr_number}"
 }
@@ -129,12 +150,7 @@ target_ids="$(jq -er '.workflow_runs[].id' <<<"${run_pages}")"
 # across invocations. A failed or incomplete admission may have sent a POST;
 # subsequent callbacks must not guess from a still-visible target attempt 1.
 assert_no_ambiguous_admission() {
-  local resolver_json resolver_id resolver_pages prior_ids prior_id prior_jobs
-  local resolver_path='.github/workflows/resolve-required-gates.yml'
-  resolver_json="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/actions/workflows/resolve-required-gates.yml")"
-  resolver_id="$(jq -er --arg path "${resolver_path}" '
-    select(.name == "Resolve Required Gates" and .path == $path)
-    | .id | select(type == "number" and . > 0 and . == floor)' <<<"${resolver_json}")"
+  local resolver_pages prior_ids prior_id prior_json prior_jobs prior_head equal_time_queued
   resolver_pages="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/actions/workflows/resolve-required-gates.yml/runs" \
     -f event=workflow_run -f created=">=${history_start}" -f per_page="${evidence_limit}")"
   prior_ids="$(jq -r --argjson workflow_id "${resolver_id}" --argjson current "${GITHUB_RUN_ID}" \
@@ -160,18 +176,55 @@ assert_no_ambiguous_admission() {
       | .id | select(type == "number" and . > 0 and . == floor)] | unique | .[]' <<<"${resolver_pages}")"
   while IFS= read -r prior_id; do
     [[ -n "${prior_id}" ]] || continue
-    prior_jobs="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/actions/runs/${prior_id}/jobs" \
-      -f filter=latest -f per_page="${evidence_limit}")"
-    jq -e --argjson prior_id "${prior_id}" --argjson limit "${evidence_limit}" '
+    prior_json="$(jq -cer --argjson id "${prior_id}" '.workflow_runs[] | select(.id == $id)' <<<"${resolver_pages}")"
+    jq -e '.run_attempt == 1' <<<"${prior_json}" >/dev/null ||
+      fail_closed "Matching resolver history contains a rerun or unknown attempt; explicit recovery is required."
+    prior_head="$(jq -er '.head_sha | select(type == "string" and test("^[0-9A-Fa-f]{40}$"))' <<<"${prior_json}")"
+    # Under this exact workflow/head concurrency group, a later first-attempt
+    # callback still queued cannot have reached admission. Require native
+    # creation ordering; listener revision movement cannot start a queued run.
+    # Missing steps in any
+    # other state remain potentially admitting evidence, never a clean no-op.
+    if jq -e --arg created "${current_resolver_created}" '
+      .status == "queued" and .conclusion == null and
+      (try ((.created_at | fromdateiso8601) > ($created | fromdateiso8601)) catch false)' \
+      <<<"${prior_json}" >/dev/null; then
+      continue
+    fi
+    # Native creation timestamps have second precision. A tied callback needs
+    # explicit first-attempt job evidence that nothing started, without guessing
+    # order from run IDs or ignoring arbitrary missing admission steps.
+    equal_time_queued=false
+    if jq -e --arg created "${current_resolver_created}" '
+      .status == "queued" and .conclusion == null and
+      (try ((.created_at | fromdateiso8601) == ($created | fromdateiso8601)) catch false)' \
+      <<<"${prior_json}" >/dev/null; then
+      equal_time_queued=true
+    fi
+    prior_jobs="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/actions/runs/${prior_id}/attempts/1/jobs" \
+      -f per_page="${evidence_limit}")"
+    jq -e --argjson prior_id "${prior_id}" --argjson limit "${evidence_limit}" \
+      --arg head "${prior_head}" --argjson equal_time_queued "${equal_time_queued}" '
       if (.jobs | type) != "array" or (.total_count | type) != "number" then error("malformed resolver jobs") else . end
       | .total_count as $total
       | if $total > $limit or (.jobs | length) != $total or ([.jobs[].id] | unique | length) != $total then
           error("incomplete resolver jobs") else . end
       | [.jobs[] | select(.name == "Resolve deferred metadata gate")]
-      | length == 1 and (.[0] | .run_id == $prior_id and (.conclusion == "skipped" or
-        ([.steps[]? | select(.name == "Admit deferred gate reruns")] |
-          length == 1 and (.[0] | .status == "completed" and
-            (.conclusion == "skipped" or .conclusion == "success")))))' <<<"${prior_jobs}" >/dev/null ||
+      | length == 1 and (.[0] |
+        (.id | type) == "number" and .id > 0 and .id == (.id | floor) and
+        .run_id == $prior_id and .head_sha == $head and
+        if $equal_time_queued then
+          .status == "queued" and .conclusion == null and
+          has("started_at") and .started_at == null and
+          has("completed_at") and .completed_at == null and
+          (.steps | type) == "array" and
+          all(.steps[]; .status == "queued" and has("conclusion") and .conclusion == null)
+        else
+          .conclusion == "skipped" or
+          ([.steps[]? | select(.name == "Admit deferred gate reruns")] |
+            length == 1 and (.[0] | .status == "completed" and
+              (.conclusion == "skipped" or .conclusion == "success")))
+        end)' <<<"${prior_jobs}" >/dev/null ||
       fail_closed "Prior matching resolver admission is ambiguous or failed; explicit recovery is required."
   done <<<"${prior_ids}"
 }
