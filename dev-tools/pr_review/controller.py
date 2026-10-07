@@ -1216,12 +1216,38 @@ class ReviewController:
             return None
         return AnchorFacts(pr, live.head, link.identity, link.parent_head, merge_base, patch_id)
 
-    def set_stack(self, pr_numbers: Iterable[int]) -> dict[str, Any]:
+    def set_stack(
+        self,
+        pr_numbers: Iterable[int],
+        *,
+        allow_removal: bool = False,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
         numbers = tuple(pr_numbers)
         if not numbers or any(isinstance(pr, bool) or not isinstance(pr, int) or pr <= 0 for pr in numbers):
             raise ControllerError("stack must contain positive pull-request numbers")
         if len(set(numbers)) != len(numbers):
             raise ControllerError("stack pull requests must be unique")
+        if not isinstance(allow_removal, bool):
+            raise ControllerError("allow_removal must be a boolean")
+
+        if allow_removal and (not isinstance(reason, str) or not reason.strip()):
+            raise ControllerError("--allow-removal requires a nonblank --reason")
+        if not allow_removal and reason is not None:
+            raise ControllerError("--reason requires --allow-removal")
+
+        expected_stack = self._state().ordered_prs
+        requested = set(numbers)
+        removed = tuple(pr for pr in expected_stack if pr not in requested)
+        if removed and not allow_removal:
+            formatted = ", ".join(f"#{pr}" for pr in removed)
+            raise ControllerError(
+                f"stack set cannot remove configured PRs by default; omitted {formatted}; "
+                "explicit user authorization is required with --allow-removal and --reason"
+            )
+        if allow_removal and not removed:
+            raise ControllerError("--allow-removal requires omitting at least one configured PR")
+
         if self.github is not None:
             if not self.repository:
                 raise ControllerError("repository identity is required to validate stack head repositories")
@@ -1230,7 +1256,22 @@ class ReviewController:
                 problem = self._head_repository_problem(item)
                 if problem:
                     raise ControllerError(f"PR #{pr} {problem}")
-        state = self.store.update(lambda current: dataclasses.replace(current, ordered_prs=numbers))
+
+        def update(current: ReviewState) -> ReviewState:
+            if current.ordered_prs != expected_stack:
+                raise ControllerError(
+                    "configured stack changed during validation; read the current stack and retry"
+                )
+            current_removed = tuple(pr for pr in current.ordered_prs if pr not in requested)
+            if current_removed and not allow_removal:
+                formatted = ", ".join(f"#{pr}" for pr in current_removed)
+                raise ControllerError(
+                    f"stack set cannot remove configured PRs by default; omitted {formatted}; "
+                    "explicit user authorization is required with --allow-removal and --reason"
+                )
+            return dataclasses.replace(current, ordered_prs=numbers)
+
+        state = self.store.update(update)
         return {"ordered_prs": list(state.ordered_prs), "schema_version": state.schema_version}
 
     def _head_repository_problem(self, item: LivePullRequest) -> str | None:
