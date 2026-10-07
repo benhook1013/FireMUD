@@ -128,6 +128,15 @@ public class AccountSecurityStateOperationRepository {
 
   /** Returns immutable current or historical operation evidence without applying a mutation. */
   public Optional<Operation> findByRequestId(UUID requestId) {
+    return findByRequestId(requestId, false);
+  }
+
+  /** Reads only complete immutable receipts without upgrading a source reader's Account lock. */
+  public Optional<Operation> findCommittedByRequestIdShared(UUID requestId) {
+    return findByRequestId(requestId, true);
+  }
+
+  private Optional<Operation> findByRequestId(UUID requestId, boolean sharedCommittedRead) {
     requireTransaction();
     Objects.requireNonNull(requestId);
     Record identity =
@@ -141,8 +150,12 @@ public class AccountSecurityStateOperationRepository {
         identity.get("account_id", Long.class),
         identity.get("account_uuid", UUID.class),
         AccountIdentityProvenance.fromStorageValue(
-            identity.get("account_provenance", String.class)));
-    Optional<Operation> stored = readForUpdate(requestId);
+            identity.get("account_provenance", String.class)),
+        sharedCommittedRead);
+    Optional<Operation> stored = readOperation(requestId, sharedCommittedRead);
+    if (sharedCommittedRead && stored.isPresent() && stored.orElseThrow().receipt().isEmpty()) {
+      throw new IllegalStateException("Complete committed security-state receipt is required");
+    }
     stored
         .filter(operation -> operation.receipt().isEmpty())
         .ifPresent(operation -> requireSourceChange(operation.capture(), false));
@@ -160,8 +173,11 @@ public class AccountSecurityStateOperationRepository {
                 () -> new IllegalStateException("Committed security-state receipt is required"));
     var request = operation.request();
     lockAssociation(
-        operation.capture().accountId(), request.accountUuid(), operation.capture().provenance());
-    Operation stored = findByRequestId(request.requestId()).orElseThrow();
+        operation.capture().accountId(),
+        request.accountUuid(),
+        operation.capture().provenance(),
+        true);
+    Operation stored = findCommittedByRequestIdShared(request.requestId()).orElseThrow();
     requireRequest(stored, request);
     if (!stored.receipt().orElseThrow().event().equals(receipt.event())
         || current == null
@@ -254,8 +270,17 @@ public class AccountSecurityStateOperationRepository {
   }
 
   private Optional<Operation> readForUpdate(UUID requestId) {
+    return readOperation(requestId, false);
+  }
+
+  private Optional<Operation> readOperation(UUID requestId, boolean shared) {
     Record row =
-        dsl.fetchOne("SELECT * FROM " + TABLE + " WHERE request_id = ? FOR UPDATE", requestId);
+        dsl.fetchOne(
+            "SELECT * FROM "
+                + TABLE
+                + " WHERE request_id = ?"
+                + (shared ? " FOR SHARE" : " FOR UPDATE"),
+            requestId);
     if (row == null) return Optional.empty();
     UUID accountUuid = row.get("account_uuid", UUID.class);
     var request =
@@ -549,9 +574,15 @@ public class AccountSecurityStateOperationRepository {
 
   private void lockAssociation(
       long numericId, UUID accountUuid, AccountIdentityProvenance provenance) {
+    lockAssociation(numericId, accountUuid, provenance, false);
+  }
+
+  private void lockAssociation(
+      long numericId, UUID accountUuid, AccountIdentityProvenance provenance, boolean shared) {
     Record account =
         dsl.fetchOne(
-            "SELECT id, account_uuid, account_uuid_source_numeric_id, account_uuid_provenance FROM accounts WHERE id = ? FOR UPDATE",
+            "SELECT id, account_uuid, account_uuid_source_numeric_id, account_uuid_provenance FROM accounts WHERE id = ?"
+                + (shared ? " FOR SHARE" : " FOR UPDATE"),
             numericId);
     if (account == null
         || !accountUuid.equals(account.get("account_uuid", UUID.class))

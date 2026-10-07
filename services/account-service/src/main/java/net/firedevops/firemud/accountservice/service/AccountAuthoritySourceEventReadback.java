@@ -211,7 +211,7 @@ public final class AccountAuthoritySourceEventReadback {
     if (verified.securityState().isPresent()) {
       var operation =
           securityStateRepository
-              .findByRequestId(UUID.fromString(verified.requestId()))
+              .findCommittedByRequestIdShared(UUID.fromString(verified.requestId()))
               .orElseThrow(
                   () ->
                       new IllegalStateException(
@@ -270,7 +270,7 @@ public final class AccountAuthoritySourceEventReadback {
       boolean latest) {
     var operation =
         securityStateRepository
-            .findByRequestId(UUID.fromString(verified.requestId()))
+            .findCommittedByRequestIdShared(UUID.fromString(verified.requestId()))
             .orElseThrow(
                 () ->
                     new IllegalStateException(

@@ -20,6 +20,9 @@ class AccountSecurityStateOperationRepositoryTest {
     assertThatThrownBy(() -> repository.findByRequestId(UUID.randomUUID()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("Writable Account owner transaction");
+    assertThatThrownBy(() -> repository.findCommittedByRequestIdShared(UUID.randomUUID()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Writable Account owner transaction");
     verifyNoInteractions(dsl);
     assertThat(
             repository
