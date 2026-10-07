@@ -694,8 +694,8 @@ class PublishAttemptServiceTransactionIntegrationTest {
         publishAttemptService.executeFullVersionTransaction(
             () -> {
               try {
-                return net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup.retain(
-                    dsl, target, savedVersion.getVersionStateEpoch(), notes);
+                return net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup
+                    .retainSourceBacked(dsl, target, savedVersion.getVersionStateEpoch(), notes);
               } catch (Exception failure) {
                 throw new IllegalStateException(failure);
               }

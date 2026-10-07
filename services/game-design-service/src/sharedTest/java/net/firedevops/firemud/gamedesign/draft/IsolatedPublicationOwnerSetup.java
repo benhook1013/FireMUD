@@ -54,7 +54,14 @@ public final class IsolatedPublicationOwnerSetup {
   /** Actual source inheritance precedes selection; only the remote owner inputs are isolated. */
   public static GameDesignPublicationOperation retainSourceBacked(
       DSLContext dsl, DraftCommitBinding.TargetProof target, long draftEpoch) throws Exception {
-    return retain(dsl, target, draftEpoch, "ISOLATED remote owner transaction proof", true);
+    return retainSourceBacked(dsl, target, draftEpoch, "ISOLATED remote owner transaction proof");
+  }
+
+  /** Actual source inheritance precedes selection; only the remote owner inputs are isolated. */
+  public static GameDesignPublicationOperation retainSourceBacked(
+      DSLContext dsl, DraftCommitBinding.TargetProof target, long draftEpoch, String notes)
+      throws Exception {
+    return retain(dsl, target, draftEpoch, notes, true);
   }
 
   private static GameDesignPublicationOperation retain(
@@ -150,7 +157,14 @@ public final class IsolatedPublicationOwnerSetup {
     attempt.setVersionNumber(versionRow.get(0, Integer.class));
     attempt.setRequestDigest(selection.digest());
     new PublishAttemptRepository(dsl).save(attempt);
-    new GameDesignPublicationOperationRepository(dsl).reserve(operation);
+    GameDesignPublicationOperationRepository operations =
+        new GameDesignPublicationOperationRepository(dsl);
+    if (captureSources) {
+      // Freeze both exact selected source snapshots and verify their operation-bound readback.
+      operations.reserveSourceBacked(operation);
+    } else {
+      operations.reserve(operation);
+    }
     return operation;
   }
 
