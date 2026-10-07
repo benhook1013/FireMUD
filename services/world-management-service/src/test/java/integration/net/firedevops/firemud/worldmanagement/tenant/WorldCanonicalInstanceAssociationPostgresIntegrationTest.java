@@ -2166,9 +2166,22 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
       String commit,
       WorldPublishedStartLocationEvidence selector,
       char manifestHashDigit) {
+    AuthoredWorldReleaseAttestationEvidence.Participant worldParticipant =
+        selector == null
+            ? participant("WORLD_MANAGEMENT", 3, "a", false, descriptor.versionId(), commit)
+            : new AuthoredWorldReleaseAttestationEvidence.Participant(
+                "WORLD_MANAGEMENT",
+                Long.toString(descriptor.versionId()),
+                false,
+                null,
+                selector.request().appliedCommitId(),
+                selector.request().contentDigest(),
+                selector.request().digestSchemaVersion(),
+                false,
+                null);
     List<AuthoredWorldReleaseAttestationEvidence.Participant> participants =
         List.of(
-            participant("WORLD_MANAGEMENT", 3, "a", false, descriptor.versionId(), commit),
+            worldParticipant,
             participant("ENTITY_MANAGEMENT", 2, "b", false, descriptor.versionId(), commit),
             participant("GAME_LOGIC", 1, "c", true, descriptor.versionId(), commit),
             participant("AUTOMATION_SCRIPTING", 5, "d", false, descriptor.versionId(), commit),
@@ -2207,8 +2220,8 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
         descriptor.launchDescriptorId(),
         descriptor.publishedReleaseBundleRef(),
         descriptor.versionStateEpoch(),
-        "publish:synthetic:association-fixture",
-        commit,
+        selector.request().publishWorkflowId(),
+        selector.request().appliedCommitId(),
         participants,
         digest(manifestHashDigit),
         1,

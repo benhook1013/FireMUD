@@ -36,8 +36,28 @@ CREATE UNIQUE INDEX uq_world_activation_one_commit_per_instance
 CREATE INDEX idx_world_activation_world_row
     ON world_canonical_instance_activation_operation(world_instance_id, activation_request_id);
 
+-- Only the validated operation insert may mint this exact, transaction-local UPDATE capability.
+CREATE TABLE world_canonical_activation_execution_manifest (
+    transaction_id BIGINT NOT NULL,
+    activation_request_id UUID NOT NULL,
+    request_digest VARCHAR(71) NOT NULL,
+    result_digest VARCHAR(71) NOT NULL,
+    canonical_game_instance_id UUID NOT NULL,
+    world_instance_id BIGINT NOT NULL,
+    local_tenant_key BIGINT NOT NULL,
+    private_game_instance_key BIGINT NOT NULL,
+    expected_old JSONB NOT NULL,
+    expected_new JSONB NOT NULL,
+    PRIMARY KEY (transaction_id, activation_request_id),
+    UNIQUE (transaction_id, world_instance_id),
+    FOREIGN KEY (activation_request_id)
+        REFERENCES world_canonical_instance_activation_operation(activation_request_id)
+        ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
+);
+
 -- [jooq ignore start]
 REVOKE ALL ON world_canonical_instance_activation_operation FROM PUBLIC;
+REVOKE ALL ON world_canonical_activation_execution_manifest FROM PUBLIC;
 
 CREATE FUNCTION world_validate_canonical_activation_operation()
 RETURNS TRIGGER
@@ -46,6 +66,7 @@ AS $$
 DECLARE
     association_row "${serviceSchema}".world_canonical_instance_association%ROWTYPE;
     instance "${serviceSchema}".world_instance%ROWTYPE;
+    activated_instance "${serviceSchema}".world_instance%ROWTYPE;
     preparing JSONB;
     normalized_request JSONB;
     result JSONB;
@@ -233,7 +254,8 @@ BEGIN
             AND v.source_evidence_digest=a.source_evidence_digest
             AND v.intake_receipt_digest=a.intake_receipt_digest
             AND v.game_design_version_id::TEXT=b.descriptor_json::JSONB->>'versionId'
-            AND v.version_state_epoch=a.version_state_epoch
+            -- Original version intake and later published launch are distinct captures.
+            -- Each epoch remains bound to its own retained evidence below and above.
             AND p.target_namespace=a.canonical_target_namespace
             AND p.canonical_tenant_id=a.canonical_tenant_id
             AND p.world_slug=a.canonical_world_slug
@@ -356,6 +378,18 @@ BEGIN
             RAISE EXCEPTION 'Committed canonical activation lacks the exact current PREPARING CAS'
                 USING ERRCODE = '23514';
         END IF;
+        activated_instance := instance;
+        activated_instance.status := 'ACTIVE';
+        activated_instance.lifecycle_epoch := NEW.result_lifecycle_epoch;
+        activated_instance.row_version := NEW.result_row_version;
+        activated_instance.updated_at := CURRENT_TIMESTAMP;
+        INSERT INTO "${serviceSchema}".world_canonical_activation_execution_manifest
+            (transaction_id, activation_request_id, request_digest, result_digest,
+             canonical_game_instance_id, world_instance_id, local_tenant_key,
+             private_game_instance_key, expected_old, expected_new)
+        VALUES (txid_current(), NEW.activation_request_id, NEW.request_digest, NEW.result_digest,
+            NEW.canonical_game_instance_id, NEW.world_instance_id, association_row.local_tenant_key,
+            association_row.private_game_instance_key, to_jsonb(instance), to_jsonb(activated_instance));
     ELSIF lifecycle->>'lifecycleStatus' IS DISTINCT FROM instance.status
         OR lifecycle->>'lifecycleEpoch' IS DISTINCT FROM instance.lifecycle_epoch::TEXT
         OR lifecycle->>'rowVersion' IS DISTINCT FROM instance.row_version::TEXT THEN
@@ -385,6 +419,77 @@ CREATE TRIGGER trg_world_canonical_activation_operation_no_truncate
     BEFORE TRUNCATE ON world_canonical_instance_activation_operation
     FOR EACH STATEMENT EXECUTE FUNCTION world_reject_canonical_activation_truncate();
 
+CREATE FUNCTION world_consume_canonical_activation_execution_manifest(
+    actual_schema TEXT, actual_table TEXT, actual_operation TEXT,
+    actual_old JSONB, actual_new JSONB
+) RETURNS BOOLEAN
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, "${serviceSchema}"
+AS $$
+DECLARE
+    consumed UUID;
+BEGIN
+    IF actual_schema IS DISTINCT FROM '${serviceSchema}'
+        OR actual_table IS DISTINCT FROM 'world_instance'
+        OR actual_operation IS DISTINCT FROM 'UPDATE'
+        OR actual_old IS NULL OR actual_new IS NULL THEN
+        RETURN FALSE;
+    END IF;
+    DELETE FROM "${serviceSchema}".world_canonical_activation_execution_manifest m
+    USING "${serviceSchema}".world_canonical_instance_activation_operation o,
+        "${serviceSchema}".world_canonical_instance_association a
+    WHERE m.transaction_id = txid_current()
+        AND m.expected_old = actual_old AND m.expected_new = actual_new
+        AND m.world_instance_id = (actual_old->>'id')::BIGINT
+        AND m.world_instance_id = (actual_new->>'id')::BIGINT
+        AND m.canonical_game_instance_id::TEXT = actual_old->>'canonical_game_instance_id'
+        AND m.canonical_game_instance_id::TEXT = actual_new->>'canonical_game_instance_id'
+        AND m.local_tenant_key = (actual_old->>'tenant_id')::BIGINT
+        AND m.local_tenant_key = (actual_new->>'tenant_id')::BIGINT
+        AND m.private_game_instance_key = (actual_old->>'game_instance_id')::BIGINT
+        AND m.private_game_instance_key = (actual_new->>'game_instance_id')::BIGINT
+        AND o.activation_request_id = m.activation_request_id
+        AND o.request_digest = m.request_digest AND o.result_digest = m.result_digest
+        AND o.canonical_game_instance_id = m.canonical_game_instance_id
+        AND o.world_instance_id = m.world_instance_id AND o.outcome = 'COMMITTED'
+        AND actual_old->>'status' = 'PREPARING' AND actual_new->>'status' = 'ACTIVE'
+        AND o.expected_lifecycle_epoch = (actual_old->>'lifecycle_epoch')::BIGINT
+        AND o.expected_row_version = (actual_old->>'row_version')::BIGINT
+        AND o.result_lifecycle_epoch = (actual_new->>'lifecycle_epoch')::BIGINT
+        AND o.result_row_version = (actual_new->>'row_version')::BIGINT
+        AND convert_from(o.result_bytes, 'UTF8')::JSONB->>'outcome' = 'COMMITTED'
+        AND convert_from(o.result_bytes, 'UTF8')::JSONB->>'requestDigest' = m.request_digest
+        AND a.canonical_game_instance_id = m.canonical_game_instance_id
+        AND a.world_instance_id = m.world_instance_id
+        AND a.local_tenant_key = m.local_tenant_key
+        AND a.private_game_instance_key = m.private_game_instance_key
+    RETURNING m.activation_request_id INTO consumed;
+    RETURN consumed IS NOT NULL;
+END;
+$$;
+REVOKE ALL ON FUNCTION world_consume_canonical_activation_execution_manifest(TEXT, TEXT, TEXT, JSONB, JSONB)
+    FROM PUBLIC;
+
+-- Extend V35's guard at one exact anchor, retaining its region/preparation paths and legacy denial.
+DO $migration$
+DECLARE
+    original TEXT;
+    anchor TEXT := $anchor$        RAISE EXCEPTION
+            'World tenant key is reserved for a canonical authored source; no exact transaction execution manifest'$anchor$;
+BEGIN
+    SELECT pg_get_functiondef('"${serviceSchema}".world_claim_legacy_numeric_tenant_key()'::REGPROCEDURE)
+        INTO STRICT original;
+    IF (length(original)-length(replace(original,anchor,'')))/length(anchor) <> 1 THEN
+        RAISE EXCEPTION 'Expected exactly one reserved-tenant execution denial guard';
+    END IF;
+    original := replace(original,anchor,$replacement$        IF "${serviceSchema}".world_consume_canonical_activation_execution_manifest(
+            TG_TABLE_SCHEMA, TG_TABLE_NAME, TG_OP, old_row, new_row) THEN
+            RETURN NEW;
+        END IF;
+$replacement$ || anchor);
+    EXECUTE original;
+END;
+$migration$;
+
 CREATE FUNCTION world_require_committed_activation_at_commit()
 RETURNS TRIGGER
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, "${serviceSchema}"
@@ -403,6 +508,8 @@ BEGIN
         OR instance.row_version IS DISTINCT FROM NEW.result_row_version
         OR result->>'outcome' IS DISTINCT FROM 'COMMITTED'
         OR result->>'requestDigest' IS DISTINCT FROM NEW.request_digest
+        OR EXISTS (SELECT 1 FROM "${serviceSchema}".world_canonical_activation_execution_manifest m
+            WHERE m.transaction_id = txid_current() AND m.activation_request_id = NEW.activation_request_id)
         OR convert_from(decode(result->>'lifecycleEvidenceBytesBase64','base64'),'UTF8')::JSONB->>'lifecycleStatus'
             IS DISTINCT FROM 'ACTIVE' THEN
         RAISE EXCEPTION 'Committed canonical activation must include its exact ACTIVE lifecycle CAS before commit'

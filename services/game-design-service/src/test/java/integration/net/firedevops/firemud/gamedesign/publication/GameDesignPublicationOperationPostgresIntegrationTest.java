@@ -501,7 +501,10 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
     DraftAuthorizationFenceBinding.frame(old, "game-design-publication-owner-readback/v1");
     DraftAuthorizationFenceBinding.frame(old, op.canonicalBytes());
     DraftAuthorizationFenceBinding.frame(old, "NO_PUBLICATION");
-    DraftAuthorizationFenceBinding.frame(old, "");
+    // V50 framed nullable release_row_json as a present, zero-byte fourth frame for
+    // NO_PUBLICATION. Preserve that historical encoding exactly without routing an empty value
+    // through the nonempty canonical-text helper.
+    DraftAuthorizationFenceBinding.frame(old, new byte[0]);
     fixture
         .write()
         .executeWithoutResult(

@@ -2288,7 +2288,7 @@ jobs:
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#rawTerminalReceiptCannotCommitWithoutMatchingOwnerPhaseCas()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#onlyPositiveNoPublicationEvidenceCanSealWorldAsAbortedAndCannotPrepare()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#lifecycleReadPreservesPreparingStateAndDeniesLegacyNumericFailureWithExactCanonicalServiceEcho()' \
-            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#canonicalActivationCommitsOneOwnerCasAndReplaysItsImmutableResultAfterLaterLifecycleMove()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#canonicalActivationCommitsOneOwnerCasAndReplaysWhileLegacyTerminationIsDenied()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#canonicalActivationStoresStaleFailedOutcomeAndFreshLifecycleReadRemainsCurrent()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#canonicalActivationRejectsSelfConsistentForgedOwnerBindingsBeforeActiveCas()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#lostHeldAuthorityAfterOperationInsertRollsBackActivationAndLedger()' \
