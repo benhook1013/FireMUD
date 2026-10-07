@@ -14,6 +14,7 @@ import tempfile
 import threading
 import time
 import unittest
+from collections.abc import Mapping
 from pathlib import Path
 from subprocess import CompletedProcess
 from types import SimpleNamespace
@@ -120,6 +121,7 @@ class FakeGit:
         self.remote_heads_calls = 0
         self.merge_base_calls = []
         self.patch_identity_calls = []
+        self.is_ancestor_calls = []
         self.test_merge_calls = []
         self.test_merge_error = None
 
@@ -134,6 +136,7 @@ class FakeGit:
         return ref_name in self.heads
 
     def is_ancestor(self, ancestor, descendant):
+        self.is_ancestor_calls.append((ancestor, descendant))
         return True
 
     def merge_base(self, left, right):
@@ -215,6 +218,9 @@ class CountingEvidence(AuditedEvidence):
         self.history_reads = []
         self.active_targets = set(active_targets)
         self.active_target_reads = 0
+        self.active_target_scans = []
+        self.request_history_reads = []
+        self.cli_lock_status = "clear"
 
     def get(self, key, default=None):
         if isinstance(key, tuple) and len(key) == 2 and key[1] in {"hosted", "cli"}:
@@ -223,7 +229,26 @@ class CountingEvidence(AuditedEvidence):
 
     def active_review_targets(self, pr_numbers, identities):
         self.active_target_reads += 1
+        self.active_target_scans.append((tuple(pr_numbers), set(identities)))
         return self.active_targets.intersection(pr_numbers)
+
+    def repository_cli_lock_status(self):
+        return self.cli_lock_status
+
+    def request_history(self, pr, channel):
+        self.request_history_reads.append((pr, channel))
+        values = super().get((pr, channel), ()) or ()
+        return [
+            value
+            for value in values
+            if isinstance(value, Mapping)
+            and (
+                value.get("active_review") is True
+                or value.get("active_reservation") is True
+                or value.get("rate_limited") is True
+                or (str(value.get("checkpoint") or "").startswith("trigger:") and value.get("terminal") is not True)
+            )
+        ]
 
 
 def _stacked_prs(count, *, merged=()):
@@ -350,6 +375,39 @@ class ControllerTests(unittest.TestCase):
             ),
         ):
             controller.run_cli()
+
+        self.assertEqual(adapter_calls, [])
+
+    def test_cli_preflight_history_expiry_names_the_current_pr_and_channel(self):
+        values, heads = _stacked_prs(2)
+        controller = self.make(values, heads=heads)
+        controller.set_stack(list(values))
+        self._enable_batch_status(controller, values)
+        adapter_calls = []
+
+        class SlowEvidence:
+            @staticmethod
+            def active_review_targets(_numbers, _identities):
+                return set()
+
+            @staticmethod
+            def history(_pr, channel):
+                if channel == "hosted":
+                    budget = github.active_hosted_preflight_budget()
+                    if budget is None:
+                        raise AssertionError("CLI preflight budget is unavailable")
+                    budget.deadline = time.monotonic() - 1
+                    raise OSError("history stalled after deadline")
+                return []
+
+        controller._evidence_provider = SlowEvidence()
+        controller.cli_adapter = lambda *args, **kwargs: adapter_calls.append((args, kwargs))
+
+        with self.assertRaisesRegex(
+            ControllerError,
+            r"CLI preflight deadline exceeded \(phase=target_history_pr_1_hosted, .*completed=0/1, budget=120s\)",
+        ):
+            controller.run_cli(expected_pr=1)
 
         self.assertEqual(adapter_calls, [])
 
@@ -550,6 +608,73 @@ class ControllerTests(unittest.TestCase):
         self.assertTrue(all(number == 2 for number, _ in reads))
         with self.assertRaisesRegex(ControllerError, "broken archived checkpoint"):
             controller.status()
+
+    def test_saved_moved_parent_reconciliation_reads_complete_history_after_channel_stop(self):
+        for channel in ("hosted", "cli"):
+            with self.subTest(channel=channel):
+                values = {
+                    1: pr(1, PARENT),
+                    2: pr(2, HEAD_2, "feature-1", PARENT),
+                }
+                heads = {"develop": BASE, "feature-1": PARENT, "feature-2": HEAD_2}
+                checkpoint = f"saved-moved-parent-{channel}"
+                old_evidence = {
+                    "pr": 2,
+                    "head": HEAD_2,
+                    "checkpoint": checkpoint,
+                    "completed": True,
+                    "attributable": True,
+                    "child_head": HEAD_2,
+                    "parent_identity": "1",
+                    "parent_head": HEAD_1,
+                    "merge_base": BASE,
+                    "patch_id": f"patch-{HEAD_2[:4]}",
+                }
+                evidence = CountingEvidence({(2, channel): [old_evidence]})
+                controller = self.make(values, evidence, heads=heads, sqlite=True)
+                controller.set_stack([1, 2])
+                controller.decide_stop(pr=2, channel=channel, reason="no further discovery")
+                current = controller._anchor(2, values[2], stack.ParentLink(2, 1, "feature-1", PARENT))
+                decision = StackReconciliationDecision(
+                    pr=2,
+                    channel=channel,
+                    checkpoint=checkpoint,
+                    prior_head=HEAD_2,
+                    child_head=current.child_head,
+                    parent_identity=current.parent_identity,
+                    parent_head=current.parent_head,
+                    merge_base=current.merge_base,
+                    patch_id=current.patch_id,
+                    reason="restore an operator-approved moved-parent review",
+                )
+                controller.store.update(
+                    lambda state, decision=decision: dataclasses.replace(
+                        state, reconciliations=(decision,)
+                    )
+                )
+                self._enable_batch_status(controller, values)
+                reconciled = []
+                original_reconciliation = controller._active_stack_reconciliation
+
+                def capture_reconciliation(
+                    state,
+                    pr_number,
+                    anchor,
+                    original_reconciliation=original_reconciliation,
+                    reconciled=reconciled,
+                ):
+                    result = original_reconciliation(state, pr_number, anchor)
+                    if pr_number == 2:
+                        reconciled.append(result)
+                    return result
+
+                controller._active_stack_reconciliation = capture_reconciliation
+                with github.cli_preflight_budget(timeout_seconds=30), self.assertRaises(WrongStackTarget):
+                    controller._target("cli", expected_pr=2)
+
+                self.assertEqual(reconciled, [decision])
+                self.assertIn((2, channel), evidence.request_history_reads)
+                self.assertIn((2, channel), evidence.history_reads)
 
     def test_merged_history_is_not_read_for_requests_but_is_retained_for_status(self):
         values, heads = _stacked_prs(2, merged=(1,))
@@ -7522,6 +7647,64 @@ class ControllerTests(unittest.TestCase):
 
         self.assertEqual(active, {5, 6})
 
+    def test_repository_cli_lock_probe_is_global_for_closed_or_off_stack_owner(self):
+        for owner_pr, owner_state in ((99, "OPEN"), (6, "CLOSED")):
+            with self.subTest(owner_pr=owner_pr, owner_state=owner_state), tempfile.TemporaryDirectory() as directory:
+                state_store = StateStore(Path(directory) / "firemud" / "pr-review-stack.json")
+                cli_root = Path(directory) / "firemud" / "pr-review"
+                lock_path = cli_root / "cli.lock"
+                metadata_path = cli_root / "runs" / f"run.{'a' * 32}" / "metadata.json"
+                metadata_path.parent.mkdir(parents=True)
+                metadata_path.write_text(
+                    json.dumps({"run_id": metadata_path.parent.name, "pull_request": owner_pr, "state": owner_state}),
+                    encoding="utf-8",
+                )
+                lock_path.parent.mkdir(parents=True, exist_ok=True)
+                lock_path.touch()
+                evidence = LiveEvidence("owner/repo", object(), state_store)
+                with lock_path.open("r+") as handle:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    self.assertEqual(evidence.repository_cli_lock_status(), "held")
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+    def test_repository_cli_lock_probe_reports_unknown_context_and_lock_state(self):
+        self.assertEqual(LiveEvidence("owner/repo", object()).repository_cli_lock_status(), "unknown")
+        with tempfile.TemporaryDirectory() as directory:
+            state_store = StateStore(Path(directory) / "firemud" / "pr-review-stack.json")
+            evidence = LiveEvidence("owner/repo", object(), state_store)
+            self.assertEqual(evidence.repository_cli_lock_status(), "clear")
+            with patch.object(LiveEvidence, "_request_lock_state", return_value="unknown"):
+                self.assertEqual(evidence.repository_cli_lock_status(), "unknown")
+
+    def test_active_target_probe_reports_the_current_pr_when_its_budget_expires(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_store = StateStore(Path(directory) / "firemud" / "pr-review-stack.json")
+            evidence = LiveEvidence("owner/repo", object(), state_store)
+            identities = {
+                number: {"comments": {"nodes": []}, "reviews": {"nodes": []}}
+                for number in (5, 6)
+            }
+            with github.cli_preflight_budget(timeout_seconds=30) as budget:
+                def trigger_paths(_repo, pr_number):
+                    if pr_number == 6:
+                        budget.deadline = time.monotonic() - 1
+                    return []
+
+                with (
+                    patch("pr_review.runtime.hosted.current_trigger_record_paths", side_effect=trigger_paths),
+                    patch(
+                        "pr_review.runtime.hosted.default_trigger_record_path",
+                        side_effect=lambda _repo, pr_number: Path(directory) / "records" / str(pr_number) / "trigger.json",
+                    ),
+                    patch.object(LiveEvidence, "_request_lock_is_held", return_value=False),
+                    self.assertRaisesRegex(
+                        github.HostedPreflightDeadlineExceeded,
+                        r"CLI preflight deadline exceeded \(phase=target_active_reservation_pr_6, "
+                        r"elapsed=.*completed=1/1, budget=30s\)",
+                    ),
+                ):
+                    evidence.active_review_targets((5, 6), identities)
+
     def test_status_overview_marks_moved_tail_stale_without_readiness(self):
         values, heads = _stacked_prs(6)
         evidence = CountingEvidence()
@@ -7678,6 +7861,314 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(target.snapshot.number, 1)
         self.assertEqual(controller.git.merge_base_calls, [(BASE, values[1].head)])
         self.assertEqual(controller.git.patch_identity_calls, [(BASE, values[1].head)])
+        self.assertEqual(controller.git.is_ancestor_calls, [(BASE, values[1].head)])
+
+    def test_moved_parent_fallback_anchor_deadline_names_the_pr_phase(self):
+        values, heads = _stacked_prs(2)
+        moved_parent_head = "9" * 40
+        values[1] = dataclasses.replace(values[1], head=moved_parent_head)
+        heads["feature-1"] = moved_parent_head
+        controller = self.make(values, heads=heads)
+        controller.set_stack([1, 2])
+        original_anchor = controller._anchor
+        anchor_calls = []
+
+        def expire_moved_parent_anchor(pr_number, item, link):
+            anchor_calls.append(pr_number)
+            if pr_number == 2:
+                self.assertEqual(item.base_tip, values[2].base_tip)
+                self.assertEqual(link.parent_head, moved_parent_head)
+                budget = github.active_hosted_preflight_budget()
+                self.assertIsNotNone(budget)
+                budget.deadline = time.monotonic() - 1
+                budget.remaining_seconds()
+            return original_anchor(pr_number, item, link)
+
+        controller._anchor = expire_moved_parent_anchor
+        with (
+            github.cli_preflight_budget(timeout_seconds=120),
+            self.assertRaises(github.HostedPreflightDeadlineExceeded) as raised,
+        ):
+            controller._target("cli")
+
+        self.assertEqual(anchor_calls, [1, 2])
+        self.assertEqual(
+            (raised.exception.phase, raised.exception.completed, raised.exception.total),
+            ("target_anchor_pr_2", 0, 1),
+        )
+
+    def test_budgeted_cli_expected_target_reads_complete_history_only_through_expected_pr(self):
+        values, heads = _stacked_prs(3)
+        evidence = CountingEvidence()
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        batch_calls = self._enable_batch_status(controller, values)
+
+        with github.cli_preflight_budget(timeout_seconds=30):
+            target = controller._target("cli", expected_pr=1)
+
+        self.assertEqual(target.pr, 1)
+        self.assertEqual(batch_calls, [tuple(values)])
+        self.assertEqual(evidence.active_target_scans, [(tuple(values), set(values))])
+        self.assertEqual(set(evidence.history_reads), {(1, "hosted"), (1, "cli")})
+
+    def test_budgeted_cli_expected_target_keeps_earlier_front_assertion(self):
+        values, heads = _stacked_prs(3)
+        evidence = CountingEvidence(active_targets={1})
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        batch_calls = self._enable_batch_status(controller, values)
+
+        with github.cli_preflight_budget(timeout_seconds=30), self.assertRaises(WrongStackTarget):
+            controller._target("cli", expected_pr=2)
+
+        self.assertEqual(batch_calls, [tuple(values)])
+        self.assertEqual(evidence.active_target_scans, [(tuple(values), set(values))])
+        self.assertEqual(
+            set(evidence.history_reads),
+            {(number, channel) for number in (1, 2) for channel in ("hosted", "cli")},
+        )
+        self.assertEqual(evidence.request_history_reads, [(1, "cli")])
+
+    def test_historical_manual_candidate_does_not_become_cli_lock(self):
+        values, heads = _stacked_prs(3)
+        evidence = CountingEvidence(active_targets={3})
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        identities = {number: _batch_identity(item) for number, item in values.items()}
+        identities[3]["comments"]["nodes"] = [
+            {"author": {"login": "human-reviewer"}, "body": hosted.FULL_COMMAND}
+        ]
+        controller.github.batch_pull_requests = lambda numbers: {number: identities[number] for number in numbers}
+
+        with github.cli_preflight_budget(timeout_seconds=30):
+            target = controller._target("cli", expected_pr=1)
+
+        self.assertEqual(target.pr, 1)
+        self.assertEqual(evidence.request_history_reads, [(3, "cli")])
+        self.assertEqual(set(evidence.history_reads), {(1, "hosted"), (1, "cli")})
+
+    def test_budgeted_cli_expected_target_refuses_genuine_or_unknown_cli_activity(self):
+        cases = (
+            ("held", set(), None, "repository-wide CLI review activity is active"),
+            ("unknown", set(), None, "repository-wide CLI review activity is unknown"),
+            (
+                "clear",
+                {3},
+                [{"pr": 3, "checkpoint": "active-cli:run.abc", "active_review": True}],
+                "repository-wide CLI review activity is active or ambiguous on PR #3",
+            ),
+        )
+        for lock_status, active_targets, cli_history, expected in cases:
+            with self.subTest(lock_status=lock_status, active_targets=active_targets):
+                values, heads = _stacked_prs(3)
+                evidence = CountingEvidence(active_targets=active_targets)
+                evidence.cli_lock_status = lock_status
+                if cli_history is not None:
+                    evidence[(3, "cli")] = cli_history
+                controller = self.make(values, evidence, heads=heads)
+                controller.set_stack(list(values))
+                self._enable_batch_status(controller, values)
+
+                with github.cli_preflight_budget(timeout_seconds=30), self.assertRaisesRegex(
+                    ControllerError, expected
+                ):
+                    controller._target("cli", expected_pr=1)
+
+                self.assertEqual(evidence.history_reads, [])
+
+    def test_budgeted_cli_expected_target_fails_closed_when_candidate_cli_activity_is_unreadable(self):
+        values, heads = _stacked_prs(3)
+        evidence = CountingEvidence(active_targets={3})
+        evidence.request_history = lambda *_args: (_ for _ in ()).throw(OSError("lock metadata unreadable"))
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        self._enable_batch_status(controller, values)
+
+        with github.cli_preflight_budget(timeout_seconds=30), self.assertRaisesRegex(
+            ControllerError, "current CLI activity for PR #3 cannot be verified"
+        ):
+            controller._target("cli", expected_pr=1)
+
+    def test_budgeted_cli_expected_target_allows_exact_anchor_hosted_overlap(self):
+        values = {1: pr(1, HEAD_1)}
+        heads = {"develop": BASE, "feature-1": HEAD_1}
+        evidence = CountingEvidence(
+            {
+                (1, "hosted"): [
+                    {
+                        "pr": 1,
+                        "head": HEAD_1,
+                        "checkpoint": "trigger:123",
+                        "held": True,
+                        "reason": HOSTED_ACTIVE_RESPONSE_REASON,
+                        "anchor": hosted_anchor(),
+                    }
+                ]
+            },
+            active_targets={1},
+        )
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        self._enable_batch_status(controller, values)
+
+        with github.cli_preflight_budget(timeout_seconds=30):
+            target = controller._target("cli", expected_pr=1)
+
+        self.assertEqual(target.pr, 1)
+        self.assertEqual(target.status, ReviewStatus.MISSING_EVIDENCE)
+        self.assertEqual(evidence.request_history_reads, [(1, "cli")])
+
+    def test_budgeted_cli_expected_target_allows_later_hosted_candidate_without_paging_it(self):
+        values, heads = _stacked_prs(3)
+        evidence = CountingEvidence(
+            {(3, "hosted"): [{"pr": 3, "checkpoint": "trigger:123", "held": True}]},
+            active_targets={3},
+        )
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        self._enable_batch_status(controller, values)
+
+        with github.cli_preflight_budget(timeout_seconds=30):
+            target = controller._target("cli", expected_pr=1)
+
+        self.assertEqual(target.pr, 1)
+        self.assertEqual(evidence.request_history_reads, [(3, "cli")])
+        self.assertEqual(set(evidence.history_reads), {(1, "hosted"), (1, "cli")})
+
+    def test_budgeted_cli_expected_target_validates_identity_of_inactive_tail(self):
+        cases = (
+            ({"headRepository": {"nameWithOwner": "elsewhere/repo"}}, "PR #3 uses unsupported cross-repository head"),
+            ({"headRefName": ""}, "fresh live identity is malformed for PR #3"),
+            ({"state": "PENDING"}, "fresh live identity has an unknown lifecycle for PR #3"),
+        )
+        for invalid_fields, expected in cases:
+            with self.subTest(invalid_fields=invalid_fields):
+                values, heads = _stacked_prs(3)
+                evidence = CountingEvidence()
+                controller = self.make(values, evidence, heads=heads)
+                controller.set_stack(list(values))
+                batch_values = {number: _batch_identity(item) for number, item in values.items()}
+                batch_values[3].update(invalid_fields)
+                controller.github.batch_pull_requests = lambda _numbers, batch_values=batch_values: batch_values
+
+                with github.cli_preflight_budget(timeout_seconds=30), self.assertRaisesRegex(ControllerError, expected):
+                    controller._target("cli", expected_pr=1)
+
+                self.assertEqual(evidence.active_target_reads, 0)
+                self.assertEqual(evidence.history_reads, [])
+
+    def test_budgeted_cli_expected_target_without_active_probe_keeps_full_history_path(self):
+        for probe in ("missing_candidate", "failed_candidate", "missing_lock"):
+            with self.subTest(probe=probe):
+                values, heads = _stacked_prs(3)
+                evidence = CountingEvidence()
+                if probe == "missing_candidate":
+                    evidence.active_review_targets = None
+                elif probe == "failed_candidate":
+                    evidence.active_review_targets = lambda *_args: (_ for _ in ()).throw(
+                        RuntimeError("candidate probe unavailable")
+                    )
+                else:
+                    evidence.repository_cli_lock_status = None
+                controller = self.make(values, evidence, heads=heads)
+                controller.set_stack(list(values))
+                self._enable_batch_status(controller, values)
+
+                with github.cli_preflight_budget(timeout_seconds=30):
+                    target = controller._target("cli", expected_pr=1)
+
+                self.assertEqual(target.pr, 1)
+                self.assertEqual(
+                    set(evidence.history_reads),
+                    {(number, channel) for number in values for channel in ("hosted", "cli")},
+                )
+
+    def test_budgeted_cli_expected_target_fallback_preloads_stopped_tail_request_history(self):
+        for probe in ("failed", "malformed"):
+            with self.subTest(probe=probe):
+                values, heads = _stacked_prs(3)
+                evidence = CountingEvidence()
+                controller = self.make(values, evidence, heads=heads, sqlite=True)
+                controller.set_stack(list(values))
+                controller.decide_stop(pr=3, channel="hosted", reason="stop tail Hosted discovery")
+                historical_reads = []
+
+                def full_history(pr_number, channel, historical_reads=historical_reads):
+                    historical_reads.append((pr_number, channel))
+                    if (pr_number, channel) == (3, "hosted"):
+                        raise ControllerError("stopped tail archive is unavailable")
+                    return []
+
+                evidence.history = full_history
+                if probe == "failed":
+                    evidence.active_review_targets = lambda *_args: (_ for _ in ()).throw(
+                        RuntimeError("candidate probe unavailable")
+                    )
+                else:
+                    evidence.active_review_targets = lambda *_args: {999}
+                batch_calls = self._enable_batch_status(controller, values)
+
+                with github.cli_preflight_budget(timeout_seconds=30):
+                    target = controller._target("cli", expected_pr=1)
+
+                self.assertEqual(target.pr, 1)
+                self.assertEqual(batch_calls, [tuple(values)])
+                self.assertIn((3, "hosted"), evidence.request_history_reads)
+                self.assertNotIn((3, "hosted"), historical_reads)
+
+    def test_budgeted_cli_expected_target_keeps_expected_pr_allocation_policy(self):
+        values = {1: pr(1, HEAD_1)}
+        heads = {"develop": BASE, "feature-1": HEAD_1}
+        evidence = CountingEvidence(
+            {
+                (1, "cli"): [
+                    self.allocation_evidence(completed=False),
+                    self.scope_timeline_evidence(channel="cli"),
+                ]
+            }
+        )
+        controller = self.grant_allocation(channel="cli", evidence=evidence, values=values, heads=heads)
+        batch_calls = self._enable_batch_status(controller, values)
+
+        with github.cli_preflight_budget(timeout_seconds=30):
+            target = controller._target("cli", expected_pr=1)
+
+        self.assertEqual(target.pr, 1)
+        self.assertEqual(batch_calls, [(1,)])
+        self.assertEqual(evidence.active_target_scans, [((1,), {1})])
+        self.assertEqual(set(evidence.history_reads), {(1, "hosted"), (1, "cli")})
+        self.assertIn("1:cli", controller.store.load().allocations)
+
+    def test_budgeted_hosted_expected_target_keeps_full_history_path(self):
+        values, heads = _stacked_prs(3)
+        evidence = CountingEvidence()
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        self._enable_batch_status(controller, values)
+
+        with github.hosted_preflight_budget(timeout_seconds=30):
+            target = controller._target("hosted", expected_pr=1)
+
+        self.assertEqual(target.pr, 1)
+        self.assertEqual(
+            set(evidence.history_reads),
+            {(number, channel) for number in values for channel in ("hosted", "cli")},
+        )
+        self.assertEqual(evidence.active_target_reads, 0)
+
+    def test_allocation_anchor_reuses_reconciled_anchor(self):
+        values = {1: pr(1, HEAD_1)}
+        heads = {"develop": BASE, "feature-1": HEAD_1}
+        controller = self.grant_allocation(channel="cli", values=values, heads=heads)
+        controller.git.merge_base_calls.clear()
+        controller.git.patch_identity_calls.clear()
+
+        target = controller._target("cli")
+
+        self.assertEqual(target.pr, 1)
+        self.assertEqual(controller.git.merge_base_calls, [(BASE, values[1].head)])
+        self.assertEqual(controller.git.patch_identity_calls, [(BASE, values[1].head)])
 
     def test_budgeted_runs_batch_fresh_identity_for_the_entire_configured_stack(self):
         for channel in ("hosted", "cli"):
@@ -7812,6 +8303,67 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(selected_targets[0].parent.head_sha, BASE)
         self.assertEqual(selected_targets[1].parent.head_sha, advanced_base)
         self.assertTrue(selected_targets[1].default_base_front)
+
+    def test_stale_default_base_retry_without_expect_pr_keeps_full_stack_reconciliation(self):
+        advanced_base = "9" * 40
+        values, heads = _stacked_prs(3)
+        evidence = CountingEvidence()
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        batch_calls = self._enable_batch_status(controller, values)
+        selected_targets = []
+
+        def adapter(target, **_kwargs):
+            selected_targets.append(target)
+            if len(selected_targets) == 1:
+                controller.git.heads["develop"] = advanced_base
+                values[1] = dataclasses.replace(values[1], base_tip=advanced_base)
+                raise StaleReviewTargetError("default base advanced after CLI target selection")
+            return target
+
+        controller.cli_adapter = adapter
+
+        result = controller.run_cli()
+
+        self.assertIs(result, selected_targets[-1])
+        self.assertEqual(len(selected_targets), 2)
+        self.assertTrue(all(target.default_base_front for target in selected_targets))
+        self.assertEqual(batch_calls, [(1, 2, 3), (1, 2, 3)])
+        self.assertEqual(evidence.active_target_scans, [])
+        expected_history = {(number, channel) for number in values for channel in ("cli", "hosted")}
+        self.assertEqual(set(evidence.history_reads), expected_history)
+        for key in expected_history:
+            self.assertGreaterEqual(evidence.history_reads.count(key), 2)
+
+    def test_stale_default_base_retry_with_expect_pr_keeps_scoped_cli_reconciliation(self):
+        advanced_base = "9" * 40
+        values, heads = _stacked_prs(3)
+        evidence = CountingEvidence()
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        batch_calls = self._enable_batch_status(controller, values)
+        selected_targets = []
+
+        def adapter(target, **_kwargs):
+            selected_targets.append(target)
+            if len(selected_targets) == 1:
+                controller.git.heads["develop"] = advanced_base
+                values[1] = dataclasses.replace(values[1], base_tip=advanced_base)
+                raise StaleReviewTargetError("default base advanced after CLI target selection")
+            return target
+
+        controller.cli_adapter = adapter
+
+        result = controller.run_cli(expected_pr=1)
+
+        self.assertIs(result, selected_targets[-1])
+        self.assertEqual(len(selected_targets), 2)
+        self.assertTrue(all(target.default_base_front for target in selected_targets))
+        self.assertEqual(batch_calls, [(1, 2, 3), (1, 2, 3)])
+        self.assertEqual(evidence.active_target_scans, [((1, 2, 3), {1, 2, 3})] * 2)
+        self.assertEqual(set(evidence.history_reads), {(1, "cli"), (1, "hosted")})
+        for key in {(1, "cli"), (1, "hosted")}:
+            self.assertGreaterEqual(evidence.history_reads.count(key), 2)
 
     def test_cli_deadline_expiring_during_reselection_prevents_another_runner_start(self):
         controller = self.make({1: pr(1, HEAD_1)}, heads={"develop": BASE, "feature-1": HEAD_1})
@@ -11272,7 +11824,7 @@ class ControllerTests(unittest.TestCase):
         controller.git.is_ancestor = fail_child_ancestry
         result = controller.status()
 
-        self.assertEqual(failing_calls, 2)
+        self.assertEqual(failing_calls, 1)
         self.assertEqual(result["prs"][1]["reconciliation"], "UNRECONCILED")
         self.assertEqual(result["prs"][1]["channels"]["hosted"], "UNRECONCILED")
         self.assertEqual(result["prs"][1]["channels"]["cli"], "UNRECONCILED")
