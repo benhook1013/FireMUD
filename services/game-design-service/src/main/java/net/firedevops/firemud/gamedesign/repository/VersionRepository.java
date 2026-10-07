@@ -7,16 +7,21 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.config.PostgresProperties;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
+import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record;
 import org.jooq.Table;
 import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Repository
 @SuppressFBWarnings(
@@ -253,8 +258,20 @@ public class VersionRepository {
     return dsl.fetchCount(VERSION_TABLE);
   }
 
-  @Transactional
+  @Transactional(isolation = Isolation.READ_COMMITTED)
   public Version save(Version version) {
+    if (version.getId() == null
+        && version.getVersionState() == VersionLifecycleState.DRAFT
+        && !version.isScriptOnly()
+        && version.getBaseVersionId() == null
+        && version.getScriptPatchVersion() == null
+        && (!TransactionSynchronizationManager.isActualTransactionActive()
+            || TransactionSynchronizationManager.isCurrentTransactionReadOnly()
+            || !Integer.valueOf(TransactionDefinition.ISOLATION_READ_COMMITTED)
+                .equals(TransactionSynchronizationManager.getCurrentTransactionIsolationLevel()))) {
+      throw new IllegalStateException(
+          "New full Draft creation requires one writable READ_COMMITTED source transaction");
+    }
     LocalDateTime createdAt =
         version.getCreatedAt() == null ? LocalDateTime.now() : version.getCreatedAt();
     LocalDateTime updatedAt =
@@ -301,6 +318,21 @@ public class VersionRepository {
       Version inserted = toEntity(record);
       Version persisted = findById(inserted.getId()).orElseThrow();
       requireIssuedIdentityReadback(persisted, inserted.getTenantId(), canonicalVersionId, source);
+      if (persisted.getVersionState() == VersionLifecycleState.DRAFT
+          && !persisted.isScriptOnly()
+          && persisted.getBaseVersionId() == null
+          && persisted.getScriptPatchVersion() == null) {
+        new GameDesignSourceRepository(dsl)
+            .enrollFreshDraft(
+                new TargetProof(
+                    persisted.getCanonicalTenantId(),
+                    persisted.getCanonicalVersionId(),
+                    persisted.getId(),
+                    persisted.getTenantId(),
+                    persisted.getIdentitySourceGameRowId(),
+                    persisted.getIdentitySourceGameTenantKey(),
+                    persisted.getIdentitySourceProvenanceKind()));
+      }
       return persisted;
     }
     dsl.update(VERSION_TABLE)

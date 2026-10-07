@@ -311,6 +311,39 @@ CHECK_STEP = "🧪 Run Gradle Checks"
 ACCOUNT_PUBLICATION_CAPTURE_STEP = "Capture Account publication participation PostgreSQL raw XML"
 ACCOUNT_INTEGRATION_TEST_COMMAND = "./gradlew :account-service:integrationTest"
 GAME_DESIGN_OWNER_STEP = "Run complete Game Design owner component PostgreSQL proof"
+REALM_POLICY_SOURCE_SUITE = "net.firedevops.firemud.gamedesign.draft.RealmPolicySourcePostgresIntegrationTest"
+REALM_POLICY_SOURCE_CASES = (
+    f"{REALM_POLICY_SOURCE_SUITE}#freshGenesisCreatesNoFakeCommitAndFirstActualPolicyCommitReplaysExactly()",
+    f"{REALM_POLICY_SOURCE_SUITE}#incompleteDraftPoliciesCanSynchronizeButCannotBecomePublicationCapture()",
+    f"{REALM_POLICY_SOURCE_SUITE}#retainedVersionUpdateIsNotFreshGenesisAndActualCreationRollbackLeavesNoReceipt()",
+    f"{REALM_POLICY_SOURCE_SUITE}#isolatedSiblingSourceComposesOneOwnerResultAndCommandOnlyFenceInheritsPolicy()",
+    f"{REALM_POLICY_SOURCE_SUITE}#absentBaselineDeniesAndApplicationReplayAndMismatchBindActualCoordinatorResult()",
+    f"{REALM_POLICY_SOURCE_SUITE}#rollbackAndPartialWritesPreserveLastVisibleSourceThenDisjointCommitInheritsExactProvenance()",
+    f"{REALM_POLICY_SOURCE_SUITE}#freezeAndSourceWriterUseSameVersionLockAndRollbackDoesNotLeaveCapture()",
+)
+COMMAND_SOURCE_SUITE = "net.firedevops.firemud.gamedesign.draft.CommandSourcePostgresIntegrationTest"
+COMMAND_SOURCE_CASES = (
+    f"{COMMAND_SOURCE_SUITE}#freshGenesisMixedUpsertRollbackRetryDisjointInheritanceDeleteAndPendingFreeze()",
+    f"{COMMAND_SOURCE_SUITE}#retainedPreSourceVersionIsNotBackfilledAsAnEmptyCommandSet()",
+)
+GAME_DESIGN_SOURCE_SUITE = "net.firedevops.firemud.gamedesign.draft.GameDesignSourcePostgresIntegrationTest"
+GAME_DESIGN_SOURCE_CASES = (
+    f"{GAME_DESIGN_SOURCE_SUITE}#versionInsertSharesGenesisAndPolicyCommandMixedCommitsKeepOneExactOutcome()",
+    f"{GAME_DESIGN_SOURCE_SUITE}#sourceRollbackIncompleteScopesAndPublicationCaptureFailClosed()",
+    f"{GAME_DESIGN_SOURCE_SUITE}#completeSelectedSourcesFreezeTogetherAndExactRetryReadsStoredBytes()",
+)
+SELECTED_COMMAND_SOURCE_BUNDLE_SUITE = "net.firedevops.firemud.gamedesign.draft.SelectedCommandSourceBundlePostgresIntegrationTest"
+SELECTED_COMMAND_SOURCE_BUNDLE_CASES = (
+    f"{SELECTED_COMMAND_SOURCE_BUNDLE_SUITE}#bundleUsesCompleteSelectedCaptureAndRetryKeepsItsOriginalBytesAndIdentity()",
+    f"{SELECTED_COMMAND_SOURCE_BUNDLE_SUITE}#missingCaptureAndOperationSubstitutionDoNotWriteBundle()",
+)
+REALM_POLICY_PUBLICATION_SUITE = "integration.net.firedevops.firemud.gamedesign.publication.RealmPolicyPublicationPostgresIntegrationTest"
+REALM_POLICY_PUBLICATION_CASES = (
+    f"{REALM_POLICY_PUBLICATION_SUITE}#actualSealAssociatesCompleteSetAndReadKeepsOriginalEpochAfterVersionMovement()",
+    f"{REALM_POLICY_PUBLICATION_SUITE}#sealRollbackLeavesNoAssociationAndExactPublicationRetryAllocatesOneStableIdentity()",
+    f"{REALM_POLICY_PUBLICATION_SUITE}#releaseWithoutTypedSourceRemainsValidButMissingCaptureWithSourceFailsClosed()",
+    f"{REALM_POLICY_PUBLICATION_SUITE}#openSetRejectsReplacedSourceAndWrongOrdinalWhileKeepingInheritedProvenance()",
+)
 GAME_TENANT_CREATION_STEP = "Verify Game Design fresh tenant creation PostgreSQL proof"
 GAME_AUTHORED_WORLD_SOURCE_STEP = "Verify Game Design authored-world source PostgreSQL proof"
 GAME_DESIGN_CAPTURE_STEP = "Capture Game Design owner component proof before later test selectors"
@@ -390,6 +423,33 @@ def validate(document) -> None:
         require(re.search(rf"(?m)^\s*{re.escape(service)}\s*$", run) is not None, f"{name} targets the wrong service")
 
     owner = find_step(document, GAME_DESIGN_OWNER_STEP)
+    owner_run = owner.get("run", "")
+    for suite, cases, description in (
+        (COMMAND_SOURCE_SUITE, COMMAND_SOURCE_CASES, "immutable command source"),
+        (GAME_DESIGN_SOURCE_SUITE, GAME_DESIGN_SOURCE_CASES, "immutable Game Design source"),
+        (SELECTED_COMMAND_SOURCE_BUNDLE_SUITE, SELECTED_COMMAND_SOURCE_BUNDLE_CASES, "selected command source bundle"),
+    ):
+        require(owner_run.count(f"--tests {suite}") == 1,
+                f"Game Design owner proof must execute the {description} suite exactly once")
+        require(owner_run.count(f"--require-suite {suite}") == 1,
+                f"Game Design owner proof must require the {description} suite")
+        for case in cases:
+            require(owner_run.count(case) == 1,
+                    f"Game Design owner proof must require exactly one execution of {case}")
+    require(owner_run.count(f"--tests {REALM_POLICY_SOURCE_SUITE}") == 1,
+            "Game Design owner proof must execute the immutable realm-policy source suite exactly once")
+    require(owner_run.count(f"--require-suite {REALM_POLICY_SOURCE_SUITE}") == 1,
+            "Game Design owner proof must require the immutable realm-policy source suite")
+    for case in REALM_POLICY_SOURCE_CASES:
+        require(owner_run.count(case) == 1,
+                f"Game Design owner proof must require exactly one execution of {case}")
+    require(owner_run.count(f"--tests {REALM_POLICY_PUBLICATION_SUITE}") == 1,
+            "Game Design owner proof must execute the published-policy association suite exactly once")
+    require(owner_run.count(f"--require-suite {REALM_POLICY_PUBLICATION_SUITE}") == 1,
+            "Game Design owner proof must require the published-policy association suite")
+    for case in REALM_POLICY_PUBLICATION_CASES:
+        require(owner_run.count(case) == 1,
+                f"Game Design owner proof must require exactly one execution of {case}")
     tenant_creation = find_step(document, GAME_TENANT_CREATION_STEP)
     authored_source = find_step(document, GAME_AUTHORED_WORLD_SOURCE_STEP)
     capture = find_step(document, GAME_DESIGN_CAPTURE_STEP)
@@ -450,6 +510,53 @@ def replace_run(document, step_name: str, old: str, new: str = "") -> None:
 
 
 mutation_must_fail("missing strict mode", lambda doc: replace_run(doc, SOCIAL_STEP, "--strict", "strict"))
+mutation_must_fail(
+    "missing realm-policy source execution",
+    lambda doc: replace_run(doc, GAME_DESIGN_OWNER_STEP, f"--tests {REALM_POLICY_SOURCE_SUITE}", ""),
+)
+mutation_must_fail(
+    "missing realm-policy source suite inspection",
+    lambda doc: replace_run(doc, GAME_DESIGN_OWNER_STEP, f"--require-suite {REALM_POLICY_SOURCE_SUITE}", ""),
+)
+mutation_must_fail(
+    "missing realm-policy source freeze-lock proof",
+    lambda doc: replace_run(doc, GAME_DESIGN_OWNER_STEP, REALM_POLICY_SOURCE_CASES[-1], ""),
+)
+for index, case in enumerate(REALM_POLICY_SOURCE_CASES[:4], start=1):
+    mutation_must_fail(
+        f"missing realm-policy source genesis proof {index}",
+        lambda doc, required_case=case: replace_run(doc, GAME_DESIGN_OWNER_STEP, required_case, ""),
+    )
+for suite, cases, label in (
+    (COMMAND_SOURCE_SUITE, COMMAND_SOURCE_CASES, "command source"),
+    (GAME_DESIGN_SOURCE_SUITE, GAME_DESIGN_SOURCE_CASES, "Game Design source"),
+    (SELECTED_COMMAND_SOURCE_BUNDLE_SUITE, SELECTED_COMMAND_SOURCE_BUNDLE_CASES, "selected command source bundle"),
+):
+    mutation_must_fail(
+        f"missing {label} execution selector",
+        lambda doc, selected_suite=suite: replace_run(doc, GAME_DESIGN_OWNER_STEP, f"--tests {selected_suite}", ""),
+    )
+    mutation_must_fail(
+        f"missing {label} strict suite requirement",
+        lambda doc, selected_suite=suite: replace_run(doc, GAME_DESIGN_OWNER_STEP, f"--require-suite {selected_suite}", ""),
+    )
+    for index, case in enumerate(cases, start=1):
+        mutation_must_fail(
+            f"missing {label} required case {index}",
+            lambda doc, required_case=case: replace_run(doc, GAME_DESIGN_OWNER_STEP, required_case, ""),
+        )
+mutation_must_fail(
+    "missing published-policy association execution",
+    lambda doc: replace_run(doc, GAME_DESIGN_OWNER_STEP, f"--tests {REALM_POLICY_PUBLICATION_SUITE}", ""),
+)
+mutation_must_fail(
+    "missing published-policy rollback proof",
+    lambda doc: replace_run(doc, GAME_DESIGN_OWNER_STEP, REALM_POLICY_PUBLICATION_CASES[1], ""),
+)
+mutation_must_fail(
+    "missing published-policy selected-source row proof",
+    lambda doc: replace_run(doc, GAME_DESIGN_OWNER_STEP, REALM_POLICY_PUBLICATION_CASES[-1], ""),
+)
 mutation_must_fail(
     "missing required suite",
     lambda doc: replace_run(doc, LOGGING_STEP, f"--require-suite {LOGGING_SUITE}", ""),

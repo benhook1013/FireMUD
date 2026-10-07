@@ -27,6 +27,16 @@ import org.jooq.DSLContext;
 public final class IsolatedPublicationOwnerSetup {
   private IsolatedPublicationOwnerSetup() {}
 
+  /** Fixture-only visibility advance; supplied owner authority remains explicitly isolated. */
+  public static void advanceIsolatedVisibility(
+      DSLContext dsl,
+      DraftCommitBinding binding,
+      List<DraftCommitCoordinatorRepository.OwnerOutcome> outcomes) {
+    new DraftCommitCoordinatorRepository(dsl)
+        .advanceVisibilityFence(
+            binding, new DraftCommitCoordinatorRepository.CoordinatorProof(binding, outcomes));
+  }
+
   /**
    * Caller supplies a writable READ_COMMITTED owner transaction and an actual Draft target/epoch.
    */
@@ -37,6 +47,22 @@ public final class IsolatedPublicationOwnerSetup {
 
   public static GameDesignPublicationOperation retain(
       DSLContext dsl, DraftCommitBinding.TargetProof target, long draftEpoch, String notes)
+      throws Exception {
+    return retain(dsl, target, draftEpoch, notes, false);
+  }
+
+  /** Actual source inheritance precedes selection; only the remote owner inputs are isolated. */
+  public static GameDesignPublicationOperation retainSourceBacked(
+      DSLContext dsl, DraftCommitBinding.TargetProof target, long draftEpoch) throws Exception {
+    return retain(dsl, target, draftEpoch, "ISOLATED remote owner transaction proof", true);
+  }
+
+  private static GameDesignPublicationOperation retain(
+      DSLContext dsl,
+      DraftCommitBinding.TargetProof target,
+      long draftEpoch,
+      String notes,
+      boolean captureSources)
       throws Exception {
     var seed = IsolatedPublicationOperationFixtures.fresh(target);
     var draft = seed.account().input().selection().selectedCommit();
@@ -68,8 +94,12 @@ public final class IsolatedPublicationOwnerSetup {
             epochs);
     coordinator.markOwnerInProgress(draft, DraftCommitBinding.Owner.WORLD_MANAGEMENT);
     coordinator.recordOwnerOutcome(draft, outcome);
-    coordinator.advanceVisibilityFence(
-        draft, new DraftCommitCoordinatorRepository.CoordinatorProof(draft, List.of(outcome)));
+    var proof = new DraftCommitCoordinatorRepository.CoordinatorProof(draft, List.of(outcome));
+    if (captureSources) {
+      coordinator.advanceSourceVisibilityFence(draft, proof);
+    } else {
+      coordinator.advanceVisibilityFence(draft, proof);
+    }
     coordinator.releaseApplicationSlot(draft);
     var selection =
         new AuthoredDraftPublishSelectionRepository(dsl, coordinator)

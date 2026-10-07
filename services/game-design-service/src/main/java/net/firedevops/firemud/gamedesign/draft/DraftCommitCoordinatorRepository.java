@@ -24,6 +24,7 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
+import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.stereotype.Repository;
@@ -313,6 +314,23 @@ public class DraftCommitCoordinatorRepository {
     }
     updateWorkflowStateAfterOwnerOutcome(binding, outcome);
     return requireOwnerState(binding, outcome.owner(), false);
+  }
+
+  /**
+   * Canonical source-aware fence handoff. The caller still supplies independently verified owner
+   * proof; both complete source snapshots become visible in this same owner transaction.
+   */
+  @Transactional(propagation = Propagation.MANDATORY, isolation = Isolation.READ_COMMITTED)
+  public VisibilityFence advanceSourceVisibilityFence(
+      DraftCommitBinding binding, CoordinatorProof coordinatorProof) {
+    requireWritableReadCommittedTransaction();
+    var sources = new GameDesignSourceRepository(dsl);
+    if (sources.readGenesis(binding.target()).isEmpty()) {
+      throw new IllegalStateException("GAME_DESIGN_SOURCE_GENESIS_UNAVAILABLE");
+    }
+    VisibilityFence fence = advanceVisibilityFence(binding, coordinatorProof);
+    sources.captureSynchronized(binding);
+    return fence;
   }
 
   /**
