@@ -1,5 +1,6 @@
 package net.firedevops.firemud.accountservice.repository;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -47,7 +48,7 @@ import tools.jackson.databind.json.JsonMapper;
  * owner before it returns the JWT in a redacted typed result.
  */
 @Repository
-public final class AccountGameplayDelegationResponseEnvelopeRepository {
+public class AccountGameplayDelegationResponseEnvelopeRepository {
   private static final String OPERATION_TABLE = "account_gameplay_delegation_issuance_operations";
   private static final String BUNDLE_TABLE = "account_gameplay_delegation_auth_evidence_bundles";
   private static final String RESPONSE_TABLE = "account_gameplay_delegation_response_envelopes";
@@ -69,6 +70,10 @@ public final class AccountGameplayDelegationResponseEnvelopeRepository {
   private final Clock clock;
 
   @Autowired
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification =
+          "Keep fail-fast collaborator preconditions in the delegated constructor; this non-final Spring repository acquires no external resources and does not escape partially initialized.")
   public AccountGameplayDelegationResponseEnvelopeRepository(
       DSLContext dsl,
       AccountAuthoritySourceEvidenceRepository sourceEvidence,
@@ -85,6 +90,10 @@ public final class AccountGameplayDelegationResponseEnvelopeRepository {
   }
 
   /** Compatibility constructor for the existing candidate-sealing component fixtures. */
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification =
+          "Keep fail-fast collaborator preconditions in the delegated constructor; constructing the lightweight owner adds no external resource acquisition or partially initialized escape.")
   public AccountGameplayDelegationResponseEnvelopeRepository(
       DSLContext dsl,
       AccountAuthoritySourceEvidenceRepository sourceEvidence,
@@ -99,6 +108,10 @@ public final class AccountGameplayDelegationResponseEnvelopeRepository {
         Clock.systemUTC());
   }
 
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification =
+          "Keep required collaborator and clock null checks fail-fast; this non-final Spring repository acquires no external resources and does not escape partially initialized.")
   AccountGameplayDelegationResponseEnvelopeRepository(
       DSLContext dsl,
       AccountAuthoritySourceEvidenceRepository sourceEvidence,

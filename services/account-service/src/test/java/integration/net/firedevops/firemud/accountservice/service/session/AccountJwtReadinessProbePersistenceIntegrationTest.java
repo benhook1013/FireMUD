@@ -271,6 +271,20 @@ class AccountJwtReadinessProbePersistenceIntegrationTest {
         inTransaction(
             context, () -> readiness.planCurrent(BINDING, trust, Instant.ofEpochSecond(now)));
     assertThat(retry).isEqualTo(plan);
+    assertThat(retry.planDigest()).isEqualTo(plan.planDigest());
+    assertThat(retry.entries()).containsExactlyElementsOf(plan.entries());
+    assertThat(retry.entries())
+        .extracting(ProbeEntry::tokenProfile)
+        .containsExactly(
+            "account-jwt-readiness-canary",
+            "control-ui",
+            "player-bootstrap",
+            "game-session-account-delegation");
+    ReadinessProbePlan durableReadback =
+        inTransaction(
+            context, () -> readiness.readCurrentPlan(BINDING, trust, result.operationId()));
+    assertThat(durableReadback.planDigest()).isEqualTo(plan.planDigest());
+    assertThat(durableReadback.entries()).containsExactlyElementsOf(plan.entries());
     ReadinessProbePlan exactSnapshotRetry =
         inTransaction(
             context,

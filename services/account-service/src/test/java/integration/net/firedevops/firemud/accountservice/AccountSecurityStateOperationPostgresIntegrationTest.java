@@ -409,7 +409,7 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
   }
 
   @Test
-  void lawfulPrivateFenceAdvanceKeepsLatestSourceEventAndOriginalReceiptUnchanged() {
+  void unownedPrivateFenceAdvanceIsRejectedWithoutChangingSourceOrOriginalReceipt() {
     Fixture fixture = fixture("83");
     Seed seed = seed(fixture);
     Pending pending = pending(fixture, seed, state(false), state(true), 0L, new byte[0]);
@@ -426,17 +426,12 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
             .fetchOne(
                 "SELECT * FROM account_security_state_operations WHERE request_id = ?",
                 pending.request().requestId());
-    ScopeState advanced =
-        tx(
-            fixture,
-            () -> {
-              new AccountRepository(fixture.dsl())
-                  .findByIdForUpdate(seed.account().getId())
-                  .orElseThrow();
-              var source = fixture.generations().read(seed.source().scope());
-              // Fixture-only private-fence CAS follows the existing guarded counters, without a
-              // source advance.
-              assertThat(
+    assertThatThrownBy(
+            () ->
+                tx(
+                    fixture,
+                    () -> {
+                      var source = fixture.generations().read(seed.source().scope());
                       fixture
                           .dsl()
                           .execute(
@@ -445,19 +440,14 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
                                   + "WHERE account_uuid = ? AND issuance_fence = ? AND source_version = ?",
                               seed.account().getAccountUuid(),
                               source.issuanceFence().value(),
-                              source.issuanceFence().sourceVersion()))
-                  .isEqualTo(1);
-              return fixture.generations().read(seed.source().scope());
-            });
+                              source.issuanceFence().sourceVersion());
+                      return null;
+                    }))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class)
+        .hasMessageContaining("Account issuance fence advance lacks exact owner source evidence");
     var snapshot = sourceReader(fixture).readCurrent(seed.account().getAccountUuid());
     assertThat(snapshot.latestEvent()).contains(event);
-    assertThat(snapshot.sourceState()).isEqualTo(advanced);
-    assertThat(advanced.generation())
-        .isEqualTo(original.receipt().orElseThrow().sourceState().generation());
-    assertThat(advanced.sourceVersion())
-        .isEqualTo(original.receipt().orElseThrow().sourceState().sourceVersion());
-    assertThat(advanced.issuanceFence().value())
-        .isEqualTo(original.receipt().orElseThrow().sourceState().issuanceFence().value() + 1);
+    assertThat(snapshot.sourceState()).isEqualTo(original.receipt().orElseThrow().sourceState());
     var retained =
         tx(
             fixture,

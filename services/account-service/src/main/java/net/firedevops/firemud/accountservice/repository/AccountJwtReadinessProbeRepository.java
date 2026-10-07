@@ -7,6 +7,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -830,29 +831,37 @@ public class AccountJwtReadinessProbeRepository {
     String matrixDigest = sha256(matrixJson.getBytes(StandardCharsets.UTF_8));
     List<ProbeEntry> entries =
         List.of(
-            newEntry(
-                current, ProbeKind.CANARY, CANARY_PROFILE, CANARY_AUDIENCE, notBefore, expiresAt),
-            newEntry(
-                current,
-                ProbeKind.REPRESENTATIVE,
-                CONTROL_UI_PROFILE,
-                CONTROL_UI_AUDIENCE,
-                notBefore,
-                expiresAt),
-            newEntry(
-                current,
-                ProbeKind.REPRESENTATIVE,
-                PLAYER_BOOTSTRAP_PROFILE,
-                PLAYER_BOOTSTRAP_AUDIENCE,
-                notBefore,
-                expiresAt),
-            newEntry(
-                current,
-                ProbeKind.REPRESENTATIVE,
-                REPRESENTATIVE_PROFILE,
-                REPRESENTATIVE_AUDIENCE,
-                notBefore,
-                expiresAt));
+                newEntry(
+                    current,
+                    ProbeKind.CANARY,
+                    CANARY_PROFILE,
+                    CANARY_AUDIENCE,
+                    notBefore,
+                    expiresAt),
+                newEntry(
+                    current,
+                    ProbeKind.REPRESENTATIVE,
+                    CONTROL_UI_PROFILE,
+                    CONTROL_UI_AUDIENCE,
+                    notBefore,
+                    expiresAt),
+                newEntry(
+                    current,
+                    ProbeKind.REPRESENTATIVE,
+                    PLAYER_BOOTSTRAP_PROFILE,
+                    PLAYER_BOOTSTRAP_AUDIENCE,
+                    notBefore,
+                    expiresAt),
+                newEntry(
+                    current,
+                    ProbeKind.REPRESENTATIVE,
+                    REPRESENTATIVE_PROFILE,
+                    REPRESENTATIVE_AUDIENCE,
+                    notBefore,
+                    expiresAt))
+            .stream()
+            .sorted(PROBE_ENTRY_ORDER)
+            .toList();
     String planDigest =
         planDigest(
             current,
@@ -1087,7 +1096,15 @@ public class AccountJwtReadinessProbeRepository {
         dsl.fetch(
             "SELECT * FROM "
                 + ENTRY_TABLE
-                + " WHERE rotation_operation_id = ? ORDER BY validator_id, token_profile, audience, probe_kind"
+                + " WHERE rotation_operation_id = ? ORDER BY validator_id, CASE token_profile WHEN '"
+                + CANARY_PROFILE
+                + "' THEN 0 WHEN '"
+                + CONTROL_UI_PROFILE
+                + "' THEN 1 WHEN '"
+                + PLAYER_BOOTSTRAP_PROFILE
+                + "' THEN 2 WHEN '"
+                + REPRESENTATIVE_PROFILE
+                + "' THEN 3 ELSE 4 END, token_profile, audience, probe_kind"
                 + (lock ? " FOR UPDATE" : ""),
             operationId);
     List<ProbeEntry> entries = new ArrayList<>(rows.size());
@@ -1095,6 +1112,25 @@ public class AccountJwtReadinessProbeRepository {
       entries.add(decodeEntry(row));
     }
     return List.copyOf(entries);
+  }
+
+  // Keep the candidate's digest/equality order identical to the durable key order. If a future
+  // schema adds identity dimensions (for example Pod membership), append them to both this
+  // comparator and SELECT's ORDER BY; V1 plans retain their existing tuple and digest semantics.
+  private static final Comparator<ProbeEntry> PROBE_ENTRY_ORDER =
+      Comparator.comparing(ProbeEntry::validatorId)
+          // V1 plan digests bind the established tuple order. Keep it explicit and shared with
+          // durable readback while appending any future identity dimensions consistently.
+          .thenComparingInt(entry -> profileOrder(entry.tokenProfile()))
+          .thenComparing(ProbeEntry::audience)
+          .thenComparing(entry -> entry.probeKind().name());
+
+  private static int profileOrder(String profile) {
+    if (CANARY_PROFILE.equals(profile)) return 0;
+    if (CONTROL_UI_PROFILE.equals(profile)) return 1;
+    if (PLAYER_BOOTSTRAP_PROFILE.equals(profile)) return 2;
+    if (REPRESENTATIVE_PROFILE.equals(profile)) return 3;
+    throw new QuarantinedStateException("Readiness probe profile has no canonical plan order");
   }
 
   private ProbeEntry selectEntry(

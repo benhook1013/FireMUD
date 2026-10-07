@@ -64,6 +64,13 @@ import org.jooq.Record;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.aop.framework.ProxyFactory;
+import org.springframework.aop.support.AopUtils;
+import org.springframework.transaction.IllegalTransactionStateException;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource;
+import org.springframework.transaction.interceptor.TransactionInterceptor;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -81,6 +88,32 @@ class AccountGameplayDelegationResponseEnvelopeRepositoryTest {
   @AfterEach
   void clearTransactionContext() {
     TransactionSynchronizationManager.clear();
+  }
+
+  @Test
+  void repositorySupportsSpringClassProxyForTransactionalInstrumentation() throws Exception {
+    Fixture fixture = fixture(NOW);
+    PlatformTransactionManager transactionManager = mock(PlatformTransactionManager.class);
+    when(transactionManager.getTransaction(any()))
+        .thenThrow(new IllegalTransactionStateException("No existing transaction"));
+
+    ProxyFactory proxyFactory = new ProxyFactory(fixture.repository());
+    proxyFactory.setProxyTargetClass(true);
+    proxyFactory.addAdvice(
+        new TransactionInterceptor(transactionManager, new AnnotationTransactionAttributeSource()));
+
+    AccountGameplayDelegationResponseEnvelopeRepository proxiedRepository =
+        (AccountGameplayDelegationResponseEnvelopeRepository) proxyFactory.getProxy();
+
+    assertThat(AopUtils.isCglibProxy(proxiedRepository)).isTrue();
+    assertThatThrownBy(() -> proxiedRepository.preflightCommittedRecovery(null, null, null))
+        .isInstanceOf(IllegalTransactionStateException.class);
+    ArgumentCaptor<TransactionDefinition> definition =
+        ArgumentCaptor.forClass(TransactionDefinition.class);
+    verify(transactionManager).getTransaction(definition.capture());
+    assertThat(definition.getValue().getPropagationBehavior())
+        .isEqualTo(TransactionDefinition.PROPAGATION_MANDATORY);
+    verifyNoInteractions(fixture.dsl());
   }
 
   @Test

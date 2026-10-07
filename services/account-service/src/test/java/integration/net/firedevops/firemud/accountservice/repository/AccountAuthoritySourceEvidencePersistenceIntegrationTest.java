@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -351,13 +353,13 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
                     account.getAccountUuid())
                 .intoMaps())
         .isEqualTo(sourceRowsBeforeLifecycleRejection);
-    assertThat(
-            dsl.fetch(
-                    "SELECT * FROM account_authority_outbox_events WHERE outbox_stream_key = ? "
-                        + "ORDER BY outbox_sequence",
-                    streamKey)
-                .intoMaps())
-        .isEqualTo(outboxRowsBeforeLifecycleRejection);
+    assertOutboxRowsEqual(
+        outboxRowsBeforeLifecycleRejection,
+        dsl.fetch(
+                "SELECT * FROM account_authority_outbox_events WHERE outbox_stream_key = ? "
+                    + "ORDER BY outbox_sequence",
+                streamKey)
+            .intoMaps());
     var absentLifecycleEvent = transaction.execute(status -> outbox.findEvent(streamKey, 3L));
     assertThat(absentLifecycleEvent).isEmpty();
     assertThatThrownBy(
@@ -380,6 +382,26 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
                             account.getAccountUuid())))
         .isInstanceOf(DataAccessException.class);
     assertThat(accounts.findByAccountUuid(account.getAccountUuid())).isPresent();
+  }
+
+  private static void assertOutboxRowsEqual(
+      List<Map<String, Object>> expected, List<Map<String, Object>> actual) {
+    assertThat(actual).hasSize(expected.size());
+    for (int index = 0; index < expected.size(); index++) {
+      Map<String, Object> expectedRow = expected.get(index);
+      Map<String, Object> actualRow = actual.get(index);
+      assertThat(actualRow.keySet()).isEqualTo(expectedRow.keySet());
+      for (Map.Entry<String, Object> entry : expectedRow.entrySet()) {
+        String field = entry.getKey();
+        Object expectedValue = entry.getValue();
+        Object actualValue = actualRow.get(field);
+        if ("payload".equals(field)) {
+          assertThat((byte[]) actualValue).containsExactly((byte[]) expectedValue);
+        } else {
+          assertThat(actualValue).isEqualTo(expectedValue);
+        }
+      }
+    }
   }
 
   @Test

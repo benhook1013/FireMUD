@@ -113,15 +113,8 @@ class AccountGameplayDelegationResponseEnvelopePersistenceIntegrationTest {
     AccountAuthorityOutboxRepository outbox = new AccountAuthorityOutboxRepository(dsl);
     AccountAuthoritySourceEvidenceRepository sourceEvidence =
         new AccountAuthoritySourceEvidenceRepository(dsl, authorities, outbox);
-    inTransaction(
-        context,
-        () -> {
-          AccountRepository accounts = new AccountRepository(dsl, sourceEvidence);
-          Account account = accounts.findByAccountUuid(accountId).orElseThrow();
-          account.setRole("moderator");
-          accounts.save(account);
-          return null;
-        });
+    AccountGameplayDelegationIssuancePersistenceIntegrationTest.advanceEmailVerifiedThroughOwner(
+        dsl, context.transaction(), sourceEvidence, accountId);
     AccountGameplayDelegationIssuanceRepository issuance =
         new AccountGameplayDelegationIssuanceRepository(dsl, sourceEvidence);
     IssuerAccountSourceSnapshot authority = currentSnapshot(context, sourceEvidence, accountId);

@@ -45,15 +45,23 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.crypto.spec.SecretKeySpec;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.SourceEvidence;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceBinding.SourceKind;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.SourceChange;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayTokenIdentityFence.State;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayTokenIdentityFence.TokenIdentity;
+import net.firedevops.firemud.accountservice.dto.AccountSecurityStateMutationRequest;
 import net.firedevops.firemud.accountservice.dto.CanonicalGameplayLoginRequest;
 import net.firedevops.firemud.accountservice.dto.GameplayCredentialSourceContext;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge;
+import net.firedevops.firemud.accountservice.entity.AccountLoginAuthModes;
 import net.firedevops.firemud.accountservice.repository.AccountAuthEvidenceBundleRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Event;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.EventEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository.IssuerAccountSourceSnapshot;
 import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
@@ -70,6 +78,8 @@ import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegatio
 import net.firedevops.firemud.accountservice.repository.AccountGameplayTokenIdentityFenceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayTokenIdentityFenceRepository.TokenRevokedException;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
+import net.firedevops.firemud.accountservice.repository.AccountSecurityStateOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountSecurityStateOperationRepository.Capture;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayCanonicalLoginOwner;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayCredentialRequestDigestKeySource;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayCredentialRequestDigestKeySource.CredentialDigestKey;
@@ -89,6 +99,8 @@ import net.firedevops.firemud.accountservice.service.session.AccountResponseEnve
 import net.firedevops.firemud.accountservice.service.session.AccountResponseEnvelopeCryptography.Binding;
 import net.firedevops.firemud.accountservice.service.session.AccountResponseEnvelopeCryptography.EncryptedResponseEnvelope;
 import net.firedevops.firemud.accountservice.service.session.AccountResponseEnvelopeKeyring;
+import net.firedevops.firemud.common.account.authority.AccountSecurityStateAuthorityEventV1Codec;
+import net.firedevops.firemud.common.account.authority.AccountSecurityStateAuthorityEventV1Codec.AccountState;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
@@ -634,15 +646,7 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("token identity may be bound exactly once");
 
-    inTransaction(
-        context,
-        () -> {
-          AccountRepository accounts = new AccountRepository(dsl, sources);
-          Account account = accounts.findByAccountUuid(accountId).orElseThrow();
-          account.setRole("moderator");
-          accounts.save(account);
-          return null;
-        });
+    advanceEmailVerifiedThroughOwner(dsl, context.transaction(), sources, accountId);
     assertThatThrownBy(() -> inTransaction(context, () -> repository.beginPending(firstIntent)))
         .isInstanceOf(StaleAuthorityException.class);
     assertThatThrownBy(
@@ -1304,15 +1308,6 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
         new AccountAuthoritySourceEvidenceRepository(dsl, authorities, outbox);
     AccountAuthEvidenceBundleRepository bundles =
         new AccountAuthEvidenceBundleRepository(dsl, authorities, outbox);
-    inTransaction(
-        context,
-        () -> {
-          AccountRepository accounts = new AccountRepository(dsl, sources);
-          Account persistedAccount = accounts.findByAccountUuid(accountId).orElseThrow();
-          persistedAccount.setRole("moderator");
-          accounts.save(persistedAccount);
-          return null;
-        });
     IssuerAccountSourceSnapshot snapshot = currentSnapshot(context, sources, accountId);
     CanonicalGameplayLoginRequest loginRequest = null;
     PendingIntent pending;
@@ -1397,15 +1392,7 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
           case WITHDRAW_SIGNER_TRUST -> signerFixture::withdrawTrust;
           case ADVANCE_ACCOUNT_AFTER_PROJECTION ->
               () ->
-                  inTransaction(
-                      context,
-                      () -> {
-                        AccountRepository accounts = new AccountRepository(dsl, sources);
-                        Account changed = accounts.findByAccountUuid(accountId).orElseThrow();
-                        changed.setEmailVerified(true);
-                        accounts.save(changed);
-                        return null;
-                      });
+                  advanceEmailVerifiedThroughOwner(dsl, context.transaction(), sources, accountId);
         });
 
     RedisHarness redis =
@@ -1503,12 +1490,17 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
   }
 
   private static Account createAccount(TestContext context) {
+    return createAccount(context, "PASSWORD");
+  }
+
+  private static Account createAccount(TestContext context, String loginAuthModes) {
     Account account = new Account();
     String suffix = UUID.randomUUID().toString().replace("-", "");
     account.setUsername("delegation-" + suffix);
     account.setEmail("delegation-" + UUID.randomUUID() + "@example.test");
     account.setPasswordHash("integration-test-hash");
     account.setRole("player");
+    account.setLoginAuthModes(loginAuthModes);
     DSLContext dsl = context.dsl();
     AccountAuthorityGenerationRepository authorities =
         new AccountAuthorityGenerationRepository(dsl);
@@ -1525,15 +1517,147 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
 
   private static Account createEmailOtpAccount(
       TestContext context, AccountAuthoritySourceEvidenceRepository sourceEvidence) {
-    Account created = createAccount(context);
-    AccountRepository accounts = new AccountRepository(context.dsl(), sourceEvidence);
-    return inTransaction(
-        context,
-        () -> {
-          Account account = accounts.findByAccountUuid(created.getAccountUuid()).orElseThrow();
-          account.setLoginAuthModes("EMAIL_OTP");
-          return accounts.save(account);
+    return createAccount(context, "EMAIL_OTP");
+  }
+
+  /** Test-only owner transaction using the retained closed operation/source receipt protocol. */
+  static void advanceEmailVerifiedThroughOwner(
+      DSLContext dsl,
+      TransactionTemplate transaction,
+      AccountAuthoritySourceEvidenceRepository sources,
+      UUID accountUuid) {
+    AccountAuthorityOutboxRepository outbox = new AccountAuthorityOutboxRepository(dsl);
+    AccountSecurityStateOperationRepository operations =
+        new AccountSecurityStateOperationRepository(dsl);
+    DraftAuthorizationFenceRepository fences = new DraftAuthorizationFenceRepository(dsl);
+    transaction.execute(
+        status -> {
+          Account account =
+              new AccountRepository(dsl, sources).findByAccountUuid(accountUuid).orElseThrow();
+          var source =
+              sources.readCurrentIssuerAccountSources(ACCOUNT_ISSUER, accountUuid).account();
+          var roleRow =
+              Objects.requireNonNull(
+                  dsl.fetchOne(
+                      "SELECT global_roles, global_role_source_version "
+                          + "FROM account_global_role_sources WHERE account_uuid = ? FOR SHARE",
+                      accountUuid));
+          long roleVersion = roleRow.get("global_role_source_version", Long.class);
+          AccountState before =
+              new AccountState(
+                  account.isEmailVerified(),
+                  AccountLoginAuthModes.read(account.getLoginAuthModes()).stream()
+                      .map(Enum::name)
+                      .sorted()
+                      .toList(),
+                  java.util.Arrays.stream(roleRow.get("global_roles", String[].class))
+                      .sorted()
+                      .toList(),
+                  account.getLifecycleState().name());
+          AccountState after =
+              new AccountState(
+                  true, before.loginAuthModes(), before.globalRoles(), before.lifecycleState());
+          if (before.emailVerified())
+            throw new IllegalStateException("Fixture expected unverified Account");
+          UUID requestId = UUID.randomUUID();
+          AccountSecurityStateMutationRequest request =
+              new AccountSecurityStateMutationRequest(
+                  requestId,
+                  accountUuid,
+                  securityStateCorrelation(accountUuid, requestId),
+                  source.generation(),
+                  source.sourceVersion(),
+                  AccountSecurityStateOperationRepository.detectedKinds(before, after),
+                  after);
+          long checkpointSequence = source.checkpoint().sequence();
+          byte[] checkpointPayload =
+              checkpointSequence == 0L
+                  ? new byte[0]
+                  : outbox
+                      .findEvent(accountStream(accountUuid), checkpointSequence)
+                      .orElseThrow()
+                      .payload();
+          Capture draft =
+              new Capture(
+                  account.getId(),
+                  account.getAccountUuidProvenance(),
+                  before,
+                  new AccountAuthorityGenerationRepository.ScopeState(
+                      source.scope(),
+                      source.generation(),
+                      source.sourceVersion(),
+                      source.issuanceFence()),
+                  checkpointSequence,
+                  checkpointPayload,
+                  roleVersion,
+                  null);
+          byte[] captureBytes =
+              AccountSecurityStateOperationRepository.captureBytes(request, draft);
+          SourceEvidence sourceEvidence =
+              new SourceEvidence(
+                  SourceKind.ACCOUNT,
+                  accountUuid.toString(),
+                  Long.toString(source.generation()),
+                  Long.toString(source.sourceVersion()),
+                  accountStream(accountUuid),
+                  Long.toString(checkpointSequence),
+                  captureBytes);
+          SourceChange change =
+              new SourceChange(UUID.randomUUID(), List.of(sourceEvidence), captureBytes);
+          Capture capture =
+              new Capture(
+                  draft.accountId(),
+                  draft.provenance(),
+                  before,
+                  draft.sourceState(),
+                  checkpointSequence,
+                  checkpointPayload,
+                  roleVersion,
+                  change);
+          fences.requestSourceChange(change);
+          if (!fences.sourceMutationPermitted(change))
+            throw new IllegalStateException("Fixture owner source is not settled");
+          operations.claim(request, capture);
+          var advanced = sources.prepareClosedAccountAdvance(accountUuid, source);
+          dsl.execute(
+              "UPDATE accounts SET email_verified = TRUE WHERE account_uuid = ?", accountUuid);
+          Event event =
+              outbox.append(
+                  accountStream(accountUuid),
+                  requestId.toString(),
+                  sequence -> {
+                    var sealed =
+                        AccountSecurityStateAuthorityEventV1Codec.seal(
+                            AccountSecurityStateMutationRequest.eventPreimage(
+                                requestId,
+                                accountUuid,
+                                Long.toString(advanced.generation()),
+                                Long.toString(advanced.sourceVersion()),
+                                Long.toString(sequence),
+                                request.mutationKinds(),
+                                after));
+                    return new EventEvidence(
+                        sealed.eventId(), sealed.eventDigest(), sealed.canonicalJsonUtf8());
+                  });
+          fences.markSourceCommitted(change);
+          operations.complete(request, event, advanced, roleVersion);
+          return null;
         });
+  }
+
+  private static byte[] securityStateCorrelation(UUID accountUuid, UUID operationId) {
+    return ("{\"actorAccountUuid\":\""
+            + accountUuid
+            + "\",\"ownerEvidenceDigest\":\"sha256:"
+            + "a".repeat(64)
+            + "\",\"ownerOperationId\":\""
+            + operationId
+            + "\",\"schemaVersion\":\"account-security-state-caller-correlation/v1\"}")
+        .getBytes(StandardCharsets.UTF_8);
+  }
+
+  private static String accountStream(UUID accountUuid) {
+    return "account:auth-authority:v1:account/" + accountUuid;
   }
 
   private static AccountEmailLoginChallenge persistEmailLoginChallenge(
