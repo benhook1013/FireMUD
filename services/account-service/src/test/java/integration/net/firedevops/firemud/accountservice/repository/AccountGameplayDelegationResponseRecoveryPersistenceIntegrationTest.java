@@ -290,7 +290,7 @@ class AccountGameplayDelegationResponseRecoveryPersistenceIntegrationTest {
     account.setUsername("recovery-" + suffix);
     account.setEmail("recovery-" + UUID.randomUUID() + "@example.test");
     account.setPasswordHash("integration-test-hash");
-    account.setRole("player");
+    // The fresh Account birth path creates the exact empty global-role source only for null role.
     return inTransaction(
             context,
             () -> {

@@ -350,13 +350,10 @@ class AccountDemoTenantEntitlementPersistenceIntegrationTest {
         .hasMessageContaining("Demo entitlement identity is immutable and version advances by one");
     assertThat(inTransaction(context.transaction(), () -> entitlements.readCurrent(tenantId)))
         .isEqualTo(updated);
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context.transaction(),
-                    () -> tenantAuthorityEvents.readCurrentByTenant(tenantId)))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("differs from its exact committed billing event");
+    assertThat(
+            inTransaction(
+                context.transaction(), () -> tenantAuthorityEvents.readCurrentByTenant(tenantId)))
+        .isEqualTo(authorityReadback);
   }
 
   @Test

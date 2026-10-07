@@ -256,15 +256,16 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
         .isInstanceOf(
             AccountGameplayDelegationIssuanceRepository.IdempotencyConflictException.class);
 
-    assertThat(
+    Record operationCount =
+        Objects.requireNonNull(
             context
                 .dsl()
                 .fetchOne(
                     "SELECT count(*) FROM account_gameplay_delegation_issuance_operations "
                         + "WHERE request_id = ?",
-                    Long.class,
-                    requestId))
-        .isEqualTo(1L);
+                    requestId),
+            "Operation count query must return a row");
+    assertThat(operationCount.get(0, Long.class)).isEqualTo(1L);
   }
 
   @Test
@@ -528,15 +529,16 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
         actualChallenges.findByAccountId(account.getId()).orElseThrow();
     assertThat(restored.getId()).isEqualTo(challenge.getId());
     assertThat(restored.getCodeHash()).isEqualTo(challenge.getCodeHash());
-    assertThat(
+    Record operationCount =
+        Objects.requireNonNull(
             context
                 .dsl()
                 .fetchOne(
                     "SELECT count(*) FROM account_gameplay_delegation_issuance_operations "
                         + "WHERE request_id = ?",
-                    Long.class,
-                    requestId))
-        .isEqualTo(0L);
+                    requestId),
+            "Operation count query must return a row");
+    assertThat(operationCount.get(0, Long.class)).isEqualTo(0L);
     assertThat(harness.redis().registeredRecord()).isNull();
   }
 
@@ -1499,7 +1501,7 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
     account.setUsername("delegation-" + suffix);
     account.setEmail("delegation-" + UUID.randomUUID() + "@example.test");
     account.setPasswordHash("integration-test-hash");
-    account.setRole("player");
+    // The fresh Account birth path creates the exact empty global-role source only for null role.
     account.setLoginAuthModes(loginAuthModes);
     DSLContext dsl = context.dsl();
     AccountAuthorityGenerationRepository authorities =
@@ -1940,14 +1942,34 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
             authority.accountSourceVersion(),
             authority.issuanceFence(),
             authority.issuanceFenceSourceVersion(),
-            canonicalBytes(
-                GameSessionAccountDelegationProfile.authorityTuple(
-                    authority.issuerGeneration(),
-                    authority.accountGeneration(),
-                    authority.accountSecurityCutoff())),
+            canonicalBytes(legacyNumericAuthorityTuple(authority)),
             canonicalBytes(Map.of()),
-            canonicalBytes(authority.sourceVersions()));
+            canonicalBytes(legacyNumericSourceVersions(authority)));
     assertThat(inserted).isEqualTo(1);
+  }
+
+  /**
+   * V78's historical SQL guard expected JSON numeric generations before the V84 string contract.
+   */
+  private static Map<String, Object> legacyNumericAuthorityTuple(
+      AccountAuthoritySnapshot authority) {
+    Map<String, Object> tuple =
+        new LinkedHashMap<>(
+            GameSessionAccountDelegationProfile.authorityTuple(
+                authority.issuerGeneration(),
+                authority.accountGeneration(),
+                authority.accountSecurityCutoff()));
+    tuple.put("accountAuthorityGeneration", authority.accountGeneration());
+    tuple.put("issuerAuthGeneration", authority.issuerGeneration());
+    return tuple;
+  }
+
+  private static Map<String, Object> legacyNumericSourceVersions(
+      AccountAuthoritySnapshot authority) {
+    return Map.of(
+        "accountSourceVersion", authority.accountSourceVersion(),
+        "issuanceFenceSourceVersion", authority.issuanceFenceSourceVersion(),
+        "issuerSourceVersion", authority.issuerSourceVersion());
   }
 
   private static void writeTestKeyring(Path root) throws Exception {

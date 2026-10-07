@@ -1,5 +1,6 @@
 package net.firedevops.firemud.accountservice.service.session;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationResponseEnvelopeRepository;
@@ -17,9 +18,15 @@ import org.springframework.transaction.annotation.Transactional;
  * non-authorizing metadata observation for the owning issuance workflow.
  */
 @Service
-public final class AccountGameplayDelegationResponseEnvelopeService {
+public class AccountGameplayDelegationResponseEnvelopeService {
   private final AccountGameplayDelegationResponseEnvelopeRepository responseEnvelopes;
 
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification =
+          "Spring transaction proxies require an extensible service; this constructor retains only"
+              + " a repository reference, with no sensitive or native partially initialized"
+              + " resources or finalizer")
   public AccountGameplayDelegationResponseEnvelopeService(
       AccountGameplayDelegationResponseEnvelopeRepository responseEnvelopes) {
     this.responseEnvelopes =

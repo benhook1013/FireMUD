@@ -370,6 +370,8 @@ class AccountJwtReadinessProbePersistenceIntegrationTest {
     int[] transientDeliveries = {0};
     String[] transientFailurePayload = {null};
     String[] safeDeliveryStage = {"NOT_STARTED"};
+    String[] safeDeliveryProfile = {"NOT_STARTED"};
+    String[] safeValidationFailure = {"NONE"};
     Map<String, byte[]> transientProbeBytes = new LinkedHashMap<>();
     AccountJwtReadinessProbeService earlyService =
         new AccountJwtReadinessProbeService(
@@ -436,6 +438,7 @@ class AccountJwtReadinessProbePersistenceIntegrationTest {
         (metadata, exactCompactJwt) -> {
           transientDeliveries[0]++;
           safeDeliveryStage[0] = "CALLBACK_REACHED";
+          safeDeliveryProfile[0] = metadata.tokenProfile();
           assertThat(exactCompactJwt).isNotEmpty().hasSizeLessThan(16 * 1024);
           assertThat(sha256(exactCompactJwt)).isEqualTo(metadata.compactTokenSha256());
           assertThat(transientProbeBytes.put(metadata.tokenProfile(), exactCompactJwt)).isNull();
@@ -488,8 +491,13 @@ class AccountJwtReadinessProbePersistenceIntegrationTest {
           assertThat(issuedBeforeCallback.compactTokenSha256())
               .contains(metadata.compactTokenSha256());
           safeDeliveryStage[0] = "ISSUED_READBACK_CONFIRMED";
-          VerificationReceipt verification =
-              validator.validate(issuedBeforeCallback, exactCompactJwt);
+          VerificationReceipt verification;
+          try {
+            verification = validator.validate(issuedBeforeCallback, exactCompactJwt);
+          } catch (RuntimeException validationFailure) {
+            safeValidationFailure[0] = validationFailure.getClass().getSimpleName();
+            throw validationFailure;
+          }
           assertThat(verification.verifiedKid()).isEqualTo(issuedBeforeCallback.targetKid());
           assertThat(verification.validatorInstanceId()).isEqualTo(validator.validatorInstanceId());
           assertThat(verification.validatorBindingDigest()).isEqualTo(validator.readinessDigest());
@@ -534,7 +542,11 @@ class AccountJwtReadinessProbePersistenceIntegrationTest {
             failure -> {
               assertThat(failure.getCause()).isNull();
               assertThat(failure.getSuppressed()).isEmpty();
-              assertThat(safeDeliveryStage[0]).isEqualTo("GSA_TRANSPORT_INTERRUPTION_ARMED");
+              assertThat(safeDeliveryStage[0])
+                  .as(
+                      "Readiness delivery stage for profile %s (validator failure: %s)",
+                      safeDeliveryProfile[0], safeValidationFailure[0])
+                  .isEqualTo("GSA_TRANSPORT_INTERRUPTION_ARMED");
               assertThat(transientFailurePayload[0]).isNotNull();
               assertThat(failure.toString().contains(transientFailurePayload[0])).isFalse();
             });

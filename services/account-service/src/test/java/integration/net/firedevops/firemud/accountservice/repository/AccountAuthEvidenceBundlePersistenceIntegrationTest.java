@@ -242,7 +242,7 @@ class AccountAuthEvidenceBundlePersistenceIntegrationTest {
     account.setUsername("auth-bundle-" + suffix);
     account.setEmail("auth-bundle-" + UUID.randomUUID() + "@example.test");
     account.setPasswordHash("integration-test-hash");
-    account.setRole("player");
+    // The fresh Account birth path creates the exact empty global-role source only for null role.
     DSLContext dsl = context.dsl();
     AccountAuthorityGenerationRepository authorities =
         new AccountAuthorityGenerationRepository(dsl);

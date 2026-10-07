@@ -386,7 +386,7 @@ class AccountGameplayDelegationResponseEnvelopePersistenceIntegrationTest {
     account.setUsername("response-envelope-" + suffix);
     account.setEmail("response-envelope-" + UUID.randomUUID() + "@example.test");
     account.setPasswordHash("integration-test-hash");
-    account.setRole("player");
+    // The fresh Account birth path creates the exact empty global-role source only for null role.
     DSLContext dsl = context.dsl();
     AccountAuthorityGenerationRepository authorities =
         new AccountAuthorityGenerationRepository(dsl);

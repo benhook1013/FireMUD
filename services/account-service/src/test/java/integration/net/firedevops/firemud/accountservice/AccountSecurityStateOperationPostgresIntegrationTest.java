@@ -443,7 +443,8 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
                               source.issuanceFence().sourceVersion());
                       return null;
                     }))
-        .isInstanceOf(org.jooq.exception.DataAccessException.class)
+        .rootCause()
+        .isInstanceOf(org.postgresql.util.PSQLException.class)
         .hasMessageContaining("Account issuance fence advance lacks exact owner source evidence");
     var snapshot = sourceReader(fixture).readCurrent(seed.account().getAccountUuid());
     assertThat(snapshot.latestEvent()).contains(event);
