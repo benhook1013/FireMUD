@@ -302,12 +302,13 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
         .isInstanceOf(AccountLifecyclePendingDenialReader.PendingOperationException.class)
         .hasMessage("Account lifecycle invalidation is unresolved for this Account and tenant");
     assertThat(
-            fixture.dsl.fetchValue(
-                "SELECT status FROM account_lifecycle_serving_operations "
-                    + "WHERE account_uuid = ? AND tenant_uuid = ?",
-                String.class,
-                fixture.account.getAccountUuid(),
-                fixture.tenantUuid))
+            Objects.requireNonNull(
+                    fixture.dsl.fetchOne(
+                        "SELECT status FROM account_lifecycle_serving_operations "
+                            + "WHERE account_uuid = ? AND tenant_uuid = ?",
+                        fixture.account.getAccountUuid(),
+                        fixture.tenantUuid))
+                .get(0, String.class))
         .isEqualTo(status);
 
     assertThat(fixture.count("account_tenant_membership", "tenant_uuid", fixture.tenantUuid))
