@@ -158,6 +158,7 @@ jobs:
           persist-credentials: false
 
       - name: Preserve successful required gate on metadata-only edit
+        id: preserved_gate
         if: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null }}
         uses: ./.github/actions/preserve-required-gate
         with:
@@ -165,6 +166,12 @@ jobs:
           workflow-name: Security Gate
           workflow-file: security.yml
           workflow-path: .github/workflows/security.yml
+
+      - name: Report dependency-deferred required gate
+        if: ${{ steps.preserved_gate.outputs.assessment == 'dependency-deferred' }}
+        run: |
+          echo "Original required-gate proof is pending; dependency-deferred failure." >&2
+          exit 1
 
       - name: Enforce security success
         if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}

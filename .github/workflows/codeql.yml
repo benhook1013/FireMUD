@@ -230,6 +230,7 @@ jobs:
           persist-credentials: false
 
       - name: Preserve successful required gate on metadata-only edit
+        id: preserved_gate
         if: ${{ github.event.action == 'edited' && github.event.changes.base.ref == null }}
         uses: ./.github/actions/preserve-required-gate
         with:
@@ -237,6 +238,12 @@ jobs:
           workflow-name: CodeQL Analysis
           workflow-file: codeql.yml
           workflow-path: .github/workflows/codeql.yml
+
+      - name: Report dependency-deferred required gate
+        if: ${{ steps.preserved_gate.outputs.assessment == 'dependency-deferred' }}
+        run: |
+          echo "Original required-gate proof is pending; dependency-deferred failure." >&2
+          exit 1
 
       - name: Enforce successful CodeQL analysis
         if: ${{ github.event.action != 'edited' || github.event.changes.base.ref != null }}
