@@ -205,7 +205,7 @@ class VersionAssetExportCandidateServiceIntegrationTest {
   void retainedNullCandidateFieldsRemainAbsentAcrossV38WithoutReadInference() {
     Fixture fixture = fixture(V37);
     Game game = saveGame(fixture, "candidate-retained-owner");
-    Version version = saveVersion(fixture, game, 1);
+    Version version = insertRetainedVersion(fixture, game, 1);
     GameAsset asset =
         saveAsset(
             fixture,
@@ -422,6 +422,8 @@ class VersionAssetExportCandidateServiceIntegrationTest {
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
     DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
     TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
+    transactionTemplate.setIsolationLevel(
+        org.springframework.transaction.TransactionDefinition.ISOLATION_READ_COMMITTED);
     GameRepository gameRepository = new GameRepository(dsl);
     GameAssetRepository gameAssetRepository = new GameAssetRepository(dsl);
     PostgresProperties postgresProperties = new PostgresProperties();
@@ -503,6 +505,37 @@ class VersionAssetExportCandidateServiceIntegrationTest {
     return fixture
         .transactionTemplate()
         .execute(status -> fixture.versionRepository().save(version));
+  }
+
+  private Version insertRetainedVersion(Fixture fixture, Game game, int versionNumber) {
+    return fixture
+        .transactionTemplate()
+        .execute(
+            status -> {
+              var inserted =
+                  fixture
+                      .dsl()
+                      .fetchOne(
+                          "INSERT INTO version (tenant_id, canonical_version_id, canonical_tenant_id, "
+                              + "identity_source_game_row_id, identity_source_game_tenant_key, "
+                              + "identity_source_provenance_kind, version_number, version_state, version_state_epoch, "
+                              + "script_patch_version, base_version_id, is_script_only, notes, created_at, updated_at) "
+                              + "SELECT g.tenant_id, ?, g.canonical_tenant_id, g.id, g.tenant_id, "
+                              + "g.tenant_identity_provenance_kind, ?, 'DRAFT', 1, NULL, NULL, FALSE, "
+                              + "'ISOLATED retained asset candidate fixture', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP "
+                              + "FROM game g WHERE g.id = ? RETURNING id",
+                          UUID.randomUUID(),
+                          versionNumber,
+                          game.getId());
+              if (inserted == null) {
+                throw new IllegalStateException(
+                    "ISOLATED retained Game Design owner row is absent");
+              }
+              return fixture
+                  .versionRepository()
+                  .findById(inserted.get("id", Long.class))
+                  .orElseThrow();
+            });
   }
 
   private GameAsset saveAsset(

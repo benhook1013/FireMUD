@@ -881,6 +881,8 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
     attempt.setStatus(PublishAttemptStatus.FAILED);
     attempt.setFailureCode("ISOLATED_BUSINESS_DENIAL");
     fixture.attempts().save(attempt);
+    // Emulate the historical V50/V51 seal storage directly. The current attempt wrapper also
+    // writes the V53 realm-policy association, which is absent from these schemas.
     fixture
         .operations()
         .seal(op.tenantKey(), op.workflowId(), op.versionId(), op.selectionDigest(), false);
@@ -920,10 +922,12 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
         fixture.attempts().findByPublishWorkflowIdForUpdate(op.workflowId()).orElseThrow();
     attempt.setStatus(PublishAttemptStatus.SUCCEEDED);
     fixture.attempts().save(attempt);
-    if (seal)
+    if (seal) {
+      // Emulate the historical V50/V51 seal storage without querying the V53 policy association.
       fixture
           .operations()
           .seal(op.tenantKey(), op.workflowId(), op.versionId(), op.selectionDigest(), true);
+    }
   }
 
   /**
@@ -1020,6 +1024,27 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
     return fixture("51");
   }
 
+  private Version insertRetainedVersion(
+      DSLContext dsl, VersionRepository versions, Game game, int versionNumber) {
+    var inserted =
+        dsl.fetchOne(
+            "INSERT INTO version (tenant_id, canonical_version_id, canonical_tenant_id, "
+                + "identity_source_game_row_id, identity_source_game_tenant_key, "
+                + "identity_source_provenance_kind, version_number, version_state, version_state_epoch, "
+                + "script_patch_version, base_version_id, is_script_only, notes, created_at, updated_at) "
+                + "SELECT g.tenant_id, ?, g.canonical_tenant_id, g.id, g.tenant_id, "
+                + "g.tenant_identity_provenance_kind, ?, 'DRAFT', 1, NULL, NULL, FALSE, "
+                + "'ISOLATED retained publication operation fixture', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP "
+                + "FROM game g WHERE g.id = ? RETURNING id",
+            UUID.randomUUID(),
+            versionNumber,
+            game.getId());
+    if (inserted == null) {
+      throw new IllegalStateException("ISOLATED retained Game Design owner row is absent");
+    }
+    return versions.findById(inserted.get("id", Long.class)).orElseThrow();
+  }
+
   private Fixture fixture(String migrationTarget) throws Exception {
     String schema = "gd_pub_op_" + UUID.randomUUID().toString().replace("-", "");
     var source =
@@ -1059,14 +1084,9 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
               requested.setName("ISOLATED publication owner");
               return games.save(requested);
             });
-    Version version =
-        write.execute(
-            status -> {
-              var requested = new Version();
-              requested.setTenantId(game.getTenantId());
-              requested.setVersionNumber(1);
-              return versions.save(requested);
-            });
+    // These V50/V51 cases model retained history. Insert the canonical owner row before V52 so
+    // the current VersionRepository does not enroll it in post-V51 source storage.
+    Version version = write.execute(status -> insertRetainedVersion(dsl, versions, game, 1));
     var target =
         new TargetProof(
             version.getCanonicalTenantId(),

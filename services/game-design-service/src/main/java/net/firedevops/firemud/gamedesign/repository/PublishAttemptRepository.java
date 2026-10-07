@@ -9,6 +9,7 @@ import net.firedevops.firemud.gamedesign.entity.PublishAttempt;
 import net.firedevops.firemud.gamedesign.model.PublishAttemptStatus;
 import net.firedevops.firemud.gamedesign.model.PublishType;
 import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationRepository;
+import net.firedevops.firemud.gamedesign.publication.RealmPolicyPublicationRepository;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Field;
@@ -94,6 +95,10 @@ public class PublishAttemptRepository {
             attempt.getVersionId(),
             attempt.getRequestDigest(),
             published);
+    if (published) {
+      new RealmPolicyPublicationRepository(dsl)
+          .retainSealedPublished(attempt.getPublishWorkflowId());
+    }
   }
 
   public void requirePublishedOperation(PublishAttempt attempt) {

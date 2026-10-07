@@ -4,11 +4,17 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.nio.charset.StandardCharsets;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
+import net.firedevops.firemud.gamedesign.publication.CommandSource;
+import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperation;
+import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationRepository;
+import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record;
@@ -105,6 +111,54 @@ public class PublishedReleaseBundleRepository {
             .where(TENANT_ID.eq(tenantId).and(VERSION_ID.eq(versionId)))
             .limit(1)
             .fetchOne(this::toEntity));
+  }
+
+  /**
+   * Reads the exact full-version command snapshot frozen for the retained publication operation.
+   * The requested Version tuple, operation selection, World evidence, and both source captures are
+   * checked before a bundle producer can persist command bytes.
+   */
+  public List<String> requireSelectedCommandDefinitions(
+      String tenantId,
+      Long versionId,
+      String publishWorkflowId,
+      WorldPublishedStartLocationEvidence worldEvidence) {
+    Objects.requireNonNull(tenantId, "tenantId");
+    Objects.requireNonNull(versionId, "versionId");
+    Objects.requireNonNull(publishWorkflowId, "publishWorkflowId");
+    Objects.requireNonNull(worldEvidence, "worldEvidence");
+
+    GameDesignPublicationOperation operation =
+        new GameDesignPublicationOperationRepository(dsl)
+            .read(publishWorkflowId)
+            .map(GameDesignPublicationOperationRepository.Readback::operation)
+            .orElseThrow(
+                () -> new IllegalStateException("SELECTED_PUBLICATION_OPERATION_UNAVAILABLE"));
+    var selection = operation.account().input().selection();
+    var target = selection.target();
+    if (!tenantId.equals(operation.tenantKey())
+        || !versionId.equals(operation.versionId())
+        || !publishWorkflowId.equals(operation.workflowId())
+        || !tenantId.equals(target.gameDesignVersionTenantKey())
+        || !versionId.equals(target.gameDesignVersionRowId())
+        || !Arrays.equals(operation.world().canonicalBytes(), worldEvidence.canonicalBytes())
+        || !target.canonicalTenantId().equals(worldEvidence.request().canonicalTenantId())
+        || !target.canonicalVersionId().equals(worldEvidence.request().canonicalVersionId())
+        || !publishWorkflowId.equals(worldEvidence.request().publishWorkflowId())) {
+      throw new IllegalStateException("SELECTED_PUBLICATION_OPERATION_BINDING_CONFLICT");
+    }
+
+    GameDesignSourceRepository.Capture capture =
+        new GameDesignSourceRepository(dsl)
+            .readCapture(operation)
+            .orElseThrow(() -> new IllegalStateException("SELECTED_SOURCE_CAPTURE_UNAVAILABLE"));
+    if (!Arrays.equals(
+        capture.command().operation().canonicalBytes(), operation.canonicalBytes())) {
+      throw new IllegalStateException("SELECTED_COMMAND_CAPTURE_OPERATION_CONFLICT");
+    }
+    return capture.command().snapshot().definitions().stream()
+        .map(CommandSource.Definition::definitionJson)
+        .toList();
   }
 
   public PublishedReleaseBundle save(PublishedReleaseBundle bundle) {

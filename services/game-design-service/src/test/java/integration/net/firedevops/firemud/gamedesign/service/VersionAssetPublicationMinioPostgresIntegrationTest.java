@@ -408,6 +408,8 @@ class VersionAssetPublicationMinioPostgresIntegrationTest {
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
     PlatformTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
     TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
+    transactionTemplate.setIsolationLevel(
+        org.springframework.transaction.TransactionDefinition.ISOLATION_READ_COMMITTED);
     GameRepository gameRepository = new GameRepository(dsl);
     GameAssetRepository gameAssetRepository = new GameAssetRepository(dsl);
     PostgresProperties postgresProperties = new PostgresProperties();

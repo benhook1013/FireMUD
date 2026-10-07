@@ -49,6 +49,9 @@ class PublishedReleaseBundleServiceImplTest {
       throws Exception {
     var evidence = selectorEvidence();
     var participants = PublishedWorldSelectorFixtures.participants(7L, evidence);
+    // ISOLATED source-repository response; this test covers service assembly only.
+    when(repository.requireSelectedCommandDefinitions(any(), any(), any(), any()))
+        .thenReturn(List.of(validCommandDefinition()));
     when(repository.save(any(PublishedReleaseBundle.class)))
         .thenAnswer(
             invocation -> {
@@ -70,6 +73,8 @@ class PublishedReleaseBundleServiceImplTest {
     assertEquals("v2", first.attestationSchemaVersion());
     assertThat(first.worldPublishedStartLocationEvidence().canonicalBytes())
         .containsExactly(evidence.canonicalBytes());
+    assertThat(first.commandDefinitions()).containsExactly(validCommandDefinition());
+    org.mockito.Mockito.verifyNoInteractions(revisionRepository);
     org.mockito.Mockito.clearInvocations(versionRepository, revisionRepository, repository);
     when(versionRepository.findByTenantIdAndId("tenant-1", 7L)).thenReturn(Optional.empty());
     var retry =
@@ -84,6 +89,8 @@ class PublishedReleaseBundleServiceImplTest {
     assertThat(retry.worldPublishedStartLocationEvidence().canonicalBytes())
         .containsExactly(first.worldPublishedStartLocationEvidence().canonicalBytes());
     org.mockito.Mockito.verifyNoInteractions(versionRepository, revisionRepository);
+    org.mockito.Mockito.verify(repository)
+        .requireSelectedCommandDefinitions(any(), any(), any(), any());
     org.mockito.Mockito.verify(repository, org.mockito.Mockito.never()).save(any());
     assertThatThrownBy(
             () ->
@@ -165,6 +172,27 @@ class PublishedReleaseBundleServiceImplTest {
                     evidence))
         .isInstanceOf(IllegalArgumentException.class);
     org.mockito.Mockito.verify(repository, org.mockito.Mockito.never()).save(any());
+  }
+
+  @Test
+  void selectorV2RequiresSelectedSourceCaptureBeforeBundleWrite() throws Exception {
+    var evidence = selectorEvidence();
+    when(repository.requireSelectedCommandDefinitions(any(), any(), any(), any()))
+        .thenThrow(new IllegalStateException("SELECTED_SOURCE_CAPTURE_UNAVAILABLE"));
+
+    assertThatThrownBy(
+            () ->
+                service.createFullVersionBundle(
+                    selectorVersion(),
+                    "publish-workflow",
+                    emptyManifest(),
+                    "genrev-1",
+                    PublishedWorldSelectorFixtures.participants(7L, evidence),
+                    evidence))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("SELECTED_SOURCE_CAPTURE_UNAVAILABLE");
+    org.mockito.Mockito.verify(repository, org.mockito.Mockito.never()).save(any());
+    org.mockito.Mockito.verifyNoInteractions(revisionRepository);
   }
 
   @Test
