@@ -8,6 +8,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
+import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -535,8 +536,22 @@ class AccountGameplayDelegationResponseEnvelopePersistenceIntegrationTest {
     try {
       return future.get(CONCURRENT_PROOF_TIMEOUT_SECONDS, TimeUnit.SECONDS);
     } catch (ExecutionException workerFailure) {
-      throw new AssertionError("Concurrent response-envelope proof worker failed");
+      throw new AssertionError(
+          "Concurrent response-envelope proof worker failed;sqlstate="
+              + safeWorkerSqlState(workerFailure));
     }
+  }
+
+  private static String safeWorkerSqlState(Throwable failure) {
+    Throwable current = failure;
+    for (int depth = 0; current != null && depth < 8; depth++) {
+      if (current instanceof SQLException sqlFailure) {
+        String sqlState = sqlFailure.getSQLState();
+        if (sqlState != null && sqlState.matches("[0-9A-Z]{5}")) return sqlState;
+      }
+      current = current.getCause();
+    }
+    return "UNKNOWN";
   }
 
   private static void stopConcurrentProofWorkers(ExecutorService executor) {

@@ -2,7 +2,9 @@ package net.firedevops.firemud.accountservice.service.session;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 
 import java.math.BigInteger;
@@ -13,6 +15,7 @@ import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.interfaces.RSAPrivateCrtKey;
 import java.security.interfaces.RSAPublicKey;
+import java.sql.SQLException;
 import java.time.Clock;
 import java.util.Arrays;
 import java.util.Base64;
@@ -37,6 +40,11 @@ import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredS
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.TrustFence;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.PublicJwksSnapshot;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceIdentity;
+import org.jooq.DSLContext;
+import org.jooq.ExecuteListener;
+import org.jooq.impl.DefaultExecuteListenerProvider;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.transaction.PlatformTransactionManager;
 
 /**
@@ -44,6 +52,17 @@ import org.springframework.transaction.PlatformTransactionManager;
  * protected Kubernetes/API trust and committed materializer evidence are deliberately mocked.
  */
 public final class AccountGameplayDelegationCommitSignerFixture {
+  private static final Logger LOGGER =
+      LoggerFactory.getLogger(AccountGameplayDelegationCommitSignerFixture.class);
+
+  private enum ProofStage {
+    BEFORE_SIGNING,
+    SIGNING_PENDING_CANDIDATE,
+    SIGNED_PENDING_CANDIDATE
+  }
+
+  private final AtomicReference<ProofStage> proofStage =
+      new AtomicReference<>(ProofStage.BEFORE_SIGNING);
   private static final String ENVIRONMENT = "staging";
   private static final String CLUSTER = "cluster-a";
   private static final String NAMESPACE = "firemud";
@@ -184,19 +203,61 @@ public final class AccountGameplayDelegationCommitSignerFixture {
         .thenAnswer(invocation -> Optional.of(currentOwnerEvidence.get()));
 
     signer =
-        new AccountGameplayDelegationSigner(
-            issuance,
-            desiredState,
-            materializerTrust,
-            apiBinding,
-            trustedJwksSource,
-            envelopeService,
-            transactionManager,
-            clock,
-            privateBundlePath.getParent(),
-            privateBundlePath.getFileName(),
-            publicJwksPath.getParent(),
-            publicJwksPath.getFileName());
+        spy(
+            new AccountGameplayDelegationSigner(
+                issuance,
+                desiredState,
+                materializerTrust,
+                apiBinding,
+                trustedJwksSource,
+                envelopeService,
+                transactionManager,
+                clock,
+                privateBundlePath.getParent(),
+                privateBundlePath.getFileName(),
+                publicJwksPath.getParent(),
+                publicJwksPath.getFileName()));
+    doAnswer(
+            invocation -> {
+              proofStage.set(ProofStage.SIGNING_PENDING_CANDIDATE);
+              try {
+                Object result = invocation.callRealMethod();
+                proofStage.set(ProofStage.SIGNED_PENDING_CANDIDATE);
+                return result;
+              } catch (RuntimeException failure) {
+                reportSafeFailure(failure);
+                throw failure;
+              }
+            })
+        .when(signer)
+        .signPendingCandidate(any(UUID.class));
+  }
+
+  /** Observes failures only; does not retain SQL, exception text, or throwable objects. */
+  public void observeDatabaseFailures(DSLContext dsl) {
+    dsl.configuration()
+        .setAppending(
+            new DefaultExecuteListenerProvider(
+                ExecuteListener.onException(context -> reportSafeFailure(context.sqlException()))));
+  }
+
+  private void reportSafeFailure(Throwable failure) {
+    String sqlState = "UNKNOWN";
+    Throwable current = failure;
+    for (int depth = 0; current != null && depth < 8; depth++) {
+      if (current instanceof SQLException sqlFailure) {
+        String candidate = sqlFailure.getSQLState();
+        if (candidate != null && candidate.matches("[0-9A-Z]{5}")) {
+          sqlState = candidate;
+          break;
+        }
+      }
+      current = current.getCause();
+    }
+    LOGGER.warn(
+        "Account integration proof failure: stage={};sqlstate={}",
+        proofStage.get().name(),
+        sqlState);
   }
 
   public static AccountGameplayDelegationCommitSignerFixture create(

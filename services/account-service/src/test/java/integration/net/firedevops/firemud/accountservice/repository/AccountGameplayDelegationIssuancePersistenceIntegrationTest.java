@@ -1390,6 +1390,7 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
     AccountGameplayDelegationCommitSignerFixture signerFixture =
         AccountGameplayDelegationCommitSignerFixture.create(
             temporaryDirectory, issuance, responseService, transactionManager, Clock.systemUTC());
+    signerFixture.observeDatabaseFailures(dsl);
     transactionManager.setBeforeTargetTransaction(
         switch (hook) {
           case NONE, AMBIGUOUS_COMMITTED_READBACK -> () -> {};

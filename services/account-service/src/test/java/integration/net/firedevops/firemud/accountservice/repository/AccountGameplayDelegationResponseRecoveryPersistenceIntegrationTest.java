@@ -158,6 +158,7 @@ class AccountGameplayDelegationResponseRecoveryPersistenceIntegrationTest {
     AccountGameplayDelegationCommitSignerFixture signerFixture =
         AccountGameplayDelegationCommitSignerFixture.create(
             temporaryDirectory, issuance, envelopeService, context.manager(), Clock.systemUTC());
+    signerFixture.observeDatabaseFailures(dsl);
     RedisHarness redis = new RedisHarness(snapshot, getClass().getClassLoader());
     AccountGameplayDelegationTokenRegistry registry =
         new AccountGameplayDelegationTokenRegistry(

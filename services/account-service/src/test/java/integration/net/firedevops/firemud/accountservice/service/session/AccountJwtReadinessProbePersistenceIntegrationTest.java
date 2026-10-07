@@ -589,8 +589,13 @@ class AccountJwtReadinessProbePersistenceIntegrationTest {
                                 result.operationId())))
         .isInstanceOf(DataAccessException.class);
 
-    List<ProbeEntry> aborted = service.abortCurrentPlan(BINDING, trust, result.operationId());
-    assertThat(aborted)
+    assertThat(service.abortCurrentPlan(BINDING, trust, result.operationId())).isEmpty();
+    List<ProbeEntry> retainedCleaned =
+        inTransaction(
+            context,
+            () -> readiness.readCurrentPlan(BINDING, trust, result.operationId()).entries());
+    assertThat(retainedCleaned)
+        .isEqualTo(cleaned)
         .hasSize(4)
         .allSatisfy(
             entry -> {

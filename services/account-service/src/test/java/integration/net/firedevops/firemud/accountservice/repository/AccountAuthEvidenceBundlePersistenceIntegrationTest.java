@@ -8,6 +8,7 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.spy;
 
 import java.net.URI;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -541,8 +542,22 @@ class AccountAuthEvidenceBundlePersistenceIntegrationTest {
     try {
       return future.get(CONCURRENT_PROOF_TIMEOUT_SECONDS, TimeUnit.SECONDS);
     } catch (ExecutionException workerFailure) {
-      throw new AssertionError("Concurrent bundle persistence proof worker failed");
+      throw new AssertionError(
+          "Concurrent bundle persistence proof worker failed;sqlstate="
+              + safeWorkerSqlState(workerFailure));
     }
+  }
+
+  private static String safeWorkerSqlState(Throwable failure) {
+    Throwable current = failure;
+    for (int depth = 0; current != null && depth < 8; depth++) {
+      if (current instanceof SQLException sqlFailure) {
+        String sqlState = sqlFailure.getSQLState();
+        if (sqlState != null && sqlState.matches("[0-9A-Z]{5}")) return sqlState;
+      }
+      current = current.getCause();
+    }
+    return "UNKNOWN";
   }
 
   private static void stopConcurrentProofWorkers(ExecutorService executor) {
