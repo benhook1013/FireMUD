@@ -5,23 +5,28 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 POSTGRES_LAYOUT_ENTRYPOINT="$ROOT_DIR/docker/postgres-data-layout-entrypoint.sh"
 POSTGRES18_IMAGE='postgres:18@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336'
 POSTGRES16_IMAGE='postgres:16@sha256:65b16a8b326e0cfbdf33fa7e783f2a0cb352a61448616ccccfd616ef42aa0f65'
-POSTGRES_DUMP_CLIENT_IMAGE='postgres:18@sha256:fc973eb97c9fd04bfa1840e0f510719a584ccb3be8debfe6a4144637a9dfe8cf'
+POSTGRES_DUMP_DOCKERFILE="$ROOT_DIR/docker/pg-dump-cron.Dockerfile"
 
 fail() {
   echo "$1" >&2
   exit 1
 }
 
+POSTGRES_DUMP_CLIENT_IMAGE="$(awk '$1 == "FROM" { print $2 }' "$POSTGRES_DUMP_DOCKERFILE")"
+[[ -n "$POSTGRES_DUMP_CLIENT_IMAGE" ]] || fail "the Compose dump Dockerfile must declare its pinned PostgreSQL base image"
+
 [[ -x "$POSTGRES_LAYOUT_ENTRYPOINT" ]] || fail "PostgreSQL layout entrypoint must be executable"
 
-python3 - "$ROOT_DIR" "$POSTGRES18_IMAGE" <<'PY'
+python3 - "$ROOT_DIR" "$POSTGRES18_IMAGE" "$POSTGRES_DUMP_CLIENT_IMAGE" <<'PY'
 from pathlib import Path
+import re
 import sys
 
 import yaml
 
 root = Path(sys.argv[1])
 expected_image = sys.argv[2]
+expected_dump_image = sys.argv[3]
 
 compose = yaml.safe_load((root / "docker/docker-compose.yml").read_text())
 postgres = compose["services"]["postgres"]
@@ -66,8 +71,17 @@ if "pg_dump -h \"$FIREMUD_POSTGRES_HOST\"" not in dump_script or "| gzip > \"$DU
     raise SystemExit("scheduled PostgreSQL dump ConfigMap must retain its plain-SQL gzip pipeline")
 
 dump_dockerfile = (root / "docker/pg-dump-cron.Dockerfile").read_text()
-if "FROM postgres:18@sha256:" not in dump_dockerfile:
-    raise SystemExit("the existing PostgreSQL dump client must remain on a pinned PostgreSQL 18 image")
+from_images = [
+    line.split()[1]
+    for line in dump_dockerfile.splitlines()
+    if line.split() and line.split()[0] == "FROM"
+]
+if len(from_images) != 1:
+    raise SystemExit("the Compose dump Dockerfile must have one unambiguous PostgreSQL base image")
+if from_images[0] != expected_dump_image:
+    raise SystemExit("the Compose dump proof image must derive from the Dockerfile's exact FROM reference")
+if not re.fullmatch(r"postgres:18@sha256:[0-9a-f]{64}", expected_dump_image):
+    raise SystemExit("the Compose dump Dockerfile must pin its PostgreSQL 18 base image by digest")
 
 for path in (
     "docker/docker-compose.yml",
@@ -145,34 +159,31 @@ assert_layout "PostgreSQL 18 child with unknown sibling" 1 postgres18-with-sibli
 assert_layout "PostgreSQL 18 child with symlinked global directory" 1 postgres18-with-global-symlink "unsafe cluster markers"
 assert_layout "valid PostgreSQL 18 child" 0 postgres18 ""
 
-run_docker_proof() {
-  command -v docker >/dev/null 2>&1 || fail "required PostgreSQL runtime proof needs Docker on the CI runner"
-  docker info >/dev/null 2>&1 || fail "required PostgreSQL runtime proof could not reach the CI Docker daemon"
-
-  local run_token
-  local network_name
-  local source_volume
-  local target_volume
-  local source_container
-  local target_container
-  local backup_dir
-  local bad_dump
-  local bad_key
-  local good_dump
-  local good_key
-  local aws_stub
-  local marker
-  local password
-  local source_version
-  local target_data_directory
-  local actual_marker
-  local failed_table_missing
-  local cleanup_dir
-  local helper_backup_dir
-  local helper_dump
-  local helper_sql
-  local cronjob_script
-  local cronjob_sql
+run_docker_proof() (
+  run_token=
+  network_name=
+  source_volume=
+  target_volume=
+  source_container=
+  target_container=
+  backup_dir=
+  bad_dump=
+  bad_key=
+  good_dump=
+  good_key=
+  aws_stub=
+  marker=
+  password=
+  source_version=
+  target_data_directory=
+  actual_marker=
+  failed_table_missing=
+  cleanup_dir=
+  helper_backup_dir=
+  helper_dump=
+  helper_sql=
+  cronjob_script=
+  cronjob_sql=
 
   run_token="${GITHUB_RUN_ID:-local}-a${GITHUB_RUN_ATTEMPT:-0}-$(date -u +%Y%m%d%H%M%S)-$$-${RANDOM:-0}"
   run_token="$(printf '%s' "$run_token" | tr -cd 'A-Za-z0-9_.-')"
@@ -199,6 +210,14 @@ run_docker_proof() {
     rm -rf -- "$cleanup_dir"
   }
   trap cleanup EXIT INT TERM
+
+  case "${1:-}" in
+    --lifecycle-success) exit 0 ;;
+    --lifecycle-failure) exit 23 ;;
+  esac
+
+  command -v docker >/dev/null 2>&1 || fail "required PostgreSQL runtime proof needs Docker on the CI runner"
+  docker info >/dev/null 2>&1 || fail "required PostgreSQL runtime proof could not reach the CI Docker daemon"
 
   mkdir -p "$backup_dir/15min" "$helper_backup_dir"
   chmod 0777 "$backup_dir" "$backup_dir/15min" "$helper_backup_dir"
@@ -248,6 +267,7 @@ PY
     >"$cleanup_dir/legacy-guard.log" 2>&1 && fail "the PostgreSQL 18 guard accepted a retained PostgreSQL 16 root cluster"
   grep -Fq "legacy root PG_VERSION" "$cleanup_dir/legacy-guard.log" || fail "the PostgreSQL 18 guard did not identify the retained root cluster"
 
+  # This executes the helper against the Dockerfile's exact PostgreSQL base image; it does not build or prove the cron image's packaging layers.
   docker run --rm \
     --network "$network_name" \
     --volume "$ROOT_DIR/dev-tools/backups/pg-dump-rotate.sh:/usr/local/bin/pg-dump-rotate.sh:ro" \
@@ -356,8 +376,59 @@ AWS
   [[ "$(docker inspect --format '{{.State.Running}}' "$source_container")" == false ]] \
     || fail "the PostgreSQL 16 source should remain stopped while the PostgreSQL 18 target is validated"
 
-  echo "PostgreSQL runtime proof passed: Compose and Kubernetes PostgreSQL 18 dump clients produced seeded gzip/plain-SQL backups; the original PostgreSQL 16 source stayed intact while the separate PostgreSQL 18 target was restored."
-}
+  echo "PostgreSQL runtime proof passed: the Compose dump helper on its pinned PostgreSQL base image and the Kubernetes PostgreSQL 18 client produced seeded gzip/plain-SQL backups; the original PostgreSQL 16 source stayed intact while the separate PostgreSQL 18 target was restored."
+)
+
+assert_proof_cleanup_lifecycle() (
+  fixture_root="$(mktemp -d)"
+  fake_bin="$fixture_root/bin"
+  proof_tmpdir="$fixture_root/proof-tmp"
+  docker_log="$fixture_root/docker.log"
+  cleanup_fixture() {
+    rm -rf -- "$fixture_root"
+  }
+  trap cleanup_fixture EXIT
+  mkdir -p "$fake_bin" "$proof_tmpdir"
+
+  cat >"$fake_bin/docker" <<'DOCKER'
+#!/bin/sh
+set -eu
+printf '%s\n' "$*" >>"${FIREMUD_TEST_DOCKER_LOG:?}"
+DOCKER
+  cat >"$fake_bin/mktemp" <<'MKTEMP'
+#!/bin/sh
+set -eu
+[ "$#" -eq 1 ] && [ "$1" = "-d" ] || exit 2
+directory="${FIREMUD_TEST_PROOF_TMPDIR:?}/proof-$$"
+mkdir "$directory"
+printf '%s\n' "$directory"
+MKTEMP
+  chmod +x "$fake_bin/docker" "$fake_bin/mktemp"
+
+  for lifecycle_case in success failure; do
+    : >"$docker_log"
+    expected_status=0
+    [[ "$lifecycle_case" == success ]] || expected_status=23
+    if (
+      export PATH="$fake_bin:$PATH"
+      export FIREMUD_TEST_DOCKER_LOG="$docker_log"
+      export FIREMUD_TEST_PROOF_TMPDIR="$proof_tmpdir"
+      run_docker_proof "--lifecycle-$lifecycle_case"
+    ); then
+      actual_status=0
+    else
+      actual_status=$?
+    fi
+    [[ "$actual_status" -eq "$expected_status" ]] || fail "PostgreSQL proof $lifecycle_case lifecycle returned $actual_status; expected $expected_status"
+    [[ "$(wc -l <"$docker_log")" -eq 3 ]] || fail "PostgreSQL proof $lifecycle_case lifecycle did not run all three cleanup commands"
+    grep -Eq '^rm -f firemud-pg16-source-[^ ]+ firemud-pg18-target-[^ ]+$' "$docker_log" || fail "PostgreSQL proof $lifecycle_case lifecycle did not remove both fixture containers"
+    grep -Eq '^network rm firemud-pg18-upgrade-[^ ]+$' "$docker_log" || fail "PostgreSQL proof $lifecycle_case lifecycle did not remove its isolated network"
+    grep -Eq '^volume rm firemud-pg18-source-[^ ]+ firemud-pg18-target-[^ ]+$' "$docker_log" || fail "PostgreSQL proof $lifecycle_case lifecycle did not remove both fixture volumes"
+    [[ -z "$(find "$proof_tmpdir" -mindepth 1 -maxdepth 1 -print -quit)" ]] || fail "PostgreSQL proof $lifecycle_case lifecycle leaked its temporary directory"
+  done
+
+  echo "PostgreSQL proof cleanup lifecycle passed for success and failure without Docker."
+)
 
 wait_for_postgres() {
   local container="$1"
@@ -403,6 +474,8 @@ run_logical_restore() {
     -ec 'export PATH="/proof-bin:$PATH"; exec /workspace/dev-tools/restores/restore-latest-db.sh' \
     >"$output_dir/restore-${backup_key##*/}.log" 2>&1
 }
+
+assert_proof_cleanup_lifecycle
 
 case "${FIREMUD_POSTGRES_RUNTIME_DOCKER_PROOF:-deferred}" in
   required)
