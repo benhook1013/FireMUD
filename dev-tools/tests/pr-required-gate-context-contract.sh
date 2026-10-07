@@ -316,7 +316,7 @@ preserve_steps = [step for step in job["steps"] if step.get("name") == "Preserve
 deferred_steps = [step for step in job["steps"] if step.get("name") == "Report dependency-deferred required gate"]
 if len(preserve_steps) != 1 or preserve_steps[0].get("id") != "preserved_gate":
     raise SystemExit(f"{workflow} must bind the preservation output")
-proof_mode = "${{ github.event.pull_request.number == 3056 && github.event.pull_request.head.ref == 'codex/required-gate-native-proof' && 'assess' || 'poll' }}"
+proof_mode = "${{ github.event.pull_request.number == 3081 && github.event.pull_request.head.ref == 'codex/required-gate-native-rehearsal-v2' && 'assess' || 'poll' }}"
 if preserve_steps[0].get("with", {}).get("assessment-mode") != proof_mode:
     raise SystemExit(f"{workflow} must assess only the fixed proof PR/ref and otherwise poll")
 if len(deferred_steps) != 1 or deferred_steps[0].get("if") != "${{ steps.preserved_gate.outputs.assessment == 'dependency-deferred' }}":
@@ -1997,9 +1997,9 @@ import copy
 import json
 
 def assert_isolated_resolution(candidate):
-    assert candidate["if"] == "${{ github.event.workflow_run.head_branch == 'codex/required-gate-native-proof' && github.event.workflow_run.event == 'pull_request' }}"
+    assert candidate["if"] == "${{ github.event.workflow_run.head_branch == 'codex/required-gate-native-rehearsal-v2' && github.event.workflow_run.event == 'pull_request' }}"
     assert json.loads(candidate["env"]["REQUIRED_GATE_PROOF_ALLOWLIST"]) == [
-        {"pr": 3056, "head_branch": "codex/required-gate-native-proof"},
+        {"pr": 3081, "head_branch": "codex/required-gate-native-rehearsal-v2"},
     ]
 
 assert_isolated_resolution(job)
@@ -2007,9 +2007,9 @@ unsafe_scopes = [
     {"if": "${{ github.event.workflow_run.event == 'pull_request' }}"},
     {"if": "${{ true }}"},
     {"env": {"REQUIRED_GATE_PROOF_ALLOWLIST": "[]"}},
-    {"env": {"REQUIRED_GATE_PROOF_ALLOWLIST": '[{"pr":3057,"head_branch":"codex/required-gate-native-proof"}]'}},
-    {"env": {"REQUIRED_GATE_PROOF_ALLOWLIST": '[{"pr":"3056","head_branch":"codex/required-gate-native-proof"}]'}},
-    {"env": {"REQUIRED_GATE_PROOF_ALLOWLIST": '[{"pr":3056,"head_branch":"ordinary-work"}]'}},
+    {"env": {"REQUIRED_GATE_PROOF_ALLOWLIST": '[{"pr":3082,"head_branch":"codex/required-gate-native-rehearsal-v2"}]'}},
+    {"env": {"REQUIRED_GATE_PROOF_ALLOWLIST": '[{"pr":"3081","head_branch":"codex/required-gate-native-rehearsal-v2"}]'}},
+    {"env": {"REQUIRED_GATE_PROOF_ALLOWLIST": '[{"pr":3081,"head_branch":"ordinary-work"}]'}},
 ]
 for override in unsafe_scopes:
     unsafe = copy.deepcopy(job)
