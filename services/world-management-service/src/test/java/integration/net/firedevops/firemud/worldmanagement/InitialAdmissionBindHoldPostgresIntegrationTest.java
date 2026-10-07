@@ -16,6 +16,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.entitymanagement.v1.CleanupRuntimeInstanceResponse;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
+import net.firedevops.firemud.test.TestContainerImages;
 import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
 import net.firedevops.firemud.worldmanagement.client.GameSessionClient;
@@ -52,12 +53,11 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 class InitialAdmissionBindHoldPostgresIntegrationTest {
   @Container
   static PostgreSQLContainer<?> postgres =
-      new PostgreSQLContainer<>(
-          PostgresBackedServiceTestSupport.postgresImage("postgres:16-alpine"));
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Container
   static GenericContainer<?> redis =
-      new GenericContainer<>("redis:7.2-alpine").withExposedPorts(6379);
+      new GenericContainer<>(TestContainerImages.redis()).withExposedPorts(6379);
 
   @DynamicPropertySource
   static void configure(DynamicPropertyRegistry registry) {

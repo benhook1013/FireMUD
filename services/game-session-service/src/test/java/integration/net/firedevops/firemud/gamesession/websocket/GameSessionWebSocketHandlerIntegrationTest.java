@@ -54,6 +54,7 @@ import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
+import net.firedevops.firemud.test.TestContainerImages;
 import net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleResponse;
 import net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot;
@@ -125,8 +126,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
   @Container
   static PostgreSQLContainer<?> postgres =
-      new PostgreSQLContainer<>(
-          PostgresBackedServiceTestSupport.postgresImage("postgres:16-alpine"));
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @DynamicPropertySource
   static void registerProperties(DynamicPropertyRegistry registry) {

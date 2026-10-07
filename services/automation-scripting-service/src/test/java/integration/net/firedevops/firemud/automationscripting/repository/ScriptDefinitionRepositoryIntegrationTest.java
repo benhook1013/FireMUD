@@ -18,7 +18,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
 import net.firedevops.firemud.automationscripting.model.ScriptDefinitionIdentityConflictException;
-import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.ExecuteContext;
@@ -46,8 +46,7 @@ class ScriptDefinitionRepositoryIntegrationTest {
 
   @Container
   static PostgreSQLContainer<?> postgres =
-      new PostgreSQLContainer<>(
-          PostgresBackedServiceTestSupport.postgresImage("postgres:16-alpine"));
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   private DSLContext dsl;
   private ScriptDefinitionRepository repository;

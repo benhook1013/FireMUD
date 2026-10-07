@@ -4,7 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
-import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -24,8 +24,7 @@ class GameInstanceScriptPinMigrationIntegrationTest {
 
   @Container
   static PostgreSQLContainer<?> postgres =
-      new PostgreSQLContainer<>(
-          PostgresBackedServiceTestSupport.postgresImage("postgres:16-alpine"));
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Test
   void baselineEnforcesCoherentScriptPinTuplesAndUnpinnedMetadata() {

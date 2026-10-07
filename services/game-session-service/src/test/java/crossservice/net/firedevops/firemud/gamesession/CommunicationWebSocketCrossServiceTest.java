@@ -19,14 +19,13 @@ import net.firedevops.firemud.socialgroups.v1.ChatType;
 import net.firedevops.firemud.socialgroups.v1.FriendPresenceActivityState;
 import net.firedevops.firemud.socialgroups.v1.FriendPresenceEntry;
 import net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy;
-import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.utility.DockerImageName;
 
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -42,15 +41,14 @@ class CommunicationWebSocketCrossServiceTest {
 
   @Container
   static final PostgreSQLContainer<?> POSTGRES =
-      new PostgreSQLContainer<>(
-              PostgresBackedServiceTestSupport.postgresImage("postgres:16-alpine"))
+      new PostgreSQLContainer<>(TestContainerImages.postgres())
           .withDatabaseName("firemud")
           .withUsername("firemud")
           .withPassword("firemud");
 
   @Container
   static final GenericContainer<?> REDIS =
-      new GenericContainer<>(DockerImageName.parse("redis:7.2-alpine")).withExposedPorts(6379);
+      new GenericContainer<>(TestContainerImages.redis()).withExposedPorts(6379);
 
   private static GameplayCrossServiceStack STACK;
 

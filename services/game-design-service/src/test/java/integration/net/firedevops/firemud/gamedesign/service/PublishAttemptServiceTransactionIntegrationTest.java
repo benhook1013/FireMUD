@@ -34,6 +34,7 @@ import net.firedevops.firemud.gamedesign.service.impl.TemporalVersionPublishWork
 import net.firedevops.firemud.gamedesign.service.impl.VersionPublishCommandServiceImpl;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -69,8 +70,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
 
   @Container
   static PostgreSQLContainer<?> postgres =
-      new PostgreSQLContainer<>(
-          PostgresBackedServiceTestSupport.postgresImage("postgres:16-alpine"));
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @DynamicPropertySource
   static void configure(DynamicPropertyRegistry registry) {

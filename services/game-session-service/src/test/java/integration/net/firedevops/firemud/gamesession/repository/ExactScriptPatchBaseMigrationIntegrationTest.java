@@ -3,7 +3,7 @@ package net.firedevops.firemud.gamesession.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.file.Path;
-import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
@@ -23,8 +23,7 @@ class ExactScriptPatchBaseMigrationIntegrationTest {
   @Test
   void migrationRetainsLegacyScriptProvenanceWithoutBackfillingMutableRuntimeVersion() {
     try (PostgreSQLContainer<?> postgres =
-        new PostgreSQLContainer<>(
-            PostgresBackedServiceTestSupport.postgresImage("postgres:16-alpine"))) {
+        new PostgreSQLContainer<>(TestContainerImages.postgres())) {
       postgres.start();
       DriverManagerDataSource dataSource = new DriverManagerDataSource();
       dataSource.setDriverClassName(postgres.getDriverClassName());

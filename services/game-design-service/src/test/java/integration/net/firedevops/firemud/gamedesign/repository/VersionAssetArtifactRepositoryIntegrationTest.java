@@ -8,6 +8,7 @@ import net.firedevops.firemud.gamedesign.entity.VersionAssetArtifact;
 import net.firedevops.firemud.gamedesign.model.VersionAssetArtifactState;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -36,8 +37,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 class VersionAssetArtifactRepositoryIntegrationTest {
   @Container
   static PostgreSQLContainer<?> postgres =
-      new PostgreSQLContainer<>(
-          PostgresBackedServiceTestSupport.postgresImage("postgres:16-alpine"));
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @DynamicPropertySource
   static void configure(DynamicPropertyRegistry registry) {

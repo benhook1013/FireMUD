@@ -15,7 +15,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerEventRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerRepository;
 import net.firedevops.firemud.gamesession.service.impl.DatabaseGameplayAdmissionPointerAuthorityService;
-import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -42,8 +42,7 @@ class GameplayAdmissionPointerCasPostgresIntegrationTest {
 
   @Container
   static PostgreSQLContainer<?> postgres =
-      new PostgreSQLContainer<>(
-              PostgresBackedServiceTestSupport.postgresImage("postgres:16-alpine"))
+      new PostgreSQLContainer<>(TestContainerImages.postgres())
           .withCommand("postgres", "-c", "fsync=off", "-c", "track_activity_query_size=128");
 
   @BeforeEach
