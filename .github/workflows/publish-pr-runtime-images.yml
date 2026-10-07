@@ -22,6 +22,7 @@ jobs:
     outputs:
       source: ${{ steps.resolve.outputs.source }}
       title: ${{ steps.resolve.outputs.title }}
+      artifact_name: ${{ steps.resolve.outputs.artifact_name }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
@@ -98,6 +99,7 @@ jobs:
                 if (run.conclusion !== "success") throw new Error("publication source run did not succeed");
                 core.setOutput("source", JSON.stringify(run));
                 core.setOutput("title", run.display_title);
+                core.setOutput("artifact_name", `pr-runtime-images-pr-merge-${title[4]}`);
                 break;
               }
               if (callback || !["queued", "in_progress", "waiting", "pending", "requested"].includes(run.status) ||
@@ -140,7 +142,9 @@ jobs:
       - name: Download successful PR image artifacts
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
-          path: /tmp/pr-runtime-artifacts
+          name: ${{ needs.source.outputs.artifact_name }}
+          # The pinned action extracts a sole artifact directly into path.
+          path: /tmp/pr-runtime-artifacts/${{ needs.source.outputs.artifact_name }}
           github-token: ${{ github.token }}
           run-id: ${{ fromJSON(needs.source.outputs.source).id }}
 

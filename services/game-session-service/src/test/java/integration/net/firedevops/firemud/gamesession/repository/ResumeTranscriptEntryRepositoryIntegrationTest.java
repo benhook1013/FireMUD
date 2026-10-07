@@ -12,7 +12,7 @@ import net.firedevops.firemud.common.config.FiremudReconnectionProperties;
 import net.firedevops.firemud.common.config.ReconnectionSettingsResolver;
 import net.firedevops.firemud.gamesession.entity.ResumeTranscriptEntry;
 import net.firedevops.firemud.gamesession.service.DurableScreenBufferService;
-import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -32,8 +32,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 class ResumeTranscriptEntryRepositoryIntegrationTest {
   @Container
   static PostgreSQLContainer<?> postgres =
-      new PostgreSQLContainer<>(
-          PostgresBackedServiceTestSupport.postgresImage("postgres:16-alpine"));
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   private DSLContext dsl;
   private ResumeTranscriptEntryRepository repository;

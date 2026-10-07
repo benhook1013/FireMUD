@@ -11,7 +11,7 @@ import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerEve
 import net.firedevops.firemud.gamesession.repository.InitialAdmissionBindAttemptRepository;
 import net.firedevops.firemud.gamesession.repository.InitialAdmissionBindCatalogRepository;
 import net.firedevops.firemud.gamesession.service.impl.DatabaseInitialAdmissionBindOwnerService;
-import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -33,8 +33,7 @@ class InitialAdmissionBindPostgresIntegrationTest {
 
   @Container
   static PostgreSQLContainer<?> postgres =
-      new PostgreSQLContainer<>(
-          PostgresBackedServiceTestSupport.postgresImage("postgres:16-alpine"));
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Test
   void initialAdmissionLedgerCommitsPointerAuditAndAttemptTogetherAndReadbackFailsClosed() {
