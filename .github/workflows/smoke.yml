@@ -486,6 +486,7 @@ jobs:
           persist-credentials: false
 
       - name: Preserve successful required gate on metadata-only edit
+        id: preserved_gate
         if: ${{ steps.smoke_gate_context.outputs.required != 'true' }}
         uses: ./.github/actions/preserve-required-gate
         with:
@@ -493,6 +494,12 @@ jobs:
           workflow-name: PR Smoke Gate
           workflow-file: smoke.yml
           workflow-path: .github/workflows/smoke.yml
+
+      - name: Report dependency-deferred required gate
+        if: ${{ steps.preserved_gate.outputs.assessment == 'dependency-deferred' }}
+        run: |
+          echo "Original required-gate proof is pending; dependency-deferred failure." >&2
+          exit 1
 
       - name: Fail when smoke dependencies did not succeed
         if: ${{ steps.smoke_gate_context.outputs.required == 'true' && steps.smoke_gate_context.outputs.execute != 'true' }}
