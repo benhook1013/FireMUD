@@ -12,6 +12,9 @@ firemudJooq {
 }
 
 dependencies {
+    testImplementation(libs.bouncycastle.pkix)
+    testCompileOnly(libs.spotbugs.annotations)
+    add("integrationTestCompileOnly", libs.spotbugs.annotations)
     compileOnly(libs.spotbugs.annotations)
     implementation(libs.aws.sdk.s3)
 }

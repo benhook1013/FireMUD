@@ -13,5 +13,8 @@ firemudJooq {
 }
 
 dependencies {
+    testImplementation(libs.bouncycastle.pkix)
+    testCompileOnly(libs.spotbugs.annotations)
+    add("integrationTestCompileOnly", libs.spotbugs.annotations)
     implementation(project(":common-security"))
 }
