@@ -21,9 +21,12 @@ import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
+import net.firedevops.firemud.gamesession.service.DurableResumeTranscriptExpiryJob;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
+import net.firedevops.firemud.gamesession.service.PlayerCommandHistoryRetentionSweepJob;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
+import net.firedevops.firemud.gamesession.service.impl.TickScheduler;
 import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketDriver;
 import net.firedevops.firemud.gamesession.testsupport.InMemorySessionContextTestConfiguration;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
@@ -45,12 +48,17 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
     properties = {
       "game-session.require-authenticated-commands=true",
       "firemud.database.enabled=false",
-      "spring.task.scheduling.enabled=false",
       "spring.data.redis.repositories.enabled=false",
       "spring.application.name=game-session-service",
       "spring.grpc.server.port=0"
     })
 @Import({NoGrpcServerTestConfiguration.class, InMemorySessionContextTestConfiguration.class})
+@MockitoBean(
+    types = {
+      TickScheduler.class,
+      PlayerCommandHistoryRetentionSweepJob.class,
+      DurableResumeTranscriptExpiryJob.class
+    })
 class GameSessionLoginIntegrationTest {
   @LocalServerPort private int port;
 

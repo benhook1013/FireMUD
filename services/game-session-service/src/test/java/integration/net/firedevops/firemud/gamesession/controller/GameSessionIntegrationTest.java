@@ -10,6 +10,9 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.gamesession.GameSessionServiceApplication;
+import net.firedevops.firemud.gamesession.service.DurableResumeTranscriptExpiryJob;
+import net.firedevops.firemud.gamesession.service.PlayerCommandHistoryRetentionSweepJob;
+import net.firedevops.firemud.gamesession.service.impl.TickScheduler;
 import net.firedevops.firemud.test.FiremudAuthTestProperties;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -17,6 +20,7 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @Target(ElementType.TYPE)
 @Retention(RetentionPolicy.RUNTIME)
@@ -25,7 +29,6 @@ import org.springframework.context.annotation.Import;
     classes = GameSessionServiceApplication.class,
     properties = {
       "firemud.database.enabled=false",
-      "spring.task.scheduling.enabled=false",
       FiremudAuthTestProperties.JWT_SECRET,
       FiremudAuthTestProperties.JWT_EXPIRATION,
       FiremudAuthTestProperties.HTTP_ENABLED,
@@ -39,6 +42,12 @@ import org.springframework.context.annotation.Import;
     })
 @AutoConfigureMockMvc
 @Import({NoGrpcServerTestConfiguration.class, LookCacheTestConfiguration.class})
+@MockitoBean(
+    types = {
+      TickScheduler.class,
+      PlayerCommandHistoryRetentionSweepJob.class,
+      DurableResumeTranscriptExpiryJob.class
+    })
 public @interface GameSessionIntegrationTest {}
 
 @TestConfiguration
