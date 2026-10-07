@@ -1522,6 +1522,24 @@ def main() -> int:
     for required in ("publisher checksum", "cluster-version upgrade"):
         if required not in kubectl_notes:
             fail(f"Renovate kubectl guidance is missing: {required}")
+    kind_node_rules = [
+        rule
+        for rule in renovate.get("packageRules", [])
+        if rule.get("matchManagers") == ["custom.regex"] and rule.get("matchPackageNames") == ["kindest/node"]
+    ]
+    if len(kind_node_rules) != 1:
+        fail("Renovate must define exactly one kindest/node compatibility rule")
+    kind_node_rule = kind_node_rules[0]
+    if (
+        kind_node_rule.get("allowedVersions") != "/^v1\\.35\\.[0-9]+$/"
+        or kind_node_rule.get("pinDigests") is not True
+        or kind_node_rule.get("automerge") is not False
+    ):
+        fail("Renovate kindest/node proposals must remain on Kubernetes v1.35 patch and reviewed digest updates")
+    kind_node_notes = "\n".join(kind_node_rule.get("prBodyNotes") or [])
+    for required in ("paired, reviewed Kubernetes minor update", "cluster and kubectl compatibility cap together"):
+        if required not in kind_node_notes:
+            fail(f"Renovate kindest/node guidance is missing: {required}")
     pip_rebase_rules = [
         rule for rule in renovate.get("packageRules", []) if rule.get("matchManagers") == ["pip_requirements"]
     ]

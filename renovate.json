@@ -394,6 +394,21 @@
       ]
     },
     {
+      "description": "Keep kindest/node within the supported Kubernetes v1.35 line",
+      "matchManagers": [
+        "custom.regex"
+      ],
+      "matchPackageNames": [
+        "kindest/node"
+      ],
+      "allowedVersions": "/^v1\\.35\\.[0-9]+$/",
+      "pinDigests": true,
+      "automerge": false,
+      "prBodyNotes": [
+        "kindest/node is kept on the supported Kubernetes v1.35 patch and digest line. Advance to another minor only in a paired, reviewed Kubernetes minor update that advances the cluster and kubectl compatibility cap together."
+      ]
+    },
+    {
       "description": "Group Velero CLI, verifier image, server image, and chart updates",
       "matchManagers": [
         "custom.regex",
