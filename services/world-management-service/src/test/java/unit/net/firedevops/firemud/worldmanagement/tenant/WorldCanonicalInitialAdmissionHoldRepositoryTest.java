@@ -458,11 +458,14 @@ class WorldCanonicalInitialAdmissionHoldRepositoryTest {
 
     @Override
     public TransactionStatus getTransaction(TransactionDefinition definition) {
-      startedWith = definition;
+      TransactionDefinition effectiveDefinition =
+          definition == null ? TransactionDefinition.withDefaults() : definition;
+      startedWith = effectiveDefinition;
       TransactionSynchronizationManager.setActualTransactionActive(true);
-      TransactionSynchronizationManager.setCurrentTransactionReadOnly(definition.isReadOnly());
+      TransactionSynchronizationManager.setCurrentTransactionReadOnly(
+          effectiveDefinition.isReadOnly());
       TransactionSynchronizationManager.setCurrentTransactionIsolationLevel(
-          definition.getIsolationLevel());
+          effectiveDefinition.getIsolationLevel());
       return new SimpleTransactionStatus();
     }
 

@@ -72,6 +72,9 @@ import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.world.CanonicalWorldInstancePreparationClient;
 import net.firedevops.firemud.common.world.CanonicalWorldInstancePreparationGrpcCodec;
 import net.firedevops.firemud.common.world.RoomTemplateRef;
+import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
+import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.InitialAdmissionOrigin;
+import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.Request;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialPlayerLocation;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceActivation;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
@@ -93,6 +96,7 @@ import net.firedevops.firemud.worldmanagement.dto.InitialAdmissionBindHoldReques
 import net.firedevops.firemud.worldmanagement.dto.InitialAdmissionBindOwnerProof;
 import net.firedevops.firemud.worldmanagement.entity.InitialAdmissionBindHold;
 import net.firedevops.firemud.worldmanagement.repository.InitialAdmissionBindHoldRepository;
+import net.firedevops.firemud.worldmanagement.repository.WorldInstanceRepository;
 import net.firedevops.firemud.worldmanagement.service.InitialAdmissionBindHoldService;
 import net.firedevops.firemud.worldmanagement.service.WorldLifecycleCommandService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceEvidence.OwnerBinding;
@@ -1750,6 +1754,223 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     assertThat(activationOperationCountForRequest(staleRequest.activationRequestId()))
         .isEqualTo(1L);
     assertThat(activationManifestCountForRequest(staleRequest.activationRequestId())).isZero();
+    assertOrigin();
+  }
+
+  @Test
+  void canonicalInitialAdmissionHoldAcquiresFromRealActiveLifecycleAndRetainsPendingIdentity() {
+    PreparedLifecycleFixture fixture = materializedLifecycleFixture();
+    // World storage/CAS is real; upstream activation authority remains an isolated fixture.
+    var activation =
+        canonicalActivationService(fixture, ignored -> stipulatedActivationAuthority())
+            .activate(
+                new WorldCanonicalInstanceActivation.Request(
+                    UUID.randomUUID(), fixture.preparing()));
+    assertThat(activation.outcome()).isEqualTo(WorldCanonicalInstanceActivation.Outcome.COMMITTED);
+    assertThat(activation.lifecycleEvidence().lifecycleStatus()).isEqualTo("ACTIVE");
+
+    var active =
+        fixture
+            .lifecycleRepository()
+            .read(lifecycleRequestWithFreshReadId(activation.lifecycleEvidence().request()))
+            .orElseThrow();
+    assertThat(active.lifecycleStatus()).isEqualTo("ACTIVE");
+    assertThat(active.lifecycleEpoch()).isEqualTo(activation.lifecycleEvidence().lifecycleEpoch());
+    assertThat(active.rowVersion()).isEqualTo(activation.lifecycleEvidence().rowVersion());
+
+    UUID realmId = UUID.randomUUID();
+    String requestId = "canonical-admission-" + UUID.randomUUID();
+    Request request =
+        new Request(
+            active.request().targetNamespace(),
+            active.request().canonicalTenantId(),
+            active.request().worldSlug(),
+            realmId,
+            active.request().playableStateNamespaceId(),
+            active.request().playableStateScope(),
+            active.request().canonicalGameInstanceId(),
+            active.request().canonicalVersionId(),
+            active.lifecycleEpoch(),
+            requestId,
+            "a".repeat(64),
+            InitialAdmissionOrigin.NO_PRIOR_POINTER,
+            1L,
+            null);
+    var repository =
+        new WorldCanonicalInitialAdmissionHoldRepository(
+            dsl, manager, associationRepository(), fixture.lifecycleRepository());
+
+    var acquired = repository.acquire(request, active.request());
+    assertThat(acquired.request()).isEqualTo(request);
+    assertThat(acquired.canonicalRequestBytes()).containsExactly(request.canonicalRequestBytes());
+    assertThat(acquired.holdBindingDigest()).isEqualTo(request.holdBindingDigest());
+
+    var stored =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT to_jsonb(h)::text AS retained_row, h.hold_id, h.hold_fence, h.tenant_id, "
+                    + "h.realm_uuid, h.playable_state_namespace_uuid, h.playable_state_scope, "
+                    + "h.game_instance_id, h.version_id, h.active_lifecycle_epoch, "
+                    + "h.initial_admission_request_id, h.request_digest, "
+                    + "h.expected_no_prior_pointer, h.expected_catalog_revision, h.status, "
+                    + "h.canonical_target_namespace, h.canonical_tenant_id, h.canonical_world_slug, "
+                    + "h.canonical_game_instance_id, h.canonical_version_id, "
+                    + "h.initial_admission_origin, h.expected_prior_pointer_version, "
+                    + "h.canonical_request_bytes, h.hold_binding_digest, h.row_version, "
+                    + "(h.diagnostic_expires_at <= CURRENT_TIMESTAMP) AS diagnostic_due "
+                    + "FROM initial_admission_bind_hold h WHERE h.tenant_id = ? "
+                    + "AND h.initial_admission_request_id = ?",
+                fixture.materialized().association().worldPrepareFields().privateTenantKey(),
+                requestId));
+    var privateKeys = fixture.materialized().association().worldPrepareFields();
+    assertThat(stored.get("hold_id", UUID.class)).isEqualTo(acquired.holdId());
+    assertThat(stored.get("hold_fence", UUID.class)).isEqualTo(acquired.holdFence());
+    assertThat(stored.get("tenant_id", Long.class)).isEqualTo(privateKeys.privateTenantKey());
+    assertThat(stored.get("game_instance_id", Long.class))
+        .isEqualTo(privateKeys.privateGameInstanceKey());
+    assertThat(stored.get("version_id", Long.class)).isEqualTo(privateKeys.localVersionKey());
+    assertThat(stored.get("realm_uuid", UUID.class)).isEqualTo(request.realmId());
+    assertThat(stored.get("playable_state_namespace_uuid", UUID.class))
+        .isEqualTo(request.playableStateNamespaceId());
+    assertThat(stored.get("playable_state_scope", String.class))
+        .isEqualTo(request.playableStateScope());
+    assertThat(stored.get("active_lifecycle_epoch", Long.class))
+        .isEqualTo(request.activeLifecycleEpoch());
+    assertThat(stored.get("initial_admission_request_id", String.class))
+        .isEqualTo(request.initialAdmissionRequestId());
+    assertThat(stored.get("request_digest", String.class))
+        .isEqualTo(request.initialAdmissionRequestDigest());
+    assertThat(stored.get("expected_no_prior_pointer", Boolean.class)).isTrue();
+    assertThat(stored.get("expected_catalog_revision", Long.class))
+        .isEqualTo(request.expectedCatalogRevision());
+    assertThat(stored.get("canonical_target_namespace", String.class))
+        .isEqualTo(request.targetNamespace());
+    assertThat(stored.get("canonical_tenant_id", UUID.class))
+        .isEqualTo(request.canonicalTenantId());
+    assertThat(stored.get("canonical_world_slug", String.class)).isEqualTo(request.worldSlug());
+    assertThat(stored.get("canonical_game_instance_id", UUID.class))
+        .isEqualTo(request.canonicalGameInstanceId());
+    assertThat(stored.get("canonical_version_id", UUID.class))
+        .isEqualTo(request.canonicalVersionId());
+    assertThat(stored.get("initial_admission_origin", String.class))
+        .isEqualTo(InitialAdmissionOrigin.NO_PRIOR_POINTER.name());
+    assertThat(stored.get("expected_prior_pointer_version", Long.class)).isNull();
+    assertThat(stored.get("canonical_request_bytes", byte[].class))
+        .containsExactly(request.canonicalRequestBytes());
+    assertThat(stored.get("hold_binding_digest", String.class))
+        .isEqualTo(request.holdBindingDigest());
+    assertThat(stored.get("status", String.class)).isEqualTo("PENDING");
+    assertThat(stored.get("row_version", Long.class)).isZero();
+    assertThat(stored.get("diagnostic_due", Boolean.class)).isTrue();
+
+    assertThat(
+            new WorldInstanceRepository(dsl)
+                .hasNonterminalInitialAdmissionBindHold(
+                    privateKeys.privateTenantKey(), privateKeys.privateGameInstanceKey()))
+        .isTrue();
+    assertThat(
+            new InitialAdmissionBindHoldRepository(dsl)
+                .hasNonterminalForRealm(privateKeys.privateTenantKey(), realmId.toString()))
+        .isTrue();
+
+    UUID closedRealmId = UUID.randomUUID();
+    // Acquiring this tagged PENDING hold does not prove Game Session's never-OPEN origin.
+    Request expectClosedRequest =
+        new Request(
+            request.targetNamespace(),
+            request.canonicalTenantId(),
+            request.worldSlug(),
+            closedRealmId,
+            request.playableStateNamespaceId(),
+            request.playableStateScope(),
+            request.canonicalGameInstanceId(),
+            request.canonicalVersionId(),
+            request.activeLifecycleEpoch(),
+            "canonical-admission-closed-" + UUID.randomUUID(),
+            "b".repeat(64),
+            InitialAdmissionOrigin.EXPECT_CLOSED,
+            2L,
+            7L);
+    var expectClosed = repository.acquire(expectClosedRequest, active.request());
+    assertThat(expectClosed.request()).isEqualTo(expectClosedRequest);
+    var storedExpectClosed =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT expected_no_prior_pointer, initial_admission_origin, "
+                    + "expected_prior_pointer_version, canonical_request_bytes, "
+                    + "hold_binding_digest FROM initial_admission_bind_hold "
+                    + "WHERE tenant_id = ? AND initial_admission_request_id = ?",
+                privateKeys.privateTenantKey(),
+                expectClosedRequest.initialAdmissionRequestId()));
+    assertThat(storedExpectClosed.get("expected_no_prior_pointer", Boolean.class)).isFalse();
+    assertThat(storedExpectClosed.get("initial_admission_origin", String.class))
+        .isEqualTo(InitialAdmissionOrigin.EXPECT_CLOSED.name());
+    assertThat(storedExpectClosed.get("expected_prior_pointer_version", Long.class)).isEqualTo(7L);
+    assertThat(storedExpectClosed.get("canonical_request_bytes", byte[].class))
+        .containsExactly(expectClosedRequest.canonicalRequestBytes());
+    assertThat(storedExpectClosed.get("hold_binding_digest", String.class))
+        .isEqualTo(expectClosedRequest.holdBindingDigest());
+    assertThat(repository.readIdentity(expectClosedRequest).orElseThrow().canonicalBytes())
+        .containsExactly(expectClosed.canonicalBytes());
+
+    var identityReadback = repository.readIdentity(request).orElseThrow();
+    assertThat(identityReadback.canonicalBytes()).containsExactly(acquired.canonicalBytes());
+    assertThat(
+            WorldCanonicalInitialAdmissionHold.HoldIdentity.fromStored(
+                identityReadback.canonicalBytes()))
+        .isEqualTo(acquired);
+
+    var retried = repository.acquire(request, active.request());
+    assertThat(retried.canonicalBytes()).containsExactly(acquired.canonicalBytes());
+    var afterRetry =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT to_jsonb(h)::text AS retained_row FROM initial_admission_bind_hold h "
+                    + "WHERE h.tenant_id = ? AND h.initial_admission_request_id = ?",
+                privateKeys.privateTenantKey(),
+                requestId));
+    assertThat(afterRetry.get("retained_row", String.class))
+        .isEqualTo(stored.get("retained_row", String.class));
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT count(*) FROM initial_admission_bind_hold "
+                            + "WHERE tenant_id = ? AND initial_admission_request_id = ?",
+                        privateKeys.privateTenantKey(),
+                        requestId))
+                .get(0, Long.class))
+        .isEqualTo(1L);
+
+    Request changedBinding =
+        new Request(
+            request.targetNamespace(),
+            request.canonicalTenantId(),
+            request.worldSlug(),
+            request.realmId(),
+            request.playableStateNamespaceId(),
+            request.playableStateScope(),
+            request.canonicalGameInstanceId(),
+            request.canonicalVersionId(),
+            request.activeLifecycleEpoch(),
+            request.initialAdmissionRequestId(),
+            request.initialAdmissionRequestDigest(),
+            request.initialAdmissionOrigin(),
+            request.expectedCatalogRevision() + 1L,
+            request.expectedPriorPointerVersion());
+    assertThatThrownBy(() -> repository.acquire(changedBinding, active.request()))
+        .isInstanceOf(WorldCanonicalInitialAdmissionHoldRepository.HoldConflictException.class)
+        .hasMessageContaining("request identity was reused with changed bindings");
+    assertThat(repository.readIdentity(request).orElseThrow().canonicalBytes())
+        .containsExactly(acquired.canonicalBytes());
+    assertThat(
+            new WorldInstanceRepository(dsl)
+                .hasNonterminalInitialAdmissionBindHold(
+                    privateKeys.privateTenantKey(), privateKeys.privateGameInstanceKey()))
+        .isTrue();
+    assertThat(
+            new InitialAdmissionBindHoldRepository(dsl)
+                .hasNonterminalForRealm(privateKeys.privateTenantKey(), realmId.toString()))
+        .isTrue();
     assertOrigin();
   }
 
