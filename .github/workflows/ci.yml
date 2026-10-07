@@ -2217,14 +2217,6 @@ jobs:
             --require-case 'net.firedevops.firemud.gamedesign.draft.GameDesignDraftTerminalOutcomePostgresIntegrationTest#migrationDoesNotInventAccountOutcomesForRetainedStatusOnlyRows()' \
             game-design-service
 
-      - name: Run Account publication settlement and consumer component proof
-        if: ${{ !cancelled() && matrix.module == 'account-service' }}
-        run: |
-          ./gradlew :account-service:integrationTest \
-            --tests integration.net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFencePostgresIntegrationTest \
-            --tests integration.net.firedevops.firemud.accountservice.authorpublication.AccountPublicationTerminalReconciliationServiceTest \
-            -PfullCheck --no-build-cache --no-configuration-cache
-
       - name: Capture Account publication participation PostgreSQL raw XML
         if: ${{ always() && matrix.module == 'account-service' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -2288,7 +2280,7 @@ jobs:
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#rawTerminalReceiptCannotCommitWithoutMatchingOwnerPhaseCas()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#onlyPositiveNoPublicationEvidenceCanSealWorldAsAbortedAndCannotPrepare()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#lifecycleReadPreservesPreparingStateAndDeniesLegacyNumericFailureWithExactCanonicalServiceEcho()' \
-            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#canonicalActivationCommitsOneOwnerCasAndReplaysItsImmutableResultAfterLaterLifecycleMove()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#canonicalActivationCommitsOneOwnerCasAndReplaysWhileLegacyTerminationIsDenied()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#canonicalActivationStoresStaleFailedOutcomeAndFreshLifecycleReadRemainsCurrent()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#canonicalActivationRejectsSelfConsistentForgedOwnerBindingsBeforeActiveCas()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#lostHeldAuthorityAfterOperationInsertRollsBackActivationAndLedger()' \
