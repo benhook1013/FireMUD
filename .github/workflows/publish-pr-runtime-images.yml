@@ -115,6 +115,26 @@ jobs:
               print(f"trusted PR runtime publication rejected: {message}", file=sys.stderr)
               raise SystemExit(1)
 
+          def is_trusted_workflow_path(value):
+              if value == SOURCE_WORKFLOW_PATH:
+                  return True
+              prefix = f"{SOURCE_WORKFLOW_PATH}@"
+              if not isinstance(value, str) or not value.startswith(prefix):
+                  return False
+              ref = value[len(prefix):]
+              if not ref or ref == "@" or ref.endswith(".") or ".." in ref or "@{" in ref or "//" in ref or any(
+                  ord(character) <= 32 or ord(character) == 127 or
+                  character in "~^:?*[\\"
+                  for character in ref
+              ):
+                  return False
+              return all(
+                  part and part not in {".", ".."} and
+                  not part.startswith(".") and
+                  not part.endswith(".lock")
+                  for part in ref.split("/")
+              )
+
           def required_environment(name):
               value = os.environ.get(name, "")
               if not value:
@@ -181,7 +201,7 @@ jobs:
               fail("source workflow identity changed between event and API")
           if source_run.get("name") not in {"Build Runtime Images", source_title}:
               fail("source workflow API name is neither its owning name nor exact run title")
-          if source_run.get("path") != SOURCE_WORKFLOW_PATH:
+          if not is_trusted_workflow_path(source_run.get("path")):
               fail("source workflow API path is not the trusted runtime-images workflow")
           if source_run.get("event") != source_event:
               fail("source workflow API event differs from the event")

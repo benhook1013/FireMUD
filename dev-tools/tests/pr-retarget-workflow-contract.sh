@@ -604,6 +604,543 @@ PY
 
 run_image_meta_exact_parent_fixture
 
+# Execute the dispatcher's production GitHub Script body with mocked GitHub APIs.
+# This keeps deduplication behavior tests bound to the code deployed by the
+# workflow instead of a second implementation of its matching rules.
+node - "$runtime_images_path" <<'NODE'
+const assert = require("node:assert/strict");
+const { spawnSync } = require("node:child_process");
+const workflowPath = process.argv[2];
+const extraction = spawnSync("python3", ["-c", String.raw`
+import sys
+import yaml
+from pathlib import Path
+
+workflow = yaml.load(Path(sys.argv[1]).read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+steps = workflow["jobs"]["dispatch-pr-base-refreshes"]["steps"]
+step = next(step for step in steps if step.get("name") == "Dispatch exact PR runtime refreshes and preview reconciles")
+sys.stdout.write(step["with"]["script"])
+`, workflowPath], { encoding: "utf8" });
+assert.equal(extraction.status, 0, extraction.stderr);
+const dispatcherScript = extraction.stdout;
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+
+const sha = (letter) => letter.repeat(40);
+const repository = "owner/repo";
+const baseSha = sha("b");
+const createdAt = "2026-01-01T00:00:00Z";
+const tupleFor = (number, headLetter, mergeLetter, base = baseSha) => ({
+  prNumber: String(number),
+  baseRef: "develop",
+  baseSha: base,
+  headSha: sha(headLetter),
+  mergeSha: sha(mergeLetter),
+});
+const titleFor = (tuple) =>
+  `Build Runtime Images secure-pr-artifact pr-${tuple.prNumber} base-${tuple.baseSha} head-${tuple.headSha} merge-${tuple.mergeSha} mode-required`;
+const producer = (tuple, event, status, conclusion = null, overrides = {}) => ({
+  id: Number(tuple.prNumber) * 100 + (event === "pull_request" ? 1 : 2),
+  name: "Build Runtime Images",
+  path: ".github/workflows/runtime-images.yml",
+  event,
+  display_title: titleFor(tuple),
+  repository: { full_name: repository },
+  head_repository: { full_name: repository },
+  head_sha: event === "pull_request" ? tuple.headSha : baseSha,
+  pull_requests: event === "pull_request"
+    ? [{ number: Number(tuple.prNumber), head: { sha: tuple.headSha } }]
+    : [],
+  status,
+  conclusion,
+  created_at: "2026-01-01T00:00:00Z",
+  ...overrides,
+});
+const runsDescending = (event, firstCreatedAt) => Array.from({ length: 100 }, (_, index) => ({
+  id: 30000 + index,
+  event,
+  display_title: `historical unrelated run ${index}`,
+  path: ".github/workflows/runtime-images.yml",
+  name: "Build Runtime Images",
+  repository: { full_name: repository },
+  head_repository: { full_name: repository },
+  created_at: new Date(Date.parse(firstCreatedAt) - index * 1000).toISOString(),
+}));
+const assertCompleteRefinementPreservesEligibleInitialRuns = (initialRuns, cutoff, refinedRuns, label) => {
+  const createdFloor = Date.parse(cutoff);
+  const eligibleIds = initialRuns
+    .filter((run) => typeof run?.created_at === "string" && Number.isFinite(Date.parse(run.created_at))
+      && Date.parse(run.created_at) >= createdFloor)
+    .map((run) => `${run.event}:${run.id}`);
+  const refinedIds = new Set(refinedRuns.map((run) => `${run.event}:${run.id}`));
+  assert(eligibleIds.every((id) => refinedIds.has(id)),
+    `${label} must retain every returned initial run at or after its refinement cutoff`);
+};
+
+async function runDispatcher({ tuples, inventories = {}, apiFailure = null }) {
+  const dispatches = [];
+  const errors = [];
+  const infos = [];
+  const warnings = [];
+  const inventoryCalls = [];
+  const eventInventoryCalls = new Map();
+  const currentBaseSha = tuples[0]?.baseSha ?? baseSha;
+  const tupleByNumber = new Map(tuples.map((tuple) => [tuple.prNumber, tuple]));
+  const core = {
+    info: (message) => infos.push(message),
+    warning: (message) => warnings.push(message),
+    error: (message) => errors.push(message),
+    setFailed: (message) => errors.push(message),
+  };
+  const github = {
+    rest: {
+      git: {
+        getRef: async () => ({ data: { object: { sha: currentBaseSha } } }),
+      },
+      pulls: {
+        list: async () => ({ data: tuples.map((tuple) => ({
+          number: Number(tuple.prNumber),
+          state: "open",
+          base: { ref: tuple.baseRef, repo: { full_name: repository } },
+          head: { sha: tuple.headSha, repo: { full_name: repository } },
+          changed_files: 1,
+          created_at: createdAt,
+        })) }),
+        get: async ({ pull_number }) => {
+          const tuple = tupleByNumber.get(String(pull_number));
+          return { data: {
+            number: Number(tuple.prNumber),
+            state: "open",
+            base: { ref: tuple.baseRef, repo: { full_name: repository } },
+            head: { sha: tuple.headSha, repo: { full_name: repository } },
+            user: { login: "maintainer" },
+            mergeable: true,
+            mergeable_state: "clean",
+            merge_commit_sha: tuple.mergeSha,
+            changed_files: 1,
+            created_at: createdAt,
+          } };
+        },
+        listFiles: async () => ({ data: [{ filename: "services/example/src/Main.java" }] }),
+      },
+      repos: {
+        getCommit: async ({ ref }) => {
+          const tuple = tuples.find((candidate) => candidate.mergeSha === ref);
+          return { data: { sha: ref, parents: [{ sha: tuple.baseSha }, { sha: tuple.headSha }] } };
+        },
+        createDispatchEvent: async (request) => { dispatches.push(request); },
+      },
+      actions: {
+        listWorkflowRuns: async (request) => {
+          inventoryCalls.push(request);
+          if (apiFailure === request.event) throw new Error("fixture API unavailable");
+          const callNumber = (eventInventoryCalls.get(request.event) ?? 0) + 1;
+          eventInventoryCalls.set(request.event, callNumber);
+          const inventory = inventories[request.event] ?? [];
+          if (!Array.isArray(inventory) && inventory.malformed) {
+            return { data: { malformed: true } };
+          }
+          const refinement = callNumber > 1 && !Array.isArray(inventory) && Array.isArray(inventory.refined);
+          const runs = Array.isArray(inventory)
+            ? inventory
+            : refinement ? inventory.refined : inventory.initial ?? inventory.runs ?? [];
+          const createdMatch = /^(.+)\.\.\*$/.exec(request.created ?? "");
+          const createdFloor = createdMatch ? Date.parse(createdMatch[1]) : Number.NaN;
+          const filteredRuns = Number.isFinite(createdFloor)
+            ? runs.filter((run) => {
+              const runCreatedAt = run?.created_at;
+              const validTimestamp = typeof runCreatedAt === "string"
+                && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(runCreatedAt)
+                && Number.isFinite(Date.parse(runCreatedAt));
+              return !validTimestamp || Date.parse(runCreatedAt) >= createdFloor;
+            })
+            : runs;
+          const filteredTotalCount = Array.isArray(inventory)
+            ? filteredRuns.length
+            : refinement
+              ? inventory.refinedTotalCount ?? filteredRuns.length
+              : inventory.initialTotalCount ?? inventory.total_count ?? filteredRuns.length;
+          return { data: { total_count: filteredTotalCount, workflow_runs: filteredRuns.slice((request.page - 1) * 100, request.page * 100) } };
+        },
+      },
+    },
+    paginate: async (endpoint, request, map) => map(await endpoint(request)),
+  };
+  const context = {
+    repo: { owner: "owner", repo: "repo" },
+    payload: {
+      repository: { full_name: repository, default_branch: "develop" },
+      workflow_run: { head_branch: "develop", head_sha: currentBaseSha, status: "completed" },
+    },
+  };
+  const originalDateNow = Date.now;
+  Date.now = () => Date.parse("2026-01-08T00:00:00Z");
+  try {
+    await new AsyncFunction("github", "context", "core", dispatcherScript)(github, context, core);
+  } finally {
+    Date.now = originalDateNow;
+  }
+  return { dispatches, errors, infos, warnings, inventoryCalls };
+}
+
+(async () => {
+  const tuple = tupleFor(101, "a", "c");
+  for (const [event, status] of [
+    ["pull_request", "queued"],
+    ["pull_request", "in_progress"],
+    ["repository_dispatch", "queued"],
+    ["repository_dispatch", "in_progress"],
+  ]) {
+    const result = await runDispatcher({
+      tuples: [tuple],
+      inventories: { [event]: [producer(tuple, event, status)] },
+    });
+    assert.equal(result.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 0,
+      `${event} ${status} exact producer must suppress duplicate runtime dispatch`);
+    assert.equal(result.dispatches.filter((item) => item.event_type === "preview-deploy").length, 1,
+      "runtime deduplication must retain preview reconciliation");
+    assert.equal(result.inventoryCalls.length, 2, "complete initial inventories require one query per event kind");
+    assert(result.inventoryCalls.every((request) =>
+      request.workflow_id === "runtime-images.yml" &&
+      request.per_page === 100 &&
+      request.page === 1 &&
+      typeof request.created === "string" &&
+      !Number.isNaN(Date.parse(request.created.replace(/\.\.\*$/, "")) )
+    ), "the shared inventory must query only one bounded recent page per event");
+  }
+
+  for (const event of ["pull_request", "repository_dispatch"]) {
+    const completedSuccess = await runDispatcher({
+      tuples: [tuple],
+      inventories: { [event]: [producer(tuple, event, "completed", "success")] },
+    });
+    assert.equal(completedSuccess.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+      `${event} completed source success must preserve recovery dispatch for missing or expired publication`);
+  }
+
+  for (const validRef of [
+    "main",
+    "refs/heads/feature]/test",
+    "refs/heads/feature/@/test",
+    "refs/heads/feature./test",
+  ]) {
+    const refSuffixedPath = await runDispatcher({
+      tuples: [tuple],
+      inventories: { pull_request: [producer(tuple, "pull_request", "in_progress", null, {
+        path: `.github/workflows/runtime-images.yml@${validRef}`,
+      })] },
+    });
+    assert.equal(refSuffixedPath.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 0,
+      `the exact owning workflow path with valid Git ref ${validRef} must remain eligible`);
+  }
+  for (const invalidRef of ["@", "refs/heads/trailing.", "refs/heads/feature[/test"]) {
+    const invalidRefPath = await runDispatcher({
+      tuples: [tuple],
+      inventories: { pull_request: [producer(tuple, "pull_request", "in_progress", null, {
+        path: `.github/workflows/runtime-images.yml@${invalidRef}`,
+      })] },
+    });
+    assert.equal(invalidRefPath.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+      `an invalid Git ref ${invalidRef} must not suppress the required dispatch`);
+  }
+  const wrongWorkflowPath = await runDispatcher({
+    tuples: [tuple],
+    inventories: { pull_request: [producer(tuple, "pull_request", "in_progress", null, {
+      path: ".github/workflows/other.yml@refs/heads/develop",
+    })] },
+  });
+  assert.equal(wrongWorkflowPath.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+    "an unrelated workflow path must not suppress the required dispatch");
+  assert(wrongWorkflowPath.warnings.some((message) => message.includes("falling back to the required refresh dispatch")),
+    "an exact-tuple producer with an unrelated workflow path must emit a fallback warning");
+
+  for (const [status, conclusion] of [
+    ["completed", "failure"],
+    ["completed", "cancelled"],
+  ]) {
+    const result = await runDispatcher({
+      tuples: [tuple],
+      inventories: { pull_request: [producer(tuple, "pull_request", status, conclusion)] },
+    });
+    assert.equal(result.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+      `${conclusion} producer must allow an exact-tuple retry`);
+  }
+
+  const orderedProducerInventory = async (older, newer, newerConclusion = null) => runDispatcher({
+    tuples: [tuple],
+    inventories: { pull_request: [
+      producer(tuple, "pull_request", older[0], older[1], {
+        id: 10101,
+        created_at: "2026-01-01T00:00:00Z",
+      }),
+      producer(tuple, "pull_request", newer[0], newerConclusion, {
+        id: 10102,
+        created_at: "2026-01-02T00:00:00Z",
+      }),
+    ] },
+  });
+  for (const conclusion of ["failure", "cancelled"]) {
+    const newestFailure = await orderedProducerInventory(
+      ["completed", "success"], ["completed", conclusion], conclusion
+    );
+    assert.equal(newestFailure.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+      `newer ${conclusion} producer must allow refresh despite an older success`);
+  }
+  for (const [olderStatus, olderConclusion, newestStatus, newestConclusion, suppress] of [
+    ["completed", "failure", "in_progress", null, true],
+    ["completed", "success", "in_progress", null, true],
+    ["completed", "failure", "completed", "success", false],
+  ]) {
+    const newestUsable = await orderedProducerInventory(
+      [olderStatus, olderConclusion], [newestStatus, newestConclusion], newestConclusion
+    );
+    assert.equal(newestUsable.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length,
+      suppress ? 0 : 1,
+      `newer ${newestStatus}/${newestConclusion} producer must determine whether runtime recovery dispatches`);
+  }
+  const ambiguousNewest = await runDispatcher({
+    tuples: [tuple],
+    inventories: { pull_request: [
+      producer(tuple, "pull_request", "completed", "success", { id: 10103 }),
+      producer(tuple, "pull_request", "completed", "failure", { id: 10104 }),
+    ] },
+  });
+  assert.equal(ambiguousNewest.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+    "ambiguous equal-time exact producers must fall back to the required refresh dispatch");
+  assert(ambiguousNewest.warnings.some((message) => message.includes("ambiguous created_at timestamp")),
+    "ambiguous producer ordering must emit an explicit fallback diagnostic");
+
+  const staleTuple = tupleFor(101, "a", "c", sha("d"));
+  const stale = await runDispatcher({
+    tuples: [tuple],
+    inventories: { repository_dispatch: [producer(staleTuple, "repository_dispatch", "completed", "success")] },
+  });
+  assert.equal(stale.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+    "stale base tuple must not suppress a current runtime refresh");
+
+  const changedBaseTuple = tupleFor(101, "a", "c", sha("e"));
+  const changedBase = await runDispatcher({
+    tuples: [changedBaseTuple],
+    inventories: { pull_request: [producer(tuple, "pull_request", "completed", "success")] },
+  });
+  assert.equal(changedBase.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+    "a changed base requires a fresh exact tuple producer");
+
+  const sibling = tupleFor(102, "f", "d");
+  const independent = await runDispatcher({
+    tuples: [tuple, sibling],
+    inventories: {
+      pull_request: [null, { id: "malformed-unrelated-record", display_title: "historical unrelated record" },
+        producer(tuple, "pull_request", "in_progress")],
+      repository_dispatch: [],
+    },
+  });
+  const independentRefreshNumbers = independent.dispatches
+    .filter((item) => item.event_type === "pr-runtime-base-refresh")
+    .map((item) => item.client_payload.pr_number)
+    .sort();
+  assert.deepEqual(independentRefreshNumbers, ["102"],
+    "unrelated malformed history must not block an independent sibling refresh or prevent reuse of the valid active producer");
+  assert.equal(independent.inventoryCalls.length, 2, "multiple PRs must reuse one shared inventory");
+
+  const partialSibling = tupleFor(103, "7", "8");
+  const recentRuns = runsDescending("pull_request", "2026-01-02T00:00:00Z");
+  recentRuns[0] = producer(tuple, "pull_request", "in_progress", null, {
+    created_at: "2026-01-02T00:00:00Z",
+  });
+  const recentRefinedRuns = [producer(tuple, "pull_request", "in_progress", null, {
+    created_at: "2026-01-02T00:00:00Z",
+  })];
+  assertCompleteRefinementPreservesEligibleInitialRuns(recentRuns, "2026-01-02T00:00:00Z", recentRefinedRuns,
+    "truncated positive refinement");
+  const truncatedPositive = await runDispatcher({
+    tuples: [tuple, partialSibling],
+    inventories: {
+      pull_request: {
+        total_count: 101,
+        runs: recentRuns,
+        refined: recentRefinedRuns,
+        refinedTotalCount: 1,
+      },
+      repository_dispatch: [],
+    },
+  });
+  const truncatedRefreshNumbers = truncatedPositive.dispatches
+    .filter((item) => item.event_type === "pr-runtime-base-refresh")
+    .map((item) => item.client_payload.pr_number)
+    .sort();
+  assert.deepEqual(truncatedRefreshNumbers, ["103"],
+    "complete refinement must prove the exact candidate while an unmatched sibling uses required dispatch");
+  assert.equal(truncatedPositive.inventoryCalls.length, 4,
+    "truncated inventory must use at most one cached refinement pair for all siblings");
+  assert(truncatedPositive.inventoryCalls.slice(2).every((request) =>
+    request.created === "2026-01-02T00:00:00Z..*"
+  ), "the refinement pair must use the inclusive exact lower bound of returned in-flight candidates");
+
+  const refinedSiblings = [tupleFor(107, "5", "6"), tupleFor(108, "7", "9")];
+  const siblingPage = runsDescending("pull_request", "2026-01-04T00:00:00Z");
+  siblingPage[0] = producer(refinedSiblings[0], "pull_request", "in_progress", null, {
+    created_at: "2026-01-04T00:00:00Z",
+  });
+  siblingPage[1] = producer(refinedSiblings[1], "pull_request", "queued", null, {
+    created_at: "2026-01-03T23:59:59Z",
+  });
+  assertCompleteRefinementPreservesEligibleInitialRuns(siblingPage, "2026-01-03T23:59:59Z", siblingPage.slice(0, 2),
+    "shared sibling refinement");
+  const refinedSiblingReuse = await runDispatcher({
+    tuples: refinedSiblings,
+    inventories: {
+      pull_request: {
+        total_count: 101,
+        runs: siblingPage,
+        refined: siblingPage.slice(0, 2),
+        refinedTotalCount: 2,
+      },
+      repository_dispatch: [],
+    },
+  });
+  assert.equal(refinedSiblingReuse.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 0,
+    "the shared refined inventory must cover each initially observed in-flight sibling");
+  assert.equal(refinedSiblingReuse.inventoryCalls.length, 4,
+    "all sibling decisions must reuse one refinement pair rather than scan per PR");
+  assert(refinedSiblingReuse.inventoryCalls.slice(2).every((request) =>
+    request.created === "2026-01-03T23:59:59Z..*"
+  ), "the shared sibling refinement must start at the earliest returned in-flight timestamp");
+
+  const truncatedRefinementTuple = tupleFor(109, "a", "e");
+  const truncatedRefinementPage = runsDescending("pull_request", "2026-01-05T00:03:00Z");
+  truncatedRefinementPage[0] = producer(truncatedRefinementTuple, "pull_request", "in_progress", null, {
+    created_at: "2026-01-05T00:00:00Z",
+  });
+  const truncatedRefinement = await runDispatcher({
+    tuples: [truncatedRefinementTuple],
+    inventories: {
+      pull_request: {
+        total_count: 101,
+        runs: truncatedRefinementPage,
+        refined: truncatedRefinementPage,
+        refinedTotalCount: 101,
+      },
+      repository_dispatch: [],
+    },
+  });
+  assert.equal(truncatedRefinement.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+    "a still-truncated refinement must use baseline dispatch");
+  assert(truncatedRefinement.warnings.some((message) => message.includes("falling back to the required refresh dispatch")),
+    "a truncated refinement must report its required-dispatch fallback");
+  assert.equal(truncatedRefinement.inventoryCalls.length, 4,
+    "a failed refinement must stop after the single bounded shared refinement pair");
+
+  const completedTruncatedTuple = tupleFor(110, "b", "f");
+  const completedTruncatedPage = runsDescending("pull_request", "2026-01-06T00:00:00Z");
+  completedTruncatedPage[0] = producer(completedTruncatedTuple, "pull_request", "completed", "success", {
+    created_at: "2026-01-06T00:00:00Z",
+  });
+  const completedTruncated = await runDispatcher({
+    tuples: [completedTruncatedTuple],
+    inventories: {
+      pull_request: { total_count: 101, runs: completedTruncatedPage },
+      repository_dispatch: [],
+    },
+  });
+  assert.equal(completedTruncated.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+    "completed source results must preserve required recovery dispatch");
+  assert.equal(completedTruncated.inventoryCalls.length, 2,
+    "completed-only truncated inventories need no refinement because they never suppress dispatch");
+
+  const hiddenNewerFailureTuple = tupleFor(105, "1", "2");
+  const crossEventHiddenNewer = await runDispatcher({
+    tuples: [hiddenNewerFailureTuple],
+    inventories: {
+      pull_request: [producer(hiddenNewerFailureTuple, "pull_request", "in_progress", null, {
+        created_at: "2026-01-01T10:00:00Z",
+      })],
+      // The initial dispatch page omits this newer exact terminal producer; bounded refinement must reveal it.
+      repository_dispatch: {
+        total_count: 101,
+        runs: runsDescending("repository_dispatch", "2026-01-01T09:00:00Z"),
+        refined: [producer(hiddenNewerFailureTuple, "repository_dispatch", "completed", "failure", {
+          created_at: "2026-01-01T10:30:00Z",
+        })],
+        refinedTotalCount: 1,
+      },
+    },
+  });
+  assert.equal(crossEventHiddenNewer.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+    "refinement must reveal the newer cross-event terminal producer and preserve required dispatch");
+  assert.equal(crossEventHiddenNewer.inventoryCalls.length, 4,
+    "one refinement pair must cover both event types when another event could contain a newer terminal run");
+
+  const safeOlderOmittedTuple = tupleFor(106, "3", "4");
+  const safelyOlderOmitted = await runDispatcher({
+    tuples: [safeOlderOmittedTuple],
+    inventories: {
+      pull_request: [producer(safeOlderOmittedTuple, "pull_request", "in_progress", null, {
+        created_at: "2026-01-03T10:00:00Z",
+      })],
+      repository_dispatch: {
+        total_count: 101,
+        runs: runsDescending("repository_dispatch", "2026-01-02T10:00:00Z"),
+        refined: [],
+        refinedTotalCount: 0,
+      },
+    },
+  });
+  assert.equal(safelyOlderOmitted.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 0,
+    "complete refinement from the candidate creation time proves apparently older omissions cannot mask it");
+  assert.equal(safelyOlderOmitted.inventoryCalls.length, 4,
+    "complete refinement must stay within the one additional shared pair");
+
+  const validSibling = tupleFor(104, "9", "0");
+  const relevantMalformed = await runDispatcher({
+    tuples: [tuple, validSibling],
+    inventories: {
+      pull_request: [
+        producer(tuple, "pull_request", "in_progress", null, { repository: { full_name: "other/repo" } }),
+        producer(validSibling, "pull_request", "in_progress"),
+      ],
+      repository_dispatch: [],
+    },
+  });
+  const relevantMalformedRefreshNumbers = relevantMalformed.dispatches
+    .filter((item) => item.event_type === "pr-runtime-base-refresh")
+    .map((item) => item.client_payload.pr_number)
+    .sort();
+  assert.deepEqual(relevantMalformedRefreshNumbers, ["101"],
+    "relevant malformed evidence must fall back for its own tuple while a valid active sibling producer remains reusable");
+
+  for (const uncertain of [
+    await runDispatcher({ tuples: [tuple], inventories: { pull_request: { total_count: 101, runs: [] } } }),
+    await runDispatcher({ tuples: [tuple], inventories: { pull_request: { total_count: 1, runs: [] } } }),
+    await runDispatcher({ tuples: [tuple], apiFailure: "pull_request" }),
+    await runDispatcher({ tuples: [tuple], inventories: { pull_request: { malformed: true } } }),
+    await runDispatcher({
+      tuples: [tuple],
+      inventories: { pull_request: [producer(tuple, "pull_request", "in_progress", null, {
+        repository: { full_name: "other/repo" },
+      })] },
+    }),
+    await runDispatcher({
+      tuples: [tuple],
+      inventories: { pull_request: [producer(tuple, "pull_request", "completed", "success", {
+        created_at: "not-a-workflow-run-timestamp",
+      })] },
+    }),
+  ]) {
+    assert.equal(uncertain.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+      "incomplete, unavailable, or relevant malformed evidence must fall back to required dispatch");
+    assert.equal(uncertain.dispatches.filter((item) => item.event_type === "preview-deploy").length, 1,
+      "inventory uncertainty must not block independent preview reconciliation");
+    assert(uncertain.warnings.some((message) => message.includes("falling back to the required refresh dispatch")),
+      "inventory uncertainty must produce a concrete fallback diagnostic");
+  }
+
+  process.stdout.write("runtime refresh deduplication fixtures passed\n");
+})().catch((error) => {
+  process.stderr.write(`${error.stack || error}\n`);
+  process.exitCode = 1;
+});
+NODE
+
 require_contains "$runtime_images_path" 'types: [opened, synchronize, reopened, edited]'
 require_contains "$runtime_images_path" 'types: [pr-runtime-base-refresh]'
 require_contains "$runtime_images_path" 'repository_dispatch:'
@@ -635,6 +1172,12 @@ assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'contents: wri
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'github.rest.git.getRef'
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'github.rest.pulls.list'
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'github.rest.repos.getCommit'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'github.rest.actions.listWorkflowRuns'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'actions: read'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'runtimeRunPageSize = 100'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'runtimeRunLookbackMilliseconds'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'falling back to the required refresh dispatch'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'Skipping duplicate PR runtime refresh'
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'currentBaseRef !== baseBranch'
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'parents.length !== 2'
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'parents[0] !== baseSha'
