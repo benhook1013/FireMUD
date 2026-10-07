@@ -575,36 +575,45 @@ class LiveEvidence:
         child_head = expected_anchor["child_head"]
         parent_identity = expected_anchor["parent_identity"]
         if (
-            pull_number != pr
-            or current.number != pr
-            or not isinstance(payload_head, str)
-            or not isinstance(payload_base_ref, str)
-            or not isinstance(payload_base_head, str)
-            or current.head_sha.casefold() != child_head.casefold()
-            or payload_head.casefold() != child_head.casefold()
-            or current.base_sha.casefold() != selected_pr_base_oid.casefold()
-            or payload_base_head.casefold() != selected_pr_base_oid.casefold()
-            or current.base_ref_name != selected_base_ref
-            or payload_base_ref != selected_base_ref
-            or current.base_ref_name != payload_base_ref
-            or (
-                enforce_parent_identity_ref
-                and not parent_identity.isdecimal()
-                and current.base_ref_name != parent_identity
+            type(pull_number) is not int or pull_number != pr
+            or type(current.number) is not int or current.number != pr
+            or any(
+                not isinstance(value, str) or re.fullmatch(r"[0-9a-fA-F]{40}", value) is None
+                for value in (payload_head, payload_base_head, current.head_sha, current.base_sha)
+            )
+            or any(
+                not isinstance(value, str) or not value.strip() or any(c in value for c in "\r\n")
+                for value in (payload_base_ref, current.base_ref_name)
             )
         ):
-            raise ControllerError("pull-request head or parent moved from the review stop anchor")
-
+            raise ControllerError("review stop observed unavailable or invalid pull-request identity")
+        # Disagreement between refreshed public reads is uncertainty, not proof
+        # that one known preparation identity moved.
+        if (
+            payload_head.casefold() != current.head_sha.casefold()
+            or payload_base_head.casefold() != current.base_sha.casefold()
+            or payload_base_ref != current.base_ref_name
+        ):
+            raise ControllerError("pull-request identity changed during review stop audit")
+        request_preparation_only = (
+            current.head_sha.casefold() != child_head.casefold()
+            or current.base_sha.casefold() != selected_pr_base_oid.casefold()
+            or current.base_ref_name != selected_base_ref
+            or (enforce_parent_identity_ref and not parent_identity.isdecimal()
+                and current.base_ref_name != parent_identity)
+        )
         try:
-            actual_parent_head = self.live.branch_head(selected_base_ref)
+            actual_parent_head = self.live.branch_head(current.base_ref_name)
         except (OSError, RuntimeError, ValueError) as error:
             raise ControllerError("current pull-request base ref tip is unavailable for review stop") from error
         if (
             not isinstance(actual_parent_head, str)
             or re.fullmatch(r"[0-9a-fA-F]{40}", actual_parent_head) is None
-            or actual_parent_head.casefold() != effective_parent_head.casefold()
         ):
-            raise ControllerError("pull-request base ref moved from the review stop anchor")
+            raise ControllerError("current pull-request base ref tip is invalid for review stop")
+        request_preparation_only = request_preparation_only or (
+            actual_parent_head.casefold() != effective_parent_head.casefold()
+        )
 
         # The established audit validates paginated identities, trigger to
         # response linkage, public checkpoints, pending captures, and unresolved
@@ -616,9 +625,9 @@ class LiveEvidence:
             pr,
             (),
             {
-                "child_head": child_head,
+                "child_head": current.head_sha,
                 "live_base_ref": current.base_ref_name,
-                "live_base_tip": selected_pr_base_oid,
+                "live_base_tip": current.base_sha,
             },
             allow_historical_unmatched=True,
             now=audit_now,
@@ -706,6 +715,8 @@ class LiveEvidence:
                 ambiguous_responses.remove("unattributed trigger response")
 
         unresolved_findings = list(audit["unresolved_findings"])
+        finding_only_findings = list(audit.get("finding_only_findings", ()))
+        unknown_review_evidence = list(audit.get("unknown_review_evidence", ()))
         cli_pending = [
             item
             for item in channel_history["cli"]
@@ -714,10 +725,44 @@ class LiveEvidence:
         active_cli_reviews = [item for item in cli_pending if item.get("active_review") is True]
         unresolved_cli_pending = [item for item in cli_pending if item.get("active_review") is not True]
         if unresolved_cli_pending:
-            unresolved_findings.extend(
-                str(item.get("reason") or item.get("checkpoint") or "unresolved CLI evidence")
-                for item in unresolved_cli_pending
-            )
+            for item in unresolved_cli_pending:
+                label = str(item.get("reason") or item.get("checkpoint") or "unresolved CLI evidence")
+                unresolved_findings.append(label)
+                if (
+                    item.get("finding_only_hold") is True
+                    and item.get("held") is True
+                    and not any(
+                        item.get(flag) is True
+                        for flag in (
+                            "unstable",
+                            "unreconciled",
+                            "parent_moved",
+                            "over_ceiling",
+                            "rate_limited",
+                            "active_review",
+                            "active_reservation",
+                            "actionable",
+                        )
+                    )
+                ):
+                    finding_only_findings.append(label)
+                else:
+                    unknown_review_evidence.append(label)
+        for channel, history in channel_history.items():
+            for item in history:
+                source_status = item.get("source_resolution_status")
+                if (source_status is None or source_status == "resolved"
+                    or item.get("completed") is not True or item.get("attributable") is not True
+                    or item.get("provisional") is True or item.get("correction") is True
+                    or item.get("non_counting") is True
+                    or type(item.get("accepted")) is not int or item["accepted"] <= 0):
+                    continue
+                label = f"{channel} accepted-finding source proof: {item.get('checkpoint')}"
+                unresolved_findings.append(label)
+                if source_status == "finding_pending":
+                    finding_only_findings.append(label)
+                else:
+                    unknown_review_evidence.append(label)
         checkpoints = [
             {"channel": channel, **item}
             for channel, values in channel_history.items()
@@ -733,7 +778,10 @@ class LiveEvidence:
         return {
             "complete": True,
             "head": current.head_sha,
-            "anchor": {
+            # A moved identity is audited against its actual public head/base;
+            # it cannot attest the old selected stack anchor.
+            "request_preparation_only": request_preparation_only,
+            "anchor": None if request_preparation_only else {
                 name: expected_anchor[name]
                 for name in ("pr", "child_head", "parent_identity", "parent_head", "merge_base", "patch_id")
                 if name in expected_anchor
@@ -744,7 +792,10 @@ class LiveEvidence:
             "historical_unmatched_responses": list(audit.get("historical_unmatched_responses", ())),
             "ambiguous_responses": ambiguous_responses,
             "unresolved_findings": unresolved_findings,
+            "finding_only_findings": finding_only_findings,
+            "unknown_review_evidence": unknown_review_evidence,
             "checkpoints": checkpoints,
+            "channel_histories": channel_history,
             "ambiguous_terminal_responses": ambiguous_terminal_responses,
             "terminal_rate_limits": terminal_rate_limits,
             "active_hosted_reservations": list(audit.get("active_hosted_reservations", ())),
@@ -1118,11 +1169,25 @@ class LiveEvidence:
                     historical=names_another_head is True,
                     ambiguous=names_another_head is not True,
                 )
-        unresolved_findings = [
+        unresolved_history = [
             str(item.get("checkpoint", "Hosted finding"))
             for item in hosted_history
             if str(item.get("checkpoint", "")).startswith(("review-threads:", "summary-actions:", "over-ceiling:"))
             and (item.get("held") is True or item.get("unstable") is True or item.get("over_ceiling") is True)
+        ]
+        finding_only_findings = [
+            str(item.get("checkpoint", "Hosted finding"))
+            for item in hosted_history
+            if str(item.get("checkpoint", "")).startswith(("review-threads:", "summary-actions:"))
+            and item.get("held") is True
+            and item.get("finding_only_hold") is True
+            and item.get("unstable") is not True
+            and item.get("unreconciled") is not True
+            and item.get("parent_moved") is not True
+            and item.get("over_ceiling") is not True
+        ]
+        unknown_review_evidence = [
+            value for value in unresolved_history if value not in finding_only_findings
         ]
         return {
             "complete": True,
@@ -1131,7 +1196,9 @@ class LiveEvidence:
             "unmatched_responses": unmatched_responses,
             "historical_unmatched_responses": historical_unmatched_responses,
             "ambiguous_responses": ambiguous_responses,
-            "unresolved_findings": unresolved_findings,
+            "unresolved_findings": unresolved_history,
+            "finding_only_findings": finding_only_findings,
+            "unknown_review_evidence": unknown_review_evidence,
         }
 
     @staticmethod
@@ -1342,12 +1409,30 @@ class LiveEvidence:
         pr: int | None = None,
         dispositions: Sequence[SummaryFindingDisposition] = (),
     ) -> tuple[int, int, str | None]:
+        outside, duplicate, url, _ = LiveEvidence._summary_action_counts_with_validity(
+            payload,
+            head,
+            pr=pr,
+            dispositions=dispositions,
+        )
+        return outside, duplicate, url
+
+    @staticmethod
+    def _summary_action_counts_with_validity(
+        payload: dict[str, Any],
+        head: str,
+        *,
+        pr: int | None = None,
+        dispositions: Sequence[SummaryFindingDisposition] = (),
+    ) -> tuple[int, int, str | None, bool]:
+        """Return summary counts and whether current evidence was parsed safely."""
+
         try:
             selected = status_module._summary_evidence(payload, head)
         except status_module.StatusError:
-            return 1, 1, None
+            return 1, 1, None, False
         if selected.get("status") != "current":
-            return 0, 0, None
+            return 0, 0, None, False
         remaining = list(selected.get("findings", []))
         if pr is not None:
             remaining, _ = adjudicate_summary_findings(pr, head, selected, dispositions)
@@ -1367,7 +1452,7 @@ class LiveEvidence:
             (item.get("url") for item in items if github.immutable_database_id(item) == identity),
             None,
         )
-        return counts["outside_diff"], counts["duplicate"], url
+        return counts["outside_diff"], counts["duplicate"], url, True
 
     def _global_blockers(
         self,
@@ -1396,6 +1481,7 @@ class LiveEvidence:
                         "pr": pr,
                         "head": head,
                         "checkpoint": "review-threads:unavailable",
+                        "held": True,
                         "unstable": True,
                         "reason": "complete GitHub review-thread evidence is unavailable",
                     }
@@ -1416,6 +1502,7 @@ class LiveEvidence:
                             "pr": pr,
                             "head": head,
                             "checkpoint": "review-threads:malformed",
+                            "held": True,
                             "unstable": True,
                             "reason": "GitHub review-thread evidence is malformed",
                         }
@@ -1429,12 +1516,13 @@ class LiveEvidence:
                             "head": head,
                             "checkpoint": f"review-threads:{current}:{outdated}",
                             "held": True,
+                            "finding_only_hold": not malformed,
                             "reason": f"{current} unresolved current and {outdated} unresolved outdated review thread(s)",
                         }
                     )
             try:
                 dispositions = self.state_store.load().summary_dispositions if self.state_store is not None else ()
-                outside, duplicate, url = self._summary_action_counts(
+                outside, duplicate, url, summary_is_valid = self._summary_action_counts_with_validity(
                     payload,
                     head,
                     pr=pr,
@@ -1443,18 +1531,19 @@ class LiveEvidence:
             except github.HostedPreflightDeadlineExceeded:
                 raise
             except (OSError, StateError, TypeError, ValueError):
-                outside, duplicate, url = 1, 1, None
+                outside, duplicate, url, summary_is_valid = 1, 1, None, False
             if outside or duplicate:
-                values.append(
-                    {
-                        "pr": pr,
-                        "head": head,
-                        "checkpoint": f"summary-actions:{outside}:{duplicate}",
-                        "held": True,
-                        "reason": f"latest CodeRabbit summary has {outside} outside-diff and {duplicate} duplicate actionable comment(s)",
-                        "url": url,
-                    }
-                )
+                summary_hold = {
+                    "pr": pr,
+                    "head": head,
+                    "checkpoint": f"summary-actions:{outside}:{duplicate}",
+                    "held": True,
+                    "reason": f"latest CodeRabbit summary has {outside} outside-diff and {duplicate} duplicate actionable comment(s)",
+                    "url": url,
+                }
+                if summary_is_valid:
+                    summary_hold["finding_only_hold"] = True
+                values.append(summary_hold)
         all_reviews = [*pull.get("comments", {}).get("nodes", []), *pull.get("reviews", {}).get("nodes", [])]
         latest_exact_completion = datetime.min.replace(tzinfo=timezone.utc)
         bound_failed_response_ids: set[int] = set()
@@ -1932,6 +2021,7 @@ class LiveEvidence:
                 source_channel=channel,
                 source_head=source_head,
                 accepted_count=checkpoint.accepted,
+                classify_pending=True,
                 **(
                     {"source_checkpoint": checkpoint, "source_repository": self.repo}
                     if type(checkpoint.comment_id) is int

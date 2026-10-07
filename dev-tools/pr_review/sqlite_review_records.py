@@ -2195,8 +2195,14 @@ class SqliteReviewRecords:
         accepted_count: int,
         source_checkpoint: Any = None,
         source_repository: str | None = None,
+        classify_pending: bool = False,
     ) -> str | None:
-        """Return proof status, or None for a CLI capture with no structured association."""
+        """Return proof status; optionally distinguish proven unresolved accepted findings.
+
+        Legacy callers retain ``pending`` for all incomplete proof. A caller
+        requesting classification receives ``finding_pending`` only after the
+        exact source association, finalized counts and existing fix proofs pass.
+        """
 
         run_id = _safe_identifier(run_id, "run_id", maximum=100)
         source_pr = _positive_pr(source_pr, "source PR")
@@ -2292,8 +2298,9 @@ class SqliteReviewRecords:
             all_resolutions = connection.execute(
                 "SELECT COUNT(*) FROM source_finding_resolutions WHERE run_id = ?", (run_id,)
             ).fetchone()[0]
-            if len(accepted) != accepted_count or all_resolutions != accepted_count:
+            if len(accepted) != accepted_count or all_resolutions != sum(row[2] is not None for row in accepted):
                 return "pending"
+            finding_pending = False
             for row in accepted:
                 (
                     _,
@@ -2308,10 +2315,17 @@ class SqliteReviewRecords:
                     at,
                     decision_count,
                 ) = row
+                if not isinstance(source_finding_key, str) or not source_finding_key or decision_count < 1:
+                    return "pending"
+                if resolution_id is None:
+                    # A missing fix is finding-only evidence only after its
+                    # accepted source and every existing sibling proof validate.
+                    if any(value is not None for value in (proof_pr, proof_channel, outcome, fix_sha, actor, note, at)):
+                        return "pending"
+                    finding_pending = True
+                    continue
                 if (
-                    not isinstance(source_finding_key, str)
-                    or not isinstance(resolution_id, str)
-                    or decision_count < 1
+                    not isinstance(resolution_id, str)
                     or proof_pr != source_pr
                     or proof_channel != source_channel
                     or outcome != "accepted_fixed"
@@ -2328,6 +2342,8 @@ class SqliteReviewRecords:
                 correction_chain = self._source_resolution_corrections(connection, resolution_id, fix_sha)
                 if correction_chain is None:
                     return "pending"
+            if finding_pending:
+                return "finding_pending" if classify_pending else "pending"
             return "resolved"
 
     @staticmethod

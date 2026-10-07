@@ -62,6 +62,7 @@ class Evidence:
     scope_timeline_complete: bool = False
     active_review: bool = False
     active_reservation: bool = False
+    finding_only_hold: bool = False
 
     @classmethod
     def from_value(cls, value: Evidence | Mapping[str, Any]) -> Evidence:
@@ -318,6 +319,26 @@ def _blocked(evidence: Evidence, reconciliation: ReconciliationStatus | str | No
     return None
 
 
+def _is_finding_only_hold(evidence: Evidence) -> bool:
+    """Return whether this is a trusted finding-only hold with no safety flags."""
+
+    return (
+        evidence.finding_only_hold is True
+        and evidence.held is True
+        and not any(
+            (
+                evidence.active_review,
+                evidence.active_reservation,
+                evidence.unstable,
+                evidence.rate_limited,
+                evidence.unreconciled,
+                evidence.over_ceiling,
+                evidence.parent_moved,
+            )
+        )
+    )
+
+
 def _only_verified_terminal_hosted_ambiguity(values: Sequence[Evidence | Mapping[str, Any]]) -> bool:
     """Identify a finished, non-counting result that need not idle later PRs."""
 
@@ -391,6 +412,8 @@ def completion_status(
         ReviewStatus.OVER_CEILING,
     }
     for item in history:
+        if taper_complete and not allocation_reopened and _is_finding_only_hold(item):
+            continue
         blocked = _blocked(item, None)
         if blocked and not (taper_complete and not allocation_reopened and blocked in request_blockers):
             return blocked
@@ -418,6 +441,7 @@ def select_review_target(
     allocation_reopen_prs: Iterable[int] = (),
     taper_history_by_pr: Mapping[int, Sequence[Evidence | Mapping[str, Any]]] | None = None,
     active_review_prs: Iterable[int] = (),
+    finding_clearance_prs: Iterable[int] = (),
 ) -> ChannelDecision:
     """Derive the next target; callers still perform live GitHub/quota operations."""
 
@@ -430,6 +454,7 @@ def select_review_target(
     allocation_holds = allocation_holds or {}
     allocation_reopen = set(allocation_reopen_prs)
     active_reviews = set(active_review_prs)
+    finding_clearance = set(finding_clearance_prs)
     taper_history_by_pr = taper_history_by_pr or {}
     encountered_human_stop = False
     completed_taper_seen = False
@@ -513,9 +538,16 @@ def select_review_target(
         }
         blocked = None
         for item in evidence:
-            if taper_complete and (item.held or item.active_review or item.active_reservation):
+            if taper_complete and (item.active_review or item.active_reservation):
                 blocked = ReviewStatus.HELD
                 break
+            if taper_complete and item.held and not (
+                pr not in allocation_reopen and pr in finding_clearance and _is_finding_only_hold(item)
+            ):
+                blocked = ReviewStatus.HELD
+                break
+            if taper_complete and pr not in allocation_reopen and pr in finding_clearance and _is_finding_only_hold(item):
+                continue
             blocked = _blocked(item, None)
             if blocked:
                 if taper_complete and pr not in allocation_reopen and blocked in request_blockers:
