@@ -695,12 +695,32 @@ class PublishAttemptServiceTransactionIntegrationTest {
             () -> {
               try {
                 return net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup
-                    .retainSourceBacked(dsl, target, savedVersion.getVersionStateEpoch(), notes);
+                    .retainFrozenSourceBacked(
+                        dsl, target, savedVersion.getVersionStateEpoch(), notes);
               } catch (Exception failure) {
                 throw new IllegalStateException(failure);
               }
             });
     var retained = operation.account().input().selection();
+    var selectedCommit = retained.selectedCommit();
+    var captures =
+        new net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository(dsl)
+            .readCapture(operation)
+            .orElseThrow();
+    assertThat(retained.intent().notes()).isEqualTo(notes);
+    assertThat(captures.command().operation().canonicalBytes())
+        .containsExactly(operation.canonicalBytes());
+    assertThat(captures.policy().operation().canonicalBytes())
+        .containsExactly(operation.canonicalBytes());
+    assertThat(captures.command().snapshot().binding()).isEqualTo(selectedCommit);
+    assertThat(captures.policy().snapshot().binding()).isEqualTo(selectedCommit);
+    assertThat(captures.policy().snapshot().policies())
+        .singleElement()
+        .satisfies(
+            policy -> {
+              assertThat(policy.policy().visible()).isTrue();
+              assertThat(policy.policy().publicProduction()).isTrue();
+            });
     AuthoredDraftPublishSelection selection =
         AuthoredDraftPublishSelection.fromStored(retained.canonicalJson(), retained.digest());
     String publishRequestId = selection.intent().publishRequestId();

@@ -2,8 +2,13 @@ package net.firedevops.firemud.gamedesign.draft;
 
 import java.math.BigInteger;
 import java.util.List;
+import java.util.UUID;
 import java.util.function.Supplier;
+import net.firedevops.firemud.common.authoring.DraftBaseReference;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
 import net.firedevops.firemud.gamedesign.entity.PublishAttempt;
 import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
@@ -14,7 +19,9 @@ import net.firedevops.firemud.gamedesign.model.VersionAssetArtifactState;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperation;
 import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationRepository;
+import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
 import net.firedevops.firemud.gamedesign.publication.IsolatedPublicationOperationFixtures;
+import net.firedevops.firemud.gamedesign.publication.RealmPolicySource;
 import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository;
@@ -54,14 +61,28 @@ public final class IsolatedPublicationOwnerSetup {
   /** Actual source inheritance precedes selection; only the remote owner inputs are isolated. */
   public static GameDesignPublicationOperation retainSourceBacked(
       DSLContext dsl, DraftCommitBinding.TargetProof target, long draftEpoch) throws Exception {
-    return retainSourceBacked(dsl, target, draftEpoch, "ISOLATED remote owner transaction proof");
+    return retain(dsl, target, draftEpoch, "ISOLATED remote owner transaction proof", true);
   }
 
-  /** Actual source inheritance precedes selection; only the remote owner inputs are isolated. */
+  /** Actual source inheritance precedes selection; this does not freeze selected source. */
   public static GameDesignPublicationOperation retainSourceBacked(
       DSLContext dsl, DraftCommitBinding.TargetProof target, long draftEpoch, String notes)
       throws Exception {
     return retain(dsl, target, draftEpoch, notes, true);
+  }
+
+  /**
+   * Finalizer-only fixture: author a complete minimal policy, select a later World-only commit, and
+   * freeze both exact selected source captures in the caller-owned owner transaction.
+   */
+  public static GameDesignPublicationOperation retainFrozenSourceBacked(
+      DSLContext dsl, DraftCommitBinding.TargetProof target, long draftEpoch, String notes)
+      throws Exception {
+    String authoredPolicyCommit = retainPublicProductionPolicy(dsl, target);
+    GameDesignPublicationOperation operation =
+        retain(dsl, target, draftEpoch, notes, true, authoredPolicyCommit);
+    new GameDesignPublicationOperationRepository(dsl).reserveSourceBacked(operation);
+    return operation;
   }
 
   private static GameDesignPublicationOperation retain(
@@ -71,14 +92,28 @@ public final class IsolatedPublicationOwnerSetup {
       String notes,
       boolean captureSources)
       throws Exception {
-    var sources = new net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository(dsl);
+    return retain(dsl, target, draftEpoch, notes, captureSources, null);
+  }
+
+  private static GameDesignPublicationOperation retain(
+      DSLContext dsl,
+      DraftCommitBinding.TargetProof target,
+      long draftEpoch,
+      String notes,
+      boolean captureSources,
+      String sourceBaseReference)
+      throws Exception {
+    var sources = new GameDesignSourceRepository(dsl);
     var reviewed = new GameDesignReviewedBaseRepository(dsl);
     var evidence =
         captureSources
             ? reviewed.resolve(
                 target,
-                net.firedevops.firemud.common.authoring.DraftBaseReference.parse(
-                    "genesis:" + sources.readGenesis(target).orElseThrow().policy().receiptId()))
+                DraftBaseReference.parse(
+                    sourceBaseReference == null
+                        ? "genesis:"
+                            + sources.readGenesis(target).orElseThrow().policy().receiptId()
+                        : sourceBaseReference))
             : null;
     var seed =
         captureSources
@@ -159,13 +194,54 @@ public final class IsolatedPublicationOwnerSetup {
     new PublishAttemptRepository(dsl).save(attempt);
     GameDesignPublicationOperationRepository operations =
         new GameDesignPublicationOperationRepository(dsl);
-    if (captureSources) {
-      // Freeze both exact selected source snapshots and verify their operation-bound readback.
-      operations.reserveSourceBacked(operation);
-    } else {
-      operations.reserve(operation);
-    }
+    operations.reserve(operation);
     return operation;
+  }
+
+  private static String retainPublicProductionPolicy(
+      DSLContext dsl, DraftCommitBinding.TargetProof target) {
+    var sources = new GameDesignSourceRepository(dsl);
+    var genesis = sources.readGenesis(target).orElseThrow();
+    String baseReference = "genesis:" + genesis.policy().receiptId();
+    var binding =
+        DraftCommitBinding.create(
+            target,
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            baseReference,
+            List.of(
+                new RevisionPayload(
+                    "0",
+                    UUID.randomUUID(),
+                    Owner.GAME_DESIGN_CONTROL_PLANE,
+                    "{\"revisionKind\":\"REALM_ENTRY_POLICY\","
+                        + "\"logicalRevisionId\":\"isolated-finalizer-main\","
+                        + "\"policy\":{\"schemaVersion\":1,\"worldSlug\":\"world\","
+                        + "\"worldDisplayName\":\"World\",\"realmSlug\":\"main\","
+                        + "\"realmDisplayName\":\"Main\",\"visible\":true,"
+                        + "\"publicProduction\":true,\"stateScope\":\"SHARED\","
+                        + "\"entryPolicy\":\"PRESEEDED_ONLY\"}}")),
+            List.of(
+                new AffectedUnit(
+                    Owner.GAME_DESIGN_CONTROL_PLANE,
+                    RealmPolicySource.SCOPE,
+                    target.canonicalVersionId().toString(),
+                    RealmPolicySource.SCOPE,
+                    "effective",
+                    "0")));
+    var reviewed = new GameDesignReviewedBaseRepository(dsl);
+    sources.claimReviewed(
+        binding, reviewed.resolve(target, DraftBaseReference.parse(baseReference)));
+    var coordinator = new DraftCommitCoordinatorRepository(dsl);
+    coordinator.claimApplicationSlot(binding);
+    coordinator.markOwnerInProgress(binding, Owner.GAME_DESIGN_CONTROL_PLANE);
+    var applied = sources.apply(binding);
+    coordinator.advanceSourceVisibilityFence(
+        binding,
+        new DraftCommitCoordinatorRepository.CoordinatorProof(
+            binding, List.of(applied.ownerOutcome())));
+    coordinator.releaseApplicationSlot(binding);
+    return binding.commitId().toString();
   }
 
   /** Storage fixture commit only; does not substitute for actual command finalization proof. */
