@@ -2058,7 +2058,7 @@ repository = "other-owner/firemud" if scenario == "fork-empty" else "example/fir
 # The existing fork predecessor fixture is run 200. Keep its resolver target
 # distinct so the shared selector correctly excludes only the target itself.
 target_id = 300 if scenario == "fork-empty" else 200
-admission_scenario = scenario.startswith("admission-") or scenario == "partial-admission"
+admission_scenario = scenario.startswith("admission-") or scenario == "partial-admission" or scenario.startswith("window-")
 if scenario == "admission-distinct" and state.get("posts", 0):
     target_id = 201
 current_id = int(os.environ["GITHUB_RUN_ID"])
@@ -2100,7 +2100,9 @@ def resolver_run(run_id):
         status = "in_progress"
     if scenario == "pending-callback-malformed" and run_id == 9001:
         created = None
-    if admission_scenario:
+    if scenario.startswith("window-") and run_id == 9001:
+        created = "2026-07-30T02:00:00Z"
+    if admission_scenario and not scenario.startswith("window-"):
         created = "2026-07-30T03:00:00Z" if run_id == 9000 else "2026-07-30T03:01:00Z"
     if scenario == "cancelled-pending-rerun" and run_id == 9001:
         attempt = 2
@@ -2131,13 +2133,14 @@ elif endpoint.endswith("/actions/runs/9000") or endpoint.endswith("/actions/runs
     result = resolver_run(int(endpoint.rsplit("/", 1)[1]))
 elif endpoint.endswith("/actions/workflows/resolve-required-gates.yml/runs"):
     assert "--paginate" not in args and "--slurp" not in args
-    assert "created=>=2026-07-30T01:00:00Z" in args and "per_page=100" in args
+    assert "created=>=2026-07-30T02:00:00Z" in args and "per_page=100" in args
+    state["history_floor"] = "2026-07-30T02:00:00Z"
     assert "head_sha=" + head not in args and not any(arg.startswith("status=") for arg in args)
     page = int(next(arg.split("=", 1)[1] for arg in args if arg.startswith("page=")))
     assert 1 <= page <= 10
     state.setdefault("history_pages", []).append(page)
     runs = [resolver_run(9000)]
-    if scenario.startswith("history-"):
+    if scenario.startswith("history-") or scenario in {"window-final-admitted", "window-final-ambiguous"}:
         count = 1000 if scenario == "history-ceiling" else 201
         for index in range(count - 2):
             unrelated = resolver_run(10000 + index)
@@ -2152,12 +2155,17 @@ elif endpoint.endswith("/actions/workflows/resolve-required-gates.yml/runs"):
             runs[0]["id"] = 20000
         elif scenario == "history-before-floor":
             runs[100]["created_at"] = "2026-07-29T01:00:00Z"
-    elif scenario.startswith(("prior-", "cancelled-pending-")) or queue_scenario or (
+    elif scenario.startswith(("prior-", "cancelled-pending-", "window-")) or queue_scenario or (
         state.get("ambiguous_admission") and scenario != "same-id-rerun"
     ):
         runs.append(resolver_run(9001))
     if current_id == 9001 and not any(item["id"] == current_id for item in runs):
         runs.append(resolver_run(current_id))
+    if scenario == "window-old-source":
+        old = [dict(resolver_run(20000 + index), created_at="2026-07-30T01:30:00Z") for index in range(1001)]
+        runs.extend(old)
+    if scenario != "history-before-floor":
+        runs = [item for item in runs if item["created_at"] is None or item["created_at"] >= "2026-07-30T02:00:00Z"]
     total = 1001 if scenario in {"prior-oversized", "history-overcap"} else len(runs) + (1 if scenario == "prior-incomplete" else 0)
     result = {"total_count": total, "workflow_runs": runs[(page - 1) * 100:page * 100]}
     if page == 2:
@@ -2186,6 +2194,8 @@ elif endpoint.endswith("/actions/runs/9001/attempts/1/jobs") or endpoint.endswit
         conclusion = "skipped" if scenario in {"prior-noop", "prior-cancelled-between-steps", "prior-rerun-skipped"} or (scenario.startswith("history-") and scenario != "history-ambiguous-tail") else "failure"
         if queue_scenario and not rejected_later:
             conclusion = "success"
+        if scenario.startswith("window-"):
+            conclusion = "failure" if scenario in {"window-boundary-ambiguous", "window-final-ambiguous"} else "success"
         if scenario == "prior-cancelled-admission":
             conclusion = "cancelled"
         steps = [{"name": "Preflight deferred gate resolution", "status": "completed", "conclusion": "success"},
@@ -2201,7 +2211,7 @@ elif endpoint.endswith("/actions/runs/9001/attempts/1/jobs") or endpoint.endswit
             steps[-1].update(status="completed", conclusion=record["admission_conclusion"])
             steps.extend(record["confirmations"])
         elif conclusion == "success":
-            steps.append({"name": "Confirm admitted deferred gate jobs []", "status": "completed", "conclusion": "success"})
+            steps.append({"name": "Confirm admitted deferred gate jobs " + ("[2000]" if scenario in {"window-boundary-admitted", "window-final-admitted", "window-source-expiry", "window-ties"} else "[]"), "status": "completed", "conclusion": "success"})
         if scenario.startswith("cancelled-pending-"):
             result = {"total_count": 0, "jobs": []}
             if scenario == "cancelled-pending-nonempty":
@@ -2240,8 +2250,10 @@ elif endpoint.endswith("/actions/workflows/ci.yml/runs"):
     assert "head_sha=" + head in args and "event=pull_request" in args and "per_page=20" in args
     state["source_listing_reads"] = state.get("source_listing_reads", 0) + 1
     runs = [run(100), run(200 if admission_scenario else target_id)]
-    if scenario == "partial-admission" or (scenario == "admission-distinct" and state.get("posts", 0)):
+    if scenario in {"partial-admission", "window-ties", "window-new-target"} or (scenario == "admission-distinct" and state.get("posts", 0)):
         runs.append(run(201))
+    if scenario == "window-source-expiry":
+        runs = [run(200)]
     total_count = 21 if scenario == "source-oversized" else len(runs)
     if scenario == "source-transient-row-count" and state["source_listing_reads"] == 1:
         total_count += 1
@@ -2322,7 +2334,10 @@ elif endpoint.endswith(f"/actions/runs/{target_id}/attempts/1/jobs") or (admissi
 elif endpoint.endswith(f"/actions/runs/{target_id}") or (admission_scenario and any(endpoint.endswith(f"/actions/runs/{run_id}") for run_id in (200, 201))):
     requested_target = int(endpoint.rsplit("/", 1)[1])
     state["target_reads"] = state.get("target_reads", 0) + 1
+    state.setdefault("target_reads_by_id", {})[str(requested_target)] = state.get("target_reads_by_id", {}).get(str(requested_target), 0) + 1
     result = run(requested_target)
+    if scenario == "window-new-target" and requested_target == 201 and not state.get("history_pages"):
+        result["status"] = "queued"
     if scenario == "chronology-missing-created":
         result.pop("created_at")
     elif scenario == "chronology-invalid-created":
@@ -2672,5 +2687,46 @@ if run_resolver original-failure 100 failed-predecessor; then
   exit 1
 fi
 [[ "$(resolver_posts original-failure)" == 0 ]] || { echo "failed original admitted a rerun" >&2; exit 1; }
+
+# History starts at the earliest frozen eligible target, including ties. Old
+# substantive evidence and unrelated earlier traffic do not widen that window.
+for scenario in window-old-source window-boundary-admitted window-boundary-ambiguous window-final-admitted window-final-ambiguous window-source-expiry window-ties window-new-target; do
+  printf '{"scenario":"%s"}\n' "$scenario" >"$tmp_dir/resolver-state-$scenario"
+  source_id=100
+  [[ "$scenario" != window-source-expiry ]] || source_id=200
+  if [[ "$scenario" == *ambiguous ]]; then
+    if run_resolver "$scenario" "$source_id"; then
+      echo "target-boundary ambiguous admission was ignored: $scenario" >&2; exit 1
+    fi
+  else
+    run_resolver "$scenario" "$source_id"
+  fi
+  python3 - "$tmp_dir/resolver-state-$scenario" "$scenario" <<'PY_WINDOW'
+import json
+from pathlib import Path
+import sys
+state = json.loads(Path(sys.argv[1]).read_text())
+scenario = sys.argv[2]
+assert state["history_floor"] == "2026-07-30T02:00:00Z"
+expected = [2000] if scenario in {"window-old-source", "window-new-target"} else [2001] if scenario == "window-ties" else []
+assert state.get("post_jobs", []) == expected, (scenario, state)
+if "final" in scenario:
+    assert state["history_pages"] == [1, 2, 3], state
+if scenario == "window-new-target":
+    assert state["target_reads_by_id"]["201"] == 1, state
+PY_WINDOW
+done
+# Ineligible or consumed targets need neither history nor recovery inference.
+for scenario in ordinary-failure consumed chronology-missing-created chronology-invalid-created; do
+  printf '{"scenario":"%s"}\n' "$scenario" >"$tmp_dir/resolver-state-$scenario"
+  run_resolver "$scenario"
+  python3 - "$tmp_dir/resolver-state-$scenario" <<'PY_WINDOW'
+import json
+from pathlib import Path
+import sys
+state = json.loads(Path(sys.argv[1]).read_text())
+assert not state.get("history_pages") and not state.get("posts"), state
+PY_WINDOW
+done
 
 echo "PR required-gate context contract checks passed"
