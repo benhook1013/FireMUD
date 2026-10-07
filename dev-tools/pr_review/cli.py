@@ -122,6 +122,16 @@ def _parser() -> argparse.ArgumentParser:
     stack_commands = stack.add_subparsers(dest="stack_command", required=True)
     stack_set = stack_commands.add_parser("set")
     stack_set.add_argument("pr_numbers", nargs="+", type=_positive_int)
+    stack_set.add_argument(
+        "--allow-removal",
+        action="store_true",
+        help="allow omitting configured PRs after explicit user authorization",
+    )
+    stack_set.add_argument(
+        "--reason",
+        metavar="REASON",
+        help="nonblank reason required with --allow-removal; not persisted in controller state",
+    )
     stack_commands.add_parser("show")
 
     status = commands.add_parser("status", help="show live stack or one-PR status")
@@ -1358,6 +1368,20 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
             ),
         )
 
+    expected_stack = None
+    if (
+        args.command == "stack"
+        and args.stack_command == "set"
+        and args.acceptance_fixture is None
+        and args.state_path is None
+    ):
+        local_controller = ReviewController(store=ControllerStateStore())
+        _, expected_stack = local_controller.prepare_stack_update(
+            args.pr_numbers,
+            allow_removal=args.allow_removal,
+            reason=args.reason,
+        )
+
     budget = github.active_hosted_preflight_budget()
     starting_cli_run = args.command == "run" and args.run_command == "cli" and budget is not None
     selected_pr_status = args.command == "status" and args.pr is not None and budget is not None
@@ -1367,7 +1391,16 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
     if starting_cli_run or selected_pr_status:
         budget.set_completed(1)
     if args.command == "stack":
-        value = controller.set_stack(args.pr_numbers) if args.stack_command == "set" else controller.show_stack()
+        if args.stack_command == "set":
+            snapshot_options = {} if expected_stack is None else {"expected_stack": expected_stack}
+            value = controller.set_stack(
+                args.pr_numbers,
+                allow_removal=args.allow_removal,
+                reason=args.reason,
+                **snapshot_options,
+            )
+        else:
+            value = controller.show_stack()
         return value, 0
 
     if args.command == "routes":
