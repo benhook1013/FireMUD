@@ -2171,10 +2171,29 @@ elif endpoint.endswith("/actions/workflows/ci.yml"):
 elif endpoint.endswith("/actions/workflows/ci.yml/runs"):
     assert "--paginate" not in args and "--slurp" not in args
     assert "head_sha=" + head in args and "event=pull_request" in args and "per_page=20" in args
+    state["source_listing_reads"] = state.get("source_listing_reads", 0) + 1
     runs = [run(100), run(200 if admission_scenario else target_id)]
     if scenario == "partial-admission" or (scenario == "admission-distinct" and state.get("posts", 0)):
         runs.append(run(201))
-    result = {"total_count": 21 if scenario == "source-oversized" else len(runs), "workflow_runs": runs}
+    total_count = 21 if scenario == "source-oversized" else len(runs)
+    if scenario == "source-transient-row-count" and state["source_listing_reads"] == 1:
+        total_count += 1
+    elif scenario == "source-transient-missing-source" and state["source_listing_reads"] == 1:
+        runs = [run(200)]
+        total_count = len(runs)
+    elif scenario == "source-empty-then-complete" and state["source_listing_reads"] == 1:
+        runs = []
+        total_count = 0
+    elif scenario == "source-persistent-incomplete":
+        total_count += 1
+    elif scenario == "source-empty-persistent":
+        runs = []
+        total_count = 0
+    elif scenario == "source-malformed-schema":
+        runs[0].pop("created_at")
+    elif scenario == "source-identity-mismatch":
+        runs[0]["head_sha"] = "f" * 40
+    result = {"total_count": total_count, "workflow_runs": runs}
 elif endpoint.endswith("/pulls/123"):
     state["pr_reads"] = state.get("pr_reads", 0) + 1
     result = {"number": 123, "state": "open", "base": {"sha": base, "ref": "develop", "repo": {"full_name": "example/firemud"}},
@@ -2233,7 +2252,7 @@ run_resolver() {
     GITHUB_OUTPUT="$tmp_dir/resolver-output-$scenario" \
     GITHUB_REPOSITORY=example/firemud GH_TOKEN=test-token \
     GH_RETRY_COUNT_FILE="$tmp_dir/resolver-proof-count-$scenario" GH_SCENARIO="$original_scenario" \
-    GH_FAILURE_MODE=none bash "$RESOLVER" "$phase" || result_status=$?
+    GH_FAILURE_MODE=none bash "$RESOLVER" "$phase" >"$tmp_dir/resolver-log-$scenario" 2>&1 || result_status=$?
   if [[ "$phase" == admit ]]; then
     python3 - "$tmp_dir/resolver-state-$scenario" "$tmp_dir/resolver-output-$scenario" "$resolver_id" "$result_status" <<'PY'
 import json
@@ -2283,7 +2302,10 @@ PY
 resolver_posts() {
   jq -r '.posts // 0' "$tmp_dir/resolver-state-$1"
 }
-for scenario in success metadata-last metadata-first consumed fresh-changed fresh-base-branch fresh-head-repository ordinary-failure stale-pr wrong-tuple wrong-association malformed-path fork-empty ambiguous-post original-failure preflight prior-noop prior-cancelled-between-steps prior-cancelled-admission prior-ambiguous prior-unavailable prior-incomplete prior-missing-step prior-oversized source-oversized same-id-rerun prior-rerun-skipped queued-callback queued-new-revision queued-equal queued-equal-started queued-equal-missing queued-equal-malformed queued-equal-incomplete queued-equal-wrong-job prior-queued-old pending-callback pending-new-revision pending-equal pending-equal-started pending-equal-missing pending-equal-malformed pending-equal-incomplete pending-equal-wrong-job pending-equal-started-step pending-callback-started pending-callback-malformed pending-callback-attempt pending-callback-concluded prior-pending-old history-multi history-ceiling history-ambiguous-tail history-duplicate history-missing-current history-before-floor history-overcap history-incomplete history-missing-total history-malformed-total history-inconsistent-total history-malformed-page history-unavailable-page admission-delayed admission-zero admission-distinct admission-marker-failed admission-marker-cancelled admission-marker-incomplete admission-marker-missing admission-marker-malformed admission-marker-duplicate-ids admission-marker-string-id admission-marker-oversized admission-marker-duplicate-step partial-admission cancelled-pending-zero cancelled-pending-nonempty cancelled-pending-incomplete cancelled-pending-malformed cancelled-pending-missing cancelled-pending-unknown cancelled-pending-rerun cancelled-pending-started; do
+resolver_source_listing_reads() {
+  jq -r '.source_listing_reads // 0' "$tmp_dir/resolver-state-$1"
+}
+for scenario in success metadata-last metadata-first consumed fresh-changed fresh-base-branch fresh-head-repository ordinary-failure stale-pr wrong-tuple wrong-association malformed-path fork-empty ambiguous-post original-failure preflight prior-noop prior-cancelled-between-steps prior-cancelled-admission prior-ambiguous prior-unavailable prior-incomplete prior-missing-step prior-oversized source-oversized source-transient-row-count source-transient-missing-source source-empty-then-complete source-persistent-incomplete source-empty-persistent source-malformed-schema source-identity-mismatch same-id-rerun prior-rerun-skipped queued-callback queued-new-revision queued-equal queued-equal-started queued-equal-missing queued-equal-malformed queued-equal-incomplete queued-equal-wrong-job prior-queued-old pending-callback pending-new-revision pending-equal pending-equal-started pending-equal-missing pending-equal-malformed pending-equal-incomplete pending-equal-wrong-job pending-equal-started-step pending-callback-started pending-callback-malformed pending-callback-attempt pending-callback-concluded prior-pending-old history-multi history-ceiling history-ambiguous-tail history-duplicate history-missing-current history-before-floor history-overcap history-incomplete history-missing-total history-malformed-total history-inconsistent-total history-malformed-page history-unavailable-page admission-delayed admission-zero admission-distinct admission-marker-failed admission-marker-cancelled admission-marker-incomplete admission-marker-missing admission-marker-malformed admission-marker-duplicate-ids admission-marker-string-id admission-marker-oversized admission-marker-duplicate-step partial-admission cancelled-pending-zero cancelled-pending-nonempty cancelled-pending-incomplete cancelled-pending-malformed cancelled-pending-missing cancelled-pending-unknown cancelled-pending-rerun cancelled-pending-started; do
   printf '{"scenario":"%s"}\n' "$scenario" >"$tmp_dir/resolver-state-$scenario"
 done
 # A passive deployment must not even invoke the CLI.
@@ -2300,6 +2322,47 @@ run_resolver metadata-first 100 pending-predecessor
 for scenario in consumed fresh-changed fresh-base-branch fresh-head-repository ordinary-failure stale-pr wrong-tuple wrong-association malformed-path; do
   run_resolver "$scenario"
   [[ "$(resolver_posts "$scenario")" == 0 ]] || { echo "resolver reran rejected target: $scenario" >&2; exit 1; }
+done
+for scenario in source-transient-row-count source-transient-missing-source source-empty-then-complete; do
+  run_resolver "$scenario"
+  [[ "$(resolver_posts "$scenario")" == 1 && "$(resolver_source_listing_reads "$scenario")" == 2 ]] || {
+    echo "valid incomplete source listing was not reread before admission: $scenario" >&2; exit 1;
+  }
+  grep -F "Exact-head source listing is incomplete (read 1/3):" "$tmp_dir/resolver-log-$scenario" >/dev/null || {
+    echo "source-list retry diagnostic was missing: $scenario" >&2; exit 1;
+  }
+done
+for scenario in source-persistent-incomplete source-empty-persistent; do
+  if run_resolver "$scenario"; then
+    echo "persistent exact-head source undercoverage did not fail closed: $scenario" >&2; exit 1
+  fi
+  [[ "$(resolver_posts "$scenario")" == 0 && "$(resolver_source_listing_reads "$scenario")" == 3 ]] || {
+    echo "persistent source undercoverage exceeded or bypassed the read budget: $scenario" >&2; exit 1;
+  }
+done
+grep -F 'Exact-head source coverage remains incomplete after 3 reads: classification=incomplete-row-count, total_count=3, returned_rows=2, source_present=true, limit=20.' \
+  "$tmp_dir/resolver-log-source-persistent-incomplete" >/dev/null || {
+  echo "persistent source undercoverage diagnostic did not report exact counts" >&2; exit 1;
+}
+grep -F 'Exact-head source coverage remains incomplete after 3 reads: classification=incomplete-missing-source, total_count=0, returned_rows=0, source_present=false, limit=20.' \
+  "$tmp_dir/resolver-log-source-empty-persistent" >/dev/null || {
+  echo "persistent empty source listing was not reported as missing its event source" >&2; exit 1;
+}
+for scenario in source-malformed-schema source-identity-mismatch source-oversized; do
+  if run_resolver "$scenario"; then
+    echo "malformed, misattributed, or over-limit source listing was accepted: $scenario" >&2; exit 1
+  fi
+  [[ "$(resolver_posts "$scenario")" == 0 && "$(resolver_source_listing_reads "$scenario")" == 1 ]] || {
+    echo "malformed, misattributed, or over-limit source listing was retried or admitted: $scenario" >&2; exit 1;
+  }
+  case "$scenario" in
+    source-malformed-schema) expected_diagnostic='classification=malformed-created-at, total_count=2, returned_rows=2, source_present=true, limit=20.' ;;
+    source-identity-mismatch) expected_diagnostic='classification=identity-mismatch, total_count=2, returned_rows=2, source_present=true, limit=20.' ;;
+    source-oversized) expected_diagnostic='classification=overflow-total-count, total_count=21, returned_rows=2, source_present=true, limit=20.' ;;
+  esac
+  grep -F "Exact-head source coverage rejected: $expected_diagnostic" "$tmp_dir/resolver-log-$scenario" >/dev/null || {
+    echo "source-list rejection omitted its cause or bounded numeric evidence: $scenario" >&2; exit 1;
+  }
 done
 run_resolver fork-empty 100 fork-empty-association
 [[ "$(resolver_posts fork-empty)" == 1 ]] || { echo "resolver lost fork/empty-association attribution" >&2; exit 1; }
