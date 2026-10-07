@@ -241,6 +241,52 @@ run_validation() {
   python3 "$validation_script"
 }
 
+set_source_run_path() {
+  python3 - "$fixture_dir/source-run.json" "$1" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+payload = json.loads(path.read_text(encoding="utf-8"))
+payload["path"] = sys.argv[2]
+path.write_text(json.dumps(payload), encoding="utf-8")
+PY
+}
+
+run_validation
+for valid_ref in \
+  "main" \
+  "feature+metadata" \
+  "refs/heads/develop" \
+  "refs/heads/feature]/test" \
+  "refs/heads/feature/@/test" \
+  "refs/heads/feature./test" \
+  "$head_sha"; do
+  set_source_run_path ".github/workflows/runtime-images.yml@$valid_ref"
+  run_validation || {
+    echo "publisher rejected valid workflow path ref suffix: $valid_ref" >&2
+    exit 1
+  }
+done
+for invalid_path in \
+  '.github/workflows/other.yml@main' \
+  '.github/workflows/runtime-images.yml@' \
+  '.github/workflows/runtime-images.yml@feature bad' \
+  '.github/workflows/runtime-images.yml@feature..bad' \
+  '.github/workflows/runtime-images.yml@@' \
+  '.github/workflows/runtime-images.yml@refs/heads/trailing.' \
+  '.github/workflows/runtime-images.yml@refs/heads/feature[/test' \
+  '.github/workflows/runtime-images.yml@.hidden' \
+  '.github/workflows/runtime-images.yml@feature/.lock'; do
+  set_source_run_path "$invalid_path"
+  if run_validation >/dev/null 2>"$fixture_dir/path-error"; then
+    echo "publisher accepted unrelated or malformed workflow path: $invalid_path" >&2
+    exit 1
+  fi
+  grep -Fq 'source workflow API path is not the trusted runtime-images workflow' "$fixture_dir/path-error"
+done
+set_source_run_path '.github/workflows/runtime-images.yml'
 run_validation
 # Both API name representations are valid; display_title remains the exact identity.
 python3 - "$fixture_dir/source-run.json" "$source_title" <<'PY'
