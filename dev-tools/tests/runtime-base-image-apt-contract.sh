@@ -114,8 +114,19 @@ if [[ "$command" == update ]]; then
     echo "APT update is missing --error-on=any" >&2
     exit 92
   }
-  grep -Eq '^URIs:[[:space:]]*https://archive\.ubuntu\.com/ubuntu/?[[:space:]]*$' "$FIREMUD_APT_SOURCE_FILE"
-  grep -Eq '^URIs:[[:space:]]*https://security\.ubuntu\.com/ubuntu/?[[:space:]]*$' "$FIREMUD_APT_SOURCE_FILE"
+  case "$APT_EXPECTED_LAYOUT" in
+    archive)
+      grep -Eq '^URIs:[[:space:]]*https://archive\.ubuntu\.com/ubuntu/?[[:space:]]*$' "$FIREMUD_APT_SOURCE_FILE"
+      grep -Eq '^URIs:[[:space:]]*https://security\.ubuntu\.com/ubuntu/?[[:space:]]*$' "$FIREMUD_APT_SOURCE_FILE"
+      ;;
+    ports)
+      grep -Eq '^URIs:[[:space:]]*https://ports\.ubuntu\.com/ubuntu-ports/?[[:space:]]*$' "$FIREMUD_APT_SOURCE_FILE"
+      ;;
+    *)
+      echo "fixture has an unexpected APT source layout: $APT_EXPECTED_LAYOUT" >&2
+      exit 94
+      ;;
+  esac
   printf '%s\n' update >> "$APT_CALL_LOG"
   exit "$APT_UPDATE_EXIT"
 fi
@@ -166,16 +177,46 @@ Components: main restricted universe multiverse
 Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
 SOURCES
 
+cat > "$TEMP_DIR/sources.ports.input" <<'SOURCES'
+Types: deb
+URIs: http://ports.ubuntu.com/ubuntu-ports/
+Suites: resolute resolute-updates resolute-backports
+Components: main restricted universe multiverse
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+
+Types: deb
+URIs: http://ports.ubuntu.com/ubuntu-ports/
+Suites: resolute-security
+Components: main restricted universe multiverse
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+SOURCES
+
+cat > "$TEMP_DIR/sources.ports.expected" <<'SOURCES'
+Types: deb
+URIs: https://ports.ubuntu.com/ubuntu-ports/
+Suites: resolute resolute-updates resolute-backports
+Components: main restricted universe multiverse
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+
+Types: deb
+URIs: https://ports.ubuntu.com/ubuntu-ports/
+Suites: resolute-security
+Components: main restricted universe multiverse
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+SOURCES
+
 run_dockerfile_instruction() {
   local source_file="$1"
   local update_exit="$2"
   local install_exit="$3"
   local apt_call_log="$4"
   local aux_call_log="$5"
+  local expected_layout="$6"
 
   FIREMUD_APT_SOURCE_FILE="$source_file" \
     APT_UPDATE_EXIT="$update_exit" \
     APT_INSTALL_EXIT="$install_exit" \
+    APT_EXPECTED_LAYOUT="$expected_layout" \
     APT_CALL_LOG="$apt_call_log" \
     AUX_CALL_LOG="$aux_call_log" \
     PATH="$FAKE_BIN:$PATH" \
@@ -187,19 +228,29 @@ cp "$TEMP_DIR/sources.input" "$TEMP_DIR/sources.success"
 : > "$TEMP_DIR/success-aux.log"
 run_dockerfile_instruction \
   "$TEMP_DIR/sources.success" 0 0 \
-  "$TEMP_DIR/success-apt.log" "$TEMP_DIR/success-aux.log"
+  "$TEMP_DIR/success-apt.log" "$TEMP_DIR/success-aux.log" archive
 cmp "$TEMP_DIR/sources.expected" "$TEMP_DIR/sources.success"
 printf 'update\ninstall\n' > "$TEMP_DIR/calls.expected"
 cmp "$TEMP_DIR/calls.expected" "$TEMP_DIR/success-apt.log"
 printf 'rm\ngroupadd\nuseradd\n' > "$TEMP_DIR/aux-calls.expected"
 cmp "$TEMP_DIR/aux-calls.expected" "$TEMP_DIR/success-aux.log"
 
+cp "$TEMP_DIR/sources.ports.input" "$TEMP_DIR/sources.ports.success"
+: > "$TEMP_DIR/ports-success-apt.log"
+: > "$TEMP_DIR/ports-success-aux.log"
+run_dockerfile_instruction \
+  "$TEMP_DIR/sources.ports.success" 0 0 \
+  "$TEMP_DIR/ports-success-apt.log" "$TEMP_DIR/ports-success-aux.log" ports
+cmp "$TEMP_DIR/sources.ports.expected" "$TEMP_DIR/sources.ports.success"
+cmp "$TEMP_DIR/calls.expected" "$TEMP_DIR/ports-success-apt.log"
+cmp "$TEMP_DIR/aux-calls.expected" "$TEMP_DIR/ports-success-aux.log"
+
 cp "$TEMP_DIR/sources.input" "$TEMP_DIR/sources.update-failure"
 : > "$TEMP_DIR/update-failure-apt.log"
 : > "$TEMP_DIR/update-failure-aux.log"
 if run_dockerfile_instruction \
   "$TEMP_DIR/sources.update-failure" 17 0 \
-  "$TEMP_DIR/update-failure-apt.log" "$TEMP_DIR/update-failure-aux.log" \
+  "$TEMP_DIR/update-failure-apt.log" "$TEMP_DIR/update-failure-aux.log" archive \
   2>"$TEMP_DIR/update-failure.stderr"; then
   echo "Dockerfile APT RUN unexpectedly succeeded when update failed" >&2
   exit 1
@@ -223,7 +274,7 @@ PY
 : > "$TEMP_DIR/missing-source-aux.log"
 if run_dockerfile_instruction \
   "$TEMP_DIR/sources.missing-security" 0 0 \
-  "$TEMP_DIR/missing-source-apt.log" "$TEMP_DIR/missing-source-aux.log" \
+  "$TEMP_DIR/missing-source-apt.log" "$TEMP_DIR/missing-source-aux.log" archive \
   2>"$TEMP_DIR/missing-source.stderr"; then
   echo "Dockerfile APT RUN unexpectedly accepted a missing canonical source" >&2
   exit 1
