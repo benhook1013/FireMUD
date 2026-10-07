@@ -1232,7 +1232,7 @@ jobs:
           workflow-name: CI — Validation
           workflow-file: ci.yml
           workflow-path: .github/workflows/ci.yml
-          assessment-mode: ${{ github.event.pull_request.number == 3056 && github.event.pull_request.head.ref == 'codex/required-gate-native-proof' && 'assess' || 'poll' }}
+          assessment-mode: ${{ github.event.pull_request.number == 3081 && github.event.pull_request.head.ref == 'codex/required-gate-native-rehearsal-v2' && 'assess' || 'poll' }}
 
       - name: Report dependency-deferred required gate
         if: ${{ steps.preserved_gate.outputs.assessment == 'dependency-deferred' }}
