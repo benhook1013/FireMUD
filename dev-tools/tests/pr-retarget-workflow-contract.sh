@@ -652,6 +652,7 @@ const producer = (tuple, event, status, conclusion = null, overrides = {}) => ({
     : [],
   status,
   conclusion,
+  created_at: "2026-01-01T00:00:00Z",
   ...overrides,
 });
 
@@ -769,6 +770,48 @@ async function runDispatcher({ tuples, inventories = {}, apiFailure = null }) {
       `${conclusion} producer must allow an exact-tuple retry`);
   }
 
+  const orderedProducerInventory = async (older, newer, newerConclusion = null) => runDispatcher({
+    tuples: [tuple],
+    inventories: { pull_request: [
+      producer(tuple, "pull_request", older[0], older[1], {
+        id: 10101,
+        created_at: "2026-01-01T00:00:00Z",
+      }),
+      producer(tuple, "pull_request", newer[0], newerConclusion, {
+        id: 10102,
+        created_at: "2026-01-02T00:00:00Z",
+      }),
+    ] },
+  });
+  for (const conclusion of ["failure", "cancelled"]) {
+    const newestFailure = await orderedProducerInventory(
+      ["completed", "success"], ["completed", conclusion], conclusion
+    );
+    assert.equal(newestFailure.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+      `newer ${conclusion} producer must allow refresh despite an older success`);
+  }
+  for (const [newestStatus, newestConclusion] of [
+    ["in_progress", null],
+    ["completed", "success"],
+  ]) {
+    const newestUsable = await orderedProducerInventory(
+      ["completed", "failure"], [newestStatus, newestConclusion], newestConclusion
+    );
+    assert.equal(newestUsable.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 0,
+      `newer ${newestStatus}/${newestConclusion} producer must suppress despite an older failure`);
+  }
+  const ambiguousNewest = await runDispatcher({
+    tuples: [tuple],
+    inventories: { pull_request: [
+      producer(tuple, "pull_request", "completed", "success", { id: 10103 }),
+      producer(tuple, "pull_request", "completed", "failure", { id: 10104 }),
+    ] },
+  });
+  assert.equal(ambiguousNewest.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+    "ambiguous equal-time exact producers must fall back to the required refresh dispatch");
+  assert(ambiguousNewest.warnings.some((message) => message.includes("ambiguous created_at timestamp")),
+    "ambiguous producer ordering must emit an explicit fallback diagnostic");
+
   const staleTuple = tupleFor(101, "a", "c", sha("d"));
   const stale = await runDispatcher({
     tuples: [tuple],
@@ -846,6 +889,12 @@ async function runDispatcher({ tuples, inventories = {}, apiFailure = null }) {
       tuples: [tuple],
       inventories: { pull_request: [producer(tuple, "pull_request", "in_progress", null, {
         repository: { full_name: "other/repo" },
+      })] },
+    }),
+    await runDispatcher({
+      tuples: [tuple],
+      inventories: { pull_request: [producer(tuple, "pull_request", "completed", "success", {
+        created_at: "not-a-workflow-run-timestamp",
       })] },
     }),
   ]) {

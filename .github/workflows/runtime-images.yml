@@ -663,11 +663,14 @@ jobs:
               const matching = inventory.filter((run) =>
                 run?.display_title === expectedTitle
               );
-              const qualifying = [];
+              const ordered = [];
               const matchingIds = new Set();
               for (const run of matching) {
                 if (!runtimeRunEvents.includes(run.event) ||
                   !Number.isSafeInteger(run.id) || run.id <= 0 || matchingIds.has(run.id) ||
+                  typeof run.created_at !== "string" ||
+                  !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(run.created_at) ||
+                  !Number.isFinite(Date.parse(run.created_at)) ||
                   run.path !== ".github/workflows/runtime-images.yml" ||
                   !["Build Runtime Images", expectedTitle].includes(run.name) ||
                   run.repository?.full_name !== context.payload.repository.full_name ||
@@ -675,6 +678,7 @@ jobs:
                   throw new Error(`run ${run.id} has the exact tuple title but invalid workflow or repository identity`);
                 }
                 matchingIds.add(run.id);
+                ordered.push(run);
                 if (run.event === "pull_request") {
                   if (run.head_sha !== tuple.headSha) {
                     throw new Error(`run ${run.id} has the exact tuple title but a different PR head SHA`);
@@ -687,29 +691,38 @@ jobs:
                     throw new Error(`run ${run.id} has incomplete or conflicting PR association evidence`);
                   }
                 }
-                if (["queued", "waiting", "requested", "pending", "in_progress"].includes(run.status)) {
-                  if (run.conclusion !== null && run.conclusion !== undefined) {
-                    throw new Error(`run ${run.id} has a conclusion while still ${run.status}`);
-                  }
-                  qualifying.push(run);
-                } else if (run.status === "completed" && run.conclusion === "success") {
-                  qualifying.push(run);
-                } else if (run.status === "completed" && [
-                  "failure",
-                  "cancelled",
-                  "timed_out",
-                  "action_required",
-                  "neutral",
-                  "skipped",
-                  "stale",
-                  "startup_failure",
-                ].includes(run.conclusion)) {
-                  // A known non-success is retryable and cannot stand in for proof.
-                } else {
-                  throw new Error(`run ${run.id} has an unknown status and cannot be classified`);
-                }
               }
-              return qualifying;
+              ordered.sort((left, right) => right.created_at.localeCompare(left.created_at));
+              if (ordered.length > 1 && ordered[0].created_at === ordered[1].created_at) {
+                throw new Error("newest exact runtime producer has an ambiguous created_at timestamp");
+              }
+              const newest = ordered[0];
+              if (!newest) {
+                return [];
+              }
+              if (["queued", "waiting", "requested", "pending", "in_progress"].includes(newest.status)) {
+                if (newest.conclusion !== null && newest.conclusion !== undefined) {
+                  throw new Error(`run ${newest.id} has a conclusion while still ${newest.status}`);
+                }
+                return [newest];
+              }
+              if (newest.status === "completed" && newest.conclusion === "success") {
+                return [newest];
+              }
+              if (newest.status === "completed" && [
+                "failure",
+                "cancelled",
+                "timed_out",
+                "action_required",
+                "neutral",
+                "skipped",
+                "stale",
+                "startup_failure",
+              ].includes(newest.conclusion)) {
+                // The newest known non-success is retryable; older success cannot stand in for it.
+                return [];
+              }
+              throw new Error(`run ${newest.id} has an unknown status and cannot be classified`);
             };
 
             if (!shaPattern.test(baseSha) || !["main", "develop"].includes(baseBranch)) {
