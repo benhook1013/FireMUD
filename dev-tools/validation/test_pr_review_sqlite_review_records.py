@@ -2158,6 +2158,86 @@ class SqliteReviewRecordsTest(unittest.TestCase):
                     "pending",
                 )
 
+    def test_finding_pending_classification_requires_complete_consistent_source_proof(self) -> None:
+        self.bootstrap()
+        self.records.import_completed_run(
+            run_id="typed-pending-source", source_pr=2828, channel="cli", source_head="a" * 40,
+            reviewer="CodeRabbit", findings=(self.observation("one"), self.observation("two")),
+            source_decisions=tuple({
+                "source_finding_key": key, "decision_id": f"typed-pending-{key}",
+                "decision": "accepted", "actor": "reviewer", "reason": "source owned finding",
+            } for key in ("one", "two")),
+        )
+        checkpoint = Checkpoint(
+            comment_id=8001, created_at="2026-09-30T12:00:00Z", type="CLI", raw_found=2,
+            accepted=2, reviewed_sha="a" * 40, file_count=1, correction=False,
+            updated_at=None, run_id="typed-pending-source", hosted_review_id=None,
+        )
+        fingerprint = sqlite_provider_imports._checkpoint_fingerprint(checkpoint)
+        self.records.archive_imported_artifacts("typed-pending-source", {"metadata": json.dumps({
+            "checkpoint": checkpoint.as_json(), "checkpoint_fields": dataclasses.asdict(checkpoint),
+            "checkpoint_fingerprint": fingerprint,
+        })})
+        self.records.link_provider_origin(
+            repository="owner/repo", source_pr=2828, channel="cli", provider_id="run:typed-pending-source",
+            checkpoint_id=8001, checkpoint_fingerprint=fingerprint, run_id="typed-pending-source",
+        )
+        query = {"source_pr": 2828, "source_channel": "cli", "source_head": "a" * 40,
+                 "accepted_count": 2, "source_checkpoint": checkpoint, "source_repository": "owner/repo"}
+        before = self.records.history(2828)["runs"][0]["counts"]
+        self.assertEqual(self.records.source_resolution_status("typed-pending-source", **query), "pending")
+        self.assertEqual(self.records.source_resolution_status(
+            "typed-pending-source", **query, classify_pending=True), "finding_pending")
+        for changed in ({"source_pr": 2879}, {"source_head": "b" * 40}, {"accepted_count": 1}):
+            with self.subTest(changed=changed):
+                self.assertEqual(self.records.source_resolution_status(
+                    "typed-pending-source", **{**query, **changed}, classify_pending=True), "pending")
+        self.records.record_source_resolution(
+            "typed-pending-source", "one", source_pr=2828, resolution_id="typed-pending-fix-one",
+            fix_sha="b" * 40, actor="owner", proof_note="Verified sibling fix",
+            resolved_at="2026-09-30T12:00:00Z",
+        )
+        self.assertEqual(self.records.source_resolution_status(
+            "typed-pending-source", **query, classify_pending=True), "finding_pending")
+        with sqlite3.connect(self.database) as connection:
+            finalized_at = connection.execute(
+                "SELECT finalized_at FROM review_runs WHERE run_id = ?", ("typed-pending-source",)
+            ).fetchone()[0]
+        self.records.correct_source_resolution(
+            "typed-pending-source", "one", source_pr=2828, resolution_id="typed-pending-fix-one",
+            expected_fix_sha="b" * 40, fix_sha="c" * 40, correction_id="typed-pending-correction",
+            actor="owner", reason="Correct retained SHA", proof_note="Verified corrected sibling fix",
+        )
+        for sql, parameters, repair, repair_parameters in (
+            ("UPDATE provider_origins SET checkpoint_fingerprint = ? WHERE run_id = ?",
+             ("0" * 64, "typed-pending-source"),
+             "UPDATE provider_origins SET checkpoint_fingerprint = ? WHERE run_id = ?",
+             (fingerprint, "typed-pending-source")),
+            ("UPDATE provider_origins SET repository = ? WHERE run_id = ?",
+             ("other/repo", "typed-pending-source"),
+             "UPDATE provider_origins SET repository = ? WHERE run_id = ?",
+             ("owner/repo", "typed-pending-source")),
+            ("UPDATE source_finding_resolution_corrections SET expected_fix_sha = ? WHERE correction_id = ?",
+             ("a" * 40, "typed-pending-correction"),
+             "UPDATE source_finding_resolution_corrections SET expected_fix_sha = ? WHERE correction_id = ?",
+             ("b" * 40, "typed-pending-correction")),
+            ("UPDATE review_runs SET finalized = 0, finalized_at = NULL WHERE run_id = ?", ("typed-pending-source",),
+             "UPDATE review_runs SET finalized = 1, finalized_at = ? WHERE run_id = ?",
+             (finalized_at, "typed-pending-source")),
+            ("UPDATE source_finding_resolutions SET fix_sha = ? WHERE resolution_id = ?",
+             ("g" * 40, "typed-pending-fix-one"),
+             "UPDATE source_finding_resolutions SET fix_sha = ? WHERE resolution_id = ?",
+             ("b" * 40, "typed-pending-fix-one")),
+        ):
+            with self.subTest(corruption=sql):
+                with sqlite3.connect(self.database) as connection:
+                    connection.execute(sql, parameters)
+                self.assertEqual(self.records.source_resolution_status(
+                    "typed-pending-source", **query, classify_pending=True), "pending")
+                with sqlite3.connect(self.database) as connection:
+                    connection.execute(repair, repair_parameters)
+        self.assertEqual(self.records.history(2828)["runs"][0]["counts"], before)
+
     def test_source_finding_resolution_requires_exact_accepted_source_and_preserves_counts(self) -> None:
         self.bootstrap()
         self.records.import_completed_run(

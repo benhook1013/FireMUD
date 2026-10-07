@@ -35,6 +35,7 @@ from pr_review.controller import (
     HostedAdmissionBusy,
     ReviewController,
     StaleReviewTarget,
+    _RequestPreparationError,
     _review_activity,
 )
 from pr_review.policy import Channel, taper_satisfied
@@ -512,6 +513,7 @@ class RuntimeTest(unittest.TestCase):
                 self.assertEqual(records.history.call_count, 2)
                 self.assertEqual(records.history.call_args.kwargs, {"include_display": False})
                 records.source_resolution_status.assert_called_once()
+                self.assertTrue(records.source_resolution_status.call_args.kwargs["classify_pending"])
 
     def test_hosted_source_resolution_reports_record_status_read_failures_as_unavailable(self) -> None:
         origin = {
@@ -803,6 +805,26 @@ class RuntimeTest(unittest.TestCase):
                 )
                 observer = LiveEvidence("owner/repo", LiveGitHub("owner/repo"), records=records)
 
+                self.assertEqual(observer._source_resolution_status(42, "hosted", checkpoint, HEAD), "pending")
+                records.source_resolution_status.assert_not_called()
+
+        attempt = {"attempt_id": "hosted-attempt", "channel": "hosted", "provider_review_id": "901",
+                   "candidate_sha": HEAD, "state": "completed", "repository": "owner/repo",
+                   "checkpoint_id": "55", "run_id": "hosted-run-901"}
+        for history in (
+            [], {"provider_origins": "malformed", "attempts": []},
+            {"provider_origins": [origin, origin], "attempts": []},
+            {"provider_origins": [{**origin, "channel": "cli"}], "attempts": []},
+            {"provider_origins": [{**origin, "checkpoint_id": 56}], "attempts": []},
+            {"provider_origins": [], "attempts": [{**attempt, "state": "started"}]},
+            {"provider_origins": [], "attempts": [attempt, {**attempt, "candidate_sha": "f" * 40}]},
+        ):
+            with self.subTest(history=history):
+                records = SimpleNamespace(
+                    history=unittest.mock.Mock(return_value=history),
+                    source_resolution_status=unittest.mock.Mock(return_value="finding_pending"),
+                )
+                observer = LiveEvidence("owner/repo", LiveGitHub("owner/repo"), records=records)
                 self.assertEqual(observer._source_resolution_status(42, "hosted", checkpoint, HEAD), "pending")
                 records.source_resolution_status.assert_not_called()
 
@@ -5234,6 +5256,14 @@ class RuntimeTest(unittest.TestCase):
             ):
                 return observer.review_stop_audit(42, anchor)
 
+        provisional = {"pr": 42, "head": HEAD, "checkpoint": "public-cli-provisional",
+            "channel": "cli", "completed": True, "attributable": True,
+            "anchored": True, "provisional": True, "accepted": 0}
+        provisional_audit = audit_for([provisional])
+        self.assertEqual(provisional_audit["unknown_review_evidence"], [])
+        self.assertEqual(provisional_audit["channel_histories"]["cli"], [provisional])
+        self.assertEqual(provisional_audit["checkpoints"], [provisional])
+
         active_audit = audit_for([active_cli])
         self.assertEqual(active_audit["active_cli_reviews"], [active_cli])
         self.assertFalse(any("CLI review is running" in item for item in active_audit["unresolved_findings"]))
@@ -5245,6 +5275,37 @@ class RuntimeTest(unittest.TestCase):
             pending_audit["unresolved_findings"],
             ["a successful private CLI capture has no public checkpoint and requires adjudication"],
         )
+        self.assertEqual(pending_audit["finding_only_findings"], [])
+        self.assertEqual(
+            pending_audit["unknown_review_evidence"],
+            ["a successful private CLI capture has no public checkpoint and requires adjudication"],
+        )
+
+        known_pending_cli = {
+            "pr": 42,
+            "head": HEAD,
+            "checkpoint": "review-threads:1:0",
+            "held": True,
+            "finding_only_hold": True,
+            "reason": "one unresolved current review thread",
+        }
+        known_audit = audit_for([known_pending_cli])
+        self.assertEqual(known_audit["unresolved_findings"], ["one unresolved current review thread"])
+        self.assertEqual(known_audit["finding_only_findings"], ["one unresolved current review thread"])
+        self.assertEqual(known_audit["unknown_review_evidence"], [])
+
+        for status in ("finding_pending", "pending", "unavailable", "unfinalized", {}, "resolved"):
+            with self.subTest(source_status=status):
+                source = {"pr": 42, "head": HEAD, "checkpoint": "accepted-source",
+                    "completed": True, "attributable": True, "accepted": 1,
+                    "source_resolution_status": status}
+                source_audit = audit_for([source])
+                label = "cli accepted-finding source proof: accepted-source"
+                self.assertEqual(source_audit["unresolved_findings"], [] if status == "resolved" else [label])
+                self.assertEqual(source_audit["finding_only_findings"],
+                                 [label] if status == "finding_pending" else [])
+                self.assertEqual(source_audit["unknown_review_evidence"],
+                                 [] if status in ("finding_pending", "resolved") else [label])
 
     def test_review_stop_audit_checks_retained_base_and_effective_parent_separately(self) -> None:
         retained_base = BASE
@@ -5346,8 +5407,52 @@ class RuntimeTest(unittest.TestCase):
             ("ref", wrong_ref, effective_parent),
             ("current ref tip", snapshot, "e" * 40),
         ):
-            with self.subTest(movement=label), self.assertRaises(ControllerError):
-                run(selected_snapshot=selected_snapshot, parent_tip=parent_tip)
+            matching_payload = self._payload()
+            matching_payload["data"]["repository"]["pullRequest"].update(
+                number=42, headRefOid=selected_snapshot.head_sha,
+                baseRefName=selected_snapshot.base_ref_name, baseRefOid=selected_snapshot.base_sha)
+            with self.subTest(movement=label):
+                moved, moved_audit = run(selected_snapshot=selected_snapshot,
+                    selected_payload=matching_payload, parent_tip=parent_tip)
+                self.assertTrue(moved["request_preparation_only"])
+                self.assertIsNone(moved["anchor"])
+                moved_audit.assert_called_once()
+
+        for change in ({"number": 43}, {"headRefOid": None}, {"headRefOid": "bad"}):
+            invalid_payload = self._payload()
+            invalid_payload["data"]["repository"]["pullRequest"].update(
+                number=42, headRefOid=HEAD, baseRefName="develop", baseRefOid=retained_base)
+            invalid_payload["data"]["repository"]["pullRequest"].update(change)
+            with self.subTest(invalid=change), self.assertRaises(ControllerError) as raised:
+                run(selected_payload=invalid_payload)
+            self.assertNotIsInstance(raised.exception, _RequestPreparationError)
+        for invalid_tip in (None, "bad", "e" * 39):
+            with self.subTest(tip=invalid_tip), self.assertRaises(ControllerError) as raised:
+                run(parent_tip=invalid_tip)
+            self.assertNotIsInstance(raised.exception, _RequestPreparationError)
+
+        # Movement cannot skip safety evidence that exists solely in the
+        # refreshed provider audit (there is no duplicate history hold).
+        for field in ("unknown_review_evidence", "unmatched_responses", "active_reservations",
+                      "ambiguous_responses"):
+            complete_audit = {"complete": True, "active_reservations": [], "unmatched_responses": [],
+                "ambiguous_responses": [], "unresolved_findings": [], "finding_only_findings": [],
+                "unknown_review_evidence": []}
+            complete_audit[field] = ["unsafe provider evidence"]
+            if field == "unknown_review_evidence":
+                complete_audit["unresolved_findings"] = ["unsafe provider evidence"]
+            with (
+                self.subTest(audit_only=field),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(observer.live, "pull_request", return_value=snapshot),
+                patch.object(observer.live, "branch_head", return_value="e" * 40),
+                patch.object(observer, "_complete_trigger_paths", return_value=[]),
+                patch.object(observer, "history", return_value=[]),
+                patch.object(observer, "legacy_transition_reauthorization_audit", return_value=complete_audit),
+            ):
+                refreshed = observer.review_stop_audit(42, anchor)
+            self.assertTrue(refreshed["request_preparation_only"])
+            self.assertEqual(refreshed[field], ["unsafe provider evidence"])
 
         for field in ("pr_base_oid", "base_ref", "effective_parent_head", "enforce_parent_identity_ref"):
             with self.subTest(missing=field), self.assertRaisesRegex(
@@ -7143,12 +7248,17 @@ class RuntimeTest(unittest.TestCase):
             cli_history = self._history(Path(directory), payload, "cli", changed_files=100)
         self.assertTrue(
             any(
-                item.get("held") and item.get("checkpoint", "").startswith("review-threads:") for item in hosted_history
+                item.get("held") is True
+                and item.get("finding_only_hold") is True
+                and item.get("checkpoint", "").startswith("review-threads:")
+                for item in hosted_history
             )
         )
         self.assertTrue(
             any(
-                item.get("held") and item.get("checkpoint", "").startswith("summary-actions:")
+                item.get("held") is True
+                and item.get("finding_only_hold") is True
+                and item.get("checkpoint", "").startswith("summary-actions:")
                 for item in hosted_history
             )
         )
@@ -7156,6 +7266,43 @@ class RuntimeTest(unittest.TestCase):
         self.assertFalse(any(item.get("checkpoint", "").startswith("summary-actions:") for item in cli_history))
         self.assertFalse(any(item.get("over_ceiling") for item in hosted_history))
         self.assertFalse(any(item.get("over_ceiling") for item in cli_history))
+
+    def test_unverified_thread_and_ambiguous_summary_holds_are_not_finding_only(self) -> None:
+        summary = {
+            "databaseId": 31,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": (
+                f"Reviewing files that changed from the base of the PR and between `{BASE}` and `{HEAD}`.\n"
+                "Outside diff range comments (1)"
+            ),
+            "createdAt": "2026-09-23T00:02:00Z",
+        }
+        tied_summary = {**summary, "databaseId": 32}
+        provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+        for threads, expected_checkpoint in (
+            ([{"isResolved": False, "isOutdated": "unknown"}], "review-threads:malformed"),
+            (None, "review-threads:unavailable"),
+        ):
+            with self.subTest(expected_checkpoint=expected_checkpoint):
+                payload = self._payload([summary, tied_summary], threads=threads or [])
+                if threads is None:
+                    payload["data"]["repository"]["pullRequest"].pop("reviewThreads")
+                blockers = provider._global_blockers(42, HEAD, payload)
+                thread_holds = [
+                    item for item in blockers if item.get("checkpoint", "").startswith("review-threads:")
+                ]
+                summary_holds = [
+                    item for item in blockers if item.get("checkpoint", "").startswith("summary-actions:")
+                ]
+                thread_blocker = next(
+                    item for item in thread_holds if item.get("checkpoint") == expected_checkpoint
+                )
+                self.assertTrue(thread_blocker.get("unstable") is True)
+                self.assertTrue(thread_blocker.get("held") is True)
+                self.assertIsNot(thread_blocker.get("finding_only_hold"), True)
+                self.assertEqual(len(summary_holds), 1)
+                self.assertEqual(summary_holds[0]["checkpoint"], "summary-actions:1:1")
+                self.assertNotIn("finding_only_hold", summary_holds[0])
 
     def test_file_ceiling_skip_uses_current_changed_file_count_and_later_completion_clears_it(self) -> None:
         old_head = "d" * 40
