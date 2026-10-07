@@ -31,6 +31,7 @@ import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOper
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountSecurityStateOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountSecurityStateOperationRepository.Capture;
+import net.firedevops.firemud.accountservice.repository.PreRestrictionBirthAccountFixture;
 import net.firedevops.firemud.accountservice.service.AccountAuthoritySourceEventReadback;
 import net.firedevops.firemud.accountservice.service.AccountAuthoritySourceReader;
 import net.firedevops.firemud.common.account.authority.AccountSecurityStateAuthorityEventV1Codec;
@@ -921,15 +922,14 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
     return tx(
         fixture,
         () -> {
-          Account account = new Account();
           String id = UUID.randomUUID().toString().substring(0, 12);
-          account.setUsername("security-" + id);
-          account.setEmail(id + "@example.test");
-          account.setPasswordHash("synthetic-verifier");
-          account = new AccountRepository(fixture.dsl()).save(account);
-          new AccountAuthoritySourceEvidenceRepository(
-                  fixture.dsl(), fixture.generations(), fixture.outbox())
-              .initializeIssuerIfAbsent("firemud-account-service");
+          Account account =
+              PreRestrictionBirthAccountFixture.create(
+                  fixture.dsl(),
+                  "security-" + id,
+                  id + "@example.test",
+                  "synthetic-verifier",
+                  AccountLoginAuthModes.DEFAULT_SERIALIZED);
           ScopeState source =
               fixture.generations().read(AuthorityScope.account(account.getAccountUuid()));
           return new Seed(account, source);

@@ -103,6 +103,7 @@ import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipR
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository;
 import net.firedevops.firemud.accountservice.repository.ApprovedLegacyTenantAssociationRepository;
 import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepository;
+import net.firedevops.firemud.accountservice.repository.PreRestrictionBirthAccountFixture;
 import net.firedevops.firemud.accountservice.service.AccountCanonicalFirstJoinTerminalCoordinator;
 import net.firedevops.firemud.accountservice.service.AccountGameplayPublicAdmissionSourceReader;
 import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer;
@@ -398,7 +399,7 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
       throws Exception {
     // V78 is the existing pre-binding schema in this checkout; V79/V80 are reserved elsewhere.
     TestContext context = newTestContextAtVersion("78");
-    Account account = createAccount(context);
+    Account account = createHistoricalAccount(context, "PASSWORD");
     AccountAuthorityGenerationRepository authorities =
         new AccountAuthorityGenerationRepository(context.dsl());
     AccountAuthoritySourceEvidenceRepository sources = sourceEvidence(context.dsl(), authorities);
@@ -2310,6 +2311,19 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
           sourceEvidence.initializeIssuerIfAbsent(ACCOUNT_ISSUER);
           return new AccountRepository(dsl, sourceEvidence).save(account);
         });
+  }
+
+  private static Account createHistoricalAccount(TestContext context, String loginAuthModes) {
+    String suffix = UUID.randomUUID().toString().replace("-", "");
+    return inTransaction(
+        context,
+        () ->
+            PreRestrictionBirthAccountFixture.create(
+                context.dsl(),
+                "delegation-" + suffix,
+                "delegation-" + UUID.randomUUID() + "@example.test",
+                "integration-test-hash",
+                loginAuthModes));
   }
 
   private static Account createEmailOtpAccount(

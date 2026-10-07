@@ -192,7 +192,17 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
   @Test
   void retainedAccountMigrationPreservesAccountAndAddsIndependentFenceDomain() {
     var context = context("84.4");
-    UUID account = account(context);
+    UUID account =
+        tx(
+            context,
+            () ->
+                PreRestrictionBirthAccountFixture.create(
+                        context.dsl(),
+                        "lease-" + UUID.randomUUID(),
+                        UUID.randomUUID() + "@example.test",
+                        "storage-fixture-only",
+                        "PASSWORD")
+                    .getAccountUuid());
     migrate(context, null);
     var first = pending(context, account);
     var second = pending(context, account);

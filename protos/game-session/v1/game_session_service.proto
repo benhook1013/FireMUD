@@ -45,6 +45,10 @@ service GameSessionControlPlaneService {
   // Read the exact point-in-time published-realm admission owner composition for Entity.
   rpc GetPublishedRealmAdmissionOwnerRead(GetPublishedRealmAdmissionOwnerReadRequest)
       returns (GetPublishedRealmAdmissionOwnerReadResponse);
+  // Read Account's exact Game Session lease-bound PROVISIONAL decision; this is not admission.
+  rpc GetCanonicalGameplayAdmissionDecision(
+      GetCanonicalGameplayAdmissionDecisionRequest)
+      returns (GetCanonicalGameplayAdmissionDecisionResponse);
   rpc ValidateBuiltInCommandAlias(ValidateBuiltInCommandAliasRequest)
       returns (ValidateBuiltInCommandAliasResponse);
   rpc ListAdmissionPointers(ListAdmissionPointersRequest)
@@ -553,6 +557,28 @@ enum PublishedRealmAdmissionAttemptStatus {
 message GetPublishedRealmAdmissionOwnerReadResponse {
   // Present only when the complete owner composition was read and validated.
   PublishedRealmAdmissionOwnerReadEvidence proof = 1;
+}
+
+enum CanonicalGameplayAdmissionDecisionStatus {
+  CANONICAL_GAMEPLAY_ADMISSION_DECISION_STATUS_UNSPECIFIED = 0;
+  CANONICAL_GAMEPLAY_ADMISSION_DECISION_STATUS_PROVISIONAL = 1;
+}
+
+// Account supplies the exact decision ID and its original canonical, bounded lease evidence.
+// Game Session's result remains provisional and is never an admission or finalization receipt.
+message GetCanonicalGameplayAdmissionDecisionRequest {
+  uint32 schema_version = 1;
+  string binding_decision_uuid = 2;
+  bytes lease_evidence = 3;
+}
+
+// Echoes the complete request and binds it to the exact strict lease digest and PROVISIONAL state.
+message GetCanonicalGameplayAdmissionDecisionResponse {
+  uint32 schema_version = 1;
+  string binding_decision_uuid = 2;
+  bytes lease_evidence = 3;
+  string lease_evidence_sha256 = 4;
+  CanonicalGameplayAdmissionDecisionStatus status = 5;
 }
 
 message GetGameplayCommandStatusRequest {
