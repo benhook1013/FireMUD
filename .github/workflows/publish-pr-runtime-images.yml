@@ -122,15 +122,15 @@ jobs:
               if not isinstance(value, str) or not value.startswith(prefix):
                   return False
               ref = value[len(prefix):]
-              if not ref or ".." in ref or "@{" in ref or "//" in ref or any(
+              if not ref or ref == "@" or ref.endswith(".") or ".." in ref or "@{" in ref or "//" in ref or any(
                   ord(character) <= 32 or ord(character) == 127 or
-                  character in "~^:?*[]\\"
+                  character in "~^:?*[\\"
                   for character in ref
               ):
                   return False
               return all(
-                  part and part not in {".", "..", "@"} and
-                  not part.startswith(".") and not part.endswith(".") and
+                  part and part not in {".", ".."} and
+                  not part.startswith(".") and
                   not part.endswith(".lock")
                   for part in ref.split("/")
               )

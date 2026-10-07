@@ -817,14 +817,31 @@ async function runDispatcher({ tuples, inventories = {}, apiFailure = null }) {
       `${event} completed source success must preserve recovery dispatch for missing or expired publication`);
   }
 
-  const refSuffixedPath = await runDispatcher({
-    tuples: [tuple],
-    inventories: { pull_request: [producer(tuple, "pull_request", "in_progress", null, {
-      path: ".github/workflows/runtime-images.yml@main",
-    })] },
-  });
-  assert.equal(refSuffixedPath.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 0,
-    "the exact owning workflow path with an API ref suffix must remain eligible");
+  for (const validRef of [
+    "main",
+    "refs/heads/feature]/test",
+    "refs/heads/feature/@/test",
+    "refs/heads/feature./test",
+  ]) {
+    const refSuffixedPath = await runDispatcher({
+      tuples: [tuple],
+      inventories: { pull_request: [producer(tuple, "pull_request", "in_progress", null, {
+        path: `.github/workflows/runtime-images.yml@${validRef}`,
+      })] },
+    });
+    assert.equal(refSuffixedPath.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 0,
+      `the exact owning workflow path with valid Git ref ${validRef} must remain eligible`);
+  }
+  for (const invalidRef of ["@", "refs/heads/trailing.", "refs/heads/feature[/test"]) {
+    const invalidRefPath = await runDispatcher({
+      tuples: [tuple],
+      inventories: { pull_request: [producer(tuple, "pull_request", "in_progress", null, {
+        path: `.github/workflows/runtime-images.yml@${invalidRef}`,
+      })] },
+    });
+    assert.equal(invalidRefPath.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+      `an invalid Git ref ${invalidRef} must not suppress the required dispatch`);
+  }
   const wrongWorkflowPath = await runDispatcher({
     tuples: [tuple],
     inventories: { pull_request: [producer(tuple, "pull_request", "in_progress", null, {

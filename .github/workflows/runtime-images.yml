@@ -712,15 +712,16 @@ jobs:
                   return false;
                 }
                 const ref = path.slice(prefix.length);
-                if (ref.length === 0 || /[\u0000-\u0020\u007f]/.test(ref) ||
-                  ["~", "^", ":", "?", "*", "[", "]", "\\"].some((character) => ref.includes(character)) ||
+                if (ref.length === 0 || ref === "@" || ref.endsWith(".") ||
+                  /[\u0000-\u0020\u007f]/.test(ref) ||
+                  ["~", "^", ":", "?", "*", "[", "\\"].some((character) => ref.includes(character)) ||
                   ref.includes("..") || ref.includes("@{")) {
                   return false;
                 }
                 return ref.split("/").every((part) =>
-                  part.length > 0 && part !== "." && part !== ".." && part !== "@" &&
+                  part.length > 0 && part !== "." && part !== ".." &&
                   !part.startsWith(".") &&
-                  !part.endsWith(".") && !part.endsWith(".lock")
+                  !part.endsWith(".lock")
                 );
               };
               const expectedTitle =
