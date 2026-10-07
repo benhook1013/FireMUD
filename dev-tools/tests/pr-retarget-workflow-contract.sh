@@ -604,6 +604,266 @@ PY
 
 run_image_meta_exact_parent_fixture
 
+# Execute the dispatcher's production GitHub Script body with mocked GitHub APIs.
+# This keeps deduplication behavior tests bound to the code deployed by the
+# workflow instead of a second implementation of its matching rules.
+node - "$runtime_images_path" <<'NODE'
+const assert = require("node:assert/strict");
+const { spawnSync } = require("node:child_process");
+const workflowPath = process.argv[2];
+const extraction = spawnSync("python3", ["-c", String.raw`
+import sys
+import yaml
+from pathlib import Path
+
+workflow = yaml.load(Path(sys.argv[1]).read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+steps = workflow["jobs"]["dispatch-pr-base-refreshes"]["steps"]
+step = next(step for step in steps if step.get("name") == "Dispatch exact PR runtime refreshes and preview reconciles")
+sys.stdout.write(step["with"]["script"])
+`, workflowPath], { encoding: "utf8" });
+assert.equal(extraction.status, 0, extraction.stderr);
+const dispatcherScript = extraction.stdout;
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+
+const sha = (letter) => letter.repeat(40);
+const repository = "owner/repo";
+const baseSha = sha("b");
+const createdAt = "2026-01-01T00:00:00Z";
+const tupleFor = (number, headLetter, mergeLetter, base = baseSha) => ({
+  prNumber: String(number),
+  baseRef: "develop",
+  baseSha: base,
+  headSha: sha(headLetter),
+  mergeSha: sha(mergeLetter),
+});
+const titleFor = (tuple) =>
+  `Build Runtime Images secure-pr-artifact pr-${tuple.prNumber} base-${tuple.baseSha} head-${tuple.headSha} merge-${tuple.mergeSha} mode-required`;
+const producer = (tuple, event, status, conclusion = null, overrides = {}) => ({
+  id: Number(tuple.prNumber) * 100 + (event === "pull_request" ? 1 : 2),
+  name: "Build Runtime Images",
+  path: ".github/workflows/runtime-images.yml",
+  event,
+  display_title: titleFor(tuple),
+  repository: { full_name: repository },
+  head_repository: { full_name: repository },
+  head_sha: event === "pull_request" ? tuple.headSha : baseSha,
+  pull_requests: event === "pull_request"
+    ? [{ number: Number(tuple.prNumber), head: { sha: tuple.headSha } }]
+    : [],
+  status,
+  conclusion,
+  ...overrides,
+});
+
+async function runDispatcher({ tuples, inventories = {}, apiFailure = null }) {
+  const dispatches = [];
+  const errors = [];
+  const infos = [];
+  const warnings = [];
+  const inventoryCalls = [];
+  const currentBaseSha = tuples[0]?.baseSha ?? baseSha;
+  const tupleByNumber = new Map(tuples.map((tuple) => [tuple.prNumber, tuple]));
+  const core = {
+    info: (message) => infos.push(message),
+    warning: (message) => warnings.push(message),
+    error: (message) => errors.push(message),
+    setFailed: (message) => errors.push(message),
+  };
+  const github = {
+    rest: {
+      git: {
+        getRef: async () => ({ data: { object: { sha: currentBaseSha } } }),
+      },
+      pulls: {
+        list: async () => ({ data: tuples.map((tuple) => ({
+          number: Number(tuple.prNumber),
+          state: "open",
+          base: { ref: tuple.baseRef, repo: { full_name: repository } },
+          head: { sha: tuple.headSha, repo: { full_name: repository } },
+          changed_files: 1,
+          created_at: createdAt,
+        })) }),
+        get: async ({ pull_number }) => {
+          const tuple = tupleByNumber.get(String(pull_number));
+          return { data: {
+            number: Number(tuple.prNumber),
+            state: "open",
+            base: { ref: tuple.baseRef, repo: { full_name: repository } },
+            head: { sha: tuple.headSha, repo: { full_name: repository } },
+            user: { login: "maintainer" },
+            mergeable: true,
+            mergeable_state: "clean",
+            merge_commit_sha: tuple.mergeSha,
+            changed_files: 1,
+            created_at: createdAt,
+          } };
+        },
+        listFiles: async () => ({ data: [{ filename: "services/example/src/Main.java" }] }),
+      },
+      repos: {
+        getCommit: async ({ ref }) => {
+          const tuple = tuples.find((candidate) => candidate.mergeSha === ref);
+          return { data: { sha: ref, parents: [{ sha: tuple.baseSha }, { sha: tuple.headSha }] } };
+        },
+        createDispatchEvent: async (request) => { dispatches.push(request); },
+      },
+      actions: {
+        listWorkflowRuns: async (request) => {
+          inventoryCalls.push(request);
+          if (apiFailure === request.event) throw new Error("fixture API unavailable");
+          const inventory = inventories[request.event] ?? [];
+          const totalCount = Number.isInteger(inventory.total_count) ? inventory.total_count : inventory.length;
+          const runs = Array.isArray(inventory) ? inventory : inventory.runs ?? [];
+          return { data: { total_count: totalCount, workflow_runs: runs.slice((request.page - 1) * 100, request.page * 100) } };
+        },
+      },
+    },
+    paginate: async (endpoint, request, map) => map(await endpoint(request)),
+  };
+  const context = {
+    repo: { owner: "owner", repo: "repo" },
+    payload: {
+      repository: { full_name: repository, default_branch: "develop" },
+      workflow_run: { head_branch: "develop", head_sha: currentBaseSha, status: "completed" },
+    },
+  };
+  await new AsyncFunction("github", "context", "core", dispatcherScript)(github, context, core);
+  return { dispatches, errors, infos, warnings, inventoryCalls };
+}
+
+(async () => {
+  const tuple = tupleFor(101, "a", "c");
+  for (const [event, status, conclusion] of [
+    ["pull_request", "in_progress", null],
+    ["pull_request", "completed", "success"],
+    ["repository_dispatch", "in_progress", null],
+    ["repository_dispatch", "completed", "success"],
+  ]) {
+    const result = await runDispatcher({
+      tuples: [tuple],
+      inventories: { [event]: [producer(tuple, event, status, conclusion)] },
+    });
+    assert.equal(result.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 0,
+      `${event} ${status}/${conclusion} exact producer must suppress duplicate runtime dispatch`);
+    assert.equal(result.dispatches.filter((item) => item.event_type === "preview-deploy").length, 1,
+      "runtime deduplication must retain preview reconciliation");
+    assert.equal(result.inventoryCalls.length, 2, "one shared inventory query per event kind is expected");
+    assert(result.inventoryCalls.every((request) =>
+      request.workflow_id === "runtime-images.yml" &&
+      request.per_page === 100 &&
+      request.page === 1 &&
+      typeof request.created === "string" &&
+      !Number.isNaN(Date.parse(request.created.replace(/\.\.\*$/, "")) )
+    ), "the shared inventory must query only one bounded recent page per event");
+  }
+
+  for (const [status, conclusion] of [
+    ["completed", "failure"],
+    ["completed", "cancelled"],
+  ]) {
+    const result = await runDispatcher({
+      tuples: [tuple],
+      inventories: { pull_request: [producer(tuple, "pull_request", status, conclusion)] },
+    });
+    assert.equal(result.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+      `${conclusion} producer must allow an exact-tuple retry`);
+  }
+
+  const staleTuple = tupleFor(101, "a", "c", sha("d"));
+  const stale = await runDispatcher({
+    tuples: [tuple],
+    inventories: { repository_dispatch: [producer(staleTuple, "repository_dispatch", "completed", "success")] },
+  });
+  assert.equal(stale.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+    "stale base tuple must not suppress a current runtime refresh");
+
+  const changedBaseTuple = tupleFor(101, "a", "c", sha("e"));
+  const changedBase = await runDispatcher({
+    tuples: [changedBaseTuple],
+    inventories: { pull_request: [producer(tuple, "pull_request", "completed", "success")] },
+  });
+  assert.equal(changedBase.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+    "a changed base requires a fresh exact tuple producer");
+
+  const sibling = tupleFor(102, "f", "d");
+  const independent = await runDispatcher({
+    tuples: [tuple, sibling],
+    inventories: {
+      pull_request: [null, { id: "malformed-unrelated-record", display_title: "historical unrelated record" },
+        producer(tuple, "pull_request", "completed", "success")],
+      repository_dispatch: [],
+    },
+  });
+  assert.equal(independent.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+    "unrelated malformed history must not poison exact suppression or an independent sibling dispatch");
+  assert.equal(independent.dispatches.find((item) => item.event_type === "pr-runtime-base-refresh").client_payload.pr_number, "102");
+  assert.equal(independent.inventoryCalls.length, 2, "multiple PRs must reuse one shared inventory");
+
+  const partialSibling = tupleFor(103, "7", "8");
+  const recentRuns = Array.from({ length: 100 }, (_, index) => ({
+    id: 20000 + index,
+    event: "pull_request",
+    display_title: `historical unrelated run ${index}`,
+  }));
+  recentRuns[0] = producer(tuple, "pull_request", "in_progress");
+  const truncatedPositive = await runDispatcher({
+    tuples: [tuple, partialSibling],
+    inventories: {
+      pull_request: { total_count: 101, runs: recentRuns },
+      repository_dispatch: [],
+    },
+  });
+  assert.equal(truncatedPositive.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+    `a positively verified exact producer from a valid truncated page must suppress only its matching tuple: ${JSON.stringify(truncatedPositive.dispatches.map((item) => item.event_type + ":" + item.client_payload.pr_number))}`);
+  assert.equal(truncatedPositive.dispatches.find((item) => item.event_type === "pr-runtime-base-refresh").client_payload.pr_number, "103",
+    "an unmatched sibling must still use the required dispatch when the recent inventory is truncated");
+  assert(truncatedPositive.warnings.some((message) => message.includes("falling back to the required refresh dispatch")),
+    "truncated inventory must warn when it cannot positively verify a sibling producer");
+  assert.equal(truncatedPositive.inventoryCalls.length, 2, "truncated shared inventory must remain bounded per event");
+
+  const validSibling = tupleFor(104, "9", "0");
+  const relevantMalformed = await runDispatcher({
+    tuples: [tuple, validSibling],
+    inventories: {
+      pull_request: [
+        producer(tuple, "pull_request", "in_progress", null, { repository: { full_name: "other/repo" } }),
+        producer(validSibling, "pull_request", "completed", "success"),
+      ],
+      repository_dispatch: [],
+    },
+  });
+  assert.equal(relevantMalformed.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+    "relevant malformed evidence must fall back only for its own tuple");
+  assert.equal(relevantMalformed.dispatches.find((item) => item.event_type === "pr-runtime-base-refresh").client_payload.pr_number, "101",
+    "a valid sibling producer must still suppress its own exact tuple");
+
+  for (const uncertain of [
+    await runDispatcher({ tuples: [tuple], inventories: { pull_request: { total_count: 101, runs: [] } } }),
+    await runDispatcher({ tuples: [tuple], inventories: { pull_request: { total_count: 1, runs: [] } } }),
+    await runDispatcher({ tuples: [tuple], apiFailure: "pull_request" }),
+    await runDispatcher({ tuples: [tuple], inventories: { pull_request: { malformed: true } } }),
+    await runDispatcher({
+      tuples: [tuple],
+      inventories: { pull_request: [producer(tuple, "pull_request", "in_progress", null, {
+        repository: { full_name: "other/repo" },
+      })] },
+    }),
+  ]) {
+    assert.equal(uncertain.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+      "incomplete, unavailable, or relevant malformed evidence must fall back to required dispatch");
+    assert.equal(uncertain.dispatches.filter((item) => item.event_type === "preview-deploy").length, 1,
+      "inventory uncertainty must not block independent preview reconciliation");
+    assert(uncertain.warnings.some((message) => message.includes("falling back to the required refresh dispatch")),
+      "inventory uncertainty must produce a concrete fallback diagnostic");
+  }
+
+  process.stdout.write("runtime refresh deduplication fixtures passed\n");
+})().catch((error) => {
+  process.stderr.write(`${error.stack || error}\n`);
+  process.exitCode = 1;
+});
+NODE
+
 require_contains "$runtime_images_path" 'types: [opened, synchronize, reopened, edited]'
 require_contains "$runtime_images_path" 'types: [pr-runtime-base-refresh]'
 require_contains "$runtime_images_path" 'repository_dispatch:'
@@ -635,6 +895,12 @@ assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'contents: wri
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'github.rest.git.getRef'
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'github.rest.pulls.list'
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'github.rest.repos.getCommit'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'github.rest.actions.listWorkflowRuns'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'actions: read'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'runtimeRunPageSize = 100'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'runtimeRunLookbackMilliseconds'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'falling back to the required refresh dispatch'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'Skipping duplicate PR runtime refresh'
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'currentBaseRef !== baseBranch'
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'parents.length !== 2'
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'parents[0] !== baseSha'

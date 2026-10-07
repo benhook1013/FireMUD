@@ -428,6 +428,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
+      actions: read
       contents: write
       pull-requests: read
     steps:
@@ -484,6 +485,9 @@ jobs:
               "gradlew.bat",
               "settings.gradle.kts",
             ]);
+            const runtimeRunEvents = ["pull_request", "repository_dispatch"];
+            const runtimeRunPageSize = 100;
+            const runtimeRunLookbackMilliseconds = 7 * 24 * 60 * 60 * 1000;
 
             const waitForMergeRefresh = async () => {
               await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -620,6 +624,94 @@ jobs:
               return null;
             };
 
+            const loadExistingRuntimeRuns = async () => {
+              const inventory = [];
+              const createdSince = new Date(Date.now() - runtimeRunLookbackMilliseconds).toISOString();
+              let complete = true;
+              let incompleteReason = null;
+              for (const event of runtimeRunEvents) {
+                const response = await github.rest.actions.listWorkflowRuns({
+                  ...context.repo,
+                  workflow_id: "runtime-images.yml",
+                  event,
+                  created: `${createdSince}..*`,
+                  per_page: runtimeRunPageSize,
+                  page: 1,
+                });
+                const payload = response?.data;
+                if (!payload || !Number.isInteger(payload.total_count) ||
+                  payload.total_count < 0 || !Array.isArray(payload.workflow_runs)) {
+                  throw new Error(`runtime-images ${event} recent run inventory is malformed`);
+                }
+                if (payload.total_count > runtimeRunPageSize) {
+                  complete = false;
+                  incompleteReason ??= `runtime-images ${event} has more than ${runtimeRunPageSize} recent runs`;
+                }
+                const expectedPageLength = Math.min(payload.total_count, runtimeRunPageSize);
+                if (payload.workflow_runs.length !== expectedPageLength) {
+                  throw new Error(`runtime-images ${event} recent run inventory is incomplete`);
+                }
+                inventory.push(...payload.workflow_runs);
+              }
+              return {complete, runs: inventory, reason: incompleteReason};
+            };
+
+            const findExactExistingProducer = (tuple, inventory) => {
+              const expectedTitle =
+                `Build Runtime Images secure-pr-artifact pr-${tuple.prNumber} ` +
+                `base-${tuple.baseSha} head-${tuple.headSha} merge-${tuple.mergeSha} mode-required`;
+              const matching = inventory.filter((run) =>
+                run?.display_title === expectedTitle
+              );
+              const qualifying = [];
+              const matchingIds = new Set();
+              for (const run of matching) {
+                if (!runtimeRunEvents.includes(run.event) ||
+                  !Number.isSafeInteger(run.id) || run.id <= 0 || matchingIds.has(run.id) ||
+                  run.path !== ".github/workflows/runtime-images.yml" ||
+                  !["Build Runtime Images", expectedTitle].includes(run.name) ||
+                  run.repository?.full_name !== context.payload.repository.full_name ||
+                  run.head_repository?.full_name !== context.payload.repository.full_name) {
+                  throw new Error(`run ${run.id} has the exact tuple title but invalid workflow or repository identity`);
+                }
+                matchingIds.add(run.id);
+                if (run.event === "pull_request") {
+                  if (run.head_sha !== tuple.headSha) {
+                    throw new Error(`run ${run.id} has the exact tuple title but a different PR head SHA`);
+                  }
+                  const pullRequests = run.pull_requests;
+                  if (!Array.isArray(pullRequests) || (pullRequests.length > 0 && !pullRequests.some((pullRequest) =>
+                    String(pullRequest?.number) === tuple.prNumber &&
+                    pullRequest?.head?.sha === tuple.headSha
+                  ))) {
+                    throw new Error(`run ${run.id} has incomplete or conflicting PR association evidence`);
+                  }
+                }
+                if (["queued", "waiting", "requested", "pending", "in_progress"].includes(run.status)) {
+                  if (run.conclusion !== null && run.conclusion !== undefined) {
+                    throw new Error(`run ${run.id} has a conclusion while still ${run.status}`);
+                  }
+                  qualifying.push(run);
+                } else if (run.status === "completed" && run.conclusion === "success") {
+                  qualifying.push(run);
+                } else if (run.status === "completed" && [
+                  "failure",
+                  "cancelled",
+                  "timed_out",
+                  "action_required",
+                  "neutral",
+                  "skipped",
+                  "stale",
+                  "startup_failure",
+                ].includes(run.conclusion)) {
+                  // A known non-success is retryable and cannot stand in for proof.
+                } else {
+                  throw new Error(`run ${run.id} has an unknown status and cannot be classified`);
+                }
+              }
+              return qualifying;
+            };
+
             if (!shaPattern.test(baseSha) || !["main", "develop"].includes(baseBranch)) {
               core.setFailed("Successful CI push did not identify a supported lowercase base branch SHA.");
               return;
@@ -643,6 +735,8 @@ jobs:
               },
               (response) => response.data
             );
+            let runtimeInventoryPromise;
+            let runtimeInventoryError = null;
             for (const listedPullRequest of pullRequests) {
               if (listedPullRequest.state !== "open" ||
                 listedPullRequest.base?.ref !== baseBranch ||
@@ -656,18 +750,54 @@ jobs:
               }
               const {tuple, pullRequest} = resolved;
               if (await hasRuntimeChange(pullRequest)) {
-                core.info(`Dispatching PR runtime base refresh for #${tuple.prNumber} (${tuple.baseSha} / ${tuple.headSha} / ${tuple.mergeSha}).`);
-                await github.rest.repos.createDispatchEvent({
-                  ...context.repo,
-                  event_type: "pr-runtime-base-refresh",
-                  client_payload: {
-                    pr_number: tuple.prNumber,
-                    base_ref: tuple.baseRef,
-                    base_sha: tuple.baseSha,
-                    head_sha: tuple.headSha,
-                    merge_sha: tuple.mergeSha,
-                  },
-                });
+                let existingProducers = [];
+                let fallbackReason = null;
+                let inventory;
+                if (runtimeInventoryError) {
+                  fallbackReason = runtimeInventoryError;
+                } else {
+                  try {
+                    runtimeInventoryPromise ??= loadExistingRuntimeRuns();
+                    inventory = await runtimeInventoryPromise;
+                  } catch (error) {
+                    fallbackReason = error.message || String(error);
+                    runtimeInventoryError = fallbackReason;
+                  }
+                }
+                if (!fallbackReason) {
+                  try {
+                    existingProducers = findExactExistingProducer(tuple, inventory.runs);
+                    if (existingProducers.length === 0 && !inventory.complete) {
+                      fallbackReason = inventory.reason || "recent run inventory is incomplete";
+                    }
+                  } catch (error) {
+                    fallbackReason = error.message || String(error);
+                  }
+                }
+                if (fallbackReason) {
+                  core.warning(
+                    `Cannot verify recent runtime producer evidence for #${tuple.prNumber} (${tuple.baseSha} / ${tuple.headSha} / ${tuple.mergeSha}); falling back to the required refresh dispatch: ${fallbackReason}`
+                  );
+                }
+                if (existingProducers.length > 0) {
+                  const producer = existingProducers[0];
+                  core.info(
+                    `Skipping duplicate PR runtime refresh for #${tuple.prNumber}: exact tuple producer ${producer.id} is ${producer.status === "completed" ? "already successful" : producer.status}.`
+                  );
+                } else {
+                  core.info(`No exact producer was found in the bounded recent inventory; dispatching required PR runtime refresh for #${tuple.prNumber} (${tuple.baseSha} / ${tuple.headSha} / ${tuple.mergeSha}).`);
+                  await github.rest.repos.createDispatchEvent({
+                    ...context.repo,
+                    event_type: "pr-runtime-base-refresh",
+                    client_payload: {
+                      pr_number: tuple.prNumber,
+                      base_ref: tuple.baseRef,
+                      base_sha: tuple.baseSha,
+                      head_sha: tuple.headSha,
+                      merge_sha: tuple.mergeSha,
+                    },
+                  });
+                }
               } else {
                 core.info(`Skipping PR runtime image refresh for #${tuple.prNumber}: no runtime-changing files.`);
               }
