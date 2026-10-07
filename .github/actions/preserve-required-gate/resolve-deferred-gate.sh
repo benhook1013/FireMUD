@@ -20,8 +20,9 @@ report_eligible() {
   fi
 }
 
-# This temporary admission boundary is empty in the trusted workflow. Proof
-# branches opt their existing action callers into assessment-mode: assess;
+# The script defaults to an empty admission boundary; the trusted workflow
+# supplies the exact isolated proof PR/branch allowlist. Proof branches opt
+# their existing action callers into assessment-mode: assess;
 # ordinary callers keep polling. No label, credential, or receipt is added.
 proof_allowlist="${REQUIRED_GATE_PROOF_ALLOWLIST:-[]}"
 jq -e 'type == "array" and all(.[];
@@ -339,7 +340,9 @@ if [[ "${resolution_phase}" == admit ]]; then
 fi
 
 # Return a gate job ID only from a completed first attempt with the distinct
-# deferred failure. Per-attempt lookup avoids mistaking old jobs for a current
+# deferred failure, created no later than this resolver. This keeps every
+# admitting resolver inside the retained target's history window even when an
+# older source expires. Per-attempt lookup avoids mistaking old jobs for a current
 # attempt; any human rerun also consumes the automatic allowance.
 deferred_job_id() {
   local target_run_id="$1" target_json jobs_json
@@ -347,14 +350,17 @@ deferred_job_id() {
   if ! jq -e --argjson id "${target_run_id}" --argjson workflow_id "${workflow_id}" \
     --arg repository "${GITHUB_REPOSITORY}" --arg head_repository "${head_repository}" \
     --arg head "${head_sha}" --arg branch "${head_branch}" --arg title "${source_title}" \
-    --arg name "${workflow_name}" --arg path "${workflow_file}" --argjson pr "${pr_number}" '
+    --arg name "${workflow_name}" --arg path "${workflow_file}" --argjson pr "${pr_number}" \
+    --arg resolver_created "${current_resolver_created}" '
     .id == $id and .workflow_id == $workflow_id and
     (.name == $name or .name == $title) and
     (.path == $path or (.path | startswith($path + "@") and length > ($path | length) + 1)) and
     .repository.full_name == $repository and .head_repository.full_name == $head_repository and
     .head_sha == $head and .head_branch == $branch and .display_title == $title and
     .event == "pull_request" and .status == "completed" and .conclusion == "failure" and
-    .run_attempt == 1 and (.pull_requests | type) == "array" and
+    .run_attempt == 1 and (.created_at | type) == "string" and
+    (try ((.created_at | fromdateiso8601) <= ($resolver_created | fromdateiso8601)) catch false) and
+    (.pull_requests | type) == "array" and
     ((.pull_requests | length) == 0 or any(.pull_requests[]; .number == $pr))' \
     <<<"${target_json}" >/dev/null; then
     return 0
