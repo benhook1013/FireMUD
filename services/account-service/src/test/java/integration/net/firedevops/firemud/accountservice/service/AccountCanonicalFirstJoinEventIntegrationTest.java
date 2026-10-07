@@ -533,7 +533,7 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
           account.getAccountUuid(),
           account.getAccountUuid(),
           account.getId(),
-          account.getAccountUuidProvenance(),
+          account.getAccountUuidProvenance().name(),
           tenantUuid,
           callerBinding,
           UUID.randomUUID(),
