@@ -875,125 +875,160 @@ if [[ -f "$count_file" ]]; then
 fi
 count=$((count + 1))
 printf '%s' "$count" >"$count_file"
+if [[ "${GH_SCENARIO:-}" == check-coverage-* ]]; then
+  python3 - "$GH_SCENARIO" <<'PYTHON'
+import json
+import sys
+scenario = sys.argv[1]
+def check(identity):
+    return {"app": {"slug": "github-actions"}, "name": "Validation Gate", "id": identity,
+            "details_url": f"https://github.com/example/firemud/actions/runs/{identity}/job/{identity}",
+            "status": "completed", "conclusion": "success", "completed_at": "2026-07-30T02:00:00Z",
+            "started_at": "2026-07-30T01:00:00Z"}
+pages = [{"total_count": 1, "check_runs": [check(100)]}]
+if scenario == "check-coverage-truncated":
+    # Omit the newer failed original from the existing newer-failure case.
+    pages[0]["total_count"] = 2
+elif scenario == "check-coverage-missing-total":
+    pages[0].pop("total_count")
+elif scenario == "check-coverage-malformed-total":
+    pages[0]["total_count"] = "1"
+elif scenario == "check-coverage-overcount":
+    pages[0]["total_count"] = 0
+elif scenario == "check-coverage-invalid-id":
+    pages[0]["check_runs"][0]["id"] = "100"
+elif scenario == "check-coverage-empty-pages":
+    pages = []
+elif scenario == "check-coverage-duplicate":
+    pages = [{"total_count": 2, "check_runs": [check(100)]}, {"total_count": 2, "check_runs": [check(100)]}]
+elif scenario in {"check-coverage-multi", "check-coverage-inconsistent-total"}:
+    pages = [{"total_count": 2, "check_runs": [check(100)]},
+             {"total_count": 3 if scenario.endswith("inconsistent-total") else 2, "check_runs": [check(101)]}]
+else:
+    raise AssertionError(scenario)
+print(json.dumps(pages))
+PYTHON
+  exit 0
+fi
 case "${GH_SCENARIO:-failure-retry}" in
   latest-pending-preferred)
     if [[ "$count" -eq 1 ]]; then
       cat <<'JSON'
-[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"success","started_at":"2026-07-30T00:00:00Z","created_at":"2026-07-30T00:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":101,"details_url":"https://github.com/example/firemud/actions/runs/101/job/101","status":"in_progress","conclusion":null,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]
+[{"total_count":2,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"success","started_at":"2026-07-30T00:00:00Z","created_at":"2026-07-30T00:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":101,"details_url":"https://github.com/example/firemud/actions/runs/101/job/101","status":"in_progress","conclusion":null,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]
 JSON
     else
       cat <<'JSON'
-[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"success","started_at":"2026-07-30T00:00:00Z","created_at":"2026-07-30T00:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":101,"details_url":"https://github.com/example/firemud/actions/runs/101/job/101","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]
+[{"total_count":2,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"success","started_at":"2026-07-30T00:00:00Z","created_at":"2026-07-30T00:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":101,"details_url":"https://github.com/example/firemud/actions/runs/101/job/101","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]
 JSON
     fi
     ;;
   missing-created-at)
-    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"success","started_at":"2026-07-30T01:00:00Z"}]}]\n'
+    printf '[{"total_count":1,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"success","started_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
   pending-predecessor)
     if [[ "$count" -eq 1 ]]; then
       cat <<'JSON'
-[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"in_progress","conclusion":null,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]
+[{"total_count":1,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"in_progress","conclusion":null,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]
 JSON
     else
       cat <<'JSON'
-[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]
+[{"total_count":1,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]
 JSON
     fi
     ;;
   queued-null-started-at)
     if [[ "$count" -eq 1 ]]; then
-      printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"queued","conclusion":null,"started_at":null,"created_at":"2026-07-30T01:00:00Z"}]}]\n'
+      printf '[{"total_count":1,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"queued","conclusion":null,"started_at":null,"created_at":"2026-07-30T01:00:00Z"}]}]\n'
     else
-      printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+      printf '[{"total_count":1,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     fi
     ;;
   no-local-workflow-file)
-    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+    printf '[{"total_count":1,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
   no-prior|active-workflow-wrong-base|active-workflow-metadata-only|active-workflow-mismatched-tuple|active-workflow-malformed-list)
-    printf '[{"check_runs":[]}]\n'
+    printf '[{"total_count":0,"check_runs":[]}]\n'
     ;;
   delayed-predecessor)
     if [[ "$count" -eq 1 ]]; then
-      printf '[{"check_runs":[]}]\n'
+      printf '[{"total_count":0,"check_runs":[]}]\n'
     elif [[ "$count" -eq 2 ]]; then
-      printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"in_progress","conclusion":null,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+      printf '[{"total_count":1,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"in_progress","conclusion":null,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     else
-      printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+      printf '[{"total_count":1,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     fi
     ;;
   delayed-predecessor-after-19-minutes)
     if [[ "$count" -le 77 ]]; then
-      printf '[{"check_runs":[]}]\n'
+      printf '[{"total_count":0,"check_runs":[]}]\n'
     else
-      printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:20:00Z","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+      printf '[{"total_count":1,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:20:00Z","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     fi
     ;;
   active-workflow-delayed-gate)
     if [[ "$count" -le 97 ]]; then
-      printf '[{"check_runs":[]}]\n'
+      printf '[{"total_count":0,"check_runs":[]}]\n'
     else
-      printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:30:00Z","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+      printf '[{"total_count":1,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:30:00Z","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     fi
     ;;
   active-workflow-late-arrival)
     if [[ "$count" -le 92 ]]; then
-      printf '[{"check_runs":[]} ]\n'
+      printf '[{"total_count":0,"check_runs":[]} ]\n'
     else
-      printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:30:00Z","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+      printf '[{"total_count":1,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:30:00Z","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     fi
     ;;
   failed-predecessor)
-    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"failure","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+    printf '[{"total_count":1,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"failure","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
   newer-failure-over-success)
-    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","completed_at":"2026-07-30T01:00:00Z","started_at":"2026-07-30T00:50:00Z","created_at":"2026-07-30T00:50:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":101,"details_url":"https://github.com/example/firemud/actions/runs/101/job/101","status":"completed","conclusion":"failure","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:50:00Z","created_at":"2026-07-30T01:50:00Z"}]}]\n'
+    printf '[{"total_count":2,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","completed_at":"2026-07-30T01:00:00Z","started_at":"2026-07-30T00:50:00Z","created_at":"2026-07-30T00:50:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":101,"details_url":"https://github.com/example/firemud/actions/runs/101/job/101","status":"completed","conclusion":"failure","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:50:00Z","created_at":"2026-07-30T01:50:00Z"}]}]\n'
     ;;
   same-timestamp-newer-failure)
-    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":101,"details_url":"https://github.com/example/firemud/actions/runs/101/job/101","status":"completed","conclusion":"failure","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+    printf '[{"total_count":2,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":101,"details_url":"https://github.com/example/firemud/actions/runs/101/job/101","status":"completed","conclusion":"failure","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
   stale-then-current-tuple)
-    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":200,"details_url":"https://github.com/example/firemud/actions/runs/200/job/200","status":"completed","conclusion":"success","completed_at":"2026-07-30T01:00:00Z","started_at":"2026-07-30T00:00:00Z","created_at":"2026-07-30T00:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":201,"details_url":"https://github.com/example/firemud/actions/runs/201/job/201","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+    printf '[{"total_count":2,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":200,"details_url":"https://github.com/example/firemud/actions/runs/200/job/200","status":"completed","conclusion":"success","completed_at":"2026-07-30T01:00:00Z","started_at":"2026-07-30T00:00:00Z","created_at":"2026-07-30T00:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":201,"details_url":"https://github.com/example/firemud/actions/runs/201/job/201","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
   cross-workflow-same-name|fork-empty-association|dynamic-run-name|dynamic-run-name-fork-empty|wrong-run-name|wrong-job-workflow-name|empty-wrong-pr|empty-wrong-base|populated-wrong-base|empty-wrong-head|populated-wrong-head|empty-wrong-title|empty-malformed-association|other-pr-association|valid-new-tuple)
-    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":200,"details_url":"https://github.com/example/firemud/actions/runs/200/job/200","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+    printf '[{"total_count":1,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":200,"details_url":"https://github.com/example/firemud/actions/runs/200/job/200","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
   duplicate-invalid-run-identity)
-    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":200,"details_url":"https://github.com/example/firemud/actions/runs/200/job/200","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":201,"details_url":"https://github.com/example/firemud/actions/runs/200/job/201","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+    printf '[{"total_count":2,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":200,"details_url":"https://github.com/example/firemud/actions/runs/200/job/200","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":201,"details_url":"https://github.com/example/firemud/actions/runs/200/job/201","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
   run-path-ref-suffix|run-path-ref-suffix-plus|run-path-ref-suffix-at|malformed-run-path-ref-suffix)
-    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":200,"details_url":"https://github.com/example/firemud/actions/runs/200/job/200","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+    printf '[{"total_count":1,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":200,"details_url":"https://github.com/example/firemud/actions/runs/200/job/200","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
   details-url-query|details-url-fragment|malformed-details-url-suffix)
     details_suffix='?check_suite_focus=true'
     [[ "${GH_SCENARIO:-}" == "details-url-fragment" ]] && details_suffix='#step:1:2'
     [[ "${GH_SCENARIO:-}" == "malformed-details-url-suffix" ]] && details_suffix='@evil'
-    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":200,"details_url":"https://github.com/example/firemud/actions/runs/200/job/200%s","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n' "$details_suffix"
+    printf '[{"total_count":1,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":200,"details_url":"https://github.com/example/firemud/actions/runs/200/job/200%s","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n' "$details_suffix"
     ;;
   fork-head-same-sha)
-    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":200,"details_url":"https://github.com/example/firemud/actions/runs/200/job/200","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+    printf '[{"total_count":1,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":200,"details_url":"https://github.com/example/firemud/actions/runs/200/job/200","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
   wrong-run-repository)
-    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":200,"details_url":"https://github.com/example/firemud/actions/runs/200/job/200","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+    printf '[{"total_count":1,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":200,"details_url":"https://github.com/example/firemud/actions/runs/200/job/200","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
   unknown-app)
-    printf '[{"check_runs":[{"app":{"slug":"other-checks"},"name":"Validation Gate","id":200,"details_url":"https://github.com/example/firemud/actions/runs/200/job/200","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":99,"details_url":"https://github.com/example/firemud/actions/runs/99/job/99","status":"completed","conclusion":"success","completed_at":"2026-07-30T01:00:00Z","started_at":"2026-07-30T00:00:00Z","created_at":"2026-07-30T00:00:00Z"}]}]\n'
+    printf '[{"total_count":2,"check_runs":[{"app":{"slug":"other-checks"},"name":"Validation Gate","id":200,"details_url":"https://github.com/example/firemud/actions/runs/200/job/200","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":99,"details_url":"https://github.com/example/firemud/actions/runs/99/job/99","status":"completed","conclusion":"success","completed_at":"2026-07-30T01:00:00Z","started_at":"2026-07-30T00:00:00Z","created_at":"2026-07-30T00:00:00Z"}]}]\n'
     ;;
   unknown-check-name)
-    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Other Gate","id":200,"details_url":"https://github.com/example/firemud/actions/runs/200/job/200","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":99,"details_url":"https://github.com/example/firemud/actions/runs/99/job/99","status":"completed","conclusion":"success","completed_at":"2026-07-30T01:00:00Z","started_at":"2026-07-30T00:00:00Z","created_at":"2026-07-30T00:00:00Z"}]}]\n'
+    printf '[{"total_count":2,"check_runs":[{"app":{"slug":"github-actions"},"name":"Other Gate","id":200,"details_url":"https://github.com/example/firemud/actions/runs/200/job/200","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":99,"details_url":"https://github.com/example/firemud/actions/runs/99/job/99","status":"completed","conclusion":"success","completed_at":"2026-07-30T01:00:00Z","started_at":"2026-07-30T00:00:00Z","created_at":"2026-07-30T00:00:00Z"}]}]\n'
     ;;
   invalid-job-id)
-    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/not-a-number","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":99,"details_url":"https://github.com/example/firemud/actions/runs/99/job/99","status":"completed","conclusion":"success","completed_at":"2026-07-30T01:00:00Z","started_at":"2026-07-30T00:00:00Z","created_at":"2026-07-30T00:00:00Z"}]}]\n'
+    printf '[{"total_count":2,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/not-a-number","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":99,"details_url":"https://github.com/example/firemud/actions/runs/99/job/99","status":"completed","conclusion":"success","completed_at":"2026-07-30T01:00:00Z","started_at":"2026-07-30T00:00:00Z","created_at":"2026-07-30T00:00:00Z"}]}]\n'
     ;;
   missing-job-id)
-    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":99,"details_url":"https://github.com/example/firemud/actions/runs/99/job/99","status":"completed","conclusion":"success","completed_at":"2026-07-30T01:00:00Z","started_at":"2026-07-30T00:00:00Z","created_at":"2026-07-30T00:00:00Z"}]}]\n'
+    printf '[{"total_count":2,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":99,"details_url":"https://github.com/example/firemud/actions/runs/99/job/99","status":"completed","conclusion":"success","completed_at":"2026-07-30T01:00:00Z","started_at":"2026-07-30T00:00:00Z","created_at":"2026-07-30T00:00:00Z"}]}]\n'
     ;;
   completed-preservation-step-lag)
-    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":99,"details_url":"https://github.com/example/firemud/actions/runs/99/job/99","status":"completed","conclusion":"success","completed_at":"2026-07-30T01:00:00Z","started_at":"2026-07-30T00:00:00Z","created_at":"2026-07-30T00:00:00Z"}]}]\n'
+    printf '[{"total_count":2,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":99,"details_url":"https://github.com/example/firemud/actions/runs/99/job/99","status":"completed","conclusion":"success","completed_at":"2026-07-30T01:00:00Z","started_at":"2026-07-30T00:00:00Z","created_at":"2026-07-30T00:00:00Z"}]}]\n'
     ;;
   completed-preservation-step-persistent-lag)
-    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":99,"details_url":"https://github.com/example/firemud/actions/runs/99/job/99","status":"completed","conclusion":"success","completed_at":"2026-07-30T01:00:00Z","started_at":"2026-07-30T00:00:00Z","created_at":"2026-07-30T00:00:00Z"}]}]\n'
+    printf '[{"total_count":2,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":99,"details_url":"https://github.com/example/firemud/actions/runs/99/job/99","status":"completed","conclusion":"success","completed_at":"2026-07-30T01:00:00Z","started_at":"2026-07-30T00:00:00Z","created_at":"2026-07-30T00:00:00Z"}]}]\n'
     ;;
   completed-cancelled-missing-step|completed-skipped-missing-step|completed-stale-missing-step)
     case "${GH_SCENARIO}" in
@@ -1001,19 +1036,19 @@ JSON
       completed-skipped-missing-step) non_authoritative_conclusion=skipped ;;
       completed-stale-missing-step) non_authoritative_conclusion=stale ;;
     esac
-    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"%s","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":99,"details_url":"https://github.com/example/firemud/actions/runs/99/job/99","status":"completed","conclusion":"success","completed_at":"2026-07-30T01:00:00Z","started_at":"2026-07-30T00:00:00Z","created_at":"2026-07-30T00:00:00Z"}]}]\n' "$non_authoritative_conclusion"
+    printf '[{"total_count":2,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"%s","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":99,"details_url":"https://github.com/example/firemud/actions/runs/99/job/99","status":"completed","conclusion":"success","completed_at":"2026-07-30T01:00:00Z","started_at":"2026-07-30T00:00:00Z","created_at":"2026-07-30T00:00:00Z"}]}]\n' "$non_authoritative_conclusion"
     ;;
   unsupported-status)
-    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"mysterious","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":99,"details_url":"https://github.com/example/firemud/actions/runs/99/job/99","status":"completed","conclusion":"success","completed_at":"2026-07-30T01:00:00Z","started_at":"2026-07-30T00:00:00Z","created_at":"2026-07-30T00:00:00Z"}]}]\n'
+    printf '[{"total_count":2,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"mysterious","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":99,"details_url":"https://github.com/example/firemud/actions/runs/99/job/99","status":"completed","conclusion":"success","completed_at":"2026-07-30T01:00:00Z","started_at":"2026-07-30T00:00:00Z","created_at":"2026-07-30T00:00:00Z"}]}]\n'
     ;;
   missing-timestamp)
-    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","completed_at":null,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":99,"details_url":"https://github.com/example/firemud/actions/runs/99/job/99","status":"completed","conclusion":"success","completed_at":"2026-07-30T01:00:00Z","started_at":"2026-07-30T00:00:00Z","created_at":"2026-07-30T00:00:00Z"}]}]\n'
+    printf '[{"total_count":2,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","completed_at":null,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":99,"details_url":"https://github.com/example/firemud/actions/runs/99/job/99","status":"completed","conclusion":"success","completed_at":"2026-07-30T01:00:00Z","started_at":"2026-07-30T00:00:00Z","created_at":"2026-07-30T00:00:00Z"}]}]\n'
     ;;
   multiple-metadata)
-    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","completed_at":"2026-07-30T01:00:00Z","started_at":"2026-07-30T00:50:00Z","created_at":"2026-07-30T00:50:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":101,"details_url":"https://github.com/example/firemud/actions/runs/101/job/101","status":"completed","conclusion":"failure","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:50:00Z","created_at":"2026-07-30T01:50:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":102,"details_url":"https://github.com/example/firemud/actions/runs/102/job/102","status":"completed","conclusion":"timed_out","completed_at":"2026-07-30T03:00:00Z","started_at":"2026-07-30T02:50:00Z","created_at":"2026-07-30T02:50:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":103,"details_url":"https://github.com/example/firemud/actions/runs/103/job/103","status":"completed","conclusion":"cancelled","completed_at":"2026-07-30T04:00:00Z","started_at":"2026-07-30T03:50:00Z","created_at":"2026-07-30T03:50:00Z"}]}]\n'
+    printf '[{"total_count":4,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","completed_at":"2026-07-30T01:00:00Z","started_at":"2026-07-30T00:50:00Z","created_at":"2026-07-30T00:50:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":101,"details_url":"https://github.com/example/firemud/actions/runs/101/job/101","status":"completed","conclusion":"failure","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:50:00Z","created_at":"2026-07-30T01:50:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":102,"details_url":"https://github.com/example/firemud/actions/runs/102/job/102","status":"completed","conclusion":"timed_out","completed_at":"2026-07-30T03:00:00Z","started_at":"2026-07-30T02:50:00Z","created_at":"2026-07-30T02:50:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":103,"details_url":"https://github.com/example/firemud/actions/runs/103/job/103","status":"completed","conclusion":"cancelled","completed_at":"2026-07-30T04:00:00Z","started_at":"2026-07-30T03:50:00Z","created_at":"2026-07-30T03:50:00Z"}]}]\n'
     ;;
   self-run-excluded)
-    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":1,"details_url":"https://github.com/example/firemud/actions/runs/999/job/1","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"failure","started_at":"2026-07-30T02:00:00Z","created_at":"2026-07-30T02:00:00Z"}]}]\n'
+    printf '[{"total_count":2,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":1,"details_url":"https://github.com/example/firemud/actions/runs/999/job/1","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"failure","started_at":"2026-07-30T02:00:00Z","created_at":"2026-07-30T02:00:00Z"}]}]\n'
     ;;
   alternate-pending)
     case "$count" in
@@ -1031,7 +1066,7 @@ JSON
     if [[ "$status" == "completed" ]]; then
       completed_at='"2026-07-30T02:00:00Z"'
     fi
-    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"%s","conclusion":%s,"completed_at":%s,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n' "$status" "$conclusion" "$completed_at"
+    printf '[{"total_count":1,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"%s","conclusion":%s,"completed_at":%s,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n' "$status" "$conclusion" "$completed_at"
     ;;
   pending-preservation-step-not-concluded)
     case "$count" in
@@ -1047,27 +1082,27 @@ JSON
       conclusion=null
       completed_at=null
     fi
-    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"%s","conclusion":%s,"completed_at":%s,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n' "$status" "$conclusion" "$completed_at"
+    printf '[{"total_count":1,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"%s","conclusion":%s,"completed_at":%s,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n' "$status" "$conclusion" "$completed_at"
     ;;
   pending-gate-discovery-throttle)
     if [[ "$count" -le 5 ]]; then
-      printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"in_progress","conclusion":null,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+      printf '[{"total_count":1,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"in_progress","conclusion":null,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     else
-      printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+      printf '[{"total_count":1,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     fi
     ;;
   cache-metadata-across-polls)
     if [[ "$count" -eq 1 ]]; then
-      printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":101,"details_url":"https://github.com/example/firemud/actions/runs/101/job/101","status":"in_progress","conclusion":null,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+      printf '[{"total_count":2,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":101,"details_url":"https://github.com/example/firemud/actions/runs/101/job/101","status":"in_progress","conclusion":null,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     else
-      printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":101,"details_url":"https://github.com/example/firemud/actions/runs/101/job/101","status":"completed","conclusion":"success","completed_at":"2026-07-30T03:00:00Z","started_at":"2026-07-30T02:00:00Z","created_at":"2026-07-30T02:00:00Z"}]}]\n'
+      printf '[{"total_count":2,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":101,"details_url":"https://github.com/example/firemud/actions/runs/101/job/101","status":"completed","conclusion":"success","completed_at":"2026-07-30T03:00:00Z","started_at":"2026-07-30T02:00:00Z","created_at":"2026-07-30T02:00:00Z"}]}]\n'
     fi
     ;;
   pending-missing-step-with-failed-substantive)
-    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":101,"details_url":"https://github.com/example/firemud/actions/runs/101/job/101","status":"in_progress","conclusion":null,"completed_at":null,"started_at":"2026-07-30T02:00:00Z","created_at":"2026-07-30T02:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"failure","completed_at":"2026-07-30T03:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+    printf '[{"total_count":2,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":101,"details_url":"https://github.com/example/firemud/actions/runs/101/job/101","status":"in_progress","conclusion":null,"completed_at":null,"started_at":"2026-07-30T02:00:00Z","created_at":"2026-07-30T02:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"failure","completed_at":"2026-07-30T03:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
   timeout-pending|unverified-pending-gate)
-    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"waiting","conclusion":null,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+    printf '[{"total_count":1,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"waiting","conclusion":null,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
   failure-retry)
     case "${GH_FAILURE_MODE:-transient}" in
@@ -1100,10 +1135,10 @@ JSON
         exit 91
         ;;
     esac
-    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+    printf '[{"total_count":1,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
   job-failure-retry)
-    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+    printf '[{"total_count":1,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
   *)
     echo "unknown simulated gh scenario" >&2
@@ -1181,6 +1216,36 @@ run_action() {
   EXPECTED_WORKFLOW_PATH=.github/workflows/ci.yml \
   bash "$POLL_SCRIPT"
 }
+
+# Incomplete or inconsistent successful API responses cannot manufacture proof.
+for coverage_mode in poll assess; do
+  for coverage_case in truncated missing-total malformed-total overcount invalid-id empty-pages duplicate inconsistent-total; do
+    coverage_scenario="check-coverage-$coverage_case"
+    coverage_count="$tmp_dir/$coverage_mode-$coverage_scenario-count"
+    coverage_output="$tmp_dir/$coverage_mode-$coverage_scenario-output"
+    coverage_log="$tmp_dir/$coverage_mode-$coverage_scenario-log"
+    if PRESERVATION_MODE="$coverage_mode" GITHUB_OUTPUT="$coverage_output" \
+      run_action "$coverage_count" none "$coverage_scenario" >"$coverage_log" 2>&1; then
+      echo "required-gate $coverage_mode accepted invalid check coverage: $coverage_case" >&2
+      exit 1
+    fi
+    [[ "$(<"$coverage_count")" == 1 && ! -s "$coverage_output" ]] || {
+      echo "invalid check coverage was retried or emitted an assessment: $coverage_case" >&2
+      exit 1
+    }
+    grep -Fq 'malformed or incomplete check-run data' "$coverage_log" || {
+      echo "invalid check coverage did not fail at the coverage boundary: $coverage_case" >&2
+      exit 1
+    }
+  done
+  coverage_output="$tmp_dir/$coverage_mode-complete-multi-output"
+  PRESERVATION_MODE="$coverage_mode" GITHUB_OUTPUT="$coverage_output" \
+    run_action "$tmp_dir/$coverage_mode-complete-multi-count" none check-coverage-multi
+  [[ "$(<"$coverage_output")" == assessment=success ]] || {
+    echo "complete multi-page check coverage lost successful proof" >&2
+    exit 1
+  }
+done
 
 sleep_until_poll_deadline_script="$(awk '
   /^sleep_until_poll_deadline\(\) \{$/ { capture=1 }
@@ -2225,8 +2290,33 @@ elif endpoint.endswith(f"/actions/runs/{target_id}/attempts/1/jobs") or (admissi
     steps = [{"name": "Preserve successful required gate on metadata-only edit", "status": "completed", "conclusion": "success"}]
     if scenario != "ordinary-failure":
         steps.append({"name": "Report dependency-deferred required gate", "status": "completed", "conclusion": "failure"})
-    result = [{"jobs": [{"id": 2001 if requested_target == 201 else 2000, "run_id": requested_target, "head_sha": head, "status": "completed", "conclusion": "failure",
+    result = [{"total_count": 1, "jobs": [{"id": 2001 if requested_target == 201 else 2000, "run_id": requested_target, "head_sha": head, "status": "completed", "conclusion": "failure",
                          "name": "Validation Gate", "steps": steps}]}]
+    if scenario.startswith("target-jobs-"):
+        gate = result[0]["jobs"][0]
+        if scenario == "target-jobs-truncated":
+            # A second gate job is omitted, so uniqueness is unproved.
+            result[0]["total_count"] = 2
+        elif scenario == "target-jobs-missing-total":
+            result[0].pop("total_count")
+        elif scenario == "target-jobs-malformed-total":
+            result[0]["total_count"] = "1"
+        elif scenario == "target-jobs-overcount":
+            result[0]["total_count"] = 0
+        elif scenario == "target-jobs-invalid-id":
+            gate["id"] = "2000"
+        elif scenario == "target-jobs-empty-pages":
+            result = []
+        elif scenario == "target-jobs-zero":
+            result = [{"total_count": 0, "jobs": []}]
+        elif scenario == "target-jobs-duplicate":
+            result = [{"total_count": 2, "jobs": [gate]}, {"total_count": 2, "jobs": [gate]}]
+        elif scenario in {"target-jobs-multi", "target-jobs-inconsistent-total"}:
+            other = dict(gate, id=2002, name="Other job")
+            result = [{"total_count": 2, "jobs": [other]},
+                      {"total_count": 3 if scenario.endswith("inconsistent-total") else 2, "jobs": [gate]}]
+        else:
+            raise AssertionError(scenario)
 elif endpoint.endswith(f"/actions/runs/{target_id}") or (admission_scenario and any(endpoint.endswith(f"/actions/runs/{run_id}") for run_id in (200, 201))):
     requested_target = int(endpoint.rsplit("/", 1)[1])
     state["target_reads"] = state.get("target_reads", 0) + 1
@@ -2340,6 +2430,36 @@ resolver_source_listing_waits() {
 for scenario in success metadata-last metadata-first consumed fresh-changed fresh-base-branch fresh-head-repository ordinary-failure stale-pr wrong-tuple wrong-association malformed-path fork-empty ambiguous-post original-failure preflight prior-noop prior-cancelled-between-steps prior-cancelled-admission prior-ambiguous prior-unavailable prior-incomplete prior-missing-step prior-oversized source-oversized source-transient-row-count source-transient-missing-source source-empty-then-complete source-third-read-complete source-incomplete-then-malformed source-persistent-incomplete source-empty-persistent source-malformed-schema source-identity-mismatch source-malformed-row source-malformed-repository source-scalar-response source-array-response same-id-rerun prior-rerun-skipped queued-callback queued-new-revision queued-equal queued-equal-started queued-equal-missing queued-equal-malformed queued-equal-incomplete queued-equal-wrong-job prior-queued-old pending-callback pending-new-revision pending-equal pending-equal-started pending-equal-missing pending-equal-malformed pending-equal-incomplete pending-equal-wrong-job pending-equal-started-step pending-callback-started pending-callback-malformed pending-callback-attempt pending-callback-concluded prior-pending-old history-multi history-ceiling history-ambiguous-tail history-duplicate history-missing-current history-before-floor history-overcap history-incomplete history-missing-total history-malformed-total history-inconsistent-total history-malformed-page history-unavailable-page admission-delayed admission-zero admission-distinct admission-marker-failed admission-marker-cancelled admission-marker-incomplete admission-marker-missing admission-marker-malformed admission-marker-duplicate-ids admission-marker-string-id admission-marker-oversized admission-marker-duplicate-step partial-admission cancelled-pending-zero cancelled-pending-nonempty cancelled-pending-incomplete cancelled-pending-malformed cancelled-pending-missing cancelled-pending-unknown cancelled-pending-rerun cancelled-pending-started; do
   printf '{"scenario":"%s"}\n' "$scenario" >"$tmp_dir/resolver-state-$scenario"
 done
+for target_coverage_case in truncated missing-total malformed-total overcount invalid-id empty-pages duplicate inconsistent-total zero multi; do
+  target_coverage_scenario="target-jobs-$target_coverage_case"
+  printf '{"scenario":"%s"}\n' "$target_coverage_scenario" >"$tmp_dir/resolver-state-$target_coverage_scenario"
+  case "$target_coverage_case" in
+    zero|multi)
+      run_resolver "$target_coverage_scenario"
+      expected_posts=0
+      [[ "$target_coverage_case" != multi ]] || expected_posts=1
+      [[ "$(resolver_posts "$target_coverage_scenario")" == "$expected_posts" ]] || {
+        echo "complete target job coverage selected the wrong gate: $target_coverage_case" >&2
+        exit 1
+      }
+      ;;
+    *)
+      if run_resolver "$target_coverage_scenario"; then
+        echo "resolver accepted invalid target job coverage: $target_coverage_case" >&2
+        exit 1
+      fi
+      [[ "$(resolver_posts "$target_coverage_scenario")" == 0 ]] || {
+        echo "invalid target job coverage admitted a POST: $target_coverage_case" >&2
+        exit 1
+      }
+      grep -Fq 'malformed or incomplete target jobs' "$tmp_dir/resolver-log-$target_coverage_scenario" || {
+        echo "invalid target job coverage did not fail at coverage validation: $target_coverage_case" >&2
+        exit 1
+      }
+      ;;
+  esac
+done
+
 # A passive deployment must not even invoke the CLI.
 REQUIRED_GATE_PROOF_ALLOWLIST='[]' PATH="$tmp_dir/resolver-bin:$PATH" bash "$RESOLVER"
 run_resolver success
