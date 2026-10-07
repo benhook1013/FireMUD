@@ -194,6 +194,7 @@ public final class AccountGameplayAdmissionLeaseRepository {
     return terminal(evidence, State.COMMITTED, bindingDecisionId, null);
   }
 
+  /** A missing decision remains unknown; the original cleanup identity is always required. */
   AccountGameplayAdmissionLeaseOperation recordAborted(
       AccountGameplayAdmissionLeaseEvidence evidence,
       UUID bindingDecisionId,
@@ -204,7 +205,7 @@ public final class AccountGameplayAdmissionLeaseRepository {
 
   private AccountGameplayAdmissionLeaseOperation terminal(
       AccountGameplayAdmissionLeaseEvidence evidence, State state, UUID decision, UUID cleanup) {
-    requireUuidV4(decision);
+    if (state == State.COMMITTED || decision != null) requireUuidV4(decision);
     AccountGameplayAdmissionLeaseOperation prior =
         readExact(evidence)
             .orElseThrow(

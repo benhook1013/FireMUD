@@ -61,3 +61,8 @@ Entry format:
   - Expected pattern: retain remote output and payload suppression while reporting trusted static phase, timeout versus nonzero exit, and secondary cleanup failure labels.
   - Current status: safe backup diagnostics are being added; fresh backup and isolated restore proof remain unavailable. Publishing and backup root causes are unresolved.
   - Reconsideration trigger: update the outcome after an authorized exact-phase failure capture and successful fresh backup/isolated restore verification; do not treat host health or a single successful SFTP listing as recovery proof.
+
+- `2026-10-08`: Keep migration simulation and Java fixture repairs narrow
+  - Observation: jOOQ's H2-backed DDL interpreter maps PostgreSQL `TEXT` to CLOB, which cannot be indexed there. Closed category/kind/state vocabulary and fixed-format stream keys can use appropriately bounded `VARCHAR` while retaining the actual PostgreSQL checks, foreign keys and triggers; simulator success is not physical migration proof.
+  - Expected pattern: build Mockito-returned fixtures before starting an outer `when(...).thenReturn(...)` call, because nested stubbing leaves that outer call unfinished. Give generic transaction readbacks an explicit typed local before overloaded AssertJ assertions, and check nullable fetched rows or fields explicitly rather than suppressing null-boundary warnings.
+  - Reconsideration trigger: apply these bounded patterns to the next migration or transaction-fixture change without broad constraint exclusions, weaker assertions or a new validator family.

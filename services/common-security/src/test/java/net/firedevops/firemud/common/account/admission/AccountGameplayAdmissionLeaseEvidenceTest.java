@@ -280,7 +280,7 @@ class AccountGameplayAdmissionLeaseEvidenceTest {
     return (List<Map<String, Object>>) value.get("outboxCheckpoints");
   }
 
-  private static Map<String, Object> fixture() {
+  static Map<String, Object> fixture() {
     Map<String, Object> value = new LinkedHashMap<>();
     value.put("schema", AccountGameplayAdmissionLeaseEvidence.SCHEMA);
     value.put("schemaVersion", "1");

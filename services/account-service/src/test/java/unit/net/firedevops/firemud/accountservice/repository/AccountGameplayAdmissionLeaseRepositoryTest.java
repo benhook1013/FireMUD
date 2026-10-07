@@ -15,6 +15,9 @@ import java.lang.reflect.Modifier;
 import java.sql.Connection;
 import java.util.Arrays;
 import java.util.UUID;
+import net.firedevops.firemud.accountservice.dto.AccountGameplayAdmissionLeaseOperation;
+import net.firedevops.firemud.accountservice.dto.AccountGameplayAdmissionLeaseOperation.State;
+import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.junit.jupiter.api.AfterEach;
@@ -205,6 +208,51 @@ class AccountGameplayAdmissionLeaseRepositoryTest {
                         "spiffe://firemud/ns/test/sa/game-session-service"))
         .isInstanceOf(IllegalArgumentException.class);
     verify(dsl, never()).execute(anyString(), any(Object[].class));
+  }
+
+  @Test
+  void abortedStorageShapeRetainsUnknownDecisionAndMandatoryPendingCleanup() {
+    var evidence = mock(AccountGameplayAdmissionLeaseEvidence.class);
+    UUID cleanup = UUID.randomUUID();
+    var unknown =
+        new AccountGameplayAdmissionLeaseOperation(evidence, State.ABORTED, null, cleanup);
+    assertThat(unknown.bindingDecisionId()).isNull();
+    assertThat(unknown.orphanCleanupId()).isEqualTo(cleanup);
+    assertThat(unknown.evidence()).isSameAs(evidence);
+    assertThat(unknown.hasPendingOrphanCleanup()).isTrue();
+    assertThatThrownBy(
+            () -> new AccountGameplayAdmissionLeaseOperation(evidence, State.ABORTED, null, null))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () -> new AccountGameplayAdmissionLeaseOperation(evidence, State.COMMITTED, null, null))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                new AccountGameplayAdmissionLeaseOperation(
+                    evidence, State.ABORTED, new UUID(0, 0), cleanup))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                new AccountGameplayAdmissionLeaseOperation(
+                    evidence, State.ABORTED, null, new UUID(0, 0)))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void invalidTerminalPresenceAndPresentUuidsRejectBeforeStorageAccess() {
+    DSLContext dsl = mock(DSLContext.class);
+    var repository = new AccountGameplayAdmissionLeaseRepository(dsl);
+    var evidence = mock(AccountGameplayAdmissionLeaseEvidence.class);
+    UUID cleanup = UUID.randomUUID();
+    assertThatThrownBy(() -> repository.recordCommitted(evidence, null))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> repository.recordAborted(evidence, null, null))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> repository.recordAborted(evidence, new UUID(0, 0), cleanup))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> repository.recordAborted(evidence, null, new UUID(0, 0)))
+        .isInstanceOf(IllegalArgumentException.class);
+    verifyNoInteractions(dsl);
   }
 
   private static Record allocationRow(UUID account, UUID request, UUID lease, Long fence) {

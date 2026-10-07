@@ -21,7 +21,7 @@ public record AccountGameplayAdmissionLeaseOperation(
     }
     if ((state == State.PENDING && (bindingDecisionId != null || orphanCleanupId != null))
         || (state == State.COMMITTED && (bindingDecisionId == null || orphanCleanupId != null))
-        || (state == State.ABORTED && (bindingDecisionId == null || orphanCleanupId == null))) {
+        || (state == State.ABORTED && orphanCleanupId == null)) {
       throw new IllegalArgumentException("Incomplete admission operation storage state");
     }
   }
@@ -32,7 +32,10 @@ public record AccountGameplayAdmissionLeaseOperation(
     ABORTED
   }
 
-  /** ABORTED retains exact binding/token evidence as pending work, never completed cleanup. */
+  /**
+   * ABORTED retains exact binding/token evidence as pending work, never completed cleanup. A null
+   * decision is unknown or unobserved, never authoritative proof that no decision exists.
+   */
   public boolean hasPendingOrphanCleanup() {
     return state == State.ABORTED;
   }

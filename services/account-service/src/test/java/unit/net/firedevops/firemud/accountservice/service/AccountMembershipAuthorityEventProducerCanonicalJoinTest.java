@@ -24,6 +24,7 @@ import java.util.function.LongFunction;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest.EntitlementAvailabilityV2;
 import net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2;
+import net.firedevops.firemud.accountservice.dto.TenantAuthorityEventV1Codec;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
 import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
@@ -50,6 +51,7 @@ import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAut
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.TenantProvenanceKind;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository.RoleSnapshot;
@@ -57,6 +59,7 @@ import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityE
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec.AccountSecurityCutoff;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.MembershipEvent;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -145,6 +148,7 @@ class AccountMembershipAuthorityEventProducerCanonicalJoinTest {
         .isEqualTo(Map.of(TENANT_UUID.toString(), "1"));
     assertThat(event.authorityTuple().accountSecurityCutoff()).isEmpty();
     assertThat(event.authorityTuple().tenantBillingCutoff()).isEmpty();
+    verifyNoInteractions(fixture.tenantEvents);
 
     var order = inOrder(fixture.accounts, fixture.joinOperations, fixture.memberships);
     order.verify(fixture.accounts).findByAccountUuid(ACCOUNT_UUID);
@@ -189,6 +193,7 @@ class AccountMembershipAuthorityEventProducerCanonicalJoinTest {
             fixture.scope, REQUEST_ID, CALLER_BINDING);
 
     assertThat(replay).isEqualTo(checkpoint);
+    verifyNoInteractions(fixture.tenantEvents);
     verify(fixture.outbox, never())
         .append(eq(MEMBERSHIP_STREAM), eq(REQUEST_ID), any(LongFunction.class));
     verify(fixture.pairs, never()).commitTransition(any(), any());
@@ -293,6 +298,87 @@ class AccountMembershipAuthorityEventProducerCanonicalJoinTest {
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("exact current Account, source, and tenant authority evidence");
 
+    verify(fixture.tenantEvents).readCurrentByTenant(TENANT_UUID);
+    verify(fixture.outbox, never())
+        .append(eq(MEMBERSHIP_STREAM), eq(REQUEST_ID), any(LongFunction.class));
+    verify(fixture.pairs, never()).commitTransition(any(), any());
+  }
+
+  @Test
+  void firstJoinDeniesStaleCurrentTenantEventReadback() {
+    Fixture fixture = advancedTenantFixture();
+    var event = tenantEvent(TENANT_UUID, 1L, 1L, TENANT_OPERATION_ID, DIGEST);
+    when(fixture.tenantEvents.readCurrentByTenant(TENANT_UUID)).thenReturn(event);
+    assertTenantReadbackDenied(fixture);
+  }
+
+  @Test
+  void firstJoinDeniesCurrentTenantEventWithDifferentSourceVersion() {
+    Fixture fixture = advancedTenantFixture();
+    var event = tenantEvent(TENANT_UUID, 2L, 3L, TENANT_OPERATION_ID, DIGEST);
+    when(fixture.tenantEvents.readCurrentByTenant(TENANT_UUID)).thenReturn(event);
+    assertTenantReadbackDenied(fixture);
+  }
+
+  @Test
+  void firstJoinDeniesCurrentTenantEventForDifferentTenant() {
+    Fixture fixture = advancedTenantFixture();
+    var event = tenantEvent(UUID.randomUUID(), 2L, 2L, TENANT_OPERATION_ID, DIGEST);
+    when(fixture.tenantEvents.readCurrentByTenant(TENANT_UUID)).thenReturn(event);
+    assertTenantReadbackDenied(fixture);
+  }
+
+  @Test
+  void firstJoinDeniesCurrentTenantEventWithDifferentFreshSource() {
+    Fixture fixture = advancedTenantFixture();
+    var event = tenantEvent(TENANT_UUID, 2L, 2L, UUID.randomUUID(), DIGEST);
+    when(fixture.tenantEvents.readCurrentByTenant(TENANT_UUID)).thenReturn(event);
+    assertTenantReadbackDenied(fixture);
+  }
+
+  @Test
+  void firstJoinDeniesCurrentTenantEventWithDifferentFreshSourceDigest() {
+    Fixture fixture = advancedTenantFixture();
+    var event = tenantEvent(TENANT_UUID, 2L, 2L, TENANT_OPERATION_ID, "sha256:" + "b".repeat(64));
+    when(fixture.tenantEvents.readCurrentByTenant(TENANT_UUID)).thenReturn(event);
+    assertTenantReadbackDenied(fixture);
+  }
+
+  private Fixture advancedTenantFixture() {
+    Fixture fixture = new Fixture();
+    fixture.arrangePendingFirstJoin();
+    when(fixture.authority.readCompositeSnapshot(
+            "firemud-account-service", ACCOUNT_UUID, List.of(TENANT_UUID), List.of(TENANT_UUID)))
+        .thenReturn(fixture.authoritySnapshot(1L, 1L, 2L, 1L));
+    fixture.startWritableTransaction();
+    return fixture;
+  }
+
+  private TenantAuthorityEventV1Codec.Event tenantEvent(
+      UUID tenantId,
+      long generation,
+      long sourceVersion,
+      UUID sourceOperationId,
+      String sourceDigest) {
+    var event = mock(TenantAuthorityEventV1Codec.Event.class);
+    var source = mock(FreshTenantCreationEvidence.class);
+    when(event.tenantId()).thenReturn(tenantId);
+    when(event.tenantAuthorityGeneration()).thenReturn(generation);
+    when(event.tenantAuthoritySourceVersion()).thenReturn(sourceVersion);
+    when(event.sourceEvidence()).thenReturn(source);
+    when(source.operationId()).thenReturn(sourceOperationId);
+    when(source.evidenceDigest()).thenReturn(sourceDigest);
+    return event;
+  }
+
+  private void assertTenantReadbackDenied(Fixture fixture) {
+    assertThatThrownBy(
+            () ->
+                fixture.producer.publishCanonicalFirstJoinMembershipChange(
+                    fixture.scope, REQUEST_ID, CALLER_BINDING))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("exact current Account, source, and tenant authority evidence");
+    verify(fixture.tenantEvents).readCurrentByTenant(TENANT_UUID);
     verify(fixture.outbox, never())
         .append(eq(MEMBERSHIP_STREAM), eq(REQUEST_ID), any(LongFunction.class));
     verify(fixture.pairs, never()).commitTransition(any(), any());
@@ -397,9 +483,19 @@ class AccountMembershipAuthorityEventProducerCanonicalJoinTest {
         mock(AccountAuthorityOutboxRepository.class);
     private final AccountAuthoritySourceEvidenceRepository sourceEvidence =
         mock(AccountAuthoritySourceEvidenceRepository.class);
+    private final AccountTenantAuthorityEventRepository tenantEvents =
+        mock(AccountTenantAuthorityEventRepository.class);
     private final AccountMembershipAuthorityEventProducer producer =
         new AccountMembershipAuthorityEventProducer(
-            joinOperations, accounts, pairs, memberships, roles, authority, outbox, sourceEvidence);
+            joinOperations,
+            accounts,
+            pairs,
+            memberships,
+            roles,
+            authority,
+            outbox,
+            sourceEvidence,
+            tenantEvents);
     private final CanonicalJoinScopeV2 scope = scopeValue();
     private final VerifiedTenantProvenance provenance = provenanceValue();
     private final Account account = accountValue();

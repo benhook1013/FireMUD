@@ -265,6 +265,90 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
   }
 
   @Test
+  void forwardMigrationPreservesRetainedReceiptsAndAllowsUnknownDecisionAbort() {
+    var context = context("88");
+    UUID account = account(context);
+    var repository = new AccountGameplayAdmissionLeaseRepository(context.dsl());
+    var retainedPending = pending(context, account);
+    var retainedKnown = pending(context, account);
+    UUID decision = UUID.randomUUID();
+    UUID knownCleanup = UUID.randomUUID();
+    var known = tx(context, () -> repository.recordAborted(retainedKnown, decision, knownCleanup));
+    var retainedCommitted = pending(context, account);
+    var committed = tx(context, () -> repository.recordCommitted(retainedCommitted, decision));
+
+    migrate(context, null);
+
+    assertThat(tx(context, () -> repository.readExact(retainedKnown))).contains(known);
+    assertThat(tx(context, () -> repository.readExact(retainedCommitted))).contains(committed);
+    UUID cleanup = UUID.randomUUID();
+    var unknown = tx(context, () -> repository.recordAborted(retainedPending, null, cleanup));
+    assertThat(unknown.state()).isEqualTo(State.ABORTED);
+    assertThat(unknown.bindingDecisionId()).isNull();
+    assertThat(unknown.orphanCleanupId()).isEqualTo(cleanup);
+    assertThat(unknown.hasPendingOrphanCleanup()).isTrue();
+    assertThat(unknown.evidence()).isEqualTo(retainedPending);
+    assertThat(tx(context, () -> repository.recordAborted(retainedPending, null, cleanup)))
+        .isEqualTo(unknown);
+    assertThat(tx(context, () -> repository.readExact(retainedPending))).contains(unknown);
+    assertThatThrownBy(
+            () ->
+                tx(
+                    context,
+                    () -> repository.recordAborted(retainedPending, UUID.randomUUID(), cleanup)))
+        .hasMessageContaining("identity conflict");
+    assertThatThrownBy(
+            () ->
+                tx(
+                    context,
+                    () -> repository.recordAborted(retainedPending, null, UUID.randomUUID())))
+        .hasMessageContaining("identity conflict");
+    // The unchanged V87 trigger prevents a direct rewrite of the unknown terminal observation.
+    assertThatThrownBy(
+            () ->
+                tx(
+                    context,
+                    () ->
+                        context
+                            .dsl()
+                            .execute(
+                                "UPDATE account_gameplay_admission_lease_operations SET binding_decision_id = ? WHERE request_id = ?",
+                                UUID.randomUUID(),
+                                UUID.fromString(
+                                    (String) retainedPending.carrier().get("requestId")))))
+        .isInstanceOf(RuntimeException.class);
+  }
+
+  @Test
+  void relaxedAbortShapeStillRejectsMissingCleanupAndCommittedWithoutDecision() {
+    var context = context(null);
+    UUID account = account(context);
+    var repository = new AccountGameplayAdmissionLeaseRepository(context.dsl());
+    var original = pending(context, account);
+    UUID request = UUID.fromString((String) original.carrier().get("requestId"));
+    assertThatThrownBy(() -> tx(context, () -> repository.recordAborted(original, null, null)))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> tx(context, () -> repository.recordCommitted(original, null)))
+        .isInstanceOf(IllegalArgumentException.class);
+    for (String state : List.of("ABORTED", "COMMITTED")) {
+      assertThatThrownBy(
+              () ->
+                  tx(
+                      context,
+                      () ->
+                          context
+                              .dsl()
+                              .execute(
+                                  "UPDATE account_gameplay_admission_lease_operations SET status = ? WHERE request_id = ?",
+                                  state,
+                                  request)))
+          .isInstanceOf(RuntimeException.class);
+    }
+    assertThat(tx(context, () -> repository.readExact(original).orElseThrow()).state())
+        .isEqualTo(State.PENDING);
+  }
+
+  @Test
   void expiredPendingCannotCommitOrRenewButKeepsExactReadbackAndCanAbort() {
     var context = context(null);
     UUID account = account(context);
@@ -283,10 +367,7 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
     assertThatThrownBy(() -> tx(context, () -> repository.beginPending(renewed)))
         .hasMessageContaining("identity conflict");
     assertThat(
-            tx(
-                    context,
-                    () -> repository.recordAborted(evidence, UUID.randomUUID(), UUID.randomUUID()))
-                .state())
+            tx(context, () -> repository.recordAborted(evidence, null, UUID.randomUUID())).state())
         .isEqualTo(State.ABORTED);
   }
 

@@ -11,12 +11,14 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2;
+import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementRequest;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
+import net.firedevops.firemud.accountservice.repository.AccountDemoTenantEntitlementRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.CanonicalJoinOperationConflictException;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository;
@@ -24,6 +26,8 @@ import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAut
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.TenantProvenanceKind;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantEntitlementOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantIdentityResolver;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository;
@@ -78,6 +82,32 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
       rootJdbc.execute("DROP SCHEMA IF EXISTS \"" + schema + "\" CASCADE");
     }
     runOwnedSchemas.clear();
+  }
+
+  @Test
+  void commitsFirstJoinAfterActualDemoProvisioningAdvancesTenantAuthority() {
+    Fixture fixture = new Fixture(newTestContext(), true);
+
+    var proof = fixture.commitFirstJoin();
+    var event =
+        fixture.inTransaction(
+            () ->
+                fixture
+                    .outbox
+                    .findEvent(fixture.membershipStream(), fixture.requestId)
+                    .orElseThrow());
+    var decoded =
+        MembershipAuthorityEventV1Codec.verify(new String(event.payload(), StandardCharsets.UTF_8));
+    var current =
+        fixture.inTransaction(() -> fixture.tenantEvents.readCurrentByTenant(fixture.tenantUuid));
+
+    assertThat(current.tenantAuthorityGeneration()).isEqualTo(2L);
+    assertThat(current.tenantAuthoritySourceVersion()).isEqualTo(2L);
+    assertThat(current.outboxSequence()).isEqualTo(1L);
+    assertThat(decoded.authorityTuple().tenantAuthorityGeneration())
+        .isEqualTo(Map.of(fixture.tenantUuid.toString(), "2"));
+    assertThat(proof.eventSequence()).isEqualTo(1L);
+    assertThat(fixture.commitFirstJoin()).isEqualTo(proof);
   }
 
   @Test
@@ -287,6 +317,8 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
     private final AccountAuthorityGenerationRepository generations;
     private final AccountAuthorityOutboxRepository outbox;
     private final AccountAuthoritySourceEvidenceRepository sourceEvidence;
+    private final AccountTenantAuthorityEventRepository tenantEvents;
+    private final AccountDemoTenantEntitlementRepository entitlements;
     private final AccountAuditOutboxRepository auditOutbox;
     private final AccountJoinOperationRepository operations;
     private final AccountMembershipAuthorityEventProducer producer;
@@ -302,6 +334,10 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
     private Long membershipId;
 
     private Fixture(TestContext context) {
+      this(context, false);
+    }
+
+    private Fixture(TestContext context, boolean provisionDemo) {
       this.dsl = context.dsl();
       this.transaction = context.transaction();
       this.accounts = new AccountRepository(dsl);
@@ -312,6 +348,13 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
       this.generations = new AccountAuthorityGenerationRepository(dsl);
       this.outbox = new AccountAuthorityOutboxRepository(dsl);
       this.sourceEvidence = new AccountAuthoritySourceEvidenceRepository(dsl, generations, outbox);
+      var billingOutbox = new AccountTenantEntitlementOutboxRepository(dsl);
+      this.tenantEvents =
+          new AccountTenantAuthorityEventRepository(
+              dsl, outbox, billingOutbox, freshTenants, generations);
+      this.entitlements =
+          new AccountDemoTenantEntitlementRepository(
+              dsl, freshTenants, generations, billingOutbox, tenantEvents);
       this.auditOutbox = new AccountAuditOutboxRepository(dsl);
       var legacyAssociationRepository =
           org.mockito.Mockito.mock(ApprovedLegacyTenantAssociationRepository.class);
@@ -322,7 +365,15 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
       this.operations = new AccountJoinOperationRepository(dsl, connectScopes);
       this.producer =
           new AccountMembershipAuthorityEventProducer(
-              operations, accounts, pairs, memberships, roles, generations, outbox, sourceEvidence);
+              operations,
+              accounts,
+              pairs,
+              memberships,
+              roles,
+              generations,
+              outbox,
+              sourceEvidence,
+              tenantEvents);
       this.terminalCoordinator =
           new AccountCanonicalFirstJoinTerminalCoordinator(
               accounts, operations, memberships, roles, outbox, pairs, auditOutbox, producer);
@@ -335,7 +386,7 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
               tenantEvidence.operationId(),
               tenantEvidence.evidenceDigest());
       this.scope = canonicalScope(account.getAccountUuid(), tenantUuid);
-      seedOwnerRowsAndOperation();
+      seedOwnerRowsAndOperation(provisionDemo);
     }
 
     private Account createAccount() {
@@ -348,7 +399,7 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
       return inTransaction(() -> accounts.save(input));
     }
 
-    private void seedOwnerRowsAndOperation() {
+    private void seedOwnerRowsAndOperation(boolean provisionDemo) {
       inTransaction(
           () -> {
             freshTenants.importVerified(tenantEvidence);
@@ -357,9 +408,16 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
             generations.initialize(
                 AccountAuthorityGenerationRepository.AuthorityScope.membership(
                     account.getAccountUuid(), tenantUuid));
+            var entitlement =
+                provisionDemo ? entitlements.provision(demoRequest(), tenantEvidence) : null;
             connectScopes.insertCanonical(account.getId(), scope, provenance);
             operations.insertCanonicalIntent(requestId, scope, callerBinding);
-            operations.bindCanonicalPolicyEvidence(requestId, scope, callerBinding, true, 5L);
+            operations.bindCanonicalPolicyEvidence(
+                requestId,
+                scope,
+                callerBinding,
+                entitlement == null || entitlement.allowPublicJoin(),
+                entitlement == null ? 5L : entitlement.entitlementVersion());
             return null;
           });
     }
@@ -380,6 +438,22 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
             return producer.publishCanonicalFirstJoinMembershipChange(
                 scope, requestId, callerBinding);
           });
+    }
+
+    private DemoTenantEntitlementRequest demoRequest() {
+      return new DemoTenantEntitlementRequest(
+          UUID.randomUUID(),
+          tenantUuid,
+          tenantEvidence.creationRequestId(),
+          tenantEvidence.requestDigest(),
+          null,
+          null,
+          null,
+          true,
+          true,
+          true,
+          true,
+          new DemoTenantEntitlementRequest.Quotas(3L, 2L, 4096L));
     }
 
     private AccountJoinOperationRepository.CanonicalJoinTerminalProof commitFirstJoin() {

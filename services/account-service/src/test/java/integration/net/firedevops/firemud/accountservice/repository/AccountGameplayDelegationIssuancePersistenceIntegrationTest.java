@@ -1428,7 +1428,15 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
         new AccountJoinOperationRepository(dsl, connectScopes);
     AccountMembershipAuthorityEventProducer membershipEvents =
         new AccountMembershipAuthorityEventProducer(
-            joinOperations, accounts, pairs, memberships, roles, generations, outbox, sources);
+            joinOperations,
+            accounts,
+            pairs,
+            memberships,
+            roles,
+            generations,
+            outbox,
+            sources,
+            tenantAuthorityEvents);
     AccountCanonicalFirstJoinTerminalCoordinator firstJoin =
         new AccountCanonicalFirstJoinTerminalCoordinator(
             accounts,
