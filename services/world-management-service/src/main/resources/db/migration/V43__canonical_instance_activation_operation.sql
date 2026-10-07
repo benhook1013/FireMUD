@@ -298,7 +298,12 @@ BEGIN
             AND p.input_json::JSONB->'versionIdentity'->>'canonicalVersionId'=v.canonical_version_id::TEXT
             AND p.input_json::JSONB->'versionIdentity'->>'localVersionKey'=v.local_version_key::TEXT
             AND p.input_json::JSONB->'versionIdentity'->>'gameDesignVersionId'=v.game_design_version_id::TEXT
-            AND p.input_json::JSONB->'versionIdentity'->>'versionState'=v.version_state_state
+            AND p.input_json::JSONB->'versionIdentity'->>'versionState'=
+                CASE v.version_state_state
+                    WHEN 'DRAFT' THEN 'VERSION_LIFECYCLE_STATE_DRAFT'
+                    WHEN 'PUBLISHED' THEN 'VERSION_LIFECYCLE_STATE_PUBLISHED'
+                    WHEN 'ACTIVE' THEN 'VERSION_LIFECYCLE_STATE_ACTIVE'
+                END
             AND p.input_json::JSONB->'versionIdentity'->>'versionStateEpoch'=v.version_state_epoch::TEXT
             AND p.input_json::JSONB->'versionIdentity'->>'evidenceDigest'=v.version_state_evidence_digest
             AND p.input_json::JSONB->'sourceIntake'->>'schemaVersion'=s.schema_version::TEXT

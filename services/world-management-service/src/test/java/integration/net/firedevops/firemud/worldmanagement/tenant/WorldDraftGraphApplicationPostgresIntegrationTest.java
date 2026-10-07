@@ -1022,7 +1022,9 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     var retainedEpochs =
         Objects.requireNonNull(
             dsl.fetchOne(
-                "SELECT v.version_state_epoch AS source_version_state_epoch, "
+                "SELECT v.version_state_state AS source_version_state, "
+                    + "p.input_json::JSONB->'versionIdentity'->>'versionState' AS input_version_state, "
+                    + "v.version_state_epoch AS source_version_state_epoch, "
                     + "p.input_json::JSONB->'versionIdentity'->>'versionStateEpoch' AS input_version_state_epoch, "
                     + "b.descriptor_json::JSONB->>'versionStateEpoch' AS descriptor_version_state_epoch, "
                     + "b.release_attestation_json::JSONB->>'versionStateEpoch' AS release_version_state_epoch, "
@@ -1033,6 +1035,9 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
                     + "JOIN world_canonical_instance_preparation p ON p.canonical_game_instance_id=a.canonical_game_instance_id "
                     + "WHERE a.canonical_game_instance_id=?",
                 fixture.input().canonicalGameInstanceId()));
+    assertThat(retainedEpochs.get("source_version_state", String.class)).isEqualTo("DRAFT");
+    assertThat(retainedEpochs.get("input_version_state", String.class))
+        .isEqualTo("VERSION_LIFECYCLE_STATE_DRAFT");
     assertThat(retainedEpochs.get("source_version_state_epoch", Long.class)).isEqualTo(1L);
     assertThat(retainedEpochs.get("input_version_state_epoch", String.class)).isEqualTo("1");
     assertThat(retainedEpochs.get("descriptor_version_state_epoch", String.class)).isEqualTo("2");
