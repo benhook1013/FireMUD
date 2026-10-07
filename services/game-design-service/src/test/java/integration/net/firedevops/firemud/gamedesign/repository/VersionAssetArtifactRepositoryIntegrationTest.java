@@ -35,7 +35,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @Import(NoGrpcServerTestConfiguration.class)
 class VersionAssetArtifactRepositoryIntegrationTest {
   @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(
+          PostgresBackedServiceTestSupport.postgresImage("postgres:16-alpine"));
 
   @DynamicPropertySource
   static void configure(DynamicPropertyRegistry registry) {

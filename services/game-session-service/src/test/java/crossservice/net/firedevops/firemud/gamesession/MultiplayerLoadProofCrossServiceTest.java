@@ -19,6 +19,7 @@ import net.firedevops.firemud.gamesession.testsupport.GameplayAsyncAssertions;
 import net.firedevops.firemud.gamesession.testsupport.GameplayCrossServiceStack;
 import net.firedevops.firemud.gamesession.testsupport.GameplayLoadScenarios;
 import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketDriver;
+import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.GenericContainer;
@@ -39,7 +40,8 @@ class MultiplayerLoadProofCrossServiceTest {
 
   @Container
   static final PostgreSQLContainer<?> POSTGRES =
-      new PostgreSQLContainer<>("postgres:16-alpine")
+      new PostgreSQLContainer<>(
+              PostgresBackedServiceTestSupport.postgresImage("postgres:16-alpine"))
           .withDatabaseName("firemud")
           .withUsername("firemud")
           .withPassword("firemud");

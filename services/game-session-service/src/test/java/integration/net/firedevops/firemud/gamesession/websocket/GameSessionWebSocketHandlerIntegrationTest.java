@@ -124,7 +124,9 @@ class GameSessionWebSocketHandlerIntegrationTest {
   private static final long CUTOVER_GAME_INSTANCE_ID = 3L;
 
   @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(
+          PostgresBackedServiceTestSupport.postgresImage("postgres:16-alpine"));
 
   @DynamicPropertySource
   static void registerProperties(DynamicPropertyRegistry registry) {

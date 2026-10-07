@@ -82,7 +82,9 @@ class SocialGroupsApplicationIntegrationTest {
       Mockito.mock(SocialAccessGuard.class);
 
   @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(
+          PostgresBackedServiceTestSupport.postgresImage("postgres:16-alpine"));
 
   @Container
   static GenericContainer<?> redis =

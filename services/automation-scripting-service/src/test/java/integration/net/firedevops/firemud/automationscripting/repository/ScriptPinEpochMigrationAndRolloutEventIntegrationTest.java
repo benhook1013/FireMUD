@@ -16,6 +16,7 @@ import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit
 import net.firedevops.firemud.automationscripting.entity.ScriptPatchInstanceRolloutEvent;
 import net.firedevops.firemud.automationscripting.entity.ScriptPatchInstanceRolloutProjection;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
+import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -35,7 +36,9 @@ class ScriptPinEpochMigrationAndRolloutEventIntegrationTest {
       "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize();
 
   @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(
+          PostgresBackedServiceTestSupport.postgresImage("postgres:16-alpine"));
 
   private String schema;
 

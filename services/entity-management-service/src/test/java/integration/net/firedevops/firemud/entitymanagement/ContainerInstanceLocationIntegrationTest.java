@@ -44,7 +44,9 @@ class ContainerInstanceLocationIntegrationTest {
       PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
 
   @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(
+          PostgresBackedServiceTestSupport.postgresImage("postgres:16-alpine"));
 
   @Container
   static GenericContainer<?> redis =
