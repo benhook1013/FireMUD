@@ -476,3 +476,7 @@ Entry format:
 - `2026-10-07`: Do not feed truncated command captures into a mechanical patch
   - Context: a source-stage preservation attempt read a large CI workflow through a bounded command capture. The truncation notice entered the proposed patch; `apply_patch` rejected it before modifying the isolated worktree.
   - Outcome: use the bounded actual diff for tracked files, check captures for truncation before constructing a patch, and read complete content only for small new files. The retry preserved the source stage without changing the concurrently prepared carrier.
+
+- `2026-10-07`: Active work in temporary directories may not survive an execution-environment replacement
+  - Context: an environment replacement removed Document's `/tmp` worktrees, uncommitted activation transport, validation logs and active process handles while published refs and saved session captures survived. Its cause remains unknown; a default-shell launch also began failing until an explicit `/bin/bash` was selected.
+  - Outcome: all in-scope patches were recovered from their successful captured edits into durable `/home/ben/src` worktrees, locally checkpointed and freshly validated before normal publication. Historical cached outputs were kept distinct from fresh execution. Use durable active worktrees and make a local preservation commit before a substantial wait; do not count a vanished process or historical log as current-candidate proof.
