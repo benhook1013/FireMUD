@@ -4477,7 +4477,7 @@ class ReviewController:
             handed_off_prs=(
                 pr
                 for pr, view in channel_allocations.items()
-                if view["status"] in {"HANDED_OFF", "CAP_TAPERED"}
+                if view["status"] in {"HANDED_OFF", "CAP_TAPERED"} and pr not in active_review_prs
             ),
             human_stopped_prs=(
                 pr for pr, view in channel_allocations.items()
@@ -4686,8 +4686,8 @@ class ReviewController:
         state: ReviewState,
         live: Mapping[int, LivePullRequest],
         reconciliation: stack.Reconciliation,
-        histories: Mapping[policy.Channel, Mapping[int, Sequence[Any]]],
-        allocations: Mapping[policy.Channel, Mapping[int, Mapping[str, Any]]],
+        histories: dict[policy.Channel, dict[int, list[Any]]],
+        allocations: dict[policy.Channel, dict[int, dict[str, Any]]],
         candidate_prs: Sequence[int],
         *,
         selection_complete: bool,
@@ -4696,7 +4696,8 @@ class ReviewController:
         history_cache: dict[tuple[int, str], list[Any]],
     ) -> dict[str, dict[str, Any]]:
         result: dict[str, dict[str, Any]] = {}
-        for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
+
+        def refreshed_histories() -> dict[policy.Channel, dict[int, list[Any]]]:
             # A prior channel's clearance audit refreshes both cache entries.
             # Reproject those local snapshots before selecting this channel.
             current_histories = {
@@ -4719,6 +4720,9 @@ class ReviewController:
                 )
                 for pr in candidate_prs
             }
+            return current_histories
+
+        def refreshed_allocations(channel, current_histories):
             current_allocations = dict(allocations[channel])
             for pr in candidate_prs:
                 fresh_history = current_histories[channel][pr]
@@ -4730,7 +4734,21 @@ class ReviewController:
                     snapshot = bounded_evidence_cache.get((pr, channel.value))
                     if snapshot is None or fresh_history != histories[channel].get(pr, ()):
                         snapshot = self._bounded_allocation_evidence(allocation, fresh_history)
-                    reason = snapshot["error"]
+                    if fresh_history != histories[channel].get(pr, ()):
+                        reason = snapshot["error"]
+                        if reason is None and snapshot["in_flight"]:
+                            # The canonical in-flight branch returns before a
+                            # clearance audit; refresh activity counters locally.
+                            current_allocations[pr] = dict(
+                                current_allocations.get(pr, {}),
+                                **self._allocation_progress(
+                                    allocation, fresh_history,
+                                    self._reconciled_anchor(pr, live[pr], reconciliation),
+                                    reconciliation.status_for(pr, channel.value),
+                                    state=state, reconciliation_result=reconciliation,
+                                    bounded_evidence=snapshot,
+                                ),
+                            )
                 if self._review_credit_projection(histories[channel].get(pr, ())) != self._review_credit_projection(
                     fresh_history
                 ):
@@ -4739,8 +4757,16 @@ class ReviewController:
                     current_allocations[pr] = dict(
                         current_allocations.get(pr, {}), status="INVALID", reason=reason, details=reason,
                         history_projection_current=False, finding_only_pending=False,
-                        request_preparation_only=False,
+                        request_preparation_only=False, selection_control="unresolved_work",
                     )
+                    for key in ("completed_count", "used", "remaining", "in_flight",
+                                "taper_complete", "historical_taper_complete"):
+                        current_allocations[pr][key] = None
+            return current_allocations
+
+        for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
+            current_histories = refreshed_histories()
+            current_allocations = refreshed_allocations(channel, current_histories)
             decision = self._select_review_decision(
                 state,
                 channel,
@@ -4780,6 +4806,36 @@ class ReviewController:
                 value["draft_notice"] = DRAFT_PR_NOTICE if is_draft else None
             value["pr"] = value.pop("target")
             result[channel.value] = value
+        # Both selectors may refresh either channel. Publish one final local
+        # snapshot to the row renderer, retaining invalidated projections.
+        final_histories = refreshed_histories()
+        for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
+            final_allocations = refreshed_allocations(channel, final_histories)
+            allocations[channel].update({
+                pr: view for pr, view in final_allocations.items() if pr in allocations[channel]
+            })
+            for pr in candidate_prs:
+                if live[pr].merged:
+                    continue
+                view = final_allocations.get(pr, {})
+                active = any(
+                    _field(value, "active_review") is True or _field(value, "active_reservation") is True
+                    for value in final_histories[channel][pr]
+                )
+                if not active and view.get("history_projection_current") is not False:
+                    continue
+                target = result[channel.value].get("pr")
+                if target is not None and candidate_prs.index(target) < candidate_prs.index(pr):
+                    break
+                reason = (f"{pr} has an active review or reservation in a review channel"
+                          if active else view["reason"])
+                held = policy.ChannelDecision(channel, pr, policy.ReviewStatus.HELD, reason).to_dict()
+                held["pr"] = held.pop("target")
+                held["is_draft"] = live[pr].is_draft
+                held["draft_notice"] = DRAFT_PR_NOTICE if live[pr].is_draft else None
+                result[channel.value] = held
+                break
+            histories[channel].update(final_histories[channel])
         return result
 
     def _target(
@@ -5623,6 +5679,20 @@ class ReviewController:
             )
             for channel in (policy.Channel.HOSTED, policy.Channel.CLI)
         }
+        review_targets = None
+        if review_target_prs is not None:
+            review_targets = self._status_review_targets(
+                state,
+                live,
+                reconciliation,
+                histories,
+                allocations,
+                review_target_prs,
+                selection_complete=review_target_selection_complete,
+                bounded_evidence_cache=bounded_evidence_cache,
+                stop_audit_cache=stop_audit_cache,
+                history_cache=history_cache,
+            )
         for pr in state.ordered_prs:
             item = live[pr]
             reconciliation_status = reconciliation.status_for(pr)
@@ -5772,18 +5842,7 @@ class ReviewController:
             "legacy_transitions": [item.to_dict() for item in state.legacy_transitions],
         }
         if review_target_prs is not None:
-            report["review_targets"] = self._status_review_targets(
-                state,
-                live,
-                reconciliation,
-                histories,
-                allocations,
-                review_target_prs,
-                selection_complete=review_target_selection_complete,
-                bounded_evidence_cache=bounded_evidence_cache,
-                stop_audit_cache=stop_audit_cache,
-                history_cache=history_cache,
-            )
+            report["review_targets"] = review_targets
             # PR-level queue selection survives request-only identity warnings.
             # Keep a separate snapshot; neither presentation nor later request
             # invalidation may select a replacement or change policy admission.

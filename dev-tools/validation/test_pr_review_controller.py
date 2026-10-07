@@ -7665,6 +7665,100 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(report["review_fronts"]["cli"]["status"], "HELD")
         self.assertEqual(controller._review_credit_projection(evidence[(1, "cli")]), credit_before)
 
+    def test_status_rows_share_credit_invalidation_and_new_obligations_from_hosted_audit(self):
+        values, heads = _stacked_prs(2)
+        evidence = CountingEvidence()
+        evidence[(1, "cli")] = [self.allocation_evidence(
+            head=values[1].head, checkpoint="cli-baseline", channel="cli")]
+        controller = self.grant_bounded_allocation(
+            channel="cli", checkpoint="cli-baseline", cap=6, minimum=4,
+            evidence=evidence, values=values, heads=heads, sqlite=True)
+        evidence[(1, "cli")].extend(self.allocation_evidence(
+            head=values[1].head, checkpoint=f"cli-dry-{index}", channel="cli") for index in (1, 2, 3))
+        evidence[(1, "hosted")] = [self.allocation_evidence(
+            head=values[1].head, checkpoint="hosted-dry", channel="hosted"), {
+            "pr": 1, "head": values[1].head, "checkpoint": "review-threads:1:0",
+            "held": True, "finding_only_hold": True}]
+        evidence.audit.update(unresolved_findings=["known finding"],
+                              finding_only_findings=["known finding"], unknown_review_evidence=[])
+
+        def discover_accepted_result():
+            if not any(item.get("checkpoint") == "fresh-accepted" for item in evidence[(1, "cli")]):
+                evidence[(1, "cli")].append(self.allocation_evidence(
+                    head=values[1].head, checkpoint="fresh-accepted", channel="cli",
+                    raw=1, accepted=1, source_resolution_status="finding_pending"))
+
+        evidence.on_audit = discover_accepted_result
+        self._enable_batch_status(controller, values)
+        saved = controller.store.load().allocations["1:cli"].to_dict()
+
+        report = controller.status_overview()
+
+        row = report["prs"][0]
+        self.assertEqual(report["review_fronts"]["cli"]["pr"], 1)
+        self.assertEqual(report["review_fronts"]["cli"]["status"], "HELD")
+        self.assertEqual(row["allocations"]["cli"]["status"], "INVALID")
+        self.assertFalse(row["allocations"]["cli"]["history_projection_current"])
+        for key in ("completed_count", "taper_complete", "historical_taper_complete", "used", "remaining"):
+            self.assertIsNone(row["allocations"]["cli"][key])
+        self.assertIn("fresh-accepted", row["review_obligations"]["cli"])
+        self.assertIsNone(row["review_progress"]["cli"]["rule"]["completed"])
+        self.assertEqual(controller.store.load().allocations["1:cli"].to_dict(), saved)
+        self.assertEqual(len([item for item in evidence[(1, "cli")]
+                              if item.get("checkpoint") == "fresh-accepted"]), 1)
+
+    def test_later_cli_audit_activity_overrides_earlier_hosted_allocation_handoff(self):
+        values, heads = _stacked_prs(2)
+        evidence = CountingEvidence()
+        evidence[(1, "hosted")] = [self.allocation_evidence(
+            head=values[1].head, checkpoint="hosted-baseline", channel="hosted")]
+        evidence[(1, "cli")] = [self.allocation_evidence(
+            head=values[1].head, checkpoint=f"cli-dry-{index}", channel="cli") for index in (1, 2, 3)]
+        controller = self.grant_bounded_allocation(
+            channel="hosted", checkpoint="hosted-baseline", cap=4, minimum=1,
+            evidence=evidence, values=values, heads=heads, sqlite=True)
+        evidence[(1, "hosted")].append(self.allocation_evidence(
+            head=values[1].head, checkpoint="hosted-dry", channel="hosted"))
+        evidence.audit.update(unresolved_findings=[], finding_only_findings=[], unknown_review_evidence=[])
+        self._enable_batch_status(controller, values)
+        original_selection = controller._status_review_targets
+
+        def selection_with_new_cli_finding(state, live, reconciliation, histories, allocations, candidates, **kwargs):
+            self.assertEqual(allocations[Channel.HOSTED][1]["status"], "CAP_TAPERED")
+            finding = {"pr": 1, "head": values[1].head, "checkpoint": "review-threads:1:0",
+                       "held": True, "finding_only_hold": True}
+            evidence[(1, "cli")].append(finding)
+            histories[Channel.CLI][1].append(dict(finding))
+            kwargs["history_cache"][(1, "cli")].append(dict(finding))
+            kwargs["stop_audit_cache"].clear()
+            evidence.audit.update(unresolved_findings=["known finding"],
+                                  finding_only_findings=["known finding"], unknown_review_evidence=[])
+
+            def discover_hosted_reservation():
+                evidence[(1, "hosted")].append({
+                    "pr": 1, "head": values[1].head, "checkpoint": "trigger:123",
+                    "trigger_id": 123, "active_reservation": True, "held": True,
+                    "completed": False, "attributable": False,
+                    "anchor": controller._anchor(1, live[1], reconciliation.links[1]).as_dict()})
+
+            evidence.on_audit = discover_hosted_reservation
+            return original_selection(state, live, reconciliation, histories, allocations, candidates, **kwargs)
+
+        controller._status_review_targets = selection_with_new_cli_finding
+        saved = controller.store.load().allocations["1:hosted"].to_dict()
+        credit = controller._review_credit_projection(evidence[(1, "hosted")])
+
+        report = controller.status_overview()
+
+        self.assertEqual(report["review_fronts"]["hosted"]["pr"], 1)
+        self.assertEqual(report["review_fronts"]["hosted"]["status"], "HELD")
+        self.assertIn("trigger:123", report["prs"][0]["review_obligations"]["hosted"])
+        self.assertEqual(report["prs"][0]["allocations"]["hosted"]["status"], "CAP_ACTIVE")
+        self.assertEqual(report["prs"][0]["allocations"]["hosted"]["completed_count"], 1)
+        self.assertEqual(report["prs"][0]["allocations"]["hosted"]["in_flight"], 1)
+        self.assertEqual(controller._review_credit_projection(evidence[(1, "hosted")]), credit)
+        self.assertEqual(controller.store.load().allocations["1:hosted"].to_dict(), saved)
+
     def test_safety_classification_uses_histories_refreshed_during_audit(self):
         for movement in (False, True):
             for fresh_blocker in ("provisional", "held"):
