@@ -2,19 +2,27 @@ package integration.net.firedevops.firemud.accountservice.authorpublication;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import java.io.ByteArrayOutputStream;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.SourceChange;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.SourceChangeAbortReason;
+import net.firedevops.firemud.accountservice.authorpublication.AccountPublicationTerminalReconciliationService;
 import net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFenceRepository;
 import net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFenceRepository.Ordering;
 import net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFenceRepository.Owner;
@@ -23,10 +31,14 @@ import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalClient;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
+import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalReadEvidence;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
 import net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding;
+import net.firedevops.firemud.common.world.WorldPublicationTerminalClient;
+import net.firedevops.firemud.common.world.WorldPublicationTerminalReadEvidence;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -37,6 +49,7 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -44,9 +57,11 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
  * Isolated component fixtures stipulate original authenticated synchronized selection and current
- * Account capture. They prove no operative legal terms, source-verification product, RPC or live
- * publication. Structural terminal rows in the focused SQL tests below are deliberately synthetic:
- * they test PostgreSQL integrity/ordering guards only and are not transport or owner proof.
+ * Account capture. They prove no operative legal terms, source-verification product, live owner RPC
+ * or publication. Reconciliation definitions inject explicitly synthetic upstream transport doubles
+ * while exercising the real Account PostgreSQL store. Structural terminal rows in the focused SQL
+ * tests below are deliberately synthetic: they test PostgreSQL integrity/ordering guards only and
+ * are not transport or owner proof.
  */
 @Testcontainers(disabledWithoutDocker = true)
 class PublicationAuthorizationFencePostgresIntegrationTest {
@@ -450,6 +465,242 @@ class PublicationAuthorizationFencePostgresIntegrationTest {
     txRun(context, () -> context.draft().markSourceCommitted(change));
     assertThat(tx(context, () -> context.draft().readSourceChange(change).status()))
         .isEqualTo("SOURCE_COMMITTED");
+  }
+
+  @Test
+  void realStoreReconciliationRetainsPublishedDesignUntilWorldRetryAndThenSettlesOriginalPair()
+      throws Exception {
+    Context context = context();
+    var fixture = AccountPublicationTerminalFixtures.scenario();
+    tx(context, () -> context.publication().reserve(fixture.account()));
+    tx(context, () -> context.publication().claimPublicationOrder(fixture.account()));
+    var change = change(fixture.account());
+    assertThat(tx(context, () -> context.draft().requestSourceChange(change))).isFalse();
+
+    var gameDesignClient = mock(GameDesignPublicationTerminalClient.class);
+    var worldClient = mock(WorldPublicationTerminalClient.class);
+    AtomicInteger worldReads = new AtomicInteger();
+    when(gameDesignClient.read(any()))
+        .thenAnswer(
+            invocation -> {
+              assertOwnerRpcOutsideAccountTransaction();
+              var request =
+                  (GameDesignPublicationTerminalReadEvidence.ReadRequest) invocation.getArgument(0);
+              return new GameDesignPublicationTerminalReadEvidence.ReadResult(
+                  request,
+                  GameDesignPublicationTerminalReadEvidence.Status.PUBLISHED,
+                  Optional.of(fixture.publishedTerminal()));
+            });
+    when(worldClient.read(any()))
+        .thenAnswer(
+            invocation -> {
+              assertOwnerRpcOutsideAccountTransaction();
+              var request =
+                  (WorldPublicationTerminalReadEvidence.Request) invocation.getArgument(0);
+              if (worldReads.getAndIncrement() == 0) {
+                return new WorldPublicationTerminalReadEvidence.ReadResult(
+                    request, WorldPublicationTerminalReadEvidence.Status.UNKNOWN, Optional.empty());
+              }
+              return new WorldPublicationTerminalReadEvidence.ReadResult(
+                  request,
+                  WorldPublicationTerminalReadEvidence.Status.PUBLISHED,
+                  Optional.of(fixture.publishedTerminal()));
+            });
+
+    var firstService = reconciliationService(context, gameDesignClient, worldClient);
+    assertThat(firstService.reconcile(fixture.operation().canonicalBytes()))
+        .contains(Settlement.PENDING);
+    var retainedDesign =
+        tx(
+            context,
+            () -> context.publication().readOriginalOperation(fixture.operation()).orElseThrow());
+    assertThat(retainedDesign.ordering()).isEqualTo(Ordering.PUBLICATION_ORDER);
+    assertThat(retainedDesign.settlement()).isEqualTo(Settlement.PENDING);
+    assertThat(retainedDesign.gameDesignResult()).isPresent();
+    assertThat(retainedDesign.worldResult()).isEmpty();
+    assertThat(retainedDesign.gameDesignResult().orElseThrow().terminalBytes())
+        .containsExactly(fixture.publishedTerminal().canonicalBytes());
+    assertThat(tx(context, () -> context.draft().sourceMutationPermitted(change))).isFalse();
+
+    // A restarted service resumes from the exact Account row; it need not refetch Game Design.
+    var restartedService = reconciliationService(context, gameDesignClient, worldClient);
+    assertThat(restartedService.reconcile(fixture.operation().canonicalBytes()))
+        .contains(Settlement.PUBLISHED);
+    var settled =
+        tx(
+            context,
+            () -> context.publication().readOriginalOperation(fixture.operation()).orElseThrow());
+    assertThat(settled.settlement()).isEqualTo(Settlement.PUBLISHED);
+    assertThat(settled.gameDesignResult()).isPresent();
+    assertThat(settled.worldResult()).isPresent();
+    assertThat(settled.gameDesignResult().orElseThrow().operationBytes())
+        .containsExactly(fixture.operation().canonicalBytes());
+    assertThat(settled.gameDesignResult().orElseThrow().terminalBytes())
+        .containsExactly(fixture.publishedTerminal().canonicalBytes());
+    assertThat(settled.gameDesignResult().orElseThrow().recordedAt())
+        .isEqualTo(retainedDesign.gameDesignResult().orElseThrow().recordedAt());
+    assertThat(settled.worldResult().orElseThrow().operationBytes())
+        .containsExactly(fixture.operation().canonicalBytes());
+    assertThat(settled.worldResult().orElseThrow().terminalBytes())
+        .containsExactly(fixture.publishedTerminal().canonicalBytes());
+    assertThat(tx(context, () -> context.draft().sourceMutationPermitted(change))).isTrue();
+    txRun(context, () -> context.draft().markSourceCommitted(change));
+
+    assertThat(restartedService.reconcile(fixture.operation().canonicalBytes()))
+        .contains(Settlement.PUBLISHED);
+    verify(gameDesignClient, times(1)).read(any());
+    verify(worldClient, times(2)).read(any());
+    assertThat(tx(context, () -> context.draft().readSourceChange(change)).status())
+        .isEqualTo("SOURCE_COMMITTED");
+  }
+
+  @Test
+  void realStoreRejectsWrongOperationWorldEvidenceAndExactRetryCanCompleteOriginalPair()
+      throws Exception {
+    Context context = context();
+    var fixture = AccountPublicationTerminalFixtures.scenario();
+    var conflictingFixture = AccountPublicationTerminalFixtures.scenario();
+    tx(context, () -> context.publication().reserve(fixture.account()));
+    tx(context, () -> context.publication().claimPublicationOrder(fixture.account()));
+    var change = change(fixture.account());
+    assertThat(tx(context, () -> context.draft().requestSourceChange(change))).isFalse();
+
+    var gameDesignClient = mock(GameDesignPublicationTerminalClient.class);
+    var worldClient = mock(WorldPublicationTerminalClient.class);
+    AtomicInteger worldReads = new AtomicInteger();
+    when(gameDesignClient.read(any()))
+        .thenAnswer(
+            invocation -> {
+              assertOwnerRpcOutsideAccountTransaction();
+              var request =
+                  (GameDesignPublicationTerminalReadEvidence.ReadRequest) invocation.getArgument(0);
+              return new GameDesignPublicationTerminalReadEvidence.ReadResult(
+                  request,
+                  GameDesignPublicationTerminalReadEvidence.Status.PUBLISHED,
+                  Optional.of(fixture.publishedTerminal()));
+            });
+    when(worldClient.read(any()))
+        .thenAnswer(
+            invocation -> {
+              assertOwnerRpcOutsideAccountTransaction();
+              var request =
+                  (WorldPublicationTerminalReadEvidence.Request) invocation.getArgument(0);
+              var evidence =
+                  worldReads.getAndIncrement() == 0
+                      ? conflictingFixture.publishedTerminal()
+                      : fixture.publishedTerminal();
+              return new WorldPublicationTerminalReadEvidence.ReadResult(
+                  request,
+                  WorldPublicationTerminalReadEvidence.Status.PUBLISHED,
+                  Optional.of(evidence));
+            });
+
+    var service = reconciliationService(context, gameDesignClient, worldClient);
+    assertThat(service.reconcile(fixture.operation().canonicalBytes()))
+        .contains(Settlement.PENDING);
+    var pending =
+        tx(
+            context,
+            () -> context.publication().readOriginalOperation(fixture.operation()).orElseThrow());
+    assertThat(pending.settlement()).isEqualTo(Settlement.PENDING);
+    assertThat(pending.gameDesignResult()).isPresent();
+    assertThat(pending.worldResult()).isEmpty();
+    assertThat(pending.gameDesignResult().orElseThrow().terminalBytes())
+        .containsExactly(fixture.publishedTerminal().canonicalBytes());
+    assertThat(tx(context, () -> context.draft().sourceMutationPermitted(change))).isFalse();
+
+    assertThat(service.reconcile(fixture.operation().canonicalBytes()))
+        .contains(Settlement.PUBLISHED);
+    var settled =
+        tx(
+            context,
+            () -> context.publication().readOriginalOperation(fixture.operation()).orElseThrow());
+    assertThat(settled.settlement()).isEqualTo(Settlement.PUBLISHED);
+    assertThat(settled.gameDesignResult().orElseThrow().terminalBytes())
+        .containsExactly(fixture.publishedTerminal().canonicalBytes());
+    assertThat(settled.worldResult().orElseThrow().terminalBytes())
+        .containsExactly(fixture.publishedTerminal().canonicalBytes());
+    assertThat(settled.gameDesignResult().orElseThrow().recordedAt())
+        .isEqualTo(pending.gameDesignResult().orElseThrow().recordedAt());
+    assertThat(tx(context, () -> context.draft().sourceMutationPermitted(change))).isTrue();
+    verify(gameDesignClient, times(1)).read(any());
+    verify(worldClient, times(2)).read(any());
+  }
+
+  @Test
+  void concurrentExactRealStoreReconciliationRetriesRetainOneImmutablePublishedPair()
+      throws Exception {
+    Context context = context();
+    var fixture = AccountPublicationTerminalFixtures.scenario();
+    tx(context, () -> context.publication().reserve(fixture.account()));
+    tx(context, () -> context.publication().claimPublicationOrder(fixture.account()));
+    var change = change(fixture.account());
+    assertThat(tx(context, () -> context.draft().requestSourceChange(change))).isFalse();
+
+    var gameDesignClient = mock(GameDesignPublicationTerminalClient.class);
+    var worldClient = mock(WorldPublicationTerminalClient.class);
+    CountDownLatch designReads = new CountDownLatch(2);
+    when(gameDesignClient.read(any()))
+        .thenAnswer(
+            invocation -> {
+              assertOwnerRpcOutsideAccountTransaction();
+              var request =
+                  (GameDesignPublicationTerminalReadEvidence.ReadRequest) invocation.getArgument(0);
+              designReads.countDown();
+              await(designReads);
+              return new GameDesignPublicationTerminalReadEvidence.ReadResult(
+                  request,
+                  GameDesignPublicationTerminalReadEvidence.Status.PUBLISHED,
+                  Optional.of(fixture.publishedTerminal()));
+            });
+    when(worldClient.read(any()))
+        .thenAnswer(
+            invocation -> {
+              assertOwnerRpcOutsideAccountTransaction();
+              var request =
+                  (WorldPublicationTerminalReadEvidence.Request) invocation.getArgument(0);
+              return new WorldPublicationTerminalReadEvidence.ReadResult(
+                  request,
+                  WorldPublicationTerminalReadEvidence.Status.PUBLISHED,
+                  Optional.of(fixture.publishedTerminal()));
+            });
+
+    var service = reconciliationService(context, gameDesignClient, worldClient);
+    try (var executor = Executors.newFixedThreadPool(2)) {
+      var first = executor.submit(() -> service.reconcile(fixture.operation().canonicalBytes()));
+      var second = executor.submit(() -> service.reconcile(fixture.operation().canonicalBytes()));
+      assertThat(first.get(20, TimeUnit.SECONDS)).contains(Settlement.PUBLISHED);
+      assertThat(second.get(20, TimeUnit.SECONDS)).contains(Settlement.PUBLISHED);
+    }
+    var stored =
+        tx(
+            context,
+            () -> context.publication().readOriginalOperation(fixture.operation()).orElseThrow());
+    assertThat(stored.ordering()).isEqualTo(Ordering.PUBLICATION_ORDER);
+    assertThat(stored.settlement()).isEqualTo(Settlement.PUBLISHED);
+    assertThat(stored.gameDesignResult()).isPresent();
+    assertThat(stored.worldResult()).isPresent();
+    for (var ownerResult :
+        List.of(stored.gameDesignResult().orElseThrow(), stored.worldResult().orElseThrow())) {
+      assertThat(ownerResult.operationBytes())
+          .containsExactly(fixture.operation().canonicalBytes());
+      assertThat(ownerResult.terminalBytes())
+          .containsExactly(fixture.publishedTerminal().canonicalBytes());
+    }
+    var ownerResultCount =
+        java.util.Objects.requireNonNull(
+            context
+                .dsl()
+                .fetchOne(
+                    "SELECT count(*) FROM account_publication_authorization_owner_results"
+                        + " WHERE operation_id=?",
+                    fixture.operation().account().operationId()));
+    assertThat(ownerResultCount.get(0, Long.class)).isEqualTo(2L);
+    assertThat(tx(context, () -> context.draft().sourceMutationPermitted(change))).isTrue();
+    verify(gameDesignClient, times(2)).read(any());
+    verify(worldClient, times(2)).read(any());
+    assertThat(tx(context, () -> context.publication().readSettlement(fixture.operation())))
+        .isEqualTo(Settlement.PUBLISHED);
   }
 
   @Test
@@ -1239,6 +1490,24 @@ class PublicationAuthorizationFencePostgresIntegrationTest {
           work.run();
           return null;
         });
+  }
+
+  /** These mocked owner transports are synthetic response fixtures, not live owner verification. */
+  private static AccountPublicationTerminalReconciliationService reconciliationService(
+      Context context,
+      GameDesignPublicationTerminalClient gameDesignClient,
+      WorldPublicationTerminalClient worldClient) {
+    return new AccountPublicationTerminalReconciliationService(
+        context.publication(),
+        new DataSourceTransactionManager(context.source()),
+        gameDesignClient,
+        worldClient,
+        "test");
+  }
+
+  private static void assertOwnerRpcOutsideAccountTransaction() {
+    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+    assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
   }
 
   private static void await(CountDownLatch latch) {
