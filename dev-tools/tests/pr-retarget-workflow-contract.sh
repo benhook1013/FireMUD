@@ -1210,7 +1210,7 @@ require_contains "$image_wait_path" 'GitHub API poll failed while %s; retrying w
 # shellcheck disable=SC2016 # These assertions intentionally match literal shell source.
 require_contains "$image_wait_path" 'if ! workflow_payload="$('
 # shellcheck disable=SC2016 # These assertions intentionally match literal shell source.
-require_contains "$image_wait_path" 'if ! publisher_payload="$('
+require_contains "$image_wait_path" 'if ! event_payload="$('
 if grep -Eq '^concurrency:' "$preview_path"; then
   echo "Preview workflow must not cancel an active lifecycle from workflow-level concurrency" >&2
   exit 1
@@ -1515,7 +1515,7 @@ done
 require_contains "$pr_image_publisher_path" 'workflow_run:'
 require_exact_line "$pr_image_publisher_path" 'permissions: {}'
 # shellcheck disable=SC2016 # This assertion intentionally matches a literal GitHub expression.
-require_contains "$pr_image_publisher_path" 'run-name: Publish PR Runtime Images ${{ github.event.workflow_run.display_title }}'
+require_contains "$pr_image_publisher_path" "run-name: Publish PR Runtime Images \${{ github.event.workflow_run.display_title || format('source-run-{0}', github.event.client_payload.source_run_id) }}"
 require_contains "$pr_image_publisher_path" "github.event.workflow_run.event == 'pull_request'"
 require_contains "$pr_image_publisher_path" "github.event.workflow_run.conclusion == 'success'"
 require_contains "$pr_image_publisher_path" 'github.event.workflow_run.head_repository.full_name == github.repository'
@@ -1589,7 +1589,7 @@ if "<script>" in summary:
     raise SystemExit("trusted PR image publisher emitted unescaped HTML")
 PY
 
-require_contains "$image_wait_path" 'publish-pr-runtime-images.yml/runs?event=workflow_run'
+require_contains "$image_wait_path" 'publish-pr-runtime-images.yml/runs?event={event}&created={lower_text}..{upper_text}&per_page=100'
 require_contains "$image_wait_path" '"Publish", "PR", "Runtime", "Images", "Build", "Runtime", "Images"'
 require_contains "$image_wait_path" 're.fullmatch(r"pr-[1-9][0-9]{0,50}", tokens[8])'
 require_contains "$image_wait_path" 'tokens[9] == f"base-{base_sha}"'
@@ -1738,10 +1738,37 @@ if [[ -n "${CONTRACT_GH_STATE_FILE:-}" ]]; then
 fi
 
 if [[ "$*" == *"publish-pr-runtime-images.yml"* ]]; then
+  [[ "$*" != *"--paginate"* ]] || { echo 'publisher inventory must be bounded' >&2; exit 1; }
+  if [[ -n "${CONTRACT_PUBLISHER_PAYLOAD:-}" ]]; then
+    python3 - "$CONTRACT_PUBLISHER_PAYLOAD" "$*" <<'PY_PAGE'
+import json
+import re
+import sys
+payload = json.load(open(sys.argv[1]))
+event = re.search(r"event=([^&]+)", sys.argv[2]).group(1)
+page_number = int(re.search(r"&page=([0-9]+)", sys.argv[2]).group(1))
+pages = payload if isinstance(payload, list) else [payload]
+page = pages[min(page_number - 1, len(pages) - 1)]
+if page.get("fixture_event", "repository_dispatch") != event:
+    page = {"total_count": 0, "workflow_runs": []}
+else:
+    page = {key: value for key, value in page.items() if key != "fixture_event"}
+print(json.dumps(page))
+PY_PAGE
+    exit 0
+  fi
+  if [[ "$*" == *event=repository_dispatch* ]]; then
+    printf '%s' '{"total_count":0,"workflow_runs":[]}'
+    exit 0
+  fi
   cat <<'JSON'
-[{"workflow_runs":[{"id":201,"status":"completed","conclusion":"success","html_url":"https://example.test/publisher/201","display_title":"Publish PR Runtime Images Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required","created_at":"2026-07-24T00:03:00Z"}]}]
+{"total_count":1,"workflow_runs":[{"id":201,"event":"workflow_run","status":"completed","conclusion":"success","html_url":"https://example.test/publisher/201","display_title":"Publish PR Runtime Images Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required","created_at":"2026-07-24T00:03:00Z"}]}
 JSON
 else
+  if [[ -n "${CONTRACT_SOURCE_PAYLOAD:-}" ]]; then
+    cat "$CONTRACT_SOURCE_PAYLOAD"
+    exit 0
+  fi
   cat <<'JSON'
 [{"workflow_runs":[{"id":102,"status":"completed","conclusion":"skipped","html_url":"https://example.test/runtime/102","event":"pull_request","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","display_title":"Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-metadata","created_at":"2026-07-24T00:02:00Z"}]},{"workflow_runs":[{"id":101,"status":"completed","conclusion":"success","html_url":"https://example.test/runtime/101","event":"pull_request","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","display_title":"Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required","created_at":"2026-07-24T00:01:00Z"}]}]
 JSON
@@ -1775,6 +1802,98 @@ require_contains "$contract_fixture_dir/retry-error" \
   'GitHub API response was empty or invalid while waiting for the runtime-images workflow; retrying.'
 require_contains "$contract_fixture_dir/retry-output" 'Matching runtime-images workflow 101 succeeded'
 require_contains "$contract_fixture_dir/retry-output" 'Trusted PR image publisher 201 succeeded'
+
+python3 - "$contract_fixture_dir" "$image_wait_path" <<'PY_FIXTURES'
+import json
+import subprocess
+import sys
+from pathlib import Path
+root = Path(sys.argv[1])
+waiter = Path(sys.argv[2]).read_text()
+source_parser = waiter.split("read_run_state() {\n  python3 -c '\n", 1)[1].split("\n' \"${wait_mode}\"", 1)[0]
+source = {"id": 101, "event": "pull_request", "status": "completed", "conclusion": "success", "head_sha": "a" * 40, "html_url": "https://example.test/runtime/101", "display_title": "Build Runtime Images secure-pr-artifact pr-1 base-" + "b" * 40 + " head-" + "a" * 40 + " merge-" + "c" * 40 + " mode-required", "created_at": "2026-07-24T00:01:00Z"}
+for created_at in [source["created_at"], "2026-02-31T00:01:00Z", "2026-07-24T00:01:00+00:00", "not-a-date", None]:
+    result = subprocess.run([sys.executable, "-c", source_parser, "pull-request", "pr-merge-" + "c" * 40, "c" * 40, "b" * 40, "a" * 40], input=json.dumps({"workflow_runs": [{**source, "created_at": created_at}]}), capture_output=True, text=True)
+    if created_at == source["created_at"]:
+        assert result.returncode == 0 and result.stdout.rstrip().endswith("\tpull_request\t" + created_at)
+    else:
+        assert result.returncode != 0, "source creation time must be a real UTC timestamp"
+def parse_source(run):
+    return subprocess.run([sys.executable, "-c", source_parser, "pull-request", "pr-merge-" + "c" * 40, "c" * 40, "b" * 40, "a" * 40], input=json.dumps({"workflow_runs": [run]}), capture_output=True, text=True)
+
+for field, values in {"id": [None, 0, True, "101"], "status": [None, "", "completed\t"], "html_url": [None, "", "https://example.test/\t101"], "conclusion": [None, "", "success\n"]}.items():
+    for value in values:
+        assert parse_source({**source, field: value}).returncode != 0, f"malformed source {field} must be rejected"
+for name, run in {"missing-url": {key: value for key, value in source.items() if key != "html_url"}, "empty-url": {**source, "html_url": ""}}.items():
+    assert parse_source(run).returncode != 0
+    (root / (name + ".json")).write_text(json.dumps({"workflow_runs": [run]}))
+for conclusion in [None, ""]:
+    result = parse_source({**source, "status": "in_progress", "conclusion": conclusion})
+    assert result.returncode == 0
+    split = subprocess.run(["bash", "-c", "IFS=$'\\t' read -r state id status conclusion url event created; printf '%s\\n' \"$state\" \"$id\" \"$status\" \"$conclusion\" \"$url\" \"$event\" \"$created\""], input=result.stdout, capture_output=True, text=True)
+    assert split.stdout.splitlines() == ["found", "101", "in_progress", "pending", source["html_url"], source["event"], source["created_at"]], "optional conclusion must preserve Bash field positions"
+
+base = {"id": 202, "event": "repository_dispatch", "status": "completed", "conclusion": "success", "html_url": "https://example.test/publisher/202", "display_title": "Publish PR Runtime Images source-run-101", "created_at": "2026-07-24T00:04:00Z"}
+fixtures = {
+    "dispatch-success": base,
+    "dispatch-wrong-source": {**base, "display_title": "Publish PR Runtime Images source-run-999"},
+    "dispatch-wrong-event": {**base, "event": "push"},
+    "dispatch-malformed-title": {**base, "display_title": "Publish PR Runtime Images source-run-101 extra"},
+    "dispatch-failure": {**base, "conclusion": "failure"},
+    "callback-wrong-tuple": {**base, "event": "workflow_run", "display_title": "Publish PR Runtime Images Build Runtime Images secure-pr-artifact pr-1 base-" + "d" * 40 + " head-" + "a" * 40 + " merge-" + "c" * 40 + " mode-required"},
+}
+for name, run in fixtures.items():
+    (root / (name + ".json")).write_text(json.dumps({"total_count": 1, "fixture_event": "workflow_run" if name == "callback-wrong-tuple" else "repository_dispatch", "workflow_runs": [run]}))
+# Matching publication remains discoverable beyond the first page.
+many = [{**base, "id": 300 + index, "display_title": f"Publish PR Runtime Images source-run-{500 + index}"} for index in range(100)] + [base]
+(root / "dispatch-second-page.json").write_text(json.dumps([{"total_count": 101, "workflow_runs": many[:100]}, {"total_count": 101, "workflow_runs": many[100:]}]))
+(root / "dispatch-overflow.json").write_text(json.dumps({"total_count": 1001, "workflow_runs": many[:100]}))
+(root / "dispatch-incomplete.json").write_text(json.dumps([{"total_count": 101, "workflow_runs": many[:100]}, {"total_count": 101, "workflow_runs": []}]))
+(root / "dispatch-unstable.json").write_text(json.dumps([{"total_count": 101, "workflow_runs": many[:100]}, {"total_count": 102, "workflow_runs": many[100:]}]))
+(root / "dispatch-outside-window.json").write_text(json.dumps({"total_count": 1, "workflow_runs": [{**base, "created_at": "2026-07-23T00:00:00Z"}]}))
+(root / "dispatch-invalid-date.json").write_text(json.dumps({"total_count": 1, "workflow_runs": [{**base, "created_at": "2026-02-31T00:00:00Z"}]}))
+PY_FIXTURES
+for fixture in missing-url empty-url; do
+  if CONTRACT_SOURCE_PAYLOAD="$contract_fixture_dir/$fixture.json" \
+    PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
+    HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+    bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+      >"$contract_fixture_dir/$fixture.output" 2>"$contract_fixture_dir/$fixture.error"; then
+    echo "$fixture unexpectedly verified publication" >&2
+    exit 1
+  fi
+  require_contains "$contract_fixture_dir/$fixture.error" 'GitHub API response was empty or invalid while waiting for the runtime-images workflow; retrying.'
+  if [[ -s "$contract_fixture_dir/$fixture.output" ]]; then
+    echo "$fixture must not report source or publisher success" >&2
+    exit 1
+  fi
+done
+for fixture in dispatch-success dispatch-wrong-source dispatch-wrong-event dispatch-malformed-title dispatch-failure callback-wrong-tuple dispatch-second-page dispatch-overflow dispatch-incomplete dispatch-unstable dispatch-outside-window dispatch-invalid-date; do
+  if CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/$fixture.json" \
+    PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
+    HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=3 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+    HOSTED_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS=0 \
+    bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+      >"$contract_fixture_dir/$fixture.output" 2>"$contract_fixture_dir/$fixture.error"; then
+    [[ "$fixture" == "dispatch-success" || "$fixture" == "dispatch-second-page" ]] || { echo "$fixture unexpectedly admitted publisher" >&2; exit 1; }
+    require_contains "$contract_fixture_dir/$fixture.output" 'Trusted PR image publisher 202 succeeded'
+  else
+    [[ "$fixture" != "dispatch-success" && "$fixture" != "dispatch-second-page" ]] || { cat "$contract_fixture_dir/$fixture.error" >&2; exit 1; }
+    if [[ "$fixture" == "dispatch-failure" ]]; then
+      require_contains "$contract_fixture_dir/$fixture.error" 'completed with failure'
+    elif [[ "$fixture" == "dispatch-wrong-event" || "$fixture" == "dispatch-overflow" || "$fixture" == "dispatch-incomplete" || "$fixture" == "dispatch-unstable" || "$fixture" == "dispatch-outside-window" || "$fixture" == "dispatch-invalid-date" ]]; then
+      require_contains "$contract_fixture_dir/$fixture.error" 'Publisher coverage unavailable'
+      if grep -Fq 'No trusted PR image publisher appeared' "$contract_fixture_dir/$fixture.error"; then
+        echo 'unavailable coverage must not claim publisher absence' >&2
+        exit 1
+      fi
+    else
+      require_contains "$contract_fixture_dir/$fixture.error" 'No trusted PR image publisher appeared'
+    fi
+  fi
+done
 
 assert_job_excludes runtime-images.yml smoke-full 'pull-requests: write'
 if (assert_job_excludes runtime-images.yml missing-job 'pull-requests: write') 2>/dev/null; then

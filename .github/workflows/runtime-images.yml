@@ -1705,6 +1705,31 @@ jobs:
           set -euo pipefail
           bash ./dev-tools/hosted/controller/smoke-paused-controller-image.sh "$CONTROLLER_IMAGE" >/dev/null
 
+  dispatch-pr-runtime-publication:
+    name: Dispatch Trusted PR Runtime Publication
+    needs: [image-meta, pr-local-smoke, pr-controller-smoke]
+    if: ${{ always() && !cancelled() && github.event_name == 'repository_dispatch' && github.event.action == 'pr-runtime-base-refresh' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && needs.image-meta.result == 'success' && needs.pr-local-smoke.result == 'success' && (needs.pr-controller-smoke.result == 'success' || (needs.image-meta.outputs.controller_smoke_required == 'false' && needs.pr-controller-smoke.result == 'skipped')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      # This trusted no-checkout job only sends an exact source-run handoff.
+      contents: write
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        with:
+          egress-policy: audit
+
+      - name: Dispatch exact runtime publication source
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            await github.rest.repos.createDispatchEvent({
+              ...context.repo,
+              event_type: "pr-runtime-image-publication",
+              client_payload: { source_run_id: String(context.runId) },
+            });
+
   smoke-full:
     name: Published Runtime Full-Stack Smoke
     needs: [image-meta, build-runtime-images]
