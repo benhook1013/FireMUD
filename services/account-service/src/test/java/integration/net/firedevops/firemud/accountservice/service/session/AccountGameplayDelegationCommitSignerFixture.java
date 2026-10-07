@@ -23,6 +23,7 @@ import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.accountservice.config.AccountJwtJwksApiBinding;
@@ -44,6 +45,7 @@ import org.aopalliance.intercept.MethodInterceptor;
 import org.jooq.DSLContext;
 import org.jooq.ExecuteListener;
 import org.jooq.impl.DefaultExecuteListenerProvider;
+import org.postgresql.util.PSQLException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.aop.framework.ProxyFactory;
@@ -57,6 +59,14 @@ import org.springframework.transaction.support.TransactionTemplate;
 public final class AccountGameplayDelegationCommitSignerFixture {
   private static final Logger LOGGER =
       LoggerFactory.getLogger(AccountGameplayDelegationCommitSignerFixture.class);
+  private static final Set<String> SAFE_CONSTRAINTS =
+      Set.of(
+          "account_gameplay_delegation_commit_immutable",
+          "account_gameplay_delegation_commit_shape",
+          "account_gameplay_delegation_candidate_one_way",
+          "account_gameplay_delegation_commit_evidence_match",
+          "account_gameplay_token_identity_shape",
+          "account_gameplay_token_revocation_shape");
 
   private enum ProofStage {
     BEFORE_SIGNING,
@@ -265,22 +275,38 @@ public final class AccountGameplayDelegationCommitSignerFixture {
   }
 
   private void reportSafeFailure(Throwable failure) {
+    LOGGER.warn(
+        "Account integration proof failure: stage={};{}",
+        proofStage.get().name(),
+        safeFailureDiagnostic(failure));
+  }
+
+  /** Returns only SQLSTATE and a constraint identifier from the fixed Account allowlist. */
+  public static String safeFailureDiagnostic(Throwable failure) {
     String sqlState = "UNKNOWN";
+    String constraint = "UNKNOWN";
     Throwable current = failure;
-    for (int depth = 0; current != null && depth < 8; depth++) {
+    for (int depth = 0; current != null && depth < 8; depth++, current = current.getCause()) {
+      if (current instanceof PSQLException postgresFailure) {
+        String candidateSqlState = postgresFailure.getSQLState();
+        if (candidateSqlState != null && candidateSqlState.matches("[0-9A-Z]{5}")) {
+          sqlState = candidateSqlState;
+        }
+        var serverError = postgresFailure.getServerErrorMessage();
+        String candidateConstraint = serverError == null ? null : serverError.getConstraint();
+        if (candidateConstraint != null && SAFE_CONSTRAINTS.contains(candidateConstraint)) {
+          constraint = candidateConstraint;
+        }
+        break;
+      }
       if (current instanceof SQLException sqlFailure) {
         String candidate = sqlFailure.getSQLState();
         if (candidate != null && candidate.matches("[0-9A-Z]{5}")) {
           sqlState = candidate;
-          break;
         }
       }
-      current = current.getCause();
     }
-    LOGGER.warn(
-        "Account integration proof failure: stage={};sqlstate={}",
-        proofStage.get().name(),
-        sqlState);
+    return "sqlstate=" + sqlState + ";constraint=" + constraint;
   }
 
   public static AccountGameplayDelegationCommitSignerFixture create(

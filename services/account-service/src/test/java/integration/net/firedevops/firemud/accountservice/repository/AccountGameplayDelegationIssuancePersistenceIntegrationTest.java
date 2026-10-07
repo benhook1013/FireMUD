@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 
@@ -25,6 +26,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
+import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -119,6 +121,8 @@ import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.postgresql.util.PSQLException;
+import org.postgresql.util.ServerErrorMessage;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
@@ -144,6 +148,7 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
   private static volatile boolean startedOwnedContainer;
 
   @TempDir Path temporaryDirectory;
+  private final AtomicReference<byte[]> capturedCommitProof = new AtomicReference<>();
 
   @BeforeAll
   static void configureDatabase() {
@@ -167,6 +172,78 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
   @AfterAll
   static void stopOwnedContainer() {
     if (startedOwnedContainer) postgres.stop();
+  }
+
+  @Test
+  void safeCommitFailureDiagnosticAllowsOnlyKnownConstraintsAndSqlState() {
+    PSQLException allowedConstraint =
+        new PSQLException(
+            new ServerErrorMessage(
+                "SERROR\u0000VERROR\u0000C23514\u0000"
+                    + "naccount_gameplay_delegation_commit_shape\u0000\u0000"),
+            false);
+    assertThat(
+            AccountGameplayDelegationCommitSignerFixture.safeFailureDiagnostic(
+                new SQLException("private wrapper details", "99999", allowedConstraint)))
+        .isEqualTo("sqlstate=23514;constraint=account_gameplay_delegation_commit_shape");
+
+    PSQLException unlistedConstraint =
+        new PSQLException(
+            new ServerErrorMessage(
+                "SERROR\u0000VERROR\u0000C23514\u0000" + "nprivate_token_payload\u0000\u0000"),
+            false);
+    String suppressed =
+        AccountGameplayDelegationCommitSignerFixture.safeFailureDiagnostic(
+            new SQLException("private wrapper details", "99999", unlistedConstraint));
+    assertThat(suppressed)
+        .isEqualTo("sqlstate=23514;constraint=UNKNOWN")
+        .doesNotContain("private", "token", "payload");
+
+    String unknown =
+        AccountGameplayDelegationCommitSignerFixture.safeFailureDiagnostic(
+            new IllegalStateException("private exception details"));
+    assertThat(unknown).isEqualTo("sqlstate=UNKNOWN;constraint=UNKNOWN").doesNotContain("private");
+  }
+
+  @Test
+  void commitProofRequiresCanonicalExactStoredBundleSourceFence() throws Exception {
+    CommitHarness harness = newCommitHarness(CommitHook.CAPTURE_COMMIT_PROOF, false, false);
+    assertThatThrownBy(
+            () -> harness.service().commitPendingCandidate(harness.pending().requestId()))
+        .isInstanceOf(
+            AccountGameplayDelegationIssuanceCommitService.IssuanceCommitUnavailableException
+                .class);
+
+    byte[] validProof = Objects.requireNonNull(capturedCommitProof.get());
+    Record evidenceBefore = readCommitBundleEvidence(harness);
+    String sourceFence = evidenceBefore.get("source_fence", String.class);
+    String validProofJson = new String(validProof, StandardCharsets.UTF_8);
+    assertThat(validProofJson).contains("\"sourceFence\":\"" + sourceFence + "\"");
+
+    byte[] missingSourceFence = removeCommitProofSourceFence(validProof, sourceFence);
+    assertCommitProofRejected(
+        harness, missingSourceFence, "account_gameplay_delegation_commit_shape");
+
+    byte[] changedSourceFence =
+        replaceCommitProofSourceFence(
+            validProof, sourceFence, Long.toString(Long.parseLong(sourceFence) + 1L));
+    assertCommitProofRejected(
+        harness, changedSourceFence, "account_gameplay_delegation_commit_evidence_match");
+
+    byte[] noncanonicalSourceFence = replaceCommitProofSourceFence(validProof, sourceFence, "01");
+    assertCommitProofRejected(
+        harness, noncanonicalSourceFence, "account_gameplay_delegation_commit_shape");
+
+    assertPendingWithoutCommitProof(harness);
+    assertThat(tokenFenceCount(harness)).isZero();
+    assertCommitBundleEvidenceUnchanged(harness, evidenceBefore);
+
+    // The exact original proof succeeds after the invalid variants leave all owner evidence intact.
+    reset(harness.issuance());
+    assertThat(harness.service().commitPendingCandidate(harness.pending().requestId()).outcome())
+        .isEqualTo(AccountGameplayDelegationIssuanceCommitService.Outcome.COMMITTED);
+    assertThat(tokenFenceCount(harness)).isEqualTo(1L);
+    assertCommitBundleEvidenceUnchanged(harness, evidenceBefore);
   }
 
   @Test
@@ -1034,8 +1111,19 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
     byte[] persistedProof = row.get("commit_proof_canonical_bytes", byte[].class);
     assertThat(row.get("commit_proof_sha256", String.class)).isEqualTo(committed.proofSha256());
     assertThat(row.get("committed_at")).isNotNull();
+    Record bundleEvidence =
+        Objects.requireNonNull(
+            harness
+                .dsl()
+                .fetchOne(
+                    "SELECT source_fence FROM account_gameplay_delegation_auth_evidence_bundles "
+                        + "WHERE operation_id = ?",
+                    harness.pending().operationId()),
+            "committed issuance evidence bundle must exist");
+    String storedSourceFence = bundleEvidence.get("source_fence", String.class);
     assertThat(new String(persistedProof, StandardCharsets.UTF_8))
         .contains("account-game-session-delegation-commit-proof/v1")
+        .contains("\"sourceFence\":\"" + storedSourceFence + "\"")
         .doesNotContain("eyJ");
     assertThat(harness.pending().authoritySnapshot().accountSecurityCutoff()).isPresent();
     assertThat(harness.redis().registeredRecord()).isNotEmpty();
@@ -1348,6 +1436,18 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
                       : Optional.empty())
           .when(readbackSpy)
           .readCommittedProof(pending.requestId());
+    } else if (hook == CommitHook.CAPTURE_COMMIT_PROOF) {
+      issuance = spy(storedIssuance);
+      AccountGameplayDelegationIssuanceRepository proofSpy = issuance;
+      doAnswer(
+              invocation -> {
+                AccountGameplayDelegationIssuanceCommitService.CommitProof commitProof =
+                    invocation.getArgument(4);
+                capturedCommitProof.set(commitProof.canonicalBytes());
+                throw new IllegalStateException();
+              })
+          .when(proofSpy)
+          .commitPendingCandidate(any(), any(), any(), any(), any());
     }
 
     return buildCommitHarness(
@@ -1394,7 +1494,7 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
     signerFixture.observeDatabaseFailures(dsl);
     transactionManager.setBeforeTargetTransaction(
         switch (hook) {
-          case NONE, AMBIGUOUS_COMMITTED_READBACK -> () -> {};
+          case NONE, AMBIGUOUS_COMMITTED_READBACK, CAPTURE_COMMIT_PROOF -> () -> {};
           case WITHDRAW_SIGNER_TRUST -> signerFixture::withdrawTrust;
           case ADVANCE_ACCOUNT_AFTER_PROJECTION ->
               () ->
@@ -1494,6 +1594,81 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
     assertThat(row.get("commit_proof_sha256")).isNull();
     assertThat(row.get("commit_proof_canonical_bytes")).isNull();
     assertThat(row.get("committed_at")).isNull();
+  }
+
+  private static Record readCommitBundleEvidence(CommitHarness harness) {
+    return Objects.requireNonNull(
+        harness
+            .dsl()
+            .fetchOne(
+                "SELECT bundle_version, source_version, source_fence, linearization, "
+                    + "canonical_sha256, canonical_bundle_bytes "
+                    + "FROM account_gameplay_delegation_auth_evidence_bundles "
+                    + "WHERE operation_id = ?",
+                harness.pending().operationId()),
+        "commit proof evidence bundle must exist");
+  }
+
+  private static void assertCommitBundleEvidenceUnchanged(CommitHarness harness, Record before) {
+    Record after = readCommitBundleEvidence(harness);
+    for (String column :
+        List.of(
+            "bundle_version",
+            "source_version",
+            "source_fence",
+            "linearization",
+            "canonical_sha256")) {
+      assertThat(after.get(column)).isEqualTo(before.get(column));
+    }
+    assertThat(after.get("canonical_bundle_bytes", byte[].class))
+        .containsExactly(before.get("canonical_bundle_bytes", byte[].class));
+  }
+
+  private static void assertCommitProofRejected(
+      CommitHarness harness, byte[] proofBytes, String safeConstraint) throws Exception {
+    assertThatThrownBy(
+            () ->
+                harness
+                    .dsl()
+                    .execute(
+                        "UPDATE account_gameplay_delegation_issuance_operations "
+                            + "SET status = 'COMMITTED', commit_proof_version = 1, "
+                            + "commit_proof_sha256 = ?, commit_proof_canonical_bytes = ?, "
+                            + "committed_at = CURRENT_TIMESTAMP WHERE request_id = ?",
+                        sha256Hex(proofBytes),
+                        proofBytes,
+                        harness.pending().requestId()))
+        .isInstanceOf(DataAccessException.class)
+        .satisfies(
+            failure ->
+                assertThat(
+                        AccountGameplayDelegationCommitSignerFixture.safeFailureDiagnostic(failure))
+                    .isEqualTo("sqlstate=23514;constraint=" + safeConstraint));
+    assertPendingWithoutCommitProof(harness);
+    assertThat(tokenFenceCount(harness)).isZero();
+  }
+
+  private static long tokenFenceCount(CommitHarness harness) {
+    return Objects.requireNonNull(
+            harness.dsl().fetchOne("SELECT count(*) FROM account_gameplay_token_identity_fences"),
+            "token identity fence count query must return a row")
+        .get(0, Long.class);
+  }
+
+  private static byte[] removeCommitProofSourceFence(byte[] proofBytes, String sourceFence) {
+    String json = new String(proofBytes, StandardCharsets.UTF_8);
+    String field = "\"sourceFence\":\"" + sourceFence + "\",";
+    assertThat(json).contains(field);
+    return json.replace(field, "").getBytes(StandardCharsets.UTF_8);
+  }
+
+  private static byte[] replaceCommitProofSourceFence(
+      byte[] proofBytes, String sourceFence, String replacement) {
+    String json = new String(proofBytes, StandardCharsets.UTF_8);
+    String field = "\"sourceFence\":\"" + sourceFence + "\"";
+    assertThat(json).contains(field);
+    return json.replace(field, "\"sourceFence\":\"" + replacement + "\"")
+        .getBytes(StandardCharsets.UTF_8);
   }
 
   private static Account createAccount(TestContext context) {
@@ -2084,7 +2259,8 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
     NONE,
     WITHDRAW_SIGNER_TRUST,
     ADVANCE_ACCOUNT_AFTER_PROJECTION,
-    AMBIGUOUS_COMMITTED_READBACK
+    AMBIGUOUS_COMMITTED_READBACK,
+    CAPTURE_COMMIT_PROOF
   }
 
   private record CommitHarness(
