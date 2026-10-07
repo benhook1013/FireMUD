@@ -35,6 +35,7 @@ jobs:
       python_changed: ${{ steps.compute.outputs.python_changed }}
       design_docs_changed: ${{ steps.compute.outputs.design_docs_changed }}
       validation_python_changed: ${{ steps.compute.outputs.validation_python_changed }}
+      postgres_runtime_proof_changed: ${{ steps.compute.outputs.postgres_runtime_proof_changed }}
       lightweight_only: ${{ steps.compute.outputs.lightweight_only }}
     steps:
       - name: Harden runner
@@ -107,6 +108,8 @@ jobs:
                 python_changed: scope.pythonChanged,
                 design_docs_changed: scope.designDocsChanged,
                 validation_python_changed: scope.validationPythonChanged,
+                postgres_runtime_proof_changed:
+                  scope.postgresRuntimeProofChanged === undefined ? true : scope.postgresRuntimeProofChanged,
                 lightweight_only: scope.lightweightOnly,
               };
             } else {
@@ -133,6 +136,7 @@ jobs:
                 python_changed: true,
                 design_docs_changed: true,
                 validation_python_changed: true,
+                postgres_runtime_proof_changed: true,
                 lightweight_only: false,
               };
             }
@@ -142,6 +146,35 @@ jobs:
                 Array.isArray(value) ? JSON.stringify(value) : String(value)
               );
             }
+
+  postgres-runtime-upgrade-proof:
+    name: PostgreSQL Runtime Upgrade Proof
+    needs: [changes]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.postgres_runtime_proof_changed == 'true' }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
+        with:
+          egress-policy: audit
+
+      - name: Check out validation candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up canonical Python dependencies
+        uses: ./.github/actions/setup-python
+        with:
+          requirements: yaml
+
+      - name: Prove PostgreSQL 16 to 18 logical restore on isolated Docker volumes
+        env:
+          FIREMUD_POSTGRES_RUNTIME_DOCKER_PROOF: required
+        run: bash ./dev-tools/tests/postgres-runtime-upgrade-contract.sh
 
   # Static generation, lint, and policy checks
   buf-check:
@@ -380,6 +413,7 @@ jobs:
           bash ./dev-tools/tests/preview-priority-contract.sh
           bash ./dev-tools/tests/gameplay-bridge-network-policy-contract.sh
           bash ./dev-tools/tests/hosted-gateway-bridge-contract.sh
+          bash ./dev-tools/tests/postgres-runtime-upgrade-contract.sh
           bash ./dev-tools/tests/preview-runner-isolation-contract.sh
           bash ./dev-tools/tests/preview-standalone-transport-certificates-contract.sh
           bash ./dev-tools/tests/preview-ca-recovery-contract.sh
@@ -1173,7 +1207,7 @@ jobs:
       checks: read # Preserve a prior successful required context on metadata-only edits.
       contents: read # Check out the shared required-gate composite action.
       actions: read # Inspect the matching required-gate job's preservation step.
-    needs: [changes, buf-check, docker-lint, shellcheck, python-script-validation, dev-tool-contract-checks, dev-tools-readme-contract, yaml-lint, metrics-cardinality-check, flyway-migration-sanity-checks, grpc-transport-config-sanity-checks, workflow-lint, helm-lint, helm-render-validation, helm-transaction-proof, docs-check, frontend-checks, build-and-test]
+    needs: [changes, postgres-runtime-upgrade-proof, buf-check, docker-lint, shellcheck, python-script-validation, dev-tool-contract-checks, dev-tools-readme-contract, yaml-lint, metrics-cardinality-check, flyway-migration-sanity-checks, grpc-transport-config-sanity-checks, workflow-lint, helm-lint, helm-render-validation, helm-transaction-proof, docs-check, frontend-checks, build-and-test]
     if: ${{ always() }}
     steps:
       - name: Harden runner
@@ -1213,6 +1247,8 @@ jobs:
           PYTHON_CHANGED: ${{ needs.changes.outputs.python_changed }}
           DESIGN_DOCS_CHANGED: ${{ needs.changes.outputs.design_docs_changed }}
           VALIDATION_PYTHON_CHANGED: ${{ needs.changes.outputs.validation_python_changed }}
+          POSTGRES_RUNTIME_PROOF_CHANGED: ${{ needs.changes.outputs.postgres_runtime_proof_changed }}
+          POSTGRES_RUNTIME_UPGRADE_PROOF: ${{ needs.postgres-runtime-upgrade-proof.result }}
           LIGHTWEIGHT_ONLY: ${{ needs.changes.outputs.lightweight_only }}
           AFFECTED_MODULES: ${{ needs.changes.outputs.affected_modules }}
           CHANGES_RESULT: ${{ needs.changes.result }}
@@ -1243,6 +1279,15 @@ jobs:
 
           if [ "$CHANGES_RESULT" != "success" ]; then
             echo "Change detection did not succeed: $CHANGES_RESULT" >&2
+            failed=1
+          fi
+
+          echo "PostgreSQL Runtime Upgrade Proof => $POSTGRES_RUNTIME_UPGRADE_PROOF (changed=$POSTGRES_RUNTIME_PROOF_CHANGED)"
+          if [ "$POSTGRES_RUNTIME_PROOF_CHANGED" = "true" ]; then
+            if [ "$POSTGRES_RUNTIME_UPGRADE_PROOF" != "success" ]; then
+              failed=1
+            fi
+          elif [ "$POSTGRES_RUNTIME_UPGRADE_PROOF" != "success" ] && [ "$POSTGRES_RUNTIME_UPGRADE_PROOF" != "skipped" ]; then
             failed=1
           fi
 

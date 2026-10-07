@@ -175,6 +175,7 @@ CI_GATING_STEPS = (
 
 DEV_TOOL_CONTRACT_COMMANDS = (
     "bash ./dev-tools/tests/hosted-gateway-bridge-contract.sh",
+    "bash ./dev-tools/tests/postgres-runtime-upgrade-contract.sh",
     "bash ./dev-tools/tests/minio-pr-smoke-bootstrap-contract.sh",
 )
 
@@ -307,6 +308,77 @@ require_equal(
     ci,
     ("jobs", "changes", "outputs", "lightweight_only"),
     "${{ steps.compute.outputs.lightweight_only }}",
+    "ci workflow",
+)
+require_equal(
+    ci,
+    ("jobs", "changes", "outputs", "postgres_runtime_proof_changed"),
+    "${{ steps.compute.outputs.postgres_runtime_proof_changed }}",
+    "ci workflow",
+)
+require_equal(
+    ci,
+    ("jobs", "postgres-runtime-upgrade-proof", "needs"),
+    ["changes"],
+    "ci workflow",
+)
+require_contains(
+    ci,
+    ("jobs", "postgres-runtime-upgrade-proof", "if"),
+    "needs.changes.outputs.postgres_runtime_proof_changed == 'true'",
+    "ci workflow",
+)
+postgres_runtime_proof_step = find_step(
+    ci,
+    "postgres-runtime-upgrade-proof",
+    "Prove PostgreSQL 16 to 18 logical restore on isolated Docker volumes",
+    "ci workflow",
+)
+require_equal(
+    postgres_runtime_proof_step,
+    ("env", "FIREMUD_POSTGRES_RUNTIME_DOCKER_PROOF"),
+    "required",
+    "ci workflow",
+)
+require_equal(
+    postgres_runtime_proof_step,
+    ("run",),
+    "bash ./dev-tools/tests/postgres-runtime-upgrade-contract.sh",
+    "ci workflow",
+)
+validation_gate_needs = value_at(
+    ci, ("jobs", "validation-gate", "needs"), "ci workflow"
+)
+if "postgres-runtime-upgrade-proof" not in validation_gate_needs:
+    raise SystemExit(
+        "ci workflow: PostgreSQL runtime proof must feed the existing Validation Gate"
+    )
+validation_gate_steps = value_at(
+    ci, ("jobs", "validation-gate", "steps"), "ci workflow"
+)
+gate_enforcement_steps = [
+    step
+    for step in validation_gate_steps
+    if isinstance(step, dict) and step.get("name") == "Enforce validation success"
+]
+if len(gate_enforcement_steps) != 1:
+    raise SystemExit("ci workflow: expected one Validation Gate enforcement step")
+require_equal(
+    gate_enforcement_steps[0],
+    ("env", "POSTGRES_RUNTIME_PROOF_CHANGED"),
+    "${{ needs.changes.outputs.postgres_runtime_proof_changed }}",
+    "ci workflow",
+)
+require_equal(
+    gate_enforcement_steps[0],
+    ("env", "POSTGRES_RUNTIME_UPGRADE_PROOF"),
+    "${{ needs.postgres-runtime-upgrade-proof.result }}",
+    "ci workflow",
+)
+require_contains(
+    gate_enforcement_steps[0],
+    ("run",),
+    'echo "PostgreSQL Runtime Upgrade Proof => $POSTGRES_RUNTIME_UPGRADE_PROOF (changed=$POSTGRES_RUNTIME_PROOF_CHANGED)"',
     "ci workflow",
 )
 require_equal(
