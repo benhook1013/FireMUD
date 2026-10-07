@@ -1110,7 +1110,9 @@ run_action() {
   local failure_mode="$2"
   local scenario="${3:-failure-retry}"
   local call_count_dir="${4:-}"
-  GITHUB_OUTPUT="${GITHUB_OUTPUT:-$count_file-output}" \
+  # Fixture outputs must never inherit the enclosing Actions step output file.
+  local assessment_output="${5:-$count_file-output}"
+  GITHUB_OUTPUT="$assessment_output" \
   GH_RETRY_COUNT_FILE="$count_file" \
   GH_FAILURE_MODE="$failure_mode" \
   GH_SCENARIO="$scenario" \
@@ -1137,8 +1139,7 @@ for coverage_case in truncated missing-total malformed-total overcount invalid-i
   coverage_count="$tmp_dir/$coverage_mode-$coverage_scenario-count"
   coverage_output="$tmp_dir/$coverage_mode-$coverage_scenario-output"
   coverage_log="$tmp_dir/$coverage_mode-$coverage_scenario-log"
-  if GITHUB_OUTPUT="$coverage_output" \
-    run_action "$coverage_count" none "$coverage_scenario" >"$coverage_log" 2>&1; then
+  if run_action "$coverage_count" none "$coverage_scenario" "" "$coverage_output" >"$coverage_log" 2>&1; then
     echo "required-gate $coverage_mode accepted invalid check coverage: $coverage_case" >&2
     exit 1
   fi
@@ -1152,8 +1153,7 @@ for coverage_case in truncated missing-total malformed-total overcount invalid-i
   }
 done
 coverage_output="$tmp_dir/$coverage_mode-complete-multi-output"
-GITHUB_OUTPUT="$coverage_output" \
-  run_action "$tmp_dir/$coverage_mode-complete-multi-count" none check-coverage-multi
+run_action "$tmp_dir/$coverage_mode-complete-multi-count" none check-coverage-multi "" "$coverage_output"
 [[ "$(<"$coverage_output")" == assessment=success ]] || {
   echo "complete multi-page check coverage lost successful proof" >&2
   exit 1
