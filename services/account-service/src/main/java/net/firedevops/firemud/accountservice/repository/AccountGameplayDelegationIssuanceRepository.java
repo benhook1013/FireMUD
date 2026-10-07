@@ -1635,7 +1635,7 @@ public class AccountGameplayDelegationIssuanceRepository {
                 + "authority_account_generation, authority_account_source_version, issuance_fence, "
                 + "issuance_fence_source_version, authority_tuple_canonical_bytes, "
                 + "membership_version_canonical_bytes, authority_source_versions_canonical_bytes) "
-                + "VALUES (?, ?, ?, ?, ?, 2, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                + "VALUES (?, ?, ?, ?, ?, 2, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 + "ON CONFLICT (request_id) DO NOTHING",
             intent.operationId(),
             intent.requestId(),

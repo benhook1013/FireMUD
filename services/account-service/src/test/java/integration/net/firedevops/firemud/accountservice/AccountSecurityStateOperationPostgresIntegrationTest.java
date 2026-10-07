@@ -56,7 +56,7 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
 
   @Test
   void pendingClaimAndExactRetryRetainOneOriginalCaptureWithoutSourceMutation() {
-    Fixture fixture = fixture("78");
+    Fixture fixture = fixture("83");
     Seed seed = seed(fixture);
     var actualSource =
         tx(
@@ -126,7 +126,7 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
             "DELETE FROM account_authority_source_records WHERE account_uuid = ?",
             "UPDATE account_authority_source_records SET account_source_numeric_id = account_source_numeric_id + 1 WHERE account_uuid = ?",
             "UPDATE account_authority_source_records SET initialization_transaction_id = initialization_transaction_id + 1, account_repository_insert_transaction_id = account_repository_insert_transaction_id + 1 WHERE account_uuid = ?")) {
-      Fixture fixture = fixture("78");
+      Fixture fixture = fixture("83");
       Seed seed = seed(fixture);
       Pending pending = pending(fixture, seed, state(false), state(true), 0L, new byte[0]);
       // Fault injection only after genuine owner insertion: never create a passing raw baseline.
@@ -162,7 +162,7 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
 
   @Test
   void accountRepositoryRoleSavePersistsGenericHistoryButNotCanonicalRoleAuthority() {
-    Fixture fixture = fixture("78");
+    Fixture fixture = fixture("83");
     Seed seed = seed(fixture);
     var roleSourceBefore =
         fixture
@@ -259,7 +259,7 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
 
   @Test
   void originalCallerAndFamilyBindingsCannotBeChangedOnRetry() {
-    Fixture fixture = fixture("78");
+    Fixture fixture = fixture("83");
     Seed seed = seed(fixture);
     Pending pending = pending(fixture, seed, state(false), state(true), 0L, new byte[0]);
     tx(fixture, () -> fixture.operations().claim(pending.request(), pending.capture()));
@@ -295,7 +295,7 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
 
   @Test
   void concurrentExactClaimsSerializeToOneOriginalRequest() throws Exception {
-    Fixture fixture = fixture("78");
+    Fixture fixture = fixture("83");
     Seed seed = seed(fixture);
     Pending pending = pending(fixture, seed, state(false), state(true), 0L, new byte[0]);
     CountDownLatch ready = new CountDownLatch(2);
@@ -335,7 +335,7 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
 
   @Test
   void exactExistingOutboxReceiptCompletesOnceAndHistoricalImagesSurviveLaterAdvance() {
-    Fixture fixture = fixture("78");
+    Fixture fixture = fixture("83");
     Seed seed = seed(fixture);
     Pending first = pending(fixture, seed, state(false), state(true), 0L, new byte[0]);
     tx(fixture, () -> fixture.operations().claim(first.request(), first.capture()));
@@ -410,7 +410,7 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
 
   @Test
   void lawfulPrivateFenceAdvanceKeepsLatestSourceEventAndOriginalReceiptUnchanged() {
-    Fixture fixture = fixture("78");
+    Fixture fixture = fixture("83");
     Seed seed = seed(fixture);
     Pending pending = pending(fixture, seed, state(false), state(true), 0L, new byte[0]);
     tx(fixture, () -> fixture.operations().claim(pending.request(), pending.capture()));
@@ -476,7 +476,7 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
 
   @Test
   void lateReceiptFailureRollsBackEntireFixtureProducerButRetainsOriginalWaitingIntent() {
-    Fixture fixture = fixture("78");
+    Fixture fixture = fixture("83");
     Seed seed = seed(fixture);
     Pending pending = pending(fixture, seed, state(false), state(true), 0L, new byte[0]);
     tx(fixture, () -> fixture.operations().claim(pending.request(), pending.capture()));
@@ -525,7 +525,7 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
 
   @Test
   void requestCaptureResultsDeletesAndTruncationRemainGuarded() {
-    Fixture fixture = fixture("78");
+    Fixture fixture = fixture("83");
     Seed seed = seed(fixture);
     Pending pending = pending(fixture, seed, state(false), state(true), 0L, new byte[0]);
     tx(fixture, () -> fixture.operations().claim(pending.request(), pending.capture()));
@@ -551,7 +551,7 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
 
   @Test
   void substitutedEventStateCannotBecomeTheOriginalReceipt() {
-    Fixture fixture = fixture("78");
+    Fixture fixture = fixture("83");
     Seed seed = seed(fixture);
     Pending pending = pending(fixture, seed, state(false), state(true), 0L, new byte[0]);
     tx(fixture, () -> fixture.operations().claim(pending.request(), pending.capture()));
@@ -608,7 +608,7 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
             "request_id = 'substituted'",
             "event_digest = 'sha256:' || repeat('b',64)",
             "payload = convert_to('{}','UTF8')")) {
-      Fixture fixture = fixture("78");
+      Fixture fixture = fixture("83");
       Seed seed = seed(fixture);
       Pending first = pending(fixture, seed, state(false), state(true), 0L, new byte[0]);
       tx(fixture, () -> fixture.operations().claim(first.request(), first.capture()));
@@ -653,7 +653,7 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
   void retainedReceiptCannotLeadRegressedCurrentAuthorityOrCheckpoint() {
     for (String table :
         List.of("account_authority_generations", "account_authority_outbox_streams")) {
-      Fixture fixture = fixture("78");
+      Fixture fixture = fixture("83");
       Seed seed = seed(fixture);
       Pending pending = pending(fixture, seed, state(false), state(true), 0L, new byte[0]);
       tx(fixture, () -> fixture.operations().claim(pending.request(), pending.capture()));
@@ -677,7 +677,7 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
 
   @Test
   void missingSecurityReceiptAndChangedCurrentPoststateCannotCommit() {
-    Fixture missing = fixture("78");
+    Fixture missing = fixture("83");
     Seed seed = seed(missing);
     Pending pending = pending(missing, seed, state(false), state(true), 0L, new byte[0]);
     tx(missing, () -> missing.operations().claim(pending.request(), pending.capture()));
@@ -695,7 +695,7 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
                 .get(0, Boolean.class))
         .isFalse();
 
-    Fixture changed = fixture("78");
+    Fixture changed = fixture("83");
     Seed other = seed(changed);
     Pending original = pending(changed, other, state(false), state(true), 0L, new byte[0]);
     tx(changed, () -> changed.operations().claim(original.request(), original.capture()));
