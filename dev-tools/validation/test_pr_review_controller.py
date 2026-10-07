@@ -648,13 +648,21 @@ class ControllerTests(unittest.TestCase):
                     reason="restore an operator-approved moved-parent review",
                 )
                 controller.store.update(
-                    lambda state: dataclasses.replace(state, reconciliations=(decision,))
+                    lambda state, decision=decision: dataclasses.replace(
+                        state, reconciliations=(decision,)
+                    )
                 )
                 self._enable_batch_status(controller, values)
                 reconciled = []
                 original_reconciliation = controller._active_stack_reconciliation
 
-                def capture_reconciliation(state, pr_number, anchor):
+                def capture_reconciliation(
+                    state,
+                    pr_number,
+                    anchor,
+                    original_reconciliation=original_reconciliation,
+                    reconciled=reconciled,
+                ):
                     result = original_reconciliation(state, pr_number, anchor)
                     if pr_number == 2:
                         reconciled.append(result)
@@ -8008,7 +8016,7 @@ class ControllerTests(unittest.TestCase):
                 controller.set_stack(list(values))
                 batch_values = {number: _batch_identity(item) for number, item in values.items()}
                 batch_values[3].update(invalid_fields)
-                controller.github.batch_pull_requests = lambda _numbers: batch_values
+                controller.github.batch_pull_requests = lambda _numbers, batch_values=batch_values: batch_values
 
                 with github.cli_preflight_budget(timeout_seconds=30), self.assertRaisesRegex(ControllerError, expected):
                     controller._target("cli", expected_pr=1)
