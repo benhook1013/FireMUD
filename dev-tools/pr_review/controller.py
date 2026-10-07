@@ -1216,13 +1216,14 @@ class ReviewController:
             return None
         return AnchorFacts(pr, live.head, link.identity, link.parent_head, merge_base, patch_id)
 
-    def set_stack(
+    def prepare_stack_update(
         self,
         pr_numbers: Iterable[int],
         *,
         allow_removal: bool = False,
         reason: str | None = None,
-    ) -> dict[str, Any]:
+        expected_stack: tuple[int, ...] | None = None,
+    ) -> tuple[tuple[int, ...], tuple[int, ...]]:
         numbers = tuple(pr_numbers)
         if not numbers or any(isinstance(pr, bool) or not isinstance(pr, int) or pr <= 0 for pr in numbers):
             raise ControllerError("stack must contain positive pull-request numbers")
@@ -1236,7 +1237,12 @@ class ReviewController:
         if not allow_removal and reason is not None:
             raise ControllerError("--reason requires --allow-removal")
 
-        expected_stack = self._state().ordered_prs
+        current_stack = self._state().ordered_prs
+        if expected_stack is not None and current_stack != expected_stack:
+            raise ControllerError(
+                "configured stack changed during validation; read the current stack and retry"
+            )
+        expected_stack = current_stack
         requested = set(numbers)
         removed = tuple(pr for pr in expected_stack if pr not in requested)
         if removed and not allow_removal:
@@ -1247,6 +1253,24 @@ class ReviewController:
             )
         if allow_removal and not removed:
             raise ControllerError("--allow-removal requires omitting at least one configured PR")
+
+        return numbers, expected_stack
+
+    def set_stack(
+        self,
+        pr_numbers: Iterable[int],
+        *,
+        allow_removal: bool = False,
+        reason: str | None = None,
+        expected_stack: tuple[int, ...] | None = None,
+    ) -> dict[str, Any]:
+        numbers, expected_stack = self.prepare_stack_update(
+            pr_numbers,
+            allow_removal=allow_removal,
+            reason=reason,
+            expected_stack=expected_stack,
+        )
+        requested = set(numbers)
 
         if self.github is not None:
             if not self.repository:

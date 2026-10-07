@@ -8037,6 +8037,7 @@ class ControllerTests(unittest.TestCase):
 
     def test_stack_set_cli_forwards_removal_authorization_and_reason(self):
         args = _parser().parse_args([
+            "--acceptance-fixture", "fixture.json", "--state-path", "state.json",
             "stack", "set", "--allow-removal", "--reason", "owner authorized removal", "1", "2",
         ])
         controller = Mock()
@@ -8047,6 +8048,90 @@ class ControllerTests(unittest.TestCase):
         controller.set_stack.assert_called_once_with(
             [1, 2], allow_removal=True, reason="owner authorized removal",
         )
+
+    def test_live_stack_set_cli_forwards_initial_snapshot_and_removal_options(self):
+        controller = self.make({1: pr(1, HEAD_1), 2: pr(2, HEAD_2)})
+        controller.set_stack([1, 2])
+        args = _parser().parse_args([
+            "stack", "set", "--allow-removal", "--reason", "owner authorized removal", "2",
+        ])
+        with (
+            patch("pr_review.cli.ControllerStateStore", return_value=controller.store),
+            patch("pr_review.cli.default_controller", return_value=controller),
+            patch.object(controller, "set_stack", wraps=controller.set_stack) as set_stack,
+        ):
+            result, exit_status = _dispatch(args)
+
+        self.assertEqual(exit_status, 0)
+        self.assertEqual(result["ordered_prs"], [2])
+        set_stack.assert_called_once_with(
+            [2], allow_removal=True, reason="owner authorized removal", expected_stack=(1, 2),
+        )
+
+    def test_live_stack_set_rejects_snapshot_change_during_controller_construction(self):
+        for sqlite in (False, True):
+            with self.subTest(sqlite=sqlite):
+                controller = self.make({1: pr(1, HEAD_1), 2: pr(2, HEAD_2)}, sqlite=sqlite)
+                controller.set_stack([1, 2])
+                args = _parser().parse_args(["stack", "set", "2", "1"])
+
+                def construct_controller():
+                    controller.store.update(lambda current: dataclasses.replace(current, ordered_prs=(2, 1)))
+                    return controller
+
+                with (
+                    patch("pr_review.cli.ControllerStateStore", return_value=controller.store),
+                    patch("pr_review.cli.default_controller", side_effect=construct_controller),
+                    patch.object(controller.github, "pull_request") as pull_request,
+                ):
+                    with self.assertRaisesRegex(ControllerError, "stack changed during validation"):
+                        _dispatch(args)
+                    pull_request.assert_not_called()
+                self.assertEqual(controller.store.load().ordered_prs, (2, 1))
+
+    def test_stack_set_snapshot_does_not_bypass_input_validation(self):
+        controller = self.make({1: pr(1, HEAD_1), 2: pr(2, HEAD_2)})
+        controller.set_stack([1, 2])
+        for numbers, options, message in (
+            ([True, 2], {}, "positive pull-request numbers"),
+            ([0, 2], {}, "positive pull-request numbers"),
+            (["1", 2], {}, "positive pull-request numbers"),
+            ([1, 1, 2], {}, "must be unique"),
+            ([2], {"allow_removal": 1, "reason": "owner authorized removal"}, "must be a boolean"),
+            ([2], {"allow_removal": True, "reason": " "}, "nonblank --reason"),
+            ([2], {"reason": "owner authorized removal"}, "--reason requires --allow-removal"),
+            ([2], {}, "cannot remove configured PRs"),
+        ):
+            with self.subTest(numbers=numbers, options=options), patch.object(
+                controller.github, "pull_request",
+            ) as pull_request:
+                with self.assertRaisesRegex(ControllerError, message):
+                    controller.set_stack(numbers, expected_stack=(1, 2), **options)
+                pull_request.assert_not_called()
+        self.assertEqual(controller.store.load().ordered_prs, (1, 2))
+
+    def test_live_stack_set_preflight_rejects_before_repository_metadata_lookup(self):
+        for options, expected_message in (
+            (("2",), r"cannot remove configured PRs.*#1"),
+            (("--allow-removal", "--reason", "  ", "2"), "nonblank --reason"),
+        ):
+            with self.subTest(options=options), tempfile.TemporaryDirectory() as directory:
+                store = StateStore(Path(directory) / "state.json")
+                store.update(lambda current: dataclasses.replace(current, ordered_prs=(1, 2)))
+                args = _parser().parse_args(["stack", "set", *options])
+
+                with (
+                    patch("pr_review.cli.ControllerStateStore", return_value=store),
+                    patch(
+                        "pr_review.cli.github.repository_metadata",
+                        side_effect=AssertionError("repository metadata must not be requested"),
+                    ) as repository_metadata,
+                ):
+                    with self.assertRaisesRegex(ControllerError, expected_message):
+                        _dispatch(args)
+
+                repository_metadata.assert_not_called()
+                self.assertEqual(store.load().ordered_prs, (1, 2))
 
     def test_persisted_cross_repository_stack_cannot_select_a_review_target(self):
         controller = self.make({1: pr(1, HEAD_1, head_repository="fork/repo")})

@@ -12,7 +12,7 @@ The output identifies the SQLite schema and writer build. The live shared cutove
 
 ### Configured review stack
 
-Use `dev-tools/pr-review stack set <ordered PR numbers...>` to add or reorder configured PRs. The command rejects omission of any currently configured PR before GitHub identity validation. After validation, it checks the exact stack read at the start of the command again inside the state update and refuses a stale update, so a concurrent stack change must be read and retried.
+Use `dev-tools/pr-review stack set <ordered PR numbers...>` to add or reorder configured PRs. The CLI checks the requested numbers, removal options, and current membership from local state before constructing the live controller or looking up repository metadata. After live identity validation, it checks the exact stack read during that local preflight again inside the state update and refuses a stale update, so a concurrent stack change must be read and retried.
 
 Removing a configured PR requires explicit user authorization and `--allow-removal --reason "<nonblank reason>"`, for example `dev-tools/pr-review stack set --allow-removal --reason "Owner-approved queue retirement" 123 456`. Merging or closing a PR does not authorize removal, and the flag does not grant a worker authority. The reason is required for the command but is not persisted in controller state.
 
