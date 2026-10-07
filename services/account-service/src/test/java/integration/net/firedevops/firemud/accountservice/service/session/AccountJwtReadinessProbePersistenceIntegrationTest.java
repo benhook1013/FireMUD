@@ -27,6 +27,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutionException;
@@ -66,6 +67,7 @@ import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.postgresql.util.PSQLException;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
@@ -76,6 +78,9 @@ import tools.jackson.databind.json.JsonMapper;
 
 /** Real-PostgreSQL proof of readiness planning, exact signing, verification, and quarantine. */
 class AccountJwtReadinessProbePersistenceIntegrationTest {
+  private static final Set<String> VALIDATION_CONSTRAINT_ALLOWLIST =
+      Set.of(
+          "account_jwt_readiness_probe_state_check", "account_jwt_readiness_probe_evidence_check");
   private static final String SCHEMA_PREFIX = "jwt_readiness_probe_proof";
   private static final String EXTERNAL_POSTGRES_URL_ENV =
       "FIREMUD_ACCOUNT_SIGNER_TEST_POSTGRES_URL";
@@ -492,10 +497,11 @@ class AccountJwtReadinessProbePersistenceIntegrationTest {
               .contains(metadata.compactTokenSha256());
           safeDeliveryStage[0] = "ISSUED_READBACK_CONFIRMED";
           VerificationReceipt verification;
+          safeDeliveryStage[0] = "VALIDATOR_VALIDATE";
           try {
             verification = validator.validate(issuedBeforeCallback, exactCompactJwt);
           } catch (RuntimeException validationFailure) {
-            safeValidationFailure[0] = validationFailure.getClass().getSimpleName();
+            safeValidationFailure[0] = safeValidationFailure(validationFailure);
             throw validationFailure;
           }
           assertThat(verification.verifiedKid()).isEqualTo(issuedBeforeCallback.targetKid());
@@ -997,6 +1003,36 @@ class AccountJwtReadinessProbePersistenceIntegrationTest {
     } catch (java.security.NoSuchAlgorithmException ex) {
       throw new IllegalStateException("SHA-256 is required for the persistence fixture", ex);
     }
+  }
+
+  private static String safeValidationFailure(RuntimeException failure) {
+    String exceptionClass =
+        failure instanceof DataAccessException
+            ? "DataAccessException"
+            : failure instanceof IllegalStateException
+                ? "IllegalStateException"
+                : failure instanceof IllegalArgumentException
+                    ? "IllegalArgumentException"
+                    : "UNKNOWN";
+    String sqlState = "UNKNOWN";
+    String constraint = "UNKNOWN";
+    Throwable current = failure;
+    for (int depth = 0; current != null && depth < 8; depth++, current = current.getCause()) {
+      if (current instanceof PSQLException postgresFailure) {
+        String candidateSqlState = postgresFailure.getSQLState();
+        if (candidateSqlState != null && candidateSqlState.matches("[0-9A-Z]{5}")) {
+          sqlState = candidateSqlState;
+        }
+        var serverError = postgresFailure.getServerErrorMessage();
+        String candidateConstraint = serverError == null ? null : serverError.getConstraint();
+        if (candidateConstraint != null
+            && VALIDATION_CONSTRAINT_ALLOWLIST.contains(candidateConstraint)) {
+          constraint = candidateConstraint;
+        }
+        break;
+      }
+    }
+    return "class=" + exceptionClass + ";sqlstate=" + sqlState + ";constraint=" + constraint;
   }
 
   private static InventorySnapshot inventorySnapshot(Instant observedAt) {

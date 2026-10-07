@@ -193,8 +193,8 @@ public class AccountGameplayDelegationIssuanceRepository {
         || ("COMMITTED".equals(preliminaryStatus) && !"COMMITTED".equals(lockedStatus))) {
       throw new IdempotencyConflictException();
     }
-    requireStoredAuthority(locked, current);
     AccountGameplayDelegationPendingIdentity identity = identity(locked);
+    requireStoredAuthority(locked, current);
     AccountAuthoritySnapshot currentAuthority = authoritySnapshot(current);
     PendingIntent exactIntent =
         new PendingIntent(

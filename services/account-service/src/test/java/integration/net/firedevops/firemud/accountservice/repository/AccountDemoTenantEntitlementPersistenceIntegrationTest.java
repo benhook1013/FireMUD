@@ -265,6 +265,14 @@ class AccountDemoTenantEntitlementPersistenceIntegrationTest {
     assertThat(updated.tenantAuthoritySourceVersion()).isEqualTo(3L);
     assertThat(updated.tenantBillingSequence()).isEqualTo(2L);
     assertThat(updated.tenantAuthorityOutboxSequence()).isEqualTo(2L);
+    var updatedAuthorityReadback =
+        inTransaction(
+            context.transaction(), () -> tenantAuthorityEvents.readCurrentByTenant(tenantId));
+    assertThat(updatedAuthorityReadback.eventId()).isEqualTo(updated.tenantAuthorityEventId());
+    assertThat(updatedAuthorityReadback.eventDigest())
+        .isEqualTo(updated.tenantAuthorityEventDigest());
+    assertThat(updatedAuthorityReadback.outboxSequence())
+        .isEqualTo(updated.tenantAuthorityOutboxSequence());
     assertThat(inTransaction(context.transaction(), () -> entitlements.provision(update, source)))
         .isEqualTo(updated);
     assertThatThrownBy(
@@ -353,7 +361,7 @@ class AccountDemoTenantEntitlementPersistenceIntegrationTest {
     assertThat(
             inTransaction(
                 context.transaction(), () -> tenantAuthorityEvents.readCurrentByTenant(tenantId)))
-        .isEqualTo(authorityReadback);
+        .isEqualTo(updatedAuthorityReadback);
   }
 
   @Test
