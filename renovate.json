@@ -32,6 +32,21 @@
   "customManagers": [
     {
       "customType": "regex",
+      "description": "Atomically update kind and its exact Linux amd64 release checksum",
+      "managerFilePatterns": [
+        "/^config/workflow-tool-versions\\.env$/"
+      ],
+      "matchStrings": [
+        "# renovate-version: datasource=github-release-attachments depName=kubernetes-sigs/kind\\nKIND_VERSION=(?<currentValue>\\S+)\\nKIND_LINUX_AMD64_CHECKSUM_VERSION=(?<currentChecksumVersion>\\S+)\\nKIND_LINUX_AMD64_SHA256=(?<currentDigest>[0-9a-f]{64})"
+      ],
+      "datasourceTemplate": "github-release-attachments",
+      "depNameTemplate": "kubernetes-sigs/kind",
+      "versioningTemplate": "semver",
+      "currentValueTemplate": "v{{{currentValue}}}",
+      "autoReplaceStringTemplate": "# renovate-version: datasource=github-release-attachments depName=kubernetes-sigs/kind\nKIND_VERSION={{{replace '^v' '' newValue}}}\nKIND_LINUX_AMD64_CHECKSUM_VERSION={{{replace '^v' '' newValue}}}\nKIND_LINUX_AMD64_SHA256={{{newDigest}}}"
+    },
+    {
+      "customType": "regex",
       "description": "Keep Actionlint version-only because it has no archive checksum authority",
       "managerFilePatterns": [
         "/^config/workflow-tool-versions\\.env$/"
@@ -184,7 +199,7 @@
         "/^config/workflow-tool-versions\\.env$/"
       ],
       "matchStrings": [
-        "# renovate-image: datasource=(?<datasource>docker) depName=(?<depName>ghcr\\.io/(?:oss-review-toolkit/ort|zaproxy/zaproxy))\\n[A-Z][A-Z0-9_]*_VERSION=(?<currentValue>\\S+)\\n(?:[A-Z][A-Z0-9_]*=[^\\n]+\\n)*?[A-Z][A-Z0-9_]*_DIGEST=(?<currentDigest>sha256:[0-9a-f]{64})"
+        "# renovate-image: datasource=(?<datasource>docker) depName=(?<depName>kindest/node|ghcr\\.io/(?:oss-review-toolkit/ort|zaproxy/zaproxy))\\n[A-Z][A-Z0-9_]*_VERSION=(?<currentValue>\\S+)\\n(?:[A-Z][A-Z0-9_]*=[^\\n]+\\n)*?[A-Z][A-Z0-9_]*_DIGEST=(?<currentDigest>sha256:[0-9a-f]{64})"
       ],
       "versioningTemplate": "docker"
     },
@@ -376,6 +391,21 @@
       "allowedVersions": "<1.36.0",
       "prBodyNotes": [
         "FireMUD's Kubernetes 1.34 cluster currently supports kubectl releases below 1.36. The installer downloads the exact-version publisher checksum and verifies the binary before installation. Advance the `<1.36.0` Renovate cap only with the corresponding cluster-version upgrade."
+      ]
+    },
+    {
+      "description": "Keep kindest/node within the supported Kubernetes v1.35 line",
+      "matchManagers": [
+        "custom.regex"
+      ],
+      "matchPackageNames": [
+        "kindest/node"
+      ],
+      "allowedVersions": "/^v1\\.35\\.[0-9]+$/",
+      "pinDigests": true,
+      "automerge": false,
+      "prBodyNotes": [
+        "kindest/node is kept on the supported Kubernetes v1.35 patch and digest line. Advance to another minor only in a paired, reviewed Kubernetes minor update that advances the cluster and kubectl compatibility cap together."
       ]
     },
     {

@@ -422,6 +422,8 @@ jobs:
           bash ./dev-tools/tests/trust-bootstrap-issuance-contract.sh
           bash ./dev-tools/tests/trust-bootstrap-live-proof-contract.sh
           bash ./dev-tools/tests/trust-bootstrap-provision-contract.sh
+          bash ./dev-tools/tests/account-jwt-bootstrap-fixture-contract.sh
+          bash ./dev-tools/tests/game-session-factory-qualification-contract.sh
           bash ./dev-tools/tests/preview-cleanup-proof-contract.sh
           bash ./dev-tools/tests/hosted-identity-controller-manifest-contract.sh
           bash ./dev-tools/tests/hosted-identity-controller-workflow-contract.sh
