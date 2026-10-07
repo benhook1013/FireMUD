@@ -54,7 +54,14 @@ jobs:
         run: bash .github/actions/preserve-required-gate/resolve-deferred-gate.sh preflight
 
       - name: Admit deferred gate reruns
+        id: admission
         if: ${{ steps.preflight.outputs.eligible == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash .github/actions/preserve-required-gate/resolve-deferred-gate.sh admit
+
+      - name: Confirm admitted deferred gate jobs ${{ steps.admission.outputs.accepted_job_ids }}
+        if: ${{ steps.admission.outcome == 'success' }}
+        # Native first-attempt step identity preserves acknowledged IDs even
+        # while the target run still exposes a stale attempt-one snapshot.
+        run: ':'

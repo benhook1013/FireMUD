@@ -1917,7 +1917,11 @@ assert len(checkouts) == 1 and checkouts[0]["with"] == {"ref": "${{ github.sha }
 preflight = next(step for step in job["steps"] if step["name"] == "Preflight deferred gate resolution")
 admission = next(step for step in job["steps"] if step["name"] == "Admit deferred gate reruns")
 assert preflight["id"] == "preflight" and preflight["run"].endswith(" preflight")
+assert admission["id"] == "admission"
 assert admission["if"] == "${{ steps.preflight.outputs.eligible == 'true' }}" and admission["run"].endswith(" admit")
+confirmation = job["steps"][job["steps"].index(admission) + 1]
+assert confirmation["name"] == "Confirm admitted deferred gate jobs ${{ steps.admission.outputs.accepted_job_ids }}"
+assert confirmation["if"] == "${{ steps.admission.outcome == 'success' }}" and confirmation["run"] == ":"
 PY
 
 mkdir "$tmp_dir/resolver-bin"
@@ -1945,6 +1949,9 @@ repository = "other-owner/firemud" if scenario == "fork-empty" else "example/fir
 # The existing fork predecessor fixture is run 200. Keep its resolver target
 # distinct so the shared selector correctly excludes only the target itself.
 target_id = 300 if scenario == "fork-empty" else 200
+admission_scenario = scenario.startswith("admission-") or scenario == "partial-admission"
+if scenario == "admission-distinct" and state.get("posts", 0):
+    target_id = 201
 current_id = int(os.environ["GITHUB_RUN_ID"])
 source_id = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())["workflow_run"]["id"]
 queue_scenario = scenario.startswith(("queued-", "pending-"))
@@ -1959,7 +1966,7 @@ def run(run_id):
             "created_at": "2026-07-30T01:00:00Z" if run_id == 100 else "2026-07-30T02:00:00Z",
             "display_title": title, "head_sha": head, "head_branch": "proof-branch",
             "repository": {"full_name": "example/firemud"}, "head_repository": {"full_name": repository},
-            "event": "pull_request", "status": "completed", "conclusion": "failure" if run_id == target_id else "success",
+            "event": "pull_request", "status": "completed", "conclusion": "failure" if run_id in {target_id, 200, 201} else "success",
             "run_attempt": state.get("attempt", 1), "pull_requests": [] if scenario == "fork-empty" else [{"number": 123}]}
 
 def resolver_run(run_id):
@@ -1982,22 +1989,30 @@ def resolver_run(run_id):
         status = "in_progress"
     if scenario == "pending-callback-malformed" and run_id == 9001:
         created = None
+    if admission_scenario:
+        created = "2026-07-30T03:00:00Z" if run_id == 9000 else "2026-07-30T03:01:00Z"
+    if scenario == "cancelled-pending-rerun" and run_id == 9001:
+        attempt = 2
+    if scenario == "cancelled-pending-unknown" and run_id == 9001:
+        status = "unknown"
     return {"id": run_id, "workflow_id": 777, "name": "Resolve Required Gates",
             "path": ".github/workflows/resolve-required-gates.yml", "event": "workflow_run",
             "repository": {"full_name": "example/firemud"},
             "head_sha": "d" * 40 if scenario in {"queued-new-revision", "pending-new-revision"} and run_id == 9001 else "c" * 40,
             "run_attempt": attempt, "status": status, "created_at": created,
-            "conclusion": "failure" if scenario == "pending-callback-concluded" and run_id == 9001 else None if status in {"queued", "pending", "in_progress"} else "success",
+            "conclusion": None if scenario == "cancelled-pending-unknown" and run_id == 9001 else "cancelled" if scenario.startswith("cancelled-pending-") and run_id == 9001 and scenario != "cancelled-pending-unknown" else "failure" if scenario == "pending-callback-concluded" and run_id == 9001 else None if status in {"queued", "pending", "in_progress"} else "success",
             "display_title": f"Resolve Required Gates workflow-42 head-{head} source-{source}"}
 
 if method == "POST":
-    assert endpoint.endswith("/actions/jobs/2000/rerun"), endpoint
+    job_id = int(endpoint.split("/")[-2])
+    assert job_id in {2000, 2001} and endpoint.endswith(f"/actions/jobs/{job_id}/rerun"), endpoint
     state["posts"] = state.get("posts", 0) + 1
-    if scenario in {"ambiguous-post", "same-id-rerun"}:
+    state.setdefault("post_jobs", []).append(job_id)
+    if scenario in {"ambiguous-post", "same-id-rerun"} or (scenario == "partial-admission" and job_id == 2001):
         state["ambiguous_admission"] = True
         exit_status = 1
         print("simulated connection lost after admission", file=sys.stderr)
-    else:
+    elif not admission_scenario:
         state["attempt"] = 2
 elif endpoint.endswith("/actions/workflows/resolve-required-gates.yml"):
     result = {"id": 777, "name": "Resolve Required Gates", "path": ".github/workflows/resolve-required-gates.yml"}
@@ -2026,10 +2041,12 @@ elif endpoint.endswith("/actions/workflows/resolve-required-gates.yml/runs"):
             runs[0]["id"] = 20000
         elif scenario == "history-before-floor":
             runs[100]["created_at"] = "2026-07-29T01:00:00Z"
-    elif scenario.startswith("prior-") or queue_scenario or (
+    elif scenario.startswith(("prior-", "cancelled-pending-")) or queue_scenario or (
         state.get("ambiguous_admission") and scenario != "same-id-rerun"
     ):
         runs.append(resolver_run(9001))
+    if current_id == 9001 and not any(item["id"] == current_id for item in runs):
+        runs.append(resolver_run(current_id))
     total = 1001 if scenario in {"prior-oversized", "history-overcap"} else len(runs) + (1 if scenario == "prior-incomplete" else 0)
     result = {"total_count": total, "workflow_runs": runs[(page - 1) * 100:page * 100]}
     if page == 2:
@@ -2068,6 +2085,28 @@ elif endpoint.endswith("/actions/runs/9001/attempts/1/jobs") or endpoint.endswit
                              "head_sha": resolver_run(prior_id)["head_sha"],
                              "status": "completed", "conclusion": "cancelled" if scenario.startswith("prior-cancelled") else "failure",
                              "steps": steps}]}
+        record = state.get("native_admissions", {}).get(str(prior_id))
+        if record:
+            steps[-1].update(status="completed", conclusion=record["admission_conclusion"])
+            steps.extend(record["confirmations"])
+        elif conclusion == "success":
+            steps.append({"name": "Confirm admitted deferred gate jobs []", "status": "completed", "conclusion": "success"})
+        if scenario.startswith("cancelled-pending-"):
+            result = {"total_count": 0, "jobs": []}
+            if scenario == "cancelled-pending-nonempty":
+                result = {"total_count": 1, "jobs": [{"id": 90010, "run_id": prior_id,
+                    "head_sha": resolver_run(prior_id)["head_sha"], "name": "Resolve deferred metadata gate",
+                    "status": "completed", "conclusion": "cancelled", "steps": []}]}
+            elif scenario == "cancelled-pending-incomplete":
+                result["total_count"] = 1
+            elif scenario == "cancelled-pending-malformed":
+                result["jobs"] = None
+            elif scenario == "cancelled-pending-missing":
+                result.pop("total_count")
+            elif scenario == "cancelled-pending-started":
+                result = {"total_count": 1, "jobs": [{"id": 90010, "run_id": prior_id,
+                    "head_sha": resolver_run(prior_id)["head_sha"], "name": "Resolve deferred metadata gate",
+                    "status": "in_progress", "conclusion": None, "steps": []}]}
         if equal_time_scenario and current_id == 9000:
             job = result["jobs"][0]
             job.update(status="queued", conclusion=None, started_at=None, completed_at=None, steps=[])
@@ -2088,7 +2127,10 @@ elif endpoint.endswith("/actions/workflows/ci.yml"):
 elif endpoint.endswith("/actions/workflows/ci.yml/runs"):
     assert "--paginate" not in args and "--slurp" not in args
     assert "head_sha=" + head in args and "event=pull_request" in args and "per_page=20" in args
-    result = {"total_count": 21 if scenario == "source-oversized" else 2, "workflow_runs": [run(100), run(target_id)]}
+    runs = [run(100), run(200 if admission_scenario else target_id)]
+    if scenario == "partial-admission" or (scenario == "admission-distinct" and state.get("posts", 0)):
+        runs.append(run(201))
+    result = {"total_count": 21 if scenario == "source-oversized" else len(runs), "workflow_runs": runs}
 elif endpoint.endswith("/pulls/123"):
     state["pr_reads"] = state.get("pr_reads", 0) + 1
     result = {"number": 123, "state": "open", "base": {"sha": base, "ref": "develop", "repo": {"full_name": "example/firemud"}},
@@ -2097,16 +2139,18 @@ elif endpoint.endswith("/pulls/123"):
         result["base"]["ref"] = "main"
     elif state["pr_reads"] >= 2 and scenario == "fresh-head-repository":
         result["head"]["repo"]["full_name"] = "other-owner/firemud"
-elif endpoint.endswith(f"/actions/runs/{target_id}/attempts/1/jobs"):
+elif endpoint.endswith(f"/actions/runs/{target_id}/attempts/1/jobs") or (admission_scenario and any(endpoint.endswith(f"/actions/runs/{run_id}/attempts/1/jobs") for run_id in (200, 201))):
+    requested_target = int(endpoint.split("/")[-4])
     assert "--paginate" in args and "--slurp" in args
     steps = [{"name": "Preserve successful required gate on metadata-only edit", "status": "completed", "conclusion": "success"}]
     if scenario != "ordinary-failure":
         steps.append({"name": "Report dependency-deferred required gate", "status": "completed", "conclusion": "failure"})
-    result = [{"jobs": [{"id": 2000, "run_id": target_id, "head_sha": head, "status": "completed", "conclusion": "failure",
+    result = [{"jobs": [{"id": 2001 if requested_target == 201 else 2000, "run_id": requested_target, "head_sha": head, "status": "completed", "conclusion": "failure",
                          "name": "Validation Gate", "steps": steps}]}]
-elif endpoint.endswith(f"/actions/runs/{target_id}"):
+elif endpoint.endswith(f"/actions/runs/{target_id}") or (admission_scenario and any(endpoint.endswith(f"/actions/runs/{run_id}") for run_id in (200, 201))):
+    requested_target = int(endpoint.rsplit("/", 1)[1])
     state["target_reads"] = state.get("target_reads", 0) + 1
-    result = run(target_id)
+    result = run(requested_target)
     if scenario == "consumed":
         result["run_attempt"] = 2
     elif scenario == "fresh-changed" and state["target_reads"] >= 2:
@@ -2134,6 +2178,8 @@ run_resolver() {
   local phase="${4:-admit}"
   local resolver_id="${5:-9000}"
   local event_file="$tmp_dir/resolver-event-$scenario"
+  local result_status=0
+  : >"$tmp_dir/resolver-output-$scenario"
   printf '{"action":"completed","workflow_run":{"id":%s,"workflow_id":42,"head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","event":"pull_request"}}\n' \
     "$source_id" >"$event_file"
   PATH="$tmp_dir/resolver-bin:$PATH" MOCK_ORIGINAL_GH="$tmp_dir/gh" \
@@ -2143,12 +2189,57 @@ run_resolver() {
     GITHUB_OUTPUT="$tmp_dir/resolver-output-$scenario" \
     GITHUB_REPOSITORY=example/firemud GH_TOKEN=test-token \
     GH_RETRY_COUNT_FILE="$tmp_dir/resolver-proof-count-$scenario" GH_SCENARIO="$original_scenario" \
-    GH_FAILURE_MODE=none bash "$RESOLVER" "$phase"
+    GH_FAILURE_MODE=none bash "$RESOLVER" "$phase" || result_status=$?
+  if [[ "$phase" == admit ]]; then
+    python3 - "$tmp_dir/resolver-state-$scenario" "$tmp_dir/resolver-output-$scenario" "$resolver_id" "$result_status" <<'PY'
+import json
+from pathlib import Path
+import sys
+state_path, output_path = map(Path, sys.argv[1:3])
+run_id, result = sys.argv[3], int(sys.argv[4])
+state = json.loads(state_path.read_text())
+outputs = dict(line.split("=", 1) for line in output_path.read_text().splitlines())
+encoded_ids = outputs.get("accepted_job_ids", "")
+confirmations = []
+if result == 0:
+    # Emulate the following native confirmation step from the actual output.
+    json.loads(encoded_ids)
+    confirmation = {"name": "Confirm admitted deferred gate jobs " + encoded_ids,
+                    "status": "completed", "conclusion": "success"}
+    scenario = state["scenario"]
+    if scenario == "admission-marker-failed":
+        confirmation["conclusion"] = "failure"
+    elif scenario == "admission-marker-cancelled":
+        confirmation["conclusion"] = "cancelled"
+    elif scenario == "admission-marker-incomplete":
+        confirmation.update(status="in_progress", conclusion=None)
+    elif scenario == "admission-marker-malformed":
+        confirmation["name"] = "Confirm admitted deferred gate jobs not-json"
+    elif scenario == "admission-marker-duplicate-ids":
+        confirmation["name"] = "Confirm admitted deferred gate jobs [2000,2000]"
+    elif scenario == "admission-marker-string-id":
+        confirmation["name"] = 'Confirm admitted deferred gate jobs ["2000"]'
+    elif scenario == "admission-marker-oversized":
+        confirmation["name"] = "Confirm admitted deferred gate jobs " + json.dumps(list(range(1, 22)), separators=(",", ":"))
+    confirmations.append(confirmation)
+    if scenario == "admission-marker-missing":
+        confirmations = []
+    elif scenario == "admission-marker-duplicate-step":
+        confirmations.append(confirmation.copy())
+else:
+    assert "accepted_job_ids" not in outputs, "uncertain admission published acknowledged IDs"
+state.setdefault("native_admissions", {})[run_id] = {
+    "admission_conclusion": "success" if result == 0 else "failure", "confirmations": confirmations,
+}
+state_path.write_text(json.dumps(state))
+PY
+  fi
+  return "$result_status"
 }
 resolver_posts() {
   jq -r '.posts // 0' "$tmp_dir/resolver-state-$1"
 }
-for scenario in success metadata-last metadata-first consumed fresh-changed fresh-base-branch fresh-head-repository ordinary-failure stale-pr wrong-tuple wrong-association malformed-path fork-empty ambiguous-post original-failure preflight prior-noop prior-cancelled-between-steps prior-cancelled-admission prior-ambiguous prior-unavailable prior-incomplete prior-missing-step prior-oversized source-oversized same-id-rerun prior-rerun-skipped queued-callback queued-new-revision queued-equal queued-equal-started queued-equal-missing queued-equal-malformed queued-equal-incomplete queued-equal-wrong-job prior-queued-old pending-callback pending-new-revision pending-equal pending-equal-started pending-equal-missing pending-equal-malformed pending-equal-incomplete pending-equal-wrong-job pending-equal-started-step pending-callback-started pending-callback-malformed pending-callback-attempt pending-callback-concluded prior-pending-old history-multi history-ceiling history-ambiguous-tail history-duplicate history-missing-current history-before-floor history-overcap history-incomplete history-missing-total history-malformed-total history-inconsistent-total history-malformed-page history-unavailable-page; do
+for scenario in success metadata-last metadata-first consumed fresh-changed fresh-base-branch fresh-head-repository ordinary-failure stale-pr wrong-tuple wrong-association malformed-path fork-empty ambiguous-post original-failure preflight prior-noop prior-cancelled-between-steps prior-cancelled-admission prior-ambiguous prior-unavailable prior-incomplete prior-missing-step prior-oversized source-oversized same-id-rerun prior-rerun-skipped queued-callback queued-new-revision queued-equal queued-equal-started queued-equal-missing queued-equal-malformed queued-equal-incomplete queued-equal-wrong-job prior-queued-old pending-callback pending-new-revision pending-equal pending-equal-started pending-equal-missing pending-equal-malformed pending-equal-incomplete pending-equal-wrong-job pending-equal-started-step pending-callback-started pending-callback-malformed pending-callback-attempt pending-callback-concluded prior-pending-old history-multi history-ceiling history-ambiguous-tail history-duplicate history-missing-current history-before-floor history-overcap history-incomplete history-missing-total history-malformed-total history-inconsistent-total history-malformed-page history-unavailable-page admission-delayed admission-zero admission-distinct admission-marker-failed admission-marker-cancelled admission-marker-incomplete admission-marker-missing admission-marker-malformed admission-marker-duplicate-ids admission-marker-string-id admission-marker-oversized admission-marker-duplicate-step partial-admission cancelled-pending-zero cancelled-pending-nonempty cancelled-pending-incomplete cancelled-pending-malformed cancelled-pending-missing cancelled-pending-unknown cancelled-pending-rerun cancelled-pending-started; do
   printf '{"scenario":"%s"}\n' "$scenario" >"$tmp_dir/resolver-state-$scenario"
 done
 # A passive deployment must not even invoke the CLI.
@@ -2223,6 +2314,50 @@ done
 [[ "$(jq '[.calls[] | select(endswith("/actions/runs/9001/attempts/1/jobs"))] | length' "$tmp_dir/resolver-state-prior-rerun-skipped")" == 0 ]] || {
   echo "historical rerun relied on a latest skipped snapshot over its ambiguous first attempt" >&2; exit 1;
 }
+run_resolver admission-delayed
+[[ "$(<"$tmp_dir/resolver-output-admission-delayed")" == 'accepted_job_ids=[2000]' ]] || {
+  echo "acknowledged POST did not publish its exact job ID" >&2; exit 1;
+}
+run_resolver admission-delayed 200 no-local-workflow-file admit 9001
+[[ "$(resolver_posts admission-delayed)" == 1 && "$(<"$tmp_dir/resolver-output-admission-delayed")" == 'accepted_job_ids=[]' ]] || {
+  echo "confirmed admission replayed while target attempt remained one" >&2; exit 1;
+}
+run_resolver admission-zero 200 pending-predecessor
+[[ "$(resolver_posts admission-zero)" == 0 && "$(<"$tmp_dir/resolver-output-admission-zero")" == 'accepted_job_ids=[]' ]] || {
+  echo "successful zero-POST admission did not publish an empty set" >&2; exit 1;
+}
+run_resolver admission-zero 100 no-local-workflow-file admit 9001
+[[ "$(resolver_posts admission-zero)" == 1 ]] || { echo "confirmed zero-POST no-op poisoned later admission" >&2; exit 1; }
+run_resolver admission-distinct
+run_resolver admission-distinct 201 no-local-workflow-file admit 9001
+jq -e '.post_jobs == [2000,2001]' "$tmp_dir/resolver-state-admission-distinct" >/dev/null || {
+  echo "one acknowledged job blocked a distinct eligible gate or replayed itself" >&2; exit 1;
+}
+[[ "$(<"$tmp_dir/resolver-output-admission-distinct")" == 'accepted_job_ids=[2001]' ]] || {
+  echo "admission output included a previously acknowledged job" >&2; exit 1;
+}
+for scenario in admission-marker-failed admission-marker-cancelled admission-marker-incomplete admission-marker-missing admission-marker-malformed admission-marker-duplicate-ids admission-marker-string-id admission-marker-oversized admission-marker-duplicate-step; do
+  run_resolver "$scenario"
+  if run_resolver "$scenario" 200 no-local-workflow-file admit 9001; then
+    echo "uncertain native confirmation allowed a later admission: $scenario" >&2; exit 1;
+  fi
+  [[ "$(resolver_posts "$scenario")" == 1 ]] || { echo "uncertain confirmation replayed a POST: $scenario" >&2; exit 1; }
+done
+if run_resolver partial-admission; then
+  echo "partial admission did not fail closed" >&2; exit 1;
+fi
+if run_resolver partial-admission 200 no-local-workflow-file admit 9001; then
+  echo "partial admission did not require explicit recovery" >&2; exit 1;
+fi
+[[ "$(resolver_posts partial-admission)" == 2 ]] || { echo "partial admission replayed a POST" >&2; exit 1; }
+run_resolver cancelled-pending-zero
+[[ "$(resolver_posts cancelled-pending-zero)" == 1 ]] || { echo "cancelled-before-start zero-job callback blocked admission" >&2; exit 1; }
+for scenario in cancelled-pending-nonempty cancelled-pending-incomplete cancelled-pending-malformed cancelled-pending-missing cancelled-pending-unknown cancelled-pending-rerun cancelled-pending-started; do
+  if run_resolver "$scenario"; then
+    echo "uncertain cancelled callback was treated as never admitted: $scenario" >&2; exit 1;
+  fi
+  [[ "$(resolver_posts "$scenario")" == 0 ]] || { echo "uncertain cancelled callback admitted a POST: $scenario" >&2; exit 1; }
+done
 if run_resolver original-failure 100 failed-predecessor; then
   echo "resolver accepted failed original proof" >&2
   exit 1

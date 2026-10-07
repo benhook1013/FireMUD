@@ -14,6 +14,9 @@ report_eligible() {
   if [[ "${resolution_phase}" == preflight ]]; then
     [[ -n "${GITHUB_OUTPUT:-}" ]] || fail_closed "Preflight requires GITHUB_OUTPUT."
     printf 'eligible=%s\n' "$1" >>"${GITHUB_OUTPUT}"
+  elif [[ "$1" == false && -n "${GITHUB_OUTPUT:-}" ]]; then
+    # Successful early no-ops also need an explicit empty confirmation.
+    printf 'accepted_job_ids=[]\n' >>"${GITHUB_OUTPUT}"
   fi
 }
 
@@ -34,6 +37,8 @@ fi
 for required_variable in GH_TOKEN GITHUB_REPOSITORY GITHUB_EVENT_PATH GITHUB_RUN_ID; do
   [[ -n "${!required_variable:-}" ]] || fail_closed "Resolver is missing ${required_variable}."
 done
+[[ "${resolution_phase}" != admit || -n "${GITHUB_OUTPUT:-}" ]] ||
+  fail_closed "Admission requires GITHUB_OUTPUT for acknowledged job IDs."
 source_run_id="$(jq -er '.workflow_run.id | select(type == "number" and . > 0 and . == floor)' "${GITHUB_EVENT_PATH}")"
 source_json="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/actions/runs/${source_run_id}")"
 workflow_path="$(jq -er '.path | select(type == "string")' <<<"${source_json}")"
@@ -152,6 +157,7 @@ target_ids="$(jq -er '.workflow_runs[].id' <<<"${run_pages}")"
 assert_no_ambiguous_admission() {
   local resolver_pages resolver_page history_total history_page history_page_count expected_page_records
   local prior_ids prior_id prior_json prior_jobs prior_head equal_time_waiting
+  local prior_admitted_ids prior_admitted_id
   # The REST search ceiling is 1,000 records. Fetch explicit pages so neither
   # an oversized response nor pagination can start an unbounded history scan.
   resolver_pages='[]'
@@ -226,31 +232,58 @@ assert_no_ambiguous_admission() {
     fi
     prior_jobs="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/actions/runs/${prior_id}/attempts/1/jobs" \
       -f per_page="${evidence_limit}")"
-    jq -e --argjson prior_id "${prior_id}" --argjson limit "${evidence_limit}" \
+    jq -e --argjson limit "${evidence_limit}" '
+      (.jobs | type) == "array" and (.total_count | type) == "number" and
+      .total_count >= 0 and .total_count <= $limit and
+      .total_count == (.total_count | floor) and (.jobs | length) == .total_count and
+      ([.jobs[].id] | unique | length) == .total_count' <<<"${prior_jobs}" >/dev/null ||
+      fail_closed "Prior resolver job coverage is malformed or incomplete."
+    # Concurrency may evict a pending callback before allocating any job. Only
+    # an attributable cancelled first attempt with complete explicit zero-job
+    # coverage proves it never reached admission; missing jobs are not proof.
+    if jq -e '.status == "completed" and .conclusion == "cancelled"' <<<"${prior_json}" >/dev/null &&
+      jq -e '.total_count == 0 and .jobs == []' <<<"${prior_jobs}" >/dev/null; then
+      continue
+    fi
+    prior_admitted_ids="$(jq -ce --argjson prior_id "${prior_id}" --argjson limit "${evidence_limit}" \
       --arg head "${prior_head}" --argjson equal_time_waiting "${equal_time_waiting}" '
-      if (.jobs | type) != "array" or (.total_count | type) != "number" then error("malformed resolver jobs") else . end
-      | .total_count as $total
-      | if $total > $limit or (.jobs | length) != $total or ([.jobs[].id] | unique | length) != $total then
-          error("incomplete resolver jobs") else . end
-      | [.jobs[] | select(.name == "Resolve deferred metadata gate")]
-      | length == 1 and (.[0] |
-        (.id | type) == "number" and .id > 0 and .id == (.id | floor) and
-        .run_id == $prior_id and .head_sha == $head and
-        if $equal_time_waiting then
-          .status == "queued" and .conclusion == null and
+      [.jobs[] | select(.name == "Resolve deferred metadata gate")]
+      | if length != 1 then error("missing resolver job") else .[0] end
+      | if (.id | type) != "number" or .id <= 0 or .id != (.id | floor) or
+          .run_id != $prior_id or .head_sha != $head then error("unattributable resolver job") else . end
+      | if $equal_time_waiting then
+          if .status == "queued" and .conclusion == null and
           has("started_at") and .started_at == null and
           has("completed_at") and .completed_at == null and
           (.steps | type) == "array" and
           all(.steps[]; .status == "queued" and has("conclusion") and .conclusion == null)
+          then [] else error("waiting resolver job may have started") end
+        elif .conclusion == "skipped" then []
         else
-          .conclusion == "skipped" or
-          ([.steps[]? | select(.name == "Admit deferred gate reruns")] |
-            length == 1 and (.[0] | .status == "completed" and
-              (.conclusion == "skipped" or .conclusion == "success")))
-        end)' <<<"${prior_jobs}" >/dev/null ||
+          [.steps[]? | select(.name == "Admit deferred gate reruns")] as $admission
+          | if ($admission | length) != 1 or $admission[0].status != "completed" then
+              error("missing or incomplete admission")
+            elif $admission[0].conclusion == "skipped" then []
+            elif $admission[0].conclusion == "success" then
+              "Confirm admitted deferred gate jobs " as $prefix
+              | [.steps[]? | select((.name | type) == "string" and (.name | startswith($prefix)))] as $confirmation
+              | if ($confirmation | length) != 1 or $confirmation[0].status != "completed" or
+                  $confirmation[0].conclusion != "success" then error("unconfirmed admission") else . end
+              | $confirmation[0].name | ltrimstr($prefix) as $encoded
+              | $encoded | fromjson
+              | if type != "array" then error("malformed admitted job IDs") else . end
+              | if length > $limit or (unique | length) != length or tojson != $encoded or
+                  (all(.[]; type == "number" and . > 0 and . == floor) | not) then
+                  error("malformed admitted job IDs") else . end
+            else error("ambiguous admission") end
+        end' <<<"${prior_jobs}")" ||
       fail_closed "Prior matching resolver admission is ambiguous or failed; explicit recovery is required."
+    while IFS= read -r prior_admitted_id; do
+      previously_admitted_jobs["${prior_admitted_id}"]=true
+    done < <(jq -r '.[]' <<<"${prior_admitted_ids}")
   done <<<"${prior_ids}"
 }
+declare -A previously_admitted_jobs=()
 if [[ "${resolution_phase}" == admit ]]; then
   assert_no_ambiguous_admission
 fi
@@ -297,10 +330,12 @@ deferred_job_id() {
 assessment_output="$(mktemp)"
 trap 'rm -f "$assessment_output"' EXIT
 eligible=false
+admitted_job_ids=()
 while IFS= read -r target_run_id; do
   [[ -n "${target_run_id}" ]] || continue
   job_id="$(deferred_job_id "${target_run_id}")"
   [[ -n "${job_id}" ]] || continue
+  [[ "${previously_admitted_jobs["${job_id}"]:-}" != true ]] || continue
   : >"${assessment_output}"
   # The child assesses an already-validated target pull_request context. It
   # shares the action's exact source selection and cannot write remote state.
@@ -324,6 +359,19 @@ while IFS= read -r target_run_id; do
   if ! gh api --method POST "/repos/${GITHUB_REPOSITORY}/actions/jobs/${job_id}/rerun" >/dev/null; then
     fail_closed "Targeted rerun outcome is ambiguous or rejected; do not replay the POST. Explicit recovery is required."
   fi
+  admitted_job_ids+=("${job_id}")
+  previously_admitted_jobs["${job_id}"]=true
   echo "Admitted one targeted rerun of deferred gate job ${job_id} in run ${target_run_id}."
 done <<<"${target_ids}"
-report_eligible "${eligible}"
+if [[ "${resolution_phase}" == preflight ]]; then
+  report_eligible "${eligible}"
+else
+  # Publish only after all POSTs were acknowledged. Partial/ambiguous execution
+  # has no successful confirmation step and blocks subsequent automation.
+  admitted_ids_json="$(jq -cn --args '$ARGS.positional | map(tonumber)' "${admitted_job_ids[@]}")"
+  jq -e --argjson limit "${evidence_limit}" '
+    type == "array" and length <= $limit and (unique | length) == length and
+    all(.[]; type == "number" and . > 0 and . == floor)' <<<"${admitted_ids_json}" >/dev/null ||
+    fail_closed "Acknowledged job IDs are not a bounded attributable set."
+  printf 'accepted_job_ids=%s\n' "${admitted_ids_json}" >>"${GITHUB_OUTPUT}"
+fi
