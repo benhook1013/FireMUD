@@ -26,6 +26,27 @@ class AccountGameplayCoordinationRedisBindingTest {
   private static final String HOST = "redis-coordination.internal";
   private static final String CA_SHA256 = "a".repeat(64);
   private static final JsonMapper JSON = JsonMapper.builder().build();
+  private static final String TEST_CA_PEM =
+      "-----BEGIN CERTIFICATE-----\n"
+          + "MIIDNTCCAh2gAwIBAgIUOF5YoEkn1gcC2m/Lu6h8FkYqg2AwDQYJKoZIhvcNAQEL\n"
+          + "BQAwIjEgMB4GA1UEAwwXRmlyZU1VRCBBY2NvdW50IFRlc3QgQ0EwHhcNMjYxMDA3\n"
+          + "MDYwMzI4WhcNNDYxMDAyMDYwMzI4WjAiMSAwHgYDVQQDDBdGaXJlTVVEIEFjY291\n"
+          + "bnQgVGVzdCBDQTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALK6HoaP\n"
+          + "hilLrnayzvxuq4R6oJZcXHjwYsxEK8n3d5trK5rZcJ3cU6qbQ8vsa3C7OJyFvw9X\n"
+          + "K3Aj4J7WSNJNW5YnygNoDno/wHpSb9zXLo1BnmAqECFBCyoQtcEZUlOtuEvCsp1o\n"
+          + "0MmS3j9jSlHHcT0ttSoMFwiD4OqI43kJDpipapOZIiC2CHspWdabdUMIxQKOwrTi\n"
+          + "kUEo2Jy5EhBqa0WuYcbz6mzpOaNrxMoQxOcLZi/J4l4LBohNyeVuKXf5TcUF3uGK\n"
+          + "g6EFufWt7RF80ApxSgft+dJLUsllnIuMfKFkdxIiH6HKhnVzqQiBHRf7BjCN+QIM\n"
+          + "m/Dmf74VUZs4t50CAwEAAaNjMGEwHQYDVR0OBBYEFHmWd9ypVjrcbzn4CWF+mhxI\n"
+          + "dNuBMB8GA1UdIwQYMBaAFHmWd9ypVjrcbzn4CWF+mhxIdNuBMA8GA1UdEwEB/wQF\n"
+          + "MAMBAf8wDgYDVR0PAQH/BAQDAgEGMA0GCSqGSIb3DQEBCwUAA4IBAQChe3UKHXKS\n"
+          + "OHaITesMpPF20fM3nDSzbo6ARrX+zRoO6VMTQ5R2rb9lYEbPBElLepIO/31cesVT\n"
+          + "TxIYJ0zuNG7d0arwVX5nA3tCsKtxYiod2NYY9Q6ggfiBTQsqPThPcYiBIJ4eSaY+\n"
+          + "z5nzznQrpmVmYANNkhVa3RzVJhlWlgZbz0lbvdsL57oB2z++suww1DUN2GQS/KWf\n"
+          + "mNhqRnMdjybXaD8uen1dDXwEpnGx3dj73yeKA5g9MuxZncPEW7dllCm4Br7CJSs4\n"
+          + "fXasNq3ngdFlj0gi/ZmoQLAubqybFlQhS4ZmO+xYL1n+/WgM9fAYQDb/bHWuVTFL\n"
+          + "6+EZfX3fzKwB\n"
+          + "-----END CERTIFICATE-----\n";
 
   @Test
   void strictBindingSelectsOnlyAccountCoordinationIdentityAndVerifiedTlsEndpoint()
@@ -89,6 +110,24 @@ class AccountGameplayCoordinationRedisBindingTest {
                 AccountGameplayCoordinationRedisBinding.parsePassword(
                     ("secret" + " ".repeat(26)).getBytes(StandardCharsets.US_ASCII)))
         .isInstanceOf(java.io.IOException.class);
+  }
+
+  @Test
+  void malformedRepeatedCertificateWhitespaceIsRejectedAndMultipleCaCertificatesRemainAccepted()
+      throws Exception {
+    String hostileMalformedBundle =
+        ("-----BEGIN CERTIFICATE-----A-----END CERTIFICATE-----" + " ".repeat(32)).repeat(64) + "X";
+    assertThatThrownBy(
+            () ->
+                AccountGameplayCoordinationRedisBinding.trustManagerFactory(
+                    hostileMalformedBundle.getBytes(StandardCharsets.US_ASCII)))
+        .isInstanceOf(java.io.IOException.class);
+
+    String twoCertificates = TEST_CA_PEM + TEST_CA_PEM;
+    TrustManagerFactory trustManagers =
+        AccountGameplayCoordinationRedisBinding.trustManagerFactory(
+            twoCertificates.getBytes(StandardCharsets.US_ASCII));
+    assertThat(trustManagers.getTrustManagers()).isNotEmpty();
   }
 
   @Test

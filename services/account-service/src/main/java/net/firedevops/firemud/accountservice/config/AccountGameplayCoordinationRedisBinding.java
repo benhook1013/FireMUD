@@ -81,9 +81,8 @@ public final class AccountGameplayCoordinationRedisBinding implements AutoClosea
       Pattern.compile(
           "(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*");
   private static final Pattern SHA256 = Pattern.compile("[0-9a-f]{64}");
-  private static final Pattern PEM_CERTIFICATE_BUNDLE =
-      Pattern.compile(
-          "\\A(?:[\\t\\r\\n ]*-----BEGIN CERTIFICATE-----[A-Za-z0-9+/=\\r\\n]+-----END CERTIFICATE-----[\\t\\r\\n ]*)+\\z");
+  private static final String PEM_CERTIFICATE_BEGIN = "-----BEGIN CERTIFICATE-----";
+  private static final String PEM_CERTIFICATE_END = "-----END CERTIFICATE-----";
   public static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(2);
   public static final Duration COMMAND_TIMEOUT = Duration.ofSeconds(2);
   private static final JsonMapper JSON =
@@ -511,12 +510,12 @@ public final class AccountGameplayCoordinationRedisBinding implements AutoClosea
         && before.lastModifiedTime().equals(after.lastModifiedTime());
   }
 
-  private static TrustManagerFactory trustManagerFactory(byte[] pemBytes) throws Exception {
+  static TrustManagerFactory trustManagerFactory(byte[] pemBytes) throws Exception {
     if (pemBytes.length == 0 || pemBytes.length > MAX_CA_BYTES) {
       throw new IOException("Account Coordination Redis CA is unavailable");
     }
     String pem = decodeUtf8(pemBytes);
-    if (!PEM_CERTIFICATE_BUNDLE.matcher(pem).matches()) {
+    if (!isPemCertificateBundle(pem)) {
       throw new IOException("Account Coordination Redis CA bundle is malformed");
     }
     Collection<? extends Certificate> certificates =
@@ -539,6 +538,51 @@ public final class AccountGameplayCoordinationRedisBinding implements AutoClosea
         TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
     factory.init(trustStore);
     return factory;
+  }
+
+  private static boolean isPemCertificateBundle(String pem) {
+    int offset = 0;
+    int certificateCount = 0;
+    while (offset < pem.length()) {
+      offset = consumePemWhitespace(pem, offset);
+      if (!pem.startsWith(PEM_CERTIFICATE_BEGIN, offset)) {
+        return false;
+      }
+      offset += PEM_CERTIFICATE_BEGIN.length();
+      int bodyStart = offset;
+      while (offset < pem.length() && isPemBodyCharacter(pem.charAt(offset))) {
+        offset++;
+      }
+      if (offset == bodyStart || !pem.startsWith(PEM_CERTIFICATE_END, offset)) {
+        return false;
+      }
+      offset += PEM_CERTIFICATE_END.length();
+      offset = consumePemWhitespace(pem, offset);
+      certificateCount++;
+    }
+    return certificateCount > 0;
+  }
+
+  private static int consumePemWhitespace(String pem, int offset) {
+    while (offset < pem.length()) {
+      char character = pem.charAt(offset);
+      if (character != '\t' && character != '\r' && character != '\n' && character != ' ') {
+        break;
+      }
+      offset++;
+    }
+    return offset;
+  }
+
+  private static boolean isPemBodyCharacter(char character) {
+    return (character >= 'A' && character <= 'Z')
+        || (character >= 'a' && character <= 'z')
+        || (character >= '0' && character <= '9')
+        || character == '+'
+        || character == '/'
+        || character == '='
+        || character == '\r'
+        || character == '\n';
   }
 
   static char[] parsePassword(byte[] bytes) throws IOException {
