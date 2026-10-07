@@ -11,7 +11,7 @@ import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
-import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalPlayerAdmissionHold;
+import net.firedevops.firemud.common.world.WorldCanonicalPlayerAdmissionHoldEvidence;
 import org.junit.jupiter.api.Test;
 
 class WorldCanonicalPlayerAdmissionHoldTest {
@@ -21,18 +21,20 @@ class WorldCanonicalPlayerAdmissionHoldTest {
   @Test
   void originalLeaseDefinesRetryIdentityWithoutRemintingOrRenewal() {
     var lease = lease();
-    var original = new WorldCanonicalPlayerAdmissionHold.Request(lease, 7L, 8L);
+    var original = new WorldCanonicalPlayerAdmissionHoldEvidence.Request(lease, 7L, 8L);
     var exact =
-        new WorldCanonicalPlayerAdmissionHold.Request(
+        new WorldCanonicalPlayerAdmissionHoldEvidence.Request(
             AccountGameplayAdmissionLeaseEvidence.parseCanonical(lease.canonicalJson()), 7L, 8L);
     assertThat(original.sameBinding(exact)).isTrue();
-    assertThat(original.sameBinding(new WorldCanonicalPlayerAdmissionHold.Request(lease, 8L, 8L)))
+    assertThat(
+            original.sameBinding(
+                new WorldCanonicalPlayerAdmissionHoldEvidence.Request(lease, 8L, 8L)))
         .isFalse();
     var changed = carrier();
     changed.put("leaseFence", "2");
     assertThat(
             original.sameBinding(
-                new WorldCanonicalPlayerAdmissionHold.Request(
+                new WorldCanonicalPlayerAdmissionHoldEvidence.Request(
                     AccountGameplayAdmissionLeaseEvidence.fromCarrier(changed), 7L, 8L)))
         .isFalse();
   }
@@ -52,10 +54,10 @@ class WorldCanonicalPlayerAdmissionHoldTest {
 
   @Test
   void worldLifecycleEpochRemainsSeparateFromLeaseRegionEpoch() {
-    var request = new WorldCanonicalPlayerAdmissionHold.Request(lease(), 7L, 8L);
+    var request = new WorldCanonicalPlayerAdmissionHoldEvidence.Request(lease(), 7L, 8L);
     var evidence = evidence();
     var hold =
-        new WorldCanonicalPlayerAdmissionHold(
+        new WorldCanonicalPlayerAdmissionHoldEvidence(
             UUID.randomUUID(), UUID.randomUUID(), request, evidence);
     assertThat(hold.worldEvidence().lifecycleEpoch()).isEqualTo(7L);
     assertThat(hold.diagnosticExpiresAtMillis())
@@ -79,20 +81,22 @@ class WorldCanonicalPlayerAdmissionHoldTest {
             "membershipAuthorityGeneration",
             "1"));
     var inactiveLease = AccountGameplayAdmissionLeaseEvidence.fromCarrier(changed);
-    assertThatThrownBy(() -> new WorldCanonicalPlayerAdmissionHold.Request(inactiveLease, 7L, 8L))
+    assertThatThrownBy(
+            () -> new WorldCanonicalPlayerAdmissionHoldEvidence.Request(inactiveLease, 7L, 8L))
         .isInstanceOf(IllegalArgumentException.class);
     changed = carrier();
     var scope = new LinkedHashMap<>(scope(changed));
     scope.put("playableStateScope", "ISOLATED");
     changed.put("bindingScope", scope);
     var isolated = AccountGameplayAdmissionLeaseEvidence.fromCarrier(changed);
-    assertThatThrownBy(() -> new WorldCanonicalPlayerAdmissionHold.Request(isolated, 7L, 8L))
+    assertThatThrownBy(
+            () -> new WorldCanonicalPlayerAdmissionHoldEvidence.Request(isolated, 7L, 8L))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
   @Test
   void substitutedWorldTenantOrNonActiveTupleIsDenied() {
-    var request = new WorldCanonicalPlayerAdmissionHold.Request(lease(), 7L, 8L);
+    var request = new WorldCanonicalPlayerAdmissionHoldEvidence.Request(lease(), 7L, 8L);
     var evidence = evidence();
     when(evidence.request().canonicalTenantId()).thenReturn(UUID.fromString(ACCOUNT));
     var substituted = evidence;

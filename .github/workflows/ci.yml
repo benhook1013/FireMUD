@@ -2159,6 +2159,32 @@ jobs:
           fi
           echo "::endgroup::"
 
+      - name: Verify World player-admission hold PostgreSQL proof
+        if: ${{ !cancelled() && matrix.module == 'world-management-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalPlayerAdmissionHoldPostgresIntegrationTest \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalPlayerAdmissionHoldPostgresIntegrationTest#exactRetryAndReadbackRetainOriginalOpaqueIdentityEvidenceAndAllLogicalState()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalPlayerAdmissionHoldPostgresIntegrationTest#diagnosticExpiryRetainsHoldAndExactRetryWithoutDeadlineRenewal()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalPlayerAdmissionHoldPostgresIntegrationTest#expiredLeaseAndSubstitutedScopeOrExpectedTupleDenyWithoutStateOrHoldChanges()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalPlayerAdmissionHoldPostgresIntegrationTest#retainedAttemptRejectsChangedLeaseDigestIdentityAndEpoch()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalPlayerAdmissionHoldPostgresIntegrationTest#v51ItselfFencesRawLifecycleCounterMutationAndDeleteWhileReleaseStaysUnavailable()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalPlayerAdmissionHoldPostgresIntegrationTest#twoConcurrentExactAcquisitionsRetainOneIdentity()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalPlayerAdmissionHoldPostgresIntegrationTest#independentPlayerAttemptsPreserveEveryExistingHoldAndDoNotOpenGenericNoOpBypass()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalPlayerAdmissionHoldPostgresIntegrationTest#staleRepeatableReadSnapshotCannotMissCommittedHoldTupleVersion()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalPlayerAdmissionHoldPostgresIntegrationTest#staleSerializableSnapshotCannotMissCommittedHoldTupleVersion()' \
+            world-management-service
+
+      - name: Capture World player-admission hold PostgreSQL raw XML
+        if: ${{ always() && matrix.module == 'world-management-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: world-player-admission-hold-postgresql-proof-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: services/world-management-service/build/test-results/integrationTest/TEST-*WorldCanonicalPlayerAdmissionHoldPostgresIntegrationTest.xml
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Verify Game Design synchronized visibility PostgreSQL proof
         if: ${{ always() && matrix.module == 'game-design-service' }}
         run: |

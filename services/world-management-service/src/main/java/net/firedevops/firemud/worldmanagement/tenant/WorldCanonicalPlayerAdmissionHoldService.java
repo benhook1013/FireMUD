@@ -5,6 +5,7 @@ import java.util.Optional;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.common.world.WorldCanonicalPlayerAdmissionHoldEvidence;
 
 /**
  * Unregistered internal boundary. Authenticating the exact Account workload establishes only the
@@ -20,7 +21,7 @@ public final class WorldCanonicalPlayerAdmissionHoldService {
     this.namespace = requireNamespace(namespace);
   }
 
-  public WorldCanonicalPlayerAdmissionHold acquire(
+  public WorldCanonicalPlayerAdmissionHoldEvidence acquire(
       String originalLeaseJson,
       String originalLeaseSha256,
       long expectedEpoch,
@@ -29,7 +30,7 @@ public final class WorldCanonicalPlayerAdmissionHoldService {
         request(originalLeaseJson, originalLeaseSha256, expectedEpoch, expectedVersion));
   }
 
-  public Optional<WorldCanonicalPlayerAdmissionHold> read(
+  public Optional<WorldCanonicalPlayerAdmissionHoldEvidence> read(
       String originalLeaseJson,
       String originalLeaseSha256,
       long expectedEpoch,
@@ -46,7 +47,7 @@ public final class WorldCanonicalPlayerAdmissionHoldService {
         "Hold release is unavailable without authenticated exact Account terminal AND Game Session installation/cleanup evidence");
   }
 
-  private WorldCanonicalPlayerAdmissionHold.Request request(
+  private WorldCanonicalPlayerAdmissionHoldEvidence.Request request(
       String originalLeaseJson,
       String originalLeaseSha256,
       long expectedEpoch,
@@ -58,7 +59,8 @@ public final class WorldCanonicalPlayerAdmissionHoldService {
         || !namespace.equals(lease.carrier().get("targetNamespace"))) {
       throw new IllegalArgumentException("Original lease digest or namespace differs");
     }
-    return new WorldCanonicalPlayerAdmissionHold.Request(lease, expectedEpoch, expectedVersion);
+    return new WorldCanonicalPlayerAdmissionHoldEvidence.Request(
+        lease, expectedEpoch, expectedVersion);
   }
 
   static String requireNamespace(String namespace) {

@@ -7,9 +7,9 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import io.grpc.Context;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.common.world.WorldCanonicalPlayerAdmissionHoldEvidence;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceAssociationRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceLifecycleReadRepository;
-import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalPlayerAdmissionHold;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalPlayerAdmissionHoldRepository;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
@@ -81,7 +81,7 @@ class WorldCanonicalPlayerAdmissionHoldRepositoryTest {
     carrier.put("targetNamespace", "other");
     carrier.put("callerWorkload", "spiffe://firemud/ns/other/sa/game-session-service");
     var changed =
-        new WorldCanonicalPlayerAdmissionHold.Request(
+        new WorldCanonicalPlayerAdmissionHoldEvidence.Request(
             net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence
                 .fromCarrier(carrier),
             7L,
@@ -95,8 +95,8 @@ class WorldCanonicalPlayerAdmissionHoldRepositoryTest {
     verifyNoInteractions(dsl, manager, associations, lifecycle);
   }
 
-  private static WorldCanonicalPlayerAdmissionHold.Request request() {
-    return new WorldCanonicalPlayerAdmissionHold.Request(
+  private static WorldCanonicalPlayerAdmissionHoldEvidence.Request request() {
+    return new WorldCanonicalPlayerAdmissionHoldEvidence.Request(
         WorldCanonicalPlayerAdmissionHoldTest.lease(), 7L, 8L);
   }
 

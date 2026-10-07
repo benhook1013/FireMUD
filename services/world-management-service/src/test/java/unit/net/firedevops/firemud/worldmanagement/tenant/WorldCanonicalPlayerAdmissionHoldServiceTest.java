@@ -12,7 +12,7 @@ import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
-import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalPlayerAdmissionHold;
+import net.firedevops.firemud.common.world.WorldCanonicalPlayerAdmissionHoldEvidence;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalPlayerAdmissionHoldRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalPlayerAdmissionHoldService;
 import org.junit.jupiter.api.Test;
@@ -63,9 +63,9 @@ class WorldCanonicalPlayerAdmissionHoldServiceTest {
   @Test
   void exactAccountProducerPassesOriginalLeaseWithoutChangingIdentity() {
     var lease = WorldCanonicalPlayerAdmissionHoldTest.lease();
-    var request = new WorldCanonicalPlayerAdmissionHold.Request(lease, 7L, 8L);
+    var request = new WorldCanonicalPlayerAdmissionHoldEvidence.Request(lease, 7L, 8L);
     var retained =
-        new WorldCanonicalPlayerAdmissionHold(
+        new WorldCanonicalPlayerAdmissionHoldEvidence(
             UUID.randomUUID(),
             UUID.randomUUID(),
             request,

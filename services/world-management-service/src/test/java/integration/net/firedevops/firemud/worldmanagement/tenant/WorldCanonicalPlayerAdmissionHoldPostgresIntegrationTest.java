@@ -15,6 +15,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.world.WorldCanonicalPlayerAdmissionHoldEvidence;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.worldmanagement.WorldManagementServiceApplication;
 import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
@@ -268,7 +269,7 @@ class WorldCanonicalPlayerAdmissionHoldPostgresIntegrationTest {
     var start = new CountDownLatch(1);
     var executor = Executors.newFixedThreadPool(2);
     try {
-      java.util.concurrent.Callable<WorldCanonicalPlayerAdmissionHold> operation =
+      java.util.concurrent.Callable<WorldCanonicalPlayerAdmissionHoldEvidence> operation =
           () -> {
             ready.countDown();
             await(start);
@@ -384,7 +385,7 @@ class WorldCanonicalPlayerAdmissionHoldPostgresIntegrationTest {
         "firemud");
   }
 
-  private static WorldCanonicalPlayerAdmissionHold acquire(
+  private static WorldCanonicalPlayerAdmissionHoldEvidence acquire(
       WorldCanonicalPlayerAdmissionHoldService service,
       WorldDraftGraphApplicationPostgresIntegrationTest.ActivePlayerAdmissionFixture f,
       AccountGameplayAdmissionLeaseEvidence lease) {

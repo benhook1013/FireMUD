@@ -6,6 +6,7 @@ import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
+import net.firedevops.firemud.common.world.WorldCanonicalPlayerAdmissionHoldEvidence;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -45,8 +46,8 @@ public final class WorldCanonicalPlayerAdmissionHoldRepository {
     readTransaction.setReadOnly(true);
   }
 
-  public WorldCanonicalPlayerAdmissionHold acquire(
-      WorldCanonicalPlayerAdmissionHold.Request request) {
+  public WorldCanonicalPlayerAdmissionHoldEvidence acquire(
+      WorldCanonicalPlayerAdmissionHoldEvidence.Request request) {
     requireBoundary(request);
     return Objects.requireNonNull(
         writeTransaction.execute(
@@ -100,8 +101,8 @@ public final class WorldCanonicalPlayerAdmissionHoldRepository {
   }
 
   /** Exact durable retained identity; absence is UNKNOWN, never an abort or release result. */
-  public Optional<WorldCanonicalPlayerAdmissionHold> read(
-      WorldCanonicalPlayerAdmissionHold.Request request) {
+  public Optional<WorldCanonicalPlayerAdmissionHoldEvidence> read(
+      WorldCanonicalPlayerAdmissionHoldEvidence.Request request) {
     requireBoundary(request);
     return Optional.ofNullable(
         readTransaction.execute(
@@ -112,7 +113,7 @@ public final class WorldCanonicalPlayerAdmissionHoldRepository {
             }));
   }
 
-  private void requireBoundary(WorldCanonicalPlayerAdmissionHold.Request request) {
+  private void requireBoundary(WorldCanonicalPlayerAdmissionHoldEvidence.Request request) {
     WorldCanonicalPlayerAdmissionHoldService.requireAccountPeer(namespace);
     requireNoAmbientTransaction();
     Objects.requireNonNull(request, "request");
@@ -120,21 +121,21 @@ public final class WorldCanonicalPlayerAdmissionHoldRepository {
       throw denied("Lease namespace differs from World");
   }
 
-  private Record findOriginal(WorldCanonicalPlayerAdmissionHold.Request request) {
+  private Record findOriginal(WorldCanonicalPlayerAdmissionHoldEvidence.Request request) {
     return dsl.fetchOne(
         "SELECT * FROM world_canonical_player_admission_hold WHERE lease_id=? OR attempt_id=?",
         request.leaseId(),
         request.attemptId());
   }
 
-  private static WorldCanonicalPlayerAdmissionHold retained(
-      Record row, WorldCanonicalPlayerAdmissionHold.Request expected) {
+  private static WorldCanonicalPlayerAdmissionHoldEvidence retained(
+      Record row, WorldCanonicalPlayerAdmissionHoldEvidence.Request expected) {
     byte[] bytes = Objects.requireNonNull(row.get("lease_bytes", byte[].class));
     var lease =
         AccountGameplayAdmissionLeaseEvidence.parseCanonical(
             new String(bytes, StandardCharsets.UTF_8));
     var request =
-        new WorldCanonicalPlayerAdmissionHold.Request(
+        new WorldCanonicalPlayerAdmissionHoldEvidence.Request(
             lease,
             Objects.requireNonNull(row.get("active_lifecycle_epoch", Long.class)),
             Objects.requireNonNull(row.get("active_row_version", Long.class)));
@@ -152,7 +153,7 @@ public final class WorldCanonicalPlayerAdmissionHoldRepository {
         || row.get("game_session_completion_evidence_bytes") != null) {
       throw denied("Retained hold conflicts with the complete original lease/attempt binding");
     }
-    return new WorldCanonicalPlayerAdmissionHold(
+    return new WorldCanonicalPlayerAdmissionHoldEvidence(
         row.get("hold_id", UUID.class),
         row.get("hold_fence", UUID.class),
         request,
