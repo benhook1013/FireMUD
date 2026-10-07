@@ -1339,11 +1339,10 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
         .isTrue();
 
     var prepareFields = materialized.association().worldPrepareFields();
-    // Successful ACTIVE epoch movement and historical retry after a later lifecycle move belong
-    // to the canonical activation proof, including
-    // canonicalActivationCommitsOneOwnerCasAndReplaysItsImmutableResultAfterLaterLifecycleMove.
-    // This front owns preparation storage and lifecycle read only; its legacy numeric writer must
-    // remain denied for the reserved canonical tenant.
+    // Successful ACTIVE epoch movement and replay while ACTIVE belong to
+    // canonicalActivationCommitsOneOwnerCasAndReplaysWhileLegacyTerminationIsDenied. Replay after
+    // canonical termination remains unavailable until this slice has a canonical termination
+    // owner operation. This front's legacy numeric writer remains denied for reserved tenants.
     assertThatThrownBy(
             () ->
                 lifecycleCommandService.failPreparedWorldInstance(
@@ -1387,57 +1386,38 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   }
 
   @Test
-  void canonicalActivationCommitsOneOwnerCasAndReplaysItsImmutableResultAfterLaterLifecycleMove()
+  void canonicalActivationCommitsOneOwnerCasAndReplaysWhileLegacyTerminationIsDenied()
       throws Exception {
     PreparedLifecycleFixture fixture = materializedLifecycleFixture();
+    var retainedEpochs =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT v.version_state_epoch AS source_version_state_epoch, "
+                    + "p.input_json::JSONB->'versionIdentity'->>'versionStateEpoch' AS input_version_state_epoch, "
+                    + "b.descriptor_json::JSONB->>'versionStateEpoch' AS descriptor_version_state_epoch, "
+                    + "b.release_attestation_json::JSONB->>'versionStateEpoch' AS release_version_state_epoch, "
+                    + "a.version_state_epoch AS association_version_state_epoch "
+                    + "FROM world_canonical_instance_association a "
+                    + "JOIN world_authored_version_identity v ON v.operation_id=a.version_identity_operation_id "
+                    + "JOIN world_complete_launch_binding b ON b.binding_operation_id=a.canonical_launch_binding_operation_id "
+                    + "JOIN world_canonical_instance_preparation p ON p.canonical_game_instance_id=a.canonical_game_instance_id "
+                    + "WHERE a.canonical_game_instance_id=?",
+                fixture.input().canonicalGameInstanceId()));
+    assertThat(retainedEpochs.get("source_version_state_epoch", Long.class)).isEqualTo(1L);
+    assertThat(retainedEpochs.get("input_version_state_epoch", String.class)).isEqualTo("1");
+    assertThat(retainedEpochs.get("descriptor_version_state_epoch", String.class)).isEqualTo("2");
+    assertThat(retainedEpochs.get("release_version_state_epoch", String.class)).isEqualTo("2");
+    assertThat(retainedEpochs.get("association_version_state_epoch", Long.class)).isEqualTo(2L);
     byte[] preparationBefore = preparationRows(fixture.input().canonicalGameInstanceId());
-    var rawCommitRequest =
-        new WorldCanonicalInstanceActivation.Request(UUID.randomUUID(), fixture.preparing());
-    var rawPredictedActive =
-        new WorldCanonicalInstanceLifecycleEvidence(
-            fixture.preparing().request(),
-            fixture.preparing().launchBinding(),
-            fixture.preparing().startLocation(),
-            fixture.preparing().runtimeRoomInstanceId(),
-            "ACTIVE",
-            fixture.preparing().lifecycleEpoch() + 1L,
-            fixture.preparing().rowVersion() + 1L,
-            fixture.preparing().captureId(),
-            fixture.preparing().graphSha256(),
-            fixture.preparing().preparationInputDigest());
-    var rawCommittedResult =
-        new WorldCanonicalInstanceActivation.Result(
-            rawCommitRequest,
-            WorldCanonicalInstanceActivation.Outcome.COMMITTED,
-            null,
-            rawPredictedActive);
-    byte[] rawRequestBytes = rawCommitRequest.canonicalRequestBytes();
-    byte[] rawResultBytes = rawCommittedResult.canonicalBytes();
+    var rawCommitProof = rawCommittedActivationProof(fixture);
     assertThatThrownBy(
             () ->
                 ownerTransaction()
                     .execute(
                         status -> {
-                          dsl.execute(
-                              "INSERT INTO world_canonical_instance_activation_operation "
-                                  + "(activation_request_id,request_digest,request_bytes,preparing_evidence_bytes,"
-                                  + "canonical_game_instance_id,world_instance_id,expected_lifecycle_epoch,expected_row_version,"
-                                  + "outcome,terminal_code,result_lifecycle_epoch,result_row_version,result_bytes,result_digest) "
-                                  + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                              rawCommitRequest.activationRequestId(),
-                              rawCommitRequest.requestDigest(),
-                              rawRequestBytes,
-                              rawCommitRequest.preparingEvidenceBytes(),
-                              rawCommitRequest.canonicalGameInstanceId(),
-                              fixture.materialized().association().worldInstanceId(),
-                              rawCommitRequest.expectedLifecycleEpoch(),
-                              rawCommitRequest.expectedRowVersion(),
-                              "COMMITTED",
-                              null,
-                              rawCommittedResult.lifecycleEvidence().lifecycleEpoch(),
-                              rawCommittedResult.lifecycleEvidence().rowVersion(),
-                              rawResultBytes,
-                              sha256Digest(rawResultBytes));
+                          insertRawActivationOperation(
+                              rawCommitProof,
+                              fixture.materialized().association().worldInstanceId());
                           return null;
                         }))
         .hasMessageContaining("must include its exact ACTIVE lifecycle CAS before commit");
@@ -1445,8 +1425,10 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             Objects.requireNonNull(
                     dsl.fetchOne(
                         "SELECT count(*) FROM world_canonical_instance_activation_operation WHERE activation_request_id=?",
-                        rawCommitRequest.activationRequestId()))
+                        rawCommitProof.request().activationRequestId()))
                 .get(0, Long.class))
+        .isZero();
+    assertThat(activationManifestCountForRequest(rawCommitProof.request().activationRequestId()))
         .isZero();
 
     var first =
@@ -1499,6 +1481,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     assertThat(active.lifecycleStatus()).isEqualTo("ACTIVE");
     assertThat(active.lifecycleEpoch()).isEqualTo(committed.lifecycleEvidence().lifecycleEpoch());
     assertThat(active.rowVersion()).isEqualTo(committed.lifecycleEvidence().rowVersion());
+    assertThat(activationManifestCount(fixture.input().canonicalGameInstanceId())).isZero();
 
     var repository =
         new WorldCanonicalInstanceActivationRepository(dsl, manager, fixture.lifecycleRepository());
@@ -1528,28 +1511,29 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
         .hasMessageContaining("reused with changed immutable bindings");
     assertThat(verifierCalls).hasValue(callsAfterFirstAttempt);
 
-    // A raw ACTIVE write cannot manufacture the committed operation that guards this CAS.
+    // The single-use activation capability was consumed; its retained ledger cannot authorize a
+    // second raw lifecycle update.
     assertThatThrownBy(
             () ->
                 dsl.execute(
                     "UPDATE world_instance SET status='ACTIVE',lifecycle_epoch=lifecycle_epoch+1,"
                         + "row_version=row_version+1 WHERE id=?",
                     fixture.materialized().association().worldInstanceId()))
-        .hasMessageContaining("requires its exact activation operation");
+        .hasMessageContaining("no exact transaction execution manifest");
+    assertThat(activationManifestCount(fixture.input().canonicalGameInstanceId())).isZero();
 
     var privateKeys = fixture.materialized().association().worldPrepareFields();
-    lifecycleCommandService.terminateWorldInstance(
-        privateKeys.privateTenantKey(),
-        privateKeys.privateGameInstanceKey(),
-        active.lifecycleEpoch(),
-        "activation-replay-terminal-move",
-        "integration lifecycle movement");
-    var terminalRow =
-        Objects.requireNonNull(
-            dsl.fetchOne(
-                "SELECT status,lifecycle_epoch FROM world_instance WHERE id=?",
-                fixture.materialized().association().worldInstanceId()));
-    assertThat(terminalRow.get("status", String.class)).isEqualTo("TERMINATED");
+    assertThatThrownBy(
+            () ->
+                lifecycleCommandService.terminateWorldInstance(
+                    privateKeys.privateTenantKey(),
+                    privateKeys.privateGameInstanceKey(),
+                    active.lifecycleEpoch(),
+                    "activation-replay-terminal-move",
+                    "integration lifecycle movement"))
+        .hasMessageContaining("no exact transaction execution manifest");
+    assertThat(fixture.lifecycleRepository().read(fixture.readRequest()).orElseThrow())
+        .isEqualTo(active);
     assertThat(service.activate(committed.request()).canonicalBytes())
         .containsExactly(committed.canonicalBytes());
     assertThat(verifierCalls).hasValue(callsAfterFirstAttempt);
@@ -1561,28 +1545,28 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   @Test
   void canonicalActivationStoresStaleFailedOutcomeAndFreshLifecycleReadRemainsCurrent() {
     PreparedLifecycleFixture fixture = materializedLifecycleFixture();
+    var service = canonicalActivationService(fixture, ignored -> stipulatedActivationAuthority());
+    var firstRequest =
+        new WorldCanonicalInstanceActivation.Request(UUID.randomUUID(), fixture.preparing());
+    var current = service.activate(firstRequest);
+    assertThat(current.outcome()).isEqualTo(WorldCanonicalInstanceActivation.Outcome.COMMITTED);
+    assertThat(current.lifecycleEvidence().lifecycleStatus()).isEqualTo("ACTIVE");
     var staleRequest =
         new WorldCanonicalInstanceActivation.Request(UUID.randomUUID(), fixture.preparing());
-    var privateKeys = fixture.materialized().association().worldPrepareFields();
-    lifecycleCommandService.failPreparedWorldInstance(
-        privateKeys.privateTenantKey(),
-        privateKeys.privateGameInstanceKey(),
-        fixture.preparing().lifecycleEpoch(),
-        "stale activation proof");
-    var failed = fixture.lifecycleRepository().read(fixture.readRequest()).orElseThrow();
-    assertThat(failed.lifecycleStatus()).isEqualTo("FAILED_PRE_ACTIVATION");
-    var service = canonicalActivationService(fixture, ignored -> stipulatedActivationAuthority());
 
     var aborted = service.activate(staleRequest);
 
     assertThat(aborted.outcome()).isEqualTo(WorldCanonicalInstanceActivation.Outcome.ABORTED);
     assertThat(aborted.terminalCode()).isEqualTo("PRECONDITION_FAILED");
     assertThat(aborted.lifecycleEvidence().canonicalBytes())
-        .containsExactly(failed.canonicalBytes());
+        .containsExactly(current.lifecycleEvidence().canonicalBytes());
     assertThat(fixture.lifecycleRepository().read(fixture.readRequest()).orElseThrow())
-        .isEqualTo(failed);
+        .isEqualTo(current.lifecycleEvidence());
     assertThat(service.activate(staleRequest).canonicalBytes())
         .containsExactly(aborted.canonicalBytes());
+    assertThat(activationOperationCountForRequest(staleRequest.activationRequestId()))
+        .isEqualTo(1L);
+    assertThat(activationManifestCountForRequest(staleRequest.activationRequestId())).isZero();
     assertOrigin();
   }
 
@@ -1670,6 +1654,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
                               sha256Digest(forgedResultBytes)))
                   .hasMessageContaining("differs from immutable World association");
               dsl.execute("ROLLBACK TO SAVEPOINT forged_world_activation");
+              // V35's reserved-tenant guard denies a raw write without an activation manifest.
               dsl.execute("SAVEPOINT forged_active_cas");
               assertThatThrownBy(
                       () ->
@@ -1677,7 +1662,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
                               "UPDATE world_instance SET status='ACTIVE',lifecycle_epoch=lifecycle_epoch+1,"
                                   + "row_version=row_version+1 WHERE id=?",
                               fixture.materialized().association().worldInstanceId()))
-                  .hasMessageContaining("requires its exact activation operation");
+                  .hasMessageContaining("no exact transaction execution manifest");
               dsl.execute("ROLLBACK TO SAVEPOINT forged_active_cas");
               return null;
             });
@@ -1689,6 +1674,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
                         activationRequest.activationRequestId()))
                 .get(0, Long.class))
         .isZero();
+    assertThat(activationManifestCountForRequest(activationRequest.activationRequestId())).isZero();
     var lifecycle = fixture.lifecycleRepository().read(fixture.readRequest()).orElseThrow();
     assertThat(lifecycle.lifecycleStatus()).isEqualTo("PREPARING");
     assertThat(lifecycle.lifecycleEpoch()).isEqualTo(activationRequest.expectedLifecycleEpoch());
@@ -1720,6 +1706,8 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
                                         request.activationRequestId()))
                                 .get(0, Long.class))
                         .isEqualTo(1L);
+                    assertThat(activationManifestCountForRequest(request.activationRequestId()))
+                        .isEqualTo(1L);
                     throw new IllegalStateException("stipulated activation authority loss");
                   }
                 }
@@ -1741,6 +1729,58 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
                         request.activationRequestId()))
                 .get(0, Long.class))
         .isZero();
+    assertThat(activationManifestCountForRequest(request.activationRequestId())).isZero();
+    assertThat(activationManifestCount(fixture.input().canonicalGameInstanceId())).isZero();
+    assertOrigin();
+  }
+
+  @Test
+  void activationExecutionManifestRequiresExactTransactionInstanceAndRowSnapshots() {
+    PreparedLifecycleFixture fixture = materializedLifecycleFixture();
+    String exactUpdate =
+        "UPDATE world_instance SET status='ACTIVE',lifecycle_epoch=lifecycle_epoch+1,"
+            + "row_version=row_version+1,updated_at=CURRENT_TIMESTAMP WHERE id=?";
+
+    assertActivationManifestMismatch(
+        fixture,
+        "activation_manifest_wrong_tx",
+        "UPDATE world_canonical_activation_execution_manifest SET transaction_id=transaction_id+1 "
+            + "WHERE activation_request_id=?",
+        exactUpdate);
+    assertActivationManifestMismatch(
+        fixture,
+        "activation_manifest_wrong_instance",
+        "UPDATE world_canonical_activation_execution_manifest SET world_instance_id=world_instance_id+1 "
+            + "WHERE activation_request_id=?",
+        exactUpdate);
+    assertActivationManifestMismatch(
+        fixture,
+        "activation_manifest_extra_old_field",
+        "UPDATE world_canonical_activation_execution_manifest SET expected_old=expected_old || '{\"extra\":true}'::JSONB "
+            + "WHERE activation_request_id=?",
+        exactUpdate);
+    assertActivationManifestMismatch(
+        fixture,
+        "activation_manifest_extra_new_field",
+        "UPDATE world_canonical_activation_execution_manifest SET expected_new=expected_new || '{\"extra\":true}'::JSONB "
+            + "WHERE activation_request_id=?",
+        exactUpdate);
+    assertActivationManifestMismatch(
+        fixture,
+        "activation_manifest_wrong_next_epoch",
+        null,
+        "UPDATE world_instance SET status='ACTIVE',lifecycle_epoch=lifecycle_epoch+2,"
+            + "row_version=row_version+1,updated_at=CURRENT_TIMESTAMP WHERE id=?");
+    assertActivationManifestMismatch(
+        fixture,
+        "activation_manifest_wrong_next_version",
+        null,
+        "UPDATE world_instance SET status='ACTIVE',lifecycle_epoch=lifecycle_epoch+1,"
+            + "row_version=row_version+2,updated_at=CURRENT_TIMESTAMP WHERE id=?");
+
+    var current = fixture.lifecycleRepository().read(fixture.readRequest()).orElseThrow();
+    assertThat(current).isEqualTo(fixture.preparing());
+    assertThat(activationManifestCount(fixture.input().canonicalGameInstanceId())).isZero();
     assertOrigin();
   }
 
@@ -2504,51 +2544,61 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   }
 
   @Test
-  void inertV1PreparationRetainsOriginalBytesAndCannotGainSelectorOnRetry() {
-    Fixture f = fixture();
-    var application = application(generationFreePlan(f));
-    appliedComponent().apply(application);
-    var frozen = capture(application.plan());
-    var input = preparationInput(f, frozen, null);
-    var repository = preparationRepository();
-    var first = preparationComponent(repository).prepare(input);
+  void inertV1PreparationRetainsOriginalBytesAndCannotGainSelectorOnRetry() throws Exception {
+    HistoricalSchemaFixture schema = historicalSchemaAt("world_v42_inert_v1", "42");
+    WorldDraftGraphApplicationPostgresIntegrationTest historical = schema.database();
+    Fixture f = historical.fixture();
+    var application = historical.application(historical.generationFreePlan(f));
+    historical.appliedComponent().apply(application);
+    var frozen = historical.capture(application.plan());
+    var input = historical.preparationInput(f, frozen, null);
+    var first = historical.prepareV1ThroughOwnerFunction(input);
     assertThat(first.startLocation()).isNull();
     assertThat(first.runtimeRoomInstanceId()).isNull();
-    byte[] before = preparationRows(input.canonicalGameInstanceId());
-    assertThat(preparationComponent(preparationRepository()).prepare(input)).isEqualTo(first);
-    assertThat(preparationRows(input.canonicalGameInstanceId())).containsExactly(before);
-    assertThat(WorldCanonicalInstancePreparationRepository.inputJson(input))
-        .doesNotContain("worldStartLocationEvidence");
+    byte[] before = historical.preparationRows(input.canonicalGameInstanceId());
+    assertThat(historical.prepareV1ThroughOwnerFunction(input)).isEqualTo(first);
+    assertThat(historical.preparationRows(input.canonicalGameInstanceId())).containsExactly(before);
+    String originalInputJson = WorldCanonicalInstancePreparationRepository.inputJson(input);
+    assertThat(originalInputJson).doesNotContain("worldStartLocationEvidence");
     assertThat(
             Objects.requireNonNull(
-                    dsl.fetchOne(
+                    historical.dsl.fetchOne(
                         "SELECT count(*) FROM world_canonical_preparation_start_location WHERE canonical_game_instance_id=?",
                         input.canonicalGameInstanceId()))
                 .get(0, Long.class))
         .isZero();
-    // A new direct selector write cannot reinterpret the existing V1 preparation.
-    var receipt =
-        appliedRepository()
-            .readCommitted(application)
-            .orElseThrow()
-            .startLocationReceipt()
-            .orElseThrow();
+    // V42 cannot reinterpret the immutable selector-null V1 preparation as a V2 materialization.
+    var selector =
+        historical.publishedEvidence(
+            historical.publishedSelectors().readCommitted(frozen.request().freeze()).orElseThrow());
+    var promotedInput =
+        (tools.jackson.databind.node.ObjectNode) historical.mapper.readTree(originalInputJson);
+    promotedInput.put("schemaVersion", 2);
+    promotedInput.put(
+        "worldStartLocationEvidenceBase64",
+        java.util.Base64.getEncoder().encodeToString(selector.canonicalBytes()));
+    String promotedInputJson = historical.mapper.writeValueAsString(promotedInput);
+    byte[] promotedInputBytes = promotedInputJson.getBytes(StandardCharsets.UTF_8);
     assertThatThrownBy(
             () ->
-                dsl.execute(
-                    "INSERT INTO world_canonical_preparation_start_location (canonical_game_instance_id,world_instance_id,canonical_tenant_id,canonical_version_id,room_template_id,"
-                        + "runtime_room_instance_id,receipt_digest,graph_digest,evidence_bytes) VALUES (?,?,?,?,?,1,?,?,?)",
-                    input.canonicalGameInstanceId(),
-                    first.association().worldInstanceId(),
-                    receipt.startLocation().tenantId(),
-                    receipt.startLocation().versionId(),
-                    receipt.startLocation().roomTemplateId(),
-                    receipt.receiptDigest(),
-                    receipt.graphDigest(),
-                    receipt.canonicalBytes()))
-        .isInstanceOf(RuntimeException.class);
-    assertThat(preparationRows(input.canonicalGameInstanceId())).containsExactly(before);
-    assertOrigin();
+                historical
+                    .ownerTransaction()
+                    .execute(
+                        status ->
+                            historical.dsl.fetchOne(
+                                "SELECT * FROM world_prepare_canonical_instance(?,?)",
+                                promotedInputJson,
+                                sha256Digest(promotedInputBytes))))
+        .hasMessageContaining("V2 preparation requires original complete World selector evidence");
+    assertThat(historical.preparationRows(input.canonicalGameInstanceId())).containsExactly(before);
+    assertThat(
+            Objects.requireNonNull(
+                    historical.dsl.fetchOne(
+                        "SELECT count(*) FROM world_canonical_preparation_start_location WHERE canonical_game_instance_id=?",
+                        input.canonicalGameInstanceId()))
+                .get(0, Long.class))
+        .isZero();
+    historical.assertOrigin();
   }
 
   @Test
@@ -2561,6 +2611,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
         publishedEvidence(
             publishedSelectors().readCommitted(frozen.request().freeze()).orElseThrow());
     var input = preparationInput(f, frozen, selector);
+    completeIsolatedPublicationTerminal(input);
     var component =
         new WorldCanonicalInstancePreparationService(
             preparationRepository(),
@@ -2673,23 +2724,46 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
 
   @Test
   void v41MaterializedV1HistoryRemainsByteExactAndRetryableAfterV42WithoutSelectorPromotion() {
-    String schema = "world_v41_preparation_" + UUID.randomUUID().toString().replace("-", "");
-    Flyway.configure()
-        .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
-        .schemas(schema)
-        .defaultSchema(schema)
-        .table("flyway_schema_history_world_management_service")
-        .placeholders(Map.of("serviceSchema", schema))
-        .locations("classpath:db/migration")
-        .target(MigrationVersion.fromVersion("41"))
-        .load()
-        .migrate();
+    HistoricalSchemaFixture schema = historicalSchemaAt("world_v41_preparation", "41");
+    WorldDraftGraphApplicationPostgresIntegrationTest historical = schema.database();
+    Fixture f = historical.fixture();
+    var application = historical.application(historical.generationFreePlan(f));
+    var applied = historical.appliedComponent().apply(application);
+    var frozen = historical.capture(application.plan());
+    var input = historical.preparationInput(f, frozen, null);
+    var first = historical.prepareV1ThroughOwnerFunction(input);
+    Map<String, String> before = historical.preparationHistoryRows();
+    byte[] originalApplied = applied.canonicalBytes();
+    historical.migrateHistoricalSchema(schema.schema(), "42");
+    assertThat(historical.preparationHistoryRows()).isEqualTo(before);
+    assertThat(historical.prepareV1ThroughOwnerFunction(input)).isEqualTo(first);
+    assertThat(historical.preparationHistoryRows()).isEqualTo(before);
+    assertThat(
+            historical
+                .appliedRepository()
+                .readCommitted(application)
+                .orElseThrow()
+                .canonicalBytes())
+        .containsExactly(originalApplied);
+    assertThat(first.startLocation()).isNull();
+    assertThat(first.runtimeRoomInstanceId()).isNull();
+    assertThat(
+            Objects.requireNonNull(
+                    historical.dsl.fetchOne(
+                        "SELECT count(*) FROM world_canonical_preparation_start_location"))
+                .get(0, Long.class))
+        .isZero();
+    historical.assertOrigin();
+  }
+
+  private HistoricalSchemaFixture historicalSchemaAt(String schemaPrefix, String version) {
+    String schema = schemaPrefix + "_" + UUID.randomUUID().toString().replace("-", "");
+    migrateHistoricalSchema(schema, version);
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
     dataSource.setUrl(postgres.getJdbcUrl());
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
     dataSource.setSchema(schema);
-    // Reuse exactly the same actual producer/preparation fixture against the historical schema.
     var historical = new WorldDraftGraphApplicationPostgresIntegrationTest();
     historical.dsl =
         DSL.using(
@@ -2714,14 +2788,10 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             new net.firedevops.firemud.worldmanagement.repository.WorldEntitySpawnBindingRepository(
                 historical.dsl),
             mapper);
-    Fixture f = historical.fixture();
-    var application = historical.application(historical.generationFreePlan(f));
-    var applied = historical.appliedComponent().apply(application);
-    var frozen = historical.capture(application.plan());
-    var input = historical.preparationInput(f, frozen, null);
-    var first = historical.preparationComponent(historical.preparationRepository()).prepare(input);
-    Map<String, String> before = historical.preparationHistoryRows();
-    byte[] originalApplied = applied.canonicalBytes();
+    return new HistoricalSchemaFixture(schema, historical);
+  }
+
+  private void migrateHistoricalSchema(String schema, String version) {
     Flyway.configure()
         .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
         .schemas(schema)
@@ -2729,28 +2799,52 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
         .table("flyway_schema_history_world_management_service")
         .placeholders(Map.of("serviceSchema", schema))
         .locations("classpath:db/migration")
+        .target(MigrationVersion.fromVersion(version))
         .load()
         .migrate();
-    assertThat(historical.preparationHistoryRows()).isEqualTo(before);
-    assertThat(historical.preparationComponent(historical.preparationRepository()).prepare(input))
-        .isEqualTo(first);
-    assertThat(historical.preparationHistoryRows()).isEqualTo(before);
-    assertThat(
-            historical
-                .appliedRepository()
-                .readCommitted(application)
-                .orElseThrow()
-                .canonicalBytes())
-        .containsExactly(originalApplied);
-    assertThat(first.startLocation()).isNull();
-    assertThat(first.runtimeRoomInstanceId()).isNull();
-    assertThat(
-            Objects.requireNonNull(
-                    historical.dsl.fetchOne(
-                        "SELECT count(*) FROM world_canonical_preparation_start_location"))
-                .get(0, Long.class))
-        .isZero();
-    historical.assertOrigin();
+  }
+
+  /** Executes the real V35/V42 owner SQL path for selector-null V1 migration history. */
+  private WorldCanonicalInstancePreparation.Result prepareV1ThroughOwnerFunction(
+      WorldCanonicalInstancePreparation.Input input) {
+    String inputJson = WorldCanonicalInstancePreparationRepository.inputJson(input);
+    byte[] inputBytes = inputJson.getBytes(StandardCharsets.UTF_8);
+    Long worldInstanceId =
+        Objects.requireNonNull(
+            ownerTransaction()
+                .execute(
+                    status -> {
+                      var row =
+                          Objects.requireNonNull(
+                              dsl.fetchOne(
+                                  "SELECT * FROM world_prepare_canonical_instance(?, ?)",
+                                  inputJson,
+                                  sha256Digest(inputBytes)),
+                              "V35/V42 owner preparation function returned no row");
+                      Long allocatedWorldInstanceId =
+                          Objects.requireNonNull(
+                              row.get("world_instance_id", Long.class),
+                              "V35/V42 owner preparation result omitted world_instance_id");
+                      var claim =
+                          new WorldCanonicalInstanceAssociation.Claim(
+                              input.gameSessionReadRequest(),
+                              input.gameSessionReadEvidence(),
+                              allocatedWorldInstanceId.longValue(),
+                              input.completeLaunchBinding(),
+                              input.versionIdentity());
+                      associationRepository().retainClaimInOwnerTransaction(claim);
+                      return allocatedWorldInstanceId;
+                    }),
+            "V35/V42 owner transaction returned no allocated world_instance_id");
+    var result =
+        preparationRepository()
+            .readOwnerPreparation(input)
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "V35/V42 owner preparation has no exact committed readback"));
+    assertThat(result.association().worldInstanceId()).isEqualTo(worldInstanceId.longValue());
+    return result;
   }
 
   private Map<String, String> preparationHistoryRows() {
@@ -3789,6 +3883,108 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     return new WorldCanonicalInstanceActivationService(
         new WorldCanonicalInstanceActivationRepository(dsl, manager, fixture.lifecycleRepository()),
         verifier);
+  }
+
+  private void assertActivationManifestMismatch(
+      PreparedLifecycleFixture fixture,
+      String savepoint,
+      String manifestTamperSql,
+      String attemptedUpdateSql) {
+    ownerTransaction()
+        .execute(
+            status -> {
+              dsl.execute("SAVEPOINT " + savepoint);
+              var proof = rawCommittedActivationProof(fixture);
+              insertRawActivationOperation(
+                  proof, fixture.materialized().association().worldInstanceId());
+              if (manifestTamperSql != null) {
+                dsl.execute(manifestTamperSql, proof.request().activationRequestId());
+              }
+              assertThatThrownBy(
+                      () ->
+                          dsl.execute(
+                              attemptedUpdateSql,
+                              fixture.materialized().association().worldInstanceId()))
+                  .hasMessageContaining("no exact transaction execution manifest");
+              dsl.execute("ROLLBACK TO SAVEPOINT " + savepoint);
+              assertThat(activationOperationCountForRequest(proof.request().activationRequestId()))
+                  .isZero();
+              assertThat(activationManifestCountForRequest(proof.request().activationRequestId()))
+                  .isZero();
+              return null;
+            });
+  }
+
+  private ActivationProof rawCommittedActivationProof(PreparedLifecycleFixture fixture) {
+    var request =
+        new WorldCanonicalInstanceActivation.Request(UUID.randomUUID(), fixture.preparing());
+    var predictedActive =
+        new WorldCanonicalInstanceLifecycleEvidence(
+            fixture.preparing().request(),
+            fixture.preparing().launchBinding(),
+            fixture.preparing().startLocation(),
+            fixture.preparing().runtimeRoomInstanceId(),
+            "ACTIVE",
+            fixture.preparing().lifecycleEpoch() + 1L,
+            fixture.preparing().rowVersion() + 1L,
+            fixture.preparing().captureId(),
+            fixture.preparing().graphSha256(),
+            fixture.preparing().preparationInputDigest());
+    return new ActivationProof(
+        request,
+        new WorldCanonicalInstanceActivation.Result(
+            request, WorldCanonicalInstanceActivation.Outcome.COMMITTED, null, predictedActive));
+  }
+
+  private void insertRawActivationOperation(ActivationProof proof, long worldInstanceId) {
+    var request = proof.request();
+    var result = proof.result();
+    byte[] requestBytes = request.canonicalRequestBytes();
+    byte[] resultBytes = result.canonicalBytes();
+    dsl.execute(
+        "INSERT INTO world_canonical_instance_activation_operation "
+            + "(activation_request_id,request_digest,request_bytes,preparing_evidence_bytes,"
+            + "canonical_game_instance_id,world_instance_id,expected_lifecycle_epoch,expected_row_version,"
+            + "outcome,terminal_code,result_lifecycle_epoch,result_row_version,result_bytes,result_digest) "
+            + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        request.activationRequestId(),
+        request.requestDigest(),
+        requestBytes,
+        request.preparingEvidenceBytes(),
+        request.canonicalGameInstanceId(),
+        worldInstanceId,
+        request.expectedLifecycleEpoch(),
+        request.expectedRowVersion(),
+        "COMMITTED",
+        null,
+        result.lifecycleEvidence().lifecycleEpoch(),
+        result.lifecycleEvidence().rowVersion(),
+        resultBytes,
+        sha256Digest(resultBytes));
+  }
+
+  private long activationOperationCountForRequest(UUID requestId) {
+    return Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT count(*) FROM world_canonical_instance_activation_operation WHERE activation_request_id=?",
+                requestId))
+        .get(0, Long.class);
+  }
+
+  private long activationManifestCount(UUID canonicalGameInstanceId) {
+    return Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT count(*) FROM world_canonical_activation_execution_manifest WHERE canonical_game_instance_id=?",
+                canonicalGameInstanceId))
+        .get(0, Long.class);
+  }
+
+  private long activationManifestCountForRequest(UUID requestId) {
+    return Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT count(*) FROM world_canonical_activation_execution_manifest WHERE activation_request_id=?",
+                requestId))
+        .get(0, Long.class);
   }
 
   /**
@@ -5853,6 +6049,13 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
       WorldAuthoredSourceIntakeReceipt intake,
       WorldAuthoredVersionIdentityReceipt version,
       OwnerBinding owner) {}
+
+  private record HistoricalSchemaFixture(
+      String schema, WorldDraftGraphApplicationPostgresIntegrationTest database) {}
+
+  private record ActivationProof(
+      WorldCanonicalInstanceActivation.Request request,
+      WorldCanonicalInstanceActivation.Result result) {}
 
   private record PreparedLifecycleFixture(
       WorldCanonicalInstancePreparation.Input input,
