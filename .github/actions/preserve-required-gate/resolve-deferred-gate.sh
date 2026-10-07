@@ -124,8 +124,8 @@ base_branch="$(jq -er '.base.ref' <<<"${pr_json}")"
 
 # A single capped exact-head query bounds both target discovery and the native
 # history window. Resolver completions cannot predate their source creation.
-# Twenty retained sources/window events is the isolated-proof activation limit;
-# partial evidence or larger windows require explicit recovery, never a scan.
+# Twenty retained sources is the source-discovery limit. Resolver history uses
+# separate bounded pagination; partial evidence always requires recovery.
 evidence_limit=20
 run_pages="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow_filename}/runs" \
   -f event=pull_request -f head_sha="${head_sha}" -f per_page="${evidence_limit}")"
@@ -150,24 +150,47 @@ target_ids="$(jq -er '.workflow_runs[].id' <<<"${run_pages}")"
 # across invocations. A failed or incomplete admission may have sent a POST;
 # subsequent callbacks must not guess from a still-visible target attempt 1.
 assert_no_ambiguous_admission() {
-  local resolver_pages prior_ids prior_id prior_json prior_jobs prior_head equal_time_queued
-  resolver_pages="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/actions/workflows/resolve-required-gates.yml/runs" \
-    -f event=workflow_run -f created=">=${history_start}" -f per_page="${evidence_limit}")"
+  local resolver_pages resolver_page history_total history_page history_page_count expected_page_records
+  local prior_ids prior_id prior_json prior_jobs prior_head equal_time_waiting
+  # The REST search ceiling is 1,000 records. Fetch explicit pages so neither
+  # an oversized response nor pagination can start an unbounded history scan.
+  resolver_pages='[]'
+  history_total=0
+  history_page_count=1
+  for (( history_page=1; history_page<=history_page_count; history_page++ )); do
+    resolver_page="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/actions/workflows/resolve-required-gates.yml/runs" \
+      -f event=workflow_run -f created=">=${history_start}" -f per_page=100 -f page="${history_page}")"
+    jq -e '(.workflow_runs | type) == "array" and
+      (.total_count | type) == "number" and .total_count > 0 and
+      .total_count == (.total_count | floor) and .total_count <= 1000' \
+      <<<"${resolver_page}" >/dev/null ||
+      fail_closed "Resolver history is malformed or exceeds the 1,000-record API ceiling."
+    if (( history_page == 1 )); then
+      history_total="$(jq -er '.total_count' <<<"${resolver_page}")"
+      history_page_count=$(( (history_total + 99) / 100 ))
+    fi
+    expected_page_records=$(( history_total - (history_page - 1) * 100 ))
+    if (( expected_page_records > 100 )); then expected_page_records=100; fi
+    jq -e --argjson total "${history_total}" --argjson count "${expected_page_records}" '
+      .total_count == $total and (.workflow_runs | length) == $count' \
+      <<<"${resolver_page}" >/dev/null ||
+      fail_closed "Resolver history page coverage or total count is inconsistent."
+    resolver_pages="$(printf '%s\n%s\n' "${resolver_pages}" "${resolver_page}" | \
+      jq -cs '.[0] + .[1].workflow_runs')"
+  done
   prior_ids="$(jq -r --argjson workflow_id "${resolver_id}" --argjson current "${GITHUB_RUN_ID}" \
-    --argjson limit "${evidence_limit}" \
+    --argjson total "${history_total}" --arg created "${history_start}" \
     --arg repository "${GITHUB_REPOSITORY}" --arg path "${resolver_path}" \
     --arg prefix "Resolve Required Gates workflow-${workflow_id} head-${head_sha} source-" '
-    if (.workflow_runs | type) != "array" or (.total_count | type) != "number" then
-      error("malformed resolver runs") else . end
-    | .total_count as $total
-    | if $total > $limit or (.workflow_runs | length) != $total or
-        ([.workflow_runs[].id] | unique | length) != $total or
-        (any(.workflow_runs[]; .id == $current) | not) then error("incomplete or oversized resolver window") else . end
-    | if any(.workflow_runs[];
+    if length != $total or ([.[].id] | unique | length) != $total or
+        (any(.[]; .id == $current) | not) then error("incomplete or duplicate resolver history") else . end
+    | if any(.[];
         (.id | type) != "number" or .id <= 0 or .id != (.id | floor) or
         .workflow_id != $workflow_id or .repository.full_name != $repository or .event != "workflow_run" or
-        (.display_title | type) != "string") then error("unattributable resolver history") else . end
-    | [.workflow_runs[]
+        (.display_title | type) != "string" or
+        (try ((.created_at | fromdateiso8601) >= ($created | fromdateiso8601)) catch false | not))
+      then error("unattributable resolver history") else . end
+    | [.[]
       | select(.workflow_id == $workflow_id and .id != $current and
           .repository.full_name == $repository and .event == "workflow_run" and
           (.path == $path or (.path | startswith($path + "@") and length > ($path | length) + 1)) and
@@ -176,17 +199,17 @@ assert_no_ambiguous_admission() {
       | .id | select(type == "number" and . > 0 and . == floor)] | unique | .[]' <<<"${resolver_pages}")"
   while IFS= read -r prior_id; do
     [[ -n "${prior_id}" ]] || continue
-    prior_json="$(jq -cer --argjson id "${prior_id}" '.workflow_runs[] | select(.id == $id)' <<<"${resolver_pages}")"
+    prior_json="$(jq -cer --argjson id "${prior_id}" '.[] | select(.id == $id)' <<<"${resolver_pages}")"
     jq -e '.run_attempt == 1' <<<"${prior_json}" >/dev/null ||
       fail_closed "Matching resolver history contains a rerun or unknown attempt; explicit recovery is required."
     prior_head="$(jq -er '.head_sha | select(type == "string" and test("^[0-9A-Fa-f]{40}$"))' <<<"${prior_json}")"
     # Under this exact workflow/head concurrency group, a later first-attempt
-    # callback still queued cannot have reached admission. Require native
-    # creation ordering; listener revision movement cannot start a queued run.
+    # callback still pending or queued cannot have reached admission. Require
+    # native creation ordering; listener revision movement cannot start it.
     # Missing steps in any
     # other state remain potentially admitting evidence, never a clean no-op.
     if jq -e --arg created "${current_resolver_created}" '
-      .status == "queued" and .conclusion == null and
+      (.status == "pending" or .status == "queued") and .conclusion == null and
       (try ((.created_at | fromdateiso8601) > ($created | fromdateiso8601)) catch false)' \
       <<<"${prior_json}" >/dev/null; then
       continue
@@ -194,17 +217,17 @@ assert_no_ambiguous_admission() {
     # Native creation timestamps have second precision. A tied callback needs
     # explicit first-attempt job evidence that nothing started, without guessing
     # order from run IDs or ignoring arbitrary missing admission steps.
-    equal_time_queued=false
+    equal_time_waiting=false
     if jq -e --arg created "${current_resolver_created}" '
-      .status == "queued" and .conclusion == null and
+      (.status == "pending" or .status == "queued") and .conclusion == null and
       (try ((.created_at | fromdateiso8601) == ($created | fromdateiso8601)) catch false)' \
       <<<"${prior_json}" >/dev/null; then
-      equal_time_queued=true
+      equal_time_waiting=true
     fi
     prior_jobs="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/actions/runs/${prior_id}/attempts/1/jobs" \
       -f per_page="${evidence_limit}")"
     jq -e --argjson prior_id "${prior_id}" --argjson limit "${evidence_limit}" \
-      --arg head "${prior_head}" --argjson equal_time_queued "${equal_time_queued}" '
+      --arg head "${prior_head}" --argjson equal_time_waiting "${equal_time_waiting}" '
       if (.jobs | type) != "array" or (.total_count | type) != "number" then error("malformed resolver jobs") else . end
       | .total_count as $total
       | if $total > $limit or (.jobs | length) != $total or ([.jobs[].id] | unique | length) != $total then
@@ -213,7 +236,7 @@ assert_no_ambiguous_admission() {
       | length == 1 and (.[0] |
         (.id | type) == "number" and .id > 0 and .id == (.id | floor) and
         .run_id == $prior_id and .head_sha == $head and
-        if $equal_time_queued then
+        if $equal_time_waiting then
           .status == "queued" and .conclusion == null and
           has("started_at") and .started_at == null and
           has("completed_at") and .completed_at == null and

@@ -1947,7 +1947,9 @@ repository = "other-owner/firemud" if scenario == "fork-empty" else "example/fir
 target_id = 300 if scenario == "fork-empty" else 200
 current_id = int(os.environ["GITHUB_RUN_ID"])
 source_id = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())["workflow_run"]["id"]
-queue_scenario = scenario.startswith("queued-")
+queue_scenario = scenario.startswith(("queued-", "pending-"))
+equal_time_scenario = queue_scenario and "-equal" in scenario
+rejected_later = scenario in {"pending-callback-started", "pending-callback-malformed", "pending-callback-attempt", "pending-callback-concluded"}
 result = None
 exit_status = 0
 state.setdefault("calls", []).append(f"{method} {endpoint}")
@@ -1967,21 +1969,25 @@ def resolver_run(run_id):
     if queue_scenario:
         source = 100 if run_id == 9000 else 200
         created = "2026-07-30T03:00:00Z" if run_id == 9000 else "2026-07-30T03:01:00Z"
-        if scenario.startswith("queued-equal"):
+        if equal_time_scenario:
             created = "2026-07-30T03:00:00Z"
         if run_id == 9001 and current_id == 9000:
-            status = "queued"
+            status = "pending" if scenario.startswith("pending-") else "queued"
     attempt = state.get("resolver_attempt", 1) if run_id == current_id else 1
-    if scenario == "prior-rerun-skipped" and run_id == 9001:
+    if scenario in {"prior-rerun-skipped", "pending-callback-attempt"} and run_id == 9001:
         attempt = 2
-    if scenario == "prior-queued-old" and run_id == 9001:
-        status = "queued"
+    if scenario in {"prior-queued-old", "prior-pending-old"} and run_id == 9001:
+        status = "pending" if scenario == "prior-pending-old" else "queued"
+    if scenario == "pending-callback-started" and run_id == 9001:
+        status = "in_progress"
+    if scenario == "pending-callback-malformed" and run_id == 9001:
+        created = None
     return {"id": run_id, "workflow_id": 777, "name": "Resolve Required Gates",
             "path": ".github/workflows/resolve-required-gates.yml", "event": "workflow_run",
             "repository": {"full_name": "example/firemud"},
-            "head_sha": "d" * 40 if scenario == "queued-new-revision" and run_id == 9001 else "c" * 40,
+            "head_sha": "d" * 40 if scenario in {"queued-new-revision", "pending-new-revision"} and run_id == 9001 else "c" * 40,
             "run_attempt": attempt, "status": status, "created_at": created,
-            "conclusion": None if status in {"queued", "in_progress"} else "success",
+            "conclusion": "failure" if scenario == "pending-callback-concluded" and run_id == 9001 else None if status in {"queued", "pending", "in_progress"} else "success",
             "display_title": f"Resolve Required Gates workflow-42 head-{head} source-{source}"}
 
 if method == "POST":
@@ -1999,49 +2005,84 @@ elif endpoint.endswith("/actions/runs/9000") or endpoint.endswith("/actions/runs
     result = resolver_run(int(endpoint.rsplit("/", 1)[1]))
 elif endpoint.endswith("/actions/workflows/resolve-required-gates.yml/runs"):
     assert "--paginate" not in args and "--slurp" not in args
-    assert "created=>=2026-07-30T01:00:00Z" in args and "per_page=20" in args
+    assert "created=>=2026-07-30T01:00:00Z" in args and "per_page=100" in args
+    assert "head_sha=" + head not in args and not any(arg.startswith("status=") for arg in args)
+    page = int(next(arg.split("=", 1)[1] for arg in args if arg.startswith("page=")))
+    assert 1 <= page <= 10
+    state.setdefault("history_pages", []).append(page)
     runs = [resolver_run(9000)]
-    if scenario.startswith("prior-") or queue_scenario or (
+    if scenario.startswith("history-"):
+        count = 1000 if scenario == "history-ceiling" else 201
+        for index in range(count - 2):
+            unrelated = resolver_run(10000 + index)
+            unrelated["display_title"] = f"Resolve Required Gates workflow-43 head-{'e' * 40} source-{10000 + index}"
+            runs.append(unrelated)
+        # A matching admission on the final page must not be skipped.
+        runs.append(resolver_run(9001))
+        if scenario == "history-duplicate":
+            runs[100] = runs[1]
+        elif scenario == "history-missing-current":
+            runs[0] = runs[2].copy()
+            runs[0]["id"] = 20000
+        elif scenario == "history-before-floor":
+            runs[100]["created_at"] = "2026-07-29T01:00:00Z"
+    elif scenario.startswith("prior-") or queue_scenario or (
         state.get("ambiguous_admission") and scenario != "same-id-rerun"
     ):
         runs.append(resolver_run(9001))
-    result = {"total_count": 21 if scenario == "prior-oversized" else len(runs) + (1 if scenario == "prior-incomplete" else 0), "workflow_runs": runs}
+    total = 1001 if scenario in {"prior-oversized", "history-overcap"} else len(runs) + (1 if scenario == "prior-incomplete" else 0)
+    result = {"total_count": total, "workflow_runs": runs[(page - 1) * 100:page * 100]}
+    if page == 2:
+        if scenario == "history-incomplete":
+            result["workflow_runs"].pop()
+        elif scenario == "history-missing-total":
+            result.pop("total_count")
+        elif scenario == "history-malformed-total":
+            result["total_count"] = str(total)
+        elif scenario == "history-inconsistent-total":
+            result["total_count"] += 1
+        elif scenario == "history-malformed-page":
+            result["workflow_runs"] = None
+        elif scenario == "history-unavailable-page":
+            exit_status = 1
 elif endpoint.endswith("/actions/runs/9001/attempts/1/jobs") or endpoint.endswith("/actions/runs/9000/attempts/1/jobs"):
     prior_id = int(endpoint.split("/")[-4])
     if queue_scenario:
         assert (current_id == 9001 and prior_id == 9000) or (
-            scenario.startswith("queued-equal") and current_id == 9000 and prior_id == 9001
-        ), "strictly later queued callback was queried as potentially admitted"
+            (equal_time_scenario or rejected_later) and current_id == 9000 and prior_id == 9001
+        ), "strictly later waiting callback was queried as potentially admitted"
     assert "--paginate" not in args and "--slurp" not in args and "per_page=20" in args
     if scenario == "prior-unavailable":
         exit_status = 1
     else:
-        conclusion = "skipped" if scenario in {"prior-noop", "prior-cancelled-between-steps", "prior-rerun-skipped"} else "failure"
-        if queue_scenario:
+        conclusion = "skipped" if scenario in {"prior-noop", "prior-cancelled-between-steps", "prior-rerun-skipped"} or (scenario.startswith("history-") and scenario != "history-ambiguous-tail") else "failure"
+        if queue_scenario and not rejected_later:
             conclusion = "success"
         if scenario == "prior-cancelled-admission":
             conclusion = "cancelled"
         steps = [{"name": "Preflight deferred gate resolution", "status": "completed", "conclusion": "success"},
                  {"name": "Admit deferred gate reruns", "status": "completed", "conclusion": conclusion}]
-        if scenario in {"prior-missing-step", "prior-queued-old"}:
+        if scenario in {"prior-missing-step", "prior-queued-old", "prior-pending-old"}:
             steps.pop()
         result = {"total_count": 1, "jobs": [{"id": prior_id * 10, "run_id": prior_id, "name": "Resolve deferred metadata gate",
                              "head_sha": resolver_run(prior_id)["head_sha"],
                              "status": "completed", "conclusion": "cancelled" if scenario.startswith("prior-cancelled") else "failure",
                              "steps": steps}]}
-        if scenario.startswith("queued-equal") and current_id == 9000:
+        if equal_time_scenario and current_id == 9000:
             job = result["jobs"][0]
             job.update(status="queued", conclusion=None, started_at=None, completed_at=None, steps=[])
-            if scenario == "queued-equal-started":
+            if scenario in {"queued-equal-started", "pending-equal-started"}:
                 job.update(status="in_progress", started_at="2026-07-30T03:00:00Z")
-            elif scenario == "queued-equal-missing":
+            elif scenario in {"queued-equal-missing", "pending-equal-missing"}:
                 job.pop("started_at")
-            elif scenario == "queued-equal-malformed":
+            elif scenario in {"queued-equal-malformed", "pending-equal-malformed"}:
                 job["steps"] = None
-            elif scenario == "queued-equal-incomplete":
+            elif scenario in {"queued-equal-incomplete", "pending-equal-incomplete"}:
                 result["total_count"] = 2
-            elif scenario == "queued-equal-wrong-job":
+            elif scenario in {"queued-equal-wrong-job", "pending-equal-wrong-job"}:
                 job["run_id"] = 9002
+            elif scenario == "pending-equal-started-step":
+                job["steps"] = [{"name": "Set up job", "status": "in_progress", "conclusion": None}]
 elif endpoint.endswith("/actions/workflows/ci.yml"):
     result = {"id": 42, "name": "CI — Validation", "path": ".github/workflows/ci.yml"}
 elif endpoint.endswith("/actions/workflows/ci.yml/runs"):
@@ -2107,7 +2148,7 @@ run_resolver() {
 resolver_posts() {
   jq -r '.posts // 0' "$tmp_dir/resolver-state-$1"
 }
-for scenario in success metadata-last metadata-first consumed fresh-changed fresh-base-branch fresh-head-repository ordinary-failure stale-pr wrong-tuple wrong-association malformed-path fork-empty ambiguous-post original-failure preflight prior-noop prior-cancelled-between-steps prior-cancelled-admission prior-ambiguous prior-unavailable prior-incomplete prior-missing-step prior-oversized source-oversized same-id-rerun prior-rerun-skipped queued-callback queued-new-revision queued-equal queued-equal-started queued-equal-missing queued-equal-malformed queued-equal-incomplete queued-equal-wrong-job prior-queued-old; do
+for scenario in success metadata-last metadata-first consumed fresh-changed fresh-base-branch fresh-head-repository ordinary-failure stale-pr wrong-tuple wrong-association malformed-path fork-empty ambiguous-post original-failure preflight prior-noop prior-cancelled-between-steps prior-cancelled-admission prior-ambiguous prior-unavailable prior-incomplete prior-missing-step prior-oversized source-oversized same-id-rerun prior-rerun-skipped queued-callback queued-new-revision queued-equal queued-equal-started queued-equal-missing queued-equal-malformed queued-equal-incomplete queued-equal-wrong-job prior-queued-old pending-callback pending-new-revision pending-equal pending-equal-started pending-equal-missing pending-equal-malformed pending-equal-incomplete pending-equal-wrong-job pending-equal-started-step pending-callback-started pending-callback-malformed pending-callback-attempt pending-callback-concluded prior-pending-old history-multi history-ceiling history-ambiguous-tail history-duplicate history-missing-current history-before-floor history-overcap history-incomplete history-missing-total history-malformed-total history-inconsistent-total history-malformed-page history-unavailable-page; do
   printf '{"scenario":"%s"}\n' "$scenario" >"$tmp_dir/resolver-state-$scenario"
 done
 # A passive deployment must not even invoke the CLI.
@@ -2146,9 +2187,9 @@ if run_resolver same-id-rerun; then
   echo "current resolver rerun hid its ambiguous first attempt" >&2; exit 1
 fi
 [[ "$(resolver_posts same-id-rerun)" == 1 ]] || { echo "same-ID resolver rerun replayed admission" >&2; exit 1; }
-for scenario in queued-callback queued-new-revision queued-equal; do
+for scenario in queued-callback queued-new-revision queued-equal pending-callback pending-new-revision pending-equal; do
   run_resolver "$scenario"
-  [[ "$(resolver_posts "$scenario")" == 1 ]] || { echo "later queued callback poisoned current resolution: $scenario" >&2; exit 1; }
+  [[ "$(resolver_posts "$scenario")" == 1 ]] || { echo "later waiting callback poisoned current resolution: $scenario" >&2; exit 1; }
   run_resolver "$scenario" 200 no-local-workflow-file admit 9001
   [[ "$(resolver_posts "$scenario")" == 1 ]] || { echo "successor callback repeated consumed admission: $scenario" >&2; exit 1; }
 done
@@ -2160,11 +2201,24 @@ for scenario in prior-noop prior-cancelled-between-steps; do
   run_resolver "$scenario"
   [[ "$(resolver_posts "$scenario")" == 1 ]] || { echo "clean skipped admission blocked resolution" >&2; exit 1; }
 done
-for scenario in prior-ambiguous prior-cancelled-admission prior-unavailable prior-incomplete prior-missing-step prior-oversized source-oversized prior-rerun-skipped prior-queued-old queued-equal-started queued-equal-missing queued-equal-malformed queued-equal-incomplete queued-equal-wrong-job; do
+for scenario in prior-ambiguous prior-cancelled-admission prior-unavailable prior-incomplete prior-missing-step prior-oversized source-oversized prior-rerun-skipped prior-queued-old queued-equal-started queued-equal-missing queued-equal-malformed queued-equal-incomplete queued-equal-wrong-job pending-equal-started pending-equal-missing pending-equal-malformed pending-equal-incomplete pending-equal-wrong-job pending-equal-started-step pending-callback-started pending-callback-malformed pending-callback-attempt pending-callback-concluded prior-pending-old history-ambiguous-tail history-duplicate history-missing-current history-before-floor history-overcap history-incomplete history-missing-total history-malformed-total history-inconsistent-total history-malformed-page history-unavailable-page; do
   if run_resolver "$scenario"; then
     echo "unproved prior admission did not require recovery: $scenario" >&2; exit 1
   fi
   [[ "$(resolver_posts "$scenario")" == 0 ]] || { echo "unproved prior admission was replayed" >&2; exit 1; }
+done
+for scenario in history-multi history-ceiling; do
+  run_resolver "$scenario"
+  [[ "$(resolver_posts "$scenario")" == 1 ]] || { echo "complete resolver history did not admit once: $scenario" >&2; exit 1; }
+  expected_pages=3
+  [[ "$scenario" != history-ceiling ]] || expected_pages=10
+  jq -e --argjson pages "$expected_pages" '.history_pages == [range(1; $pages + 1)]' \
+    "$tmp_dir/resolver-state-$scenario" >/dev/null || { echo "resolver history pagination was incomplete: $scenario" >&2; exit 1; }
+done
+for scenario in prior-oversized history-overcap; do
+  [[ "$(jq '.history_pages | length' "$tmp_dir/resolver-state-$scenario")" == 1 ]] || {
+    echo "resolver fetched more history after observing the API ceiling: $scenario" >&2; exit 1;
+  }
 done
 [[ "$(jq '[.calls[] | select(endswith("/actions/runs/9001/attempts/1/jobs"))] | length' "$tmp_dir/resolver-state-prior-rerun-skipped")" == 0 ]] || {
   echo "historical rerun relied on a latest skipped snapshot over its ambiguous first attempt" >&2; exit 1;
