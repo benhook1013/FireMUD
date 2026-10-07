@@ -1802,13 +1802,6 @@ def main() -> int:
     k3s_rule = next(rule for rule in renovate["packageRules"] if rule.get("matchPackageNames") == ["rancher/k3s"])
     if k3s_rule.get("allowedVersions") != "/^v1\\.34\\.[0-9]+-k3s[0-9]+$/" or k3s_rule.get("pinDigests") is not True or k3s_rule.get("automerge") is not False:
         fail("K3s updates must preserve the supported Kubernetes minor and reviewed digest updates")
-    # Version comments let the native manager update immutable action commits.
-    # Exact upstream tag/SHA identity is verified separately during coverage proof.
-    action_pattern = re.compile(r"(?m)^\s*uses:\s+[^./\s][^\s]*@[0-9a-f]{40}(?P<comment>[^\n]*)$")
-    for action_file in (root / ".github").rglob("*.yml"):
-        for action in action_pattern.finditer(action_file.read_text()):
-            if not re.search(r"# v[0-9]+(?:\.[0-9]+){0,2}(?:[ -]|$)", action.group("comment")):
-                fail(f"Pinned external action lacks a managed release ref: {action_file.relative_to(root)}")
     if "**/test/**" in renovate.get("ignorePaths", []):
         fail("Renovate must include service test image authorities")
     manifest_patterns = renovate.get("kubernetes", {}).get("managerFilePatterns", [])

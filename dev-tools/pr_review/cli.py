@@ -1497,10 +1497,8 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
             for channel, state in stack_item["channels"].items():
                 if state not in {"COMPLETE", "HUMAN_STOPPED"}:
                     review_reasons.append(f"{channel} review policy is {state}")
-                if state == "HUMAN_STOPPED":
-                    review_reasons.extend(
-                        f"{channel}: {reason}" for reason in stack_item.get("review_obligations", {}).get(channel, ())
-                    )
+            for channel, obligations in stack_item.get("review_obligations", {}).items():
+                review_reasons.extend(f"{channel}: {reason}" for reason in obligations)
             for channel, allocation in stack_item.get("allocations", {}).items():
                 if allocation["status"] not in {"HANDED_OFF", "STOPPED"}:
                     review_reasons.append(

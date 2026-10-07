@@ -26,6 +26,7 @@ import net.firedevops.firemud.automationscripting.service.ScriptEventRegistrySer
 import net.firedevops.firemud.common.saga.Saga;
 import net.firedevops.firemud.common.saga.SagaException;
 import net.firedevops.firemud.common.saga.SagaRunner;
+import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -51,7 +52,9 @@ class ScriptDefinitionServiceTransactionIntegrationTest {
   private static final String VERSION = "patch-definition";
 
   @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(
+          PostgresBackedServiceTestSupport.postgresImage("postgres:16-alpine"));
 
   private String schema;
   private DSLContext dsl;

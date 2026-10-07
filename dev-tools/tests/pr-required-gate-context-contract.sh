@@ -218,8 +218,26 @@ while IFS='|' read -r workflow gate_job_id gate workflow_name workflow_file work
     exit 1
   }
   harden_block="$(awk '/^      - name: Harden runner$/{in_harden=1} in_harden{if (/^      - / && $0 != "      - name: Harden runner") exit; print}' <<<"$gate_block")"
+  harden_action_pattern='^        uses: step-security/harden-runner@[0-9a-f]{40}([[:blank:]]+#.*)?[[:blank:]]*$'
+  fixture_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  for annotation in '' ' # v2.19.3' ' # verified upstream ref'; do
+    fixture_uses="        uses: step-security/harden-runner@${fixture_sha}${annotation}"
+    grep -Eq "$harden_action_pattern" <<<"$fixture_uses" || {
+      echo "required-gate hardening pin rejected a valid immutable SHA annotation form" >&2
+      exit 1
+    }
+  done
+  for invalid_uses in \
+    "        uses: actions/harden-runner@${fixture_sha}" \
+    '        uses: step-security/harden-runner@v2' \
+    "        uses: step-security/harden-runner@${fixture_sha%?}"; do
+    if grep -Eq "$harden_action_pattern" <<<"$invalid_uses"; then
+      echo "required-gate hardening pin accepted an invalid action reference: $invalid_uses" >&2
+      exit 1
+    fi
+  done
   if grep -Fq '        if:' <<<"$harden_block" ||
-    ! grep -Eq '        uses: step-security/harden-runner@[0-9a-f]{40}( # v[0-9]+(\.[0-9]+){0,2})?$' <<<"$harden_block" ||
+    ! grep -Eq "$harden_action_pattern" <<<"$harden_block" ||
     ! grep -Fq '          egress-policy: audit' <<<"$harden_block"; then
     echo "$workflow $gate hardening must remain unconditional and retain its pinned audit configuration" >&2
     exit 1

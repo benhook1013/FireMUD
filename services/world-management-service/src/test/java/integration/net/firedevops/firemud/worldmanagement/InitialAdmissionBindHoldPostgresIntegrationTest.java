@@ -51,7 +51,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
     properties = {"spring.grpc.server.port=0"})
 class InitialAdmissionBindHoldPostgresIntegrationTest {
   @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(
+          PostgresBackedServiceTestSupport.postgresImage("postgres:16-alpine"));
 
   @Container
   static GenericContainer<?> redis =

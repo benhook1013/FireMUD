@@ -14,6 +14,7 @@ dependencies {
     compileOnly(libs.lombok)
     compileOnly(libs.spotbugs.annotations)
 
+    testImplementation(testFixtures(project(":common-test-support")))
     testImplementation(libs.testcontainers.junit.jupiter)
     testImplementation(libs.testcontainers.postgresql)
     testRuntimeOnly(libs.postgresql)

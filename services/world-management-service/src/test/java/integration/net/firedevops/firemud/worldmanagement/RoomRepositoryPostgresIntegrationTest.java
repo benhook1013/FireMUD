@@ -37,7 +37,9 @@ class RoomRepositoryPostgresIntegrationTest {
   private static final long VERSION_ID = 77L;
 
   @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(
+          PostgresBackedServiceTestSupport.postgresImage("postgres:16-alpine"));
 
   @Container
   static GenericContainer<?> redis =

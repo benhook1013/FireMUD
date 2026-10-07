@@ -4,21 +4,115 @@ on:
   workflow_run:
     workflows: [Build Runtime Images]
     types: [completed]
+  repository_dispatch:
+    types: [pr-runtime-image-publication]
 
-run-name: Publish PR Runtime Images ${{ github.event.workflow_run.display_title }}
+run-name: Publish PR Runtime Images ${{ github.event.workflow_run.display_title || format('source-run-{0}', github.event.client_payload.source_run_id) }}
 
 permissions: {}
 
-concurrency:
-  # PR refresh runs execute from the default branch, so serialize on the exact
-  # merge-bound source title rather than the source run's default-branch SHA.
-  group: publish-pr-merge-images-${{ github.event.workflow_run.display_title }}
-  cancel-in-progress: false
-
 jobs:
+  source:
+    name: Resolve Exact Runtime Publication Source
+    if: ${{ (github.event_name == 'workflow_run' && (github.event.workflow_run.event == 'pull_request' || github.event.workflow_run.event == 'repository_dispatch') && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository) || (github.event_name == 'repository_dispatch' && github.event.action == 'pr-runtime-image-publication' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+    outputs:
+      source: ${{ steps.resolve.outputs.source }}
+      title: ${{ steps.resolve.outputs.title }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
+        with:
+          egress-policy: audit
+
+      - name: Resolve successful exact source run
+        id: resolve
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            const callback = context.eventName === "workflow_run";
+            const payload = context.payload.client_payload;
+            if (!callback && (context.eventName !== "repository_dispatch" ||
+                context.payload.action !== "pr-runtime-image-publication" ||
+                context.ref !== `refs/heads/${context.payload.repository.default_branch}` ||
+                !payload || Array.isArray(payload) || typeof payload !== "object" ||
+                Object.keys(payload).length !== 1 || !Object.hasOwn(payload, "source_run_id"))) {
+              throw new Error("publication handoff is not the closed default-branch source-run payload");
+            }
+            const sourceIdText = String(callback ? context.payload.workflow_run.id : payload.source_run_id);
+            if (!/^[1-9][0-9]*$/.test(sourceIdText) || !Number.isSafeInteger(Number(sourceIdText))) {
+              throw new Error("publication source run ID is not a positive safe integer");
+            }
+            const sourceId = Number(sourceIdText);
+            const repository = `${context.repo.owner}/${context.repo.repo}`;
+            const { data: workflow } = await github.rest.actions.getWorkflow({
+              ...context.repo, workflow_id: "runtime-images.yml",
+            });
+            if (!Number.isSafeInteger(workflow.id) || workflow.id <= 0 ||
+                workflow.name !== "Build Runtime Images" || workflow.path !== ".github/workflows/runtime-images.yml") {
+              throw new Error("runtime source workflow identity is not trusted");
+            }
+            function isTrustedWorkflowPath(value) {
+              if (value === workflow.path) return true;
+              const prefix = `${workflow.path}@`;
+              if (typeof value !== "string" || value.slice(0, prefix.length) !== prefix) return false;
+              const ref = value.slice(prefix.length);
+              if (!ref || ref === "@" || ref.endsWith(".") || ref.includes("..") ||
+                  ref.includes("@{") || ref.includes("//") || [...ref].some(character =>
+                    character.charCodeAt(0) <= 32 || character.charCodeAt(0) === 127 ||
+                    "~^:?*[\\".includes(character))) return false;
+              return ref.split("/").every(part => part && part !== "." && part !== ".." &&
+                !part.startsWith(".") && !part.endsWith(".lock"));
+            }
+            const titlePattern = /^Build Runtime Images secure-pr-artifact pr-([1-9][0-9]*) base-([0-9a-f]{40}) head-([0-9a-f]{40}) merge-([0-9a-f]{40}) mode-required$/;
+            const deadline = Date.now() + 120000;
+            for (;;) {
+              const { data: run } = await github.rest.actions.getWorkflowRun({
+                ...context.repo, run_id: sourceId,
+              });
+              const title = typeof run.display_title === "string" && run.display_title.match(titlePattern);
+              if (run.id !== sourceId || run.workflow_id !== workflow.id ||
+                  !isTrustedWorkflowPath(run.path) || !title ||
+                  !["Build Runtime Images", run.display_title].includes(run.name) ||
+                  !["pull_request", "repository_dispatch"].includes(run.event) ||
+                  run.repository?.full_name !== repository || run.head_repository?.full_name !== repository ||
+                  typeof run.head_branch !== "string" || !run.head_branch ||
+                  typeof run.head_sha !== "string" || !/^[0-9a-f]{40}$/.test(run.head_sha) ||
+                  (run.event === "pull_request" && run.head_sha !== title[3]) ||
+                  (run.event === "repository_dispatch" && run.head_branch !== context.payload.repository.default_branch)) {
+                throw new Error("publication source run provenance is not trusted");
+              }
+              if (callback) {
+                const event = context.payload.workflow_run;
+                for (const field of ["id", "workflow_id", "display_title", "event", "conclusion", "head_branch", "head_sha"]) {
+                  if (run[field] !== event[field]) throw new Error(`source API ${field} differs from callback`);
+                }
+                for (const field of ["repository", "head_repository"]) {
+                  if (run[field]?.full_name !== event[field]?.full_name) throw new Error(`source API ${field} differs from callback`);
+                }
+              }
+              if (run.status === "completed") {
+                if (run.conclusion !== "success") throw new Error("publication source run did not succeed");
+                core.setOutput("source", JSON.stringify(run));
+                core.setOutput("title", run.display_title);
+                break;
+              }
+              if (callback || !["queued", "in_progress", "waiting", "pending", "requested"].includes(run.status) ||
+                  run.conclusion != null || Date.now() >= deadline) {
+                throw new Error("publication source did not reach a real terminal success within the bounded wait");
+              }
+              await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+
   publish:
     name: Publish Fixed PR Merge Image Tags
-    if: ${{ (github.event.workflow_run.event == 'pull_request' || github.event.workflow_run.event == 'repository_dispatch') && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository }}
+    needs: [source]
+    concurrency:
+      group: publish-pr-merge-images-${{ needs.source.outputs.title }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     permissions:
       # This trusted default-branch workflow reads one successful run artifact and publishes immutable merge tags.
@@ -27,7 +121,7 @@ jobs:
       packages: write
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
         with:
           egress-policy: audit
 
@@ -44,25 +138,25 @@ jobs:
         uses: ./.github/actions/setup-gh
 
       - name: Download successful PR image artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           path: /tmp/pr-runtime-artifacts
           github-token: ${{ github.token }}
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ fromJSON(needs.source.outputs.source).id }}
 
       - name: Validate exact PR source and artifact before registry login
         env:
           CURRENT_REPOSITORY: ${{ github.repository }}
-          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
-          SOURCE_RUN_URL: ${{ github.event.workflow_run.html_url }}
-          SOURCE_RUN_TITLE: ${{ github.event.workflow_run.display_title }}
-          SOURCE_RUN_EVENT: ${{ github.event.workflow_run.event }}
-          SOURCE_RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
-          SOURCE_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
-          SOURCE_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-          SOURCE_HEAD_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
-          SOURCE_RUN_REPOSITORY: ${{ github.event.workflow_run.repository.full_name }}
-          SOURCE_WORKFLOW_ID: ${{ github.event.workflow_run.workflow_id }}
+          SOURCE_RUN_ID: ${{ fromJSON(needs.source.outputs.source).id }}
+          SOURCE_RUN_URL: ${{ fromJSON(needs.source.outputs.source).html_url }}
+          SOURCE_RUN_TITLE: ${{ fromJSON(needs.source.outputs.source).display_title }}
+          SOURCE_RUN_EVENT: ${{ fromJSON(needs.source.outputs.source).event }}
+          SOURCE_RUN_CONCLUSION: ${{ fromJSON(needs.source.outputs.source).conclusion }}
+          SOURCE_HEAD_BRANCH: ${{ fromJSON(needs.source.outputs.source).head_branch }}
+          SOURCE_HEAD_SHA: ${{ fromJSON(needs.source.outputs.source).head_sha }}
+          SOURCE_HEAD_REPOSITORY: ${{ fromJSON(needs.source.outputs.source).head_repository.full_name }}
+          SOURCE_RUN_REPOSITORY: ${{ fromJSON(needs.source.outputs.source).repository.full_name }}
+          SOURCE_WORKFLOW_ID: ${{ fromJSON(needs.source.outputs.source).workflow_id }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -348,11 +442,11 @@ jobs:
 
       - name: Summarize trusted publication source
         env:
-          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
-          SOURCE_RUN_URL: ${{ github.event.workflow_run.html_url }}
-          SOURCE_RUN_TITLE: ${{ github.event.workflow_run.display_title }}
-          SOURCE_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
-          SOURCE_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          SOURCE_RUN_ID: ${{ fromJSON(needs.source.outputs.source).id }}
+          SOURCE_RUN_URL: ${{ fromJSON(needs.source.outputs.source).html_url }}
+          SOURCE_RUN_TITLE: ${{ fromJSON(needs.source.outputs.source).display_title }}
+          SOURCE_HEAD_BRANCH: ${{ fromJSON(needs.source.outputs.source).head_branch }}
+          SOURCE_HEAD_SHA: ${{ fromJSON(needs.source.outputs.source).head_sha }}
           PR_HEAD_BRANCH: ${{ env.PR_HEAD_BRANCH }}
         run: |
           python3 - <<'PY'
@@ -370,7 +464,7 @@ jobs:
           - Current PR head branch/SHA: <code>{markdown_code(os.environ.get('PR_HEAD_BRANCH', '<validated>'))}</code> / `{os.environ['HEAD_SHA']}`
           - Tested merge SHA and immutable image tag: `{os.environ['MERGE_SHA']}` / `{os.environ['IMAGE_TAG']}`
 
-          GitHub displays this run in the default-branch context because `workflow_run` uses the trusted workflow definition. It publishes only the successful source run's exact merge-SHA artifact after validating current PR identity and provenance, and does not check out PR source.
+          GitHub displays this run in the default-branch context because completion callbacks and typed publication handoffs use the trusted workflow definition. It publishes only the successful source run's exact merge-SHA artifact after validating current PR identity and provenance, and does not check out PR source.
           """
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary_file:
               summary_file.write(summary)

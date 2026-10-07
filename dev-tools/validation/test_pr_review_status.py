@@ -1410,6 +1410,66 @@ class StatusTest(unittest.TestCase):
                     self.assertFalse(value["ready"])
                     self.assertIn(f"{channel}: {obligation}", value["reasons"])
 
+    def test_completed_discovery_keeps_fresh_controller_obligations_as_readiness_gates(self) -> None:
+        for obligation in (
+            "accepted findings remain pending; source resolution proof is uncertain",
+            "accepted findings remain pending; their fixes are mandatory",
+            "unresolved review thread discovered after public status read",
+        ):
+            for channel in ("hosted", "cli"):
+                with self.subTest(obligation=obligation, channel=channel):
+                    report = {
+                        "pull_request": {"headRefOid": HEAD, "baseRefName": "develop", "baseRefOid": BASE},
+                        "reasons": [],
+                        "ready": True,
+                        "verdict": "READY",
+                        "mergeability": {"clean": True, "diagnosis": "READY"},
+                    }
+                    stack_report = {
+                        "prs": [
+                            {
+                                "pr": 2838,
+                                "head": HEAD,
+                                "base": "develop",
+                                "pr_base_oid": BASE,
+                                "reconciliation": "COHERENT",
+                                "channels": {"hosted": "COMPLETE", "cli": "COMPLETE"},
+                                "review_obligations": {channel: [obligation]},
+                            }
+                        ],
+                        "review_fronts": {"hosted": 2839, "cli": 2839},
+                    }
+                    controller = Mock()
+
+                    def fresh_stack_status(number: int, report: dict = report, stack_report: dict = stack_report) -> dict:
+                        public_status.assert_called_once()
+                        self.assertEqual(number, 2838)
+                        self.assertTrue(report["ready"])
+                        self.assertEqual(report["reasons"], [])
+                        return stack_report
+
+                    controller.status_for_pr.side_effect = fresh_stack_status
+                    with (
+                        patch.object(cli, "default_controller", return_value=controller),
+                        patch.object(status, "status", return_value=report) as public_status,
+                        patch.object(
+                            cli, "_read_record_incoming_routes", return_value=([], {"status": "not_bootstrapped"})
+                        ),
+                    ):
+                        value, exit_status = cli._dispatch(
+                            cli._parser().parse_args(["status", "--pr", "2838", "--json"])
+                        )
+                    self.assertEqual(exit_status, 0)
+                    self.assertFalse(value["ready"])
+                    self.assertEqual(value["verdict"], "NOT READY")
+                    self.assertEqual(value["reasons"], [f"{channel}: {obligation}"])
+                    self.assertFalse(value["mergeability"]["clean"])
+                    self.assertEqual(value["mergeability"]["diagnosis"], "NOT READY")
+                    self.assertEqual(value["review_stack"], stack_report)
+                    self.assertEqual(stack_report["review_fronts"], {"hosted": 2839, "cli": 2839})
+                    controller.status_for_pr.assert_called_once_with(2838)
+                    controller.status.assert_not_called()
+
     def test_cli_status_supplies_persisted_summary_dispositions_to_report(self) -> None:
         disposition = SummaryFindingDisposition(
             2838, HEAD, "review", 501, "outside_diff", 1, "rejected", "finding does not apply"

@@ -14,7 +14,7 @@ require_contains() {
   }
 }
 
-require_contains 'run-name: Publish PR Runtime Images ${{ github.event.workflow_run.display_title }}'
+require_contains 'run-name: Publish PR Runtime Images ${{ github.event.workflow_run.display_title ||'
 require_contains 'pr-merge-'
 require_contains 'pr-runtime-provenance.json'
 require_contains 'source run title does not contain exact PR/base/head/merge/mode metadata'
@@ -42,7 +42,7 @@ require_contains 'source_image_ids=()'
 require_contains 'docker pull "$image"'
 require_contains 'does not match the validated source artifact'
 require_contains 'uses: ./.github/actions/setup-gh'
-require_contains 'group: publish-pr-merge-images-${{ github.event.workflow_run.display_title }}'
+require_contains 'group: publish-pr-merge-images-${{ needs.source.outputs.title }}'
 require_contains 'cancel-in-progress: false'
 if grep -Fq -- 'pr-runtime-images-${{ github.event.workflow_run.head_sha }}' "$WORKFLOW"; then
   echo "publisher must not fall back to a PR head-SHA artifact name" >&2
@@ -79,8 +79,10 @@ trap 'rm -rf -- "$fixture_dir"' EXIT
 validation_script="$fixture_dir/publisher-validation.py"
 publisher_script="$fixture_dir/publisher.sh"
 runtime_script="$fixture_dir/runtime.sh"
+resolver_script="$fixture_dir/resolver.js"
+dispatch_script="$fixture_dir/dispatch.js"
 
-python3 - "$WORKFLOW" "$RUNTIME_WORKFLOW" "$validation_script" "$publisher_script" "$runtime_script" <<'PY'
+python3 - "$WORKFLOW" "$RUNTIME_WORKFLOW" "$validation_script" "$publisher_script" "$runtime_script" "$resolver_script" "$dispatch_script" <<'PY'
 import re
 import sys
 from pathlib import Path
@@ -99,7 +101,8 @@ if not download < validate < login < publish:
     raise SystemExit("source/artifact validation must precede registry login and publication")
 if "github.event.workflow_run.head_repository.full_name == github.repository" not in workflow:
     raise SystemExit("publisher must reject fork-owned source runs")
-match = re.search(r"(?ms)^          python3 - <<'PY'\n(?P<script>.*?)^          PY$", workflow)
+validation_section = workflow[validate:login]
+match = re.search(r"(?ms)^          python3 - <<'PY'\n(?P<script>.*?)^          PY$", validation_section)
 if match is None:
     raise SystemExit("publisher validation script was not found")
 script = match.group("script")
@@ -115,7 +118,34 @@ publisher_path.write_text(
     "\n".join(line[10:] if line.startswith("          ") else line for line in publish_script.splitlines()) + "\n",
     encoding="utf-8",
 )
+def javascript_step(text, name):
+    section = text.split("      - name: " + name + "\n", 1)[1]
+    section = section.split("          script: |\n", 1)[1]
+    lines = []
+    for line in section.splitlines():
+        if line and not line.startswith("            "):
+            break
+        lines.append(line[12:] if line.startswith("            ") else line)
+    return "\n".join(lines)
+
+Path(sys.argv[6]).write_text(javascript_step(workflow, "Resolve successful exact source run"))
 runtime_workflow = runtime_workflow_path.read_text(encoding="utf-8")
+Path(sys.argv[7]).write_text(javascript_step(runtime_workflow, "Dispatch exact runtime publication source"))
+handoff = runtime_workflow.split("  dispatch-pr-runtime-publication:\n", 1)[1].split("  smoke-full:\n", 1)[0]
+for required in ["needs: [image-meta, pr-local-smoke, pr-controller-smoke]", "github.event_name == 'repository_dispatch'", "github.event.action == 'pr-runtime-base-refresh'", "github.ref == format('refs/heads/{0}', github.event.repository.default_branch)", "needs.image-meta.result == 'success'", "needs.pr-local-smoke.result == 'success'", "needs.pr-controller-smoke.result == 'success'", "needs.image-meta.outputs.controller_smoke_required == 'false'", "needs.pr-controller-smoke.result == 'skipped'", "contents: write"]:
+    if required not in handoff:
+        raise SystemExit("trusted handoff prerequisite missing: " + required)
+if any(forbidden in handoff for forbidden in ["actions/checkout", "packages: write", "actions: write", "secrets:"]):
+    raise SystemExit("trusted handoff must not consume source or other write credentials")
+resolver = workflow.split("  source:\n", 1)[1].split("  publish:\n", 1)[0]
+if "actions: read" not in resolver or any(value in resolver for value in ["actions/checkout", "contents: write", "packages: write"]):
+    raise SystemExit("source resolver must be no-checkout and read-only")
+if "workflow_dispatch:" in workflow or "types: [pr-runtime-image-publication]" not in workflow:
+    raise SystemExit("publisher handoff must retain default-branch repository dispatch")
+for job in ["pr-local-smoke", "pr-controller-smoke"]:
+    section = re.split(r"\n  [a-z][a-z-]*:", runtime_workflow.split("  " + job + ":\n", 1)[1], maxsplit=1)[0]
+    if "contents: read" not in section or "contents: write" in section or "packages: write" in section:
+        raise SystemExit("PR source jobs must remain read-only")
 runtime_start = runtime_workflow.index("- name: Promote smoke-tested service digests")
 runtime_run = runtime_workflow.index("        run: |\n", runtime_start) + len("        run: |\n")
 runtime_script = runtime_workflow[runtime_run:]
@@ -124,6 +154,84 @@ runtime_path.write_text(
     encoding="utf-8",
 )
 PY
+
+node - "$resolver_script" "$dispatch_script" "$RUNTIME_WORKFLOW" <<'JS'
+const fs = require("fs");
+const assert = require("assert/strict");
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+const resolver = new AsyncFunction("github", "context", "core", "Date", "setTimeout", fs.readFileSync(process.argv[2], "utf8"));
+const dispatch = new AsyncFunction("github", "context", fs.readFileSync(process.argv[3], "utf8"));
+const sha = character => character.repeat(40);
+const title = `Build Runtime Images secure-pr-artifact pr-42 base-${sha("b")} head-${sha("a")} merge-${sha("c")} mode-required`;
+const repository = { full_name: "benhook1013/FireMUD", default_branch: "develop" };
+const source = { id: 4242, workflow_id: 777, path: ".github/workflows/runtime-images.yml", name: title, display_title: title, event: "repository_dispatch", repository, head_repository: repository, head_branch: "develop", head_sha: sha("b"), status: "completed", conclusion: "success" };
+const baseContext = { eventName: "repository_dispatch", ref: "refs/heads/develop", repo: {owner: "benhook1013", repo: "FireMUD"}, runId: 4242, payload: { repository, action: "pr-runtime-image-publication", client_payload: { source_run_id: "4242" } } };
+async function resolve({ context = baseContext, runs = [source], workflow = { id: 777, name: "Build Runtime Images", path: source.path }, error = false } = {}) {
+  let reads = 0, clock = 0;
+  const output = {};
+  const github = { rest: { actions: {
+    getWorkflow: async () => ({data: workflow}),
+    getWorkflowRun: async request => { assert.equal(request.run_id, 4242); reads++; if (error) throw Error("API unavailable"); return {data: runs[Math.min(reads - 1, runs.length - 1)]}; },
+  } } };
+  await resolver(github, context, {setOutput: (key, value) => {output[key] = value;}}, {now: () => {clock += 60000; return clock;}}, fn => fn());
+  assert.equal(output.title, title);
+  assert.equal(JSON.parse(output.source).status, "completed");
+  return {reads, output};
+}
+const runtimeWorkflow = fs.readFileSync(process.argv[4], "utf8");
+const handoffCondition = runtimeWorkflow.split("  dispatch-pr-runtime-publication:\n")[1].match(/^    if: \$\{\{ (.*) \}\}$/m)[1]
+  .replace(/needs\.([a-z-]+)/g, (_, key) => `needs[${JSON.stringify(key)}]`);
+const admitted = new Function("github", "needs", "always", "cancelled", "format", `return ${handoffCondition};`);
+const trigger = {event_name: "repository_dispatch", event: {action: "pr-runtime-base-refresh", repository}, ref: "refs/heads/develop"};
+const success = {"image-meta": {result: "success", outputs: {controller_smoke_required: "false"}}, "pr-local-smoke": {result: "success"}, "pr-controller-smoke": {result: "skipped"}};
+function admits(event = trigger, results = success, cancelled = false) {
+  return admitted(event, results, () => true, () => cancelled, (pattern, value) => pattern.replace("{0}", value));
+}
+assert.equal(admits(), true);
+assert.equal(admits(trigger, {...success, "image-meta": {result: "success", outputs: {controller_smoke_required: "true"}}, "pr-controller-smoke": {result: "success"}}), true);
+for (const event of [{...trigger, event_name: "pull_request"}, {...trigger, ref: "refs/heads/feature"}, {...trigger, event: {...trigger.event, action: "other"}}]) assert.equal(admits(event), false);
+for (const job of ["image-meta", "pr-local-smoke", "pr-controller-smoke"]) {
+  for (const result of ["failure", "cancelled"]) assert.equal(admits(trigger, {...success, [job]: {...success[job], result}}), false);
+}
+assert.equal(admits(trigger, {...success, "image-meta": {result: "success", outputs: {controller_smoke_required: "true"}}}), false);
+assert.equal(admits(trigger, {...success, "image-meta": {result: "success", outputs: {}}}), false);
+assert.equal(admits(trigger, success, true), false);
+(async () => {
+  let dispatched;
+  await dispatch({rest: {repos: {createDispatchEvent: async payload => {dispatched = payload;}}}}, baseContext);
+  assert.deepEqual(dispatched, {...baseContext.repo, event_type: "pr-runtime-image-publication", client_payload: {source_run_id: "4242"}});
+  const direct = await resolve();
+  const pending = {...source, status: "in_progress", conclusion: null};
+  assert.equal((await resolve({runs: [pending, source]})).reads, 2);
+  const callbackContext = {...baseContext, eventName: "workflow_run", payload: {repository, workflow_run: source}};
+  assert.equal((await resolve({context: callbackContext})).output.title, direct.output.title);
+  for (const suffix of ["refs/heads/develop", "refs/pull/42/merge", sha("b")]) {
+    const suffixed = {...source, path: `${source.path}@${suffix}`};
+    assert.equal((await resolve({runs: [suffixed]})).output.title, direct.output.title);
+    assert.equal((await resolve({runs: [suffixed], context: {...callbackContext, payload: {repository, workflow_run: suffixed}}})).output.title, direct.output.title);
+  }
+  for (const path of ["other.yml@refs/heads/develop", `${source.path}.bak@refs/heads/develop`,
+      `${source.path}@`, `${source.path}@@`, `${source.path}@refs//heads/develop`,
+      `${source.path}@refs/heads/.hidden`, `${source.path}@refs/heads/foo.lock`,
+      `${source.path}@refs/heads/foo.`, `${source.path}@refs/heads/a..b`,
+      `${source.path}@refs/heads/a@{b}`, `${source.path}@refs/heads/a b`,
+      `${source.path}@refs/heads/a\\b`, `${source.path}@refs/heads/a?b`]) {
+    const malformed = {...source, path};
+    await assert.rejects(resolve({runs: [malformed]}), /provenance/);
+    await assert.rejects(resolve({runs: [malformed], context: {...callbackContext, payload: {repository, workflow_run: malformed}}}), /provenance/);
+  }
+  for (const change of [{status: "completed", conclusion: "failure"}, {head_repository: {full_name: "fork/FireMUD"}}, {repository: {full_name: "fork/FireMUD"}}, {workflow_id: 778}, {path: "other.yml"}, {event: "push"}, {head_branch: "feature"}, {display_title: "unbound"}, {head_sha: "bad"}]) {
+    await assert.rejects(resolve({runs: [{...source, ...change}]}));
+  }
+  await assert.rejects(resolve({runs: [pending]}), /bounded wait/);
+  await assert.rejects(resolve({error: true}), /API unavailable/);
+  await assert.rejects(resolve({context: {...baseContext, ref: "refs/heads/feature"}}));
+  await assert.rejects(resolve({context: {...baseContext, payload: {...baseContext.payload, client_payload: {source_run_id: "4242", extra: true}}}}));
+  await assert.rejects(resolve({context: {...baseContext, payload: {...baseContext.payload, client_payload: {source_run_id: "../4242"}}}}));
+  await assert.rejects(resolve({context: {...callbackContext, payload: {repository, workflow_run: {...source, head_sha: sha("d")}}}}), /differs from callback/);
+  console.log("Exact source handoff and terminal-resolution fixtures passed.");
+})().catch(error => { console.error(error); process.exitCode = 1; });
+JS
 
 artifact_root="$fixture_dir/artifacts"
 fake_bin="$fixture_dir/bin"
