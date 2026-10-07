@@ -8,6 +8,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
+import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -257,6 +258,21 @@ class AccountGameplayDelegationResponseEnvelopePersistenceIntegrationTest {
     var secondCandidate =
         inTransaction(
             context, () -> issuance.bindSignedCandidate(secondPending.requestId(), secondJwt, "1"));
+    byte[] secondStoredBundleBytes =
+        inTransaction(
+            context,
+            () ->
+                bundles
+                    .readStoredNonAuthorizingValue(secondPending.operationId())
+                    .canonicalBytes());
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT count(*) AS bundle_count "
+                            + "FROM account_gameplay_delegation_auth_evidence_bundles"),
+                    "bound candidate bundle count query must return a row")
+                .get("bundle_count", Long.class))
+        .isEqualTo(2L);
     byte[] fakeCiphertext = new byte[] {1, 2, 3};
     assertThatThrownBy(
             () ->
@@ -300,7 +316,35 @@ class AccountGameplayDelegationResponseEnvelopePersistenceIntegrationTest {
                             + "FROM account_gameplay_delegation_auth_evidence_bundles"),
                     "bundle count query must return a row")
                 .get("bundle_count", Long.class))
+        .isEqualTo(2L);
+    assertThat(
+            inTransaction(
+                context,
+                () ->
+                    bundles.readStoredNonAuthorizingValue(pending.operationId()).canonicalBytes()))
+        .containsExactly(storedBundleBytes);
+    assertThat(
+            inTransaction(
+                context,
+                () ->
+                    bundles
+                        .readStoredNonAuthorizingValue(secondPending.operationId())
+                        .canonicalBytes()))
+        .containsExactly(secondStoredBundleBytes);
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT count(*) AS response_count "
+                            + "FROM account_gameplay_delegation_response_envelopes"),
+                    "failed encryption response count query must return a row")
+                .get("response_count", Long.class))
         .isEqualTo(1L);
+    assertThat(
+            dsl.fetchOne(
+                "SELECT operation_id FROM account_gameplay_delegation_response_envelopes "
+                    + "WHERE operation_id = ?",
+                secondPending.operationId()))
+        .isNull();
 
     CountDownLatch concurrentStart = new CountDownLatch(1);
     ExecutorService concurrentRetries = Executors.newFixedThreadPool(2);
@@ -386,7 +430,7 @@ class AccountGameplayDelegationResponseEnvelopePersistenceIntegrationTest {
     account.setUsername("response-envelope-" + suffix);
     account.setEmail("response-envelope-" + UUID.randomUUID() + "@example.test");
     account.setPasswordHash("integration-test-hash");
-    account.setRole("player");
+    // The fresh Account birth path creates the exact empty global-role source only for null role.
     DSLContext dsl = context.dsl();
     AccountAuthorityGenerationRepository authorities =
         new AccountAuthorityGenerationRepository(dsl);
@@ -535,8 +579,22 @@ class AccountGameplayDelegationResponseEnvelopePersistenceIntegrationTest {
     try {
       return future.get(CONCURRENT_PROOF_TIMEOUT_SECONDS, TimeUnit.SECONDS);
     } catch (ExecutionException workerFailure) {
-      throw new AssertionError("Concurrent response-envelope proof worker failed");
+      throw new AssertionError(
+          "Concurrent response-envelope proof worker failed;sqlstate="
+              + safeWorkerSqlState(workerFailure));
     }
+  }
+
+  private static String safeWorkerSqlState(Throwable failure) {
+    Throwable current = failure;
+    for (int depth = 0; current != null && depth < 8; depth++) {
+      if (current instanceof SQLException sqlFailure) {
+        String sqlState = sqlFailure.getSQLState();
+        if (sqlState != null && sqlState.matches("[0-9A-Z]{5}")) return sqlState;
+      }
+      current = current.getCause();
+    }
+    return "UNKNOWN";
   }
 
   private static void stopConcurrentProofWorkers(ExecutorService executor) {

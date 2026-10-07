@@ -27,6 +27,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutionException;
@@ -66,6 +67,7 @@ import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.postgresql.util.PSQLException;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
@@ -76,6 +78,9 @@ import tools.jackson.databind.json.JsonMapper;
 
 /** Real-PostgreSQL proof of readiness planning, exact signing, verification, and quarantine. */
 class AccountJwtReadinessProbePersistenceIntegrationTest {
+  private static final Set<String> VALIDATION_CONSTRAINT_ALLOWLIST =
+      Set.of(
+          "account_jwt_readiness_probe_state_check", "account_jwt_readiness_probe_evidence_check");
   private static final String SCHEMA_PREFIX = "jwt_readiness_probe_proof";
   private static final String EXTERNAL_POSTGRES_URL_ENV =
       "FIREMUD_ACCOUNT_SIGNER_TEST_POSTGRES_URL";
@@ -370,6 +375,8 @@ class AccountJwtReadinessProbePersistenceIntegrationTest {
     int[] transientDeliveries = {0};
     String[] transientFailurePayload = {null};
     String[] safeDeliveryStage = {"NOT_STARTED"};
+    String[] safeDeliveryProfile = {"NOT_STARTED"};
+    String[] safeValidationFailure = {"NONE"};
     Map<String, byte[]> transientProbeBytes = new LinkedHashMap<>();
     AccountJwtReadinessProbeService earlyService =
         new AccountJwtReadinessProbeService(
@@ -436,6 +443,7 @@ class AccountJwtReadinessProbePersistenceIntegrationTest {
         (metadata, exactCompactJwt) -> {
           transientDeliveries[0]++;
           safeDeliveryStage[0] = "CALLBACK_REACHED";
+          safeDeliveryProfile[0] = metadata.tokenProfile();
           assertThat(exactCompactJwt).isNotEmpty().hasSizeLessThan(16 * 1024);
           assertThat(sha256(exactCompactJwt)).isEqualTo(metadata.compactTokenSha256());
           assertThat(transientProbeBytes.put(metadata.tokenProfile(), exactCompactJwt)).isNull();
@@ -488,8 +496,14 @@ class AccountJwtReadinessProbePersistenceIntegrationTest {
           assertThat(issuedBeforeCallback.compactTokenSha256())
               .contains(metadata.compactTokenSha256());
           safeDeliveryStage[0] = "ISSUED_READBACK_CONFIRMED";
-          VerificationReceipt verification =
-              validator.validate(issuedBeforeCallback, exactCompactJwt);
+          VerificationReceipt verification;
+          safeDeliveryStage[0] = "VALIDATOR_VALIDATE";
+          try {
+            verification = validator.validate(issuedBeforeCallback, exactCompactJwt);
+          } catch (RuntimeException validationFailure) {
+            safeValidationFailure[0] = safeValidationFailure(validationFailure);
+            throw validationFailure;
+          }
           assertThat(verification.verifiedKid()).isEqualTo(issuedBeforeCallback.targetKid());
           assertThat(verification.validatorInstanceId()).isEqualTo(validator.validatorInstanceId());
           assertThat(verification.validatorBindingDigest()).isEqualTo(validator.readinessDigest());
@@ -534,7 +548,11 @@ class AccountJwtReadinessProbePersistenceIntegrationTest {
             failure -> {
               assertThat(failure.getCause()).isNull();
               assertThat(failure.getSuppressed()).isEmpty();
-              assertThat(safeDeliveryStage[0]).isEqualTo("GSA_TRANSPORT_INTERRUPTION_ARMED");
+              assertThat(safeDeliveryStage[0])
+                  .as(
+                      "Readiness delivery stage for profile %s (validator failure: %s)",
+                      safeDeliveryProfile[0], safeValidationFailure[0])
+                  .isEqualTo("GSA_TRANSPORT_INTERRUPTION_ARMED");
               assertThat(transientFailurePayload[0]).isNotNull();
               assertThat(failure.toString().contains(transientFailurePayload[0])).isFalse();
             });
@@ -571,8 +589,13 @@ class AccountJwtReadinessProbePersistenceIntegrationTest {
                                 result.operationId())))
         .isInstanceOf(DataAccessException.class);
 
-    List<ProbeEntry> aborted = service.abortCurrentPlan(BINDING, trust, result.operationId());
-    assertThat(aborted)
+    assertThat(service.abortCurrentPlan(BINDING, trust, result.operationId())).isEmpty();
+    List<ProbeEntry> retainedCleaned =
+        inTransaction(
+            context,
+            () -> readiness.readCurrentPlan(BINDING, trust, result.operationId()).entries());
+    assertThat(retainedCleaned)
+        .isEqualTo(cleaned)
         .hasSize(4)
         .allSatisfy(
             entry -> {
@@ -584,6 +607,22 @@ class AccountJwtReadinessProbePersistenceIntegrationTest {
     assertThat(count(context, "account_jwt_readiness_probe_plans")).isEqualTo(1L);
     assertThat(count(context, "account_jwt_readiness_probe_entries")).isEqualTo(4L);
     assertThat(count(context, "account_jwt_readiness_delivery_claims")).isEqualTo(1L);
+    ReadinessProbePlan cleanedPlan =
+        inTransaction(
+            context, () -> readiness.readCurrentPlan(BINDING, trust, result.operationId()));
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    context,
+                    () ->
+                        readiness.claimSingleDelivery(
+                            BINDING,
+                            trust,
+                            cleanedPlan,
+                            validator.caller().binding(),
+                            validator.caller().peer(),
+                            Instant.ofEpochSecond(now))))
+        .isInstanceOf(AccountJwtReadinessProbeRepository.DeliveryAlreadyClaimedException.class);
     assertThatThrownBy(
             () ->
                 inTransaction(
@@ -596,7 +635,7 @@ class AccountJwtReadinessProbePersistenceIntegrationTest {
                             validator.caller().binding(),
                             validator.caller().peer(),
                             Instant.ofEpochSecond(now))))
-        .isInstanceOf(AccountJwtReadinessProbeRepository.DeliveryAlreadyClaimedException.class);
+        .isInstanceOf(AccountJwtReadinessProbeRepository.StaleOperationException.class);
     assertThat(columnNames(context, "account_jwt_readiness_probe_entries"))
         .contains("compact_token_sha256")
         .contains("verification_receipt_sha256", "validator_peer_spki_sha256")
@@ -985,6 +1024,36 @@ class AccountJwtReadinessProbePersistenceIntegrationTest {
     } catch (java.security.NoSuchAlgorithmException ex) {
       throw new IllegalStateException("SHA-256 is required for the persistence fixture", ex);
     }
+  }
+
+  private static String safeValidationFailure(RuntimeException failure) {
+    String exceptionClass =
+        failure instanceof DataAccessException
+            ? "DataAccessException"
+            : failure instanceof IllegalStateException
+                ? "IllegalStateException"
+                : failure instanceof IllegalArgumentException
+                    ? "IllegalArgumentException"
+                    : "UNKNOWN";
+    String sqlState = "UNKNOWN";
+    String constraint = "UNKNOWN";
+    Throwable current = failure;
+    for (int depth = 0; current != null && depth < 8; depth++, current = current.getCause()) {
+      if (current instanceof PSQLException postgresFailure) {
+        String candidateSqlState = postgresFailure.getSQLState();
+        if (candidateSqlState != null && candidateSqlState.matches("[0-9A-Z]{5}")) {
+          sqlState = candidateSqlState;
+        }
+        var serverError = postgresFailure.getServerErrorMessage();
+        String candidateConstraint = serverError == null ? null : serverError.getConstraint();
+        if (candidateConstraint != null
+            && VALIDATION_CONSTRAINT_ALLOWLIST.contains(candidateConstraint)) {
+          constraint = candidateConstraint;
+        }
+        break;
+      }
+    }
+    return "class=" + exceptionClass + ";sqlstate=" + sqlState + ";constraint=" + constraint;
   }
 
   private static InventorySnapshot inventorySnapshot(Instant observedAt) {

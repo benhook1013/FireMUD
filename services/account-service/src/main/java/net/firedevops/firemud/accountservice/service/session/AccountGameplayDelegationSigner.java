@@ -19,6 +19,7 @@ import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegatio
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository.PendingRegistryCandidate;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository.PendingSigningIdentity;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationResponseEnvelopeRepository.CallerIdentity;
+import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationResponseEnvelopeRepository.PendingCandidateCredential;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationResponseEnvelopeRepository.SealedCandidateObservation;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.ActiveSigner;
@@ -174,18 +175,35 @@ public final class AccountGameplayDelegationSigner {
     byte[] firstJwksBytes = null;
     byte[] finalJwksBytes = null;
     AtomicReference<byte[]> compactTokenCapture = new AtomicReference<>();
+    AtomicReference<PendingCandidateCredential> acquiredCandidate = new AtomicReference<>();
+    PendingCandidateCredential openedCandidate = null;
     try {
-      InvocationIdentity initial =
+      InvocationIdentity acquired =
           accountTransaction.execute(
               status -> {
                 CurrentSigner signer = currentCommittedSigner();
                 PendingSigningIdentity pending = requireCurrentPendingIdentity(requestId);
                 requireUnexpired(pending);
-                return new InvocationIdentity(signer, pending);
+                PendingCandidateCredential resumed =
+                    pending.persistedCandidate().isPresent()
+                        ? responseEnvelopeService.openPendingCandidate(
+                            requestId,
+                            new CallerIdentity(
+                                pending.identity().callerWorkload(),
+                                pending.identity().callerContextId()))
+                        : null;
+                if (resumed != null) {
+                  PendingCandidateCredential replaced = acquiredCandidate.getAndSet(resumed);
+                  if (replaced != null) replaced.close();
+                  requireOpenedCandidate(pending, resumed);
+                }
+                return new InvocationIdentity(signer, pending, resumed);
               });
-      if (initial == null) {
+      openedCandidate = acquiredCandidate.getAndSet(null);
+      if (acquired == null) {
         throw unavailable();
       }
+      final InvocationIdentity initial = acquired;
 
       SourceIdentity sourcePin = trustedJwksSource.sourceIdentity();
       PublicJwksSnapshot initialSnapshot = trustedJwksSource.load();
@@ -212,33 +230,50 @@ public final class AccountGameplayDelegationSigner {
               PUBLIC_KEY_CACHE_AGE);
       keyCache.keyFor(initial.currentSigner().expectedIdentity().kid());
 
-      AccountMountedJwtSignerBundle.SignedDelegationDigest digest =
-          AccountMountedJwtSignerBundle.signCommittedGameplayDelegationDigest(
-              privateMountRoot,
-              privateBundlePath,
-              publicMountRoot,
-              publicJwksPath,
-              initial.currentSigner().expectedIdentity(),
-              new AccountMountedJwtSignerBundle.DelegationSigningSpec(
-                  initial.pending().identity(), initial.pending().authoritySnapshot()),
-              (signed, exactCompactJwt) -> {
-                requireSignedIdentity(initial, signed);
-                byte[] transientCopy = exactCompactJwt.clone();
-                if (!compactTokenCapture.compareAndSet(null, transientCopy)) {
-                  wipe(transientCopy);
-                  throw unavailable();
-                }
-              });
-      transientCompactJwt = compactTokenCapture.getAndSet(null);
-      if (transientCompactJwt == null
-          || !sha256(transientCompactJwt).equals(digest.compactTokenSha256())) {
-        throw unavailable();
+      AccountMountedJwtSignerBundle.SignedDelegationDigest digest = null;
+      VerifiedCandidateIdentity candidateIdentity;
+      if (initial.resumedCandidate() == null) {
+        digest =
+            AccountMountedJwtSignerBundle.signCommittedGameplayDelegationDigest(
+                privateMountRoot,
+                privateBundlePath,
+                publicMountRoot,
+                publicJwksPath,
+                initial.currentSigner().expectedIdentity(),
+                new AccountMountedJwtSignerBundle.DelegationSigningSpec(
+                    initial.pending().identity(), initial.pending().authoritySnapshot()),
+                (signed, exactCompactJwt) -> {
+                  requireSignedIdentity(initial, signed);
+                  byte[] transientCopy = exactCompactJwt.clone();
+                  if (!compactTokenCapture.compareAndSet(null, transientCopy)) {
+                    wipe(transientCopy);
+                    throw unavailable();
+                  }
+                });
+        transientCompactJwt = compactTokenCapture.getAndSet(null);
+        if (transientCompactJwt == null
+            || !sha256(transientCompactJwt).equals(digest.compactTokenSha256())) {
+          throw unavailable();
+        }
+        candidateIdentity = candidateIdentity(initial.pending(), digest);
+      } else {
+        PendingRegistryCandidate persisted =
+            initial
+                .pending()
+                .persistedCandidate()
+                .orElseThrow(AccountGameplayDelegationSigner::unavailable);
+        requirePersistedCandidateSigner(initial, persisted);
+        transientCompactJwt = initial.resumedCandidate().compactJwtBytes();
+        candidateIdentity = candidateIdentity(initial.pending(), persisted);
+        if (!sha256(transientCompactJwt).equals(candidateIdentity.tokenSha256())) {
+          throw unavailable();
+        }
       }
       String compactJwt = exactAscii(transientCompactJwt);
 
       VerifiedClaims verified =
           new AccountAsymmetricJwtVerifier(keyCache, clock).verify(compactJwt, GSA_SIGNING_POLICY);
-      requireVerifiedClaims(initial, digest, verified);
+      requireVerifiedClaims(initial, candidateIdentity, verified);
 
       PublicJwksSnapshot finalSnapshot = trustedJwksSource.load();
       finalJwksBytes =
@@ -247,10 +282,21 @@ public final class AccountGameplayDelegationSigner {
         throw unavailable();
       }
 
+      AccountMountedJwtSignerBundle.SignedDelegationDigest signedDigest = digest;
+      VerifiedCandidateIdentity verifiedCandidateIdentity = candidateIdentity;
       CandidateOutcome outcome =
           accountTransaction.execute(
               status ->
-                  bindAndSealWithinTransaction(requestId, compactJwt, initial, digest, sourcePin));
+                  initial.resumedCandidate() == null
+                      ? bindAndSealWithinTransaction(
+                          requestId,
+                          compactJwt,
+                          initial,
+                          verifiedCandidateIdentity,
+                          signedDigest,
+                          sourcePin)
+                      : resumeAndReadbackWithinTransaction(
+                          requestId, initial, verifiedCandidateIdentity, sourcePin));
       if (outcome == null) {
         throw unavailable();
       }
@@ -263,6 +309,9 @@ public final class AccountGameplayDelegationSigner {
       wipe(compactTokenCapture.getAndSet(null));
       wipe(firstJwksBytes);
       wipe(finalJwksBytes);
+      if (openedCandidate != null) openedCandidate.close();
+      PendingCandidateCredential untransferredCandidate = acquiredCandidate.getAndSet(null);
+      if (untransferredCandidate != null) untransferredCandidate.close();
     }
   }
 
@@ -451,6 +500,7 @@ public final class AccountGameplayDelegationSigner {
       UUID requestId,
       String compactJwt,
       InvocationIdentity initial,
+      VerifiedCandidateIdentity candidateIdentity,
       AccountMountedJwtSignerBundle.SignedDelegationDigest digest,
       SourceIdentity sourceIdentity) {
     CurrentSigner currentBeforePersist = currentCommittedSigner();
@@ -461,10 +511,10 @@ public final class AccountGameplayDelegationSigner {
 
     BoundTokenCandidate bound =
         issuanceRepository.bindSignedCandidate(requestId, compactJwt, digest.signerGeneration());
-    requireBoundCandidate(requestId, digest, bound);
+    requireBoundCandidate(requestId, candidateIdentity, bound);
 
     PendingRegistryCandidate persisted = issuanceRepository.readPendingRegistryCandidate(requestId);
-    requirePersistedCandidate(initial, digest, bound, persisted);
+    requirePersistedCandidate(initial, candidateIdentity, persisted);
 
     SealedCandidateObservation sealed =
         responseEnvelopeService.sealPendingCandidate(
@@ -477,14 +527,14 @@ public final class AccountGameplayDelegationSigner {
 
     PendingRegistryCandidate finalReadback =
         issuanceRepository.readPendingRegistryCandidate(requestId);
-    requirePersistedCandidate(initial, digest, bound, finalReadback);
+    requirePersistedCandidate(initial, candidateIdentity, finalReadback);
     CurrentSigner currentAfterPersist = currentCommittedSigner();
     requireSameCommittedSigner(initial.currentSigner(), currentAfterPersist);
 
     PendingCandidateVerificationProof verificationProof =
         createVerificationProof(
             pendingBeforePersist,
-            digest,
+            candidateIdentity,
             finalReadback,
             sealed,
             currentAfterPersist,
@@ -493,16 +543,68 @@ public final class AccountGameplayDelegationSigner {
     return new CandidateOutcome(
         pendingBeforePersist.identity().operationId(),
         requestId,
-        digest.compactTokenSha256(),
-        digest.signerGeneration(),
-        digest.kid(),
+        candidateIdentity.tokenSha256(),
+        candidateIdentity.signerGeneration(),
+        candidateIdentity.kid(),
+        sealed,
+        verificationProof);
+  }
+
+  private CandidateOutcome resumeAndReadbackWithinTransaction(
+      UUID requestId,
+      InvocationIdentity initial,
+      VerifiedCandidateIdentity candidateIdentity,
+      SourceIdentity sourceIdentity) {
+    CurrentSigner currentBeforePersist = currentCommittedSigner();
+    PendingSigningIdentity pendingBeforePersist = requireCurrentPendingIdentity(requestId);
+    requireUnexpired(pendingBeforePersist);
+    requireSameCommittedSigner(initial.currentSigner(), currentBeforePersist);
+    requireSamePendingIdentity(initial.pending(), pendingBeforePersist);
+
+    PendingRegistryCandidate persisted = issuanceRepository.readPendingRegistryCandidate(requestId);
+    requirePersistedCandidate(initial, candidateIdentity, persisted);
+    PendingCandidateCredential revalidatedEnvelope =
+        responseEnvelopeService.openPendingCandidate(
+            requestId,
+            new CallerIdentity(
+                pendingBeforePersist.identity().callerWorkload(),
+                pendingBeforePersist.identity().callerContextId()));
+    final SealedCandidateObservation sealed;
+    try {
+      sealed = revalidatedEnvelope.sealedCandidate();
+      if (!sealed.equals(initial.resumedCandidate().sealedCandidate())) throw unavailable();
+    } finally {
+      revalidatedEnvelope.close();
+    }
+
+    PendingRegistryCandidate finalReadback =
+        issuanceRepository.readPendingRegistryCandidate(requestId);
+    requirePersistedCandidate(initial, candidateIdentity, finalReadback);
+    CurrentSigner currentAfterPersist = currentCommittedSigner();
+    requireSameCommittedSigner(initial.currentSigner(), currentAfterPersist);
+
+    PendingCandidateVerificationProof verificationProof =
+        createVerificationProof(
+            pendingBeforePersist,
+            candidateIdentity,
+            finalReadback,
+            sealed,
+            currentAfterPersist,
+            sourceIdentity);
+
+    return new CandidateOutcome(
+        pendingBeforePersist.identity().operationId(),
+        requestId,
+        candidateIdentity.tokenSha256(),
+        candidateIdentity.signerGeneration(),
+        candidateIdentity.kid(),
         sealed,
         verificationProof);
   }
 
   private static PendingCandidateVerificationProof createVerificationProof(
       PendingSigningIdentity pending,
-      AccountMountedJwtSignerBundle.SignedDelegationDigest digest,
+      VerifiedCandidateIdentity candidateIdentity,
       PendingRegistryCandidate persisted,
       SealedCandidateObservation sealed,
       CurrentSigner currentSigner,
@@ -526,20 +628,20 @@ public final class AccountGameplayDelegationSigner {
             persisted.identity().issuedAtEpochSecond(),
             persisted.identity().notBeforeEpochSecond(),
             persisted.identity().expiresAtEpochSecond());
-    if (!identity.requestId().equals(digest.requestId())
-        || !identity.operationId().equals(digest.issuanceOperationId())
-        || !identity.tokenJti().equals(digest.jti())
-        || digest.issuedAtEpochSecond() != identity.issuedAtEpochSecond()
-        || digest.notBeforeEpochSecond() != identity.notBeforeEpochSecond()
-        || digest.expiresAtEpochSecond() != identity.expiresAtEpochSecond()
+    if (!identity.requestId().equals(candidateIdentity.requestId())
+        || !identity.operationId().equals(candidateIdentity.operationId())
+        || !identity.tokenJti().equals(candidateIdentity.jti())
+        || candidateIdentity.issuedAtEpochSecond() != identity.issuedAtEpochSecond()
+        || candidateIdentity.notBeforeEpochSecond() != identity.notBeforeEpochSecond()
+        || candidateIdentity.expiresAtEpochSecond() != identity.expiresAtEpochSecond()
         || persisted.authoritySnapshot() == null
         || !persisted
             .evidenceBundleReference()
             .canonicalSha256()
             .equals(pending.evidenceBundle().canonicalSha256())
-        || !persisted.tokenHash().equals(digest.compactTokenSha256())
-        || !persisted.kid().equals(digest.kid())
-        || !persisted.signerGeneration().equals(digest.signerGeneration())) {
+        || !persisted.tokenHash().equals(candidateIdentity.tokenSha256())
+        || !persisted.kid().equals(candidateIdentity.kid())
+        || !persisted.signerGeneration().equals(candidateIdentity.signerGeneration())) {
       throw unavailable();
     }
     AuthenticatedSignerCorrespondence correspondence =
@@ -548,8 +650,8 @@ public final class AccountGameplayDelegationSigner {
         || !correspondence
             .generationOperationId()
             .equals(UUID.fromString(currentSigner.expectedIdentity().operationId()))
-        || !correspondence.targetGeneration().equals(digest.signerGeneration())
-        || !correspondence.targetKid().equals(digest.kid())
+        || !correspondence.targetGeneration().equals(candidateIdentity.signerGeneration())
+        || !correspondence.targetKid().equals(candidateIdentity.kid())
         || !correspondence
             .targetPublicKeyFingerprint()
             .equals(currentSigner.expectedIdentity().publicKeyFingerprint())) {
@@ -822,14 +924,22 @@ public final class AccountGameplayDelegationSigner {
   }
 
   private static void requireVerifiedClaims(
-      InvocationIdentity initial,
-      AccountMountedJwtSignerBundle.SignedDelegationDigest digest,
-      VerifiedClaims verified) {
+      InvocationIdentity initial, VerifiedCandidateIdentity candidate, VerifiedClaims verified) {
     PendingSigningIdentity pending = initial.pending();
+    AccountMountedJwtSignerBundle.ExpectedIdentity signer =
+        initial.currentSigner().expectedIdentity();
     Map<String, Object> claims = verified.claims();
+    Object authorityTuple = claims.get("authorityTuple");
+    Object expectedAuthorityTuple =
+        GameSessionAccountDelegationProfile.authorityTuple(
+            pending.authoritySnapshot().issuerGeneration(),
+            pending.authoritySnapshot().accountGeneration(),
+            pending.authoritySnapshot().accountSecurityCutoff());
     if (!GameSessionAccountDelegationProfile.PROFILE.equals(verified.profile())
         || !GameSessionAccountDelegationProfile.TYPE.equals(verified.tokenType())
-        || !initial.currentSigner().expectedIdentity().kid().equals(verified.keyId())
+        || !signer.kid().equals(verified.keyId())
+        || !candidate.kid().equals(signer.kid())
+        || !candidate.signerGeneration().equals(signer.generation())
         || !pending.identity().accountId().toString().equals(claims.get("sub"))
         || !pending.identity().accountId().toString().equals(claims.get("accountId"))
         || !pending.identity().tokenJti().toString().equals(claims.get("jti"))
@@ -841,10 +951,17 @@ public final class AccountGameplayDelegationSigner {
             != pending.authoritySnapshot().issuanceFence()
         || !(claims.get("membershipVersion") instanceof Map<?, ?> membershipVersion)
         || !membershipVersion.isEmpty()
+        || !(authorityTuple instanceof Map<?, ?>)
+        || !authorityTuple.equals(expectedAuthorityTuple)
         || claims.containsKey("globalRoles")
         || claims.containsKey("scopedRoles")
-        || !digest.jti().equals(pending.identity().tokenJti())
-        || !digest.compactTokenSha256().matches("[0-9a-f]{64}")) {
+        || !candidate.operationId().equals(pending.identity().operationId())
+        || !candidate.requestId().equals(pending.identity().requestId())
+        || !candidate.jti().equals(pending.identity().tokenJti())
+        || candidate.issuedAtEpochSecond() != pending.identity().issuedAtEpochSecond()
+        || candidate.notBeforeEpochSecond() != pending.identity().notBeforeEpochSecond()
+        || candidate.expiresAtEpochSecond() != pending.identity().expiresAtEpochSecond()
+        || !candidate.tokenSha256().matches("[0-9a-f]{64}")) {
       throw unavailable();
     }
   }
@@ -878,44 +995,135 @@ public final class AccountGameplayDelegationSigner {
             .canonicalSha256()
             .equals(observed.evidenceBundle().canonicalSha256())
         || !Arrays.equals(
-            expected.evidenceBundle().canonicalBytes(),
-            observed.evidenceBundle().canonicalBytes())) {
+            expected.evidenceBundle().canonicalBytes(), observed.evidenceBundle().canonicalBytes())
+        || !samePersistedCandidate(expected.persistedCandidate(), observed.persistedCandidate())) {
       throw unavailable();
     }
   }
 
   private static void requireBoundCandidate(
-      UUID requestId,
-      AccountMountedJwtSignerBundle.SignedDelegationDigest digest,
-      BoundTokenCandidate bound) {
+      UUID requestId, VerifiedCandidateIdentity candidate, BoundTokenCandidate bound) {
     if (bound == null
         || !bound.requestId().equals(requestId)
-        || !bound.tokenHash().equals(digest.compactTokenSha256())
-        || !bound.signerGeneration().equals(digest.signerGeneration())
-        || !bound.kid().equals(digest.kid())) {
+        || !bound.tokenHash().equals(candidate.tokenSha256())
+        || !bound.signerGeneration().equals(candidate.signerGeneration())
+        || !bound.kid().equals(candidate.kid())) {
       throw unavailable();
     }
   }
 
   private static void requirePersistedCandidate(
       InvocationIdentity initial,
-      AccountMountedJwtSignerBundle.SignedDelegationDigest digest,
-      BoundTokenCandidate bound,
+      VerifiedCandidateIdentity candidateIdentity,
       PendingRegistryCandidate persisted) {
     if (persisted == null
         || !persisted.identity().equals(initial.pending().identity())
         || !persisted.authoritySnapshot().equals(initial.pending().authoritySnapshot())
-        || !persisted.tokenHash().equals(digest.compactTokenSha256())
-        || !persisted.kid().equals(digest.kid())
-        || !persisted.signerGeneration().equals(digest.signerGeneration())
-        || !persisted.tokenHash().equals(bound.tokenHash())
-        || !persisted.kid().equals(bound.kid())
-        || !persisted.signerGeneration().equals(bound.signerGeneration())
-        || persisted.expiresAtEpochSecond() != digest.expiresAtEpochSecond()
+        || !persisted.tokenHash().equals(candidateIdentity.tokenSha256())
+        || !persisted.kid().equals(candidateIdentity.kid())
+        || !persisted.signerGeneration().equals(candidateIdentity.signerGeneration())
+        || !persisted.identity().tokenJti().equals(candidateIdentity.jti())
+        || persisted.identity().issuedAtEpochSecond() != candidateIdentity.issuedAtEpochSecond()
+        || persisted.identity().notBeforeEpochSecond() != candidateIdentity.notBeforeEpochSecond()
+        || persisted.expiresAtEpochSecond() != candidateIdentity.expiresAtEpochSecond()
+        || (initial.pending().persistedCandidate().isPresent()
+            && !samePersistedCandidate(
+                initial.pending().persistedCandidate(), Optional.of(persisted)))
         || !matchesEvidenceBundleReference(
             initial.pending(), persisted.evidenceBundleReference())) {
       throw unavailable();
     }
+  }
+
+  private static boolean samePersistedCandidate(
+      Optional<PendingRegistryCandidate> expected, Optional<PendingRegistryCandidate> observed) {
+    if (expected.isEmpty() || observed.isEmpty()) return expected.isEmpty() && observed.isEmpty();
+    PendingRegistryCandidate left = expected.orElseThrow();
+    PendingRegistryCandidate right = observed.orElseThrow();
+    return left.identity().equals(right.identity())
+        && left.tokenHash().equals(right.tokenHash())
+        && left.kid().equals(right.kid())
+        && left.signerGeneration().equals(right.signerGeneration())
+        && left.expiresAtEpochSecond() == right.expiresAtEpochSecond()
+        && left.authoritySnapshot().equals(right.authoritySnapshot())
+        && left.evidenceBundleReference().equals(right.evidenceBundleReference())
+        && Arrays.equals(left.canonicalRecordBytes(), right.canonicalRecordBytes());
+  }
+
+  private static void requireOpenedCandidate(
+      PendingSigningIdentity pending, PendingCandidateCredential opened) {
+    PendingRegistryCandidate persisted =
+        pending.persistedCandidate().orElseThrow(AccountGameplayDelegationSigner::unavailable);
+    SealedCandidateObservation sealed = opened.sealedCandidate();
+    long expectedExpiryMillis;
+    try {
+      expectedExpiryMillis = Math.multiplyExact(persisted.expiresAtEpochSecond(), 1_000L);
+    } catch (ArithmeticException invalidExpiry) {
+      throw unavailable();
+    }
+    if (!persisted.identity().operationId().equals(sealed.operationId())
+        || !persisted.identity().requestId().equals(sealed.requestId())
+        || !persisted
+            .evidenceBundleReference()
+            .canonicalSha256()
+            .equals(sealed.authorityEvidenceBundleSha256())
+        || persisted.authoritySnapshot().issuanceFence() != sealed.issuanceFence()
+        || expectedExpiryMillis != sealed.responseRecoveryExpiryEpochMillis()) {
+      throw unavailable();
+    }
+  }
+
+  private static void requirePersistedCandidateSigner(
+      InvocationIdentity initial, PendingRegistryCandidate persisted) {
+    AccountMountedJwtSignerBundle.ExpectedIdentity signer =
+        initial.currentSigner().expectedIdentity();
+    PendingSigningIdentity pending = initial.pending();
+    if (!persisted.identity().equals(pending.identity())
+        || !persisted.authoritySnapshot().equals(pending.authoritySnapshot())
+        || !persisted
+            .evidenceBundleReference()
+            .canonicalSha256()
+            .equals(pending.evidenceBundle().canonicalSha256())
+        || !persisted.kid().equals(signer.kid())
+        || !persisted.signerGeneration().equals(signer.generation())
+        || !persisted.tokenHash().matches("[0-9a-f]{64}")
+        || persisted.expiresAtEpochSecond() != pending.identity().expiresAtEpochSecond()) {
+      throw unavailable();
+    }
+  }
+
+  private static VerifiedCandidateIdentity candidateIdentity(
+      PendingSigningIdentity pending, AccountMountedJwtSignerBundle.SignedDelegationDigest digest) {
+    if (!digest.issuanceOperationId().equals(pending.identity().operationId())
+        || !digest.requestId().equals(pending.identity().requestId())
+        || !digest.jti().equals(pending.identity().tokenJti())) {
+      throw unavailable();
+    }
+    return new VerifiedCandidateIdentity(
+        digest.issuanceOperationId(),
+        digest.requestId(),
+        digest.jti(),
+        digest.kid(),
+        digest.signerGeneration(),
+        digest.issuedAtEpochSecond(),
+        digest.notBeforeEpochSecond(),
+        digest.expiresAtEpochSecond(),
+        digest.compactTokenSha256());
+  }
+
+  private static VerifiedCandidateIdentity candidateIdentity(
+      PendingSigningIdentity pending, PendingRegistryCandidate persisted) {
+    if (!persisted.identity().equals(pending.identity())) throw unavailable();
+    return new VerifiedCandidateIdentity(
+        persisted.identity().operationId(),
+        persisted.identity().requestId(),
+        persisted.identity().tokenJti(),
+        persisted.kid(),
+        persisted.signerGeneration(),
+        persisted.identity().issuedAtEpochSecond(),
+        persisted.identity().notBeforeEpochSecond(),
+        persisted.expiresAtEpochSecond(),
+        persisted.tokenHash());
   }
 
   private static boolean matchesEvidenceBundleReference(
@@ -990,7 +1198,36 @@ public final class AccountGameplayDelegationSigner {
       CommittedSignerEvidence evidence,
       AccountMountedJwtSignerBundle.ExpectedIdentity expectedIdentity) {}
 
-  private record InvocationIdentity(CurrentSigner currentSigner, PendingSigningIdentity pending) {}
+  private record InvocationIdentity(
+      CurrentSigner currentSigner,
+      PendingSigningIdentity pending,
+      PendingCandidateCredential resumedCandidate) {
+    @Override
+    public String toString() {
+      return "InvocationIdentity[redacted]";
+    }
+  }
+
+  private record VerifiedCandidateIdentity(
+      UUID operationId,
+      UUID requestId,
+      UUID jti,
+      String kid,
+      String signerGeneration,
+      long issuedAtEpochSecond,
+      long notBeforeEpochSecond,
+      long expiresAtEpochSecond,
+      String tokenSha256) {
+    private VerifiedCandidateIdentity {
+      Objects.requireNonNull(operationId);
+      Objects.requireNonNull(requestId);
+      Objects.requireNonNull(jti);
+      Objects.requireNonNull(kid);
+      Objects.requireNonNull(signerGeneration);
+      Objects.requireNonNull(tokenSha256);
+      if (!tokenSha256.matches("[0-9a-f]{64}")) throw unavailable();
+    }
+  }
 
   /**
    * Signer-produced evidence that one exact pending candidate passed local cryptographic and

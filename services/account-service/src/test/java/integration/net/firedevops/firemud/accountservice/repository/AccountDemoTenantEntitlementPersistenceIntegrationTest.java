@@ -265,6 +265,14 @@ class AccountDemoTenantEntitlementPersistenceIntegrationTest {
     assertThat(updated.tenantAuthoritySourceVersion()).isEqualTo(3L);
     assertThat(updated.tenantBillingSequence()).isEqualTo(2L);
     assertThat(updated.tenantAuthorityOutboxSequence()).isEqualTo(2L);
+    var updatedAuthorityReadback =
+        inTransaction(
+            context.transaction(), () -> tenantAuthorityEvents.readCurrentByTenant(tenantId));
+    assertThat(updatedAuthorityReadback.eventId()).isEqualTo(updated.tenantAuthorityEventId());
+    assertThat(updatedAuthorityReadback.eventDigest())
+        .isEqualTo(updated.tenantAuthorityEventDigest());
+    assertThat(updatedAuthorityReadback.outboxSequence())
+        .isEqualTo(updated.tenantAuthorityOutboxSequence());
     assertThat(inTransaction(context.transaction(), () -> entitlements.provision(update, source)))
         .isEqualTo(updated);
     assertThatThrownBy(
@@ -350,13 +358,11 @@ class AccountDemoTenantEntitlementPersistenceIntegrationTest {
         .hasMessageContaining("Demo entitlement identity is immutable and version advances by one");
     assertThat(inTransaction(context.transaction(), () -> entitlements.readCurrent(tenantId)))
         .isEqualTo(updated);
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context.transaction(),
-                    () -> tenantAuthorityEvents.readCurrentByTenant(tenantId)))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("differs from its exact committed billing event");
+    assertThat(
+            inTransaction(
+                context.transaction(), () -> tenantAuthorityEvents.readCurrentByTenant(tenantId)))
+        .usingRecursiveComparison()
+        .isEqualTo(updatedAuthorityReadback);
   }
 
   @Test

@@ -2,8 +2,16 @@ package integration.net.firedevops.firemud.accountservice.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.startsWith;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.spy;
 
 import java.net.URI;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
@@ -26,11 +34,14 @@ import net.firedevops.firemud.accountservice.repository.AccountGameplayCredentia
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository.PendingIntent;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
+import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationRegistryRecord.AccountAuthoritySnapshot;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
+import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
@@ -42,6 +53,8 @@ import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.DockerClientFactory;
 import org.testcontainers.containers.PostgreSQLContainer;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.json.JsonMapper;
 
 class AccountAuthEvidenceBundlePersistenceIntegrationTest {
   private static final String SCHEMA_PREFIX = "acct_auth_bundle";
@@ -81,6 +94,192 @@ class AccountAuthEvidenceBundlePersistenceIntegrationTest {
   @AfterAll
   static void stopOwnedContainer() {
     if (startedOwnedContainer) postgres.stop();
+  }
+
+  @Test
+  void forwardCheckpointRepairRetainsV84OwnersAndCapturesZeroAndPositiveEvidence() {
+    TestContext context = newTestContext(MigrationVersion.fromVersion("84"));
+    DSLContext dsl = context.dsl();
+    Account account = createAccount(context);
+    AccountAuthorityGenerationRepository authorities =
+        new AccountAuthorityGenerationRepository(dsl);
+    AccountAuthorityOutboxRepository outbox = new AccountAuthorityOutboxRepository(dsl);
+    AccountAuthoritySourceEvidenceRepository sources =
+        new AccountAuthoritySourceEvidenceRepository(dsl, authorities, outbox);
+    AccountAuthEvidenceBundleRepository bundles =
+        new AccountAuthEvidenceBundleRepository(dsl, authorities, outbox);
+    PendingIntent zero = preparePending(context, sources, account.getAccountUuid());
+    Map<String, List<Map<String, Object>>> before = retainedOwnerRows(dsl);
+
+    // Stock V84 cannot produce a historical bundle: its insert guard calls a nonexistent
+    // PostgreSQL function. The genuine capture attempt must roll back its allocator and row writes.
+    assertThatThrownBy(
+            () -> inTransaction(context, () -> bundles.captureAndPersist(zero.requestId())))
+        .isInstanceOf(DataAccessException.class)
+        .rootCause()
+        .isInstanceOf(org.postgresql.util.PSQLException.class)
+        .extracting("SQLState")
+        .isEqualTo("42883");
+    assertThat(retainedOwnerRows(dsl)).usingRecursiveComparison().isEqualTo(before);
+    assertThat(dsl.fetch("SELECT * FROM account_gameplay_delegation_auth_evidence_bundles"))
+        .isEmpty();
+
+    assertThat(migrateCheckpointRepair(context)).isEqualTo(1);
+    assertThat(retainedOwnerRows(dsl)).usingRecursiveComparison().isEqualTo(before);
+    AccountAuthEvidenceBundle zeroBundle =
+        inTransaction(context, () -> bundles.captureAndPersist(zero.requestId()));
+    assertThat(zeroBundle.fields().get("outboxCheckpoints"))
+        .asList()
+        .allSatisfy(
+            checkpoint ->
+                assertThat(checkpoint)
+                    .asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.MAP)
+                    .containsEntry("outboxSequence", "0")
+                    .hasSize(2));
+
+    AccountGameplayDelegationIssuancePersistenceIntegrationTest.advanceEmailVerifiedThroughOwner(
+        dsl, context.transaction(), sources, account.getAccountUuid());
+    PendingIntent positive = preparePending(context, sources, account.getAccountUuid());
+    AccountAuthEvidenceBundle positiveBundle =
+        inTransaction(context, () -> bundles.captureAndPersist(positive.requestId()));
+    assertThat(positiveBundle.fields().get("outboxCheckpoints"))
+        .asList()
+        .anySatisfy(
+            checkpoint ->
+                assertThat(checkpoint)
+                    .asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.MAP)
+                    .containsEntry("outboxSequence", "1")
+                    .containsKeys("sourceEventId", "sourceEventDigest")
+                    .hasSize(4));
+    var retainedBundles =
+        dsl.fetch(
+                "SELECT * FROM account_gameplay_delegation_auth_evidence_bundles ORDER BY operation_id")
+            .intoMaps();
+    assertThat(retainedBundles).hasSize(2);
+    var retainedOwners = retainedOwnerRows(dsl);
+    assertThat(migrateCheckpointRepair(context)).isZero();
+    assertThat(retainedOwnerRows(dsl)).usingRecursiveComparison().isEqualTo(retainedOwners);
+    assertThat(
+            dsl.fetch(
+                    "SELECT * FROM account_gameplay_delegation_auth_evidence_bundles ORDER BY operation_id")
+                .intoMaps())
+        .usingRecursiveComparison()
+        .isEqualTo(retainedBundles);
+    assertThat(
+            inTransaction(context, () -> bundles.readStoredNonAuthorizingValue(zero.operationId()))
+                .canonicalBytes())
+        .isEqualTo(zeroBundle.canonicalBytes());
+    assertThat(
+            inTransaction(
+                    context, () -> bundles.readStoredNonAuthorizingValue(positive.operationId()))
+                .canonicalBytes())
+        .isEqualTo(positiveBundle.canonicalBytes());
+  }
+
+  @Test
+  void repairedGuardRejectsExtraAndMissingKeysInBothRealCheckpointBranches() throws Exception {
+    TestContext context = newTestContext();
+    DSLContext dsl = context.dsl();
+    Account account = createAccount(context);
+    AccountAuthorityGenerationRepository authorities =
+        new AccountAuthorityGenerationRepository(dsl);
+    AccountAuthorityOutboxRepository outbox = new AccountAuthorityOutboxRepository(dsl);
+    AccountAuthoritySourceEvidenceRepository sources =
+        new AccountAuthoritySourceEvidenceRepository(dsl, authorities, outbox);
+    AccountGameplayDelegationIssuancePersistenceIntegrationTest.advanceEmailVerifiedThroughOwner(
+        dsl, context.transaction(), sources, account.getAccountUuid());
+    for (boolean positive : List.of(false, true)) {
+      for (boolean extraKey : List.of(false, true)) {
+        PendingIntent pending = preparePending(context, sources, account.getAccountUuid());
+        var before = retainedOwnerRows(dsl);
+        DSLContext corruptingInsert = spy(dsl);
+        // Fault injection changes only a real owner-produced bundle at its SQL insert boundary;
+        // no owner authority, operation, checkpoint, or committed row is fabricated.
+        doAnswer(
+                invocation -> {
+                  Object[] bindings = ((Object[]) invocation.getRawArguments()[1]).clone();
+                  bindings[10] = corruptCheckpointKeys((byte[]) bindings[10], positive, extraKey);
+                  return dsl.execute((String) invocation.getRawArguments()[0], bindings);
+                })
+            .when(corruptingInsert)
+            .execute(
+                startsWith("INSERT INTO account_gameplay_delegation_auth_evidence_bundles"),
+                any(Object[].class));
+        AccountAuthEvidenceBundleRepository bundles =
+            new AccountAuthEvidenceBundleRepository(corruptingInsert, authorities, outbox);
+        assertThatThrownBy(
+                () -> inTransaction(context, () -> bundles.captureAndPersist(pending.requestId())))
+            .isInstanceOf(DataAccessException.class)
+            .rootCause()
+            .isInstanceOf(org.postgresql.util.PSQLException.class)
+            .extracting("SQLState")
+            .isEqualTo("23514");
+        assertThat(retainedOwnerRows(dsl)).usingRecursiveComparison().isEqualTo(before);
+        assertThat(dsl.fetch("SELECT * FROM account_gameplay_delegation_auth_evidence_bundles"))
+            .isEmpty();
+      }
+    }
+  }
+
+  private static byte[] corruptCheckpointKeys(byte[] original, boolean positive, boolean extraKey)
+      throws Exception {
+    JsonMapper json = JsonMapper.builder().build();
+    Map<String, Object> fields =
+        json.readValue(original, new TypeReference<Map<String, Object>>() {});
+    List<Object> checkpoints = new ArrayList<>((List<?>) fields.get("outboxCheckpoints"));
+    boolean corrupted = false;
+    for (int i = 0; i < checkpoints.size(); i++) {
+      Map<?, ?> checkpoint = (Map<?, ?>) checkpoints.get(i);
+      if (positive == !"0".equals(checkpoint.get("outboxSequence"))) {
+        Map<Object, Object> changed = new LinkedHashMap<>(checkpoint);
+        if (extraKey) changed.put("unexpected", true);
+        else changed.remove(positive ? "sourceEventDigest" : "outboxStreamKey");
+        checkpoints.set(i, changed);
+        corrupted = true;
+        break;
+      }
+    }
+    assertThat(corrupted).isTrue();
+    fields.put("outboxCheckpoints", checkpoints);
+    return Rfc8785CanonicalJson.canonicalizeUtf8(json.writeValueAsString(fields));
+  }
+
+  private static PendingIntent preparePending(
+      TestContext context, AccountAuthoritySourceEvidenceRepository sources, UUID accountId) {
+    long now = Math.floorDiv(System.currentTimeMillis(), 1000L);
+    PendingIntent pending =
+        new PendingIntent(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            CALLER_WORKLOAD,
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            now,
+            now,
+            now + 120L,
+            authoritySnapshot(currentSnapshot(context, sources, accountId)),
+            AccountGameplayCredentialRequestBindingFixture.binding());
+    AccountGameplayDelegationIssuanceRepository issuance =
+        new AccountGameplayDelegationIssuanceRepository(context.dsl(), sources);
+    inTransaction(context, () -> issuance.beginPending(pending));
+    return pending;
+  }
+
+  private static Map<String, List<Map<String, Object>>> retainedOwnerRows(DSLContext dsl) {
+    Map<String, List<Map<String, Object>>> rows = new LinkedHashMap<>();
+    for (String table :
+        List.of(
+            "accounts",
+            "account_authority_generations",
+            "account_authority_issuance_fences",
+            "account_authority_source_records",
+            "account_authority_outbox_streams",
+            "account_authority_outbox_events",
+            "account_gameplay_delegation_issuance_operations",
+            "account_gameplay_auth_evidence_source_fence")) {
+      rows.put(table, dsl.fetch("SELECT * FROM " + table + " ORDER BY 1").intoMaps());
+    }
+    return rows;
   }
 
   @Test
@@ -242,7 +441,7 @@ class AccountAuthEvidenceBundlePersistenceIntegrationTest {
     account.setUsername("auth-bundle-" + suffix);
     account.setEmail("auth-bundle-" + UUID.randomUUID() + "@example.test");
     account.setPasswordHash("integration-test-hash");
-    account.setRole("player");
+    // The fresh Account birth path creates the exact empty global-role source only for null role.
     DSLContext dsl = context.dsl();
     AccountAuthorityGenerationRepository authorities =
         new AccountAuthorityGenerationRepository(dsl);
@@ -288,6 +487,10 @@ class AccountAuthEvidenceBundlePersistenceIntegrationTest {
   }
 
   private TestContext newTestContext() {
+    return newTestContext(null);
+  }
+
+  private TestContext newTestContext(MigrationVersion target) {
     String schema = SCHEMA_PREFIX + "_" + UUID.randomUUID().toString().replace("-", "");
     assertThat(schema.length()).isLessThanOrEqualTo(63);
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
@@ -298,18 +501,35 @@ class AccountAuthEvidenceBundlePersistenceIntegrationTest {
     Properties connectionProperties = new Properties();
     connectionProperties.setProperty("options", "-c lock_timeout=60000 -c statement_timeout=90000");
     dataSource.setConnectionProperties(connectionProperties);
-    Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .placeholders(Map.of("serviceSchema", schema))
-        .locations("classpath:db/migration")
-        .load()
-        .migrate();
+    var configuration =
+        Flyway.configure()
+            .dataSource(dataSource)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .placeholders(Map.of("serviceSchema", schema))
+            .locations("classpath:db/migration");
+    if (target != null) configuration.target(target);
+    configuration.load().migrate();
     DSLContext dsl =
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
     return new TestContext(
-        new TransactionTemplate(new DataSourceTransactionManager(dataSource)), dsl);
+        new TransactionTemplate(new DataSourceTransactionManager(dataSource)),
+        dsl,
+        dataSource,
+        schema);
+  }
+
+  private static int migrateCheckpointRepair(TestContext context) {
+    return Flyway.configure()
+        .dataSource(context.dataSource())
+        .schemas(context.schema())
+        .defaultSchema(context.schema())
+        .placeholders(Map.of("serviceSchema", context.schema()))
+        .locations("classpath:db/migration")
+        .target(MigrationVersion.fromVersion("84.1"))
+        .load()
+        .migrate()
+        .migrationsExecuted;
   }
 
   private static <T> T inTransaction(
@@ -322,8 +542,22 @@ class AccountAuthEvidenceBundlePersistenceIntegrationTest {
     try {
       return future.get(CONCURRENT_PROOF_TIMEOUT_SECONDS, TimeUnit.SECONDS);
     } catch (ExecutionException workerFailure) {
-      throw new AssertionError("Concurrent bundle persistence proof worker failed");
+      throw new AssertionError(
+          "Concurrent bundle persistence proof worker failed;sqlstate="
+              + safeWorkerSqlState(workerFailure));
     }
+  }
+
+  private static String safeWorkerSqlState(Throwable failure) {
+    Throwable current = failure;
+    for (int depth = 0; current != null && depth < 8; depth++) {
+      if (current instanceof SQLException sqlFailure) {
+        String sqlState = sqlFailure.getSQLState();
+        if (sqlState != null && sqlState.matches("[0-9A-Z]{5}")) return sqlState;
+      }
+      current = current.getCause();
+    }
+    return "UNKNOWN";
   }
 
   private static void stopConcurrentProofWorkers(ExecutorService executor) {
@@ -363,5 +597,9 @@ class AccountAuthEvidenceBundlePersistenceIntegrationTest {
     return jdbcUrl;
   }
 
-  private record TestContext(TransactionTemplate transaction, DSLContext dsl) {}
+  private record TestContext(
+      TransactionTemplate transaction,
+      DSLContext dsl,
+      DriverManagerDataSource dataSource,
+      String schema) {}
 }

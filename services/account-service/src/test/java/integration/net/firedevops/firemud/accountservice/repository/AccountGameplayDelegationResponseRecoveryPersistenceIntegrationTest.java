@@ -158,10 +158,12 @@ class AccountGameplayDelegationResponseRecoveryPersistenceIntegrationTest {
     AccountGameplayDelegationCommitSignerFixture signerFixture =
         AccountGameplayDelegationCommitSignerFixture.create(
             temporaryDirectory, issuance, envelopeService, context.manager(), Clock.systemUTC());
+    signerFixture.observeDatabaseFailures(dsl);
     RedisHarness redis = new RedisHarness(snapshot, getClass().getClassLoader());
     AccountGameplayDelegationTokenRegistry registry =
         new AccountGameplayDelegationTokenRegistry(
-            issuance,
+            AccountGameplayDelegationCommitSignerFixture.transactionalPendingRegistryReads(
+                issuance, context.manager()),
             redis.client(),
             Clock.systemUTC(),
             GameSessionAccountDelegationProfile.MAX_REGISTRY_RECORD_BYTES,
@@ -290,7 +292,7 @@ class AccountGameplayDelegationResponseRecoveryPersistenceIntegrationTest {
     account.setUsername("recovery-" + suffix);
     account.setEmail("recovery-" + UUID.randomUUID() + "@example.test");
     account.setPasswordHash("integration-test-hash");
-    account.setRole("player");
+    // The fresh Account birth path creates the exact empty global-role source only for null role.
     return inTransaction(
             context,
             () -> {
@@ -435,7 +437,7 @@ class AccountGameplayDelegationResponseRecoveryPersistenceIntegrationTest {
           .thenAnswer(
               invocation -> {
                 byte[][] keys = invocation.getArgument(2);
-                byte[][] arguments = invocation.getArgument(3);
+                byte[][] arguments = (byte[][]) invocation.getRawArguments()[3];
                 String key = new String(keys[0], StandardCharsets.US_ASCII);
                 if (!key.startsWith(AccountGameplayDelegationRedisClient.TOKEN_KEY_PREFIX)) {
                   return 0L;
@@ -495,6 +497,12 @@ class AccountGameplayDelegationResponseRecoveryPersistenceIntegrationTest {
                     ? absoluteExpiryMillis.get()
                     : null;
               });
+      when(commands.pttl(
+              eq(
+                  (AccountGameplayDelegationAuthorityProjection.ACCOUNT_KEY_PREFIX
+                          + snapshot.account().scope().accountId())
+                      .getBytes(StandardCharsets.US_ASCII))))
+          .thenReturn(-1L);
       Mockito.doReturn(java.util.List.of(1L, 1L))
           .when(commands)
           .dispatch(any(ProtocolKeyword.class), any(CommandOutput.class), any(CommandArgs.class));

@@ -509,6 +509,38 @@ class AccountGameplayDelegationResponseEnvelopeRepositoryTest {
     verify(missing.dsl(), never()).execute(anyString(), any(Object[].class));
   }
 
+  @Test
+  void pendingCandidateResumeRejectsAlteredEncryptedEnvelopeBeforeDecryption() throws Exception {
+    Fixture fixture = fixture(NOW);
+    when(fixture.dsl().fetchOne(anyString(), any(Object[].class)))
+        .thenAnswer(
+            invocation -> {
+              String sql = invocation.getArgument(0);
+              if (sql.contains("FROM account_gameplay_delegation_issuance_operations")) {
+                return fixture.operationRow();
+              }
+              if (sql.contains("FROM accounts")) return fixture.accountRow();
+              if (sql.contains("FROM account_gameplay_delegation_response_envelopes")) {
+                return fixture.envelopeRow();
+              }
+              throw new AssertionError("Unexpected pending-resume SQL in component fixture");
+            });
+    when(fixture.bundles().readStoredNonAuthorizingValue(OPERATION_ID))
+        .thenReturn(fixture.bundle());
+    when(fixture.envelopeRow().get("envelope_bytes", byte[].class))
+        .thenReturn(new byte[] {9, 8, 7, 6, 5});
+
+    assertThatThrownBy(
+            () ->
+                inWritableOwnerTransaction(
+                    () -> fixture.repository().openPendingCandidate(REQUEST_ID, fixture.caller())))
+        .isInstanceOf(
+            AccountGameplayDelegationResponseEnvelopeRepository.StorageUnavailableException.class)
+        .hasNoCause();
+    verify(fixture.crypto(), never())
+        .decrypt(any(EncryptedResponseEnvelope.class), any(Binding.class), any(Instant.class));
+  }
+
   private static RecoveryHarness recoveryHarness(Fixture fixture) throws Exception {
     AccountGameplayDelegationIssuanceRepository issuance =
         mock(AccountGameplayDelegationIssuanceRepository.class);

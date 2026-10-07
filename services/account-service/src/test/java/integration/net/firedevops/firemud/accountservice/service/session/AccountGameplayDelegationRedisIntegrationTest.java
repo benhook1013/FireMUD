@@ -532,7 +532,12 @@ class AccountGameplayDelegationRedisIntegrationTest {
           new AccountGameplayDelegationAuthorityProjection(sources, database.manager(), redis);
       AccountGameplayDelegationTokenRegistry tokenRegistry =
           new AccountGameplayDelegationTokenRegistry(
-              issuance, redis, Clock.systemUTC(), REGISTRY_BYTES, 30_000L);
+              AccountGameplayDelegationCommitSignerFixture.transactionalPendingRegistryReads(
+                  issuance, database.manager()),
+              redis,
+              Clock.systemUTC(),
+              REGISTRY_BYTES,
+              30_000L);
       AccountGameplayDelegationIssuanceCommitService commitService =
           new AccountGameplayDelegationIssuanceCommitService(
               signerFixture.signer(),
@@ -805,7 +810,12 @@ class AccountGameplayDelegationRedisIntegrationTest {
           new AccountGameplayDelegationAuthorityProjection(sources, database.manager(), redis);
       AccountGameplayDelegationTokenRegistry tokenRegistry =
           new AccountGameplayDelegationTokenRegistry(
-              issuance, redis, Clock.systemUTC(), REGISTRY_BYTES, 30_000L);
+              AccountGameplayDelegationCommitSignerFixture.transactionalPendingRegistryReads(
+                  issuance, database.manager()),
+              redis,
+              Clock.systemUTC(),
+              REGISTRY_BYTES,
+              30_000L);
       AccountGameplayDelegationIssuanceCommitService commitService =
           new AccountGameplayDelegationIssuanceCommitService(
               signerFixture.signer(),

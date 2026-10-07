@@ -7,7 +7,11 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.mkammerer.argon2.Argon2;
@@ -25,6 +29,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
+import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -119,6 +124,8 @@ import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.postgresql.util.PSQLException;
+import org.postgresql.util.ServerErrorMessage;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
@@ -144,6 +151,7 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
   private static volatile boolean startedOwnedContainer;
 
   @TempDir Path temporaryDirectory;
+  private final AtomicReference<byte[]> capturedCommitProof = new AtomicReference<>();
 
   @BeforeAll
   static void configureDatabase() {
@@ -167,6 +175,97 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
   @AfterAll
   static void stopOwnedContainer() {
     if (startedOwnedContainer) postgres.stop();
+  }
+
+  @Test
+  void safeCommitFailureDiagnosticAllowsOnlyKnownConstraintsAndSqlState() {
+    PSQLException allowedConstraint =
+        new PSQLException(
+            new ServerErrorMessage(
+                "SERROR\u0000VERROR\u0000C23514\u0000"
+                    + "naccount_gameplay_delegation_commit_shape\u0000\u0000"),
+            false);
+    assertThat(
+            AccountGameplayDelegationCommitSignerFixture.safeFailureDiagnostic(
+                new SQLException("private wrapper details", "99999", allowedConstraint)))
+        .isEqualTo("sqlstate=23514;constraint=account_gameplay_delegation_commit_shape");
+
+    PSQLException unlistedConstraint =
+        new PSQLException(
+            new ServerErrorMessage(
+                "SERROR\u0000VERROR\u0000C23514\u0000" + "nprivate_token_payload\u0000\u0000"),
+            false);
+    String suppressed =
+        AccountGameplayDelegationCommitSignerFixture.safeFailureDiagnostic(
+            new SQLException("private wrapper details", "99999", unlistedConstraint));
+    assertThat(suppressed)
+        .isEqualTo("sqlstate=23514;constraint=UNKNOWN")
+        .doesNotContain("private", "token", "payload");
+
+    String unknown =
+        AccountGameplayDelegationCommitSignerFixture.safeFailureDiagnostic(
+            new IllegalStateException("private exception details"));
+    assertThat(unknown).isEqualTo("sqlstate=UNKNOWN;constraint=UNKNOWN").doesNotContain("private");
+  }
+
+  @Test
+  void commitProofRequiresCanonicalExactStoredBundleSourceFence() throws Exception {
+    CommitHarness harness = newCommitHarness(CommitHook.CAPTURE_COMMIT_PROOF, false, false);
+    assertThatThrownBy(
+            () -> harness.service().commitPendingCandidate(harness.pending().requestId()))
+        .isInstanceOf(
+            AccountGameplayDelegationIssuanceCommitService.IssuanceCommitUnavailableException
+                .class);
+
+    byte[] validProof = Objects.requireNonNull(capturedCommitProof.get());
+    Record evidenceBefore = readCommitBundleEvidence(harness);
+    String sourceFence = evidenceBefore.get("source_fence", String.class);
+    String validProofJson = new String(validProof, StandardCharsets.UTF_8);
+    assertThat(validProofJson).contains("\"sourceFence\":\"" + sourceFence + "\"");
+
+    byte[] missingSourceFence = removeCommitProofSourceFence(validProof, sourceFence);
+    assertCommitProofRejected(
+        harness, missingSourceFence, "account_gameplay_delegation_commit_evidence_match");
+
+    byte[] changedSourceFence =
+        replaceCommitProofSourceFence(
+            validProof, sourceFence, Long.toString(Long.parseLong(sourceFence) + 1L));
+    assertCommitProofRejected(
+        harness, changedSourceFence, "account_gameplay_delegation_commit_evidence_match");
+
+    byte[] noncanonicalSourceFence = replaceCommitProofSourceFence(validProof, sourceFence, "01");
+    assertCommitProofRejected(
+        harness, noncanonicalSourceFence, "account_gameplay_delegation_commit_evidence_match");
+
+    assertPendingWithoutCommitProof(harness);
+    assertThat(tokenFenceCount(harness)).isZero();
+    assertCommitBundleEvidenceUnchanged(harness, evidenceBefore);
+    verify(harness.issuance(), times(1))
+        .bindSignedCandidate(eq(harness.pending().requestId()), anyString(), anyString());
+    PendingRegistryCandidate pendingBeforeRetry =
+        inTransaction(
+            harness.context(),
+            () -> harness.issuance().readPendingRegistryCandidate(harness.pending().requestId()));
+    Record envelopeBeforeRetry = readResponseEnvelope(harness);
+
+    // The exact original proof succeeds after the invalid variants leave all owner evidence intact.
+    reset(harness.issuance());
+    assertThat(harness.service().commitPendingCandidate(harness.pending().requestId()).outcome())
+        .isEqualTo(AccountGameplayDelegationIssuanceCommitService.Outcome.COMMITTED);
+    assertThat(tokenFenceCount(harness)).isEqualTo(1L);
+    assertCommitBundleEvidenceUnchanged(harness, evidenceBefore);
+    verify(harness.issuance(), never())
+        .bindSignedCandidate(eq(harness.pending().requestId()), anyString(), anyString());
+    Record committedCandidate = readCandidateRow(harness);
+    assertThat(committedCandidate.get("token_hash", String.class))
+        .isEqualTo(pendingBeforeRetry.tokenHash());
+    assertThat(committedCandidate.get("pending_registry_candidate_bytes", byte[].class))
+        .containsExactly(pendingBeforeRetry.canonicalRecordBytes());
+    Record envelopeAfterRetry = readResponseEnvelope(harness);
+    assertThat(envelopeAfterRetry.get("envelope_sha256", String.class))
+        .isEqualTo(envelopeBeforeRetry.get("envelope_sha256", String.class));
+    assertThat(envelopeAfterRetry.get("envelope_bytes", byte[].class))
+        .containsExactly(envelopeBeforeRetry.get("envelope_bytes", byte[].class));
   }
 
   @Test
@@ -256,15 +355,16 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
         .isInstanceOf(
             AccountGameplayDelegationIssuanceRepository.IdempotencyConflictException.class);
 
-    assertThat(
+    Record operationCount =
+        Objects.requireNonNull(
             context
                 .dsl()
                 .fetchOne(
                     "SELECT count(*) FROM account_gameplay_delegation_issuance_operations "
                         + "WHERE request_id = ?",
-                    Long.class,
-                    requestId))
-        .isEqualTo(1L);
+                    requestId),
+            "Operation count query must return a row");
+    assertThat(operationCount.get(0, Long.class)).isEqualTo(1L);
   }
 
   @Test
@@ -528,15 +628,16 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
         actualChallenges.findByAccountId(account.getId()).orElseThrow();
     assertThat(restored.getId()).isEqualTo(challenge.getId());
     assertThat(restored.getCodeHash()).isEqualTo(challenge.getCodeHash());
-    assertThat(
+    Record operationCount =
+        Objects.requireNonNull(
             context
                 .dsl()
                 .fetchOne(
                     "SELECT count(*) FROM account_gameplay_delegation_issuance_operations "
                         + "WHERE request_id = ?",
-                    Long.class,
-                    requestId))
-        .isEqualTo(0L);
+                    requestId),
+            "Operation count query must return a row");
+    assertThat(operationCount.get(0, Long.class)).isEqualTo(0L);
     assertThat(harness.redis().registeredRecord()).isNull();
   }
 
@@ -717,6 +818,7 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
                 dsl.execute(
                     "INSERT INTO account_gameplay_delegation_issuance_operations ("
                         + "operation_id, request_id, account_uuid, caller_workload, caller_context_id, "
+                        + "credential_request_digest_version, credential_digest_key_id, credential_request_digest, "
                         + "request_digest_version, request_digest, token_jti, token_generation, "
                         + "issued_at_epoch_second, not_before_epoch_second, expires_at_epoch_second, "
                         + "authority_issuer_generation, authority_issuer_source_version, "
@@ -727,6 +829,7 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
                         + "pending_registry_candidate_bytes, commit_proof_version, commit_proof_sha256, "
                         + "commit_proof_canonical_bytes, committed_at) "
                         + "SELECT operation_id, request_id, account_uuid, caller_workload, caller_context_id, "
+                        + "credential_request_digest_version, credential_digest_key_id, credential_request_digest, "
                         + "request_digest_version, request_digest, token_jti, token_generation, "
                         + "issued_at_epoch_second, not_before_epoch_second, expires_at_epoch_second, "
                         + "authority_issuer_generation, authority_issuer_source_version, "
@@ -981,6 +1084,68 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
     }
   }
 
+  @Test
+  void concurrentDifferentAccountIssuerSnapshotsAndPendingIssuanceShareGlobalRows()
+      throws Exception {
+    TestContext context = newTestContext();
+    Account firstAccount = createAccount(context);
+    Account secondAccount = createAccount(context);
+    AccountAuthorityGenerationRepository authorities =
+        new AccountAuthorityGenerationRepository(context.dsl());
+    AccountAuthoritySourceEvidenceRepository sources = sourceEvidence(context.dsl(), authorities);
+    AccountGameplayDelegationIssuanceRepository issuance =
+        new AccountGameplayDelegationIssuanceRepository(
+            context.dsl(),
+            sources,
+            new AccountAuthEvidenceBundleRepository(
+                context.dsl(), authorities, new AccountAuthorityOutboxRepository(context.dsl())));
+    PendingIntent firstIntent =
+        intent(
+            currentSnapshot(context, sources, firstAccount.getAccountUuid()),
+            firstAccount.getAccountUuid());
+    PendingIntent secondIntent =
+        intent(
+            currentSnapshot(context, sources, secondAccount.getAccountUuid()),
+            secondAccount.getAccountUuid());
+    CountDownLatch sharedIssuerSnapshotsHeld = new CountDownLatch(2);
+    CountDownLatch releaseIssuance = new CountDownLatch(1);
+    var executor = Executors.newFixedThreadPool(2);
+    try {
+      var first =
+          executor.submit(
+              () ->
+                  inTransaction(
+                      context,
+                      () -> {
+                        sources.readCurrentIssuerAccountSources(
+                            ACCOUNT_ISSUER, firstAccount.getAccountUuid());
+                        sharedIssuerSnapshotsHeld.countDown();
+                        awaitLatch(releaseIssuance, "release concurrent first Account issuance");
+                        return issuance.beginPending(firstIntent);
+                      }));
+      var second =
+          executor.submit(
+              () ->
+                  inTransaction(
+                      context,
+                      () -> {
+                        sources.readCurrentIssuerAccountSources(
+                            ACCOUNT_ISSUER, secondAccount.getAccountUuid());
+                        sharedIssuerSnapshotsHeld.countDown();
+                        awaitLatch(releaseIssuance, "release concurrent second Account issuance");
+                        return issuance.beginPending(secondIntent);
+                      }));
+
+      assertThat(sharedIssuerSnapshotsHeld.await(10, TimeUnit.SECONDS)).isTrue();
+      releaseIssuance.countDown();
+      assertThat(first.get(10, TimeUnit.SECONDS).requestId()).isEqualTo(firstIntent.requestId());
+      assertThat(second.get(10, TimeUnit.SECONDS).requestId()).isEqualTo(secondIntent.requestId());
+    } finally {
+      releaseIssuance.countDown();
+      executor.shutdownNow();
+    }
+  }
+
   private static TokenIdentity tokenFenceIdentity(CommitHarness harness) {
     Record row =
         Objects.requireNonNull(
@@ -1030,10 +1195,23 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
     byte[] persistedProof = row.get("commit_proof_canonical_bytes", byte[].class);
     assertThat(row.get("commit_proof_sha256", String.class)).isEqualTo(committed.proofSha256());
     assertThat(row.get("committed_at")).isNotNull();
+    Record bundleEvidence =
+        Objects.requireNonNull(
+            harness
+                .dsl()
+                .fetchOne(
+                    "SELECT source_fence FROM account_gameplay_delegation_auth_evidence_bundles "
+                        + "WHERE operation_id = ?",
+                    harness.pending().operationId()),
+            "committed issuance evidence bundle must exist");
+    String storedSourceFence = bundleEvidence.get("source_fence", String.class);
     assertThat(new String(persistedProof, StandardCharsets.UTF_8))
         .contains("account-game-session-delegation-commit-proof/v1")
+        .contains("\"sourceFence\":\"" + storedSourceFence + "\"")
         .doesNotContain("eyJ");
-    assertThat(harness.pending().authoritySnapshot().accountSecurityCutoff()).isPresent();
+    // This fixture does not advance Account security state through an owner event, so no
+    // security-cutoff checkpoint is present in its exact authority snapshot.
+    assertThat(harness.pending().authoritySnapshot().accountSecurityCutoff()).isEmpty();
     assertThat(harness.redis().registeredRecord()).isNotEmpty();
     assertThat(new String(harness.redis().registeredRecord(), StandardCharsets.UTF_8))
         .doesNotContain("eyJ");
@@ -1099,7 +1277,7 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
                                 CALLER_WORKLOAD,
                                 verifierMustNotRun(credentialVerifierCalls))))
         .isInstanceOf(
-            AccountGameplayDelegationIssuanceRepository.IdempotencyConflictException.class);
+            AccountGameplayDelegationResponseEnvelopeRepository.IdempotencyConflictException.class);
     assertThat(credentialVerifierCalls).hasValue(0);
 
     AccountGameplayDelegationIssuanceRepository expiredReader =
@@ -1188,7 +1366,10 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
                                 exactLoginRetry,
                                 CALLER_WORKLOAD,
                                 verifierMustNotRun(credentialVerifierCalls))))
-        .isInstanceOf(StaleAuthorityException.class);
+        // This generic Account mutation has no closed source-event receipt. Reject its unsupported
+        // authority before comparing a current snapshot with the retained issuance snapshot.
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Account source event schema is unsupported");
     assertThat(credentialVerifierCalls).hasValue(0);
 
     int closesBeforeRetry = harness.redis().connectionCloseCount();
@@ -1252,8 +1433,83 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
   }
 
   @Test
+  void realIssuerWriterInvalidatesAlreadySignedPendingCommit() throws Exception {
+    CommitHarness harness = newCommitHarness(CommitHook.NONE, false);
+    harness.signerFixture().preparePendingCandidate(harness.pending().requestId());
+    PendingRegistryCandidate pendingBeforeIssuerMutation =
+        inTransaction(
+            harness.context(),
+            () -> harness.issuance().readPendingRegistryCandidate(harness.pending().requestId()));
+    Record envelopeBeforeIssuerMutation = readResponseEnvelope(harness);
+    CountDownLatch issuerSnapshotHeld = new CountDownLatch(1);
+    CountDownLatch releaseIssuerSnapshot = new CountDownLatch(1);
+    CountDownLatch issuerWriterEntered = new CountDownLatch(1);
+    CountDownLatch issuerWriterCompleted = new CountDownLatch(1);
+    var executor = Executors.newFixedThreadPool(2);
+    try {
+      var ownerRead =
+          executor.submit(
+              () ->
+                  inTransaction(
+                      harness.context(),
+                      () -> {
+                        harness
+                            .sources()
+                            .readCurrentIssuerAccountSources(ACCOUNT_ISSUER, harness.accountId());
+                        issuerSnapshotHeld.countDown();
+                        awaitLatch(releaseIssuerSnapshot, "release held issuer snapshot");
+                        return null;
+                      }));
+      assertThat(issuerSnapshotHeld.await(10, TimeUnit.SECONDS)).isTrue();
+
+      var issuerWriter =
+          executor.submit(
+              () -> {
+                inTransaction(
+                    harness.context(),
+                    () -> {
+                      issuerWriterEntered.countDown();
+                      harness
+                          .sources()
+                          .appendIssuerAuthorityChange(
+                              ACCOUNT_ISSUER, "SIGNER_COMPROMISE", UUID.randomUUID().toString());
+                      return null;
+                    });
+                issuerWriterCompleted.countDown();
+              });
+      assertThat(issuerWriterEntered.await(10, TimeUnit.SECONDS)).isTrue();
+      assertThat(issuerWriterCompleted.await(250, TimeUnit.MILLISECONDS)).isFalse();
+
+      releaseIssuerSnapshot.countDown();
+      ownerRead.get(10, TimeUnit.SECONDS);
+      issuerWriter.get(10, TimeUnit.SECONDS);
+      assertThat(issuerWriterCompleted.getCount()).isZero();
+    } finally {
+      releaseIssuerSnapshot.countDown();
+      executor.shutdownNow();
+    }
+
+    assertThatThrownBy(
+            () -> harness.service().commitPendingCandidate(harness.pending().requestId()))
+        .isInstanceOf(
+            AccountGameplayDelegationIssuanceCommitService.IssuanceCommitUnavailableException.class)
+        .hasNoCause();
+    assertPendingWithoutCommitProof(harness);
+    Record candidateAfterIssuerMutation = readCandidateRow(harness);
+    assertThat(candidateAfterIssuerMutation.get("token_hash", String.class))
+        .isEqualTo(pendingBeforeIssuerMutation.tokenHash());
+    assertThat(candidateAfterIssuerMutation.get("pending_registry_candidate_bytes", byte[].class))
+        .containsExactly(pendingBeforeIssuerMutation.canonicalRecordBytes());
+    Record envelopeAfterIssuerMutation = readResponseEnvelope(harness);
+    assertThat(envelopeAfterIssuerMutation.get("envelope_sha256", String.class))
+        .isEqualTo(envelopeBeforeIssuerMutation.get("envelope_sha256", String.class));
+    assertThat(envelopeAfterIssuerMutation.get("envelope_bytes", byte[].class))
+        .containsExactly(envelopeBeforeIssuerMutation.get("envelope_bytes", byte[].class));
+  }
+
+  @Test
   void changedPendingRedisReadbackNeverCommitsTheCandidate() throws Exception {
-    CommitHarness harness = newCommitHarness(CommitHook.NONE, true);
+    CommitHarness harness = newCommitHarness(CommitHook.TRANSIENT_REDIS_READBACK, true);
 
     assertThatThrownBy(
             () -> harness.service().commitPendingCandidate(harness.pending().requestId()))
@@ -1263,6 +1519,30 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
 
     assertPendingWithoutCommitProof(harness);
     assertThat(harness.redis().connectionCloseCount()).isEqualTo(1);
+    verify(harness.issuance(), times(1))
+        .bindSignedCandidate(eq(harness.pending().requestId()), anyString(), anyString());
+    PendingRegistryCandidate pendingBeforeRetry =
+        inTransaction(
+            harness.context(),
+            () -> harness.issuance().readPendingRegistryCandidate(harness.pending().requestId()));
+    Record envelopeBeforeRetry = readResponseEnvelope(harness);
+
+    harness.redis().restorePendingReadback();
+    reset(harness.issuance());
+    assertThat(harness.service().commitPendingCandidate(harness.pending().requestId()).outcome())
+        .isEqualTo(AccountGameplayDelegationIssuanceCommitService.Outcome.COMMITTED);
+    verify(harness.issuance(), never())
+        .bindSignedCandidate(eq(harness.pending().requestId()), anyString(), anyString());
+    Record committedCandidate = readCandidateRow(harness);
+    assertThat(committedCandidate.get("token_hash", String.class))
+        .isEqualTo(pendingBeforeRetry.tokenHash());
+    assertThat(committedCandidate.get("pending_registry_candidate_bytes", byte[].class))
+        .containsExactly(pendingBeforeRetry.canonicalRecordBytes());
+    Record envelopeAfterRetry = readResponseEnvelope(harness);
+    assertThat(envelopeAfterRetry.get("envelope_sha256", String.class))
+        .isEqualTo(envelopeBeforeRetry.get("envelope_sha256", String.class));
+    assertThat(envelopeAfterRetry.get("envelope_bytes", byte[].class))
+        .containsExactly(envelopeBeforeRetry.get("envelope_bytes", byte[].class));
   }
 
   @Test
@@ -1344,6 +1624,20 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
                       : Optional.empty())
           .when(readbackSpy)
           .readCommittedProof(pending.requestId());
+    } else if (hook == CommitHook.TRANSIENT_REDIS_READBACK) {
+      issuance = spy(storedIssuance);
+    } else if (hook == CommitHook.CAPTURE_COMMIT_PROOF) {
+      issuance = spy(storedIssuance);
+      AccountGameplayDelegationIssuanceRepository proofSpy = issuance;
+      doAnswer(
+              invocation -> {
+                AccountGameplayDelegationIssuanceCommitService.CommitProof commitProof =
+                    invocation.getArgument(4);
+                capturedCommitProof.set(commitProof.canonicalBytes());
+                throw new IllegalStateException();
+              })
+          .when(proofSpy)
+          .commitPendingCandidate(any(), any(), any(), any(), any());
     }
 
     return buildCommitHarness(
@@ -1382,13 +1676,16 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
     AccountGameplayDelegationResponseEnvelopeService responseService =
         new AccountGameplayDelegationResponseEnvelopeService(responseRepository);
 
-    TransactionHookManager transactionManager = new TransactionHookManager(context.manager(), 5);
+    // Only the commit service uses this manager: its transaction is the final commit boundary.
+    TransactionHookManager transactionManager = new TransactionHookManager(context.manager());
     AccountGameplayDelegationCommitSignerFixture signerFixture =
         AccountGameplayDelegationCommitSignerFixture.create(
-            temporaryDirectory, issuance, responseService, transactionManager, Clock.systemUTC());
+            temporaryDirectory, issuance, responseService, context.manager(), Clock.systemUTC());
+    signerFixture.observeDatabaseFailures(dsl);
     transactionManager.setBeforeTargetTransaction(
         switch (hook) {
-          case NONE, AMBIGUOUS_COMMITTED_READBACK -> () -> {};
+          case NONE, AMBIGUOUS_COMMITTED_READBACK, CAPTURE_COMMIT_PROOF, TRANSIENT_REDIS_READBACK ->
+              () -> {};
           case WITHDRAW_SIGNER_TRUST -> signerFixture::withdrawTrust;
           case ADVANCE_ACCOUNT_AFTER_PROJECTION ->
               () ->
@@ -1399,14 +1696,15 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
         new RedisHarness(accountId, snapshot, mismatchRedisReadback, getClass().getClassLoader());
     AccountGameplayDelegationTokenRegistry tokenRegistry =
         new AccountGameplayDelegationTokenRegistry(
-            issuance,
+            AccountGameplayDelegationCommitSignerFixture.transactionalPendingRegistryReads(
+                issuance, context.manager()),
             redis.client(),
             Clock.systemUTC(),
             GameSessionAccountDelegationProfile.MAX_REGISTRY_RECORD_BYTES,
             30_000L);
     AccountGameplayDelegationAuthorityProjection authorityProjection =
         new AccountGameplayDelegationAuthorityProjection(
-            sources, transactionManager, redis.client());
+            sources, context.manager(), redis.client());
     AccountGameplayDelegationIssuanceCommitService service =
         new AccountGameplayDelegationIssuanceCommitService(
             signerFixture.signer(),
@@ -1417,10 +1715,10 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
             Clock.systemUTC());
     AccountGameplayDelegationCommittedIssuanceOwner committedOwner =
         new AccountGameplayDelegationCommittedIssuanceOwner(
-            issuance, signerFixture.signer(), tokenRegistry, transactionManager, Clock.systemUTC());
+            issuance, signerFixture.signer(), tokenRegistry, context.manager(), Clock.systemUTC());
     AccountGameplayDelegationResponseRecoveryOwner responseOwner =
         new AccountGameplayDelegationResponseRecoveryOwner(
-            responseRepository, committedOwner, transactionManager);
+            responseRepository, committedOwner, context.manager());
     AccountGameplayCanonicalLoginOwner loginOwner =
         new AccountGameplayCanonicalLoginOwner(
             new AccountRepository(dsl, sources),
@@ -1428,7 +1726,7 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
             integrationDigestKeySource(),
             service,
             responseOwner,
-            transactionManager,
+            context.manager(),
             Clock.systemUTC());
     return new CommitHarness(
         context,
@@ -1439,6 +1737,7 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
         redis,
         service,
         issuance,
+        signerFixture,
         signerFixture.signer(),
         loginOwner,
         loginRequest);
@@ -1489,6 +1788,103 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
     assertThat(row.get("committed_at")).isNull();
   }
 
+  private static Record readCommitBundleEvidence(CommitHarness harness) {
+    return Objects.requireNonNull(
+        harness
+            .dsl()
+            .fetchOne(
+                "SELECT bundle_version, source_version, source_fence, linearization, "
+                    + "canonical_sha256, canonical_bundle_bytes "
+                    + "FROM account_gameplay_delegation_auth_evidence_bundles "
+                    + "WHERE operation_id = ?",
+                harness.pending().operationId()),
+        "commit proof evidence bundle must exist");
+  }
+
+  private static Record readCandidateRow(CommitHarness harness) {
+    return Objects.requireNonNull(
+        harness
+            .dsl()
+            .fetchOne(
+                "SELECT token_hash, pending_registry_candidate_bytes "
+                    + "FROM account_gameplay_delegation_issuance_operations WHERE request_id = ?",
+                harness.pending().requestId()),
+        "issuance candidate row must exist");
+  }
+
+  private static Record readResponseEnvelope(CommitHarness harness) {
+    return Objects.requireNonNull(
+        harness
+            .dsl()
+            .fetchOne(
+                "SELECT envelope_sha256, envelope_bytes "
+                    + "FROM account_gameplay_delegation_response_envelopes WHERE operation_id = ?",
+                harness.pending().operationId()),
+        "sealed PENDING response envelope must exist");
+  }
+
+  private static void assertCommitBundleEvidenceUnchanged(CommitHarness harness, Record before) {
+    Record after = readCommitBundleEvidence(harness);
+    for (String column :
+        List.of(
+            "bundle_version",
+            "source_version",
+            "source_fence",
+            "linearization",
+            "canonical_sha256")) {
+      assertThat(after.get(column)).isEqualTo(before.get(column));
+    }
+    assertThat(after.get("canonical_bundle_bytes", byte[].class))
+        .containsExactly(before.get("canonical_bundle_bytes", byte[].class));
+  }
+
+  private static void assertCommitProofRejected(
+      CommitHarness harness, byte[] proofBytes, String safeConstraint) throws Exception {
+    assertThatThrownBy(
+            () ->
+                harness
+                    .dsl()
+                    .execute(
+                        "UPDATE account_gameplay_delegation_issuance_operations "
+                            + "SET status = 'COMMITTED', commit_proof_version = 1, "
+                            + "commit_proof_sha256 = ?, commit_proof_canonical_bytes = ?, "
+                            + "committed_at = CURRENT_TIMESTAMP WHERE request_id = ?",
+                        sha256Hex(proofBytes),
+                        proofBytes,
+                        harness.pending().requestId()))
+        .isInstanceOf(DataAccessException.class)
+        .satisfies(
+            failure ->
+                assertThat(
+                        AccountGameplayDelegationCommitSignerFixture.safeFailureDiagnostic(failure))
+                    .isEqualTo("sqlstate=23514;constraint=" + safeConstraint));
+    assertPendingWithoutCommitProof(harness);
+    assertThat(tokenFenceCount(harness)).isZero();
+  }
+
+  private static long tokenFenceCount(CommitHarness harness) {
+    return Objects.requireNonNull(
+            harness.dsl().fetchOne("SELECT count(*) FROM account_gameplay_token_identity_fences"),
+            "token identity fence count query must return a row")
+        .get(0, Long.class);
+  }
+
+  private static byte[] removeCommitProofSourceFence(byte[] proofBytes, String sourceFence) {
+    String json = new String(proofBytes, StandardCharsets.UTF_8);
+    String field = "\"sourceFence\":\"" + sourceFence + "\",";
+    assertThat(json).contains(field);
+    return json.replace(field, "").getBytes(StandardCharsets.UTF_8);
+  }
+
+  private static byte[] replaceCommitProofSourceFence(
+      byte[] proofBytes, String sourceFence, String replacement) {
+    String json = new String(proofBytes, StandardCharsets.UTF_8);
+    String field = "\"sourceFence\":\"" + sourceFence + "\"";
+    assertThat(json).contains(field);
+    return json.replace(field, "\"sourceFence\":\"" + replacement + "\"")
+        .getBytes(StandardCharsets.UTF_8);
+  }
+
   private static Account createAccount(TestContext context) {
     return createAccount(context, "PASSWORD");
   }
@@ -1499,7 +1895,7 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
     account.setUsername("delegation-" + suffix);
     account.setEmail("delegation-" + UUID.randomUUID() + "@example.test");
     account.setPasswordHash("integration-test-hash");
-    account.setRole("player");
+    // The fresh Account birth path creates the exact empty global-role source only for null role.
     account.setLoginAuthModes(loginAuthModes);
     DSLContext dsl = context.dsl();
     AccountAuthorityGenerationRepository authorities =
@@ -1940,14 +2336,34 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
             authority.accountSourceVersion(),
             authority.issuanceFence(),
             authority.issuanceFenceSourceVersion(),
-            canonicalBytes(
-                GameSessionAccountDelegationProfile.authorityTuple(
-                    authority.issuerGeneration(),
-                    authority.accountGeneration(),
-                    authority.accountSecurityCutoff())),
+            canonicalBytes(legacyNumericAuthorityTuple(authority)),
             canonicalBytes(Map.of()),
-            canonicalBytes(authority.sourceVersions()));
+            canonicalBytes(legacyNumericSourceVersions(authority)));
     assertThat(inserted).isEqualTo(1);
+  }
+
+  /**
+   * V78's historical SQL guard expected JSON numeric generations before the V84 string contract.
+   */
+  private static Map<String, Object> legacyNumericAuthorityTuple(
+      AccountAuthoritySnapshot authority) {
+    Map<String, Object> tuple =
+        new LinkedHashMap<>(
+            GameSessionAccountDelegationProfile.authorityTuple(
+                authority.issuerGeneration(),
+                authority.accountGeneration(),
+                authority.accountSecurityCutoff()));
+    tuple.put("accountAuthorityGeneration", authority.accountGeneration());
+    tuple.put("issuerAuthGeneration", authority.issuerGeneration());
+    return tuple;
+  }
+
+  private static Map<String, Object> legacyNumericSourceVersions(
+      AccountAuthoritySnapshot authority) {
+    return Map.of(
+        "accountSourceVersion", authority.accountSourceVersion(),
+        "issuanceFenceSourceVersion", authority.issuanceFenceSourceVersion(),
+        "issuerSourceVersion", authority.issuerSourceVersion());
   }
 
   private static void writeTestKeyring(Path root) throws Exception {
@@ -2022,6 +2438,17 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
     return context.transaction().execute(status -> operation.get());
   }
 
+  private static void awaitLatch(CountDownLatch latch, String description) {
+    try {
+      if (!latch.await(10, TimeUnit.SECONDS)) {
+        throw new IllegalStateException("Timed out waiting to " + description);
+      }
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException("Interrupted waiting to " + description, interrupted);
+    }
+  }
+
   private static String validateExternalLoopbackPostgresUrl(String jdbcUrl) {
     final URI uri;
     try {
@@ -2057,7 +2484,9 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
     NONE,
     WITHDRAW_SIGNER_TRUST,
     ADVANCE_ACCOUNT_AFTER_PROJECTION,
-    AMBIGUOUS_COMMITTED_READBACK
+    AMBIGUOUS_COMMITTED_READBACK,
+    TRANSIENT_REDIS_READBACK,
+    CAPTURE_COMMIT_PROOF
   }
 
   private record CommitHarness(
@@ -2069,31 +2498,28 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
       RedisHarness redis,
       AccountGameplayDelegationIssuanceCommitService service,
       AccountGameplayDelegationIssuanceRepository issuance,
+      AccountGameplayDelegationCommitSignerFixture signerFixture,
       AccountGameplayDelegationSigner signer,
       AccountGameplayCanonicalLoginOwner loginOwner,
       CanonicalGameplayLoginRequest loginRequest) {}
 
   private static final class TransactionHookManager implements PlatformTransactionManager {
     private final PlatformTransactionManager delegate;
-    private final int targetTransaction;
-    private final AtomicInteger transactionCount = new AtomicInteger();
-    private volatile Runnable beforeTargetTransaction = () -> {};
+    private final AtomicReference<Runnable> beforeTargetTransaction =
+        new AtomicReference<>(() -> {});
 
-    private TransactionHookManager(PlatformTransactionManager delegate, int targetTransaction) {
+    private TransactionHookManager(PlatformTransactionManager delegate) {
       this.delegate = delegate;
-      this.targetTransaction = targetTransaction;
     }
 
     private void setBeforeTargetTransaction(Runnable operation) {
-      beforeTargetTransaction = operation;
+      beforeTargetTransaction.set(operation);
     }
 
     @Override
     public org.springframework.transaction.TransactionStatus getTransaction(
         org.springframework.transaction.TransactionDefinition definition) {
-      if (transactionCount.incrementAndGet() == targetTransaction) {
-        beforeTargetTransaction.run();
-      }
+      beforeTargetTransaction.getAndSet(() -> {}).run();
       return delegate.getTransaction(definition);
     }
 
@@ -2110,7 +2536,7 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
 
   private static final class RedisHarness {
     private final UUID accountId;
-    private final boolean mismatchPendingReadback;
+    private volatile boolean mismatchPendingReadback;
     private final byte[][] authorityProjectionBytes;
     private final AtomicReference<byte[]> pendingRecord = new AtomicReference<>();
     private final AtomicLong absoluteExpiryMillis = new AtomicLong();
@@ -2147,10 +2573,32 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
               anyString(), eq(ScriptOutputType.INTEGER), any(byte[][].class), any(byte[][].class)))
           .thenAnswer(
               invocation -> {
-                byte[][] arguments = invocation.getArgument(3);
-                pendingRecord.set(arguments[0].clone());
-                absoluteExpiryMillis.set(
-                    Long.parseLong(new String(arguments[1], StandardCharsets.US_ASCII)));
+                byte[][] keys = (byte[][]) invocation.getRawArguments()[2];
+                byte[][] arguments = (byte[][]) invocation.getRawArguments()[3];
+                String key = new String(keys[0], StandardCharsets.US_ASCII);
+                if (key.startsWith(AccountGameplayDelegationRedisClient.TOKEN_KEY_PREFIX)) {
+                  if (arguments.length == 2) {
+                    pendingRecord.set(arguments[0].clone());
+                  } else if (arguments.length == 3) {
+                    // The activation CAS ARGV order is exact PENDING bytes, exact ACTIVE bytes,
+                    // and the original absolute deadline. Readback must see the ACTIVE record.
+                    pendingRecord.set(arguments[1].clone());
+                  } else {
+                    throw new AssertionError("Unexpected token-registry script arguments");
+                  }
+                  absoluteExpiryMillis.set(
+                      Long.parseLong(
+                          new String(arguments[arguments.length - 1], StandardCharsets.US_ASCII)));
+                } else if (key.equals(
+                    AccountGameplayDelegationAuthorityProjection.ISSUER_KEY_PREFIX
+                        + GameSessionAccountDelegationProfile.ISSUER)) {
+                  authorityProjectionBytes[0] = arguments[0].clone();
+                } else if (key.equals(
+                    AccountGameplayDelegationAuthorityProjection.ACCOUNT_KEY_PREFIX + accountId)) {
+                  if (arguments.length == 3 && arguments[2].length > 0) {
+                    authorityProjectionBytes[1] = arguments[2].clone();
+                  }
+                }
                 return 1L;
               });
       when(commands.get(any(byte[].class)))
@@ -2160,7 +2608,7 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
                 if (key.startsWith(AccountGameplayDelegationRedisClient.TOKEN_KEY_PREFIX)) {
                   byte[] value = pendingRecord.get();
                   if (value == null) return null;
-                  return mismatchPendingReadback
+                  return this.mismatchPendingReadback
                       ? ascii("different-pending-record")
                       : value.clone();
                 }
@@ -2177,6 +2625,11 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
               });
       when(commands.pexpiretime(any(byte[].class)))
           .thenAnswer(invocation -> absoluteExpiryMillis.get());
+      when(commands.pttl(
+              eq(
+                  (AccountGameplayDelegationAuthorityProjection.ACCOUNT_KEY_PREFIX + accountId)
+                      .getBytes(StandardCharsets.US_ASCII))))
+          .thenReturn(-1L);
       org.mockito.Mockito.doReturn(List.of(1L, 1L))
           .when(commands)
           .dispatch(any(ProtocolKeyword.class), any(CommandOutput.class), any(CommandArgs.class));
@@ -2205,6 +2658,10 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
     private byte[] registeredRecord() {
       byte[] value = pendingRecord.get();
       return value == null ? null : value.clone();
+    }
+
+    private void restorePendingReadback() {
+      mismatchPendingReadback = false;
     }
 
     private int connectionCloseCount() {
