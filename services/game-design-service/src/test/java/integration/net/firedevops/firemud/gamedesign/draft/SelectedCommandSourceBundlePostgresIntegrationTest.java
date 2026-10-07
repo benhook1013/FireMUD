@@ -65,7 +65,7 @@ class SelectedCommandSourceBundlePostgresIntegrationTest {
     Fixture fixture = fixture();
     String inheritedDefinition = commandDefinition("look", "l");
     String lastCommitDefinition = commandDefinition("inventory", "i");
-    DraftCommitBinding first = mixedSourceCommit(fixture.target(), inheritedDefinition);
+    DraftCommitBinding first = mixedSourceCommit(fixture, inheritedDefinition);
     applyAndSynchronize(fixture, first);
     DraftCommitBinding lastCommandChange =
         commandSourceCommit(
@@ -173,8 +173,7 @@ class SelectedCommandSourceBundlePostgresIntegrationTest {
   @Test
   void missingCaptureAndOperationSubstitutionDoNotWriteBundle() throws Exception {
     Fixture fixture = fixture();
-    DraftCommitBinding authored =
-        mixedSourceCommit(fixture.target(), commandDefinition("look", "l"));
+    DraftCommitBinding authored = mixedSourceCommit(fixture, commandDefinition("look", "l"));
     applyAndSynchronize(fixture, authored);
     GameDesignPublicationOperation operation =
         fixture.txChecked(
@@ -277,7 +276,7 @@ class SelectedCommandSourceBundlePostgresIntegrationTest {
         .placeholders(Map.of("serviceSchema", schema))
         .locations("classpath:db/migration")
         .table("flyway_schema_history_game_design_service")
-        .target("54")
+        .target("55")
         .load()
         .migrate();
 
@@ -325,7 +324,8 @@ class SelectedCommandSourceBundlePostgresIntegrationTest {
     return new Fixture(dsl, write, target, versions, sources, coordinator);
   }
 
-  private static DraftCommitBinding mixedSourceCommit(TargetProof target, String definition) {
+  private static DraftCommitBinding mixedSourceCommit(Fixture fixture, String definition) {
+    TargetProof target = fixture.target();
     String policy =
         "{\"revisionKind\":\"REALM_ENTRY_POLICY\",\"logicalRevisionId\":\"authored-main\",\"policy\":"
             + RealmEntryPolicy.parse(
@@ -340,7 +340,7 @@ class SelectedCommandSourceBundlePostgresIntegrationTest {
         target,
         UUID.randomUUID(),
         UUID.randomUUID(),
-        "ISOLATED-explicit-first-base",
+        "genesis:" + fixture.sources().readGenesis(target).orElseThrow().policy().receiptId(),
         List.of(revision("0", CommandSource.upsertPayload(definition)), revision("1", policy)),
         List.of(commandScope(target, "0"), policyScope(target, "0")));
   }
@@ -359,7 +359,15 @@ class SelectedCommandSourceBundlePostgresIntegrationTest {
   private static void applyAndSynchronize(Fixture fixture, DraftCommitBinding binding) {
     fixture.tx(
         () -> {
-          fixture.coordinator().claim(binding);
+          var reviewed = new GameDesignReviewedBaseRepository(fixture.dsl());
+          fixture
+              .sources()
+              .claimReviewed(
+                  binding,
+                  reviewed.resolve(
+                      fixture.target(),
+                      net.firedevops.firemud.common.authoring.DraftBaseReference.parse(
+                          binding.baseCommitId())));
           fixture.coordinator().claimApplicationSlot(binding);
           fixture.coordinator().markOwnerInProgress(binding, Owner.GAME_DESIGN_CONTROL_PLANE);
           return null;
@@ -374,6 +382,7 @@ class SelectedCommandSourceBundlePostgresIntegrationTest {
                   binding,
                   new DraftCommitCoordinatorRepository.CoordinatorProof(
                       binding, List.of(applied.ownerOutcome())));
+          fixture.sources().captureSynchronized(binding);
           fixture.coordinator().releaseApplicationSlot(binding);
           return null;
         });

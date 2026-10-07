@@ -1,21 +1,20 @@
 package net.firedevops.firemud.gamedesign.publication;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
-import java.util.HexFormat;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
+import net.firedevops.firemud.common.publication.PublishedRealmEntryPolicyEvidence;
+import net.firedevops.firemud.common.publication.PublishedRealmEntryPolicySetEvidence;
 
 /** Immutable internal evidence associating a frozen source set with its actual sealed release. */
 public final class RealmPolicyPublishedEvidence {
-  public static final String SET_DIGEST_SCHEMA = "game-design-published-realm-policy-set/v1";
-  public static final String POLICY_DIGEST_SCHEMA = "game-design-published-realm-policy/v1";
+  public static final String SET_DIGEST_SCHEMA =
+      PublishedRealmEntryPolicySetEvidence.SET_DIGEST_SCHEMA;
+  public static final String POLICY_DIGEST_SCHEMA =
+      PublishedRealmEntryPolicySetEvidence.POLICY_DIGEST_SCHEMA;
 
   private RealmPolicyPublishedEvidence() {}
 
@@ -133,16 +132,7 @@ public final class RealmPolicyPublishedEvidence {
   }
 
   public static String targetProofJson(DraftCommitBinding.TargetProof target) {
-    Objects.requireNonNull(target, "target");
-    return RealmPolicySource.canonical(
-        Map.of(
-            "canonicalTenantId", target.canonicalTenantId().toString(),
-            "canonicalVersionId", target.canonicalVersionId().toString(),
-            "gameDesignVersionRowId", Long.toString(target.gameDesignVersionRowId()),
-            "gameDesignVersionTenantKey", target.gameDesignVersionTenantKey(),
-            "sourceGameRowId", Long.toString(target.sourceGameRowId()),
-            "sourceGameTenantKey", target.sourceGameTenantKey(),
-            "sourceProvenanceKind", target.sourceProvenanceKind()));
+    return PublishedRealmEntryPolicySetEvidence.targetProofJson(target);
   }
 
   public static String policyDigest(
@@ -154,36 +144,19 @@ public final class RealmPolicyPublishedEvidence {
       String publishWorkflowId,
       String manifestHash,
       RealmPolicySource.Policy source) {
-    nonNil(policyId, "policyId");
     Objects.requireNonNull(source, "source");
-    String evidence =
-        RealmPolicySource.canonical(
-            map(
-                "schema",
-                POLICY_DIGEST_SCHEMA,
-                "policyId",
-                policyId.toString(),
-                "target",
-                RealmPolicySource.tree(targetProofJson(target)),
-                "versionNumber",
-                versionNumber,
-                "sourceCommitId",
-                source.commitId().toString(),
-                "sourceRevisionId",
-                source.revisionId().toString(),
-                "logicalRevisionId",
-                source.logicalRevisionId(),
-                "publishedReleaseBundleRef",
-                publishedReleaseBundleRef,
-                "publishedReleaseBundleDigest",
-                publishedReleaseBundleDigest,
-                "publishWorkflowId",
-                publishWorkflowId,
-                "manifestHash",
-                manifestHash,
-                "policy",
-                RealmPolicySource.tree(source.policy().canonicalJson())));
-    return sha256(evidence.getBytes(StandardCharsets.UTF_8));
+    return PublishedRealmEntryPolicyEvidence.calculateDigest(
+        policyId,
+        target,
+        versionNumber,
+        publishedReleaseBundleRef,
+        publishedReleaseBundleDigest,
+        publishWorkflowId,
+        manifestHash,
+        source.commitId(),
+        source.revisionId(),
+        source.logicalRevisionId(),
+        source.policy());
   }
 
   public static String computePolicySetDigest(
@@ -200,46 +173,33 @@ public final class RealmPolicyPublishedEvidence {
       byte[] captureBytes,
       byte[] terminalEvidenceBytes,
       List<Policy> policies) {
-    var ordered = RealmPolicySource.ordered(policies.stream().map(Policy::source).toList());
-    if (ordered.size() != policies.size()) {
-      throw new IllegalArgumentException("Canonical policy order required");
-    }
-    var bySource =
-        policies.stream().collect(java.util.stream.Collectors.toMap(Policy::source, p -> p));
-    var orderedEvidence =
-        ordered.stream()
+    RealmPolicySource.ordered(policies.stream().map(Policy::source).toList());
+    var shared =
+        policies.stream()
             .map(
-                source -> {
-                  Policy policy = bySource.get(source);
-                  return Map.of(
-                      "policyId", policy.policyId().toString(),
-                      "sourceCommitId", source.commitId().toString(),
-                      "sourceRevisionId", source.revisionId().toString(),
-                      "logicalRevisionId", source.logicalRevisionId(),
-                      "worldSlug", source.policy().worldSlug(),
-                      "realmSlug", source.policy().realmSlug(),
-                      "policyDigest", policy.policyDigest());
-                })
+                policy ->
+                    new PublishedRealmEntryPolicyEvidence(
+                        policy.policyId(),
+                        policy.source().commitId(),
+                        policy.source().revisionId(),
+                        policy.source().logicalRevisionId(),
+                        policy.source().policy(),
+                        policy.policyDigest()))
             .toList();
-    String evidence =
-        RealmPolicySource.canonical(
-            map(
-                "schema", SET_DIGEST_SCHEMA,
-                "target", RealmPolicySource.tree(targetProofJson(target)),
-                "versionNumber", versionNumber,
-                "sourceCommitId", sourceCommitId.toString(),
-                "sourceEpoch", sourceEpoch,
-                "publishedReleaseBundleRef", publishedReleaseBundleRef,
-                "publishedReleaseBundleDigest", publishedReleaseBundleDigest,
-                "publishWorkflowId", publishWorkflowId,
-                "manifestHash", manifestHash,
-                "publicationVersionStateEpoch", Long.toString(publicationVersionStateEpoch),
-                "operationDigest", sha256(operationBytes),
-                "captureDigest", sha256(captureBytes),
-                "terminalEvidenceDigest", sha256(terminalEvidenceBytes),
-                "policyCount", orderedEvidence.size(),
-                "policies", orderedEvidence));
-    return sha256(evidence.getBytes(StandardCharsets.UTF_8));
+    return PublishedRealmEntryPolicySetEvidence.calculatePolicySetDigest(
+        target,
+        versionNumber,
+        sourceCommitId,
+        sourceEpoch,
+        publishedReleaseBundleRef,
+        publishedReleaseBundleDigest,
+        publishWorkflowId,
+        manifestHash,
+        publicationVersionStateEpoch,
+        operationBytes,
+        captureBytes,
+        terminalEvidenceBytes,
+        shared);
   }
 
   private static byte[] nonEmptyCopy(byte[] bytes, String name) {
@@ -249,28 +209,8 @@ public final class RealmPolicyPublishedEvidence {
     return bytes.clone();
   }
 
-  private static Map<String, Object> map(Object... entries) {
-    if (entries.length % 2 != 0) {
-      throw new IllegalArgumentException("Even evidence key/value entries required");
-    }
-    var result = new java.util.LinkedHashMap<String, Object>();
-    for (int index = 0; index < entries.length; index += 2) {
-      result.put((String) entries[index], entries[index + 1]);
-    }
-    return result;
-  }
-
   private static boolean digest(String value) {
     return value != null && value.matches("sha256:[0-9a-f]{64}");
-  }
-
-  private static String sha256(byte[] bytes) {
-    try {
-      return "sha256:"
-          + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
-    } catch (NoSuchAlgorithmException impossible) {
-      throw new IllegalStateException("SHA-256 is unavailable", impossible);
-    }
   }
 
   private static void nonNil(UUID value, String name) {

@@ -12,6 +12,7 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository;
+import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.transaction.TransactionDefinition;
@@ -209,6 +210,33 @@ public final class RealmPolicyPublicationRepository {
   /**
    * Caller supplies a REPEATABLE_READ snapshot; no caller state substitutes for stored evidence.
    */
+  public Optional<RealmPolicyPublishedEvidence.PublishedSet> readPublishedSet(
+      UUID canonicalTenantId, UUID canonicalVersionId) {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || !TransactionSynchronizationManager.isCurrentTransactionReadOnly()
+        || !Integer.valueOf(TransactionDefinition.ISOLATION_REPEATABLE_READ)
+            .equals(TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())) {
+      throw new IllegalStateException(
+          "Canonical policy target resolution requires one read-only REPEATABLE_READ snapshot");
+    }
+    var version =
+        // Exact read uses the transaction-bound search path, not the migration-only lock API.
+        new VersionRepository(dsl, null)
+            .findByCanonicalTenantIdAndCanonicalVersionId(canonicalTenantId, canonicalVersionId);
+    if (version.isEmpty()) return Optional.empty();
+    var owner = version.orElseThrow();
+    return readPublishedSet(
+        new TargetProof(
+            owner.getCanonicalTenantId(),
+            owner.getCanonicalVersionId(),
+            owner.getId(),
+            owner.getTenantId(),
+            owner.getIdentitySourceGameRowId(),
+            owner.getIdentitySourceGameTenantKey(),
+            owner.getIdentitySourceProvenanceKind()));
+  }
+
+  /** Exact internal target read; the service owns its independent snapshot boundary. */
   public Optional<RealmPolicyPublishedEvidence.PublishedSet> readPublishedSet(TargetProof target) {
     Objects.requireNonNull(target, "target");
     var row =

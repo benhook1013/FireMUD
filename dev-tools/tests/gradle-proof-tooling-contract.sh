@@ -322,6 +322,18 @@ REALM_POLICY_SOURCE_CASES = (
     f"{REALM_POLICY_SOURCE_SUITE}#freezeAndSourceWriterUseSameVersionLockAndRollbackDoesNotLeaveCapture()",
 )
 COMMAND_SOURCE_SUITE = "net.firedevops.firemud.gamedesign.draft.CommandSourcePostgresIntegrationTest"
+REVIEWED_BASE_SUITE = "net.firedevops.firemud.gamedesign.draft.GameDesignReviewedBasePostgresIntegrationTest"
+REVIEWED_BASE_CASES = (
+    f"{REVIEWED_BASE_SUITE}#newDraftSharedGenesisClaimsAndReadsExactImmutableBinding()",
+    f"{REVIEWED_BASE_SUITE}#wrongDraftWrongReceiptAndUnknownRetainedBaseDenyBeforeClaim()",
+    f"{REVIEWED_BASE_SUITE}#changedCreationWitnessAndDigestCannotReplaceReviewedEvidence()",
+    f"{REVIEWED_BASE_SUITE}#retainedAuthoredBaseSurvivesNewerDisjointCommandAdvanceAndExactRetry()",
+    f"{REVIEWED_BASE_SUITE}#reviewedGenesisRemainsOriginalProvenanceAfterDisjointSourceAdvance()",
+    f"{REVIEWED_BASE_SUITE}#unreviewedClaimCannotWriteOrCaptureCanonicalSources()",
+    f"{REVIEWED_BASE_SUITE}#unreviewedPublicationSelectionCannotFreezeOrConsumeCanonicalSources()",
+    f"{REVIEWED_BASE_SUITE}#storageRejectsLateReviewedDecorationAfterDispatchSlotClaim()",
+    f"{REVIEWED_BASE_SUITE}#rollbackRemovesClaimAndEvidenceTogetherAndOpaqueHistoryCannotBeBackfilled()",
+)
 COMMAND_SOURCE_CASES = (
     f"{COMMAND_SOURCE_SUITE}#freshGenesisMixedUpsertRollbackRetryDisjointInheritanceDeleteAndPendingFreeze()",
     f"{COMMAND_SOURCE_SUITE}#retainedPreSourceVersionIsNotBackfilledAsAnEmptyCommandSet()",
@@ -427,6 +439,7 @@ def validate(document) -> None:
     for suite, cases, description in (
         (COMMAND_SOURCE_SUITE, COMMAND_SOURCE_CASES, "immutable command source"),
         (GAME_DESIGN_SOURCE_SUITE, GAME_DESIGN_SOURCE_CASES, "immutable Game Design source"),
+        (REVIEWED_BASE_SUITE, REVIEWED_BASE_CASES, "immutable reviewed Draft base"),
         (SELECTED_COMMAND_SOURCE_BUNDLE_SUITE, SELECTED_COMMAND_SOURCE_BUNDLE_CASES, "selected command source bundle"),
     ):
         require(owner_run.count(f"--tests {suite}") == 1,
@@ -530,6 +543,7 @@ for index, case in enumerate(REALM_POLICY_SOURCE_CASES[:4], start=1):
 for suite, cases, label in (
     (COMMAND_SOURCE_SUITE, COMMAND_SOURCE_CASES, "command source"),
     (GAME_DESIGN_SOURCE_SUITE, GAME_DESIGN_SOURCE_CASES, "Game Design source"),
+    (REVIEWED_BASE_SUITE, REVIEWED_BASE_CASES, "reviewed Draft base"),
     (SELECTED_COMMAND_SOURCE_BUNDLE_SUITE, SELECTED_COMMAND_SOURCE_BUNDLE_CASES, "selected command source bundle"),
 ):
     mutation_must_fail(

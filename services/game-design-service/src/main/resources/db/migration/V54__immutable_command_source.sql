@@ -291,7 +291,7 @@ BEGIN
             OR (SELECT count(*) FROM jsonb_object_keys(revision_payload)) <> 4
             OR revision_payload->>'operation' IS DISTINCT FROM NEW.operation_kind
             OR (SELECT count(*) FROM jsonb_object_keys(stored_operation))
-                <> CASE WHEN NEW.operation_kind = 'UPSERT' THEN 6 ELSE 5 END
+                <> (CASE WHEN NEW.operation_kind = 'UPSERT' THEN 6 ELSE 5 END)
             OR stored_operation->>'revisionOrder' IS DISTINCT FROM NEW.revision_order::TEXT
             OR stored_operation->>'revisionId' IS DISTINCT FROM NEW.revision_id::TEXT
             OR stored_operation->>'commitId' IS DISTINCT FROM NEW.commit_id::TEXT

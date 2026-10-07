@@ -54,8 +54,6 @@ class CommandSourcePostgresIntegrationTest {
   @Container
   static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
 
-  private static final String INITIAL_PROPOSAL_BASE = "ISOLATED-explicit-initial-proposal-base";
-
   @Test
   void freshGenesisMixedUpsertRollbackRetryDisjointInheritanceDeleteAndPendingFreeze()
       throws Exception {
@@ -71,7 +69,8 @@ class CommandSourcePostgresIntegrationTest {
     assertThat(fixture.dsl().fetchCount(DSL.table("game_design_draft_commit"))).isZero();
     assertThat(fixture.dsl().fetchCount(DSL.table("game_design_command_source_snapshot"))).isZero();
 
-    DraftCommitBinding mixed = mixedUpsertBinding(fixture.target(), INITIAL_PROPOSAL_BASE);
+    String genesisBase = "genesis:" + commandGenesis.receiptId();
+    DraftCommitBinding mixed = mixedUpsertBinding(fixture.target(), genesisBase);
     start(fixture, mixed);
     fixture
         .write()
@@ -122,7 +121,7 @@ class CommandSourcePostgresIntegrationTest {
         fixture.tx(() -> fixture.sources().apply(mixed));
     CommandApplication commandApplication = mixedApplication.command().orElseThrow();
     assertThat(mixedApplication.ownerOutcome().appliedEpochs()).hasSize(2);
-    assertThat(commandApplication.binding().baseCommitId()).isEqualTo(INITIAL_PROPOSAL_BASE);
+    assertThat(commandApplication.binding().baseCommitId()).isEqualTo(genesisBase);
     assertThat(commandApplication.snapshot().definitions()).hasSize(1);
     assertThat(fixture.commands().readSnapshot(fixture.target(), mixed.commitId())).isEmpty();
     assertThat(fixture.coordinator().readVisibilityFence(fixture.target())).isEmpty();
@@ -130,7 +129,7 @@ class CommandSourcePostgresIntegrationTest {
         .isEqualTo(mixedApplication.ownerOutcome());
     DraftCommitBinding changed = changedCommandDigest(mixed);
     assertThatThrownBy(() -> fixture.tx(() -> fixture.sources().apply(changed)))
-        .hasMessageContaining("COMMAND_SOURCE_COMMIT_BINDING_CONFLICT");
+        .hasMessageContaining("REVIEWED_BASE_STORED_BINDING_CONFLICT");
     assertThat(fixture.dsl().fetchCount(DSL.table("game_design_command_source_application")))
         .isEqualTo(1);
 
@@ -250,7 +249,13 @@ class CommandSourcePostgresIntegrationTest {
     Fixture fixture = retainedVersionWithoutBaseline();
     DraftCommitBinding command =
         commandUpsertBinding(fixture.target(), "0", "ISOLATED-retained-proposal-base", "look", "l");
-    start(fixture, command);
+    fixture.tx(
+        () -> {
+          fixture.coordinator().claim(command);
+          fixture.coordinator().claimApplicationSlot(command);
+          fixture.coordinator().markOwnerInProgress(command, Owner.GAME_DESIGN_CONTROL_PLANE);
+          return null;
+        });
     assertThatThrownBy(() -> fixture.tx(() -> fixture.sources().apply(command)))
         .hasMessageContaining("GAME_DESIGN_SOURCE_GENESIS_UNAVAILABLE");
     assertThat(fixture.sources().readGenesis(fixture.target())).isEmpty();
@@ -326,7 +331,15 @@ class CommandSourcePostgresIntegrationTest {
   private static void start(Fixture fixture, DraftCommitBinding binding) {
     fixture.tx(
         () -> {
-          fixture.coordinator().claim(binding);
+          var reviewed = new GameDesignReviewedBaseRepository(fixture.dsl());
+          fixture
+              .sources()
+              .claimReviewed(
+                  binding,
+                  reviewed.resolve(
+                      fixture.target(),
+                      net.firedevops.firemud.common.authoring.DraftBaseReference.parse(
+                          binding.baseCommitId())));
           fixture.coordinator().claimApplicationSlot(binding);
           fixture.coordinator().markOwnerInProgress(binding, Owner.GAME_DESIGN_CONTROL_PLANE);
           return null;
@@ -470,7 +483,7 @@ class CommandSourcePostgresIntegrationTest {
         .placeholders(Map.of("serviceSchema", schema))
         .locations("classpath:db/migration")
         .table("flyway_schema_history_game_design_service")
-        .target("54")
+        .target("55")
         .load()
         .migrate();
     var transactions = new DataSourceTransactionManager(dataSource);
@@ -564,7 +577,7 @@ class CommandSourcePostgresIntegrationTest {
         .placeholders(Map.of("serviceSchema", schema))
         .locations("classpath:db/migration")
         .table("flyway_schema_history_game_design_service")
-        .target("54")
+        .target("55")
         .load()
         .migrate();
     RealmPolicySourceRepository policies = new RealmPolicySourceRepository(dsl);

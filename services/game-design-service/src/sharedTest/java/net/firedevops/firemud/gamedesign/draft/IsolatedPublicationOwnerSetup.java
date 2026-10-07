@@ -64,12 +64,29 @@ public final class IsolatedPublicationOwnerSetup {
       String notes,
       boolean captureSources)
       throws Exception {
-    var seed = IsolatedPublicationOperationFixtures.fresh(target);
+    var sources = new net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository(dsl);
+    var reviewed = new GameDesignReviewedBaseRepository(dsl);
+    var evidence =
+        captureSources
+            ? reviewed.resolve(
+                target,
+                net.firedevops.firemud.common.authoring.DraftBaseReference.parse(
+                    "genesis:" + sources.readGenesis(target).orElseThrow().policy().receiptId()))
+            : null;
+    var seed =
+        captureSources
+            ? IsolatedPublicationOperationFixtures.fresh(
+                target, evidence.reference().canonicalValue())
+            : IsolatedPublicationOperationFixtures.fresh(target);
     var draft = seed.account().input().selection().selectedCommit();
     var coordinator = new DraftCommitCoordinatorRepository(dsl);
     // The original Draft Account/World result is stipulated upstream fixture evidence, not a new
     // GD Draft-authorization operation or live Account authority issued by this helper.
-    coordinator.claim(draft);
+    if (captureSources) {
+      sources.claimReviewed(draft, evidence);
+    } else {
+      coordinator.claim(draft);
+    }
     coordinator.claimApplicationSlot(draft);
     var epochs =
         draft.affectedUnits().stream()

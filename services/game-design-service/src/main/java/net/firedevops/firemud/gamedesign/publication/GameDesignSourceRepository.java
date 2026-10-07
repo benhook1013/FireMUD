@@ -15,21 +15,34 @@ import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository;
 import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository.AppliedEpoch;
 import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository.OwnerOutcome;
 import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository.OwnerStatus;
+import net.firedevops.firemud.gamedesign.draft.GameDesignReviewedBaseEvidence;
+import net.firedevops.firemud.gamedesign.draft.GameDesignReviewedBaseRepository;
 import org.jooq.DSLContext;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Joins the two actual Game Design sources under one caller-owned coordinator transaction. */
 public final class GameDesignSourceRepository {
+  private final DSLContext dsl;
   private final RealmPolicySourceRepository policies;
   private final CommandSourceRepository commands;
   private final DraftCommitCoordinatorRepository coordinator;
 
   public GameDesignSourceRepository(DSLContext dsl) {
-    Objects.requireNonNull(dsl, "dsl");
+    this.dsl = Objects.requireNonNull(dsl, "dsl");
     policies = new RealmPolicySourceRepository(dsl);
     commands = new CommandSourceRepository(dsl);
     coordinator = new DraftCommitCoordinatorRepository(dsl);
+  }
+
+  /**
+   * Claim the exact reviewed proposal against actual owner evidence before any source dispatch.
+   * Account authorization and current permission through commit remain caller obligations.
+   */
+  public DraftCommitCoordinatorRepository.CommitSnapshot claimReviewed(
+      DraftCommitBinding binding, GameDesignReviewedBaseEvidence reviewedEvidence) {
+    requireWrite();
+    return new GameDesignReviewedBaseRepository(dsl).claimReviewed(binding, reviewedEvidence);
   }
 
   /** Call only on the actual new full-Draft Version insertion branch, in that transaction. */
@@ -72,6 +85,7 @@ public final class GameDesignSourceRepository {
     boolean policyMutation = CommandSource.hasRealmPolicyRevision(binding);
     requireCompleteScopes(binding, !commandMutations.isEmpty(), policyMutation);
     requireGenesis(binding.target());
+    requireReviewed(binding);
     Optional<CommandApplication> command = commands.apply(binding);
     if (command.isPresent() != !commandMutations.isEmpty()) {
       throw new IllegalStateException("GAME_DESIGN_COMMAND_APPLICATION_INCOMPLETE");
@@ -121,6 +135,7 @@ public final class GameDesignSourceRepository {
     requireWrite();
     Objects.requireNonNull(binding, "binding");
     requireGenesis(binding.target());
+    requireReviewed(binding);
     CommandSnapshot command = commands.captureSynchronized(binding);
     RealmPolicySnapshot policy = policies.captureSynchronized(binding);
     if (!binding.equals(command.binding()) || !binding.equals(policy.binding())) {
@@ -134,6 +149,7 @@ public final class GameDesignSourceRepository {
     requireWrite();
     Objects.requireNonNull(operation, "operation");
     requireGenesis(operation.account().input().selection().target());
+    requireReviewed(operation.account().input().selection().selectedCommit());
     RealmPolicySnapshot.Capture policy = policies.freeze(operation);
     CommandSnapshot.Capture command = commands.freeze(operation);
     Capture result = new Capture(command, policy);
@@ -151,6 +167,7 @@ public final class GameDesignSourceRepository {
   /** Exact stored captures for a bundle producer; partial capture cannot authorize publication. */
   public Optional<Capture> readCapture(GameDesignPublicationOperation operation) {
     Objects.requireNonNull(operation, "operation");
+    requireReviewed(operation.account().input().selection().selectedCommit());
     var command = commands.readCapture(operation);
     var policy = policies.readCapture(operation);
     if (command.isEmpty() && policy.isEmpty()) return Optional.empty();
@@ -176,6 +193,10 @@ public final class GameDesignSourceRepository {
     if (readGenesis(target).isEmpty()) {
       throw new IllegalStateException("GAME_DESIGN_SOURCE_GENESIS_UNAVAILABLE");
     }
+  }
+
+  private void requireReviewed(DraftCommitBinding binding) {
+    new GameDesignReviewedBaseRepository(dsl).requireRetained(binding);
   }
 
   private static OwnerOutcome commandOnlyOutcome(

@@ -35,7 +35,7 @@ AI-assisted and external proposals make the same problem more visible but do not
 
 Game Design owns the durable, creator-visible coordination record for every shared-Draft commit and isolated proposal. For every mutation, the record binds at least the target `tenantId` and `versionId`, plus:
 
-- the exact `baseCommitId` from which the complete diff was produced;
+- the exact `baseCommitId` from which the complete diff was produced, resolved under the [Game Design-owned authored-base reference contract](../microservices/game-design-service/api-contracts.md#authored-source-genesis-and-deterministic-replay); a genuinely new Draft's first base names its separate proved genesis receipt, not an invented authored commit;
 - a stable request or proposal identity and canonical digest of the complete proposed input;
 - the complete affected `(tenantId, versionId, owner, aggregateId, scopeId, epoch)` set;
 - canonical commit and revision order; and

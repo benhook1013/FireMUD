@@ -965,6 +965,7 @@ jobs:
             --tests integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest \
             --tests net.firedevops.firemud.gamedesign.draft.CommandSourcePostgresIntegrationTest \
             --tests net.firedevops.firemud.gamedesign.draft.GameDesignSourcePostgresIntegrationTest \
+            --tests net.firedevops.firemud.gamedesign.draft.GameDesignReviewedBasePostgresIntegrationTest \
             --tests net.firedevops.firemud.gamedesign.draft.SelectedCommandSourceBundlePostgresIntegrationTest \
             --tests net.firedevops.firemud.gamedesign.draft.RealmPolicySourcePostgresIntegrationTest \
             --tests integration.net.firedevops.firemud.gamedesign.publication.RealmPolicyPublicationPostgresIntegrationTest \
@@ -982,6 +983,7 @@ jobs:
             --require-suite integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest \
             --require-suite net.firedevops.firemud.gamedesign.draft.CommandSourcePostgresIntegrationTest \
             --require-suite net.firedevops.firemud.gamedesign.draft.GameDesignSourcePostgresIntegrationTest \
+            --require-suite net.firedevops.firemud.gamedesign.draft.GameDesignReviewedBasePostgresIntegrationTest \
             --require-suite net.firedevops.firemud.gamedesign.draft.SelectedCommandSourceBundlePostgresIntegrationTest \
             --require-suite net.firedevops.firemud.gamedesign.draft.RealmPolicySourcePostgresIntegrationTest \
             --require-suite integration.net.firedevops.firemud.gamedesign.publication.RealmPolicyPublicationPostgresIntegrationTest \
@@ -990,6 +992,15 @@ jobs:
             --require-case 'net.firedevops.firemud.gamedesign.draft.GameDesignSourcePostgresIntegrationTest#versionInsertSharesGenesisAndPolicyCommandMixedCommitsKeepOneExactOutcome()' \
             --require-case 'net.firedevops.firemud.gamedesign.draft.GameDesignSourcePostgresIntegrationTest#sourceRollbackIncompleteScopesAndPublicationCaptureFailClosed()' \
             --require-case 'net.firedevops.firemud.gamedesign.draft.GameDesignSourcePostgresIntegrationTest#completeSelectedSourcesFreezeTogetherAndExactRetryReadsStoredBytes()' \
+            --require-case 'net.firedevops.firemud.gamedesign.draft.GameDesignReviewedBasePostgresIntegrationTest#newDraftSharedGenesisClaimsAndReadsExactImmutableBinding()' \
+            --require-case 'net.firedevops.firemud.gamedesign.draft.GameDesignReviewedBasePostgresIntegrationTest#wrongDraftWrongReceiptAndUnknownRetainedBaseDenyBeforeClaim()' \
+            --require-case 'net.firedevops.firemud.gamedesign.draft.GameDesignReviewedBasePostgresIntegrationTest#changedCreationWitnessAndDigestCannotReplaceReviewedEvidence()' \
+            --require-case 'net.firedevops.firemud.gamedesign.draft.GameDesignReviewedBasePostgresIntegrationTest#retainedAuthoredBaseSurvivesNewerDisjointCommandAdvanceAndExactRetry()' \
+            --require-case 'net.firedevops.firemud.gamedesign.draft.GameDesignReviewedBasePostgresIntegrationTest#reviewedGenesisRemainsOriginalProvenanceAfterDisjointSourceAdvance()' \
+            --require-case 'net.firedevops.firemud.gamedesign.draft.GameDesignReviewedBasePostgresIntegrationTest#unreviewedClaimCannotWriteOrCaptureCanonicalSources()' \
+            --require-case 'net.firedevops.firemud.gamedesign.draft.GameDesignReviewedBasePostgresIntegrationTest#unreviewedPublicationSelectionCannotFreezeOrConsumeCanonicalSources()' \
+            --require-case 'net.firedevops.firemud.gamedesign.draft.GameDesignReviewedBasePostgresIntegrationTest#storageRejectsLateReviewedDecorationAfterDispatchSlotClaim()' \
+            --require-case 'net.firedevops.firemud.gamedesign.draft.GameDesignReviewedBasePostgresIntegrationTest#rollbackRemovesClaimAndEvidenceTogetherAndOpaqueHistoryCannotBeBackfilled()' \
             --require-case 'net.firedevops.firemud.gamedesign.draft.SelectedCommandSourceBundlePostgresIntegrationTest#bundleUsesCompleteSelectedCaptureAndRetryKeepsItsOriginalBytesAndIdentity()' \
             --require-case 'net.firedevops.firemud.gamedesign.draft.SelectedCommandSourceBundlePostgresIntegrationTest#missingCaptureAndOperationSubstitutionDoNotWriteBundle()' \
             --require-case 'net.firedevops.firemud.gamedesign.draft.RealmPolicySourcePostgresIntegrationTest#freshGenesisCreatesNoFakeCommitAndFirstActualPolicyCommitReplaysExactly()' \

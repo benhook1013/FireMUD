@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamedesign.publication;
 
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -32,6 +33,14 @@ public final class RealmPolicyPublicationService {
   }
 
   /** Independent complete-set read; it never establishes runtime catalog or admission authority. */
+  public Optional<RealmPolicyPublishedEvidence.PublishedSet> readPublishedSet(
+      UUID canonicalTenantId, UUID canonicalVersionId) {
+    requireIndependentRead();
+    return read.execute(
+        status -> repository.readPublishedSet(canonicalTenantId, canonicalVersionId));
+  }
+
+  /** Internal complete-target read for owner composition, never caller-provided numeric aliases. */
   public Optional<RealmPolicyPublishedEvidence.PublishedSet> readPublishedSet(TargetProof target) {
     requireIndependentRead();
     return read.execute(status -> repository.readPublishedSet(target));

@@ -51,7 +51,9 @@ class GameDesignSourcePostgresIntegrationTest {
         .isEqualTo(genesis);
     assertThat(fixture.coordinator().readVisibilityFence(fixture.target())).isEmpty();
 
-    DraftCommitBinding policy = binding(fixture.target(), null, "0", null, "main", true);
+    DraftCommitBinding policy =
+        binding(
+            fixture.target(), "genesis:" + genesis.policy().receiptId(), "0", null, "main", true);
     var policyResult = apply(fixture, policy);
     synchronize(fixture, policy, policyResult);
     var policySnapshot =
@@ -60,7 +62,7 @@ class GameDesignSourcePostgresIntegrationTest {
     assertThat(policySnapshot.command().definitions()).isEmpty();
 
     DraftCommitBinding command =
-        binding(fixture.target(), policy.commitId(), null, "0", null, false);
+        binding(fixture.target(), policy.commitId().toString(), null, "0", null, false);
     var commandResult = apply(fixture, command);
     synchronize(fixture, command, commandResult);
     var commandSnapshot =
@@ -72,7 +74,7 @@ class GameDesignSourcePostgresIntegrationTest {
         .containsExactly(commandResult.command().orElseThrow().commandAppliedEpoch());
 
     DraftCommitBinding mixed =
-        binding(fixture.target(), command.commitId(), "1", "1", "main", true);
+        binding(fixture.target(), command.commitId().toString(), "1", "1", "main", true);
     var mixedResult = apply(fixture, mixed);
     assertThat(mixedResult.ownerOutcome().appliedEpochs()).hasSize(2);
     assertThat(mixedResult.ownerOutcome().resultBytes())
@@ -101,7 +103,20 @@ class GameDesignSourcePostgresIntegrationTest {
   @Test
   void sourceRollbackIncompleteScopesAndPublicationCaptureFailClosed() {
     Fixture fixture = fixture();
-    DraftCommitBinding incomplete = binding(fixture.target(), null, "0", null, "private", false);
+    DraftCommitBinding incomplete =
+        binding(
+            fixture.target(),
+            "genesis:"
+                + fixture
+                    .sources()
+                    .readGenesis(fixture.target())
+                    .orElseThrow()
+                    .policy()
+                    .receiptId(),
+            "0",
+            null,
+            "private",
+            false);
     start(fixture, incomplete);
     fixture
         .write()
@@ -172,7 +187,20 @@ class GameDesignSourcePostgresIntegrationTest {
   @Test
   void completeSelectedSourcesFreezeTogetherAndExactRetryReadsStoredBytes() {
     Fixture fixture = fixture();
-    var authored = binding(fixture.target(), null, "0", "0", "main", true);
+    var authored =
+        binding(
+            fixture.target(),
+            "genesis:"
+                + fixture
+                    .sources()
+                    .readGenesis(fixture.target())
+                    .orElseThrow()
+                    .policy()
+                    .receiptId(),
+            "0",
+            "0",
+            "main",
+            true);
     synchronize(fixture, authored, apply(fixture, authored));
     var operation =
         fixture.tx(
@@ -220,7 +248,15 @@ class GameDesignSourcePostgresIntegrationTest {
   private static void start(Fixture fixture, DraftCommitBinding binding) {
     fixture.tx(
         () -> {
-          fixture.coordinator().claim(binding);
+          var reviewed = new GameDesignReviewedBaseRepository(fixture.dsl());
+          fixture
+              .sources()
+              .claimReviewed(
+                  binding,
+                  reviewed.resolve(
+                      fixture.target(),
+                      net.firedevops.firemud.common.authoring.DraftBaseReference.parse(
+                          binding.baseCommitId())));
           fixture.coordinator().claimApplicationSlot(binding);
           fixture.coordinator().markOwnerInProgress(binding, Owner.GAME_DESIGN_CONTROL_PLANE);
           return null;
@@ -245,7 +281,7 @@ class GameDesignSourcePostgresIntegrationTest {
 
   private static DraftCommitBinding binding(
       TargetProof target,
-      UUID base,
+      String base,
       String policyEpoch,
       String commandEpoch,
       String realm,
@@ -295,12 +331,7 @@ class GameDesignSourcePostgresIntegrationTest {
               policyEpoch));
     }
     return DraftCommitBinding.create(
-        target,
-        UUID.randomUUID(),
-        UUID.randomUUID(),
-        base == null ? "ISOLATED-explicit-base" : base.toString(),
-        revisions,
-        scopes);
+        target, UUID.randomUUID(), UUID.randomUUID(), base, revisions, scopes);
   }
 
   private static String command(String id, String alias) {
@@ -328,7 +359,7 @@ class GameDesignSourcePostgresIntegrationTest {
         .placeholders(Map.of("serviceSchema", schema))
         .locations("classpath:db/migration")
         .table("flyway_schema_history_game_design_service")
-        .target("54")
+        .target("55")
         .load()
         .migrate();
     var write = new TransactionTemplate(new DataSourceTransactionManager(dataSource));

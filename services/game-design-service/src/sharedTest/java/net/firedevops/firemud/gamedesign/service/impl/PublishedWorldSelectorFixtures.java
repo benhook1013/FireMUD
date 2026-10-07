@@ -23,15 +23,27 @@ import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 /** Stipulated original Account/APPLIED component bytes; no live producer/currentness proof. */
 public final class PublishedWorldSelectorFixtures {
   private final TargetProof target;
+  private final String baseReference;
 
   private PublishedWorldSelectorFixtures(TargetProof target) {
+    this(target, "base-1");
+  }
+
+  private PublishedWorldSelectorFixtures(TargetProof target, String baseReference) {
     this.target = target;
+    this.baseReference = baseReference;
     this.TENANT_ID = target.canonicalTenantId();
     this.VERSION_ID = target.canonicalVersionId();
   }
 
   public static WorldPublishedStartLocationEvidence evidence(TargetProof target) throws Exception {
     return new PublishedWorldSelectorFixtures(target).build();
+  }
+
+  public static WorldPublishedStartLocationEvidence evidence(
+      TargetProof target, String baseReference) throws Exception {
+    net.firedevops.firemud.common.authoring.DraftBaseReference.parse(baseReference);
+    return new PublishedWorldSelectorFixtures(target, baseReference).build();
   }
 
   public static List<net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto>
@@ -243,7 +255,7 @@ public final class PublishedWorldSelectorFixtures {
             target.sourceProvenanceKind()),
         REQUEST_ID,
         COMMIT_ID,
-        "base-1",
+        baseReference,
         List.of(
             new RevisionPayload(
                 "0",
@@ -315,7 +327,7 @@ public final class PublishedWorldSelectorFixtures {
             ACTOR_ID,
             TENANT_ID,
             VERSION_ID,
-            "base-1",
+            draft.baseCommitId(),
             "0",
             draftBytes,
             draftBytes,
