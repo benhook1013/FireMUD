@@ -420,7 +420,7 @@
       ],
       "automerge": false,
       "prBodyNotes": [
-        "Database major updates remain visible proposals. Local Compose and hosted preview target PostgreSQL 18 with fail-closed retained-data guards; activation requires a reviewed exact image digest, fresh startup, logical restore into a separate target volume, and backup/restore proof for every changed consumer. Current Testcontainers image convergence belongs to its separate native dependency proposal, and production chart/HA image packaging remains a separate owned gap. Never activate a database major through dependency automation alone."
+        "Database major updates remain visible proposals. Local Compose and hosted preview target PostgreSQL 18 with fail-closed retained-data guards; activation requires a reviewed exact image digest, fresh startup, logical restore into a separate target volume, and backup/restore proof for every changed consumer. Shared Testcontainers PostgreSQL/Redis selections are maintained through the common-test-support classpath properties resource; selection and dependency extraction do not demonstrate Docker-backed application-test execution. Production chart/HA image packaging remains a separate owned gap. Never activate a database major through dependency automation alone."
       ]
     },
     {
