@@ -308,6 +308,8 @@ STORAGE_CASES = (
     f"{STORAGE_SUITE}#migrationWaitsForConcurrentWriterThenRejectsItsCommittedEvidence()",
 )
 CHECK_STEP = "🧪 Run Gradle Checks"
+ACCOUNT_PUBLICATION_CAPTURE_STEP = "Capture Account publication participation PostgreSQL raw XML"
+ACCOUNT_INTEGRATION_TEST_COMMAND = "./gradlew :account-service:integrationTest"
 GAME_DESIGN_OWNER_STEP = "Run complete Game Design owner component PostgreSQL proof"
 GAME_TENANT_CREATION_STEP = "Verify Game Design fresh tenant creation PostgreSQL proof"
 GAME_AUTHORED_WORLD_SOURCE_STEP = "Verify Game Design authored-world source PostgreSQL proof"
@@ -357,6 +359,14 @@ def validate(document) -> None:
         require(flag in branch[2], f"fresh Gradle check branch omits {flag}")
 
     check_index = document["jobs"]["build-and-test"]["steps"].index(check)
+    account_capture = find_step(document, ACCOUNT_PUBLICATION_CAPTURE_STEP)
+    account_capture_index = steps.index(account_capture)
+    require(account_capture_index > check_index, "Account publication XML must be captured after the full Account check")
+    intervening_steps = steps[check_index + 1 : account_capture_index]
+    require(
+        all(ACCOUNT_INTEGRATION_TEST_COMMAND not in str(step.get("run", "")) for step in intervening_steps),
+        "Account integrationTest must not rerun between the full Account check and raw XML capture",
+    )
     for name, service, suite, cases in (
         (SOCIAL_STEP, "social-groups-service", SOCIAL_SUITE, SOCIAL_CASES),
         (LOGGING_STEP, "logging-admin-service", LOGGING_SUITE, LOGGING_CASES),
@@ -464,6 +474,24 @@ mutation_must_fail(
 mutation_must_fail(
     "configuration-cache bypass removed",
     lambda doc: replace_run(doc, CHECK_STEP, "--no-configuration-cache", ""),
+)
+
+
+def insert_account_integration_test_before_capture(document) -> None:
+    steps = document["jobs"]["build-and-test"]["steps"]
+    capture = find_step(document, ACCOUNT_PUBLICATION_CAPTURE_STEP)
+    steps.insert(
+        steps.index(capture),
+        {
+            "name": "Unexpected Account rerun",
+            "run": f"{ACCOUNT_INTEGRATION_TEST_COMMAND} --tests ExampleTest",
+        },
+    )
+
+
+mutation_must_fail(
+    "Account integrationTest rerun before raw XML capture",
+    insert_account_integration_test_before_capture,
 )
 
 
