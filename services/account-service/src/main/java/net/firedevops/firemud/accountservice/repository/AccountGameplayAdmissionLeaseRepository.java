@@ -304,8 +304,16 @@ public final class AccountGameplayAdmissionLeaseRepository {
       throw new IllegalArgumentException("Canonical non-nil UUIDv4 identity required");
   }
 
-  private static IllegalStateException conflict() {
-    return new IllegalStateException("Exact admission operation identity conflict");
+  private static IdentityConflictException conflict() {
+    return new IdentityConflictException();
+  }
+
+  static final class IdentityConflictException extends IllegalStateException {
+    private static final long serialVersionUID = 1L;
+
+    IdentityConflictException() {
+      super("Exact admission operation identity conflict");
+    }
   }
 
   record Allocation(UUID accountId, UUID requestId, UUID leaseId, long leaseFence) {}

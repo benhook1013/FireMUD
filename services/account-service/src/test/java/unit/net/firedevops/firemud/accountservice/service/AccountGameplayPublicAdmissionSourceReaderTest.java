@@ -2,6 +2,7 @@ package unit.net.firedevops.firemud.accountservice.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -35,6 +36,7 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEv
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository.SourceCheckpoint;
 import net.firedevops.firemud.accountservice.repository.AccountDemoTenantEntitlementRepository;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayTokenIdentityFenceRepository;
+import net.firedevops.firemud.accountservice.repository.AccountLifecyclePendingDenialReader;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.PairAuthority;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.TenantProvenanceKind;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance;
@@ -81,14 +83,43 @@ class AccountGameplayPublicAdmissionSourceReaderTest {
     assertThat(result.entitlementSource()).isEqualTo(fixture.entitlement);
     assertThat(result.tokenIdentityFence()).isEqualTo(fixture.activeFence);
     var ordered =
-        inOrder(fixture.memberships, fixture.accounts, fixture.entitlements, fixture.tokenFences);
+        inOrder(
+            fixture.memberships,
+            fixture.lifecyclePendingDenials,
+            fixture.accounts,
+            fixture.entitlements,
+            fixture.tokenFences);
     ordered.verify(fixture.memberships).readCurrent(ACCOUNT, TENANT);
+    ordered.verify(fixture.lifecyclePendingDenials).requireNoPending(ACCOUNT, TENANT);
     ordered.verify(fixture.accounts).findByAccountUuid(ACCOUNT);
     ordered.verify(fixture.entitlements).readCurrent(TENANT);
     ordered.verify(fixture.entitlements).revalidate(fixture.entitlement);
     ordered.verify(fixture.tokenFences).requireActiveForUpdate(fixture.identity);
     verifyNoMoreInteractions(
-        fixture.memberships, fixture.accounts, fixture.entitlements, fixture.tokenFences);
+        fixture.memberships,
+        fixture.lifecyclePendingDenials,
+        fixture.accounts,
+        fixture.entitlements,
+        fixture.tokenFences);
+  }
+
+  @Test
+  void pendingLifecycleDenialStopsBeforeEntitlementAndTokenReads() {
+    Fixture fixture = new Fixture();
+    doThrow(
+            new AccountLifecyclePendingDenialReader.PendingOperationException(
+                "Account lifecycle invalidation is unresolved for this Account and tenant"))
+        .when(fixture.lifecyclePendingDenials)
+        .requireNoPending(ACCOUNT, TENANT);
+
+    assertThatThrownBy(fixture::read)
+        .isInstanceOf(AccountLifecyclePendingDenialReader.PendingOperationException.class)
+        .hasMessage("Account lifecycle invalidation is unresolved for this Account and tenant");
+
+    var ordered = inOrder(fixture.memberships, fixture.lifecyclePendingDenials);
+    ordered.verify(fixture.memberships).readCurrent(ACCOUNT, TENANT);
+    ordered.verify(fixture.lifecyclePendingDenials).requireNoPending(ACCOUNT, TENANT);
+    verifyNoInteractions(fixture.accounts, fixture.entitlements, fixture.tokenFences);
   }
 
   @Test
@@ -333,10 +364,12 @@ class AccountGameplayPublicAdmissionSourceReaderTest {
         mock(AccountDemoTenantEntitlementRepository.class);
     final AccountGameplayTokenIdentityFenceRepository tokenFences =
         mock(AccountGameplayTokenIdentityFenceRepository.class);
+    final AccountLifecyclePendingDenialReader lifecyclePendingDenials =
+        mock(AccountLifecyclePendingDenialReader.class);
     final Account account = account();
     final AccountGameplayPublicAdmissionSourceReader reader =
         new AccountGameplayPublicAdmissionSourceReader(
-            memberships, accounts, entitlements, tokenFences);
+            memberships, accounts, entitlements, tokenFences, lifecyclePendingDenials);
     TokenIdentity identity =
         new TokenIdentity(
             ACCOUNT,

@@ -30,6 +30,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.sql.SQLException;
+import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -90,6 +91,7 @@ import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegatio
 import net.firedevops.firemud.accountservice.repository.AccountGameplayTokenIdentityFenceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayTokenIdentityFenceRepository.TokenRevokedException;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountLifecyclePendingDenialReader;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.TenantProvenanceKind;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance;
@@ -1148,6 +1150,172 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
   }
 
   @Test
+  void pendingAndWorldTerminalLifecycleRowsDenyWithoutChangingOwnerState() throws Exception {
+    for (String status : List.of("PENDING", "WORLD_TERMINAL")) {
+      AdmissionSourceFixture fixture = newAdmissionSourceFixture();
+      String accountBefore =
+          accountSemanticSnapshot(fixture.harness().dsl(), fixture.harness().accountId());
+      String sourceBefore =
+          accountAuthoritySourceSnapshot(fixture.harness().dsl(), fixture.harness().accountId());
+      long authorityEventsBefore =
+          accountAuthorityEventCount(fixture.harness().dsl(), fixture.harness().accountId());
+      UUID requestId = insertLifecycleDenialFixture(fixture, fixture.tenantId(), status);
+
+      assertThatThrownBy(
+              () ->
+                  inRepeatableReadTransaction(
+                      fixture.harness().context(),
+                      () ->
+                          fixture
+                              .admissionReader()
+                              .readCurrent(
+                                  fixture.harness().accountId(),
+                                  fixture.tenantId(),
+                                  fixture.identity())))
+          .isInstanceOf(AccountLifecyclePendingDenialReader.PendingOperationException.class)
+          .hasMessage("Account lifecycle invalidation is unresolved for this Account and tenant");
+
+      assertThat(accountSemanticSnapshot(fixture.harness().dsl(), fixture.harness().accountId()))
+          .isEqualTo(accountBefore);
+      assertThat(
+              accountAuthoritySourceSnapshot(
+                  fixture.harness().dsl(), fixture.harness().accountId()))
+          .isEqualTo(sourceBefore);
+      assertThat(
+              Objects.requireNonNull(
+                      fixture
+                          .harness()
+                          .dsl()
+                          .fetchOne(
+                              "SELECT status FROM account_lifecycle_serving_operations "
+                                  + "WHERE request_id = ?",
+                              requestId))
+                  .get(0, String.class))
+          .isEqualTo(status);
+      assertThat(accountAuthorityEventCount(fixture.harness().dsl(), fixture.harness().accountId()))
+          .isEqualTo(authorityEventsBefore);
+      assertThat(
+              Objects.requireNonNull(
+                      fixture
+                          .harness()
+                          .dsl()
+                          .fetchOne(
+                              "SELECT state FROM account_gameplay_token_identity_fences "
+                                  + "WHERE operation_id = ?",
+                              fixture.identity().operationId()))
+                  .get(0, String.class))
+          .isEqualTo("ACTIVE");
+    }
+  }
+
+  @Test
+  void lifecycleJournalInsertInvalidatesOlderRepeatableReadAndSerializableSnapshots()
+      throws Exception {
+    for (int isolation :
+        List.of(
+            TransactionDefinition.ISOLATION_REPEATABLE_READ,
+            TransactionDefinition.ISOLATION_SERIALIZABLE)) {
+      AdmissionSourceFixture fixture = newAdmissionSourceFixture();
+      DSLContext dsl = fixture.harness().dsl();
+      UUID accountId = fixture.harness().accountId();
+      String accountBefore = accountSemanticSnapshot(dsl, accountId);
+      String sourceBefore = accountAuthoritySourceSnapshot(dsl, accountId);
+      long authorityEventsBefore = accountAuthorityEventCount(dsl, accountId);
+      CountDownLatch writerLockedAccount = new CountDownLatch(1);
+      CountDownLatch readerSnapshotEstablished = new CountDownLatch(1);
+      CountDownLatch readerIsChecking = new CountDownLatch(1);
+      var executor = Executors.newFixedThreadPool(2);
+      try {
+        TransactionTemplate writerTransaction =
+            new TransactionTemplate(fixture.harness().context().manager());
+        writerTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+        var writer =
+            executor.submit(
+                () ->
+                    writerTransaction.execute(
+                        transaction -> {
+                          Record lockedAccount =
+                              dsl.fetchOne(
+                                  "SELECT account_uuid FROM accounts "
+                                      + "WHERE account_uuid = ? FOR UPDATE",
+                                  accountId);
+                          if (lockedAccount == null) {
+                            throw new IllegalStateException(
+                                "Lifecycle writer could not lock the exact Account");
+                          }
+                          writerLockedAccount.countDown();
+                          awaitLatch(
+                              readerSnapshotEstablished, "reader to establish its stale snapshot");
+                          awaitLatch(readerIsChecking, "reader to attempt its Account lock");
+                          insertLifecycleDenialFixture(fixture, fixture.tenantId(), "PENDING");
+                          return null;
+                        }));
+
+        var reader =
+            executor.submit(
+                () -> {
+                  awaitLatch(writerLockedAccount, "lifecycle writer to lock the Account");
+                  TransactionTemplate readerTransaction =
+                      new TransactionTemplate(fixture.harness().context().manager());
+                  readerTransaction.setIsolationLevel(isolation);
+                  try {
+                    readerTransaction.execute(
+                        transaction -> {
+                          Objects.requireNonNull(
+                              dsl.fetchOne(
+                                  "SELECT COUNT(*) FROM account_lifecycle_serving_operations "
+                                      + "WHERE account_uuid = ? AND tenant_uuid = ?",
+                                  accountId,
+                                  fixture.tenantId()));
+                          readerSnapshotEstablished.countDown();
+                          readerIsChecking.countDown();
+                          new AccountLifecyclePendingDenialReader(dsl)
+                              .requireNoPending(accountId, fixture.tenantId());
+                          return null;
+                        });
+                    return null;
+                  } catch (RuntimeException failure) {
+                    return failure;
+                  }
+                });
+
+        RuntimeException readerFailure = reader.get(15, TimeUnit.SECONDS);
+        writer.get(15, TimeUnit.SECONDS);
+        assertThat(readerFailure)
+            .as("an old %s snapshot cannot observe a clear lifecycle predicate", isolation)
+            .isInstanceOf(
+                AccountLifecyclePendingDenialReader.PendingStateUnavailableException.class);
+        assertThat(sqlState(readerFailure)).isEqualTo("40001");
+        assertThat(accountSemanticSnapshot(dsl, accountId)).isEqualTo(accountBefore);
+        assertThat(accountAuthoritySourceSnapshot(dsl, accountId)).isEqualTo(sourceBefore);
+        assertThat(accountAuthorityEventCount(dsl, accountId)).isEqualTo(authorityEventsBefore);
+      } finally {
+        readerSnapshotEstablished.countDown();
+        readerIsChecking.countDown();
+        executor.shutdownNow();
+      }
+    }
+  }
+
+  @Test
+  void lifecycleOperationForAnotherTenantDoesNotDenyExactAdmissionScope() throws Exception {
+    AdmissionSourceFixture fixture = newAdmissionSourceFixture();
+    UUID otherTenant = UUID.randomUUID();
+    insertLifecycleDenialFixture(fixture, otherTenant, "PENDING");
+
+    var captured =
+        inRepeatableReadTransaction(
+            fixture.harness().context(),
+            () ->
+                fixture
+                    .admissionReader()
+                    .readCurrent(
+                        fixture.harness().accountId(), fixture.tenantId(), fixture.identity()));
+
+    assertThat(captured.membershipSource().membership().tenantId()).isEqualTo(fixture.tenantId());
+  }
+
+  @Test
   void membershipRoleSnapshotMustStillMatchItsCommittedCurrentEvent() throws Exception {
     AdmissionSourceFixture fixture = newAdmissionSourceFixture();
     inRepeatableReadTransaction(
@@ -1467,7 +1635,11 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
             sources, generations, memberships, pairs, roles, outbox, tenantAuthorityEvents);
     AccountGameplayPublicAdmissionSourceReader admissionReader =
         new AccountGameplayPublicAdmissionSourceReader(
-            membershipReader, accounts, entitlements, tokenFences);
+            membershipReader,
+            accounts,
+            entitlements,
+            tokenFences,
+            new AccountLifecyclePendingDenialReader(dsl));
     return new AdmissionSourceFixture(
         harness,
         tenantId,
@@ -1481,6 +1653,137 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
         memberships,
         roles,
         identity);
+  }
+
+  /**
+   * Creates opaque shape-valid storage evidence only. This fixture does not represent an
+   * authenticated caller, valid World request, or actual invalidation publisher.
+   */
+  private UUID insertLifecycleDenialFixture(
+      AdmissionSourceFixture fixture, UUID tenantId, String status) {
+    UUID requestId = UUID.randomUUID();
+    inTransaction(
+        fixture.harness().context(),
+        () -> {
+          DSLContext dsl = fixture.harness().dsl();
+          Account account =
+              new AccountRepository(dsl)
+                  .findByAccountUuid(fixture.harness().accountId())
+                  .orElseThrow();
+          String streamKey = "account:auth-authority:v1:account/" + fixture.harness().accountId();
+          Record source =
+              Objects.requireNonNull(
+                  dsl.fetchOne(
+                      "SELECT current_generation, current_source_version, "
+                          + "current_issuance_fence, current_issuance_fence_source_version, "
+                          + "last_outbox_sequence "
+                          + "FROM account_authority_source_records WHERE outbox_stream_key = ?",
+                      streamKey));
+          Long checkpointSequenceValue = source.get("last_outbox_sequence", Long.class);
+          if (checkpointSequenceValue == null || checkpointSequenceValue < 0L) {
+            throw new IllegalStateException(
+                "Current Account authority source checkpoint is unavailable");
+          }
+          long checkpointSequence = checkpointSequenceValue;
+          Record checkpoint =
+              checkpointSequence == 0L
+                  ? null
+                  : Objects.requireNonNull(
+                      dsl.fetchOne(
+                          "SELECT request_id, event_id, event_digest, payload "
+                              + "FROM account_authority_outbox_events "
+                              + "WHERE outbox_stream_key = ? AND outbox_sequence = ?",
+                          streamKey,
+                          checkpointSequence));
+          String terminalOutcome = "WORLD_TERMINAL".equals(status) ? "ABORTED" : null;
+          byte[] terminalPayload =
+              "WORLD_TERMINAL".equals(status)
+                  ? "opaque-storage-shape".getBytes(StandardCharsets.US_ASCII)
+                  : null;
+          String digest = "sha256:" + "a".repeat(64);
+          dsl.execute(
+              "INSERT INTO account_lifecycle_serving_operations ("
+                  + "request_id, actor_account_uuid, account_uuid, account_id, account_provenance, "
+                  + "tenant_uuid, purpose, caller_proof_binding, world_activation_request_id, "
+                  + "world_activation_request_digest, world_activation_request_bytes, "
+                  + "world_activation_preparing_evidence, request_payload, request_digest, "
+                  + "account_stream_key, account_generation, account_source_version, "
+                  + "account_issuance_fence, account_fence_source_version, checkpoint_sequence, "
+                  + "checkpoint_event_sequence, checkpoint_event_request_id, checkpoint_event_id, "
+                  + "checkpoint_event_digest, checkpoint_payload, capture_payload, capture_digest, "
+                  + "status, world_result_outcome, world_result_payload, world_result_digest, "
+                  + "world_terminal_at) VALUES (?, ?, ?, ?, ?, ?, 'WORLD_ACTIVATION_INVALIDATION', "
+                  + "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              requestId,
+              fixture.harness().accountId(),
+              fixture.harness().accountId(),
+              account.getId(),
+              account.getAccountUuidProvenance().name(),
+              tenantId,
+              new byte[] {1},
+              UUID.randomUUID(),
+              digest,
+              new byte[] {1},
+              new byte[] {1},
+              new byte[] {1},
+              digest,
+              streamKey,
+              source.get("current_generation", Long.class),
+              source.get("current_source_version", Long.class),
+              source.get("current_issuance_fence", Long.class),
+              source.get("current_issuance_fence_source_version", Long.class),
+              checkpointSequence,
+              checkpoint == null ? null : checkpointSequence,
+              checkpoint == null ? null : checkpoint.get("request_id", String.class),
+              checkpoint == null ? null : checkpoint.get("event_id", String.class),
+              checkpoint == null ? null : checkpoint.get("event_digest", String.class),
+              checkpoint == null ? new byte[0] : checkpoint.get("payload", byte[].class),
+              new byte[] {1},
+              digest,
+              status,
+              terminalOutcome,
+              terminalPayload,
+              "WORLD_TERMINAL".equals(status) ? digest : null,
+              "WORLD_TERMINAL".equals(status) ? Timestamp.from(Instant.now()) : null);
+          return null;
+        });
+    return requestId;
+  }
+
+  private static long accountAuthorityEventCount(DSLContext dsl, UUID accountId) {
+    return Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT COUNT(*) FROM account_authority_outbox_events "
+                    + "WHERE outbox_stream_key = ?",
+                "account:auth-authority:v1:account/" + accountId))
+        .get(0, Long.class);
+  }
+
+  private static String accountSemanticSnapshot(DSLContext dsl, UUID accountId) {
+    return Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT to_jsonb(account_row)::text FROM accounts account_row "
+                    + "WHERE account_uuid = ?",
+                accountId))
+        .get(0, String.class);
+  }
+
+  private static String accountAuthoritySourceSnapshot(DSLContext dsl, UUID accountId) {
+    return Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT to_jsonb(source_row)::text FROM account_authority_source_records source_row "
+                    + "WHERE outbox_stream_key = ?",
+                "account:auth-authority:v1:account/" + accountId))
+        .get(0, String.class);
+  }
+
+  private static String sqlState(Throwable failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof SQLException sqlException && sqlException.getSQLState() != null) {
+        return sqlException.getSQLState();
+      }
+    }
+    return null;
   }
 
   private static FreshTenantCreationEvidence freshAdmissionTenantEvidence(UUID tenantId) {

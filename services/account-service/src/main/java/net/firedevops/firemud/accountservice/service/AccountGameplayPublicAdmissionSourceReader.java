@@ -15,6 +15,7 @@ import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.AuthorityScope;
 import net.firedevops.firemud.accountservice.repository.AccountDemoTenantEntitlementRepository;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayTokenIdentityFenceRepository;
+import net.firedevops.firemud.accountservice.repository.AccountLifecyclePendingDenialReader;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.TenantProvenanceKind;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import org.springframework.transaction.TransactionDefinition;
@@ -35,6 +36,7 @@ public final class AccountGameplayPublicAdmissionSourceReader {
   private final AccountRepository accounts;
   private final AccountDemoTenantEntitlementRepository entitlements;
   private final AccountGameplayTokenIdentityFenceRepository tokenFences;
+  private final AccountLifecyclePendingDenialReader lifecyclePendingDenials;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -43,11 +45,13 @@ public final class AccountGameplayPublicAdmissionSourceReader {
       AccountMembershipRoleSourceReader membershipSources,
       AccountRepository accounts,
       AccountDemoTenantEntitlementRepository entitlements,
-      AccountGameplayTokenIdentityFenceRepository tokenFences) {
+      AccountGameplayTokenIdentityFenceRepository tokenFences,
+      AccountLifecyclePendingDenialReader lifecyclePendingDenials) {
     this.membershipSources = Objects.requireNonNull(membershipSources);
     this.accounts = Objects.requireNonNull(accounts);
     this.entitlements = Objects.requireNonNull(entitlements);
     this.tokenFences = Objects.requireNonNull(tokenFences);
+    this.lifecyclePendingDenials = Objects.requireNonNull(lifecyclePendingDenials);
   }
 
   /** Captures exact Account owner sources under the caller's existing serialized transaction. */
@@ -65,6 +69,7 @@ public final class AccountGameplayPublicAdmissionSourceReader {
     AccountMembershipRoleSourceSnapshot membership =
         membershipSources.readCurrent(accountId, tenantId);
     requireMembership(membership, accountId, tenantId, identity);
+    lifecyclePendingDenials.requireNoPending(accountId, tenantId);
     Account account =
         accounts
             .findByAccountUuid(accountId)

@@ -8,15 +8,20 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
+import net.firedevops.firemud.account.v1.AbortGameplayAdmissionLeaseRequest;
+import net.firedevops.firemud.accountservice.dto.AccountGameplayAdmissionLeaseOperation;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayAdmissionLeaseOperation.State;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
+import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseWireCodec;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -48,6 +53,156 @@ class AccountGameplayAdmissionLeasePersistenceIntegrationTest {
   @AfterAll
   static void stop() {
     POSTGRES.stop();
+  }
+
+  @Test
+  void actualAbortOwnerRecoversLostResponseAndRetainsOriginalDecisionAndCleanup() throws Exception {
+    var context = context(null);
+    var original = pending(context, account(context));
+    var repository = new AccountGameplayAdmissionLeaseRepository(context.dsl());
+    var owner =
+        new AccountGameplayAdmissionAbortOwner(
+            repository, new DataSourceTransactionManager(context.dataSource()), "test");
+    UUID decision = UUID.randomUUID();
+    var request =
+        AbortGameplayAdmissionLeaseRequest.newBuilder()
+            .setLease(AccountGameplayAdmissionLeaseWireCodec.encodeReference(original))
+            .setBindingDecisionId(decision.toString())
+            .build();
+    // The trusted context is synthetic: this exercises real SQL ownership, never actual mTLS.
+    syntheticAbortPeer().call(() -> owner.abort(request)); // Discard the first response.
+    var stored = tx(context, () -> repository.readExact(original).orElseThrow());
+    var replay = syntheticAbortPeer().call(() -> owner.abort(request));
+    assertThat(replay).isEqualTo(stored);
+    assertThat(replay.state()).isEqualTo(State.ABORTED);
+    assertThat(replay.bindingDecisionId()).isEqualTo(decision);
+    assertThat(replay.orphanCleanupId()).isNotNull();
+    assertThat(replay.evidence().canonicalJson()).isEqualTo(original.canonicalJson());
+    assertThat(replay.evidence().sha256()).isEqualTo(original.sha256());
+    assertThat(AccountGameplayAdmissionLeaseWireCodec.encodeReference(replay.evidence()))
+        .isEqualTo(request.getLease());
+    for (var changed :
+        List.of(
+            request.toBuilder().clearBindingDecisionId().build(),
+            request.toBuilder().setBindingDecisionId(UUID.randomUUID().toString()).build())) {
+      assertThatThrownBy(() -> syntheticAbortPeer().call(() -> owner.abort(changed)))
+          .isInstanceOf(AccountGameplayAdmissionAbortOwner.AbortDeniedException.class)
+          .satisfies(
+              failure ->
+                  assertThat(
+                          ((AccountGameplayAdmissionAbortOwner.AbortDeniedException) failure)
+                              .code())
+                      .isEqualTo("IDEMPOTENCY_CONFLICT"));
+      assertThat(tx(context, () -> repository.readExact(original))).contains(stored);
+    }
+  }
+
+  @Test
+  void concurrentActualAbortOwnersRetainOneCleanupAndDenySubstitutionOrCommittedLease()
+      throws Exception {
+    var context = context(null);
+    UUID account = account(context);
+    var original = pending(context, account);
+    var repository = new AccountGameplayAdmissionLeaseRepository(context.dsl());
+    var owner =
+        new AccountGameplayAdmissionAbortOwner(
+            repository, new DataSourceTransactionManager(context.dataSource()), "test");
+    var request =
+        AbortGameplayAdmissionLeaseRequest.newBuilder()
+            .setLease(AccountGameplayAdmissionLeaseWireCodec.encodeReference(original))
+            .build();
+    var start = new CountDownLatch(1);
+    Callable<AccountGameplayAdmissionLeaseOperation> abort =
+        () -> {
+          if (!start.await(10, TimeUnit.SECONDS)) throw new IllegalStateException("start timeout");
+          try {
+            // DriverManagerDataSource supplies each thread's owned transaction its own SQL
+            // connection.
+            return syntheticAbortPeer().call(() -> owner.abort(request));
+          } catch (RuntimeException failure) {
+            Throwable cause = failure;
+            while (cause != null) {
+              if (cause instanceof java.sql.SQLException sql && "40001".equals(sql.getSQLState()))
+                return null;
+              cause = cause.getCause();
+            }
+            throw failure;
+          }
+        };
+    AccountGameplayAdmissionLeaseOperation left;
+    AccountGameplayAdmissionLeaseOperation right;
+    try (var executor = Executors.newFixedThreadPool(2)) {
+      var first = executor.submit(abort);
+      var second = executor.submit(abort);
+      start.countDown();
+      left = first.get(30, TimeUnit.SECONDS);
+      right = second.get(30, TimeUnit.SECONDS);
+    }
+    assertThat(left != null || right != null).isTrue();
+    var replay = syntheticAbortPeer().call(() -> owner.abort(request));
+    if (left != null) assertThat(left).isEqualTo(replay);
+    if (right != null) assertThat(right).isEqualTo(replay);
+    assertThat(replay.state()).isEqualTo(State.ABORTED);
+    assertThat(replay.bindingDecisionId()).isNull();
+    assertThat(replay.orphanCleanupId()).isNotNull();
+    assertThat(tx(context, () -> repository.readExact(original))).contains(replay);
+    assertThat(context.dsl().fetchCount(DSL.table("account_gameplay_admission_lease_operations")))
+        .isEqualTo(1);
+    assertThat(
+            Objects.requireNonNull(
+                    context
+                        .dsl()
+                        .fetchOne(
+                            "SELECT count(DISTINCT orphan_cleanup_id) AS cleanups FROM account_gameplay_admission_lease_operations"))
+                .get("cleanups", Long.class))
+        .isEqualTo(1L);
+    var changedCarrier = new LinkedHashMap<>(original.carrier());
+    changedCarrier.put("leaseId", UUID.randomUUID().toString());
+    var changed =
+        request.toBuilder()
+            .setLease(
+                AccountGameplayAdmissionLeaseWireCodec.encodeReference(
+                    AccountGameplayAdmissionLeaseEvidence.fromCarrier(changedCarrier)))
+            .build();
+    assertThatThrownBy(() -> syntheticAbortPeer().call(() -> owner.abort(changed)))
+        .isInstanceOf(AccountGameplayAdmissionAbortOwner.AbortDeniedException.class);
+    var mismatchedRequest =
+        request.toBuilder()
+            .setLease(request.getLease().toBuilder().setRequestId(UUID.randomUUID().toString()))
+            .build();
+    assertThatThrownBy(() -> syntheticAbortPeer().call(() -> owner.abort(mismatchedRequest)))
+        .isInstanceOf(IllegalArgumentException.class);
+    var changedDecision =
+        request.toBuilder().setBindingDecisionId(UUID.randomUUID().toString()).build();
+    assertThatThrownBy(() -> syntheticAbortPeer().call(() -> owner.abort(changedDecision)))
+        .isInstanceOf(AccountGameplayAdmissionAbortOwner.AbortDeniedException.class);
+    assertThat(tx(context, () -> repository.readExact(original))).contains(replay);
+
+    var committedEvidence = pending(context, account);
+    var committed =
+        tx(context, () -> repository.recordCommitted(committedEvidence, UUID.randomUUID()));
+    var committedRequest =
+        request.toBuilder()
+            .setLease(AccountGameplayAdmissionLeaseWireCodec.encodeReference(committedEvidence))
+            .build();
+    assertThatThrownBy(() -> syntheticAbortPeer().call(() -> owner.abort(committedRequest)))
+        .isInstanceOf(AccountGameplayAdmissionAbortOwner.AbortDeniedException.class)
+        .satisfies(
+            failure ->
+                assertThat(
+                        ((AccountGameplayAdmissionAbortOwner.AbortDeniedException) failure).code())
+                    .isEqualTo("ADMISSION_LEASE_NOT_ABORTABLE"));
+    assertThat(tx(context, () -> repository.readExact(committedEvidence))).contains(committed);
+    assertThat(committed.orphanCleanupId()).isNull();
+  }
+
+  /** Synthetic trusted caller only; the existing carriers remain fabricated storage fixtures. */
+  private static io.grpc.Context syntheticAbortPeer() {
+    return io.grpc.Context.current()
+        .withValue(
+            GrpcPeerIdentity.CONTEXT_KEY,
+            GrpcPeerIdentity.parseUri("spiffe://firemud/ns/test/sa/game-session-service")
+                .orElseThrow());
   }
 
   @Test
