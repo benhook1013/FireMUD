@@ -127,27 +127,77 @@ fi
 head_repository="$(jq -er '.head.repo.full_name' <<<"${pr_json}")"
 base_branch="$(jq -er '.base.ref' <<<"${pr_json}")"
 
-# A single capped exact-head query bounds both target discovery and the native
-# history window. Resolver completions cannot predate their source creation.
-# Twenty retained sources is the source-discovery limit. Resolver history uses
+# A capped exact-head query bounds both target discovery and the native history
+# window. Resolver completions cannot predate their source creation. Twenty
+# retained sources is the source-discovery limit. Resolver history uses
 # separate bounded pagination; partial evidence always requires recovery.
 evidence_limit=20
-run_pages="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow_filename}/runs" \
-  -f event=pull_request -f head_sha="${head_sha}" -f per_page="${evidence_limit}")"
-jq -e --argjson limit "${evidence_limit}" --argjson source "${source_run_id}" \
-  --argjson workflow_id "${workflow_id}" --arg repository "${GITHUB_REPOSITORY}" --arg head "${head_sha}" '
-  (.workflow_runs | type) == "array" and (.total_count | type) == "number" and
-  .total_count > 0 and .total_count <= $limit and
-  (.workflow_runs | length) == .total_count and
-  ([.workflow_runs[].id] | unique | length) == .total_count and
-  any(.workflow_runs[]; .id == $source) and
-  all(.workflow_runs[];
-    (.id | type) == "number" and .id > 0 and .id == (.id | floor) and
-    .workflow_id == $workflow_id and .repository.full_name == $repository and
-    .head_sha == $head and .event == "pull_request" and
-    (.created_at | type) == "string" and
-    (try (.created_at | fromdateiso8601 | type == "number") catch false))' <<<"${run_pages}" >/dev/null ||
-  fail_closed "Exact-head source coverage is incomplete or exceeds the isolated-proof limit."
+source_listing_read_limit=3
+source_listing_attempt=0
+source_listing_result=''
+while (( source_listing_attempt < source_listing_read_limit )); do
+  source_listing_attempt=$((source_listing_attempt + 1))
+  run_pages="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow_filename}/runs" \
+    -f event=pull_request -f head_sha="${head_sha}" -f per_page="${evidence_limit}")"
+  if ! source_listing_result="$(jq -cer --argjson limit "${evidence_limit}" --argjson source "${source_run_id}" \
+    --argjson workflow_id "${workflow_id}" --arg repository "${GITHUB_REPOSITORY}" --arg head "${head_sha}" '
+    def listed_count:
+      if type != "object" then null
+      elif (.workflow_runs | type) == "array" then (.workflow_runs | length) else null end;
+    def source_present:
+      if type != "object" then false
+      elif (.workflow_runs | type) == "array" then
+        any(.workflow_runs[]; if type == "object" then .id == $source else false end)
+      else false end;
+    def outcome($classification): {
+      classification: $classification,
+      total_count: (if type == "object" then (.total_count // null) else null end),
+      returned_rows: listed_count,
+      source_present: source_present
+    };
+    if type != "object" then outcome("malformed-response")
+    elif (.workflow_runs | type) != "array" then outcome("malformed-workflow-runs")
+    elif (.total_count | type) != "number" or .total_count < 0 or .total_count != (.total_count | floor) then
+      outcome("malformed-total-count")
+    elif .total_count > $limit then outcome("overflow-total-count")
+    elif any(.workflow_runs[]; type != "object") then outcome("malformed-row")
+    elif any(.workflow_runs[];
+      (.id | type) != "number" or .id <= 0 or .id != (.id | floor)) then outcome("malformed-row-id")
+    elif any(.workflow_runs[]; (.repository | type) != "object") then outcome("malformed-row-repository")
+    elif any(.workflow_runs[];
+      .workflow_id != $workflow_id or .repository.full_name != $repository or
+      .head_sha != $head or .event != "pull_request") then outcome("identity-mismatch")
+    elif any(.workflow_runs[];
+      (.created_at | type) != "string" or
+      (try (.created_at | fromdateiso8601 | type == "number") catch false | not)) then
+      outcome("malformed-created-at")
+    elif ([.workflow_runs[].id] | unique | length) != (.workflow_runs | length) then
+      outcome("duplicate-row-id")
+    elif (.workflow_runs | length) > .total_count then outcome("malformed-row-count")
+    elif (.workflow_runs | length) < .total_count then outcome("incomplete-row-count")
+    elif (source_present | not) then outcome("incomplete-missing-source")
+    else outcome("complete") end' <<<"${run_pages}")"; then
+    fail_closed "Exact-head source listing response is not valid JSON."
+  fi
+  source_listing_classification="$(jq -er '.classification' <<<"${source_listing_result}")"
+  case "${source_listing_classification}" in
+    complete)
+      break
+      ;;
+    incomplete-row-count|incomplete-missing-source)
+      source_listing_diagnostics="$(jq -er '[.classification, (.total_count // "unknown"), (.returned_rows // "unknown"), .source_present] | @tsv' \
+        <<<"${source_listing_result}")"
+      if (( source_listing_attempt == source_listing_read_limit )); then
+        fail_closed "Exact-head source coverage remains incomplete after ${source_listing_attempt} reads: classification=${source_listing_classification}, total_count=$(jq -r '.total_count // "unknown"' <<<"${source_listing_result}"), returned_rows=$(jq -r '.returned_rows // "unknown"' <<<"${source_listing_result}"), source_present=$(jq -r '.source_present' <<<"${source_listing_result}"), limit=${evidence_limit}."
+      fi
+      echo "Exact-head source listing is incomplete (read ${source_listing_attempt}/${source_listing_read_limit}): ${source_listing_diagnostics}; limit=${evidence_limit}." >&2
+      if (( source_listing_attempt == 1 )); then sleep 1; else sleep 2; fi
+      ;;
+    *)
+      fail_closed "Exact-head source coverage rejected: classification=${source_listing_classification}, total_count=$(jq -r '.total_count // "unknown"' <<<"${source_listing_result}"), returned_rows=$(jq -r '.returned_rows // "unknown"' <<<"${source_listing_result}"), source_present=$(jq -r '.source_present' <<<"${source_listing_result}"), limit=${evidence_limit}."
+      ;;
+  esac
+done
 history_start="$(jq -er '[.workflow_runs[].created_at] | min' <<<"${run_pages}")"
 target_ids="$(jq -er '.workflow_runs[].id' <<<"${run_pages}")"
 
