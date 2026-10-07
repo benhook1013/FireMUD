@@ -44,34 +44,35 @@ class WorldCanonicalInitialPlayerLocationTest {
   }
 
   @Test
-  void unsupportedExpectClosedOriginIsRejectedWithoutInventingPointerEvidence() {
-    assertThatThrownBy(
-            () ->
-                new WorldCanonicalInitialPlayerLocation.Request(
-                    OPERATION_ID,
-                    uuid("20000000-0000-4000-8000-000000000001"),
-                    uuid("30000000-0000-4000-8000-000000000001"),
-                    "starter-world",
-                    uuid("40000000-0000-4000-8000-000000000001"),
-                    uuid("50000000-0000-4000-8000-000000000001"),
-                    "SHARED",
-                    uuid("60000000-0000-4000-8000-000000000001"),
-                    uuid("70000000-0000-4000-8000-000000000001"),
-                    uuid("80000000-0000-4000-8000-000000000001"),
-                    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                    uuid("90000000-0000-4000-8000-000000000001"),
-                    uuid("a0000000-0000-4000-8000-000000000001"),
-                    "initial-request",
-                    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-                    1,
-                    "owner-proof",
-                    "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-                    "pointer-audit",
-                    1,
-                    WorldCanonicalInitialPlayerLocation.InitialAdmissionOrigin.EXPECT_CLOSED,
-                    lifecycle("proof", "b0000000-0000-4000-8000-000000000001")))
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("EXPECT_CLOSED");
+  void expectClosedOriginIsRetainedButDoesNotSupplyOwnerProof() {
+    var request =
+        new WorldCanonicalInitialPlayerLocation.Request(
+            OPERATION_ID,
+            uuid("20000000-0000-4000-8000-000000000001"),
+            uuid("30000000-0000-4000-8000-000000000001"),
+            "starter-world",
+            uuid("40000000-0000-4000-8000-000000000001"),
+            uuid("50000000-0000-4000-8000-000000000001"),
+            "SHARED",
+            uuid("60000000-0000-4000-8000-000000000001"),
+            uuid("70000000-0000-4000-8000-000000000001"),
+            uuid("80000000-0000-4000-8000-000000000001"),
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            uuid("90000000-0000-4000-8000-000000000001"),
+            uuid("a0000000-0000-4000-8000-000000000001"),
+            "initial-request",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            1,
+            "owner-proof",
+            "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "pointer-audit",
+            1,
+            WorldCanonicalInitialPlayerLocation.InitialAdmissionOrigin.EXPECT_CLOSED,
+            lifecycle("proof", "b0000000-0000-4000-8000-000000000001"));
+    assertThat(request.initialAdmissionOrigin())
+        .isEqualTo(WorldCanonicalInitialPlayerLocation.InitialAdmissionOrigin.EXPECT_CLOSED);
+    assertThat(new String(request.canonicalRequestBytes(), java.nio.charset.StandardCharsets.UTF_8))
+        .contains("\"initialAdmissionOrigin\":\"EXPECT_CLOSED\"");
   }
 
   @Test

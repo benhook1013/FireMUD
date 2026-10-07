@@ -135,10 +135,6 @@ public final class WorldCanonicalInitialPlayerLocation {
       requireText(pointerAuditId, 128, "pointerAuditId");
       requirePositive(pointerVersion, "pointerVersion");
       Objects.requireNonNull(initialAdmissionOrigin, "initialAdmissionOrigin");
-      if (initialAdmissionOrigin != InitialAdmissionOrigin.NO_PRIOR_POINTER) {
-        throw invalid(
-            "EXPECT_CLOSED initial-admission origin is unsupported by the current World hold proof");
-      }
       Objects.requireNonNull(activeLifecycleEvidence, "activeLifecycleEvidence");
       if (!"ACTIVE".equals(activeLifecycleEvidence.lifecycleStatus())) {
         throw invalid("initial placement requires exact current ACTIVE World lifecycle evidence");
