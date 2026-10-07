@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -35,6 +36,7 @@ import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepos
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.CanonicalJoinOperationEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.CanonicalJoinTerminalProof;
+import net.firedevops.firemud.accountservice.repository.AccountLifecyclePendingDenialReader;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.PairAuthority;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.TenantProvenanceKind;
@@ -85,7 +87,18 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
         fixture.coordinator.commitCanonicalFirstJoin(fixture.scope, REQUEST_ID, CALLER_BINDING);
 
     assertThat(result).isEqualTo(fixture.expectedProof);
-    InOrder ordered = inOrder(fixture.memberships, fixture.roles, fixture.eventProducer);
+    InOrder ordered =
+        inOrder(
+            fixture.accounts,
+            fixture.operations,
+            fixture.pendingReader,
+            fixture.memberships,
+            fixture.roles,
+            fixture.eventProducer);
+    ordered.verify(fixture.accounts).findByAccountUuid(ACCOUNT_ID);
+    ordered.verify(fixture.operations).lockAccount(17L);
+    ordered.verify(fixture.operations).findCanonicalEvidenceForUpdateByRequestId(REQUEST_ID);
+    ordered.verify(fixture.pendingReader).requireNoPending(ACCOUNT_ID, TENANT_ID);
     ordered.verify(fixture.memberships).createFreshMembershipForJoin(ACCOUNT_ID, TENANT_ID);
     ordered
         .verify(fixture.roles)
@@ -123,10 +136,44 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
     verify(fixture.roles, never()).replaceCanonical(any(), any(), any(), any(), anyLong(), any());
     verify(fixture.audit, never())
         .appendCanonicalTenant(any(), anyString(), anyString(), anyString());
+    verify(fixture.pendingReader, never()).requireNoPending(any(), any());
     verify(fixture.audit)
         .findCanonicalTenantEnvelopeForUpdate(fixture.expectedProof.auditEventId());
     verify(fixture.operations)
         .commitCanonicalFirstJoin(REQUEST_ID, fixture.scope, CALLER_BINDING, fixture.expectedProof);
+  }
+
+  @Test
+  void pendingLifecycleOperationDeniesBeforeAnyJoinMutationOrPublication() {
+    Fixture fixture = new Fixture();
+    fixture.arrangePending();
+    doThrow(
+            new AccountLifecyclePendingDenialReader.PendingOperationException(
+                "Account lifecycle invalidation is unresolved for this Account and tenant"))
+        .when(fixture.pendingReader)
+        .requireNoPending(ACCOUNT_ID, TENANT_ID);
+    fixture.startWritableTransaction();
+
+    assertThatThrownBy(
+            () ->
+                fixture.coordinator.commitCanonicalFirstJoin(
+                    fixture.scope, REQUEST_ID, CALLER_BINDING))
+        .isInstanceOf(AccountLifecyclePendingDenialReader.PendingOperationException.class)
+        .hasMessage("Account lifecycle invalidation is unresolved for this Account and tenant");
+
+    InOrder ordered = inOrder(fixture.operations, fixture.pendingReader);
+    ordered.verify(fixture.operations).lockAccount(17L);
+    ordered.verify(fixture.operations).findCanonicalEvidenceForUpdateByRequestId(REQUEST_ID);
+    ordered.verify(fixture.pendingReader).requireNoPending(ACCOUNT_ID, TENANT_ID);
+    verifyNoInteractions(
+        fixture.memberships,
+        fixture.roles,
+        fixture.outbox,
+        fixture.pairs,
+        fixture.audit,
+        fixture.eventProducer);
+    verify(fixture.operations, never())
+        .commitCanonicalFirstJoin(anyString(), any(), anyString(), any());
   }
 
   @Test
@@ -282,7 +329,8 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
         fixture.outbox,
         fixture.pairs,
         fixture.audit,
-        fixture.eventProducer);
+        fixture.eventProducer,
+        fixture.pendingReader);
   }
 
   @Test
@@ -303,7 +351,8 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
         fixture.outbox,
         fixture.pairs,
         fixture.audit,
-        fixture.eventProducer);
+        fixture.eventProducer,
+        fixture.pendingReader);
   }
 
   @Test
@@ -358,9 +407,19 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
     private final AccountAuditOutboxRepository audit = mock(AccountAuditOutboxRepository.class);
     private final AccountMembershipAuthorityEventProducer eventProducer =
         mock(AccountMembershipAuthorityEventProducer.class);
+    private final AccountLifecyclePendingDenialReader pendingReader =
+        mock(AccountLifecyclePendingDenialReader.class);
     private final AccountCanonicalFirstJoinTerminalCoordinator coordinator =
         new AccountCanonicalFirstJoinTerminalCoordinator(
-            accounts, operations, memberships, roles, outbox, pairs, audit, eventProducer);
+            accounts,
+            operations,
+            memberships,
+            roles,
+            outbox,
+            pairs,
+            audit,
+            eventProducer,
+            pendingReader);
     private final CanonicalJoinScopeV2 scope = scope(ACCOUNT_ID);
     private final VerifiedTenantProvenance provenance =
         new VerifiedTenantProvenance(

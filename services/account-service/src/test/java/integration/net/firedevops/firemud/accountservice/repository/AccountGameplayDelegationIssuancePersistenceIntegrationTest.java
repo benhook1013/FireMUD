@@ -1615,7 +1615,8 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
             outbox,
             pairs,
             new AccountAuditOutboxRepository(dsl),
-            membershipEvents);
+            membershipEvents,
+            new AccountLifecyclePendingDenialReader(dsl));
     inTransaction(
         harness.context(),
         () -> {

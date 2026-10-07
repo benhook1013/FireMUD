@@ -5,6 +5,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -21,6 +24,7 @@ import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepos
 import net.firedevops.firemud.accountservice.repository.AccountDemoTenantEntitlementRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.CanonicalJoinOperationConflictException;
+import net.firedevops.firemud.accountservice.repository.AccountLifecyclePendingDenialReader;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.PairAuthority;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.TenantProvenanceKind;
@@ -284,6 +288,59 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
     assertThat(operation.terminalProof()).isNull();
   }
 
+  @Test
+  void unresolvedLifecycleJournalRowsDenyNewFirstJoinWithoutChangingJoinOwnerState() {
+    assertLifecycleJournalDeniesFirstJoin("PENDING");
+    assertLifecycleJournalDeniesFirstJoin("WORLD_TERMINAL");
+  }
+
+  private void assertLifecycleJournalDeniesFirstJoin(String status) {
+    Fixture fixture = newFixture();
+    fixture.seedLifecycleOperation(status);
+
+    assertThatThrownBy(fixture::commitFirstJoin)
+        .isInstanceOf(AccountLifecyclePendingDenialReader.PendingOperationException.class)
+        .hasMessage("Account lifecycle invalidation is unresolved for this Account and tenant");
+    assertThat(
+            fixture.dsl.fetchValue(
+                "SELECT status FROM account_lifecycle_serving_operations "
+                    + "WHERE account_uuid = ? AND tenant_uuid = ?",
+                String.class,
+                fixture.account.getAccountUuid(),
+                fixture.tenantUuid))
+        .isEqualTo(status);
+
+    assertThat(fixture.count("account_tenant_membership", "tenant_uuid", fixture.tenantUuid))
+        .isZero();
+    assertThat(fixture.countAll("account_tenant_membership_role_snapshots")).isZero();
+    assertThat(fixture.countAll("account_membership_pair_authority")).isZero();
+    assertThat(
+            fixture.count(
+                "account_authority_outbox_streams",
+                "outbox_stream_key",
+                fixture.membershipStream()))
+        .isZero();
+    assertThat(
+            fixture.count(
+                "account_authority_outbox_events", "outbox_stream_key", fixture.membershipStream()))
+        .isZero();
+    UUID auditEventId =
+        UUID.nameUUIDFromBytes(
+            ("account-join-audit/v1:" + fixture.requestId).getBytes(StandardCharsets.UTF_8));
+    assertThat(fixture.count("account_audit_outbox", "audit_event_id", auditEventId)).isZero();
+    assertThat(fixture.count("account_join_operations", "request_id", fixture.requestId))
+        .isEqualTo(1L);
+    var operation =
+        fixture.inTransaction(
+            () ->
+                fixture
+                    .operations
+                    .findCanonicalEvidenceForUpdateByRequestId(fixture.requestId)
+                    .orElseThrow());
+    assertThat(operation.status()).isEqualTo("PENDING");
+    assertThat(operation.terminalProof()).isNull();
+  }
+
   private Fixture newFixture() {
     return new Fixture(newTestContext());
   }
@@ -376,7 +433,15 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
               tenantEvents);
       this.terminalCoordinator =
           new AccountCanonicalFirstJoinTerminalCoordinator(
-              accounts, operations, memberships, roles, outbox, pairs, auditOutbox, producer);
+              accounts,
+              operations,
+              memberships,
+              roles,
+              outbox,
+              pairs,
+              auditOutbox,
+              producer,
+              new AccountLifecyclePendingDenialReader(dsl));
       this.account = createAccount();
       this.tenantEvidence = freshTenantEvidence(tenantUuid);
       this.provenance =
@@ -420,6 +485,98 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
                 entitlement == null ? 5L : entitlement.entitlementVersion());
             return null;
           });
+    }
+
+    private void seedLifecycleOperation(String status) {
+      // Lifecycle fixture payloads are opaque shape-only; they do not prove an authenticated World
+      // receipt.
+      if (!"PENDING".equals(status) && !"WORLD_TERMINAL".equals(status)) {
+        throw new IllegalArgumentException("unsupported lifecycle fixture status");
+      }
+      String accountStream = "account:auth-authority:v1:account/" + account.getAccountUuid();
+      var source =
+          Objects.requireNonNull(
+              dsl.fetchOne(
+                  "SELECT current_generation, current_source_version, "
+                      + "current_issuance_fence, current_issuance_fence_source_version, "
+                      + "last_outbox_sequence FROM account_authority_source_records "
+                      + "WHERE outbox_stream_key = ?",
+                  accountStream));
+      long generation = source.get("current_generation", Long.class);
+      long sourceVersion = source.get("current_source_version", Long.class);
+      long issuanceFence = source.get("current_issuance_fence", Long.class);
+      long fenceSourceVersion = source.get("current_issuance_fence_source_version", Long.class);
+      long checkpointSequence = source.get("last_outbox_sequence", Long.class);
+      if (checkpointSequence != 0L) {
+        throw new IllegalStateException("fixture Account baseline unexpectedly has an event");
+      }
+      UUID lifecycleRequestId = UUID.randomUUID();
+      byte[] callerBinding = opaqueBytes("caller-proof");
+      byte[] activationRequest = opaqueBytes("world-request");
+      byte[] preparingEvidence = opaqueBytes("world-preparing-evidence");
+      byte[] requestPayload = opaqueBytes("account-request");
+      byte[] capturePayload = opaqueBytes("account-capture");
+      byte[] resultPayload = "opaque-world-terminal-result".getBytes(StandardCharsets.UTF_8);
+      dsl.execute(
+          "INSERT INTO account_lifecycle_serving_operations ("
+              + "request_id, actor_account_uuid, account_uuid, account_id, account_provenance, "
+              + "tenant_uuid, purpose, caller_proof_binding, world_activation_request_id, "
+              + "world_activation_request_digest, world_activation_request_bytes, "
+              + "world_activation_preparing_evidence, request_payload, request_digest, "
+              + "account_stream_key, account_generation, account_source_version, "
+              + "account_issuance_fence, account_fence_source_version, checkpoint_sequence, "
+              + "checkpoint_payload, capture_payload, capture_digest, status, "
+              + "world_result_outcome, world_result_payload, world_result_digest) "
+              + "VALUES (?, ?, ?, ?, ?, ?, 'WORLD_ACTIVATION_INVALIDATION', ?, ?, ?, ?, ?, ?, ?, "
+              + "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          lifecycleRequestId,
+          account.getAccountUuid(),
+          account.getAccountUuid(),
+          account.getId(),
+          account.getAccountUuidProvenance(),
+          tenantUuid,
+          callerBinding,
+          UUID.randomUUID(),
+          sha256(activationRequest),
+          activationRequest,
+          preparingEvidence,
+          requestPayload,
+          sha256(requestPayload),
+          accountStream,
+          generation,
+          sourceVersion,
+          issuanceFence,
+          fenceSourceVersion,
+          checkpointSequence,
+          new byte[0],
+          capturePayload,
+          sha256(capturePayload),
+          "PENDING",
+          null,
+          null,
+          null);
+      if ("WORLD_TERMINAL".equals(status)) {
+        dsl.execute(
+            "UPDATE account_lifecycle_serving_operations SET world_result_outcome = 'ABORTED', "
+                + "world_result_payload = ?, world_result_digest = ?, status = 'WORLD_TERMINAL' "
+                + "WHERE request_id = ?",
+            resultPayload,
+            sha256(resultPayload),
+            lifecycleRequestId);
+      }
+    }
+
+    private static byte[] opaqueBytes(String label) {
+      return ("opaque-fixture:" + label + ":" + UUID.randomUUID()).getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static String sha256(byte[] value) {
+      try {
+        return "sha256:"
+            + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value));
+      } catch (NoSuchAlgorithmException unavailable) {
+        throw new IllegalStateException("SHA-256 is unavailable", unavailable);
+      }
     }
 
     private AccountAuthorityOutboxRepository.Checkpoint writeAndPublish() {

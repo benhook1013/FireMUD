@@ -25,6 +25,7 @@ import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepo
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.CanonicalJoinOperationConflictException;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.CanonicalJoinOperationEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.CanonicalJoinTerminalProof;
+import net.firedevops.firemud.accountservice.repository.AccountLifecyclePendingDenialReader;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.PairAuthority;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.TenantProvenanceKind;
@@ -63,6 +64,7 @@ public class AccountCanonicalFirstJoinTerminalCoordinator {
   private final AccountMembershipPairAuthorityRepository pairAuthorityRepository;
   private final AccountAuditOutboxRepository auditOutboxRepository;
   private final AccountMembershipAuthorityEventProducer eventProducer;
+  private final AccountLifecyclePendingDenialReader lifecyclePendingDenialReader;
 
   @SuppressFBWarnings(
       value = {"CT_CONSTRUCTOR_THROW", "EI_EXPOSE_REP2"},
@@ -77,7 +79,8 @@ public class AccountCanonicalFirstJoinTerminalCoordinator {
       AccountAuthorityOutboxRepository authorityOutboxRepository,
       AccountMembershipPairAuthorityRepository pairAuthorityRepository,
       AccountAuditOutboxRepository auditOutboxRepository,
-      AccountMembershipAuthorityEventProducer eventProducer) {
+      AccountMembershipAuthorityEventProducer eventProducer,
+      AccountLifecyclePendingDenialReader lifecyclePendingDenialReader) {
     this.accountRepository = Objects.requireNonNull(accountRepository);
     this.joinOperationRepository = Objects.requireNonNull(joinOperationRepository);
     this.membershipRepository = Objects.requireNonNull(membershipRepository);
@@ -86,6 +89,7 @@ public class AccountCanonicalFirstJoinTerminalCoordinator {
     this.pairAuthorityRepository = Objects.requireNonNull(pairAuthorityRepository);
     this.auditOutboxRepository = Objects.requireNonNull(auditOutboxRepository);
     this.eventProducer = Objects.requireNonNull(eventProducer);
+    this.lifecyclePendingDenialReader = Objects.requireNonNull(lifecyclePendingDenialReader);
   }
 
   /**
@@ -120,6 +124,7 @@ public class AccountCanonicalFirstJoinTerminalCoordinator {
 
     final Checkpoint checkpoint;
     if ("PENDING".equals(operation.status())) {
+      lifecyclePendingDenialReader.requireNoPending(scope.accountId(), scope.tenantId());
       VerifiedTenantProvenance provenance = operation.scopeEvidence().tenantProvenance();
       if (!Boolean.TRUE.equals(operation.allowPublicJoin())
           || !"AVAILABLE".equals(operation.entitlementAuthorityAvailability())

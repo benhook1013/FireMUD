@@ -1,10 +1,12 @@
 package net.firedevops.firemud.accountservice.repository;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.Objects;
 import java.util.UUID;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.exception.DataAccessException;
+import org.springframework.stereotype.Repository;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -13,7 +15,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * predicate. It proves no producer identity, World result, source finalization, current serving
  * state, or admission permission.
  */
-public final class AccountLifecyclePendingDenialReader {
+@Repository
+public class AccountLifecyclePendingDenialReader {
   private static final String ACCOUNT_LOCK_SQL =
       "SELECT account_uuid FROM accounts WHERE account_uuid = ? FOR UPDATE";
   private static final String PENDING_SQL =
@@ -24,6 +27,10 @@ public final class AccountLifecyclePendingDenialReader {
 
   private final DSLContext dsl;
 
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification =
+          "Keep the required DSL precondition fail-fast; this non-final Spring repository is proxied and no partially initialized instance escapes.")
   public AccountLifecyclePendingDenialReader(DSLContext dsl) {
     this.dsl = Objects.requireNonNull(dsl, "DSLContext is required");
   }
@@ -31,14 +38,15 @@ public final class AccountLifecyclePendingDenialReader {
   /**
    * Requires no unresolved lifecycle operation for the exact Account/tenant pair.
    *
-   * <p>The existing writable owner transaction must be REPEATABLE_READ or SERIALIZABLE. The
-   * canonical journal's BEFORE INSERT row-version fence forces an older snapshot waiting on the
-   * persisted Account lock to fail with a serialization error instead of reading a stale clear
-   * predicate. Both a pending intent and a correlated World terminal receipt remain denial
-   * evidence.
+   * <p>The existing writable owner transaction must be READ_COMMITTED, REPEATABLE_READ, or
+   * SERIALIZABLE. At READ_COMMITTED, the exact Account row lock makes this query observe a
+   * lifecycle insert committed before the lock is acquired; the journal's BEFORE INSERT row-version
+   * fence prevents an insert from crossing a later lock holder. When Spring uses the datasource's
+   * default isolation, the actual PostgreSQL transaction isolation is checked. Both a pending
+   * intent and a correlated World terminal receipt remain denial evidence.
    */
   public void requireNoPending(UUID accountUuid, UUID tenantUuid) {
-    requireWritableOwnerTransaction();
+    requireWritableOwnerTransaction(dsl);
     requireUuid(accountUuid, "Account UUID");
     requireUuid(tenantUuid, "tenant UUID");
 
@@ -66,7 +74,7 @@ public final class AccountLifecyclePendingDenialReader {
     }
   }
 
-  private static void requireWritableOwnerTransaction() {
+  private static void requireWritableOwnerTransaction(DSLContext dsl) {
     if (!TransactionSynchronizationManager.isActualTransactionActive()) {
       throw new IllegalStateException(
           "Account lifecycle pending read requires an owner transaction");
@@ -76,11 +84,30 @@ public final class AccountLifecyclePendingDenialReader {
           "Account lifecycle pending read requires a writable transaction");
     }
     Integer isolation = TransactionSynchronizationManager.getCurrentTransactionIsolationLevel();
+    if (isolation == null) {
+      final String databaseIsolation;
+      try {
+        Record isolationRecord = dsl.fetchOne("SHOW transaction_isolation");
+        databaseIsolation = isolationRecord == null ? null : isolationRecord.get(0, String.class);
+      } catch (DataAccessException unavailable) {
+        throw new IllegalStateException(
+            "Account lifecycle pending read could not determine transaction isolation",
+            unavailable);
+      }
+      if ("read committed".equals(databaseIsolation)) {
+        isolation = TransactionDefinition.ISOLATION_READ_COMMITTED;
+      } else if ("repeatable read".equals(databaseIsolation)) {
+        isolation = TransactionDefinition.ISOLATION_REPEATABLE_READ;
+      } else if ("serializable".equals(databaseIsolation)) {
+        isolation = TransactionDefinition.ISOLATION_SERIALIZABLE;
+      }
+    }
     if (isolation == null
-        || (isolation != TransactionDefinition.ISOLATION_REPEATABLE_READ
+        || (isolation != TransactionDefinition.ISOLATION_READ_COMMITTED
+            && isolation != TransactionDefinition.ISOLATION_REPEATABLE_READ
             && isolation != TransactionDefinition.ISOLATION_SERIALIZABLE)) {
       throw new IllegalStateException(
-          "Account lifecycle pending read requires REPEATABLE_READ or SERIALIZABLE isolation");
+          "Account lifecycle pending read requires READ_COMMITTED, REPEATABLE_READ, or SERIALIZABLE isolation");
     }
   }
 
