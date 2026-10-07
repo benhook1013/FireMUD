@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# Reserve a fresh disposable native-rehearsal PR tuple; no timing or hosted proof is established.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ACTION="$ROOT_DIR/.github/actions/preserve-required-gate/action.yml"
