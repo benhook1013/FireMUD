@@ -1255,11 +1255,6 @@ class WorldCanonicalPlayerLocationGrpcServiceTest {
             .formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes));
   }
 
-  private static byte[] canonical(Object value) throws Exception {
-    return net.firedevops.firemud.common.json.Rfc8785CanonicalJson.canonicalizeUtf8(
-        JSON.writeValueAsString(value));
-  }
-
   private static byte[] canonical(tools.jackson.databind.JsonNode value) throws Exception {
     return net.firedevops.firemud.common.json.Rfc8785CanonicalJson.canonicalizeUtf8(
         JSON.writeValueAsString(value));
