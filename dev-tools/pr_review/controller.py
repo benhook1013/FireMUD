@@ -4715,6 +4715,78 @@ class ReviewController:
             for channel in (policy.Channel.HOSTED, policy.Channel.CLI)
         )
 
+    def _refreshed_status_histories(
+        self, state, live, reconciliation, candidate_prs, history_cache,
+    ):
+        # Clearance audits refresh both cache entries. Reproject that local
+        # snapshot for selection and row rendering without another read.
+        current_histories = {
+            selected: {
+                pr: self._policy_history(
+                    state, pr, selected, reconciliation, history_cache=history_cache,
+                )
+                for pr in candidate_prs
+            }
+            for selected in (policy.Channel.HOSTED, policy.Channel.CLI)
+        }
+        current_histories[policy.Channel.CLI] = {
+            pr: self._project_cli_streak_lineage(
+                self._project_cli_hosted_reservations(
+                    current_histories[policy.Channel.CLI][pr],
+                    current_histories[policy.Channel.HOSTED][pr],
+                    pr, live[pr].head, self._reconciled_anchor(pr, live[pr], reconciliation),
+                ),
+                pr, state, self._reconciled_anchor(pr, live[pr], reconciliation),
+            )
+            for pr in candidate_prs
+        }
+        return current_histories
+
+    def _refreshed_status_allocations(
+        self, state, live, reconciliation, histories, allocations, candidate_prs,
+        bounded_evidence_cache, channel, current_histories,
+    ):
+        current_allocations = dict(allocations[channel])
+        for pr in candidate_prs:
+            fresh_history = current_histories[channel][pr]
+            allocation = state.allocations.get(f"{pr}:{channel.value}")
+            reason = None
+            if (allocation is not None and allocation.stop_basis is None
+                and (allocation.min_additional_completed is not None
+                     or allocation.max_additional_completed is not None)):
+                snapshot = bounded_evidence_cache.get((pr, channel.value))
+                if snapshot is None or fresh_history != histories[channel].get(pr, ()):
+                    snapshot = self._bounded_allocation_evidence(allocation, fresh_history)
+                if fresh_history != histories[channel].get(pr, ()):
+                    reason = snapshot["error"]
+                    if reason is None and snapshot["in_flight"]:
+                        # The canonical in-flight branch returns before a
+                        # clearance audit; refresh activity counters locally.
+                        current_allocations[pr] = dict(
+                            current_allocations.get(pr, {}),
+                            **self._allocation_progress(
+                                allocation, fresh_history,
+                                self._reconciled_anchor(pr, live[pr], reconciliation),
+                                reconciliation.status_for(pr, channel.value),
+                                state=state, reconciliation_result=reconciliation,
+                                bounded_evidence=snapshot,
+                            ),
+                        )
+            if self._review_credit_projection(histories[channel].get(pr, ())) != self._review_credit_projection(
+                fresh_history
+            ):
+                reason = "review count or taper evidence changed during audit; refresh status before release"
+            if reason is not None:
+                current_allocations[pr] = dict(
+                    current_allocations.get(pr, {}), status="INVALID", reason=reason, details=reason,
+                    history_projection_current=False, finding_only_pending=False,
+                    request_preparation_only=False, selection_control="unresolved_work",
+                )
+                for key in ("completed_count", "used", "remaining", "in_flight",
+                            "taper_complete", "historical_taper_complete"):
+                    current_allocations[pr][key] = None
+        return current_allocations
+
     def _status_review_targets(
         self,
         state: ReviewState,
@@ -4731,72 +4803,16 @@ class ReviewController:
     ) -> dict[str, dict[str, Any]]:
         result: dict[str, dict[str, Any]] = {}
 
-        def refreshed_histories() -> dict[policy.Channel, dict[int, list[Any]]]:
-            # A prior channel's clearance audit refreshes both cache entries.
-            # Reproject those local snapshots before selecting this channel.
-            current_histories = {
-                selected: {
-                    pr: self._policy_history(
-                        state, pr, selected, reconciliation, history_cache=history_cache,
-                    )
-                    for pr in candidate_prs
-                }
-                for selected in (policy.Channel.HOSTED, policy.Channel.CLI)
-            }
-            current_histories[policy.Channel.CLI] = {
-                pr: self._project_cli_streak_lineage(
-                    self._project_cli_hosted_reservations(
-                        current_histories[policy.Channel.CLI][pr],
-                        current_histories[policy.Channel.HOSTED][pr],
-                        pr, live[pr].head, self._reconciled_anchor(pr, live[pr], reconciliation),
-                    ),
-                    pr, state, self._reconciled_anchor(pr, live[pr], reconciliation),
-                )
-                for pr in candidate_prs
-            }
-            return current_histories
+        def refreshed_histories():
+            return self._refreshed_status_histories(
+                state, live, reconciliation, candidate_prs, history_cache,
+            )
 
         def refreshed_allocations(channel, current_histories):
-            current_allocations = dict(allocations[channel])
-            for pr in candidate_prs:
-                fresh_history = current_histories[channel][pr]
-                allocation = state.allocations.get(f"{pr}:{channel.value}")
-                reason = None
-                if (allocation is not None and allocation.stop_basis is None
-                    and (allocation.min_additional_completed is not None
-                         or allocation.max_additional_completed is not None)):
-                    snapshot = bounded_evidence_cache.get((pr, channel.value))
-                    if snapshot is None or fresh_history != histories[channel].get(pr, ()):
-                        snapshot = self._bounded_allocation_evidence(allocation, fresh_history)
-                    if fresh_history != histories[channel].get(pr, ()):
-                        reason = snapshot["error"]
-                        if reason is None and snapshot["in_flight"]:
-                            # The canonical in-flight branch returns before a
-                            # clearance audit; refresh activity counters locally.
-                            current_allocations[pr] = dict(
-                                current_allocations.get(pr, {}),
-                                **self._allocation_progress(
-                                    allocation, fresh_history,
-                                    self._reconciled_anchor(pr, live[pr], reconciliation),
-                                    reconciliation.status_for(pr, channel.value),
-                                    state=state, reconciliation_result=reconciliation,
-                                    bounded_evidence=snapshot,
-                                ),
-                            )
-                if self._review_credit_projection(histories[channel].get(pr, ())) != self._review_credit_projection(
-                    fresh_history
-                ):
-                    reason = "review count or taper evidence changed during audit; refresh status before release"
-                if reason is not None:
-                    current_allocations[pr] = dict(
-                        current_allocations.get(pr, {}), status="INVALID", reason=reason, details=reason,
-                        history_projection_current=False, finding_only_pending=False,
-                        request_preparation_only=False, selection_control="unresolved_work",
-                    )
-                    for key in ("completed_count", "used", "remaining", "in_flight",
-                                "taper_complete", "historical_taper_complete"):
-                        current_allocations[pr][key] = None
-            return current_allocations
+            return self._refreshed_status_allocations(
+                state, live, reconciliation, histories, allocations, candidate_prs,
+                bounded_evidence_cache, channel, current_histories,
+            )
 
         for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
             current_histories = refreshed_histories()
@@ -5767,6 +5783,23 @@ class ReviewController:
                 stop_audit_cache=stop_audit_cache,
                 history_cache=history_cache,
             )
+        else:
+            # Allocation audits refresh both operation-local histories even
+            # when this read does not select a queue target. Render those final
+            # snapshots through the same projection used by target status.
+            checked_prs = tuple(pr for pr in state.ordered_prs if evidence_prs is None or pr in evidence_prs)
+            final_histories = self._refreshed_status_histories(
+                state, live, reconciliation, checked_prs, history_cache,
+            )
+            for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
+                final_allocations = self._refreshed_status_allocations(
+                    state, live, reconciliation, histories, allocations, checked_prs,
+                    bounded_evidence_cache, channel, final_histories,
+                )
+                allocations[channel].update({
+                    pr: view for pr, view in final_allocations.items() if pr in allocations[channel]
+                })
+                histories[channel].update(final_histories[channel])
         for pr in state.ordered_prs:
             item = live[pr]
             reconciliation_status = reconciliation.status_for(pr)

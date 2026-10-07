@@ -7707,6 +7707,69 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(len([item for item in evidence[(1, "cli")]
                               if item.get("checkpoint") == "fresh-accepted"]), 1)
 
+    def test_selected_status_and_allocation_evidence_use_final_audit_histories(self):
+        for operation in ("status", "evidence"):
+            for change in ("activity", "credit"):
+                with self.subTest(operation=operation, change=change):
+                    values, heads = _stacked_prs(2)
+                    evidence = CountingEvidence()
+                    evidence[(1, "hosted")] = [self.allocation_evidence(
+                        head=values[1].head, checkpoint="baseline", channel="hosted")]
+                    evidence[(1, "cli")] = []
+                    controller = self.grant_bounded_allocation(
+                        channel="hosted", checkpoint="baseline", cap=4, minimum=1,
+                        evidence=evidence, values=values, heads=heads, sqlite=True)
+                    evidence[(1, "hosted")].append(self.allocation_evidence(
+                        head=values[1].head, checkpoint="dry", channel="hosted"))
+                    live, reconciliation = controller._reconciliation(controller.store.load())
+                    anchor = controller._anchor(1, live[1], reconciliation.links[1]).as_dict()
+                    saved = controller.store.load().allocations["1:hosted"].to_dict()
+
+                    def refresh_during_audit(change=change, evidence=evidence, anchor=anchor, values=values):
+                        if change == "activity":
+                            evidence[(1, "hosted")].append({
+                                "pr": 1, "head": values[1].head, "checkpoint": "trigger:123",
+                                "trigger_id": 123, "active_reservation": True, "held": True,
+                                "completed": False, "attributable": False, "anchor": anchor})
+                        else:
+                            evidence[(1, "hosted")].append(self.allocation_evidence(
+                                head=values[1].head, checkpoint="fresh-accepted", channel="hosted",
+                                accepted=1, raw=1, source_resolution_status="finding_pending"))
+                        evidence[(1, "cli")].append({
+                            "pr": 1, "head": values[1].head, "checkpoint": "fresh-thread",
+                            "held": True, "finding_only_hold": True})
+
+                    evidence.on_audit = refresh_during_audit
+                    self._enable_batch_status(controller, values)
+                    evidence.history_reads.clear()
+                    if operation == "status":
+                        report = controller.status_for_pr(1)
+                        self.assertNotIn("review_targets", report)
+                        row = report["prs"][0]
+                        self.assertIn("fresh-thread", row["review_obligations"]["cli"])
+                        self.assertIn("trigger:123" if change == "activity" else "fresh-accepted",
+                                      row["review_obligations"]["hosted"])
+                        activity = row["review_activity"]["hosted"]
+                        self.assertEqual(activity["total"], 0 if change == "activity" else 1)
+                        self.assertEqual([item["checkpoint"] for item in activity["active"]],
+                                         ["trigger:123"] if change == "activity" else [])
+                    else:
+                        row = controller.evidence(1)["1"]
+                        self.assertIn("fresh-thread", [item.get("checkpoint") for item in row["cli"]])
+                    allocation = row["allocations"]["hosted"]
+                    if change == "activity":
+                        self.assertEqual(allocation["status"], "CAP_ACTIVE")
+                        self.assertEqual(allocation["completed_count"], 1)
+                        self.assertEqual(allocation["in_flight"], 1)
+                    else:
+                        self.assertEqual(allocation["status"], "INVALID")
+                        self.assertFalse(allocation["history_projection_current"])
+                        for key in ("completed_count", "taper_complete", "used", "remaining", "in_flight"):
+                            self.assertIsNone(allocation[key])
+                    self.assertEqual(len(evidence.stop_audit_calls), 1)
+                    self.assertEqual(evidence.history_reads, [(1, "hosted"), (1, "cli")])
+                    self.assertEqual(controller.store.load().allocations["1:hosted"].to_dict(), saved)
+
     def test_later_cli_audit_activity_overrides_earlier_hosted_allocation_handoff(self):
         values, heads = _stacked_prs(2)
         evidence = CountingEvidence()
