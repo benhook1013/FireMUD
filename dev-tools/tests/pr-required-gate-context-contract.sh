@@ -420,6 +420,10 @@ for workflow in ("ci.yml", "security.yml", "smoke.yml"):
     for job_name, job in data["jobs"].items():
         if job_name == workflows[workflow][0]:
             continue
+        if workflow == "ci.yml" and job_name == "proof-metadata-completion-hold":
+            # The isolated timing job has a separate semantic admission matrix
+            # below; this exception does not admit other metadata work.
+            continue
         condition = job.get("if", "") if isinstance(job, dict) else ""
         if metadata_guard not in condition:
             raise SystemExit(
@@ -1896,6 +1900,90 @@ import sys
 import yaml
 
 root = Path(sys.argv[1])
+ci = yaml.load((root / ".github/workflows/ci.yml").read_text(), Loader=yaml.BaseLoader)
+
+# Parse this deliberately narrow condition and test its admission boundary.
+# Unknown operators/fields fail closed rather than evaluating arbitrary code.
+# GitHub expression string equality ignores case: case variants of the proof
+# ref share the timing scope, but grant no credentials or gate success.
+import copy
+import itertools
+import re
+
+def hold_admitted(job, context):
+    expression = job.get("if", "")
+    assert expression.startswith("${{ ") and expression.endswith(" }}")
+    terms = expression[4:-3].split(" && ")
+    assert terms.count("always()") == 1
+    comparisons = [term for term in terms if term != "always()"]
+    assert len(comparisons) == 5
+    results = []
+    fields = set()
+    for term in comparisons:
+        match = re.fullmatch(r"([A-Za-z0-9_.-]+) == (null|'[^']*')", term)
+        assert match is not None
+        field, literal = match.groups()
+        assert field in context and field not in fields
+        fields.add(field)
+        expected = None if literal == "null" else literal[1:-1]
+        actual = context[field]
+        if isinstance(actual, str) and isinstance(expected, str):
+            results.append(actual.lower() == expected.lower())
+        else:
+            results.append(actual == expected)
+    assert fields == set(context)
+    return all(results)
+
+def assert_proof_hold(job):
+    assert job.get("needs") == ["validation-gate"]
+    assert job.get("permissions") == {}
+    assert job.get("timeout-minutes") == "3"
+    assert job.get("runs-on") == "ubuntu-latest"
+    assert set(job) == {"name", "needs", "if", "runs-on", "timeout-minutes", "permissions", "steps"}
+    assert job.get("steps") == [{"name": "Hold completion for the isolated native proof", "run": "sleep 120"}]
+    for event, action, base_ref, branch, result in itertools.product(
+        ["pull_request", "PuLl_ReQuEsT", "push", "workflow_dispatch"],
+        ["edited", "EdItEd", "synchronize", "opened"],
+        [None, "develop"],
+        ["codex/required-gate-native-proof", "CoDeX/ReQuIrEd-GaTe-NaTiVe-PrOoF", "ordinary-work"],
+        ["failure", "FaIlUrE", "success", "cancelled", "skipped"],
+    ):
+        context = {"github.event_name": event, "github.event.action": action,
+                   "github.event.changes.base.ref": base_ref,
+                   "github.event.pull_request.head.ref": branch,
+                   "needs.validation-gate.result": result}
+        expected = (event.lower() == "pull_request" and action.lower() == "edited" and base_ref is None
+                    and branch.lower() == "codex/required-gate-native-proof" and result.lower() == "failure")
+        assert hold_admitted(job, context) == expected
+
+hold = ci["jobs"]["proof-metadata-completion-hold"]
+assert_proof_hold(hold)
+for job in ci["jobs"].values():
+    dependencies = job.get("needs", [])
+    if isinstance(dependencies, str):
+        dependencies = [dependencies]
+    assert "proof-metadata-completion-hold" not in dependencies
+unsafe_variants = [
+    {"if": hold["if"].replace("always() && ", "")},
+    {"if": hold["if"].replace(" && github.event.changes.base.ref == null", "")},
+    {"if": hold["if"].replace("codex/required-gate-native-proof", "ordinary-work")},
+    {"if": hold["if"].replace("'failure'", "'success'")},
+    {"if": hold["if"].replace(" && ", " || ", 1)},
+    {"permissions": {"actions": "write"}}, {"permissions": {"contents": "read"}},
+    {"needs": []}, {"timeout-minutes": "30"}, {"continue-on-error": "true"},
+    {"steps": [{"uses": "actions/checkout@unsafe"}, *hold["steps"]]},
+    {"steps": [{"name": hold["steps"][0]["name"], "run": "sleep 1200"}]},
+]
+for override in unsafe_variants:
+    unsafe = copy.deepcopy(hold)
+    unsafe.update(override)
+    try:
+        assert_proof_hold(unsafe)
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError(f"unsafe native proof hold accepted: {override}")
+
 workflow = yaml.load((root / ".github/workflows/resolve-required-gates.yml").read_text(), Loader=yaml.BaseLoader)
 action = yaml.load((root / ".github/actions/preserve-required-gate/action.yml").read_text(), Loader=yaml.BaseLoader)
 assert action["inputs"]["assessment-mode"]["default"] == "poll"
