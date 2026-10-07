@@ -182,6 +182,7 @@ run_docker_proof() (
   failed_table_missing=
   cleanup_dir=
   helper_backup_dir=
+  proof_user=
   helper_dump=
   helper_sql=
   cronjob_script=
@@ -222,7 +223,7 @@ run_docker_proof() (
   docker info >/dev/null 2>&1 || fail "required PostgreSQL runtime proof could not reach the CI Docker daemon"
 
   mkdir -p "$backup_dir/15min" "$helper_backup_dir"
-  chmod 0777 "$backup_dir" "$backup_dir/15min" "$helper_backup_dir"
+  proof_user="$(id -u):$(id -g)"
   cronjob_script="$cleanup_dir/k8s-pg-dump.sh"
   python3 - "$ROOT_DIR/k8s/postgres/pg-dump-cronjob.yaml" "$cronjob_script" <<'PY'
 from pathlib import Path
@@ -270,7 +271,9 @@ PY
   grep -Fq "legacy root PG_VERSION" "$cleanup_dir/legacy-guard.log" || fail "the PostgreSQL 18 guard did not identify the retained root cluster"
 
   # This executes the helper against the Dockerfile's exact PostgreSQL base image; it does not build or prove the cron image's packaging layers.
+  # Both dump-only clients use the runner identity so run-owned artifacts remain host-readable and removable.
   docker run --rm \
+    --user "$proof_user" \
     --network "$network_name" \
     --volume "$ROOT_DIR/dev-tools/backups/pg-dump-rotate.sh:/usr/local/bin/pg-dump-rotate.sh:ro" \
     --volume "$helper_backup_dir:/backups" \
@@ -289,6 +292,7 @@ PY
   grep -Fq -- "$marker" "$helper_sql" || fail "the Compose dump helper artifact omitted the seeded PostgreSQL 16 row"
 
   docker run --rm \
+    --user "$proof_user" \
     --network "$network_name" \
     --volume "$cronjob_script:/scripts/pg-dump.sh:ro" \
     --volume "$backup_dir:/backups" \
