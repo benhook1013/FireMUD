@@ -422,7 +422,7 @@ def _private_document(title: str, content: str) -> str:
         '.private-pages .conversation-open{max-width:100%;white-space:normal}'
         '.private-pages .private-actions a,.private-pages .job-links a{max-width:100%;overflow-wrap:anywhere}}</style>'
         '</head><body><main class="private-pages"><nav class="private-actions" aria-label="Local navigation">'
-        '<a href="/">← Local status page</a></nav>'
+        '<a href="/">← Local Delivery Status page</a></nav>'
         f'{content}</main></body></html>'
     )
 

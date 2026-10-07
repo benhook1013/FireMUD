@@ -627,10 +627,18 @@ class RuntimeTest(unittest.TestCase):
         runner = HostedRunner("owner/repo", LiveGitHub("owner/repo"))
         now = datetime.now(timezone.utc).replace(microsecond=0)
         terminal_at = now.isoformat().replace("+00:00", "Z")
-        reservation = self._trigger_record(created=terminal_at)
+        trigger_at = (now - timedelta(hours=1)).isoformat().replace("+00:00", "Z")
+        reservation = self._trigger_record(created=trigger_at)
         reservation.update({"pr_number": 99, "sqlite_attempt_id": "attempt-99"})
         reservation["anchor"]["pr"] = 99
         path = Path("/unused/pr-99/trigger.json")
+        captured_trigger = {
+            "databaseId": 10,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": reservation["trigger"]["created_at"],
+            "url": reservation["trigger"]["url"],
+        }
 
         cases = (
             ("mixed-case repository", now - timedelta(minutes=1), terminal_at, "OWNER/REPO", True, False),
@@ -662,7 +670,7 @@ class RuntimeTest(unittest.TestCase):
                             "observed_at": observed_at,
                         }
                     ),
-                    "hosted_comments": json.dumps({"comments": [response]}),
+                    "hosted_comments": json.dumps({"comments": [captured_trigger, response]}),
                 }
                 attempt = {
                     "attempt_id": "attempt-99",
@@ -694,7 +702,7 @@ class RuntimeTest(unittest.TestCase):
                 "createdAt": response_at.isoformat().replace("+00:00", "Z"),
                 "updatedAt": (now + timedelta(minutes=30)).isoformat().replace("+00:00", "Z"),
             }
-            artifacts["hosted_comments"] = json.dumps({"comments": [response]})
+            artifacts["hosted_comments"] = json.dumps({"comments": [captured_trigger, response]})
             runner.records = SimpleNamespace(
                 attempt_history=lambda _pr, attempt=attempt: [attempt],
                 attempt_artifacts=lambda _attempt_id, value=artifacts: value,
@@ -806,9 +814,9 @@ class RuntimeTest(unittest.TestCase):
     def test_closed_reservation_uses_only_durable_future_cooldown_when_history_is_unavailable(self) -> None:
         runner = HostedRunner("owner/repo", LiveGitHub("owner/repo"))
         now = datetime.now(timezone.utc).replace(microsecond=0)
-        created = now.isoformat().replace("+00:00", "Z")
+        trigger_created = (now - timedelta(hours=1)).isoformat().replace("+00:00", "Z")
         path = Path("/unused/pr-99/trigger.json")
-        record = self._trigger_record(created=created)
+        record = self._trigger_record(created=trigger_created)
         record.update({"pr_number": 99, "sqlite_attempt_id": "attempt-99"})
         record["anchor"]["pr"] = 99
 
@@ -820,7 +828,7 @@ class RuntimeTest(unittest.TestCase):
                 "author": {"login": "coderabbitai"},
                 "body": f"Next reviews available in {abs(minutes)} minutes",
                 "createdAt": (
-                    created
+                    (now - timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
                     if minutes > 0
                     else (now - timedelta(minutes=20)).isoformat().replace("+00:00", "Z")
                 ),
@@ -840,7 +848,16 @@ class RuntimeTest(unittest.TestCase):
                         "observed_at": observed_at,
                     }
                 ),
-                "hosted_comments": json.dumps({"comments": [response]}),
+                "hosted_comments": json.dumps({"comments": [
+                    {
+                        "databaseId": 10,
+                        "author": {"login": "maintainer"},
+                        "body": hosted.FULL_COMMAND,
+                        "createdAt": trigger_created,
+                        "url": record["trigger"]["url"],
+                    },
+                    response,
+                ]}),
             }
             attempt = {
                 "attempt_id": "attempt-99",
@@ -895,14 +912,22 @@ class RuntimeTest(unittest.TestCase):
                 candidate_sha=HEAD,
                 started_at=trigger_record["trigger"]["created_at"],
             )
+            earlier_response_created = now - timedelta(minutes=25)
+            earlier_response = {
+                "databaseId": 12,
+                "author": {"login": "coderabbitai[bot]"},
+                "body": "Review rate limited; next reviews available in: 2 hours.",
+                "createdAt": earlier_response_created.isoformat().replace("+00:00", "Z"),
+                "updatedAt": (now - timedelta(minutes=2)).isoformat().replace("+00:00", "Z"),
+            }
             response = {
                 "databaseId": 11,
                 "author": {"login": "coderabbitai[bot]"},
-                "body": "Review rate limited. Next reviews available in: 10 minutes.",
+                "body": hosted.REVIEW_LIMIT_MARKER,
                 "createdAt": response_created.isoformat().replace("+00:00", "Z"),
                 "updatedAt": response_updated.isoformat().replace("+00:00", "Z"),
             }
-            payload = self._payload(comments=[response])
+            payload = self._payload(comments=[earlier_response, response])
             pull = payload["data"]["repository"]["pullRequest"]
             pull["number"] = 99
             pull["comments"]["nodes"].insert(
@@ -936,15 +961,18 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(metadata["trigger_id"], 10)
             self.assertEqual(metadata["response_id"], 11)
             self.assertEqual(metadata["observed_at"], attempt["finished_at"])
-            self.assertEqual([item["databaseId"] for item in archived_comments], [10, 11])
+            self.assertEqual([item["databaseId"] for item in archived_comments], [10, 12, 11])
 
             runner.records = records
+            reset = runner._closed_repository_cooldown_until(99, [path])
+            self.assertEqual(reset, earlier_response_created + timedelta(hours=2))
             with (
                 patch.object(runner, "_repository_current_trigger_paths", return_value={99: [path]}),
                 patch.object(github, "fetch_api_endpoint", return_value=[]),
                 patch.object(github, "fetch_pull_request", side_effect=RuntimeError("closed history unavailable")) as fetch,
             ):
-                runner._assert_no_other_active_reservations(42, common)
+                with self.assertRaisesRegex(ControllerError, "cooldown remains active on closed PR #99"):
+                    runner._assert_no_other_active_reservations(42, common)
             fetch.assert_not_called()
 
     def test_open_pull_request_listing_failure_remains_fail_closed(self) -> None:

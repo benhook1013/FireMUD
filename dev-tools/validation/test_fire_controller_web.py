@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import json
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -13,6 +14,7 @@ TOOLS = ROOT / "dev-tools"
 sys.path.insert(0, str(TOOLS))
 
 web = importlib.import_module("fire_controller.web")
+from fire_controller.jobs import JobStore
 
 
 PRIVATE_SENTINEL = "PRIVATE-BRIEF-SENTINEL-7f2d"
@@ -133,6 +135,28 @@ class FireControllerWebTest(unittest.TestCase):
         self.assertEqual(result[0]["id"], "job-1")
         self.assertNotIn(PRIVATE_SENTINEL, json.dumps(result))
 
+    def test_load_public_lanes_projects_durable_job_dates_from_real_store(self):
+        created_at = "2026-10-01T10:00:00Z"
+        last_activity_at = "2026-10-03T11:30:00Z"
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "controller.sqlite3"
+            store = JobStore(database)
+            store.bootstrap()
+            with patch("fire_controller.jobs._now", side_effect=[created_at, last_activity_at]):
+                job = store.create("lane-dates", "Gameplay", "Lane dates", status="blocked")
+                store.append_update(job["id"], "A later public milestone")
+
+            lanes = web.load_public_lanes(database)
+
+        lane = next(item for item in lanes if item["worker"] == "Gameplay")
+        projected = lane["jobs"][0]
+        self.assertEqual(projected["created_at"], created_at)
+        self.assertEqual(projected["updated_at"], created_at)
+        self.assertEqual(projected["last_activity_at"], last_activity_at)
+        self.assertEqual(lane["primary"]["last_activity_at"], last_activity_at)
+        self.assertNotIn("brief", projected)
+        self.assertNotIn("chat_id", projected)
+
     def test_lane_projection_batches_and_keeps_blocked_primary_visible(self):
         job = {**public_row(), "worker": "Build & Tools"}
         row = {
@@ -189,6 +213,7 @@ class FireControllerWebTest(unittest.TestCase):
         page = web.render_job(FakeStore().detail)
         self.assertIn("<title>Keep the lane moving · FireController job</title>", page)
         self.assertIn("<h1>Keep the lane moving</h1>", page)
+        self.assertIn("← Local Delivery Status page", page)
         self.assertIn('<span class="job-alias">Job alias · Build the bridge</span>', page)
         self.assertIn(PRIVATE_SENTINEL, page)
         self.assertIn('<a href="https://example.com">web</a>', page)

@@ -1942,6 +1942,69 @@ class HostedEvidenceTests(unittest.TestCase):
         self.assertEqual(state.cooldown_until, "2026-09-23T00:32:00+00:00")
         self.assertIn("provider-stated", state.reason)
 
+    def test_rate_limit_uses_longest_deadline_from_its_trigger_window(self):
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        scenarios = (
+            (
+                "earlier provider reset remains longer",
+                "2026-09-23T00:02:00Z",
+                "Review rate limited; next reviews available in 2 hours",
+                "2026-09-23T00:03:00Z",
+                "2026-09-23T00:04:00Z",
+                "2026-09-23T02:02:00+00:00",
+                "provider_reset",
+            ),
+            (
+                "expired provider reset gives way to fresh local backoff",
+                "2026-09-23T00:02:00Z",
+                "Review rate limited; next reviews available in 1 second",
+                "2026-09-23T00:30:00Z",
+                "2026-09-23T01:04:00Z",
+                "2026-09-23T01:30:00+00:00",
+                "local_retry_backoff",
+            ),
+            (
+                "long provider reset remains authoritative",
+                "2026-09-23T00:02:00Z",
+                "Review rate limited; next reviews available in 30 hours",
+                "2026-09-23T00:03:00Z",
+                "2026-09-23T00:04:00Z",
+                "2026-09-24T06:02:00+00:00",
+                "provider_reset",
+            ),
+        )
+        for label, earlier_at, earlier_body, latest_at, now_at, expected, basis in scenarios:
+            with self.subTest(case=label):
+                earlier = comment(11, "coderabbitai[bot]", earlier_body, earlier_at)
+                latest = comment(12, "coderabbitai[bot]", hosted.REVIEW_LIMIT_MARKER, latest_at)
+                comments = [trigger, earlier, latest]
+                if label == "earlier provider reset remains longer":
+                    comments.extend(
+                        [
+                            comment(13, "owner", hosted.FULL_COMMAND, "2026-09-23T00:04:00Z"),
+                            comment(
+                                14,
+                                "coderabbitai[bot]",
+                                "Review rate limited; next reviews available in 10 hours",
+                                "2026-09-23T00:05:00Z",
+                            ),
+                        ]
+                    )
+                state = hosted.trigger_state(
+                    REPO,
+                    PR,
+                    review_payload(comments),
+                    trigger_record(),
+                    now=datetime.fromisoformat(now_at.replace("Z", "+00:00")),
+                )
+                self.assertEqual(state.state, "rate_limited")
+                self.assertEqual(state.response_id, 12)
+                self.assertEqual(state.response_created_at, latest_at)
+                self.assertTrue(state.terminal)
+                self.assertTrue(state.attributed)
+                self.assertEqual(state.cooldown_until, expected)
+                self.assertEqual(state.cooldown_basis, basis)
+
     def test_rate_limit_cooldown_rejects_missing_malformed_naive_and_future_response_times(self):
         now = datetime(2026, 9, 23, 1, 0, tzinfo=timezone.utc)
         future = "2026-09-23T01:00:01Z"

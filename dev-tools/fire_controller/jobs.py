@@ -1022,14 +1022,15 @@ class JobStore:
             counts[row["worker"]][row["status"]] = row["total"]
         ranked_rows = connection.execute(
             "SELECT id, name, worker, workstream_id, title, status, is_primary, revision, summary, progress, "
-            "blocker, checklist_json, updated_at, lane_rank FROM ("
+            "blocker, checklist_json, created_at, updated_at, lane_rank FROM ("
             "SELECT id, name, worker, workstream_id, title, status, is_primary, revision, summary, progress, "
-            "blocker, checklist_json, updated_at, "
+            "blocker, checklist_json, created_at, updated_at, "
             "ROW_NUMBER() OVER (PARTITION BY worker, status ORDER BY is_primary DESC, updated_at DESC, name COLLATE NOCASE) AS lane_rank "
             f"FROM jobs WHERE worker IN ({placeholders}) AND status IN ('active', 'blocked', 'parked')"
             ") WHERE lane_rank <= ? ORDER BY worker COLLATE NOCASE, status, lane_rank",
             (*workers, _MAX_LANE_JOBS),
         ).fetchall()
+        activity = JobStore._last_activity(connection, [row["id"] for row in ranked_rows])
         grouped: dict[str, dict[str, list[dict[str, Any]]]] = {
             worker: {status: [] for status in ("active", "blocked", "parked")} for worker in workers
         }
@@ -1040,7 +1041,8 @@ class JobStore:
                 "workstream_id": row["workstream_id"], "title": row["title"], "status": row["status"],
                 "primary": bool(row["is_primary"]), "revision": row["revision"], "summary": row["summary"],
                 "progress": row["progress"], "blocker": row["blocker"],
-                "checklist": _loads(row["checklist_json"], "job checklist"), "updated_at": row["updated_at"],
+                "checklist": _loads(row["checklist_json"], "job checklist"), "created_at": row["created_at"],
+                "updated_at": row["updated_at"], "last_activity_at": activity[row["id"]],
             }
             grouped[row["worker"]][row["status"]].append(selected)
             if selected["primary"]:

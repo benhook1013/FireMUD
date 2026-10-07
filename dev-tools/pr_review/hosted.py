@@ -10,7 +10,7 @@ import os
 import re
 import stat
 import tempfile
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1413,6 +1413,14 @@ def _is_rate_limited_reply(body: str, cooldown: datetime | None) -> bool:
     )
 
 
+def is_rate_limit_reply_body(body: Any) -> bool:
+    """Recognize provider rate-limit prose without needing a trusted timestamp."""
+
+    return isinstance(body, str) and (
+        _is_rate_limited_reply(body, None) or RATE_LIMIT_PATTERN.search(_unquoted(body)) is not None
+    )
+
+
 def rate_limit_cooldown(
     body: str,
     response_created_at: str | datetime | None,
@@ -1425,18 +1433,9 @@ def rate_limit_cooldown(
     missing, naive, or future timestamps stay unresolved so callers fail closed.
     """
 
-    if isinstance(response_created_at, datetime):
-        if response_created_at.tzinfo is None or response_created_at.utcoffset() is None:
-            return None, "unknown"
-        created = response_created_at.astimezone(timezone.utc)
-    else:
-        try:
-            parsed = datetime.fromisoformat(response_created_at.replace("Z", "+00:00"))
-        except (AttributeError, TypeError, ValueError):
-            return None, "unknown"
-        if parsed.tzinfo is None or parsed.utcoffset() is None:
-            return None, "unknown"
-        created = parsed.astimezone(timezone.utc)
+    created = strict_provider_timestamp(response_created_at)
+    if created is None:
+        return None, "unknown"
     reference = now or datetime.now(timezone.utc)
     if reference.tzinfo is None or reference.utcoffset() is None:
         return None, "unknown"
@@ -1450,6 +1449,43 @@ def rate_limit_cooldown(
     if _is_rate_limited_reply(body, None):
         return created + UNKNOWN_RATE_LIMIT_BACKOFF, "local_retry_backoff"
     return None, "none"
+
+
+def strict_provider_timestamp(value: str | datetime | None) -> datetime | None:
+    """Parse a provider timestamp only when its original value includes a timezone."""
+
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except (AttributeError, TypeError, ValueError):
+            return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
+def rate_limit_window_cooldown(
+    responses: Sequence[Mapping[str, Any]],
+    *,
+    now: datetime | None = None,
+) -> tuple[datetime | None, str]:
+    """Choose the longest cooldown among already-attributed replies in one trigger window."""
+
+    deadlines: list[tuple[datetime, str]] = []
+    for response in responses:
+        body = response.get("body")
+        if not isinstance(body, str) or not is_rate_limit_reply_body(body):
+            continue
+        deadline, basis = rate_limit_cooldown(body, response.get("createdAt"), now=now)
+        if basis == "unknown":
+            return None, "unknown"
+        if deadline is not None:
+            deadlines.append((deadline, basis))
+    if not deadlines:
+        return None, "none"
+    return max(deadlines, key=lambda item: (item[0], item[1] == "provider_reset"))
 
 
 def _zero_finding_summary(
@@ -2577,8 +2613,9 @@ def trigger_state(
     response_id = immutable_database_id(response)
     cooldown_basis = None
     if state == "rate_limited":
-        cooldown, cooldown_basis = rate_limit_cooldown(
-            response.get("body") or "", response.get("createdAt"), now=now
+        cooldown, cooldown_basis = rate_limit_window_cooldown(
+            [candidate[2] for candidate in candidates if candidate[1] == "rate_limited"],
+            now=now,
         )
     else:
         cooldown = None
