@@ -10,6 +10,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
+import net.firedevops.firemud.common.world.WorldCanonicalInitialPlayerLocation;
 import net.firedevops.firemud.worldmanagement.entity.InitialAdmissionBindHold;
 import net.firedevops.firemud.worldmanagement.repository.InitialAdmissionBindHoldRepository;
 import org.jooq.DSLContext;

@@ -75,6 +75,7 @@ import net.firedevops.firemud.common.world.RoomTemplateRef;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceActivation;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleGrpcCodec;
+import net.firedevops.firemud.common.world.WorldCanonicalInitialPlayerLocation;
 import net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence;
 import net.firedevops.firemud.common.world.WorldPublicationTerminalCompletionGrpcCodec;
 import net.firedevops.firemud.common.world.WorldPublicationTerminalReadEvidence;
@@ -2083,17 +2084,26 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     assertThat(current.runtimeRoomInstanceId())
         .isEqualTo(fixture.activeEvidence().runtimeRoomInstanceId());
     assertThat(current.worldRegionInstanceId()).isPositive();
+    assertThat(current.canonicalRegionInstanceId())
+        .isNotNull()
+        .isNotEqualTo(new UUID(0L, 0L));
     assertThat(current.operationalRegionId()).isNotEqualTo(new UUID(0L, 0L));
+    assertThat(current.canonicalRegionInstanceId()).isNotEqualTo(current.operationalRegionId());
     assertThat(current.placementResult().canonicalBytes()).containsExactly(placed.canonicalBytes());
     assertThat(current.originalLifecycleEvidenceBytes())
         .containsExactly(fixture.request().originalLifecycleEvidenceBytes());
     Record region =
         Objects.requireNonNull(
             dsl.fetchOne(
-                "SELECT operational_region_id FROM region_instance WHERE id=?",
+                "SELECT canonical_region_instance_id, operational_region_id "
+                    + "FROM region_instance WHERE id=?",
                 current.worldRegionInstanceId()));
+    assertThat(region.get("canonical_region_instance_id", UUID.class))
+        .isEqualTo(current.canonicalRegionInstanceId());
     assertThat(region.get("operational_region_id", UUID.class))
         .isEqualTo(current.operationalRegionId());
+    assertThat(region.get("canonical_region_instance_id", UUID.class))
+        .isNotEqualTo(region.get("operational_region_id", UUID.class));
     assertOrigin();
   }
 

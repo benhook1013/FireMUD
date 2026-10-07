@@ -10,7 +10,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
-import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialPlayerLocation;
+import net.firedevops.firemud.common.world.WorldCanonicalInitialPlayerLocation;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialPlayerLocationRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialPlayerLocationService;
 import org.junit.jupiter.api.Test;

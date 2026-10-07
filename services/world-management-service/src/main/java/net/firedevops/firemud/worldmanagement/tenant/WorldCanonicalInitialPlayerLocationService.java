@@ -1,6 +1,7 @@
 package net.firedevops.firemud.worldmanagement.tenant;
 
 import java.util.Objects;
+import net.firedevops.firemud.common.world.WorldCanonicalInitialPlayerLocation;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**

@@ -12,9 +12,9 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.common.world.RoomTemplateRef;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
+import net.firedevops.firemud.common.world.WorldCanonicalInitialPlayerLocation;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalCurrentPlayerLocationRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalCurrentPlayerLocationService;
-import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialPlayerLocation;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialPlayerLocationService;
 import org.junit.jupiter.api.Test;
 

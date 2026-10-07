@@ -1,4 +1,4 @@
-package unit.net.firedevops.firemud.worldmanagement.tenant;
+package net.firedevops.firemud.common.world;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -6,8 +6,10 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import java.util.UUID;
-import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
-import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialPlayerLocation;
+import java.util.List;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
+import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
 import org.junit.jupiter.api.Test;
 
 class WorldCanonicalInitialPlayerLocationTest {
@@ -158,6 +160,73 @@ class WorldCanonicalInitialPlayerLocationTest {
     }
   }
 
+  @Test
+  void storedRequestRoundTripsWithItsCompleteOriginalLifecycleEvidence() throws Exception {
+    var lifecycle = genuineLifecycleEvidence();
+    var request = requestWithLifecycle(lifecycle);
+
+    var decoded =
+        WorldCanonicalInitialPlayerLocation.Request.fromStored(
+            request.canonicalRequestBytes(), request.originalLifecycleEvidenceBytes());
+
+    assertThat(decoded.canonicalRequestBytes()).containsExactly(request.canonicalRequestBytes());
+    assertThat(decoded.originalLifecycleEvidenceBytes())
+        .containsExactly(request.originalLifecycleEvidenceBytes());
+
+    var alternateRead =
+        copyLifecycle(
+            lifecycle,
+            copyLifecycleRequest(lifecycle, uuid("ffffffff-ffff-4fff-8fff-ffffffffffff")),
+            lifecycle.lifecycleEpoch());
+    assertThat(
+            WorldCanonicalInitialPlayerLocation.normalizedLifecycleEvidenceBytes(
+                alternateRead.canonicalBytes()))
+        .containsExactly(request.normalizedLifecycleEvidenceBytes());
+    var sameRequestWithFreshRead =
+        WorldCanonicalInitialPlayerLocation.Request.fromStored(
+            request.canonicalRequestBytes(), alternateRead.canonicalBytes());
+    assertThat(sameRequestWithFreshRead.originalLifecycleEvidenceBytes())
+        .containsExactly(alternateRead.canonicalBytes());
+  }
+
+  @Test
+  void storedRequestRejectsChangedEvidenceAndMalformedClosedRepresentations() throws Exception {
+    var lifecycle = genuineLifecycleEvidence();
+    var request = requestWithLifecycle(lifecycle);
+    byte[] canonical = request.canonicalRequestBytes();
+    String json = new String(canonical, java.nio.charset.StandardCharsets.UTF_8);
+    var changedEvidence = copyLifecycle(lifecycle, lifecycle.request(), lifecycle.lifecycleEpoch() + 1);
+
+    assertThatThrownBy(
+            () ->
+                WorldCanonicalInitialPlayerLocation.Request.fromStored(
+                    canonical, changedEvidence.canonicalBytes()))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    for (byte[] malformed :
+        new byte[][] {
+          (json.substring(0, json.length() - 1) + ",\"unknown\":true}")
+              .getBytes(java.nio.charset.StandardCharsets.UTF_8),
+          json.replace("\"schema\":", "\"schema\":\"duplicate\",\"schema\":")
+              .getBytes(java.nio.charset.StandardCharsets.UTF_8),
+          (json + "{}\n").getBytes(java.nio.charset.StandardCharsets.UTF_8),
+          json.replace(
+                  request.initialAdmissionHoldFence().toString(),
+                  request.initialAdmissionHoldFence().toString().toUpperCase())
+              .getBytes(java.nio.charset.StandardCharsets.UTF_8),
+          json.replace("\"catalogRevision\":\"1\"", "\"catalogRevision\":\"01\"")
+              .getBytes(java.nio.charset.StandardCharsets.UTF_8),
+          java.util.Arrays.copyOf(canonical, canonical.length + 1)
+        }) {
+      if (malformed[malformed.length - 1] == 0) malformed[malformed.length - 1] = (byte) 0xc3;
+      assertThatThrownBy(
+              () ->
+                  WorldCanonicalInitialPlayerLocation.Request.fromStored(
+                      malformed, request.originalLifecycleEvidenceBytes()))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+  }
+
   private static WorldCanonicalInitialPlayerLocation.Request request(
       String assignmentDigest, String lifecycleProof) {
     return request(assignmentDigest, lifecycleProof, "b0000000-0000-4000-8000-000000000001");
@@ -232,6 +301,176 @@ class WorldCanonicalInitialPlayerLocationTest {
     when(evidence.canonicalBytes())
         .thenReturn(canonicalEvidence.getBytes(java.nio.charset.StandardCharsets.UTF_8));
     return evidence;
+  }
+
+  private static WorldCanonicalInitialPlayerLocation.Request requestWithLifecycle(
+      WorldCanonicalInstanceLifecycleEvidence lifecycle) {
+    var scope = lifecycle.request();
+    return new WorldCanonicalInitialPlayerLocation.Request(
+        OPERATION_ID,
+        scope.canonicalTenantId(),
+        uuid("30000000-0000-4000-8000-000000000001"),
+        scope.worldSlug(),
+        scope.canonicalGameInstanceId(),
+        scope.playableStateNamespaceId(),
+        scope.playableStateScope(),
+        uuid("60000000-0000-4000-8000-000000000001"),
+        uuid("70000000-0000-4000-8000-000000000001"),
+        uuid("80000000-0000-4000-8000-000000000001"),
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        uuid("90000000-0000-4000-8000-000000000001"),
+        uuid("a0000000-0000-4000-8000-000000000001"),
+        "initial-request",
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        1,
+        "owner-proof",
+        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "pointer-audit",
+        1,
+        WorldCanonicalInitialPlayerLocation.InitialAdmissionOrigin.NO_PRIOR_POINTER,
+        lifecycle);
+  }
+
+  private static WorldCanonicalInstanceLifecycleEvidence genuineLifecycleEvidence()
+      throws Exception {
+    WorldPublishedStartLocationEvidence selector =
+        WorldPublishedStartLocationGrpcCodecTest.evidence();
+    var descriptorRequest =
+        new AuthoredWorldLaunchDescriptorEvidence.Request(
+            selector.request().targetNamespace(),
+            "world-lifecycle-control-request",
+            selector.request().canonicalTenantId(),
+            "synthetic-world",
+            uuid("dddddddd-dddd-4ddd-8ddd-dddddddddddd"),
+            "sha256:" + "a".repeat(64),
+            19L,
+            false,
+            null,
+            false,
+            null,
+            false,
+            null,
+            false,
+            null);
+    var descriptor =
+        AuthoredWorldLaunchDescriptorEvidence.create(
+            descriptorRequest,
+            "canonical-instance-launch-descriptor",
+            42L,
+            false,
+            null,
+            "{}",
+            "generation-revision",
+            9L,
+            7L,
+            "release-bundle",
+            false,
+            null);
+    List<AuthoredWorldReleaseAttestationEvidence.Participant> participants =
+        AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
+            .map(
+                owner ->
+                    new AuthoredWorldReleaseAttestationEvidence.Participant(
+                        owner,
+                        Long.toString(descriptor.versionId()),
+                        false,
+                        null,
+                        selector.request().appliedCommitId(),
+                        selector.request().contentDigest(),
+                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                            owner),
+                        "GAME_LOGIC".equals(owner),
+                        "GAME_LOGIC".equals(owner) ? "sha256:" + "c".repeat(64) : null))
+            .toList();
+    var release =
+        AuthoredWorldReleaseAttestationEvidence.create(
+            descriptor.targetNamespace(),
+            descriptor.resultDigest(),
+            descriptor.canonicalTenantId(),
+            selector.request().canonicalVersionId(),
+            descriptor.worldSlug(),
+            descriptor.authoredWorldSourceOperationId(),
+            descriptor.authoredWorldSourceEvidenceDigest(),
+            descriptor.launchDescriptorId(),
+            descriptor.publishedReleaseBundleRef(),
+            descriptor.versionStateEpoch(),
+            selector.request().publishWorkflowId(),
+            selector.request().appliedCommitId(),
+            participants,
+            "sha256:" + "d".repeat(64),
+            1,
+            List.of(),
+            List.of(),
+            List.of(),
+            descriptor.generationConfigRevision(),
+            selector);
+    var binding = new CompleteLaunchBindingEvidence(descriptor, release);
+    var selectorReceipt =
+        WorldDraftStartLocationEvidence.fromStored(selector.selectorReceiptBytes());
+    var request =
+        new WorldCanonicalInstanceLifecycleEvidence.Request(
+            WorldCanonicalInstanceLifecycleEvidence.Request.SCHEMA_VERSION,
+            uuid("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
+            descriptor.targetNamespace(),
+            descriptor.canonicalTenantId(),
+            descriptor.worldSlug(),
+            uuid("11111111-1111-4111-8111-111111111111"),
+            uuid("22222222-2222-4222-8222-222222222222"),
+            "SHARED",
+            true,
+            descriptor.controlPlaneRequestId(),
+            release.canonicalVersionId(),
+            descriptor.requestDigest(),
+            descriptor.resultDigest(),
+            release.evidenceDigest());
+    return new WorldCanonicalInstanceLifecycleEvidence(
+        request,
+        binding,
+        selectorReceipt.startLocation(),
+        1042L,
+        "ACTIVE",
+        3L,
+        0L,
+        uuid("33333333-3333-4333-8333-333333333333"),
+        selectorReceipt.graphDigest().substring("sha256:".length()),
+        "sha256:" + "e".repeat(64));
+  }
+
+  private static WorldCanonicalInstanceLifecycleEvidence.Request copyLifecycleRequest(
+      WorldCanonicalInstanceLifecycleEvidence source, UUID readRequestId) {
+    var request = source.request();
+    return new WorldCanonicalInstanceLifecycleEvidence.Request(
+        request.schemaVersion(),
+        readRequestId,
+        request.targetNamespace(),
+        request.canonicalTenantId(),
+        request.worldSlug(),
+        request.canonicalGameInstanceId(),
+        request.playableStateNamespaceId(),
+        request.playableStateScope(),
+        request.publicProduction(),
+        request.controlPlaneRequestId(),
+        request.canonicalVersionId(),
+        request.expectedDescriptorRequestDigest(),
+        request.expectedDescriptorResultDigest(),
+        request.expectedReleaseAttestationDigest());
+  }
+
+  private static WorldCanonicalInstanceLifecycleEvidence copyLifecycle(
+      WorldCanonicalInstanceLifecycleEvidence source,
+      WorldCanonicalInstanceLifecycleEvidence.Request request,
+      long lifecycleEpoch) {
+    return new WorldCanonicalInstanceLifecycleEvidence(
+        request,
+        source.launchBinding(),
+        source.startLocation(),
+        source.runtimeRoomInstanceId(),
+        source.lifecycleStatus(),
+        lifecycleEpoch,
+        source.rowVersion(),
+        source.captureId(),
+        source.graphSha256(),
+        source.preparationInputDigest());
   }
 
   private static UUID uuid(String value) {
