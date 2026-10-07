@@ -70,6 +70,31 @@ const SHARED_FILES = new Set([
   "dev-tools/validation/gradle-run-supervisor.py",
 ]);
 
+const POSTGRES_RUNTIME_PROOF_FILES = new Set([
+  ".github/scripts/classify-change-scope.cjs",
+  ".github/scripts/classify-change-scope.test.cjs",
+  ".github/workflows/ci.yml",
+  "dev-tools/hosted/preview/validate-preview-artifact.py",
+  "dev-tools/tests/ci-lightweight-scope-contract.sh",
+  "dev-tools/tests/hosted-gateway-bridge-contract.sh",
+  "dev-tools/tests/postgres-runtime-upgrade-contract.sh",
+  "dev-tools/validation/test_validate_preview_artifact.py",
+  "docker/README.md",
+  "docker/docker-compose.yml",
+  "docker/pg-dump-cron.Dockerfile",
+  "docker/pg-dump-cron.crontab",
+  "docker/postgres-data-layout-entrypoint.sh",
+  "k8s/helm/firemud/templates/stateful-core.yaml",
+  "k8s/helm/firemud/values-hosted-shared.example.yaml",
+  "k8s/postgres/pg-dump-cronjob.yaml",
+]);
+
+const POSTGRES_RUNTIME_PROOF_PREFIXES = [
+  "dev-tools/backups/",
+  "dev-tools/restores/",
+  "k8s/postgres/",
+];
+
 function isDocumentation(file) {
   return (
     file === "AGENTS.md" ||
@@ -91,6 +116,13 @@ function isValidationTooling(file) {
 
 function isRuntimeAuthority(file) {
   return file === ".node-version" || file === ".python-version";
+}
+
+function isPostgresRuntimeProofRelevant(file) {
+  return (
+    POSTGRES_RUNTIME_PROOF_FILES.has(file) ||
+    POSTGRES_RUNTIME_PROOF_PREFIXES.some((prefix) => file.startsWith(prefix))
+  );
 }
 
 function isPythonDependency(file) {
@@ -172,6 +204,7 @@ function classifyChangeScope(inputFiles, options = {}) {
     pythonChanged: forceAll || pythonFiles.length > 0,
     designDocsChanged,
     validationPythonChanged,
+    postgresRuntimeProofChanged: files.some(isPostgresRuntimeProofRelevant),
     lightweightOnly:
       !forceAll &&
       files.length > 0 &&
@@ -180,8 +213,48 @@ function classifyChangeScope(inputFiles, options = {}) {
 }
 
 async function classifyGithubChangeScope(github, context) {
+  if (context.eventName === "push") {
+    const scope = classifyChangeScope([], { forceAll: true });
+    const payload = context.payload || {};
+    if (payload.deleted === true) {
+      return { ...scope, postgresRuntimeProofChanged: false };
+    }
+
+    const commits = payload.commits;
+    const pushRangeComplete =
+      typeof payload.before === "string" &&
+      payload.before.length > 0 &&
+      typeof payload.after === "string" &&
+      payload.after.length > 0;
+    const commitFileListsComplete =
+      pushRangeComplete &&
+      Array.isArray(commits) &&
+      commits.every(
+        (commit) =>
+          commit &&
+          Array.isArray(commit.added) &&
+          Array.isArray(commit.modified) &&
+          Array.isArray(commit.removed) &&
+          [...commit.added, ...commit.modified, ...commit.removed].every(
+            (file) => typeof file === "string" && file.length > 0,
+          ),
+      ) &&
+      (commits.length > 0 || payload.before === payload.after);
+    const files = commitFileListsComplete
+      ? commits.flatMap((commit) => [...commit.added, ...commit.modified, ...commit.removed])
+      : [];
+    return {
+      ...scope,
+      postgresRuntimeProofChanged:
+        !commitFileListsComplete || files.some(isPostgresRuntimeProofRelevant),
+    };
+  }
+
   if (context.eventName !== "pull_request") {
-    return classifyChangeScope([], { forceAll: true });
+    return {
+      ...classifyChangeScope([], { forceAll: true }),
+      postgresRuntimeProofChanged: false,
+    };
   }
 
   const fileEntries = await github.paginate(
@@ -220,7 +293,12 @@ async function classifyGithubChangeScope(github, context) {
     Number.isInteger(expectedFileCount) &&
     expectedFileCount === fileEntries.length;
 
-  return classifyChangeScope(files, { forceAll: !fileListComplete });
+  const scope = classifyChangeScope(files, { forceAll: !fileListComplete });
+  return {
+    ...scope,
+    postgresRuntimeProofChanged:
+      !fileListComplete || scope.postgresRuntimeProofChanged,
+  };
 }
 
 module.exports = {
@@ -231,6 +309,7 @@ module.exports = {
   classifyGithubChangeScope,
   isDocumentation,
   isLightweightEligible,
+  isPostgresRuntimeProofRelevant,
   isValidationPython,
   isValidationTooling,
   moduleForFile,

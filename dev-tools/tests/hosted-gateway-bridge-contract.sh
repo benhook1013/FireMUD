@@ -204,9 +204,9 @@ if proxy_deployment["spec"].get("strategy") != {"type": "Recreate"}:
     raise SystemExit("preview TCP Proxy Deployment must use the Recreate strategy")
 postgres_deployment = named("Deployment", "postgres")
 postgres, postgres_env = env_map(postgres_deployment)
-if postgres_env.get("PGDATA") != "/var/lib/postgresql/data/pgdata":
+if postgres_env.get("PGDATA") != "/var/lib/postgresql/18/docker":
     raise SystemExit(
-        "PostgreSQL PGDATA did not render as /var/lib/postgresql/data/pgdata"
+        "PostgreSQL PGDATA did not render as /var/lib/postgresql/18/docker"
     )
 postgres_pod_spec = postgres_deployment["spec"]["template"]["spec"]
 postgres_init_containers = postgres_pod_spec.get("initContainers") or []
@@ -228,7 +228,7 @@ if postgres_layout_guard.get("command") != ["sh", "-ec"]:
     raise SystemExit("PostgreSQL data-layout guard must execute a shell check")
 if postgres_layout_guard.get("volumeMounts") != [{
     "name": "postgres-data",
-    "mountPath": "/var/lib/postgresql/data",
+    "mountPath": "/var/lib/postgresql",
     "readOnly": True,
 }]:
     raise SystemExit(
@@ -237,21 +237,44 @@ if postgres_layout_guard.get("volumeMounts") != [{
 guard_script = (postgres_layout_guard.get("args") or [None])[0]
 if (
     not isinstance(guard_script, str)
-    or 'data_root="/var/lib/postgresql/data"' not in guard_script
+    or 'data_root="/var/lib/postgresql"' not in guard_script
     or '"${data_root}/PG_VERSION"' not in guard_script
+    or '"${data_root}/pgdata/PG_VERSION"' not in guard_script
+    or '"${data_directory}/global/pg_control"' not in guard_script
 ):
-    raise SystemExit("PostgreSQL data-layout guard did not inspect the legacy PG_VERSION marker")
-for layout, expected_returncode in (("legacy", 1), ("fresh", 0), ("nested", 0)):
+    raise SystemExit("PostgreSQL data-layout guard did not inspect retained and PostgreSQL 18 layout markers")
+for layout, expected_returncode in (
+    ("legacy-root", 1),
+    ("legacy-preview", 1),
+    ("fresh", 0),
+    ("postgres18", 0),
+    ("unknown", 1),
+    ("wrong-major", 1),
+    ("incomplete-postgres18", 1),
+):
     with tempfile.TemporaryDirectory() as data_root:
         data_root_path = pathlib.Path(data_root)
-        if layout == "legacy":
+        if layout == "legacy-root":
             (data_root_path / "PG_VERSION").write_text("16\n")
-        elif layout == "nested":
+        elif layout == "legacy-preview":
             nested_path = data_root_path / "pgdata"
             nested_path.mkdir()
             (nested_path / "PG_VERSION").write_text("16\n")
+        elif layout in {"postgres18", "wrong-major", "incomplete-postgres18"}:
+            current_path = data_root_path / "18" / "docker"
+            current_path.mkdir(parents=True)
+            (current_path / "PG_VERSION").write_text(
+                "16\n" if layout == "wrong-major" else "18\n"
+            )
+            if layout != "incomplete-postgres18":
+                (current_path / "base").mkdir()
+                global_path = current_path / "global"
+                global_path.mkdir()
+                (global_path / "pg_control").write_text("control")
+        elif layout == "unknown":
+            (data_root_path / "unknown.txt").write_text("unrecognized")
         rendered_guard_script = guard_script.replace(
-            "/var/lib/postgresql/data", data_root
+            "/var/lib/postgresql", data_root
         )
         guard_result = subprocess.run(
             ["sh", "-ec", rendered_guard_script],
@@ -263,9 +286,13 @@ for layout, expected_returncode in (("legacy", 1), ("fresh", 0), ("nested", 0)):
             raise SystemExit(
                 f"PostgreSQL data-layout guard returned {guard_result.returncode} for {layout} layout"
             )
-        if layout == "legacy" and "legacy root PG_VERSION" not in guard_result.stderr:
+        if layout == "legacy-root" and "legacy root PG_VERSION" not in guard_result.stderr:
             raise SystemExit(
                 "PostgreSQL data-layout guard did not clearly reject the legacy root marker"
+            )
+        if layout == "legacy-preview" and "legacy nested PG_VERSION" not in guard_result.stderr:
+            raise SystemExit(
+                "PostgreSQL data-layout guard did not clearly reject the legacy nested marker"
             )
 expected_gateway = {
     "FIREMUD_GATEWAY_TCP_PROXY_TLS_ENABLED": "true",

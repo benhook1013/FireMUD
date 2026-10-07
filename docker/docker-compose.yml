@@ -321,17 +321,20 @@ services:
       <<: *service-health
 
   postgres:
-    image: postgres:16@sha256:65b16a8b326e0cfbdf33fa7e783f2a0cb352a61448616ccccfd616ef42aa0f65
+    image: postgres:18@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
     command: ["postgres", "-c", "max_connections=200"]
+    entrypoint: ["/usr/local/bin/firemud-postgres-data-layout-entrypoint.sh"]
     mem_limit: 1g
     restart: unless-stopped
     env_file: *service-env-file
     environment:
+      PGDATA: /var/lib/postgresql/18/docker
       POSTGRES_USER: ${FIREMUD_POSTGRES_USER}
       POSTGRES_PASSWORD: ${FIREMUD_POSTGRES_PASSWORD}
       POSTGRES_DB: ${FIREMUD_POSTGRES_DB}
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - postgres-data:/var/lib/postgresql
+      - ./postgres-data-layout-entrypoint.sh:/usr/local/bin/firemud-postgres-data-layout-entrypoint.sh:ro
     ports:
       - "5432:5432"
     healthcheck:

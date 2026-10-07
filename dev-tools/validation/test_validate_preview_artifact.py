@@ -1070,12 +1070,12 @@ class TrustedDatabaseImageAuthorityTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "values.yaml"
             source.write_text(yaml.safe_dump({"previewStack": {
-                "postgres": {"image": "postgres:16.9-alpine"},
+                "postgres": {"image": "postgres:18.0-alpine"},
                 "redis": {"image": "redis:7.4.4"},
-                "seed": {"image": "postgres:16.9-alpine"},
+                "seed": {"image": "postgres:18.0-alpine"},
             }}))
             images = VALIDATOR._trusted_database_images(source)
-            self.assertEqual(images["postgres"], "postgres:16.9-alpine")
+            self.assertEqual(images["postgres"], "postgres:18.0-alpine")
             self.assertEqual(images["redis"], "redis:7.4.4")
 
     def test_missing_or_unpinned_trusted_images_fail_closed(self):

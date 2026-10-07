@@ -171,12 +171,76 @@ test("non-PR runs always execute the complete path", () => {
 test("GitHub non-PR events always execute the complete path", async () => {
   const result = await classifyGithubChangeScope({}, {
     eventName: "push",
+    payload: {
+      before: "before-sha",
+      after: "after-sha",
+      commits: [{ added: [], modified: [], removed: [] }],
+    },
   });
 
   assert.equal(result.runAll, true);
   assert.equal(result.lightweightOnly, false);
   assert.equal(result.pythonChanged, true);
+  assert.equal(result.postgresRuntimeProofChanged, false);
   assert.deepEqual(result.affectedServices, ALL_SERVICES);
+});
+
+test("PostgreSQL physical proof follows PostgreSQL, backup, guard, and CI paths", async () => {
+  for (const path of [
+    "docker/docker-compose.yml",
+    "docker/pg-dump-cron.Dockerfile",
+    "docker/postgres-data-layout-entrypoint.sh",
+    "dev-tools/backups/pg-dump-rotate.sh",
+    "dev-tools/restores/restore-latest-db.sh",
+    "k8s/helm/firemud/templates/stateful-core.yaml",
+    "k8s/postgres/pg-dump-cronjob.yaml",
+    "dev-tools/tests/postgres-runtime-upgrade-contract.sh",
+    ".github/workflows/ci.yml",
+  ]) {
+    assert.equal(
+      classifyChangeScope([path]).postgresRuntimeProofChanged,
+      true,
+      path,
+    );
+  }
+
+  for (const path of [
+    "design/architecture/README.md",
+    "docker/Dockerfile",
+    "k8s/helm/firemud/templates/identity-controller.yaml",
+    "services/account-service/src/main/java/example/Account.java",
+  ]) {
+    assert.equal(
+      classifyChangeScope([path]).postgresRuntimeProofChanged,
+      false,
+      path,
+    );
+  }
+
+  const push = await classifyGithubChangeScope({}, {
+    eventName: "push",
+    payload: {
+      before: "before-sha",
+      after: "after-sha",
+      commits: [{ added: [], modified: ["k8s/postgres/pg-dump-cronjob.yaml"], removed: [] }],
+    },
+  });
+  assert.equal(push.postgresRuntimeProofChanged, true);
+
+  const incompletePush = await classifyGithubChangeScope({}, {
+    eventName: "push",
+    payload: { before: "before-sha", after: "after-sha", commits: [{ modified: [] }] },
+  });
+  assert.equal(incompletePush.postgresRuntimeProofChanged, true);
+
+  const docsPullRequest = await classifyGithubFiles(["design/architecture/README.md"], 1);
+  assert.equal(docsPullRequest.postgresRuntimeProofChanged, false);
+
+  const incompletePullRequest = await classifyGithubFiles(
+    ["design/architecture/README.md"],
+    2,
+  );
+  assert.equal(incompletePullRequest.postgresRuntimeProofChanged, true);
 });
 
 test("GitHub file-count mismatches fail closed to the complete path", async () => {
