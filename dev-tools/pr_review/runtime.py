@@ -973,15 +973,20 @@ class LiveEvidence:
             if trigger_id in records_by_trigger:
                 continue
             public_responses = unrecorded_responses_by_trigger.get(trigger_id, [])
-            events = [
-                (
-                    response_at,
-                    github.immutable_database_id(item) or 0,
-                    self._public_response_state(item, timestamp_field, checkpoint_by_response),
-                    item,
+            events = []
+            rate_limit_responses = []
+            for item, timestamp_field, response_at in public_responses:
+                response_state = self._public_response_state(item, timestamp_field, checkpoint_by_response)
+                if timestamp_field == "createdAt" and response_state == "rate_limited":
+                    rate_limit_responses.append(item)
+                events.append(
+                    (
+                        response_at,
+                        github.immutable_database_id(item) or 0,
+                        response_state,
+                        item,
+                    )
                 )
-                for item, timestamp_field, response_at in public_responses
-            ]
             events = [event for event in events if event[2] is not None]
             if not events:
                 active_reservations.append("a public full-review trigger has no attributable terminal response")
@@ -992,11 +997,12 @@ class LiveEvidence:
             elif response_state == "ambiguous":
                 ambiguous_responses.append("an unrecorded public response does not identify its reviewed head")
             elif response_state == "rate_limited":
-                now = datetime.now(timezone.utc)
-                cooldown, cooldown_basis = hosted.rate_limit_cooldown(
-                    response_item.get("body", ""), response_item.get("createdAt"), now=now
+                audit_now = now if now is not None else datetime.now(timezone.utc)
+                cooldown, cooldown_basis = hosted.rate_limit_window_cooldown(
+                    rate_limit_responses,
+                    now=audit_now,
                 )
-                if cooldown_basis == "unknown" or cooldown is None or cooldown > now:
+                if cooldown_basis in {"unknown", "none"} or cooldown is None or cooldown > audit_now:
                     active_reservations.append("an unrecorded public response has an unresolved rate limit")
             elif response_state == "completed":
                 response_id = github.immutable_database_id(response_item)

@@ -762,9 +762,7 @@ def public_response_state(
             return "completed"
         return None
 
-    created = parse_timestamp(item.get("createdAt"))
-    cooldown = _rate_limit(body, created) if created is not None else None
-    if _is_rate_limited_reply(body, cooldown):
+    if is_rate_limit_reply_body(body):
         return "rate_limited"
     if provider_file_ceiling_skip(body):
         return "failed"
@@ -1416,8 +1414,14 @@ def _is_rate_limited_reply(body: str, cooldown: datetime | None) -> bool:
 def is_rate_limit_reply_body(body: Any) -> bool:
     """Recognize provider rate-limit prose without needing a trusted timestamp."""
 
-    return isinstance(body, str) and (
-        _is_rate_limited_reply(body, None) or RATE_LIMIT_PATTERN.search(_unquoted(body)) is not None
+    if not isinstance(body, str):
+        return False
+    unquoted = _without_fenced_code(_unquoted(body))
+    return (
+        REVIEW_LIMIT_MARKER in unquoted
+        or RATE_LIMIT_PATTERN.search(unquoted) is not None
+        or unquoted.strip().lower().startswith("review rate limited")
+        or WRAPPED_RATE_LIMIT_REPLY_PATTERN.fullmatch(unquoted) is not None
     )
 
 
@@ -2452,16 +2456,22 @@ def trigger_state(
     ]
     next_dt = min((parse_timestamp(item.get("createdAt")) for item in newer), default=None)
     candidates: list[tuple[datetime, str, dict[str, Any], datetime | None]] = []
+    window_rate_limit_responses: list[dict[str, Any]] = []
+    unresolved_rate_limit_timestamp = False
     for item in comments:
         if not is_coderabbit_login((item.get("author") or {}).get("login")):
             continue
+        body = item.get("body") or ""
+        if is_rate_limit_reply_body(body) and strict_provider_timestamp(item.get("createdAt")) is None:
+            unresolved_rate_limit_timestamp = True
         created = parse_timestamp(item.get("createdAt"))
         if created is None or created <= trigger_dt or (next_dt and created >= next_dt):
             continue
-        body = item.get("body") or ""
+        if is_rate_limit_reply_body(body):
+            window_rate_limit_responses.append(item)
         cooldown = _rate_limit(body, created)
         # Rate-limit evidence is classified before all other prose in a reply.
-        if _is_rate_limited_reply(body, cooldown):
+        if is_rate_limit_reply_body(body):
             candidates.append((created, "rate_limited", item, cooldown))
         elif provider_file_ceiling_skip(body):
             candidates.append((created, "failed", item, None))
@@ -2567,6 +2577,18 @@ def trigger_state(
         ]
         candidates = [*review_candidates, *later_terminal_comments]
     if not candidates:
+        if unresolved_rate_limit_timestamp:
+            return TriggerState(
+                "ambiguous",
+                True,
+                False,
+                **base,
+                response_id=None,
+                response_created_at=None,
+                response_url=None,
+                cooldown_until=None,
+                reason="a CodeRabbit rate-limit reply has no valid creation timestamp",
+            )
         if newer:
             return TriggerState(
                 "ambiguous",
@@ -2604,6 +2626,18 @@ def trigger_state(
             reason="no attributable terminal response",
         )
     _, state, response, cooldown = max(candidates, key=lambda item: (item[0], immutable_database_id(item[2]) or -1))
+    if unresolved_rate_limit_timestamp and state != "rate_limited":
+        return TriggerState(
+            "ambiguous",
+            True,
+            False,
+            **base,
+            response_id=None,
+            response_created_at=None,
+            response_url=None,
+            cooldown_until=None,
+            reason="a CodeRabbit rate-limit reply has no valid creation timestamp",
+        )
     incomplete_coverage = state == "failed_incomplete_coverage"
     if incomplete_coverage:
         state = "failed"
@@ -2613,10 +2647,10 @@ def trigger_state(
     response_id = immutable_database_id(response)
     cooldown_basis = None
     if state == "rate_limited":
-        cooldown, cooldown_basis = rate_limit_window_cooldown(
-            [candidate[2] for candidate in candidates if candidate[1] == "rate_limited"],
-            now=now,
-        )
+        if unresolved_rate_limit_timestamp:
+            cooldown, cooldown_basis = None, "unknown"
+        else:
+            cooldown, cooldown_basis = rate_limit_window_cooldown(window_rate_limit_responses, now=now)
     else:
         cooldown = None
     if state == "active" and response_id is None:

@@ -84,6 +84,7 @@ JOB_INDEXES: dict[str, str] = {
     "job_notes_job_status_idx": "CREATE INDEX job_notes_job_status_idx ON job_notes(job, status, created_at DESC)",
     "job_notes_phase_status_idx": "CREATE INDEX job_notes_phase_status_idx ON job_notes(phase, status, created_at DESC)",
     "job_note_revisions_created_idx": "CREATE INDEX job_note_revisions_created_idx ON job_note_revisions(note_id, revision DESC)",
+    "job_note_revisions_job_created_idx": "CREATE INDEX job_note_revisions_job_created_idx ON job_note_revisions(json_extract(state_json, '$.job'), created_at DESC)",
     "job_worker_state_history_idx": "CREATE INDEX job_worker_state_history_idx ON job_worker_state_history(worker, sequence DESC)",
 }
 
@@ -406,6 +407,8 @@ class JobStore:
                 if present:
                     if present != set(_JOB_TABLES):
                         raise JobsSchemaIncompatible("job schema is partial and cannot be bootstrapped")
+                    index_sql = JOB_INDEXES["job_note_revisions_job_created_idx"]
+                    connection.execute(index_sql.replace("CREATE INDEX ", "CREATE INDEX IF NOT EXISTS ", 1))
                     self.validate(connection)
                     connection.commit()
                     return
@@ -758,8 +761,9 @@ class JobStore:
             "UNION ALL SELECT job_id, created_at FROM job_updates JOIN selected ON selected.id = job_id "
             "UNION ALL SELECT job_id, created_at FROM job_checkpoints JOIN selected ON selected.id = job_id "
             "UNION ALL SELECT job, job_notes.updated_at FROM job_notes JOIN selected ON selected.id = job "
-            "UNION ALL SELECT selected.id, created_at FROM job_note_revisions "
-            "JOIN selected ON selected.id = json_extract(state_json, '$.job')) "
+            "UNION ALL SELECT selected.id, (SELECT MAX(job_note_revisions.created_at) "
+            "FROM job_note_revisions INDEXED BY job_note_revisions_job_created_idx "
+            "WHERE json_extract(state_json, '$.job') = selected.id) FROM selected) "
             "SELECT job_id, MAX(touched_at) FROM activity GROUP BY job_id",
             (_json(identifiers),),
         ).fetchall()

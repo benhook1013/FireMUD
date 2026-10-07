@@ -1495,6 +1495,54 @@ class RuntimeTest(unittest.TestCase):
         self.assertEqual(LiveEvidence._public_response_state(ambiguous_comment, "createdAt", {}), "ambiguous")
         self.assertIsNone(LiveEvidence._public_response_state({"databaseId": 74, "body": ""}, "createdAt", {}))
 
+    def test_unrecorded_rate_limit_audit_keeps_longer_deadline_from_same_trigger_window(self) -> None:
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        trigger_at = now - timedelta(hours=3)
+        explicit_at = now - timedelta(minutes=62)
+        generic_at = now - timedelta(minutes=61)
+        def stamp(value: datetime) -> str:
+            return value.isoformat().replace("+00:00", "Z")
+
+        trigger = {
+            "databaseId": 10,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": stamp(trigger_at),
+            "url": "https://example.test/comments/10",
+        }
+        earlier_explicit = {
+            "databaseId": 11,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "Review rate limited; next reviews available in 2 hours",
+            "createdAt": stamp(explicit_at),
+        }
+        latest_generic = {
+            "databaseId": 12,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": hosted.REVIEW_LIMIT_MARKER,
+            "createdAt": stamp(generic_at),
+        }
+        payload = self._payload([trigger, earlier_explicit, latest_generic])
+        live = LiveGitHub("owner/repo")
+        observer = LiveEvidence("owner/repo", live)
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(evidence, "git_common_dir", return_value=Path(directory)),
+            patch.object(github, "fetch_pull_request", return_value=payload),
+            patch.object(live, "pull_request", return_value=snapshot),
+            patch.object(observer, "_complete_trigger_paths", return_value=[]),
+            patch.object(observer, "history", return_value=[]),
+        ):
+            audit = observer.legacy_transition_reauthorization_audit(
+                42,
+                (),
+                {"child_head": HEAD, "live_base_ref": "develop", "live_base_tip": BASE},
+                now=now,
+            )
+
+        self.assertIn("an unrecorded public response has an unresolved rate limit", audit["active_reservations"])
+
     def test_auto_generated_summary_is_not_a_response_but_unmatched_review_still_blocks(self) -> None:
         auto_summary = {
             "databaseId": 5748509184,

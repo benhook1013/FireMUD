@@ -108,6 +108,39 @@ class JobStoreTest(unittest.TestCase):
         self.assertIn("job_updates_sequence_idx", details)
         self.assertIn("job_checkpoints_sequence_idx", details)
         self.assertIn("job_notes_job_status_idx", details)
+        self.assertIn("job_note_revisions_job_created_idx", details)
+
+    def test_bootstrap_adds_job_note_activity_index_to_previous_layout_without_rewriting_history(self) -> None:
+        self.bootstrap()
+        job = self.store.create("history-index", "Gameplay", "History index")
+        note = self.store.note("Initial note", job=job["id"])
+        self.store.revise_note(note["id"], expected_revision=1, body="Revised note")
+        activity_before = self.store.get(job["id"])["last_activity_at"]
+        with sqlite3.connect(self.database) as connection:
+            revisions_before = list(connection.execute(
+                "SELECT note_id, revision, created_at, state_json FROM job_note_revisions ORDER BY note_id, revision"
+            ))
+            notes_before = list(connection.execute("SELECT * FROM job_notes ORDER BY id"))
+            connection.execute("DROP INDEX job_note_revisions_job_created_idx")
+
+        self.store.bootstrap()
+
+        with sqlite3.connect(self.database) as connection:
+            revisions_after = list(connection.execute(
+                "SELECT note_id, revision, created_at, state_json FROM job_note_revisions ORDER BY note_id, revision"
+            ))
+            notes_after = list(connection.execute("SELECT * FROM job_notes ORDER BY id"))
+            self.assertEqual(revisions_after, revisions_before)
+            self.assertEqual(notes_after, notes_before)
+            statements = []
+            connection.set_trace_callback(statements.append)
+            self.assertEqual(JobStore._last_activity(connection, [job["id"]])[job["id"]], activity_before)
+            connection.set_trace_callback(None)
+            plan = connection.execute("EXPLAIN QUERY PLAN " + statements[0]).fetchall()
+            JobStore.validate(connection)
+        revision_plan = next(row[3] for row in plan if "job_note_revisions" in row[3])
+        self.assertIn("SEARCH job_note_revisions USING INDEX job_note_revisions_job_created_idx", revision_plan)
+        self.assertNotIn("SCAN job_note_revisions", revision_plan)
 
     def test_bootstrap_preserves_review_state_and_writer_metadata(self) -> None:
         controller = SqliteStateStore(self.database)

@@ -2005,6 +2005,64 @@ class HostedEvidenceTests(unittest.TestCase):
                 self.assertEqual(state.cooldown_until, expected)
                 self.assertEqual(state.cooldown_basis, basis)
 
+    def test_rate_limit_window_precedes_review_object_selection_and_invalid_dates_fail_closed(self):
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        earlier_provider_limit = comment(
+            11,
+            "coderabbitai[bot]",
+            "Review rate limited; next reviews available in 2 hours",
+            "2026-09-23T00:02:00Z",
+        )
+        review = {
+            "databaseId": 13,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": f"<!-- walkthrough_start -->\nReviewed {HEAD}",
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-23T00:03:00Z",
+            "commit": {"oid": HEAD},
+        }
+        latest_generic_limit = comment(12, "coderabbitai[bot]", hosted.REVIEW_LIMIT_MARKER, "2026-09-23T00:04:00Z")
+        state = hosted.trigger_state(
+            REPO,
+            PR,
+            review_payload([trigger, earlier_provider_limit, latest_generic_limit], [review]),
+            trigger_record(),
+            now=datetime(2026, 9, 23, 0, 5, tzinfo=timezone.utc),
+        )
+        self.assertEqual(state.state, "rate_limited")
+        self.assertEqual(state.response_id, 12)
+        self.assertEqual(state.response_created_at, "2026-09-23T00:04:00Z")
+        self.assertEqual(state.cooldown_basis, "provider_reset")
+        self.assertEqual(state.cooldown_until, "2026-09-23T02:02:00+00:00")
+
+        malformed_limit = comment(14, "coderabbitai[bot]", "Review rate limited; next reviews available in 20 hours", "")
+        malformed_limit.pop("createdAt")
+        unresolved = hosted.trigger_state(
+            REPO,
+            PR,
+            review_payload([trigger, malformed_limit, latest_generic_limit]),
+            trigger_record(),
+            now=datetime(2026, 9, 23, 1, 5, tzinfo=timezone.utc),
+        )
+        self.assertEqual(unresolved.state, "rate_limited")
+        self.assertEqual(unresolved.response_id, 12)
+        self.assertEqual(unresolved.cooldown_basis, "unknown")
+        self.assertIsNone(unresolved.cooldown_until)
+
+        quoted_limit = comment(15, "coderabbitai[bot]", "> Review rate limited; next reviews available in 20 hours", "")
+        quoted_limit.pop("createdAt")
+        quoted_only = hosted.trigger_state(
+            REPO,
+            PR,
+            review_payload([trigger, quoted_limit, latest_generic_limit]),
+            trigger_record(),
+            now=datetime(2026, 9, 23, 0, 5, tzinfo=timezone.utc),
+        )
+        self.assertEqual(quoted_only.state, "rate_limited")
+        self.assertEqual(quoted_only.response_id, 12)
+        self.assertEqual(quoted_only.cooldown_basis, "local_retry_backoff")
+        self.assertEqual(quoted_only.cooldown_until, "2026-09-23T01:04:00+00:00")
+
     def test_rate_limit_cooldown_rejects_missing_malformed_naive_and_future_response_times(self):
         now = datetime(2026, 9, 23, 1, 0, tzinfo=timezone.utc)
         future = "2026-09-23T01:00:01Z"
