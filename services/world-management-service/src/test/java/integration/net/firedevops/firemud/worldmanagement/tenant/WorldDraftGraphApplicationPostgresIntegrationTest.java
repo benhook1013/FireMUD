@@ -4201,6 +4201,29 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             OffsetDateTime.parse("2026-01-01T00:00:00Z")));
   }
 
+  /** Reuses genuine graph/release/materialization/activation; upstream authority is stipulated. */
+  ActivePlayerAdmissionFixture activePlayerAdmissionFixture() {
+    var prepared = materializedLifecycleFixture();
+    var activation =
+        canonicalActivationService(prepared, ignored -> stipulatedActivationAuthority())
+            .activate(
+                new WorldCanonicalInstanceActivation.Request(
+                    UUID.randomUUID(), prepared.preparing()));
+    assertThat(activation.outcome()).isEqualTo(WorldCanonicalInstanceActivation.Outcome.COMMITTED);
+    var current =
+        prepared
+            .lifecycleRepository()
+            .read(lifecycleRequestWithFreshReadId(activation.lifecycleEvidence().request()))
+            .orElseThrow();
+    return new ActivePlayerAdmissionFixture(
+        prepared.materialized().association(), current, prepared.lifecycleRepository());
+  }
+
+  record ActivePlayerAdmissionFixture(
+      WorldCanonicalInstanceAssociation association,
+      WorldCanonicalInstanceLifecycleEvidence activeEvidence,
+      WorldCanonicalInstanceLifecycleReadRepository lifecycleRepository) {}
+
   private PreparedLifecycleFixture materializedLifecycleFixture() {
     Fixture f = fixture();
     var original = application(generationFreePlan(f));

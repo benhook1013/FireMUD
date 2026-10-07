@@ -200,6 +200,62 @@ final class AccountJwtProfileClaimSupport {
     return result;
   }
 
+  /** Delegation-only signed-long bounds; generic Account counter semantics remain unchanged. */
+  static Map<String, Object> requireDelegationAuthorityTuple(
+      Object value,
+      boolean allowTenantBillingCutoff,
+      boolean requireUnscoped,
+      boolean requireAccountCutoffForAdvancedGeneration) {
+    Map<String, Object> tuple =
+        requireAuthorityTuple(
+            value,
+            allowTenantBillingCutoff,
+            requireUnscoped,
+            requireAccountCutoffForAdvancedGeneration,
+            GameSessionAccountDelegationProfile.MAX_AUTHORITY_TUPLE_BYTES);
+    requireDelegationPositiveLong(tuple.get("issuerAuthGeneration"));
+    long accountGeneration = requireDelegationPositiveLong(tuple.get("accountAuthorityGeneration"));
+    requireDelegationVersionMap(tuple.get("tenantAuthorityGeneration"));
+    requireDelegationVersionMap(tuple.get("membershipAuthorityGeneration"));
+    if (tuple.containsKey("accountSecurityCutoff")) {
+      Map<String, Object> cutoff = requireObjectMap(tuple.get("accountSecurityCutoff"));
+      long generation = requireDelegationPositiveLong(cutoff.get("accountAuthorityGeneration"));
+      long sequence = requireDelegationPositiveLong(cutoff.get("outboxSequence"));
+      if (generation != accountGeneration || sequence != accountGeneration - 1L) throw invalid();
+    }
+    if (tuple.containsKey("tenantBillingCutoff")) {
+      requireObjectMap(tuple.get("tenantBillingCutoff"))
+          .values()
+          .forEach(
+              entry -> {
+                var cutoff = requireObjectMap(entry);
+                requireDelegationPositiveLong(cutoff.get("tenantAuthorityGeneration"));
+                requireDelegationPositiveLong(cutoff.get("tenantBillingSequence"));
+                requireDelegationPositiveLong(cutoff.get("outboxSequence"));
+              });
+    }
+    return tuple;
+  }
+
+  static Map<String, Long> requireDelegationVersionMap(Object value) {
+    Map<String, Long> result = new LinkedHashMap<>();
+    requireObjectMap(value)
+        .forEach(
+            (key, counter) -> {
+              requireUuid(key);
+              result.put(key, requireDelegationPositiveLong(counter));
+            });
+    return result;
+  }
+
+  private static long requireDelegationPositiveLong(Object value) {
+    try {
+      return AccountJwtExactValues.positiveDecimalCounter(value).longValueExact();
+    } catch (IllegalArgumentException | ArithmeticException failure) {
+      throw invalid();
+    }
+  }
+
   static void validateAccountSecurityCutoff(Object value, BigInteger accountGeneration) {
     Map<String, Object> cutoff = requireObjectMap(value);
     if (!cutoff
