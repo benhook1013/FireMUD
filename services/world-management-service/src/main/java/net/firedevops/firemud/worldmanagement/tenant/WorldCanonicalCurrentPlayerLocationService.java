@@ -2,6 +2,7 @@ package net.firedevops.firemud.worldmanagement.tenant;
 
 import java.util.Objects;
 import java.util.Optional;
+import net.firedevops.firemud.common.world.WorldCanonicalInitialPlayerLocation;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Unregistered, default-denied reader for exact World-owned initial actor placement. */

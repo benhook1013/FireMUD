@@ -6,6 +6,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.world.RoomTemplateRef;
+import net.firedevops.firemud.common.world.WorldCanonicalInitialPlayerLocation;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.worldmanagement.entity.InitialAdmissionBindHold;
 import net.firedevops.firemud.worldmanagement.repository.InitialAdmissionBindHoldRepository;
@@ -152,6 +153,7 @@ public final class WorldCanonicalCurrentPlayerLocationRepository {
                   current.startLocation(),
                   current.runtimeRoomInstanceId(),
                   region.worldRegionInstanceId(),
+                  region.canonicalRegionInstanceId(),
                   region.operationalRegionId(),
                   result,
                   originalEvidence));
@@ -210,8 +212,8 @@ public final class WorldCanonicalCurrentPlayerLocationRepository {
     var fields = association.worldPrepareFields();
     Record region =
         dsl.fetchOne(
-            "SELECT ri.id AS world_region_instance_id, ri.operational_region_id, "
-                + "ri.canonical_region_instance_id "
+            "SELECT ri.id AS world_region_instance_id, ri.canonical_region_instance_id, "
+                + "ri.operational_region_id "
                 + "FROM world_canonical_preparation_start_location s "
                 + "JOIN world_canonical_instance_topology_identity m "
                 + "ON m.world_instance_id = s.world_instance_id "
@@ -220,6 +222,12 @@ public final class WorldCanonicalCurrentPlayerLocationRepository {
                 + "JOIN room_instance r ON r.id = m.runtime_row_id "
                 + "AND r.room_instance_row_id = s.runtime_room_instance_id "
                 + "JOIN region_instance ri ON ri.id = r.region_instance_id "
+                + "JOIN world_canonical_instance_topology_identity region_map "
+                + "ON region_map.world_instance_id = s.world_instance_id "
+                + "AND region_map.canonical_game_instance_id = s.canonical_game_instance_id "
+                + "AND region_map.family = 'REGION' "
+                + "AND region_map.runtime_row_id = ri.id "
+                + "AND region_map.runtime_identity = ri.canonical_region_instance_id "
                 + "WHERE s.canonical_game_instance_id = ? AND s.world_instance_id = ? "
                 + "AND s.canonical_tenant_id = ? AND s.canonical_version_id = ? "
                 + "AND s.room_template_id = ? AND s.runtime_room_instance_id = ? "
@@ -243,13 +251,15 @@ public final class WorldCanonicalCurrentPlayerLocationRepository {
     }
     UUID operationalRegionId = region.get("operational_region_id", UUID.class);
     UUID canonicalRegionId = region.get("canonical_region_instance_id", UUID.class);
-    if (operationalRegionId == null
+    if (canonicalRegionId == null
+        || new UUID(0L, 0L).equals(canonicalRegionId)
+        || operationalRegionId == null
         || new UUID(0L, 0L).equals(operationalRegionId)
         || operationalRegionId.equals(canonicalRegionId)) {
-      throw denied("current World region has no valid V45 operational region assignment");
+      throw denied("current World region has invalid V35 identity or V45 operational assignment");
     }
     return new RegionBinding(
-        region.get("world_region_instance_id", Long.class), operationalRegionId);
+        region.get("world_region_instance_id", Long.class), canonicalRegionId, operationalRegionId);
   }
 
   private void requireReadOnlyRepeatableReadTransaction() {
@@ -275,7 +285,8 @@ public final class WorldCanonicalCurrentPlayerLocationRepository {
     return new IllegalStateException("CURRENT_PLAYER_LOCATION_DENIED: " + message);
   }
 
-  private record RegionBinding(long worldRegionInstanceId, UUID operationalRegionId) {}
+  private record RegionBinding(
+      long worldRegionInstanceId, UUID canonicalRegionInstanceId, UUID operationalRegionId) {}
 
   private record StoredOperation(
       WorldCanonicalInitialPlayerLocation.Result result, byte[] originalLifecycleEvidenceBytes) {
@@ -297,6 +308,7 @@ public final class WorldCanonicalCurrentPlayerLocationRepository {
       RoomTemplateRef startLocation,
       long runtimeRoomInstanceId,
       long worldRegionInstanceId,
+      UUID canonicalRegionInstanceId,
       UUID operationalRegionId,
       WorldCanonicalInitialPlayerLocation.Result placementResult,
       byte[] originalLifecycleEvidenceBytes) {
@@ -304,6 +316,7 @@ public final class WorldCanonicalCurrentPlayerLocationRepository {
       Objects.requireNonNull(binding, "binding");
       Objects.requireNonNull(currentLifecycleEvidence, "currentLifecycleEvidence");
       Objects.requireNonNull(startLocation, "startLocation");
+      Objects.requireNonNull(canonicalRegionInstanceId, "canonicalRegionInstanceId");
       Objects.requireNonNull(operationalRegionId, "operationalRegionId");
       Objects.requireNonNull(placementResult, "placementResult");
       originalLifecycleEvidenceBytes =
@@ -314,7 +327,9 @@ public final class WorldCanonicalCurrentPlayerLocationRepository {
       if (worldInstanceId <= 0
           || runtimeRoomInstanceId <= 0
           || worldRegionInstanceId <= 0
+          || new UUID(0L, 0L).equals(canonicalRegionInstanceId)
           || new UUID(0L, 0L).equals(operationalRegionId)
+          || canonicalRegionInstanceId.equals(operationalRegionId)
           || !"ACTIVE".equals(currentLifecycleEvidence.lifecycleStatus())
           || !startLocation.equals(currentLifecycleEvidence.startLocation())
           || runtimeRoomInstanceId != currentLifecycleEvidence.runtimeRoomInstanceId()

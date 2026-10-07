@@ -1,6 +1,9 @@
-package net.firedevops.firemud.worldmanagement.tenant;
+package net.firedevops.firemud.common.world;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.charset.CodingErrorAction;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.LinkedHashMap;
@@ -10,8 +13,6 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
-import net.firedevops.firemud.common.world.RoomTemplateRef;
-import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import tools.jackson.core.StreamReadFeature;
 import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.JsonNode;
@@ -36,6 +37,31 @@ public final class WorldCanonicalInitialPlayerLocation {
           "conflictCode",
           "startLocation",
           "runtimeRoomInstanceId");
+  private static final Set<String> REQUEST_FIELDS =
+      Set.of(
+          "schema",
+          "operationId",
+          "canonicalTenantId",
+          "realmId",
+          "worldSlug",
+          "canonicalGameInstanceId",
+          "playableStateNamespaceId",
+          "playableStateScope",
+          "canonicalAccountId",
+          "characterId",
+          "entityAssignmentOperationId",
+          "entityAssignmentDigest",
+          "initialAdmissionHoldId",
+          "initialAdmissionHoldFence",
+          "initialAdmissionRequestId",
+          "initialAdmissionRequestDigest",
+          "catalogRevision",
+          "initialAdmissionOrigin",
+          "initialAdmissionOwnerProofId",
+          "initialAdmissionOwnerProofDigest",
+          "pointerAuditId",
+          "pointerVersion",
+          "activeLifecycleEvidence");
   private static final Set<String> ROOM_FIELDS = Set.of("tenantId", "versionId", "roomTemplateId");
   private static final ObjectMapper JSON =
       JsonMapper.builder()
@@ -162,6 +188,60 @@ public final class WorldCanonicalInitialPlayerLocation {
 
     public String requestDigest() {
       return prefixedDigest(canonicalRequestBytes());
+    }
+
+    /** Decodes a canonical stored request while retaining its complete original lifecycle proof. */
+    public static Request fromStored(
+        byte[] completeCanonicalRequestBytes, byte[] originalCompleteLifecycleEvidenceBytes) {
+      Objects.requireNonNull(completeCanonicalRequestBytes, "completeCanonicalRequestBytes");
+      Objects.requireNonNull(
+          originalCompleteLifecycleEvidenceBytes, "originalCompleteLifecycleEvidenceBytes");
+      try {
+        JsonNode root = JSON.readTree(strictUtf8(completeCanonicalRequestBytes));
+        requireFields(root, REQUEST_FIELDS, "initial-location request");
+        if (!REQUEST_SCHEMA.equals(text(root, "schema"))) {
+          throw invalid("unsupported initial-location request schema");
+        }
+        WorldCanonicalInstanceLifecycleEvidence lifecycleEvidence =
+            WorldCanonicalInstanceLifecycleEvidence.fromStored(
+                originalCompleteLifecycleEvidenceBytes);
+        Request request =
+            new Request(
+                canonicalUuid(root, "operationId"),
+                canonicalUuid(root, "canonicalTenantId"),
+                canonicalUuid(root, "realmId"),
+                text(root, "worldSlug"),
+                canonicalUuid(root, "canonicalGameInstanceId"),
+                canonicalUuid(root, "playableStateNamespaceId"),
+                text(root, "playableStateScope"),
+                canonicalUuid(root, "canonicalAccountId"),
+                canonicalUuid(root, "characterId"),
+                canonicalUuid(root, "entityAssignmentOperationId"),
+                text(root, "entityAssignmentDigest"),
+                canonicalUuid(root, "initialAdmissionHoldId"),
+                canonicalUuid(root, "initialAdmissionHoldFence"),
+                text(root, "initialAdmissionRequestId"),
+                text(root, "initialAdmissionRequestDigest"),
+                positiveLong(text(root, "catalogRevision"), "catalogRevision"),
+                text(root, "initialAdmissionOwnerProofId"),
+                text(root, "initialAdmissionOwnerProofDigest"),
+                text(root, "pointerAuditId"),
+                positiveLong(text(root, "pointerVersion"), "pointerVersion"),
+                InitialAdmissionOrigin.valueOf(text(root, "initialAdmissionOrigin")),
+                lifecycleEvidence);
+        if (!Arrays.equals(completeCanonicalRequestBytes, request.canonicalRequestBytes())) {
+          throw invalid(
+              "retained initial-location request is not canonical or differs from evidence");
+        }
+        return request;
+      } catch (tools.jackson.core.JacksonException | IllegalArgumentException invalid) {
+        if (invalid instanceof IllegalArgumentException argument
+            && argument.getMessage() != null
+            && argument.getMessage().startsWith("INVALID_ARGUMENT:")) {
+          throw argument;
+        }
+        throw invalid("retained initial-location request is invalid", invalid);
+      }
     }
 
     /** Full source/lifecycle evidence with only the per-read correlation UUID removed. */
@@ -392,6 +472,30 @@ public final class WorldCanonicalInitialPlayerLocation {
     JsonNode value = node.get(field);
     if (value == null || !value.isTextual()) throw invalid(field + " must be text");
     return value.textValue();
+  }
+
+  private static UUID canonicalUuid(JsonNode node, String field) {
+    String value = text(node, field);
+    try {
+      UUID parsed = UUID.fromString(value);
+      if (!parsed.toString().equals(value)) throw new IllegalArgumentException();
+      return parsed;
+    } catch (IllegalArgumentException invalid) {
+      throw invalid(field + " must be a canonical UUID", invalid);
+    }
+  }
+
+  private static String strictUtf8(byte[] bytes) {
+    try {
+      return StandardCharsets.UTF_8
+          .newDecoder()
+          .onMalformedInput(CodingErrorAction.REPORT)
+          .onUnmappableCharacter(CodingErrorAction.REPORT)
+          .decode(ByteBuffer.wrap(bytes))
+          .toString();
+    } catch (java.nio.charset.CharacterCodingException invalid) {
+      throw invalid("stored initial-location request is not valid UTF-8", invalid);
+    }
   }
 
   private static long positiveLong(String value, String label) {
