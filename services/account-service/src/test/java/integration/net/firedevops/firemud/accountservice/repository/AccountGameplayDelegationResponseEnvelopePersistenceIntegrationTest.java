@@ -258,6 +258,21 @@ class AccountGameplayDelegationResponseEnvelopePersistenceIntegrationTest {
     var secondCandidate =
         inTransaction(
             context, () -> issuance.bindSignedCandidate(secondPending.requestId(), secondJwt, "1"));
+    byte[] secondStoredBundleBytes =
+        inTransaction(
+            context,
+            () ->
+                bundles
+                    .readStoredNonAuthorizingValue(secondPending.operationId())
+                    .canonicalBytes());
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT count(*) AS bundle_count "
+                            + "FROM account_gameplay_delegation_auth_evidence_bundles"),
+                    "bound candidate bundle count query must return a row")
+                .get("bundle_count", Long.class))
+        .isEqualTo(2L);
     byte[] fakeCiphertext = new byte[] {1, 2, 3};
     assertThatThrownBy(
             () ->
@@ -301,7 +316,35 @@ class AccountGameplayDelegationResponseEnvelopePersistenceIntegrationTest {
                             + "FROM account_gameplay_delegation_auth_evidence_bundles"),
                     "bundle count query must return a row")
                 .get("bundle_count", Long.class))
+        .isEqualTo(2L);
+    assertThat(
+            inTransaction(
+                context,
+                () ->
+                    bundles.readStoredNonAuthorizingValue(pending.operationId()).canonicalBytes()))
+        .containsExactly(storedBundleBytes);
+    assertThat(
+            inTransaction(
+                context,
+                () ->
+                    bundles
+                        .readStoredNonAuthorizingValue(secondPending.operationId())
+                        .canonicalBytes()))
+        .containsExactly(secondStoredBundleBytes);
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT count(*) AS response_count "
+                            + "FROM account_gameplay_delegation_response_envelopes"),
+                    "failed encryption response count query must return a row")
+                .get("response_count", Long.class))
         .isEqualTo(1L);
+    assertThat(
+            dsl.fetchOne(
+                "SELECT operation_id FROM account_gameplay_delegation_response_envelopes "
+                    + "WHERE operation_id = ?",
+                secondPending.operationId()))
+        .isNull();
 
     CountDownLatch concurrentStart = new CountDownLatch(1);
     ExecutorService concurrentRetries = Executors.newFixedThreadPool(2);

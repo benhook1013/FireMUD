@@ -2200,6 +2200,11 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
               });
       when(commands.pexpiretime(any(byte[].class)))
           .thenAnswer(invocation -> absoluteExpiryMillis.get());
+      when(commands.pttl(
+              eq(
+                  (AccountGameplayDelegationAuthorityProjection.ACCOUNT_KEY_PREFIX + accountId)
+                      .getBytes(StandardCharsets.US_ASCII))))
+          .thenReturn(-1L);
       org.mockito.Mockito.doReturn(List.of(1L, 1L))
           .when(commands)
           .dispatch(any(ProtocolKeyword.class), any(CommandOutput.class), any(CommandArgs.class));

@@ -497,6 +497,12 @@ class AccountGameplayDelegationResponseRecoveryPersistenceIntegrationTest {
                     ? absoluteExpiryMillis.get()
                     : null;
               });
+      when(commands.pttl(
+              eq(
+                  (AccountGameplayDelegationAuthorityProjection.ACCOUNT_KEY_PREFIX
+                          + snapshot.account().scope().accountId())
+                      .getBytes(StandardCharsets.US_ASCII))))
+          .thenReturn(-1L);
       Mockito.doReturn(java.util.List.of(1L, 1L))
           .when(commands)
           .dispatch(any(ProtocolKeyword.class), any(CommandOutput.class), any(CommandArgs.class));
