@@ -19,7 +19,9 @@ import org.jooq.exception.DataAccessException;
 import org.springframework.dao.TransientDataAccessException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-/** Standalone protected canonical placement/location adapter; intentionally not runtime-registered. */
+/**
+ * Standalone protected canonical placement/location adapter; intentionally not runtime-registered.
+ */
 public final class WorldCanonicalPlayerLocationGrpcService
     extends WorldCanonicalPlayerLocationServiceGrpc.WorldCanonicalPlayerLocationServiceImplBase {
   private static final UUID NIL_UUID = new UUID(0L, 0L);
@@ -33,7 +35,8 @@ public final class WorldCanonicalPlayerLocationGrpcService
       WorldCanonicalCurrentPlayerLocationService currentLocationService,
       String trustedNamespace) {
     this.placementService = Objects.requireNonNull(placementService, "placementService");
-    this.currentLocationService = Objects.requireNonNull(currentLocationService, "currentLocationService");
+    this.currentLocationService =
+        Objects.requireNonNull(currentLocationService, "currentLocationService");
     if (!GrpcPeerIdentity.isValidNamespace(trustedNamespace)) {
       throw new IllegalArgumentException("World workload namespace is invalid");
     }
@@ -238,7 +241,8 @@ public final class WorldCanonicalPlayerLocationGrpcService
               .setPlacementRequestDigest(parsed.placementRequest().requestDigest())
               .setCurrentLifecycleEvidenceBytes(
                   ByteString.copyFrom(validated.currentLifecycleEvidenceBytes()))
-              .setImmutablePlacementResultBytes(ByteString.copyFrom(validated.placementResultBytes()))
+              .setImmutablePlacementResultBytes(
+                  ByteString.copyFrom(validated.placementResultBytes()))
               .setOriginalPlacementLifecycleEvidenceBytes(
                   ByteString.copyFrom(validated.originalPlacementLifecycleEvidenceBytes()))
               .setRegionInstanceId(location.canonicalRegionInstanceId().toString())

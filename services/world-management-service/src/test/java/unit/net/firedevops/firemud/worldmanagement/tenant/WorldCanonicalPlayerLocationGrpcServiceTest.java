@@ -58,6 +58,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 class WorldCanonicalPlayerLocationGrpcServiceTest {
   private static final String NAMESPACE = "test";
+  private static final UUID NIL_UUID = new UUID(0L, 0L);
   private static final UUID OPERATION_ID = uuid("a0000000-0000-4000-8000-000000000001");
   private static final UUID OTHER_OPERATION_ID = uuid("10000000-0000-4000-8000-000000000002");
   private static final UUID REGION_INSTANCE_ID = uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
@@ -96,7 +97,11 @@ class WorldCanonicalPlayerLocationGrpcServiceTest {
     Collector<PlaceCanonicalInitialPlayerLocationResponse> placeResult;
     Collector<ReadCanonicalCurrentPlayerLocationResponse> readResult;
     try {
-      placeResult = callPlace(grpc, placeRequest(new byte[] {1}, new byte[] {1}), peer("game-session-service", NAMESPACE));
+      placeResult =
+          callPlace(
+              grpc,
+              placeRequest(new byte[] {1}, new byte[] {1}),
+              peer("game-session-service", NAMESPACE));
       readResult =
           callRead(
               grpc,
@@ -163,11 +168,26 @@ class WorldCanonicalPlayerLocationGrpcServiceTest {
 
     assertThat(callPlace(grpc, unknownPlace, peer("game-session-service", NAMESPACE)).error)
         .isEqualTo(Status.Code.INVALID_ARGUMENT);
-    assertThat(callPlace(grpc, placeRequest(new byte[0], fixture.originalLifecycleBytes()), peer("game-session-service", NAMESPACE)).error)
+    assertThat(
+            callPlace(
+                    grpc,
+                    placeRequest(new byte[0], fixture.originalLifecycleBytes()),
+                    peer("game-session-service", NAMESPACE))
+                .error)
         .isEqualTo(Status.Code.INVALID_ARGUMENT);
-    assertThat(callPlace(grpc, placeRequest(fixture.request().canonicalRequestBytes(), new byte[0]), peer("game-session-service", NAMESPACE)).error)
+    assertThat(
+            callPlace(
+                    grpc,
+                    placeRequest(fixture.request().canonicalRequestBytes(), new byte[0]),
+                    peer("game-session-service", NAMESPACE))
+                .error)
         .isEqualTo(Status.Code.INVALID_ARGUMENT);
-    assertThat(callPlace(grpc, placeRequest(new byte[] {1}, fixture.originalLifecycleBytes()), peer("game-session-service", NAMESPACE)).error)
+    assertThat(
+            callPlace(
+                    grpc,
+                    placeRequest(new byte[] {1}, fixture.originalLifecycleBytes()),
+                    peer("game-session-service", NAMESPACE))
+                .error)
         .isEqualTo(Status.Code.INVALID_ARGUMENT);
     String canonicalPlacementRequest =
         new String(fixture.request().canonicalRequestBytes(), StandardCharsets.UTF_8);
@@ -199,7 +219,9 @@ class WorldCanonicalPlayerLocationGrpcServiceTest {
             callRead(
                     grpc,
                     readRequest(
-                        fixture.readRequestId().toString(), new byte[0], fixture.originalLifecycleBytes()),
+                        fixture.readRequestId().toString(),
+                        new byte[0],
+                        fixture.originalLifecycleBytes()),
                     peer("game-session-service", NAMESPACE))
                 .error)
         .isEqualTo(Status.Code.INVALID_ARGUMENT);
@@ -223,11 +245,35 @@ class WorldCanonicalPlayerLocationGrpcServiceTest {
                     peer("game-session-service", NAMESPACE))
                 .error)
         .isEqualTo(Status.Code.INVALID_ARGUMENT);
-    assertThat(callRead(grpc, readRequest(NIL_UUID.toString(), fixture.request().canonicalRequestBytes(), fixture.originalLifecycleBytes()), peer("game-session-service", NAMESPACE)).error)
+    assertThat(
+            callRead(
+                    grpc,
+                    readRequest(
+                        NIL_UUID.toString(),
+                        fixture.request().canonicalRequestBytes(),
+                        fixture.originalLifecycleBytes()),
+                    peer("game-session-service", NAMESPACE))
+                .error)
         .isEqualTo(Status.Code.INVALID_ARGUMENT);
-    assertThat(callRead(grpc, readRequest(fixture.readRequestId().toString().toUpperCase(), fixture.request().canonicalRequestBytes(), fixture.originalLifecycleBytes()), peer("game-session-service", NAMESPACE)).error)
+    assertThat(
+            callRead(
+                    grpc,
+                    readRequest(
+                        fixture.readRequestId().toString().toUpperCase(),
+                        fixture.request().canonicalRequestBytes(),
+                        fixture.originalLifecycleBytes()),
+                    peer("game-session-service", NAMESPACE))
+                .error)
         .isEqualTo(Status.Code.INVALID_ARGUMENT);
-    assertThat(callRead(grpc, readRequest("not-a-uuid", fixture.request().canonicalRequestBytes(), fixture.originalLifecycleBytes()), peer("game-session-service", NAMESPACE)).error)
+    assertThat(
+            callRead(
+                    grpc,
+                    readRequest(
+                        "not-a-uuid",
+                        fixture.request().canonicalRequestBytes(),
+                        fixture.originalLifecycleBytes()),
+                    peer("game-session-service", NAMESPACE))
+                .error)
         .isEqualTo(Status.Code.INVALID_ARGUMENT);
     Fixture reusedOperationId = fixture(NAMESPACE, OPERATION_ID.toString());
     assertThat(
@@ -296,7 +342,8 @@ class WorldCanonicalPlayerLocationGrpcServiceTest {
     Collector<PlaceCanonicalInitialPlayerLocationResponse> placeResult =
         callPlace(
             grpc,
-            placeRequest(fixture.request().canonicalRequestBytes(), fixture.originalLifecycleBytes()),
+            placeRequest(
+                fixture.request().canonicalRequestBytes(), fixture.originalLifecycleBytes()),
             peer("game-session-service", NAMESPACE));
     Collector<ReadCanonicalCurrentPlayerLocationResponse> readResult =
         callRead(
@@ -325,7 +372,8 @@ class WorldCanonicalPlayerLocationGrpcServiceTest {
         .containsExactly(original.request().canonicalRequestBytes());
     var stored =
         WorldCanonicalInitialPlayerLocation.Result.applied(
-            original.request(), original.lifecycleEvidence().startLocation(),
+            original.request(),
+            original.lifecycleEvidence().startLocation(),
             original.lifecycleEvidence().runtimeRoomInstanceId());
     var exactRetryResult =
         WorldCanonicalInitialPlayerLocation.Result.fromStored(
@@ -355,35 +403,42 @@ class WorldCanonicalPlayerLocationGrpcServiceTest {
     Fixture fixture = fixture(NAMESPACE, "b0000000-0000-4000-8000-000000000001");
     var conflictService = mock(WorldCanonicalInitialPlayerLocationService.class);
     when(conflictService.place(any()))
-        .thenReturn(WorldCanonicalInitialPlayerLocation.Result.conflict(fixture.request(), "ACTOR_CONFLICT"));
+        .thenReturn(
+            WorldCanonicalInitialPlayerLocation.Result.conflict(
+                fixture.request(), "ACTOR_CONFLICT"));
     var transientService = mock(WorldCanonicalInitialPlayerLocationService.class);
     when(transientService.place(any()))
         .thenThrow(new TransientDataAccessException("temporary store issue") {});
     var permanentService = mock(WorldCanonicalInitialPlayerLocationService.class);
     when(permanentService.place(any()))
-        .thenThrow(new DataAccessException("permanent store issue", new SQLException("bad schema")) {});
+        .thenThrow(
+            new DataAccessException("permanent store issue", new SQLException("bad schema")) {});
     var unknownService = mock(WorldCanonicalInitialPlayerLocationService.class);
     when(unknownService.place(any())).thenThrow(new IllegalStateException("unexpected failure"));
 
     var conflict =
         callPlace(
             service(conflictService, mock(WorldCanonicalCurrentPlayerLocationService.class)),
-            placeRequest(fixture.request().canonicalRequestBytes(), fixture.originalLifecycleBytes()),
+            placeRequest(
+                fixture.request().canonicalRequestBytes(), fixture.originalLifecycleBytes()),
             peer("game-session-service", NAMESPACE));
     var unavailable =
         callPlace(
             service(transientService, mock(WorldCanonicalCurrentPlayerLocationService.class)),
-            placeRequest(fixture.request().canonicalRequestBytes(), fixture.originalLifecycleBytes()),
+            placeRequest(
+                fixture.request().canonicalRequestBytes(), fixture.originalLifecycleBytes()),
             peer("game-session-service", NAMESPACE));
     var internal =
         callPlace(
             service(permanentService, mock(WorldCanonicalCurrentPlayerLocationService.class)),
-            placeRequest(fixture.request().canonicalRequestBytes(), fixture.originalLifecycleBytes()),
+            placeRequest(
+                fixture.request().canonicalRequestBytes(), fixture.originalLifecycleBytes()),
             peer("game-session-service", NAMESPACE));
     var unknown =
         callPlace(
             service(unknownService, mock(WorldCanonicalCurrentPlayerLocationService.class)),
-            placeRequest(fixture.request().canonicalRequestBytes(), fixture.originalLifecycleBytes()),
+            placeRequest(
+                fixture.request().canonicalRequestBytes(), fixture.originalLifecycleBytes()),
             peer("game-session-service", NAMESPACE));
 
     assertThat(conflict.error).isEqualTo(Status.Code.ALREADY_EXISTS);
@@ -404,7 +459,8 @@ class WorldCanonicalPlayerLocationGrpcServiceTest {
     var retainedResult =
         WorldCanonicalInitialPlayerLocation.Result.fromStored(
             fixture.request(), immutableResult.canonicalBytes());
-    var current = currentLocation(fixture, originalPlacement.originalLifecycleBytes(), retainedResult);
+    var current =
+        currentLocation(fixture, originalPlacement.originalLifecycleBytes(), retainedResult);
     var placementService = mock(WorldCanonicalInitialPlayerLocationService.class);
     var currentService = mock(WorldCanonicalCurrentPlayerLocationService.class);
     when(currentService.read(any())).thenReturn(Optional.of(current));
@@ -423,7 +479,8 @@ class WorldCanonicalPlayerLocationGrpcServiceTest {
     assertThat(response.completed).isTrue();
     assertThat(response.value.getReadRequestId()).isEqualTo(fixture.readRequestId().toString());
     assertThat(response.value.getPlacementOperationId()).isEqualTo(OPERATION_ID.toString());
-    assertThat(response.value.getPlacementRequestDigest()).isEqualTo(fixture.request().requestDigest());
+    assertThat(response.value.getPlacementRequestDigest())
+        .isEqualTo(fixture.request().requestDigest());
     assertThat(response.value.getCurrentLifecycleEvidenceBytes().toByteArray())
         .containsExactly(fixture.originalLifecycleBytes());
     assertThat(response.value.getImmutablePlacementResultBytes().toByteArray())
@@ -461,7 +518,8 @@ class WorldCanonicalPlayerLocationGrpcServiceTest {
     Fixture original = fixture(NAMESPACE, "c0000000-0000-4000-8000-000000000001");
     var immutableResult =
         WorldCanonicalInitialPlayerLocation.Result.applied(
-            original.request(), original.lifecycleEvidence().startLocation(),
+            original.request(),
+            original.lifecycleEvidence().startLocation(),
             original.lifecycleEvidence().runtimeRoomInstanceId());
     var validResult =
         WorldCanonicalInitialPlayerLocation.Result.fromStored(
@@ -473,20 +531,26 @@ class WorldCanonicalPlayerLocationGrpcServiceTest {
             changedBindingRequest.activeLifecycleEvidence().startLocation(),
             changedBindingRequest.activeLifecycleEvidence().runtimeRoomInstanceId());
     var changedBindingLocation =
-        currentLocation(fixture, original.originalLifecycleBytes(), changedBindingResult, changedBindingRequest);
-    var bindingError =
-        readForgedCurrent(fixture, changedBindingLocation);
+        currentLocation(
+            fixture,
+            original.originalLifecycleBytes(),
+            changedBindingResult,
+            changedBindingRequest);
+    var bindingError = readForgedCurrent(fixture, changedBindingLocation);
 
-    var substitutedResult = mock(WorldCanonicalCurrentPlayerLocationRepository.CurrentLocation.class);
+    var substitutedResult =
+        mock(WorldCanonicalCurrentPlayerLocationRepository.CurrentLocation.class);
     var changedResult =
         WorldCanonicalInitialPlayerLocation.Result.applied(
             placementRequestWithOperation(fixture, OTHER_OPERATION_ID),
             fixture.lifecycleEvidence().startLocation(),
             fixture.lifecycleEvidence().runtimeRoomInstanceId());
-    stubCurrentLocation(substitutedResult, fixture, original.originalLifecycleBytes(), changedResult);
+    stubCurrentLocation(
+        substitutedResult, fixture, original.originalLifecycleBytes(), changedResult);
     var resultError = readForgedCurrent(fixture, substitutedResult);
 
-    var substitutedRegion = mock(WorldCanonicalCurrentPlayerLocationRepository.CurrentLocation.class);
+    var substitutedRegion =
+        mock(WorldCanonicalCurrentPlayerLocationRepository.CurrentLocation.class);
     stubCurrentLocation(substitutedRegion, fixture, original.originalLifecycleBytes(), validResult);
     when(substitutedRegion.operationalRegionId()).thenReturn(REGION_INSTANCE_ID);
     var regionError = readForgedCurrent(fixture, substitutedRegion);
@@ -504,7 +568,8 @@ class WorldCanonicalPlayerLocationGrpcServiceTest {
         .thenThrow(new TransientDataAccessException("temporary store issue") {});
     var permanentService = mock(WorldCanonicalCurrentPlayerLocationService.class);
     when(permanentService.read(any()))
-        .thenThrow(new DataAccessException("permanent store issue", new SQLException("bad schema")) {});
+        .thenThrow(
+            new DataAccessException("permanent store issue", new SQLException("bad schema")) {});
     var unknownService = mock(WorldCanonicalCurrentPlayerLocationService.class);
     when(unknownService.read(any())).thenThrow(new IllegalStateException("unexpected failure"));
 
@@ -513,9 +578,21 @@ class WorldCanonicalPlayerLocationGrpcServiceTest {
             fixture.readRequestId().toString(),
             fixture.request().canonicalRequestBytes(),
             fixture.originalLifecycleBytes());
-    var unavailable = callRead(service(mock(WorldCanonicalInitialPlayerLocationService.class), transientService), request, peer("game-session-service", NAMESPACE));
-    var internal = callRead(service(mock(WorldCanonicalInitialPlayerLocationService.class), permanentService), request, peer("game-session-service", NAMESPACE));
-    var unknown = callRead(service(mock(WorldCanonicalInitialPlayerLocationService.class), unknownService), request, peer("game-session-service", NAMESPACE));
+    var unavailable =
+        callRead(
+            service(mock(WorldCanonicalInitialPlayerLocationService.class), transientService),
+            request,
+            peer("game-session-service", NAMESPACE));
+    var internal =
+        callRead(
+            service(mock(WorldCanonicalInitialPlayerLocationService.class), permanentService),
+            request,
+            peer("game-session-service", NAMESPACE));
+    var unknown =
+        callRead(
+            service(mock(WorldCanonicalInitialPlayerLocationService.class), unknownService),
+            request,
+            peer("game-session-service", NAMESPACE));
 
     assertThat(unavailable.error).isEqualTo(Status.Code.UNAVAILABLE);
     assertThat(internal.error).isEqualTo(Status.Code.INTERNAL);
@@ -523,8 +600,7 @@ class WorldCanonicalPlayerLocationGrpcServiceTest {
   }
 
   private static Status.Code readForgedCurrent(
-      Fixture fixture,
-      WorldCanonicalCurrentPlayerLocationRepository.CurrentLocation location) {
+      Fixture fixture, WorldCanonicalCurrentPlayerLocationRepository.CurrentLocation location) {
     var currentService = mock(WorldCanonicalCurrentPlayerLocationService.class);
     when(currentService.read(any())).thenReturn(Optional.of(location));
     var isolated = service(mock(WorldCanonicalInitialPlayerLocationService.class), currentService);
@@ -578,7 +654,8 @@ class WorldCanonicalPlayerLocationGrpcServiceTest {
     when(location.binding()).thenReturn(fixture.request());
     when(location.currentLifecycleEvidence()).thenReturn(fixture.lifecycleEvidence());
     when(location.startLocation()).thenReturn(fixture.lifecycleEvidence().startLocation());
-    when(location.runtimeRoomInstanceId()).thenReturn(fixture.lifecycleEvidence().runtimeRoomInstanceId());
+    when(location.runtimeRoomInstanceId())
+        .thenReturn(fixture.lifecycleEvidence().runtimeRoomInstanceId());
     when(location.canonicalRegionInstanceId()).thenReturn(REGION_INSTANCE_ID);
     when(location.operationalRegionId()).thenReturn(OPERATIONAL_REGION_ID);
     when(location.placementResult()).thenReturn(result);
@@ -844,25 +921,27 @@ class WorldCanonicalPlayerLocationGrpcServiceTest {
     String declaration =
         JSON.writeValueAsString(
             Map.of(
-                "tenantId", "11111111-1111-4111-8111-111111111111",
-                "versionId", "22222222-2222-4222-8222-222222222222",
+                "tenantId",
+                "11111111-1111-4111-8111-111111111111",
+                "versionId",
+                "22222222-2222-4222-8222-222222222222",
                 "startLocation",
-                    Map.of(
-                        "tenantId", "11111111-1111-4111-8111-111111111111",
-                        "versionId", "22222222-2222-4222-8222-222222222222",
-                        "roomTemplateId", "77777777-7777-4777-8777-777777777777"),
+                Map.of(
+                    "tenantId", "11111111-1111-4111-8111-111111111111",
+                    "versionId", "22222222-2222-4222-8222-222222222222",
+                    "roomTemplateId", "77777777-7777-4777-8777-777777777777"),
                 "familyCounts",
-                    List.of(
-                        Map.of("family", "WORLD_DESIGN_AGGREGATE_TYPE_REGION", "count", 1),
-                        Map.of("family", "WORLD_DESIGN_AGGREGATE_TYPE_ZONE", "count", 1),
-                        Map.of("family", "WORLD_DESIGN_AGGREGATE_TYPE_ROOM", "count", 1),
-                        Map.of("family", "WORLD_DESIGN_AGGREGATE_TYPE_ROOM_EXIT", "count", 0),
-                        Map.of("family", "WORLD_DESIGN_AGGREGATE_TYPE_GENERATION_RULE", "count", 0),
-                        Map.of(
-                            "family",
-                            "WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING",
-                            "count",
-                            0))));
+                List.of(
+                    Map.of("family", "WORLD_DESIGN_AGGREGATE_TYPE_REGION", "count", 1),
+                    Map.of("family", "WORLD_DESIGN_AGGREGATE_TYPE_ZONE", "count", 1),
+                    Map.of("family", "WORLD_DESIGN_AGGREGATE_TYPE_ROOM", "count", 1),
+                    Map.of("family", "WORLD_DESIGN_AGGREGATE_TYPE_ROOM_EXIT", "count", 0),
+                    Map.of("family", "WORLD_DESIGN_AGGREGATE_TYPE_GENERATION_RULE", "count", 0),
+                    Map.of(
+                        "family",
+                        "WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING",
+                        "count",
+                        0))));
     UUID tenantId = uuid("11111111-1111-4111-8111-111111111111");
     UUID versionId = uuid("22222222-2222-4222-8222-222222222222");
     UUID commitId = uuid("55555555-5555-4555-8555-555555555555");
@@ -882,17 +961,24 @@ class WorldCanonicalPlayerLocationGrpcServiceTest {
                 "0",
                 regionRevision,
                 DraftCommitBinding.Owner.WORLD_MANAGEMENT,
-                worldRevisionPayload(regionRevision, commitId, "WORLD_DESIGN_AGGREGATE_TYPE_REGION", regionId, declaration)),
+                worldRevisionPayload(
+                    regionRevision,
+                    commitId,
+                    "WORLD_DESIGN_AGGREGATE_TYPE_REGION",
+                    regionId,
+                    declaration)),
             new RevisionPayload(
                 "1",
                 zoneRevision,
                 DraftCommitBinding.Owner.WORLD_MANAGEMENT,
-                worldRevisionPayload(zoneRevision, commitId, "WORLD_DESIGN_AGGREGATE_TYPE_ZONE", zoneId, null)),
+                worldRevisionPayload(
+                    zoneRevision, commitId, "WORLD_DESIGN_AGGREGATE_TYPE_ZONE", zoneId, null)),
             new RevisionPayload(
                 "2",
                 roomRevision,
                 DraftCommitBinding.Owner.WORLD_MANAGEMENT,
-                worldRevisionPayload(roomRevision, commitId, "WORLD_DESIGN_AGGREGATE_TYPE_ROOM", roomId, null))),
+                worldRevisionPayload(
+                    roomRevision, commitId, "WORLD_DESIGN_AGGREGATE_TYPE_ROOM", roomId, null))),
         List.of(
                 affected("REGION", regionId, "REGION_SUBTREE", regionId),
                 affected("ZONE", zoneId, "REGION_SUBTREE", regionId),
@@ -974,7 +1060,8 @@ class WorldCanonicalPlayerLocationGrpcServiceTest {
             throw new AssertionError(impossible);
           }
         };
-    java.util.function.Consumer<String> text = value -> frame.accept(value.getBytes(StandardCharsets.UTF_8));
+    java.util.function.Consumer<String> text =
+        value -> frame.accept(value.getBytes(StandardCharsets.UTF_8));
     text.accept("world-draft-terminal-operation/v1");
     for (UUID id :
         List.of(
@@ -1024,7 +1111,9 @@ class WorldCanonicalPlayerLocationGrpcServiceTest {
                         "scopeId", unit.scopeId(),
                         "expectedEpoch", unit.expectedEpoch(),
                         "resultingEpoch",
-                            new java.math.BigInteger(unit.expectedEpoch()).add(java.math.BigInteger.ONE).toString()))
+                            new java.math.BigInteger(unit.expectedEpoch())
+                                .add(java.math.BigInteger.ONE)
+                                .toString()))
             .toList());
     byte[] resultBytes = canonical(JSON.valueToTree(result));
     var readback =
@@ -1056,7 +1145,8 @@ class WorldCanonicalPlayerLocationGrpcServiceTest {
     for (RevisionPayload revision : draft.revisions()) {
       if (revision.owner() != DraftCommitBinding.Owner.WORLD_MANAGEMENT) continue;
       var mutation = JSON.readTree(revision.payload());
-      String family = mutation.get("aggregateType").textValue().replace("WORLD_DESIGN_AGGREGATE_TYPE_", "");
+      String family =
+          mutation.get("aggregateType").textValue().replace("WORLD_DESIGN_AGGREGATE_TYPE_", "");
       var mapping = new java.util.LinkedHashMap<String, Object>();
       mapping.put("id", mappingId++);
       mapping.put("target_namespace", request.targetNamespace());
@@ -1067,7 +1157,8 @@ class WorldCanonicalPlayerLocationGrpcServiceTest {
       mapping.put("private_row_key", privateRowKey++);
       mapping.put("tenant_id", 11);
       mapping.put("version_id", 19);
-      mapping.put("version_identity_operation_id", uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").toString());
+      mapping.put(
+          "version_identity_operation_id", uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").toString());
       mapping.put("request_id", draft.requestId().toString());
       mapping.put("commit_id", draft.commitId().toString());
       mapping.put("revision_id", revision.revisionId().toString());
@@ -1079,9 +1170,8 @@ class WorldCanonicalPlayerLocationGrpcServiceTest {
   }
 
   private static byte[] receiptBytes(
-      WorldDraftTerminalReadEvidence.Request request,
-      DraftCommitBinding draft,
-      byte[] appliedBytes) throws Exception {
+      WorldDraftTerminalReadEvidence.Request request, DraftCommitBinding draft, byte[] appliedBytes)
+      throws Exception {
     var applied = JSON.readTree(appliedBytes);
     return Base64.getDecoder().decode(applied.get("startLocationReceiptBase64").textValue());
   }
@@ -1096,7 +1186,14 @@ class WorldCanonicalPlayerLocationGrpcServiceTest {
     String accountDigest = sha256(request.originalAccountBinding());
     String digest =
         startLocationReceiptDigest(
-            request.targetNamespace(), account, accountDigest, draft.digest(), tenant, version, room, graphDigest);
+            request.targetNamespace(),
+            account,
+            accountDigest,
+            draft.digest(),
+            tenant,
+            version,
+            room,
+            graphDigest);
     var value = new java.util.LinkedHashMap<String, Object>();
     value.put("schema", "world-draft-start-location-receipt/v1");
     value.put("targetNamespace", request.targetNamespace());
@@ -1108,7 +1205,13 @@ class WorldCanonicalPlayerLocationGrpcServiceTest {
     value.put("bindingDigest", draft.digest());
     value.put(
         "startLocation",
-        Map.of("tenantId", tenant.toString(), "versionId", version.toString(), "roomTemplateId", room.toString()));
+        Map.of(
+            "tenantId",
+            tenant.toString(),
+            "versionId",
+            version.toString(),
+            "roomTemplateId",
+            room.toString()));
     value.put("graphDigest", graphDigest);
     value.put("receiptDigest", digest);
     return (tools.jackson.databind.node.ObjectNode) JSON.valueToTree(value);
@@ -1147,7 +1250,9 @@ class WorldCanonicalPlayerLocationGrpcServiceTest {
   }
 
   private static String sha256(byte[] bytes) throws Exception {
-    return "sha256:" + java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes));
+    return "sha256:"
+        + java.util.HexFormat.of()
+            .formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes));
   }
 
   private static byte[] canonical(Object value) throws Exception {
