@@ -56,7 +56,19 @@ if len(instructions) != 1:
         f"expected one Ubuntu APT RUN instruction, found {len(instructions)}"
     )
 
-output.write_text("#!/bin/sh\n" + instructions[0] + "\n", encoding="utf-8")
+canonical_source_path = "/etc/apt/sources.list.d/ubuntu.sources"
+instruction = instructions[0]
+if instruction.count(canonical_source_path) != 1:
+    raise SystemExit("Dockerfile must use the canonical Ubuntu deb822 source path once")
+
+# The fixture redirects only the source-file path; the extracted APT logic stays intact.
+instruction = instruction.replace(
+    canonical_source_path, "$FIREMUD_APT_SOURCE_FILE", 1
+)
+if canonical_source_path in instruction:
+    raise SystemExit("fixture scratch RUN still contains the production source path")
+
+output.write_text("#!/bin/sh\n" + instruction + "\n", encoding="utf-8")
 PY
 
 cat > "$FAKE_BIN/apt-get" <<'SH'
