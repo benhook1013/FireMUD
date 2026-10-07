@@ -110,6 +110,8 @@ class ControllerCliTest(unittest.TestCase):
 
     def run_cli(self, alias, *args, success=True):
         env = os.environ.copy()
+        # Keep this convenience path identity-free; identity metadata is tested explicitly below.
+        env.pop("FIRE_CONTROLLER_WORKER", None)
         # Any attempted external provider call fails rather than consuming quota.
         env["GH_HOST"] = "provider.invalid"
         result = subprocess.run([sys.executable, str(TOOLS / "fire-controller"), "--context",
@@ -166,7 +168,9 @@ class ControllerCliTest(unittest.TestCase):
         root = inbox.send("General", "Original", author="Overseer")
         reply = inbox.send("Overseer", "Reply", author="General", reply_to=root["id"])
         output = io.StringIO()
-        with contextlib.redirect_stdout(output):
+        env = os.environ.copy()
+        env.pop("FIRE_CONTROLLER_WORKER", None)
+        with patch.dict(os.environ, env, clear=True), contextlib.redirect_stdout(output):
             self.assertEqual(main(["--context", str(self.contexts["alpha"]), "inbox", "--json", "thread",
                                    reply["id"], "--limit", "2", "--offset", "0"]), 0)
         page = json.loads(output.getvalue())
