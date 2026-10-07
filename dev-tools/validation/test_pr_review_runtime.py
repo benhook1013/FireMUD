@@ -633,12 +633,13 @@ class RuntimeTest(unittest.TestCase):
         path = Path("/unused/pr-99/trigger.json")
 
         cases = (
-            ("mixed-case repository", now - timedelta(minutes=1), terminal_at, "OWNER/REPO", True),
-            ("delayed observation", now - timedelta(minutes=20), terminal_at, "owner/repo", False),
-            ("missing response time", None, terminal_at, "owner/repo", False),
-            ("response after terminal", now + timedelta(minutes=1), terminal_at, "owner/repo", False),
+            ("mixed-case repository", now - timedelta(minutes=1), terminal_at, "OWNER/REPO", True, False),
+            ("delayed observation", now - timedelta(minutes=20), terminal_at, "owner/repo", False, False),
+            ("missing response time", None, terminal_at, "owner/repo", False, True),
+            ("naive response time", (now - timedelta(minutes=1)).replace(tzinfo=None), terminal_at, "owner/repo", False, True),
+            ("response after terminal", now + timedelta(minutes=1), terminal_at, "owner/repo", False, True),
         )
-        for label, response_at, observed_at, repository, should_hold in cases:
+        for label, response_at, observed_at, repository, should_hold, fail_closed in cases:
             with self.subTest(case=label):
                 response = {
                     "databaseId": 11,
@@ -677,8 +678,30 @@ class RuntimeTest(unittest.TestCase):
                     attempt_artifacts=lambda _attempt_id, artifacts=artifacts: artifacts,
                 )
                 with patch.object(hosted, "load_trigger_reservation", return_value=reservation):
+                    if fail_closed:
+                        with self.assertRaises(ControllerError):
+                            runner._closed_repository_cooldown_until(99, [path])
+                        continue
                     reset = runner._closed_repository_cooldown_until(99, [path])
                 self.assertEqual(reset is not None, should_hold)
+
+        with self.subTest(case="unknown reset uses response creation time"):
+            response_at = now - timedelta(minutes=20)
+            response = {
+                "databaseId": 11,
+                "author": {"login": "coderabbitai[bot]"},
+                "body": hosted.REVIEW_LIMIT_MARKER,
+                "createdAt": response_at.isoformat().replace("+00:00", "Z"),
+                "updatedAt": (now + timedelta(minutes=30)).isoformat().replace("+00:00", "Z"),
+            }
+            artifacts["hosted_comments"] = json.dumps({"comments": [response]})
+            runner.records = SimpleNamespace(
+                attempt_history=lambda _pr, attempt=attempt: [attempt],
+                attempt_artifacts=lambda _attempt_id, value=artifacts: value,
+            )
+            with patch.object(hosted, "load_trigger_reservation", return_value=reservation):
+                reset = runner._closed_repository_cooldown_until(99, [path])
+            self.assertEqual(reset, response_at + timedelta(hours=1))
 
     def test_closed_pr_cooldown_sqlite_read_rechecks_active_deadline(self) -> None:
         class Clock:
@@ -4367,7 +4390,7 @@ class RuntimeTest(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(record), encoding="utf-8")
 
-    def _history(self, common: Path, payload, channel="hosted", *, changed_files=1, current_head=HEAD):
+    def _history(self, common: Path, payload, channel="hosted", *, changed_files=1, current_head=HEAD, now=None):
         pull = payload["data"]["repository"]["pullRequest"]
         snapshot = PullRequestSnapshot(
             42,
@@ -4384,7 +4407,7 @@ class RuntimeTest(unittest.TestCase):
             patch.object(live, "pull_request", return_value=snapshot),
             patch.object(evidence, "git_common_dir", return_value=common),
         ):
-            return list(LiveEvidence("owner/repo", live).history(42, channel))
+            return list(LiveEvidence("owner/repo", live).history(42, channel, now=now))
 
     def test_history_uses_complete_review_snapshot_head_without_extra_metadata_read(self):
         live = LiveGitHub("owner/repo")
@@ -4606,7 +4629,7 @@ class RuntimeTest(unittest.TestCase):
         self.assertFalse(any(item.get("scope_changed") is True for item in history))
         self.assertTrue(any(item.get("scope_timeline_complete") is True for item in history))
 
-    def test_rate_limit_cooldown_holds_until_deadline_and_unknown_fails_closed(self) -> None:
+    def test_rate_limit_cooldown_holds_until_explicit_or_local_deadline(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             common = Path(directory)
             path = hosted.default_trigger_record_path("owner/repo", 42, common)
@@ -4641,8 +4664,27 @@ class RuntimeTest(unittest.TestCase):
             self.assertFalse(any(item.get("rate_limited") for item in released))
 
             unknown_reply = {**future_reply, "body": hosted.REVIEW_LIMIT_MARKER}
-            unknown = self._history(common, self._payload([trigger, unknown_reply]))
-            self.assertTrue(any(item.get("rate_limited") and item.get("unstable") for item in unknown))
+            unknown_payload = self._payload([trigger, unknown_reply])
+            unknown = self._history(common, unknown_payload, now=now)
+            hold = next(item for item in unknown if item.get("rate_limited"))
+            local_deadline = datetime.fromisoformat(unknown_reply["createdAt"].replace("Z", "+00:00")) + timedelta(
+                seconds=3600
+            )
+            self.assertEqual(hold["cooldown_basis"], "local_retry_backoff")
+            self.assertEqual(hosted.parse_timestamp(hold["cooldown_until"]), local_deadline)
+            self.assertFalse(hold["unstable"])
+            self.assertIn("local retry backoff", hold["reason"])
+
+            edited_reply = {**unknown_reply, "updatedAt": (local_deadline + timedelta(minutes=30)).isoformat()}
+            refreshed = self._history(common, self._payload([trigger, edited_reply]), now=now)
+            self.assertEqual(next(item for item in refreshed if item.get("rate_limited"))["cooldown_until"], hold["cooldown_until"])
+
+            expired = self._history(common, unknown_payload, now=local_deadline)
+            self.assertFalse(any(item.get("rate_limited") for item in expired))
+
+            future_reply = {**unknown_reply, "createdAt": (now + timedelta(seconds=1)).isoformat()}
+            future = self._history(common, self._payload([trigger, future_reply]), now=now)
+            self.assertTrue(any(item.get("rate_limited") and item.get("unstable") for item in future))
 
     def test_review_stop_audit_excludes_only_proven_terminal_rate_limit_reservations(self) -> None:
         now = datetime.now(timezone.utc).replace(microsecond=0)
@@ -4758,6 +4800,7 @@ class RuntimeTest(unittest.TestCase):
                     "response_id": 11,
                     "captured_head": old_head,
                     "cooldown_until": cooldown_until,
+                    "cooldown_basis": None,
                     "terminal": True,
                     "attributable": True,
                 }
@@ -5719,7 +5762,7 @@ class RuntimeTest(unittest.TestCase):
                 patch.object(
                     hosted,
                     "trigger_state",
-                    side_effect=lambda _repo, _pr, _payload, selected_record, _path: state_by_trigger[
+                    side_effect=lambda _repo, _pr, _payload, selected_record, _path, **_kwargs: state_by_trigger[
                         selected_record["trigger"]["id"]
                     ],
                 ),

@@ -602,7 +602,7 @@ class LiveEvidence:
         for path in self._complete_trigger_paths(self.repo, pr):
             try:
                 record = hosted.load_trigger_record(path, self.repo, pr)
-                state = hosted.trigger_state(self.repo, pr, payload, record, path)
+                state = hosted.trigger_state(self.repo, pr, payload, record, path, now=audit_now)
             except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
                 raise ControllerError("a Hosted trigger record cannot be completely audited") from error
             observation = self._terminal_ambiguous_hosted_observation(pr, record, state, payload)
@@ -634,6 +634,7 @@ class LiveEvidence:
                         "response_id": response_id,
                         "captured_head": captured_head,
                         "cooldown_until": cooldown_value,
+                        "cooldown_basis": getattr(state, "cooldown_basis", None),
                         "terminal": True,
                         "attributable": True,
                     }
@@ -651,8 +652,8 @@ class LiveEvidence:
         active_reservations = list(audit["active_reservations"])
         unmatched_responses = list(audit["unmatched_responses"])
         ambiguous_responses = list(audit["ambiguous_responses"])
-        # A proven terminal response has ended execution even when its quota
-        # reset is unknown. Hosted admission still owns that cooldown hold.
+        # A proven terminal response has ended execution; its provider reset or
+        # bounded local retry backoff remains a repository admission hold.
         active_terminal_rate_limits = [
             item
             for item in terminal_rate_limits
@@ -991,9 +992,11 @@ class LiveEvidence:
             elif response_state == "ambiguous":
                 ambiguous_responses.append("an unrecorded public response does not identify its reviewed head")
             elif response_state == "rate_limited":
-                response_at = hosted.parse_timestamp(response_item.get("createdAt"))
-                cooldown = hosted._rate_limit(response_item.get("body", ""), response_at) if response_at else None
-                if cooldown is None or cooldown > datetime.now(timezone.utc):
+                now = datetime.now(timezone.utc)
+                cooldown, cooldown_basis = hosted.rate_limit_cooldown(
+                    response_item.get("body", ""), response_item.get("createdAt"), now=now
+                )
+                if cooldown_basis == "unknown" or cooldown is None or cooldown > now:
                     active_reservations.append("an unrecorded public response has an unresolved rate limit")
             elif response_state == "completed":
                 response_id = github.immutable_database_id(response_item)
@@ -1628,7 +1631,7 @@ class LiveEvidence:
         for path in paths:
             try:
                 record = hosted.load_trigger_reservation(path, self.repo, pr)
-                state = hosted.trigger_state(self.repo, pr, payload, record, path)
+                state = hosted.trigger_state(self.repo, pr, payload, record, path, now=now)
             except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
                 values.append(
                     {
@@ -1644,6 +1647,7 @@ class LiveEvidence:
                 continue
             if state.state == "rate_limited":
                 reset = hosted.parse_timestamp(state.cooldown_until)
+                cooldown_basis = getattr(state, "cooldown_basis", None)
                 history_now = now if now is not None else datetime.now(timezone.utc)
                 if reset is not None and reset <= history_now:
                     continue
@@ -1659,10 +1663,15 @@ class LiveEvidence:
                         "attributable": state.attributed,
                         "held": reset is None,
                         "unstable": reset is None,
-                        "reason": "Hosted cooldown remains active"
-                        if reset
-                        else "Hosted cooldown has no attributable reset time",
+                        "reason": (
+                            f"Hosted one-hour local retry backoff remains active until {state.cooldown_until}"
+                            if cooldown_basis == "local_retry_backoff"
+                            else f"Hosted provider-stated cooldown remains active until {state.cooldown_until}"
+                            if cooldown_basis == "provider_reset"
+                            else "Hosted cooldown has no attributable reset time"
+                        ),
                         "cooldown_until": state.cooldown_until,
+                        "cooldown_basis": cooldown_basis,
                     }
                 )
             elif (
@@ -2626,15 +2635,23 @@ class HostedRunner:
                     continue
                 response = responses[0]
                 response_at = hosted.parse_timestamp(response.get("createdAt"))
-                if response_at is None or response_at > terminal_at:
-                    continue
                 author = response.get("author")
                 login = author.get("login") if isinstance(author, Mapping) else None
                 body = response.get("body")
                 if not github.is_coderabbit_login(login) or not isinstance(body, str):
                     continue
-                reset = hosted._rate_limit(body, response_at)
+                if response_at is None or response_at > terminal_at:
+                    raise ControllerError(
+                        f"closed PR #{pr} has a rate-limit response with no valid creation-time cooldown basis"
+                    )
+                reset, cooldown_basis = hosted.rate_limit_cooldown(body, response.get("createdAt"), now=now)
+                if cooldown_basis in {"unknown", "none"}:
+                    raise ControllerError(
+                        f"closed PR #{pr} has a rate-limit response with no valid creation-time cooldown basis"
+                    )
             except github.HostedPreflightDeadlineExceeded:
+                raise
+            except ControllerError:
                 raise
             except Exception:  # noqa: BLE001 - missing closed-history proof cannot retain an execution slot
                 if budget is not None:

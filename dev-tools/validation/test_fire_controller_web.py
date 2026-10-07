@@ -30,6 +30,9 @@ def public_row():
         "summary": "Finish the safe handoff. [private](/jobs/private-job)",
         "progress": "Public progress.",
         "blocker": "Waiting on the reviewed interface.",
+        "created_at": "2026-10-02T10:00:00Z",
+        "updated_at": "2026-10-03T10:00:00Z",
+        "last_activity_at": "2026-10-04T10:00:00Z",
         "checklist": [
             {"id": "c1", "text": "Confirm the contract", "done": True, "private": PRIVATE_SENTINEL},
             {"id": "c2", "text": "Resume after review [private](/jobs/private-job)", "done": False},
@@ -100,8 +103,11 @@ class FireControllerWebTest(unittest.TestCase):
         result = web.public_jobs([public_row()])
         self.assertEqual(set(result[0]), {
             "id", "name", "worker", "workstream_id", "title", "status", "primary", "summary", "progress",
-            "blocker", "checklist",
+            "blocker", "created_at", "updated_at", "last_activity_at", "checklist",
         })
+        self.assertEqual(result[0]["created_at"], "2026-10-02T10:00:00Z")
+        self.assertEqual(result[0]["updated_at"], "2026-10-03T10:00:00Z")
+        self.assertEqual(result[0]["last_activity_at"], "2026-10-04T10:00:00Z")
         self.assertEqual(set(result[0]["checklist"][0]), {"id", "text", "done"})
         self.assertTrue(result[0]["primary"])
         self.assertEqual(result[0]["status"], "blocked")
@@ -196,6 +202,11 @@ class FireControllerWebTest(unittest.TestCase):
         self.assertNotIn("<script>private()", page)
         self.assertIn("Latest checkpoint", page)
         self.assertIn("Latest update", page)
+        self.assertIn('<section class="job-brief"><h2>Private working brief</h2>', page)
+        self.assertIn('<div class="job-brief-body"><h1>Private instructions</h1>', page)
+        self.assertIn(".private-pages section.job-brief>h2{font-size:1.4rem}", page)
+        self.assertIn(".private-pages .job-brief-body{font-size:.95rem}", page)
+        self.assertIn(".private-pages .job-brief-body h1{font-size:1.15rem", page)
         self.assertIn("after-review", page)
         self.assertIn("/jobs/job-1/history", page)
 
@@ -413,8 +424,12 @@ class FireControllerWebTest(unittest.TestCase):
         self.assertIn(b'<time datetime="2026-10-03T00:00:00Z">3 Oct 2026 13:00 NZDT</time>', body)
         self.assertEqual(inbox.list_calls, [])
         self.assertIn(b"Open conversation", body)
-        self.assertIn(b"2 message(s)", body)
-        self.assertIn(b"1 unread incoming", body)
+        self.assertIn(b"2 messages", body)
+        self.assertIn(b"1 unread incoming message", body)
+        self.assertIn(b'conversation-card', body)
+        self.assertIn(b'class="conversation-meta"', body)
+        self.assertIn(b'class="conversation-open"', body)
+        self.assertIn(b"@media(max-width:760px)", body)
         status, _headers, body = web.private_route("/inbox/Build%20%26%20Tools?view=messages", None, inbox=inbox)
         self.assertEqual(status, 200)
         self.assertEqual(inbox.list_calls, [("Build & Tools", 50, 0)])
@@ -441,6 +456,32 @@ class FireControllerWebTest(unittest.TestCase):
         self.assertIn(b"PR: #2898", body)
         self.assertIn(b"Reply to", body)
         self.assertIn(b"Earlier messages", body)
+
+    def test_conversation_message_counts_use_singular_and_plural_labels(self):
+        conversation = {
+            "root_id": "message-1",
+            "message_count": 1,
+            "unread_count": 2,
+            "latest_message": {
+                "id": "message-2",
+                "author": "Overseer",
+                "recipient": "Gameplay",
+                "created_at": "2026-10-03T00:00:00Z",
+            },
+        }
+
+        page = web.render_inbox_conversations("Gameplay", [conversation], unread_count=2)
+
+        self.assertIn("2 unread incoming messages.", page)
+        self.assertIn("1 message</span>", page)
+        self.assertIn("2 unread incoming messages</span>", page)
+
+        conversation["message_count"] = 2
+        conversation["unread_count"] = 1
+        singular_page = web.render_inbox_conversations("Gameplay", [conversation], unread_count=1)
+        self.assertIn("1 unread incoming message.", singular_page)
+        self.assertIn("2 messages</span>", singular_page)
+        self.assertIn("1 unread incoming message</span>", singular_page)
 
     def test_private_conversation_pagination_labels_follow_chronological_order(self):
         first_page = [
@@ -475,7 +516,10 @@ class FireControllerWebTest(unittest.TestCase):
         self.assertIn("(1h 30m ago)", document)
         self.assertNotIn('datetime="2026-10-01T00:00:00Z"', document)
         self.assertIn('datetime="2026-07-01T00:00:00Z"', document)
-        missing = web.render_worker_history("Gameplay", [public_row()])
+        missing_job = public_row()
+        for field in ("created_at", "updated_at", "last_activity_at"):
+            missing_job.pop(field)
+        missing = web.render_worker_history("Gameplay", [missing_job])
         self.assertEqual(missing.count("Not recorded"), 2)
         self.assertNotIn("1970", missing)
         invalid = web._time_metadata('<invalid>', relative=True)

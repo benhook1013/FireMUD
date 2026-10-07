@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import nullcontext
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -1899,7 +1900,7 @@ class HostedEvidenceTests(unittest.TestCase):
         self.assertEqual(state.state, "rate_limited")
         self.assertNotEqual(state.state, "completed")
 
-    def test_wrapped_explicit_rate_limit_is_terminal_without_inventing_reset(self):
+    def test_wrapped_unknown_rate_limit_uses_one_hour_backoff_from_response_creation(self):
         trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
         body = (
             "<!-- This is an auto-generated reply by CodeRabbit -->\n"
@@ -1917,7 +1918,47 @@ class HostedEvidenceTests(unittest.TestCase):
         self.assertTrue(state.attributed)
         self.assertEqual(state.trigger_comment_id, 10)
         self.assertEqual(state.response_id, 11)
-        self.assertIsNone(state.cooldown_until)
+        self.assertEqual(state.cooldown_basis, "local_retry_backoff")
+        self.assertEqual(state.cooldown_until, "2026-09-23T01:02:00+00:00")
+        self.assertIn("local one-hour retry backoff", state.reason)
+
+        edited_reply = {**reply, "updatedAt": "2026-09-23T04:02:00Z"}
+        edited_state = hosted.trigger_state(REPO, PR, review_payload([trigger, edited_reply]), trigger_record())
+        self.assertEqual(edited_state.cooldown_until, state.cooldown_until)
+
+    def test_explicit_rate_limit_deadline_is_distinguished_from_local_backoff(self):
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        reply = comment(
+            11,
+            "coderabbitai[bot]",
+            "Review rate limited; next reviews available in 30 minutes",
+            "2026-09-23T00:02:00Z",
+        )
+
+        state = hosted.trigger_state(REPO, PR, review_payload([trigger, reply]), trigger_record())
+
+        self.assertEqual(state.state, "rate_limited")
+        self.assertEqual(state.cooldown_basis, "provider_reset")
+        self.assertEqual(state.cooldown_until, "2026-09-23T00:32:00+00:00")
+        self.assertIn("provider-stated", state.reason)
+
+    def test_rate_limit_cooldown_rejects_missing_malformed_naive_and_future_response_times(self):
+        now = datetime(2026, 9, 23, 1, 0, tzinfo=timezone.utc)
+        future = "2026-09-23T01:00:01Z"
+        for response_created_at in (None, "not-a-time", datetime(2026, 9, 23, 0, 0), future):
+            with self.subTest(response_created_at=response_created_at):
+                cooldown, basis = hosted.rate_limit_cooldown("Review rate limited", response_created_at, now=now)
+                self.assertIsNone(cooldown)
+                self.assertEqual(basis, "unknown")
+
+    def test_rate_limit_fallback_is_expired_at_inclusive_deadline(self):
+        created_at = "2026-09-23T00:00:00Z"
+        deadline = datetime(2026, 9, 23, 1, 0, tzinfo=timezone.utc)
+
+        cooldown, basis = hosted.rate_limit_cooldown("Review rate limited", created_at, now=deadline)
+
+        self.assertEqual(basis, "local_retry_backoff")
+        self.assertEqual(cooldown, deadline)
 
     def test_rate_limit_phrase_in_normal_finding_code_is_not_a_rate_limit_reply(self):
         trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
@@ -2564,6 +2605,23 @@ class HostedEvidenceTests(unittest.TestCase):
 
         self.assertEqual(state.state, "completed")
         self.assertEqual(state.response_id, 12)
+
+    def test_review_object_without_created_at_preserves_submitted_at_projection(self):
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        review = {
+            "databaseId": 12,
+            "author": {"login": "coderabbitai"},
+            "body": "**Actionable comments posted: 1**",
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-23T00:02:00Z",
+            "commit": {"oid": HEAD},
+        }
+
+        state = hosted.trigger_state(REPO, PR, review_payload([trigger], [review]), trigger_record())
+
+        self.assertEqual(state.state, "completed")
+        self.assertEqual(state.response_id, 12)
+        self.assertEqual(state.response_created_at, "2026-09-23T00:02:00Z")
 
     def test_direct_terminal_finished_reply_keeps_creation_time_duration(self):
         trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")

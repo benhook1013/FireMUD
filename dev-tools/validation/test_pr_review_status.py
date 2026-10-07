@@ -776,6 +776,54 @@ class StatusTest(unittest.TestCase):
         self.assertEqual(result["historical"]["classification"], "historical")
         self.assertNotEqual(result["historical"]["state"], result["state"])
 
+    def test_current_rate_limit_status_identifies_local_retry_backoff(self) -> None:
+        payload = github_payload()
+        payload["data"]["repository"]["pullRequest"]["comments"] = {
+            "nodes": [
+                {
+                    "databaseId": 10,
+                    "author": {"login": "maintainer"},
+                    "body": status.hosted.FULL_COMMAND,
+                    "createdAt": "2026-09-21T00:00:00Z",
+                    "url": "https://github.test/comments/10",
+                },
+                {
+                    "databaseId": 11,
+                    "author": {"login": "coderabbitai[bot]"},
+                    "body": "Review rate limited.",
+                    "createdAt": "2026-09-22T01:00:00Z",
+                    "updatedAt": "2026-09-25T01:00:00Z",
+                    "url": "https://github.test/comments/11",
+                },
+            ]
+        }
+        record = {
+            "schema_version": 1,
+            "status": "posted",
+            "repository": "owner/repo",
+            "pr_number": 2838,
+            "head_sha": HEAD,
+            "trigger": {
+                "id": 10,
+                "created_at": "2026-09-21T00:00:00Z",
+                "url": "https://github.test/comments/10",
+                "type": "full",
+                "command": "@coderabbitai full review",
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            current = Path(directory) / "trigger.json"
+            current.write_text(json.dumps(record), encoding="utf-8")
+            with (
+                patch.object(status.evidence, "git_common_dir", return_value=Path(directory)),
+                patch.object(status.hosted, "trigger_record_paths", return_value=[current]),
+            ):
+                result = status._trigger("owner/repo", 2838, payload, HEAD)
+        self.assertEqual(result["state"], "rate_limited", result)
+        self.assertEqual(result["cooldown_basis"], "local_retry_backoff")
+        self.assertEqual(result["cooldown_until"], "2026-09-22T02:00:00+00:00")
+        self.assertIn("local one-hour retry backoff", result["reason"])
+
     def test_current_posting_reservation_is_ambiguous_not_malformed(self) -> None:
         payload = github_payload()
         record = {

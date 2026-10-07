@@ -122,6 +122,7 @@ OPEN_ISSUE_CLAIM = re.compile(
 ARCHIVED = re.compile(r"^trigger-([1-9][0-9]*)\.json$")
 TIMEOUT_REASON = "bounded wait expired before a terminal CodeRabbit response"
 LATER_TRIGGER_AMBIGUITY_REASON = "a later or concurrent full-review trigger prevents attribution"
+UNKNOWN_RATE_LIMIT_BACKOFF = timedelta(seconds=3600)
 
 
 @dataclass(frozen=True)
@@ -142,6 +143,7 @@ class TriggerState:
     response_url: str | None
     cooldown_until: str | None
     reason: str
+    cooldown_basis: str | None = None
     trigger_command: str | None = None
     age_seconds: int | None = None
     manual_adjudication_required: bool = False
@@ -1411,6 +1413,45 @@ def _is_rate_limited_reply(body: str, cooldown: datetime | None) -> bool:
     )
 
 
+def rate_limit_cooldown(
+    body: str,
+    response_created_at: str | datetime | None,
+    *,
+    now: datetime | None = None,
+) -> tuple[datetime | None, str]:
+    """Return the provider deadline or bounded local fallback for a rate-limit reply.
+
+    The fallback is anchored to the immutable response creation time. Invalid,
+    missing, naive, or future timestamps stay unresolved so callers fail closed.
+    """
+
+    if isinstance(response_created_at, datetime):
+        if response_created_at.tzinfo is None or response_created_at.utcoffset() is None:
+            return None, "unknown"
+        created = response_created_at.astimezone(timezone.utc)
+    else:
+        try:
+            parsed = datetime.fromisoformat(response_created_at.replace("Z", "+00:00"))
+        except (AttributeError, TypeError, ValueError):
+            return None, "unknown"
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            return None, "unknown"
+        created = parsed.astimezone(timezone.utc)
+    reference = now or datetime.now(timezone.utc)
+    if reference.tzinfo is None or reference.utcoffset() is None:
+        return None, "unknown"
+    reference = reference.astimezone(timezone.utc)
+    if created is None or created > reference:
+        return None, "unknown"
+
+    provider_reset = _rate_limit(body, created)
+    if provider_reset is not None:
+        return provider_reset, "provider_reset"
+    if _is_rate_limited_reply(body, None):
+        return created + UNKNOWN_RATE_LIMIT_BACKOFF, "local_retry_backoff"
+    return None, "none"
+
+
 def _zero_finding_summary(
     payload: dict[str, Any],
     head: str,
@@ -2272,6 +2313,8 @@ def trigger_state(
     payload: dict[str, Any],
     record: dict[str, Any],
     current_record_path: str | Path | None = None,
+    *,
+    now: datetime | None = None,
 ) -> TriggerState:
     pr = payload["data"]["repository"]["pullRequest"]
     current_head = pr.get("headRefOid", "")
@@ -2528,8 +2571,17 @@ def trigger_state(
     incomplete_coverage = state == "failed_incomplete_coverage"
     if incomplete_coverage:
         state = "failed"
+    # Preserve submittedAt for GitHub review objects, which have no createdAt.
+    # A rate-limit cooldown itself may use only the immutable comment timestamp.
     response_at = response.get("createdAt") or response.get("submittedAt")
     response_id = immutable_database_id(response)
+    cooldown_basis = None
+    if state == "rate_limited":
+        cooldown, cooldown_basis = rate_limit_cooldown(
+            response.get("body") or "", response.get("createdAt"), now=now
+        )
+    else:
+        cooldown = None
     if state == "active" and response_id is None:
         return TriggerState(
             "unattributed",
@@ -2603,6 +2655,7 @@ def trigger_state(
             response_created_at=response_at,
             response_url=response.get("url"),
             cooldown_until=cooldown.isoformat() if cooldown else None,
+            cooldown_basis=cooldown_basis,
             reason="terminal response has no immutable numeric GitHub identity",
         )
     reason = {
@@ -2613,6 +2666,13 @@ def trigger_state(
     }[state]
     if incomplete_coverage:
         reason = "CodeRabbit finished after explicitly reporting incomplete file coverage"
+    if state == "rate_limited":
+        if cooldown_basis == "local_retry_backoff" and cooldown is not None:
+            reason = f"CodeRabbit rate limited; local one-hour retry backoff deadline is {cooldown.isoformat()}"
+        elif cooldown_basis == "provider_reset" and cooldown is not None:
+            reason = f"CodeRabbit rate limited; provider-stated next-review time is {cooldown.isoformat()}"
+        elif cooldown_basis == "unknown":
+            reason = "CodeRabbit rate limited; response creation time is unavailable or invalid, so cooldown remains unresolved"
     return TriggerState(
         state,
         True,
@@ -2623,6 +2683,7 @@ def trigger_state(
         response_url=response.get("url"),
         cooldown_until=cooldown.isoformat() if cooldown else None,
         reason=reason,
+        cooldown_basis=cooldown_basis,
         duration_seconds=elapsed if elapsed is not None and elapsed >= 0 else None,
     )
 

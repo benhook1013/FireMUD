@@ -14,6 +14,7 @@ from .context import worker_alias as _worker_alias
 
 PUBLIC_FIELDS = (
     "id", "name", "worker", "workstream_id", "title", "status", "primary", "summary", "progress", "blocker",
+    "created_at", "updated_at", "last_activity_at",
 )
 JOB_STATUSES = frozenset({"active", "parked", "blocked", "completed"})
 LANE_STATUSES = frozenset({"active", "blocked", "paused", "idle"})
@@ -369,6 +370,14 @@ def _private_document(title: str, content: str) -> str:
         '.private-pages .job-times{display:flex;flex-wrap:wrap;gap:.35rem 1.5rem;margin:.8rem 0}'
         '.private-pages section{margin-top:1.25rem;padding-top:1rem;border-top:1px solid var(--line,#b9b9b9)}'
         '.private-pages section>h2{margin:0 0 .75rem;font-size:1.2rem;letter-spacing:normal}'
+        '.private-pages section.job-brief>h2{font-size:1.4rem}'
+        '.private-pages .job-brief-body{font-size:.95rem}'
+        '.private-pages .job-brief-body h1{font-size:1.15rem;line-height:1.3;letter-spacing:normal}'
+        '.private-pages .job-brief-body h2{font-size:1.05rem;line-height:1.3}'
+        '.private-pages .job-brief-body h3{font-size:1rem;line-height:1.3}'
+        '.private-pages .job-brief-body h4{font-size:.95rem;line-height:1.3}'
+        '.private-pages .job-brief-body h5{font-size:.9rem;line-height:1.3}'
+        '.private-pages .job-brief-body h6{font-size:.85rem;line-height:1.3}'
         '.private-pages h3{margin:.75rem 0 .4rem;font-size:1rem}.private-pages p{margin:.5rem 0 .85rem}'
         '.private-pages .job-update,.private-pages .job-note{padding:1rem;margin:.75rem 0;'
         'border:1px solid var(--line,#b9b9b9);background:var(--surface,#f0f0f0)}'
@@ -392,6 +401,16 @@ def _private_document(title: str, content: str) -> str:
         '.private-pages .private-actions a:hover,.private-pages .job-links a:hover,.private-pages .job-history-paging a:hover{'
         'background:var(--surface-muted,#dedede);text-decoration:underline}'
         '.private-pages .private-list{list-style:none;padding:0;display:grid;gap:.75rem;margin:1.25rem 0}'
+        '.private-pages .conversation-list{gap:.5rem;margin:.75rem 0}'
+        '.private-pages .conversation-card{display:flex;align-items:center;justify-content:space-between;'
+        'gap:.5rem 1rem;padding:.65rem .8rem!important}'
+        '.private-pages .conversation-copy{min-width:0;flex:1}'
+        '.private-pages .conversation-card h2{margin:0;font-size:1rem;line-height:1.3}'
+        '.private-pages .conversation-meta{display:flex;flex-wrap:wrap;gap:.15rem .65rem;align-items:baseline;'
+        'margin:.2rem 0 0!important;color:var(--muted,#57636c);font-size:.85rem}'
+        '.private-pages .conversation-open{display:inline-flex;align-items:center;justify-content:center;'
+        'min-height:44px;padding:.45rem .75rem;border:1px solid var(--line,#b9b9b9);'
+        'background:var(--surface-muted,#dedede);font-size:.85rem;font-weight:650;text-decoration:none;white-space:nowrap}'
         '.private-pages .private-row{padding:1rem;border:1px solid var(--line,#b9b9b9);background:var(--surface,#f0f0f0)}'
         '.private-pages .private-row h2{margin:0 0 .5rem;font-size:1.15rem}'
         '.private-pages .private-list .job-private{margin:0;background:var(--surface,#f0f0f0)}'
@@ -399,6 +418,8 @@ def _private_document(title: str, content: str) -> str:
         'background:var(--surface,#f0f0f0);color:var(--muted,#57636c)}'
         '@media(max-width:760px){.private-pages .job-meta{align-items:flex-start}.private-pages .job-times{'
         'flex-direction:column}.private-pages .job-update-head{justify-content:flex-start}'
+        '.private-pages .conversation-card{align-items:flex-start;flex-direction:column}'
+        '.private-pages .conversation-open{max-width:100%;white-space:normal}'
         '.private-pages .private-actions a,.private-pages .job-links a{max-width:100%;overflow-wrap:anywhere}}</style>'
         '</head><body><main class="private-pages"><nav class="private-actions" aria-label="Local navigation">'
         '<a href="/">← Local status page</a></nav>'
@@ -489,7 +510,10 @@ def render_job(job, history=False) -> str:
         if section:
             content.append(f'<div class="job-{field}">{section}</div>')
     content.append(_render_checklist(job.get("checklist", [])))
-    content.append(f'<section><h2>Private working brief</h2>{_markdown(job.get("brief", ""))}</section>')
+    content.append(
+        f'<section class="job-brief"><h2>Private working brief</h2>'
+        f'<div class="job-brief-body">{_markdown(job.get("brief", ""))}</div></section>'
+    )
     checkpoint = job.get("latest_checkpoint")
     if isinstance(checkpoint, dict):
         content.append('<section><h2>Latest checkpoint</h2>')
@@ -703,7 +727,9 @@ def render_inbox_conversations(worker: str, conversations, *, offset: int = 0,
     base = f"/inbox/{quote(worker, safe='')}"
     raw_title = f"{worker} inbox"
     title = html.escape(raw_title, quote=True)
-    count = "" if unread_count is None else f'<p>{unread_count} unread incoming message(s).</p>'
+    count = "" if unread_count is None else (
+        f'<p>{unread_count} unread incoming {"message" if unread_count == 1 else "messages"}.</p>'
+    )
     entries = []
     for conversation in conversations:
         root_id = conversation["root_id"]
@@ -712,21 +738,28 @@ def render_inbox_conversations(worker: str, conversations, *, offset: int = 0,
             continue
         author = html.escape(str(message.get("author") or "Unspecified sender"), quote=True)
         recipient = html.escape(str(message.get("recipient") or "Unspecified recipient"), quote=True)
+        message_count = conversation["message_count"]
+        unread_message_count = conversation["unread_count"]
         entries.append(
-            '<li><article class="job-private">'
-            f'<h2>{author} → {recipient}</h2>'
-            f'<p><span class="job-badge">{conversation["message_count"]} message(s)</span> · '
-            f'<span class="job-badge">{conversation["unread_count"]} unread incoming</span></p>'
-            f'<p>Latest: {_time_metadata(message.get("created_at", "Message"))} · '
-            f'{_inbox_direction(worker, message)}</p><p class="job-links">'
-            f'<a href="{base}/thread/{quote(root_id, safe="")}">Open conversation</a></p></article></li>'
+            '<li class="conversation-entry"><article class="job-private conversation-card">'
+            f'<div class="conversation-copy"><h2>{author} → {recipient}</h2>'
+            '<p class="conversation-meta">'
+            f'<span>{message_count} {"message" if message_count == 1 else "messages"}</span>'
+            f'<span>{unread_message_count} unread incoming '
+            f'{"message" if unread_message_count == 1 else "messages"}</span>'
+            f'<span>{_inbox_direction(worker, message)}</span>'
+            f'<span>Latest {_time_metadata(message.get("created_at", "Message"))}</span>'
+            '</p></div>'
+            f'<a class="conversation-open" href="{base}/thread/{quote(root_id, safe="")}">Open conversation</a>'
+            '</article></li>'
         )
     rendered_entries = "".join(entries) if entries else '<li class="private-empty">No conversations on this page.</li>'
     content = (
         f'<article class="job-private"><h1>{title}</h1>{_inbox_views(worker)}{count}'
         '<p>Conversations are ordered by your latest incoming or outgoing message. '
         'Opening this list or a conversation does not mark messages seen or acknowledge them.</p>'
-        f'<ol class="private-list">{rendered_entries}</ol><nav class="job-history-paging" aria-label="Conversation pages">'
+        f'<ol class="private-list conversation-list">{rendered_entries}</ol>'
+        '<nav class="job-history-paging" aria-label="Conversation pages">'
     )
     if offset > 0:
         content += f'<a href="{base}?offset={max(0, offset - HISTORY_PAGE_SIZE)}">Newer conversations</a> '
@@ -746,7 +779,9 @@ def render_inbox(worker: str, messages, *, offset: int = 0, unread_count: int | 
         raise TypeError("inbox messages must be a list")
     raw_title = f"{worker} inbox"
     title = html.escape(raw_title, quote=True)
-    count = "" if unread_count is None else f'<p>{unread_count} unread incoming message(s).</p>'
+    count = "" if unread_count is None else (
+        f'<p>{unread_count} unread incoming {"message" if unread_count == 1 else "messages"}.</p>'
+    )
     entries = []
     for message in messages:
         if not isinstance(message, dict):
