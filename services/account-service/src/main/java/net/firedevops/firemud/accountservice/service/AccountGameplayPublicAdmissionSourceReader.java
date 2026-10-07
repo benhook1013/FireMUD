@@ -9,10 +9,14 @@ import net.firedevops.firemud.accountservice.dto.AccountGameplayTokenIdentityFen
 import net.firedevops.firemud.accountservice.dto.AccountGameplayTokenIdentityFence.TokenIdentity;
 import net.firedevops.firemud.accountservice.dto.AccountMembershipRoleSourceSnapshot;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementSnapshot;
+import net.firedevops.firemud.accountservice.entity.Account;
+import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
+import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.AuthorityScope;
 import net.firedevops.firemud.accountservice.repository.AccountDemoTenantEntitlementRepository;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayTokenIdentityFenceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.TenantProvenanceKind;
+import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -22,12 +26,13 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * <p>The caller must already own a writable Account transaction at REPEATABLE_READ or SERIALIZABLE
  * isolation. The membership reader supplies the first Account lock. This reader does not create a
  * transaction, write state, authenticate a caller or token, validate a signature or token registry,
- * establish World ACTIVE/lifecycle, routing, coordination, grant, or deadline evidence, decide
- * admission, or issue or commit an admission lease. Current SQL token-fence state is only one
- * captured source and is not complete token authority.
+ * establish Account safety restrictions, World ACTIVE, routing, coordination, grant, or deadline
+ * evidence, decide admission, or issue or commit an admission lease. Current SQL token-fence state
+ * and Account lifecycle are only captured sources, not complete token authority or admission.
  */
 public final class AccountGameplayPublicAdmissionSourceReader {
   private final AccountMembershipRoleSourceReader membershipSources;
+  private final AccountRepository accounts;
   private final AccountDemoTenantEntitlementRepository entitlements;
   private final AccountGameplayTokenIdentityFenceRepository tokenFences;
 
@@ -36,9 +41,11 @@ public final class AccountGameplayPublicAdmissionSourceReader {
       justification = "Injected Account owner sources are private transaction collaborators.")
   public AccountGameplayPublicAdmissionSourceReader(
       AccountMembershipRoleSourceReader membershipSources,
+      AccountRepository accounts,
       AccountDemoTenantEntitlementRepository entitlements,
       AccountGameplayTokenIdentityFenceRepository tokenFences) {
     this.membershipSources = Objects.requireNonNull(membershipSources);
+    this.accounts = Objects.requireNonNull(accounts);
     this.entitlements = Objects.requireNonNull(entitlements);
     this.tokenFences = Objects.requireNonNull(tokenFences);
   }
@@ -58,6 +65,12 @@ public final class AccountGameplayPublicAdmissionSourceReader {
     AccountMembershipRoleSourceSnapshot membership =
         membershipSources.readCurrent(accountId, tenantId);
     requireMembership(membership, accountId, tenantId, identity);
+    Account account =
+        accounts
+            .findByAccountUuid(accountId)
+            .orElseThrow(AccountGameplayPublicAdmissionSourceReader::accountSourceUnavailable);
+    AccountLifecycleState accountLifecycleState =
+        requireAccountIdentityAndActiveLifecycle(account, membership, accountId);
 
     DemoTenantEntitlementSnapshot evaluated = entitlements.readCurrent(tenantId);
     require(evaluated != null, "Current demo entitlement source is unavailable");
@@ -74,7 +87,40 @@ public final class AccountGameplayPublicAdmissionSourceReader {
             && tokenFence.state() == State.ACTIVE,
         "Exact Account SQL token identity is not active");
 
-    return new AccountGameplayPublicAdmissionSourceSnapshot(membership, current, tokenFence);
+    return new AccountGameplayPublicAdmissionSourceSnapshot(
+        membership, accountLifecycleState, current, tokenFence);
+  }
+
+  private static AccountLifecycleState requireAccountIdentityAndActiveLifecycle(
+      Account account, AccountMembershipRoleSourceSnapshot membership, UUID accountId) {
+    var member = membership.membership();
+    var accountSource = membership.issuerAccountSources().account();
+    require(
+        accountId.equals(account.getAccountUuid())
+            && account.getId() != null
+            && account.getId() > 0L
+            && account.getId() == member.accountRowId()
+            && Objects.equals(account.getId(), accountSource.accountSourceNumericId())
+            && account.getAccountUuidProvenance()
+                == AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT
+            && account.getAccountUuidProvenance() == member.accountIdentityProvenance()
+            && AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT
+                .name()
+                .equals(accountSource.accountUuidProvenance())
+            && account.getAccountUuidSourceNumericId() != null
+            && account.getAccountUuidSourceNumericId().equals(account.getId())
+            && account.getAccountUuidSourceNumericId() == member.accountSourceNumericId(),
+        "Current Account lifecycle source is unavailable or inconsistent");
+    AccountLifecycleState lifecycleState = account.getLifecycleState();
+    require(
+        lifecycleState == AccountLifecycleState.ACTIVE,
+        "Current Account lifecycle does not allow gameplay admission");
+    return lifecycleState;
+  }
+
+  private static IllegalStateException accountSourceUnavailable() {
+    return new IllegalStateException(
+        "Current Account lifecycle source is unavailable or inconsistent");
   }
 
   private static void requireMembership(

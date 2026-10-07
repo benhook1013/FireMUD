@@ -58,10 +58,15 @@ import net.firedevops.firemud.accountservice.dto.AccountGameplayTokenIdentityFen
 import net.firedevops.firemud.accountservice.dto.AccountGameplayTokenIdentityFence.TokenIdentity;
 import net.firedevops.firemud.accountservice.dto.AccountSecurityStateMutationRequest;
 import net.firedevops.firemud.accountservice.dto.CanonicalGameplayLoginRequest;
+import net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2;
+import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementRequest;
+import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementSnapshot;
 import net.firedevops.firemud.accountservice.dto.GameplayCredentialSourceContext;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge;
+import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
 import net.firedevops.firemud.accountservice.entity.AccountLoginAuthModes;
+import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthEvidenceBundleRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
@@ -69,6 +74,8 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRe
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.EventEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository.IssuerAccountSourceSnapshot;
+import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
+import net.firedevops.firemud.accountservice.repository.AccountDemoTenantEntitlementRepository;
 import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayCredentialRequestBinding;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayCredentialRequestBindingFixture;
@@ -82,9 +89,24 @@ import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegatio
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationResponseEnvelopeRepository.SealedCandidateObservation;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayTokenIdentityFenceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayTokenIdentityFenceRepository.TokenRevokedException;
+import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository;
+import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.TenantProvenanceKind;
+import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountSecurityStateOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountSecurityStateOperationRepository.Capture;
+import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantEntitlementOutboxRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantIdentityResolver;
+import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository;
+import net.firedevops.firemud.accountservice.repository.ApprovedLegacyTenantAssociationRepository;
+import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepository;
+import net.firedevops.firemud.accountservice.service.AccountCanonicalFirstJoinTerminalCoordinator;
+import net.firedevops.firemud.accountservice.service.AccountGameplayPublicAdmissionSourceReader;
+import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer;
+import net.firedevops.firemud.accountservice.service.AccountMembershipRoleSourceReader;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayCanonicalLoginOwner;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayCredentialRequestDigestKeySource;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayCredentialRequestDigestKeySource.CredentialDigestKey;
@@ -112,6 +134,8 @@ import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile.AccountSecurityCutoff;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationRegistryRecord.AccountAuthoritySnapshot;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
@@ -130,6 +154,7 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.DockerClientFactory;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -141,6 +166,7 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
       "FIREMUD_ACCOUNT_SIGNER_TEST_POSTGRES_URL";
   private static final String CALLER_WORKLOAD = "spiffe://firemud/ns/test/sa/game-session-service";
   private static final String ACCOUNT_ISSUER = "firemud-account-service";
+  private static final String GAME_DESIGN_NAMESPACE = "account-gameplay-admission-proof";
   private static final JsonMapper JSON = JsonMapper.builder().build();
 
   private static final PostgreSQLContainer<?> postgres =
@@ -1025,6 +1051,180 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
         .isEqualTo("PENDING");
   }
 
+  // Source-capture proof only; this does not claim authenticated admission or lease issuance.
+  @Test
+  void capturesFreshPlayerDemoSourcesBesideTheExactCommittedSqlTokenIdentity() throws Exception {
+    AdmissionSourceFixture fixture = newAdmissionSourceFixture();
+
+    var membership =
+        inRepeatableReadTransaction(
+            fixture.harness().context(),
+            () ->
+                fixture
+                    .membershipReader()
+                    .readCurrent(fixture.harness().accountId(), fixture.tenantId()));
+    assertThat(membership.membership().lifecycleState()).isEqualTo("ACTIVE");
+    assertThat(membership.membership().gameplayAdmissionAllowed()).isTrue();
+    assertThat(membership.roles().roles()).containsExactly("player");
+    assertThat(membership.membershipEvent().roles()).containsExactly("player");
+    assertThat(membership.tenantSource().sourceEvidence()).isEqualTo(fixture.tenantEvidence());
+    assertThat(membership.tenantSource().sourceEvidence().provenanceKind())
+        .isEqualTo("NEW_GAME_ROW");
+
+    var captured =
+        inRepeatableReadTransaction(
+            fixture.harness().context(),
+            () ->
+                fixture
+                    .admissionReader()
+                    .readCurrent(
+                        fixture.harness().accountId(), fixture.tenantId(), fixture.identity()));
+    assertThat(captured.membershipSource().membership()).isEqualTo(membership.membership());
+    assertThat(captured.accountLifecycleState()).isEqualTo(AccountLifecycleState.ACTIVE);
+    assertThat(captured.entitlementSource().entitlementKind()).isEqualTo("NON_PAID_DEMO");
+    assertThat(captured.entitlementSource().sourceEvidence()).isEqualTo(fixture.tenantEvidence());
+    assertThat(captured.entitlementSource().gameplayAvailable()).isTrue();
+    assertThat(captured.entitlementSource().allowNewGameplayBindings()).isTrue();
+    assertThat(captured.tokenIdentityFence().state()).isEqualTo(State.ACTIVE);
+    assertThat(captured.tokenIdentityFence().identity()).isEqualTo(fixture.identity());
+
+    Record sqlFence =
+        Objects.requireNonNull(
+            fixture
+                .harness()
+                .dsl()
+                .fetchOne(
+                    "SELECT account_uuid, operation_id, issuance_request_id, token_hash, "
+                        + "token_jti, not_before_epoch_second, token_generation, issuance_fence, "
+                        + "token_identity_fence, state "
+                        + "FROM account_gameplay_token_identity_fences WHERE operation_id = ?",
+                    fixture.identity().operationId()),
+            "the committed issuance must have an exact SQL token-fence row");
+    assertThat(sqlFence.get("account_uuid", UUID.class)).isEqualTo(fixture.identity().accountId());
+    assertThat(sqlFence.get("operation_id", UUID.class))
+        .isEqualTo(fixture.identity().operationId());
+    assertThat(sqlFence.get("issuance_request_id", UUID.class))
+        .isEqualTo(fixture.identity().issuanceRequestId());
+    assertThat(sqlFence.get("token_hash", String.class))
+        .isEqualTo(fixture.identity().tokenSha256());
+    assertThat(sqlFence.get("token_jti", UUID.class)).isEqualTo(fixture.identity().tokenJti());
+    assertThat(sqlFence.get("not_before_epoch_second", Long.class))
+        .isEqualTo(fixture.identity().notBeforeEpochSecond());
+    assertThat(sqlFence.get("token_generation", Long.class))
+        .isEqualTo(fixture.identity().tokenGeneration());
+    assertThat(sqlFence.get("issuance_fence", Long.class))
+        .isEqualTo(fixture.identity().issuanceFence());
+    assertThat(sqlFence.get("token_identity_fence", Long.class)).isEqualTo(1L);
+    assertThat(sqlFence.get("state", String.class)).isEqualTo("ACTIVE");
+  }
+
+  @Test
+  void publicAdmissionSourceCaptureRejectsDurablePendingTokenRevocation() throws Exception {
+    AdmissionSourceFixture fixture = newAdmissionSourceFixture();
+    UUID requestId = UUID.randomUUID();
+    String digest =
+        AccountGameplayTokenIdentityFenceRepository.revocationDigest(fixture.identity(), requestId);
+    var pending =
+        inTransaction(
+            fixture.harness().context(),
+            () ->
+                fixture.tokenFences().beginRevocationIntent(fixture.identity(), requestId, digest));
+    assertThat(pending.state()).isEqualTo(State.PENDING);
+    assertThat(pending.tokenIdentityFence()).isEqualTo(2L);
+
+    assertThatThrownBy(
+            () ->
+                inRepeatableReadTransaction(
+                    fixture.harness().context(),
+                    () ->
+                        fixture
+                            .admissionReader()
+                            .readCurrent(
+                                fixture.harness().accountId(),
+                                fixture.tenantId(),
+                                fixture.identity())))
+        .isInstanceOf(TokenRevokedException.class);
+  }
+
+  @Test
+  void membershipRoleSnapshotMustStillMatchItsCommittedCurrentEvent() throws Exception {
+    AdmissionSourceFixture fixture = newAdmissionSourceFixture();
+    inRepeatableReadTransaction(
+        fixture.harness().context(),
+        () -> {
+          var membership =
+              fixture
+                  .memberships()
+                  .findFreshMembershipForUpdate(fixture.harness().accountId(), fixture.tenantId())
+                  .orElseThrow();
+          fixture
+              .roles()
+              .replaceCanonical(
+                  membership,
+                  fixture.harness().accountId(),
+                  fixture.tenantId(),
+                  fixture.provenance(),
+                  membership.getMembershipVersion(),
+                  List.of("builder", "player"));
+          return null;
+        });
+
+    assertThatThrownBy(
+            () ->
+                inRepeatableReadTransaction(
+                    fixture.harness().context(),
+                    () ->
+                        fixture
+                            .admissionReader()
+                            .readCurrent(
+                                fixture.harness().accountId(),
+                                fixture.tenantId(),
+                                fixture.identity())))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Current Account membership/role SQL source is unavailable or inconsistent");
+  }
+
+  @Test
+  void publicAdmissionSourceCaptureRejectsARealEntitlementAuthorityAdvance() throws Exception {
+    AdmissionSourceFixture fixture = newAdmissionSourceFixture();
+    var changedEntitlement =
+        new DemoTenantEntitlementRequest(
+            UUID.randomUUID(),
+            fixture.tenantId(),
+            fixture.tenantEvidence().creationRequestId(),
+            fixture.tenantEvidence().requestDigest(),
+            fixture.entitlement().entitlementVersion(),
+            fixture.entitlement().tenantAuthorityGeneration(),
+            fixture.entitlement().tenantAuthoritySourceVersion(),
+            true,
+            true,
+            false,
+            true,
+            fixture.entitlement().quotas());
+    var committedChange =
+        inTransaction(
+            fixture.harness().context(),
+            () -> fixture.entitlements().provision(changedEntitlement, fixture.tenantEvidence()));
+    assertThat(committedChange.tenantAuthorityGeneration())
+        .isGreaterThan(fixture.entitlement().tenantAuthorityGeneration());
+    assertThat(committedChange.allowNewGameplayBindings()).isFalse();
+
+    assertThatThrownBy(
+            () ->
+                inRepeatableReadTransaction(
+                    fixture.harness().context(),
+                    () ->
+                        fixture
+                            .admissionReader()
+                            .readCurrent(
+                                fixture.harness().accountId(),
+                                fixture.tenantId(),
+                                fixture.identity())))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage(
+            "Current public demo entitlement or fresh Game Design source is unavailable or denied");
+  }
+
   @Test
   void racingAdmissionWaitsForAccountRevocationTransactionThenObservesPendingFence()
       throws Exception {
@@ -1144,6 +1344,199 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
       releaseIssuance.countDown();
       executor.shutdownNow();
     }
+  }
+
+  private AdmissionSourceFixture newAdmissionSourceFixture() throws Exception {
+    CommitHarness harness = newCommitHarness(CommitHook.NONE, false);
+    assertThat(harness.service().commitPendingCandidate(harness.pending().requestId()).outcome())
+        .isEqualTo(AccountGameplayDelegationIssuanceCommitService.Outcome.COMMITTED);
+    TokenIdentity identity = tokenFenceIdentity(harness);
+
+    DSLContext dsl = harness.dsl();
+    UUID tenantId = UUID.randomUUID();
+    FreshTenantCreationEvidence tenantEvidence = freshAdmissionTenantEvidence(tenantId);
+    VerifiedTenantProvenance provenance =
+        new VerifiedTenantProvenance(
+            null,
+            TenantProvenanceKind.FRESH_GAME_DESIGN,
+            tenantEvidence.operationId(),
+            tenantEvidence.evidenceDigest());
+    AccountAuthorityGenerationRepository generations =
+        new AccountAuthorityGenerationRepository(dsl);
+    AccountAuthorityOutboxRepository outbox = new AccountAuthorityOutboxRepository(dsl);
+    AccountAuthoritySourceEvidenceRepository sources = harness.sources();
+    FreshTenantIdentityAssociationRepository freshTenants =
+        new FreshTenantIdentityAssociationRepository(dsl, GAME_DESIGN_NAMESPACE);
+    AccountTenantEntitlementOutboxRepository billingOutbox =
+        new AccountTenantEntitlementOutboxRepository(dsl);
+    AccountTenantAuthorityEventRepository tenantAuthorityEvents =
+        new AccountTenantAuthorityEventRepository(
+            dsl, outbox, billingOutbox, freshTenants, generations);
+    AccountDemoTenantEntitlementRepository entitlements =
+        new AccountDemoTenantEntitlementRepository(
+            dsl, freshTenants, generations, billingOutbox, tenantAuthorityEvents);
+    AccountGameplayTokenIdentityFenceRepository tokenFences =
+        new AccountGameplayTokenIdentityFenceRepository(dsl);
+    AccountRepository accounts = new AccountRepository(dsl, sources);
+    AccountMembershipPairAuthorityRepository pairs =
+        new AccountMembershipPairAuthorityRepository(dsl);
+    AccountTenantMembershipRepository memberships =
+        new AccountTenantMembershipRepository(dsl, accounts, freshTenants, pairs);
+    AccountTenantMembershipRoleSnapshotRepository roles =
+        new AccountTenantMembershipRoleSnapshotRepository(dsl);
+
+    inTransaction(
+        harness.context(),
+        () -> {
+          freshTenants.importVerified(tenantEvidence);
+          sources.initializeIssuerIfAbsent(ACCOUNT_ISSUER);
+          generations.initializeTenantIfAbsent(tenantId);
+          generations.initialize(
+              AccountAuthorityGenerationRepository.AuthorityScope.membership(
+                  harness.accountId(), tenantId));
+          return null;
+        });
+    DemoTenantEntitlementRequest initialEntitlementRequest =
+        new DemoTenantEntitlementRequest(
+            UUID.randomUUID(),
+            tenantId,
+            tenantEvidence.creationRequestId(),
+            tenantEvidence.requestDigest(),
+            null,
+            null,
+            null,
+            true,
+            true,
+            true,
+            true,
+            new DemoTenantEntitlementRequest.Quotas(3L, 2L, 4096L));
+    DemoTenantEntitlementSnapshot entitlement =
+        inTransaction(
+            harness.context(),
+            () -> entitlements.provision(initialEntitlementRequest, tenantEvidence));
+
+    CanonicalJoinScopeV2 scope = canonicalAdmissionJoinScope(harness.accountId(), tenantId);
+    String requestId = UUID.randomUUID().toString();
+    String callerBinding = "admission-source-owner-" + UUID.randomUUID();
+    ApprovedLegacyTenantAssociationRepository legacyAssociations =
+        mock(ApprovedLegacyTenantAssociationRepository.class);
+    AccountTenantIdentityResolver tenantIdentityResolver =
+        new AccountTenantIdentityResolver(legacyAssociations, GAME_DESIGN_NAMESPACE);
+    AccountConnectScopeRepository connectScopes =
+        new AccountConnectScopeRepository(dsl, tenantIdentityResolver, freshTenants);
+    AccountJoinOperationRepository joinOperations =
+        new AccountJoinOperationRepository(dsl, connectScopes);
+    AccountMembershipAuthorityEventProducer membershipEvents =
+        new AccountMembershipAuthorityEventProducer(
+            joinOperations, accounts, pairs, memberships, roles, generations, outbox, sources);
+    AccountCanonicalFirstJoinTerminalCoordinator firstJoin =
+        new AccountCanonicalFirstJoinTerminalCoordinator(
+            accounts,
+            joinOperations,
+            memberships,
+            roles,
+            outbox,
+            pairs,
+            new AccountAuditOutboxRepository(dsl),
+            membershipEvents);
+    inTransaction(
+        harness.context(),
+        () -> {
+          long accountRowId =
+              Objects.requireNonNull(
+                  accounts.findByAccountUuid(harness.accountId()).orElseThrow().getId());
+          connectScopes.insertCanonical(accountRowId, scope, provenance);
+          joinOperations.insertCanonicalIntent(requestId, scope, callerBinding);
+          joinOperations.bindCanonicalPolicyEvidence(
+              requestId, scope, callerBinding, true, entitlement.entitlementVersion());
+          firstJoin.commitCanonicalFirstJoin(scope, requestId, callerBinding);
+          return null;
+        });
+
+    AccountMembershipRoleSourceReader membershipReader =
+        new AccountMembershipRoleSourceReader(
+            sources, generations, memberships, pairs, roles, outbox, tenantAuthorityEvents);
+    AccountGameplayPublicAdmissionSourceReader admissionReader =
+        new AccountGameplayPublicAdmissionSourceReader(
+            membershipReader, accounts, entitlements, tokenFences);
+    return new AdmissionSourceFixture(
+        harness,
+        tenantId,
+        tenantEvidence,
+        provenance,
+        membershipReader,
+        admissionReader,
+        entitlements,
+        entitlement,
+        tokenFences,
+        memberships,
+        roles,
+        identity);
+  }
+
+  private static FreshTenantCreationEvidence freshAdmissionTenantEvidence(UUID tenantId) {
+    UUID requestId = UUID.randomUUID();
+    UUID operationId = UUID.randomUUID();
+    String sourceTenantKey =
+        "admission-" + UUID.randomUUID().toString().replace("-", "").substring(0, 28);
+    String requestDigest =
+        GameTenantCreationDigest.requestDigest(
+            GAME_DESIGN_NAMESPACE,
+            requestId,
+            sourceTenantKey,
+            "Account admission source proof",
+            null);
+    long sourceGameRowId = UUID.randomUUID().getMostSignificantBits() & Long.MAX_VALUE;
+    if (sourceGameRowId == 0L) sourceGameRowId = 1L;
+    String provenanceKind = "NEW_GAME_ROW";
+    return new FreshTenantCreationEvidence(
+        1,
+        GAME_DESIGN_NAMESPACE,
+        requestId,
+        operationId,
+        requestDigest,
+        tenantId,
+        sourceGameRowId,
+        sourceTenantKey,
+        provenanceKind,
+        GameTenantCreationDigest.evidenceDigest(
+            GAME_DESIGN_NAMESPACE,
+            requestId,
+            operationId,
+            requestDigest,
+            tenantId,
+            sourceGameRowId,
+            sourceTenantKey,
+            provenanceKind));
+  }
+
+  private static CanonicalJoinScopeV2 canonicalAdmissionJoinScope(UUID accountId, UUID tenantId) {
+    long evaluatedAtEpochSecond = Instant.now().getEpochSecond();
+    String evaluatedAt = Instant.ofEpochSecond(evaluatedAtEpochSecond).toString();
+    String expiresAt = Instant.ofEpochSecond(evaluatedAtEpochSecond + 120L).toString();
+    return new CanonicalJoinScopeV2(
+        "admission-scope-" + UUID.randomUUID(),
+        accountId,
+        tenantId,
+        UUID.randomUUID(),
+        "tenant",
+        "world",
+        "production",
+        UUID.randomUUID(),
+        "SHARED",
+        UUID.randomUUID(),
+        7L,
+        3L,
+        evaluatedAt,
+        expiresAt);
+  }
+
+  private static <T> T inRepeatableReadTransaction(
+      TestContext context, java.util.function.Supplier<T> operation) {
+    TransactionTemplate transaction = new TransactionTemplate(context.manager());
+    transaction.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
+    transaction.setReadOnly(false);
+    return transaction.execute(status -> operation.get());
   }
 
   private static TokenIdentity tokenFenceIdentity(CommitHarness harness) {
@@ -2502,6 +2895,20 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
       AccountGameplayDelegationSigner signer,
       AccountGameplayCanonicalLoginOwner loginOwner,
       CanonicalGameplayLoginRequest loginRequest) {}
+
+  private record AdmissionSourceFixture(
+      CommitHarness harness,
+      UUID tenantId,
+      FreshTenantCreationEvidence tenantEvidence,
+      VerifiedTenantProvenance provenance,
+      AccountMembershipRoleSourceReader membershipReader,
+      AccountGameplayPublicAdmissionSourceReader admissionReader,
+      AccountDemoTenantEntitlementRepository entitlements,
+      DemoTenantEntitlementSnapshot entitlement,
+      AccountGameplayTokenIdentityFenceRepository tokenFences,
+      AccountTenantMembershipRepository memberships,
+      AccountTenantMembershipRoleSnapshotRepository roles,
+      TokenIdentity identity) {}
 
   private static final class TransactionHookManager implements PlatformTransactionManager {
     private final PlatformTransactionManager delegate;

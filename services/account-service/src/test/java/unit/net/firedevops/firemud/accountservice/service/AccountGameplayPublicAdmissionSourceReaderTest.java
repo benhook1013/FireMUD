@@ -21,7 +21,9 @@ import net.firedevops.firemud.accountservice.dto.AccountMembershipRoleSourceSnap
 import net.firedevops.firemud.accountservice.dto.AccountMembershipRoleSourceSnapshot.MembershipSource;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementSnapshot;
 import net.firedevops.firemud.accountservice.dto.TenantAuthorityEventV1Codec;
+import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
+import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.AuthorityScope;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.CompositeSnapshot;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.IssuanceFence;
@@ -36,6 +38,7 @@ import net.firedevops.firemud.accountservice.repository.AccountGameplayTokenIden
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.PairAuthority;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.TenantProvenanceKind;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance;
+import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository.RoleSnapshot;
 import net.firedevops.firemud.accountservice.service.AccountGameplayPublicAdmissionSourceReader;
 import net.firedevops.firemud.accountservice.service.AccountMembershipRoleSourceReader;
@@ -74,14 +77,58 @@ class AccountGameplayPublicAdmissionSourceReaderTest {
     AccountGameplayPublicAdmissionSourceSnapshot result = fixture.read();
 
     assertThat(result.membershipSource()).isSameAs(fixture.membership);
+    assertThat(result.accountLifecycleState()).isEqualTo(AccountLifecycleState.ACTIVE);
     assertThat(result.entitlementSource()).isEqualTo(fixture.entitlement);
     assertThat(result.tokenIdentityFence()).isEqualTo(fixture.activeFence);
-    var ordered = inOrder(fixture.memberships, fixture.entitlements, fixture.tokenFences);
+    var ordered =
+        inOrder(fixture.memberships, fixture.accounts, fixture.entitlements, fixture.tokenFences);
     ordered.verify(fixture.memberships).readCurrent(ACCOUNT, TENANT);
+    ordered.verify(fixture.accounts).findByAccountUuid(ACCOUNT);
     ordered.verify(fixture.entitlements).readCurrent(TENANT);
     ordered.verify(fixture.entitlements).revalidate(fixture.entitlement);
     ordered.verify(fixture.tokenFences).requireActiveForUpdate(fixture.identity);
-    verifyNoMoreInteractions(fixture.memberships, fixture.entitlements, fixture.tokenFences);
+    verifyNoMoreInteractions(
+        fixture.memberships, fixture.accounts, fixture.entitlements, fixture.tokenFences);
+  }
+
+  @Test
+  void nonActiveAccountLifecycleStatesDenyBeforeEntitlementOrTokenReads() {
+    for (AccountLifecycleState state :
+        List.of(
+            AccountLifecycleState.SECURITY_LOCKED,
+            AccountLifecycleState.DEACTIVATED_PENDING_DELETE,
+            AccountLifecycleState.DELETED)) {
+      Fixture fixture = new Fixture();
+      fixture.account.setLifecycleState(state);
+
+      assertThatThrownBy(fixture::read)
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Current Account lifecycle does not allow gameplay admission");
+      verifyNoInteractions(fixture.entitlements, fixture.tokenFences);
+    }
+  }
+
+  @Test
+  void missingOrMismatchedPersistedAccountIdentityAndProvenanceDeny() {
+    List<Consumer<Fixture>> changes =
+        List.of(
+            f -> when(f.accounts.findByAccountUuid(ACCOUNT)).thenReturn(Optional.empty()),
+            f -> f.account.setAccountUuid(UUID.randomUUID()),
+            f -> f.account.setId(99L),
+            f -> f.account.setAccountUuidProvenance(null),
+            f ->
+                f.account.setAccountUuidProvenance(
+                    AccountIdentityProvenance.ACCOUNT_DATABASE_INSERT),
+            f -> f.account.setAccountUuidSourceNumericId(99L),
+            f -> f.account.setAccountUuidSourceNumericId(null));
+
+    for (Consumer<Fixture> change : changes) {
+      Fixture fixture = new Fixture();
+      change.accept(fixture);
+
+      assertDenied(fixture);
+      verifyNoInteractions(fixture.entitlements, fixture.tokenFences);
+    }
   }
 
   @Test
@@ -191,7 +238,8 @@ class AccountGameplayPublicAdmissionSourceReaderTest {
       Fixture fixture = new Fixture();
       invalidTransaction.accept(fixture);
       assertDenied(fixture);
-      verifyNoInteractions(fixture.memberships, fixture.entitlements, fixture.tokenFences);
+      verifyNoInteractions(
+          fixture.memberships, fixture.accounts, fixture.entitlements, fixture.tokenFences);
       TransactionSynchronizationManager.setActualTransactionActive(true);
       TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
       TransactionSynchronizationManager.setCurrentTransactionIsolationLevel(
@@ -205,7 +253,8 @@ class AccountGameplayPublicAdmissionSourceReaderTest {
     assertThatThrownBy(
             () -> fixture.reader.readCurrent(UUID.randomUUID(), TENANT, fixture.identity))
         .isInstanceOf(IllegalArgumentException.class);
-    verifyNoInteractions(fixture.memberships, fixture.entitlements, fixture.tokenFences);
+    verifyNoInteractions(
+        fixture.memberships, fixture.accounts, fixture.entitlements, fixture.tokenFences);
   }
 
   @Test
@@ -279,12 +328,15 @@ class AccountGameplayPublicAdmissionSourceReaderTest {
   private static final class Fixture {
     final AccountMembershipRoleSourceReader memberships =
         mock(AccountMembershipRoleSourceReader.class);
+    final AccountRepository accounts = mock(AccountRepository.class);
     final AccountDemoTenantEntitlementRepository entitlements =
         mock(AccountDemoTenantEntitlementRepository.class);
     final AccountGameplayTokenIdentityFenceRepository tokenFences =
         mock(AccountGameplayTokenIdentityFenceRepository.class);
+    final Account account = account();
     final AccountGameplayPublicAdmissionSourceReader reader =
-        new AccountGameplayPublicAdmissionSourceReader(memberships, entitlements, tokenFences);
+        new AccountGameplayPublicAdmissionSourceReader(
+            memberships, accounts, entitlements, tokenFences);
     TokenIdentity identity =
         new TokenIdentity(
             ACCOUNT,
@@ -303,9 +355,19 @@ class AccountGameplayPublicAdmissionSourceReaderTest {
 
     Fixture() {
       when(memberships.readCurrent(ACCOUNT, TENANT)).thenReturn(membership);
+      when(accounts.findByAccountUuid(ACCOUNT)).thenReturn(Optional.of(account));
       when(entitlements.readCurrent(TENANT)).thenReturn(entitlement);
       when(entitlements.revalidate(entitlement)).thenReturn(entitlement);
       when(tokenFences.requireActiveForUpdate(identity)).thenReturn(activeFence);
+    }
+
+    private static Account account() {
+      Account account = new Account();
+      account.setId(4L);
+      account.setAccountUuid(ACCOUNT);
+      account.setAccountUuidProvenance(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
+      account.setAccountUuidSourceNumericId(4L);
+      return account;
     }
 
     AccountGameplayPublicAdmissionSourceSnapshot read() {
