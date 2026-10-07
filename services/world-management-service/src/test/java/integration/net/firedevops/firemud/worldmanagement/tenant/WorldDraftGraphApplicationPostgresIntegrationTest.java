@@ -37,6 +37,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
@@ -1870,7 +1871,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     PreparedLifecycleFixture fixture = materializedLifecycleFixture();
     var request =
         new WorldCanonicalInstanceActivation.Request(UUID.randomUUID(), fixture.preparing());
-    AtomicInteger checks = new AtomicInteger();
+    AtomicBoolean lossInjectedAfterOperationInsert = new AtomicBoolean();
     var service =
         canonicalActivationService(
             fixture,
@@ -1878,21 +1879,33 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
               assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
               return new WorldCanonicalInstanceActivationService.HeldActivationAuthority() {
                 public void requireHeld() {
-                  int count = checks.incrementAndGet();
-                  if (count == 4) {
-                    assertThat(TransactionSynchronizationManager.isActualTransactionActive())
-                        .isTrue();
-                    assertThat(
-                            Objects.requireNonNull(
-                                    dsl.fetchOne(
-                                        "SELECT count(*) FROM world_canonical_instance_activation_operation WHERE activation_request_id=?",
-                                        request.activationRequestId()))
-                                .get(0, Long.class))
-                        .isEqualTo(1L);
-                    assertThat(activationManifestCountForRequest(request.activationRequestId()))
-                        .isEqualTo(1L);
-                    throw new IllegalStateException("stipulated activation authority loss");
-                  }
+                  if (!TransactionSynchronizationManager.isActualTransactionActive()) return;
+                  long operationCount =
+                      Objects.requireNonNull(
+                              dsl.fetchOne(
+                                  "SELECT count(*) FROM world_canonical_instance_activation_operation WHERE activation_request_id=?",
+                                  request.activationRequestId()))
+                          .get(0, Long.class);
+                  long manifestCount =
+                      activationManifestCountForRequest(request.activationRequestId());
+                  if (operationCount != 1L || manifestCount != 1L) return;
+
+                  assertThat(TransactionSynchronizationManager.isActualTransactionActive())
+                      .isTrue();
+                  var lifecycleRow =
+                      dsl.fetchOne(
+                          "SELECT status, lifecycle_epoch, row_version FROM world_instance WHERE id=?",
+                          fixture.materialized().association().worldInstanceId());
+                  assertThat(lifecycleRow).isNotNull();
+                  assertThat(lifecycleRow.get("status", String.class)).isEqualTo("PREPARING");
+                  assertThat(lifecycleRow.get("lifecycle_epoch", Long.class))
+                      .isEqualTo(request.expectedLifecycleEpoch());
+                  assertThat(lifecycleRow.get("row_version", Long.class))
+                      .isEqualTo(request.expectedRowVersion());
+                  assertThat(operationCount).isEqualTo(1L);
+                  assertThat(manifestCount).isEqualTo(1L);
+                  lossInjectedAfterOperationInsert.set(true);
+                  throw new IllegalStateException("stipulated activation authority loss");
                 }
 
                 public void close() {}
@@ -1901,6 +1914,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
 
     assertThatThrownBy(() -> service.activate(request))
         .hasMessageContaining("stipulated activation authority loss");
+    assertThat(lossInjectedAfterOperationInsert).isTrue();
     var current = fixture.lifecycleRepository().read(fixture.readRequest()).orElseThrow();
     assertThat(current.lifecycleStatus()).isEqualTo("PREPARING");
     assertThat(current.lifecycleEpoch()).isEqualTo(fixture.preparing().lifecycleEpoch());
