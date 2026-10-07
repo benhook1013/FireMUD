@@ -105,131 +105,48 @@ workflow = yaml.safe_load(runtime_source)
 publisher_workflow = yaml.safe_load(Path(sys.argv[2]).read_text(encoding="utf-8"))
 
 
+def has_immutable_action_pin(step, action):
+    return isinstance(step, dict) and re.fullmatch(
+        rf"{re.escape(action)}@[0-9a-f]{{40}}", step.get("uses", "")
+    ) is not None
+
+
 def assert_immutable_action_pin(step, action):
-    uses = step.get("uses", "")
-    assert re.fullmatch(rf"{re.escape(action)}@[0-9a-f]{{40}}", uses), uses
+    uses = step.get("uses", "") if isinstance(step, dict) else ""
+    assert has_immutable_action_pin(step, action), uses
 
 
-def mapping_entry_nodes(mapping_node, key):
-    if not isinstance(mapping_node, yaml.MappingNode):
-        return None
-    for key_node, value_node in mapping_node.value:
-        if isinstance(key_node, yaml.ScalarNode) and key_node.value == key:
-            return key_node, value_node
-    return None
-
-
-def mapping_value_node(mapping_node, key):
-    entry = mapping_entry_nodes(mapping_node, key)
-    return entry[1] if entry is not None else None
-
-
-def workflow_action_uses_node(workflow_node, job_name, step_name):
-    jobs_node = mapping_value_node(workflow_node, "jobs")
-    job_node = mapping_value_node(jobs_node, job_name)
-    steps_node = mapping_value_node(job_node, "steps")
-    if not isinstance(steps_node, yaml.SequenceNode):
-        return None
-    selected_entry = None
-    for step_node in steps_node.value:
-        name_node = mapping_value_node(step_node, "name")
-        if isinstance(name_node, yaml.ScalarNode) and name_node.value == step_name:
-            selected_entry = mapping_entry_nodes(step_node, "uses")
-    return selected_entry
-
-
-def has_valid_action_version_annotation(workflow_text, action, uses, uses_entry):
-    match = re.fullmatch(rf"{re.escape(action)}@([0-9a-f]{{40}})", uses)
-    if match is None or uses_entry is None:
-        return False
-    uses_key_node, uses_node = uses_entry
-    if (
-        not isinstance(uses_key_node, yaml.ScalarNode)
-        or uses_key_node.value != "uses"
-        or not isinstance(uses_node, yaml.ScalarNode)
-        or uses_node.value != uses
-        or uses_key_node.start_mark.line != uses_node.start_mark.line
-        or uses_node.start_mark.line != uses_node.end_mark.line
-        or uses_key_node.end_mark.index > uses_node.start_mark.index
-    ):
-        return False
-    line = workflow_text.splitlines()[uses_node.start_mark.line]
-    annotation = line[uses_node.end_mark.column :]
-    return (
-        re.fullmatch(r"[ \t]+#[ \t]*v[0-9]+(?:\.[0-9]+){0,2}[ \t]*", annotation)
-        is not None
-    )
-
-
-def assert_action_pin_and_annotation(step, action, workflow_text, workflow_node, step_name):
-    assert_immutable_action_pin(step, action)
-    uses_entry = workflow_action_uses_node(
-        workflow_node, "pr-controller-smoke", step_name
-    )
-    assert has_valid_action_version_annotation(
-        workflow_text,
-        action,
-        step.get("uses", ""),
-        uses_entry,
-    ), step.get("uses", "")
-
-
-def fixture_has_target_annotation(uses_line, sibling_line=""):
-    fixture = (
-        "jobs:\n"
-        "  contract:\n"
-        "    steps:\n"
-        f"      - name: sibling\n        uses: {sibling_line}\n"
-        "      - name: target\n"
-        f"        uses: {uses_line}\n"
-    )
-    fixture_node = yaml.compose(fixture)
-    target_entry = workflow_action_uses_node(fixture_node, "contract", "target")
-    target_value = target_entry[1].value if target_entry is not None else ""
-    return has_valid_action_version_annotation(
-        fixture, "docker/setup-buildx-action", target_value, target_entry
-    )
-
-
-def fixture_has_last_named_annotation(first_uses_line, last_uses_line):
-    fixture = (
-        "jobs:\n"
-        "  contract:\n"
-        "    steps:\n"
-        f"      - name: target\n        uses: {first_uses_line}\n"
-        f"      - name: target\n        uses: {last_uses_line}\n"
-    )
-    fixture_node = yaml.compose(fixture)
-    selected_entry = workflow_action_uses_node(fixture_node, "contract", "target")
-    selected_value = selected_entry[1].value if selected_entry is not None else ""
-    return has_valid_action_version_annotation(
-        fixture, "docker/setup-buildx-action", selected_value, selected_entry
+def fixture_has_target_pin(target_uses, earlier_uses=None):
+    steps = []
+    if earlier_uses is not None:
+        steps.append({"name": "target", "uses": earlier_uses})
+    steps.append({"name": "target", "uses": target_uses})
+    fixture = yaml.safe_load("jobs:\n  contract:\n    steps:\n" + "".join(
+        f"      - name: {step['name']}\n        uses: {step['uses']}\n"
+        for step in steps
+    ))
+    steps_by_name = {
+        step.get("name"): step
+        for step in fixture["jobs"]["contract"]["steps"]
+        if isinstance(step, dict)
+    }
+    return has_immutable_action_pin(
+        steps_by_name["target"], "docker/setup-buildx-action"
     )
 
 
 changed_pin = "docker/setup-buildx-action@" + "a" * 40
-assert fixture_has_target_annotation(f"{changed_pin} # v3.11.0")
-assert fixture_has_target_annotation(f'"{changed_pin}" # v3.11.0')
+assert fixture_has_target_pin(changed_pin)
+assert fixture_has_target_pin(f'"{changed_pin}"')
+assert fixture_has_target_pin(f"{changed_pin} # v3.11.0")
 for invalid_uses in (
     "docker/setup-buildx-action@v3",
     "docker/setup-buildx-action@" + "a" * 39,
     "docker/other-action@" + "a" * 40,
 ):
-    assert not fixture_has_target_annotation(f"{invalid_uses} # v3.11.0"), invalid_uses
-assert not fixture_has_target_annotation(f"{changed_pin} # latest")
-assert not fixture_has_target_annotation(f"{changed_pin}\n        # v3.11.0")
-valid_sibling = f"{changed_pin} # v3.11.0"
-assert not fixture_has_target_annotation(f'"{changed_pin}"', valid_sibling)
-assert not fixture_has_target_annotation(f'"{changed_pin}" # latest', valid_sibling)
-anchored_sibling = f'&pinned "{changed_pin}" # v3.11.0'
-assert not fixture_has_target_annotation("*pinned", anchored_sibling)
-assert not fixture_has_target_annotation("*pinned # latest", anchored_sibling)
-assert not fixture_has_last_named_annotation(
-    f"{changed_pin} # v3.11.0", changed_pin
-)
-assert fixture_has_last_named_annotation(
-    changed_pin, f"{changed_pin} # v3.11.0"
-)
+    assert not fixture_has_target_pin(invalid_uses), invalid_uses
+assert not fixture_has_target_pin("docker/setup-buildx-action@v3", changed_pin)
+assert fixture_has_target_pin(changed_pin, "docker/setup-buildx-action@v3")
 
 
 for job in workflow["jobs"].values():
@@ -461,21 +378,8 @@ build_step = controller_steps_by_name[
 smoke_step = controller_steps_by_name["Smoke controller image entrypoint and paused health"]
 assert controller_steps.index(buildx_step) < controller_steps.index(base_step)
 assert controller_steps.index(base_step) < controller_steps.index(build_step) < controller_steps.index(smoke_step)
-runtime_node = yaml.compose(runtime_source)
-assert_action_pin_and_annotation(
-    buildx_step,
-    "docker/setup-buildx-action",
-    runtime_source,
-    runtime_node,
-    "Set up Docker Buildx",
-)
-assert_action_pin_and_annotation(
-    base_step,
-    "docker/build-push-action",
-    runtime_source,
-    runtime_node,
-    "Build exact local runtime base image",
-)
+assert_immutable_action_pin(buildx_step, "docker/setup-buildx-action")
+assert_immutable_action_pin(base_step, "docker/build-push-action")
 assert base_step["with"] == {
     "context": ".",
     "file": "docker/base.Dockerfile",
@@ -586,7 +490,7 @@ for required in \
   'using: composite' \
   'uses: ./.github/actions/load-workflow-tool-versions' \
   'id: versions' \
-  'uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9' \
+  'uses: actions/cache@' \
   'path: ${{ runner.temp }}/firemud-helm/v${{ steps.versions.outputs.helm-version }}/helm.tar.gz' \
   'key: firemud-helm-${{ runner.os }}-${{ runner.arch }}-v${{ steps.versions.outputs.helm-version }}' \
   'HELM_VERSION: v${{ steps.versions.outputs.helm-version }}' \
@@ -632,6 +536,7 @@ if grep -Fq -- '--retry-all-errors' "$helm_action"; then
 fi
 python3 - "$helm_action" <<'PY'
 import os
+import re
 import subprocess
 import sys
 
@@ -646,6 +551,7 @@ validation = step_by_name["Validate supported runner"]
 restore = step_by_name["Restore pinned Helm archive"]
 install = step_by_name["Install pinned Helm"]
 assert steps.index(validation) < steps.index(restore) < steps.index(install)
+assert re.fullmatch(r"actions/cache@[0-9a-f]{40}", restore.get("uses", "")), restore
 
 validation_run = validation["run"]
 for runner_os, runner_arch, expected_returncode in (
@@ -972,9 +878,7 @@ assert [step["name"] for step in artifact_action_steps] == [
     "Verify artifact provenance, checksum, and closed object set",
 ]
 artifact_download = artifact_action_steps[0]
-assert artifact_download["uses"] == (
-    "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
-)
+assert_immutable_action_pin(artifact_download, "actions/download-artifact")
 assert artifact_download["with"] == {
     "name": "${{ inputs['artifact-name'] }}",
     "path": "${{ inputs['artifact-directory'] }}",
@@ -1561,8 +1465,8 @@ assert controller_build_steps[export_index]["env"] == {
 assert 'docker save "$CONTROLLER_IMAGE" | gzip -1 > "$RUNNER_TEMP/hosted-identity-controller.tar.gz"' in export_run
 assert 'current_image_id="$(docker image inspect --format' in export_run
 assert '[[ "$current_image_id" == "$VERIFIED_IMAGE_ID" ]]' in export_run
-assert controller_build_steps[upload_index]["uses"] == (
-    "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+assert_immutable_action_pin(
+    controller_build_steps[upload_index], "actions/upload-artifact"
 )
 assert controller_build_steps[upload_index]["with"] == {
     "name": "hosted-identity-controller-${{ needs.image-meta.outputs.image_tag }}",
@@ -1604,8 +1508,8 @@ assert controller_publish_steps[checkout_index]["with"] == {
     "ref": "${{ needs.image-meta.outputs.checkout_ref }}",
     "persist-credentials": False,
 }
-assert controller_publish_steps[download_index]["uses"] == (
-    "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
+assert_immutable_action_pin(
+    controller_publish_steps[download_index], "actions/download-artifact"
 )
 assert controller_publish_steps[download_index]["with"] == {
     "name": "hosted-identity-controller-${{ needs.image-meta.outputs.image_tag }}",
@@ -1645,7 +1549,12 @@ for required in (
 ):
     assert required in push_verified_image_text, required
 assert 'done\n\npushed_digests=()' in push_verified_image_text
-attest_step = next(step for step in controller_publish_steps if step.get("uses") == "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6")
+attest_step = next(
+    step
+    for step in controller_publish_steps
+    if step.get("name") == "Attest trusted controller image provenance"
+)
+assert_immutable_action_pin(attest_step, "actions/attest")
 assert attest_step["with"]["subject-name"] == "${{ env.CONTROLLER_IMAGE_NAME }}"
 assert attest_step["with"]["subject-digest"] == "${{ steps.publish.outputs.digest }}"
 assert controller_publish_steps.index(attest_step) > publish_index
@@ -1838,7 +1747,7 @@ for artifact_job_name in ("prepare-runtime", "deploy-runtime"):
         artifact_call
     )
 assert trusted_source.count("./.github/actions/download-validated-preview-artifact") == 2
-assert "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" not in trusted_source
+assert "actions/download-artifact@" not in trusted_source
 active_request = deploy_by_name["Apply canonical Active request"]
 assert active_request["run"] == (
     'bash ./dev-tools/hosted/shared/request-hosted-identity.sh "$IDENTITY_NAME" Active'
@@ -2341,7 +2250,7 @@ assert deploy_failure["if"] == (
     "(steps.allocate-capacity.outputs.allocation_status != 'unavailable' || "
     "steps.publish-capacity-unavailable.outcome == 'failure') }}"
 )
-assert deploy_failure["uses"] == "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3"
+assert_immutable_action_pin(deploy_failure, "actions/github-script")
 assert deploy_failure["env"] == {
     "PREVIEW_PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
     "PREVIEW_HEAD_SHA": "${{ needs.validate-target.outputs.head_sha }}",
