@@ -7979,9 +7979,11 @@ class ControllerTests(unittest.TestCase):
 
         with patch.object(controller.github, "pull_request", wraps=original) as pull_request:
             for reason in (None, "", " \t "):
-                with self.subTest(reason=reason):
-                    with self.assertRaisesRegex(ControllerError, "--allow-removal requires a nonblank --reason"):
-                        controller.set_stack([2], allow_removal=True, reason=reason)
+                with (
+                    self.subTest(reason=reason),
+                    self.assertRaisesRegex(ControllerError, "--allow-removal requires a nonblank --reason"),
+                ):
+                    controller.set_stack([2], allow_removal=True, reason=reason)
             with self.assertRaisesRegex(ControllerError, "--reason requires --allow-removal"):
                 controller.set_stack([2], reason="obsolete PR")
             pull_request.assert_not_called()
@@ -8017,7 +8019,7 @@ class ControllerTests(unittest.TestCase):
                 original = controller.github.pull_request
                 changed = False
 
-                def add_concurrent_member(number):
+                def add_concurrent_member(number, controller=controller, original=original):
                     nonlocal changed
                     if not changed:
                         changed = True
@@ -8029,9 +8031,11 @@ class ControllerTests(unittest.TestCase):
                         )
                     return original(number)
 
-                with patch.object(controller.github, "pull_request", side_effect=add_concurrent_member):
-                    with self.assertRaisesRegex(ControllerError, "stack changed during validation"):
-                        controller.set_stack([2], allow_removal=True, reason="owner authorized removing PR 1")
+                with (
+                    patch.object(controller.github, "pull_request", side_effect=add_concurrent_member),
+                    self.assertRaisesRegex(ControllerError, "stack changed during validation"),
+                ):
+                    controller.set_stack([2], allow_removal=True, reason="owner authorized removing PR 1")
 
                 self.assertEqual(controller.show_stack()["ordered_prs"], [1, 2, 3])
 
@@ -8045,6 +8049,7 @@ class ControllerTests(unittest.TestCase):
             result, exit_status = _dispatch(args)
 
         self.assertEqual(exit_status, 0)
+        self.assertIs(result, controller.set_stack.return_value)
         controller.set_stack.assert_called_once_with(
             [1, 2], allow_removal=True, reason="owner authorized removal",
         )
@@ -8075,7 +8080,7 @@ class ControllerTests(unittest.TestCase):
                 controller.set_stack([1, 2])
                 args = _parser().parse_args(["stack", "set", "2", "1"])
 
-                def construct_controller():
+                def construct_controller(controller=controller):
                     controller.store.update(lambda current: dataclasses.replace(current, ordered_prs=(2, 1)))
                     return controller
 
@@ -8126,9 +8131,9 @@ class ControllerTests(unittest.TestCase):
                         "pr_review.cli.github.repository_metadata",
                         side_effect=AssertionError("repository metadata must not be requested"),
                     ) as repository_metadata,
+                    self.assertRaisesRegex(ControllerError, expected_message),
                 ):
-                    with self.assertRaisesRegex(ControllerError, expected_message):
-                        _dispatch(args)
+                    _dispatch(args)
 
                 repository_metadata.assert_not_called()
                 self.assertEqual(store.load().ordered_prs, (1, 2))
