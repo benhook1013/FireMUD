@@ -1,5 +1,6 @@
 package net.firedevops.firemud.accountservice.service.session;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationResponseEnvelopeRepository;
@@ -49,6 +50,10 @@ public final class AccountGameplayDelegationResponseRecoveryOwner {
    * Session boundary; this owner does not authenticate a UUID or trust caller-supplied workload
    * text as proof of mTLS.
    */
+  @SuppressFBWarnings(
+      value = "RCN_REDUNDANT_NULLCHECK_OF_NONNULL_VALUE",
+      justification =
+          "Keep the explicit fail-closed AUTH_UNAVAILABLE outcome if the activation owner ever violates its non-null result contract.")
   public RecoveredCredential recoverInitialLoginResponse(
       UUID requestId, UUID expectedAccountId, CallerIdentity caller) {
     requireRequest(requestId, expectedAccountId, caller);

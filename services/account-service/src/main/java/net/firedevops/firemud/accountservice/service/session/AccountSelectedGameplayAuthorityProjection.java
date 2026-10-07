@@ -138,7 +138,7 @@ public final class AccountSelectedGameplayAuthorityProjection {
           throw invalid();
       }
       return new AccountSelectedGameplayAuthorityProjection(fields);
-    } catch (Exception failure) {
+    } catch (java.nio.charset.CharacterCodingException | RuntimeException failure) {
       throw invalid();
     }
   }

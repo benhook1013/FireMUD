@@ -26,6 +26,7 @@ import java.util.Base64;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
@@ -35,16 +36,11 @@ import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementEventV1Cod
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementRequest;
 import net.firedevops.firemud.accountservice.dto.TenantAuthorityEventV1Codec;
 import net.firedevops.firemud.accountservice.entity.Account;
-import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
 import net.firedevops.firemud.accountservice.repository.AccountAuthEvidenceBundleRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
-import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.AuthorityScope;
-import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.IssuanceFence;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
-import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository.CurrentSourceEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository.IssuerAccountSourceSnapshot;
-import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository.SourceCheckpoint;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository.PendingIntent;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationResponseEnvelopeRepository;
@@ -66,7 +62,6 @@ import net.firedevops.firemud.accountservice.service.session.AccountGameplayDele
 import net.firedevops.firemud.accountservice.service.session.AccountResponseEnvelopeCryptography;
 import net.firedevops.firemud.accountservice.service.session.AccountResponseEnvelopeKeyring;
 import net.firedevops.firemud.accountservice.service.session.AccountSelectedGameplayAuthorityProjection;
-import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec.AccountSecurityCutoff;
 import net.firedevops.firemud.common.account.authority.AccountSecurityStateAuthorityEventV1Codec;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
@@ -979,17 +974,21 @@ class AccountGameplayDelegationRedisIntegrationTest {
       assertThat(committedAfterRetry.registryAbsoluteExpiryMillis())
           .isEqualTo(originalRegistryDeadline);
       assertThat(
-              dsl.fetchOne(
-                      "SELECT count(*) AS envelope_count FROM "
-                          + "account_gameplay_delegation_response_envelopes WHERE request_id = ?",
-                      requestId)
+              Objects.requireNonNull(
+                      dsl.fetchOne(
+                          "SELECT count(*) AS envelope_count FROM "
+                              + "account_gameplay_delegation_response_envelopes WHERE request_id = ?",
+                          requestId),
+                      "response envelope count query must return a row")
                   .get("envelope_count", Long.class))
           .isEqualTo(1L);
       byte[] storedEnvelope =
-          dsl.fetchOne(
-                  "SELECT envelope_bytes FROM account_gameplay_delegation_response_envelopes "
-                      + "WHERE request_id = ?",
-                  requestId)
+          Objects.requireNonNull(
+                  dsl.fetchOne(
+                      "SELECT envelope_bytes FROM account_gameplay_delegation_response_envelopes "
+                          + "WHERE request_id = ?",
+                      requestId),
+                  "stored response envelope query must return a row")
               .get("envelope_bytes", byte[].class);
       assertThat(containsSequence(storedEnvelope, originalCredentialBytes)).isFalse();
       assertThat(committedAfterRetry.toString()).doesNotContain("eyJ");
@@ -1324,41 +1323,6 @@ class AccountGameplayDelegationRedisIntegrationTest {
     String issuerStream =
         "account:auth-authority:v1:issuer/" + GameSessionAccountDelegationProfile.ISSUER;
     String accountStream = "account:auth-authority:v1:account/" + accountId;
-    IssuanceFence fence = new IssuanceFence(accountId, accountGeneration, accountGeneration);
-    CurrentSourceEvidence issuer =
-        new CurrentSourceEvidence(
-            AuthorityScope.issuer(GameSessionAccountDelegationProfile.ISSUER),
-            issuerGeneration,
-            issuerGeneration,
-            null,
-            checkpoint(issuerStream, issuerGeneration, issuerEventMarker),
-            Optional.empty(),
-            "ISSUER_SCOPE_INSERT",
-            null,
-            null,
-            1L,
-            null);
-    Optional<AccountSecurityCutoff> cutoff =
-        accountGeneration == 1L
-            ? Optional.empty()
-            : Optional.of(
-                new AccountSecurityCutoff(
-                    Long.toString(accountGeneration),
-                    accountStream,
-                    Long.toString(accountGeneration - 1L)));
-    CurrentSourceEvidence account =
-        new CurrentSourceEvidence(
-            AuthorityScope.account(accountId),
-            accountGeneration,
-            accountGeneration,
-            fence,
-            checkpoint(accountStream, accountGeneration, accountEventMarker),
-            cutoff,
-            "ACCOUNT_REPOSITORY_INSERT",
-            42L,
-            AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT.name(),
-            2L,
-            2L);
     String event = null;
     if (accountGeneration > 1) {
       String generation = Long.toString(accountGeneration);
@@ -1471,23 +1435,6 @@ class AccountGameplayDelegationRedisIntegrationTest {
     };
   }
 
-  private static SourceCheckpoint checkpoint(String stream, long generation, String marker) {
-    long sequence = generation - 1L;
-    if (sequence == 0L) {
-      return new SourceCheckpoint(stream, 0L, Optional.empty(), Optional.empty());
-    }
-    String digestSuffix = marker.contains("conflict") ? "b" : "a";
-    return new SourceCheckpoint(
-        stream,
-        sequence,
-        Optional.of("event-" + marker),
-        Optional.of("sha256:" + digestSuffix.repeat(64)));
-  }
-
-  private static PendingFixture pendingFixture(UUID accountId) throws Exception {
-    return pendingFixture(accountId, null);
-  }
-
   private static PendingFixture pendingFixture(UUID accountId, UUID tenantId) throws Exception {
     long issuedAt = Instant.now().getEpochSecond();
     long expiresAt = Math.addExact(issuedAt, 180L);
@@ -1561,11 +1508,6 @@ class AccountGameplayDelegationRedisIntegrationTest {
             issuedAt,
             REGISTRY_BYTES)
         .toCanonicalJsonBytes(REGISTRY_BYTES);
-  }
-
-  private static String compactToken(UUID accountId, UUID tokenJti, long issuedAt, long expiresAt)
-      throws Exception {
-    return compactToken(accountId, tokenJti, issuedAt, expiresAt, null);
   }
 
   private static String compactToken(

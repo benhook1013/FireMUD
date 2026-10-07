@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.net.URI;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -199,9 +200,11 @@ class AccountAuthEvidenceBundlePersistenceIntegrationTest {
                     .containsEntry("outboxSequence", "0")
                     .doesNotContainKeys("sourceEventId", "sourceEventDigest"));
     Long bundleCount =
-        dsl.fetchOne(
-                "SELECT count(*) AS bundle_count "
-                    + "FROM account_gameplay_delegation_auth_evidence_bundles")
+        Objects.requireNonNull(
+                dsl.fetchOne(
+                    "SELECT count(*) AS bundle_count "
+                        + "FROM account_gameplay_delegation_auth_evidence_bundles"),
+                "bundle count query must return a row")
             .get("bundle_count", Long.class);
     assertThat(bundleCount).isEqualTo(2L);
 
@@ -223,10 +226,12 @@ class AccountAuthEvidenceBundlePersistenceIntegrationTest {
             () -> inTransaction(context, () -> bundles.captureAndPersist(pending.requestId())))
         .isInstanceOf(AccountAuthEvidenceBundleRepository.OwnerEvidenceUnavailableException.class);
     String storedCanonicalDigest =
-        dsl.fetchOne(
-                "SELECT canonical_sha256 FROM "
-                    + "account_gameplay_delegation_auth_evidence_bundles WHERE operation_id = ?",
-                pending.operationId())
+        Objects.requireNonNull(
+                dsl.fetchOne(
+                    "SELECT canonical_sha256 FROM "
+                        + "account_gameplay_delegation_auth_evidence_bundles WHERE operation_id = ?",
+                    pending.operationId()),
+                "stored bundle digest query must return a row")
             .get("canonical_sha256", String.class);
     assertThat(storedCanonicalDigest).isEqualTo(first.canonicalSha256());
   }

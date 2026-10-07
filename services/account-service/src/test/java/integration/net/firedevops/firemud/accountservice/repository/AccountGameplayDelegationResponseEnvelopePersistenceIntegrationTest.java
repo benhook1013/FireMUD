@@ -13,6 +13,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Base64;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -194,30 +195,38 @@ class AccountGameplayDelegationResponseEnvelopePersistenceIntegrationTest {
         .isEqualTo(Math.multiplyExact(pending.expiresAtEpochSecond(), 1_000L));
     assertThat(first.toString()).doesNotContain(compactJwt);
     assertThat(
-            dsl.fetchOne(
-                    "SELECT count(*) AS response_count "
-                        + "FROM account_gameplay_delegation_response_envelopes")
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT count(*) AS response_count "
+                            + "FROM account_gameplay_delegation_response_envelopes"),
+                    "response count query must return a row")
                 .get("response_count", Long.class))
         .isEqualTo(1L);
     assertThat(
-            dsl.fetchOne(
-                    "SELECT count(*) AS bundle_count "
-                        + "FROM account_gameplay_delegation_auth_evidence_bundles")
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT count(*) AS bundle_count "
+                            + "FROM account_gameplay_delegation_auth_evidence_bundles"),
+                    "bundle count query must return a row")
                 .get("bundle_count", Long.class))
         .isEqualTo(1L);
     byte[] storedEnvelope =
-        dsl.fetchOne(
-                "SELECT envelope_bytes FROM account_gameplay_delegation_response_envelopes "
-                    + "WHERE operation_id = ?",
-                pending.operationId())
+        Objects.requireNonNull(
+                dsl.fetchOne(
+                    "SELECT envelope_bytes FROM account_gameplay_delegation_response_envelopes "
+                        + "WHERE operation_id = ?",
+                    pending.operationId()),
+                "stored response envelope query must return a row")
             .get("envelope_bytes", byte[].class);
     assertThat(new String(storedEnvelope, StandardCharsets.ISO_8859_1)).doesNotContain(compactJwt);
 
     byte[] boundMetadata =
-        dsl.fetchOne(
-                "SELECT pending_registry_candidate_bytes FROM "
-                    + "account_gameplay_delegation_issuance_operations WHERE request_id = ?",
-                pending.requestId())
+        Objects.requireNonNull(
+                dsl.fetchOne(
+                    "SELECT pending_registry_candidate_bytes FROM "
+                        + "account_gameplay_delegation_issuance_operations WHERE request_id = ?",
+                    pending.requestId()),
+                "bound candidate query must return a row")
             .get("pending_registry_candidate_bytes", byte[].class);
     assertThat(new String(boundMetadata, StandardCharsets.ISO_8859_1)).doesNotContain(compactJwt);
 
@@ -240,10 +249,12 @@ class AccountGameplayDelegationResponseEnvelopePersistenceIntegrationTest {
                     pending.operationId()))
         .isInstanceOf(DataAccessException.class);
     assertThat(
-            dsl.fetchOne(
-                    "SELECT envelope_sha256 FROM account_gameplay_delegation_response_envelopes "
-                        + "WHERE operation_id = ?",
-                    pending.operationId())
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT envelope_sha256 FROM "
+                            + "account_gameplay_delegation_response_envelopes WHERE operation_id = ?",
+                        pending.operationId()),
+                    "response digest query must return a row")
                 .get("envelope_sha256", String.class))
         .isEqualTo(first.envelopeSha256());
 
@@ -290,9 +301,11 @@ class AccountGameplayDelegationResponseEnvelopePersistenceIntegrationTest {
                             secondPending.requestId(), secondCaller, secondJwt)))
         .isInstanceOf(AccountResponseEnvelopeKeyring.KeyUnavailableException.class);
     assertThat(
-            dsl.fetchOne(
-                    "SELECT count(*) AS bundle_count "
-                        + "FROM account_gameplay_delegation_auth_evidence_bundles")
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT count(*) AS bundle_count "
+                            + "FROM account_gameplay_delegation_auth_evidence_bundles"),
+                    "bundle count query must return a row")
                 .get("bundle_count", Long.class))
         .isEqualTo(1L);
 
@@ -328,9 +341,11 @@ class AccountGameplayDelegationResponseEnvelopePersistenceIntegrationTest {
       stopConcurrentProofWorkers(concurrentRetries);
     }
     assertThat(
-            dsl.fetchOne(
-                    "SELECT count(*) AS response_count "
-                        + "FROM account_gameplay_delegation_response_envelopes")
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT count(*) AS response_count "
+                            + "FROM account_gameplay_delegation_response_envelopes"),
+                    "response count query must return a row")
                 .get("response_count", Long.class))
         .isEqualTo(2L);
 
@@ -363,9 +378,11 @@ class AccountGameplayDelegationResponseEnvelopePersistenceIntegrationTest {
             AccountGameplayDelegationResponseEnvelopeRepository.ResponseRecoveryExpiredException
                 .class);
     assertThat(
-            dsl.fetchOne(
-                    "SELECT count(*) AS response_count "
-                        + "FROM account_gameplay_delegation_response_envelopes")
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT count(*) AS response_count "
+                            + "FROM account_gameplay_delegation_response_envelopes"),
+                    "response count query must return a row")
                 .get("response_count", Long.class))
         .isEqualTo(2L);
   }

@@ -26,6 +26,7 @@ import java.time.Instant;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.UUID;
@@ -92,6 +93,7 @@ class AccountGameplayDelegationResponseRecoveryPersistenceIntegrationTest {
   private static final String ACCOUNT_ISSUER = "firemud-account-service";
   private static final PostgreSQLContainer<?> postgres =
       new PostgreSQLContainer<>("postgres:16-alpine");
+  private static final SecureRandom RESPONSE_KEY_RANDOM = new SecureRandom();
 
   private static String jdbcUrl;
   private static String jdbcUsername;
@@ -180,10 +182,12 @@ class AccountGameplayDelegationResponseRecoveryPersistenceIntegrationTest {
     assertThat(committed.operationId()).isEqualTo(intent.operationId());
     assertThat(committed.proofSha256()).matches("[0-9a-f]{64}");
     byte[] candidateBeforeRecovery =
-        dsl.fetchOne(
-                "SELECT pending_registry_candidate_bytes FROM "
-                    + "account_gameplay_delegation_issuance_operations WHERE request_id = ?",
-                intent.requestId())
+        Objects.requireNonNull(
+                dsl.fetchOne(
+                    "SELECT pending_registry_candidate_bytes FROM "
+                        + "account_gameplay_delegation_issuance_operations WHERE request_id = ?",
+                    intent.requestId()),
+                "pending candidate query must return a row")
             .get("pending_registry_candidate_bytes", byte[].class);
 
     AccountGameplayDelegationCommittedIssuanceOwner committedOwner =
@@ -232,17 +236,21 @@ class AccountGameplayDelegationResponseRecoveryPersistenceIntegrationTest {
     assertThat(operationAfterRecovery.get("pending_registry_candidate_bytes", byte[].class))
         .containsExactly(candidateBeforeRecovery);
     assertThat(
-            dsl.fetchOne(
-                    "SELECT count(*) AS envelope_count "
-                        + "FROM account_gameplay_delegation_response_envelopes WHERE request_id = ?",
-                    intent.requestId())
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT count(*) AS envelope_count "
+                            + "FROM account_gameplay_delegation_response_envelopes WHERE request_id = ?",
+                        intent.requestId()),
+                    "response envelope count query must return a row")
                 .get("envelope_count", Long.class))
         .isEqualTo(1L);
     byte[] storedEnvelope =
-        dsl.fetchOne(
-                "SELECT envelope_bytes FROM account_gameplay_delegation_response_envelopes "
-                    + "WHERE request_id = ?",
-                intent.requestId())
+        Objects.requireNonNull(
+                dsl.fetchOne(
+                    "SELECT envelope_bytes FROM account_gameplay_delegation_response_envelopes "
+                        + "WHERE request_id = ?",
+                    intent.requestId()),
+                "stored response envelope query must return a row")
             .get("envelope_bytes", byte[].class);
     assertThat(containsByteSequence(storedEnvelope, first.compactJwtBytes())).isFalse();
     assertThat(redis.activeRecord()).contains("\"state\":\"active\"");
@@ -337,7 +345,7 @@ class AccountGameplayDelegationResponseRecoveryPersistenceIntegrationTest {
 
   private static void writeResponseKeyring(Path path) throws Exception {
     byte[] key = new byte[32];
-    new SecureRandom().nextBytes(key);
+    RESPONSE_KEY_RANDOM.nextBytes(key);
     String encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(key);
     Arrays.fill(key, (byte) 0);
     Files.writeString(

@@ -1,6 +1,5 @@
 package net.firedevops.firemud.accountservice.repository;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -48,9 +47,6 @@ import tools.jackson.databind.json.JsonMapper;
  * owner before it returns the JWT in a redacted typed result.
  */
 @Repository
-@SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification = "Injected jOOQ, Account authorities, bundle owner, and crypto remain internal.")
 public final class AccountGameplayDelegationResponseEnvelopeRepository {
   private static final String OPERATION_TABLE = "account_gameplay_delegation_issuance_operations";
   private static final String BUNDLE_TABLE = "account_gameplay_delegation_auth_evidence_bundles";

@@ -1,5 +1,6 @@
 package net.firedevops.firemud.accountservice.service.session;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -49,9 +50,9 @@ import org.springframework.transaction.support.TransactionTemplate;
  * registry transition or caller-facing credential response.
  */
 public final class AccountGameplayDelegationSigner {
-  private static final Path PRIVATE_MOUNT_ROOT = Path.of("/var/run/secrets/firemud/jwt");
+  private static final Path PRIVATE_MOUNT_ROOT = privateSignerMountRoot();
   private static final Path PRIVATE_ACTIVE_BUNDLE = Path.of("current.key");
-  private static final Path PUBLIC_MOUNT_ROOT = Path.of("/var/run/secrets/firemud/jwks");
+  private static final Path PUBLIC_MOUNT_ROOT = publicJwksMountRoot();
   private static final Path PUBLIC_JWKS = Path.of("jwks.json");
   private static final Duration PUBLIC_KEY_CACHE_AGE = Duration.ofSeconds(30);
   private static final ExplicitRouteProfilePolicy GSA_SIGNING_POLICY =
@@ -67,6 +68,22 @@ public final class AccountGameplayDelegationSigner {
           5,
           GameSessionAccountDelegationProfile.MAX_COMPACT_JWT_BYTES,
           GameSessionAccountDelegationJwtProfileValidator::validateClaims);
+
+  @SuppressFBWarnings(
+      value = "DMI_HARDCODED_ABSOLUTE_FILENAME",
+      justification =
+          "The interim Account private signing key uses this architecture-defined fixed protected mount; runtime configuration cannot redirect it or add a fallback.")
+  private static Path privateSignerMountRoot() {
+    return Path.of("/var/run/secrets/firemud/jwt");
+  }
+
+  @SuppressFBWarnings(
+      value = "DMI_HARDCODED_ABSOLUTE_FILENAME",
+      justification =
+          "Account signer correspondence reads this architecture-defined fixed public JWKS mount; runtime configuration cannot redirect it or add a fallback.")
+  private static Path publicJwksMountRoot() {
+    return Path.of("/var/run/secrets/firemud/jwks");
+  }
 
   private final AccountGameplayDelegationIssuanceRepository issuanceRepository;
   private final AccountJwtSignerDesiredStateRepository desiredStateRepository;

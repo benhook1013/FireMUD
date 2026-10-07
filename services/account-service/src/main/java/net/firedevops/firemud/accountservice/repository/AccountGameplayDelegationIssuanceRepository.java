@@ -53,9 +53,6 @@ import tools.jackson.databind.json.JsonMapper;
  * Account transaction; no remote operation is performed while those locks are held.
  */
 @Repository
-@SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification = "Injected jOOQ and Account authority collaborators remain internal.")
 public class AccountGameplayDelegationIssuanceRepository {
   private static final String TABLE = "account_gameplay_delegation_issuance_operations";
   private static final int REQUEST_DIGEST_VERSION = 2;
@@ -78,6 +75,10 @@ public class AccountGameplayDelegationIssuanceRepository {
   private final AccountGameplayTokenIdentityFenceRepository tokenIdentityFences;
 
   @Autowired
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification =
+          "Keep required collaborator preconditions fail-fast; this non-final Spring repository is proxied, no partially initialized instance escapes, and it declares no finalizer.")
   public AccountGameplayDelegationIssuanceRepository(
       DSLContext dsl,
       AccountAuthoritySourceEvidenceRepository sourceEvidence,
@@ -86,16 +87,28 @@ public class AccountGameplayDelegationIssuanceRepository {
   }
 
   /** Compatibility for non-signing repositories/fixtures that only use the pending boundary. */
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification =
+          "Keep required collaborator preconditions fail-fast; this non-final Spring repository is proxied, no partially initialized instance escapes, and it declares no finalizer.")
   public AccountGameplayDelegationIssuanceRepository(
       DSLContext dsl, AccountAuthoritySourceEvidenceRepository sourceEvidence) {
     this(dsl, sourceEvidence, defaultEvidenceBundles(dsl), Clock.systemUTC());
   }
 
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification =
+          "Keep required collaborator preconditions fail-fast; this non-final Spring repository is proxied, no partially initialized instance escapes, and it declares no finalizer.")
   public AccountGameplayDelegationIssuanceRepository(
       DSLContext dsl, AccountAuthoritySourceEvidenceRepository sourceEvidence, Clock clock) {
     this(dsl, sourceEvidence, defaultEvidenceBundles(dsl), clock);
   }
 
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification =
+          "Keep required collaborator preconditions fail-fast; this non-final Spring repository is proxied, no partially initialized instance escapes, and it declares no finalizer.")
   public AccountGameplayDelegationIssuanceRepository(
       DSLContext dsl,
       AccountAuthoritySourceEvidenceRepository sourceEvidence,

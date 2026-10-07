@@ -34,6 +34,10 @@ public class AccountGameplayTokenIdentityFenceRepository {
           + "state, revocation_request_id, revocation_digest";
   private final DSLContext dsl;
 
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification =
+          "Keep the required DSLContext precondition fail-fast; this non-final Spring repository is proxied, no partially initialized instance escapes, and it declares no finalizer.")
   public AccountGameplayTokenIdentityFenceRepository(DSLContext dsl) {
     this.dsl = Objects.requireNonNull(dsl);
   }

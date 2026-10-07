@@ -34,6 +34,7 @@ import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.UUID;
@@ -128,7 +129,7 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
   private static String testJdbcUrl;
   private static String testJdbcUsername;
   private static String testJdbcPassword;
-  private static boolean startedOwnedContainer;
+  private static volatile boolean startedOwnedContainer;
 
   @TempDir Path temporaryDirectory;
 
@@ -814,9 +815,11 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
   void realCommittedIssuanceEstablishesExactSqlFenceAndIndependentRetryReadback() throws Exception {
     CommitHarness harness = newCommitHarness(CommitHook.NONE, false);
     assertThat(
-            harness
-                .dsl()
-                .fetchOne("SELECT count(*) FROM account_gameplay_token_identity_fences")
+            Objects.requireNonNull(
+                    harness
+                        .dsl()
+                        .fetchOne("SELECT count(*) FROM account_gameplay_token_identity_fences"),
+                    "token identity fence count query must return a row")
                 .get(0, Long.class))
         .isZero();
     harness.service().commitPendingCandidate(harness.pending().requestId());
@@ -831,9 +834,11 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
     assertThat(harness.service().commitPendingCandidate(identity.issuanceRequestId()).outcome())
         .isEqualTo(AccountGameplayDelegationIssuanceCommitService.Outcome.EXACT_RETRY);
     assertThat(
-            harness
-                .dsl()
-                .fetchOne("SELECT count(*) FROM account_gameplay_token_identity_fences")
+            Objects.requireNonNull(
+                    harness
+                        .dsl()
+                        .fetchOne("SELECT count(*) FROM account_gameplay_token_identity_fences"),
+                    "token identity fence count query must return a row")
                 .get(0, Long.class))
         .isEqualTo(1L);
   }
@@ -901,11 +906,14 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
                                 identity.operationId())))
         .isInstanceOf(DataAccessException.class);
     assertThat(
-            harness
-                .dsl()
-                .fetchOne(
-                    "SELECT state FROM account_gameplay_token_identity_fences WHERE operation_id = ?",
-                    identity.operationId())
+            Objects.requireNonNull(
+                    harness
+                        .dsl()
+                        .fetchOne(
+                            "SELECT state FROM account_gameplay_token_identity_fences "
+                                + "WHERE operation_id = ?",
+                            identity.operationId()),
+                    "token identity fence query must return a row")
                 .get(0, String.class))
         .isEqualTo("PENDING");
   }
@@ -971,11 +979,14 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
 
   private static TokenIdentity tokenFenceIdentity(CommitHarness harness) {
     Record row =
-        harness
-            .dsl()
-            .fetchOne(
-                "SELECT token_hash FROM account_gameplay_delegation_issuance_operations WHERE request_id = ?",
-                harness.pending().requestId());
+        Objects.requireNonNull(
+            harness
+                .dsl()
+                .fetchOne(
+                    "SELECT token_hash FROM account_gameplay_delegation_issuance_operations "
+                        + "WHERE request_id = ?",
+                    harness.pending().requestId()),
+            "committed token candidate query must return a row");
     return new TokenIdentity(
         harness.accountId(),
         harness.pending().operationId(),
@@ -1052,12 +1063,14 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
         .doesNotContain("already-consumed-credential", "eyJ", committed.proofSha256());
     assertThat(credentialVerifierCalls).hasValue(0);
     assertThat(
-            harness
-                .dsl()
-                .fetchOne(
-                    "SELECT status FROM account_gameplay_delegation_issuance_operations "
-                        + "WHERE request_id = ?",
-                    harness.pending().requestId())
+            Objects.requireNonNull(
+                    harness
+                        .dsl()
+                        .fetchOne(
+                            "SELECT status FROM account_gameplay_delegation_issuance_operations "
+                                + "WHERE request_id = ?",
+                            harness.pending().requestId()),
+                    "issuance status query must return a row")
                 .get("status", String.class))
         .isEqualTo("COMMITTED");
 
@@ -1186,13 +1199,16 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
     assertThat(harness.redis().connectionCloseCount()).isEqualTo(closesBeforeRetry);
     assertThat(harness.redis().scriptLoadCount()).isEqualTo(loadsBeforeRetry);
     assertThat(
-            harness
-                .dsl()
-                .resultQuery(
-                    "SELECT commit_proof_canonical_bytes FROM "
-                        + "account_gameplay_delegation_issuance_operations WHERE request_id = ?",
-                    harness.pending().requestId())
-                .fetchOne()
+            Objects.requireNonNull(
+                    harness
+                        .dsl()
+                        .resultQuery(
+                            "SELECT commit_proof_canonical_bytes FROM "
+                                + "account_gameplay_delegation_issuance_operations "
+                                + "WHERE request_id = ?",
+                            harness.pending().requestId())
+                        .fetchOne(),
+                    "committed proof query must return a row")
                 .get("commit_proof_canonical_bytes", byte[].class))
         .containsExactly(persistedProof);
   }
@@ -1749,12 +1765,14 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
 
   private static RecordData readCandidate(DSLContext dsl, UUID requestId) {
     var row =
-        dsl.resultQuery(
-                "SELECT status, token_hash, pending_registry_candidate_bytes, "
-                    + "authority_tuple_canonical_bytes "
-                    + "FROM account_gameplay_delegation_issuance_operations WHERE request_id = ?",
-                requestId)
-            .fetchOne();
+        Objects.requireNonNull(
+            dsl.resultQuery(
+                    "SELECT status, token_hash, pending_registry_candidate_bytes, "
+                        + "authority_tuple_canonical_bytes "
+                        + "FROM account_gameplay_delegation_issuance_operations WHERE request_id = ?",
+                    requestId)
+                .fetchOne(),
+            "issuance candidate query must return a row");
     return new RecordData(
         row.get("status", String.class),
         row.get("token_hash", String.class),

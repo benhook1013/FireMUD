@@ -36,9 +36,6 @@ import tools.jackson.databind.json.JsonMapper;
  * fails closed.
  */
 @Repository
-@SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification = "Injected jOOQ and Account owner repositories remain internal collaborators.")
 public class AccountAuthEvidenceBundleRepository {
   private static final String ISSUER_STREAM =
       "account:auth-authority:v1:issuer/" + GameSessionAccountDelegationProfile.ISSUER;
@@ -56,6 +53,10 @@ public class AccountAuthEvidenceBundleRepository {
   private final AccountAuthorityGenerationRepository authorityGenerations;
   private final AccountAuthoritySourceEvidenceRepository sourceEvidence;
 
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification =
+          "Keep required collaborator preconditions fail-fast; this non-final Spring repository is proxied, no partially initialized instance escapes, and it declares no finalizer.")
   public AccountAuthEvidenceBundleRepository(
       DSLContext dsl,
       AccountAuthorityGenerationRepository authorityGenerations,

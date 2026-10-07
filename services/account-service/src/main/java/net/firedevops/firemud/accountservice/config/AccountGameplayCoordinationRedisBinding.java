@@ -1,5 +1,6 @@
 package net.firedevops.firemud.accountservice.config;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.lettuce.core.ClientOptions;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
@@ -60,8 +61,7 @@ public final class AccountGameplayCoordinationRedisBinding implements AutoClosea
   public static final Path BINDING_ROOT = Path.of("/etc/firemud/account-coordination-redis");
   public static final Path BINDING_PATH = BINDING_ROOT.resolve("binding.json");
   public static final Path CA_PATH = BINDING_ROOT.resolve("coordination-ca.pem");
-  public static final Path CREDENTIAL_ROOT =
-      Path.of("/run/secrets/firemud/account-coordination-redis");
+  public static final Path CREDENTIAL_ROOT = protectedCredentialRoot();
   public static final Path CREDENTIAL_PATH = CREDENTIAL_ROOT.resolve("acl-password");
 
   private static final String VERSION = "account-coordination-redis-binding/v1";
@@ -91,6 +91,14 @@ public final class AccountGameplayCoordinationRedisBinding implements AutoClosea
           .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
           .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
           .build();
+
+  @SuppressFBWarnings(
+      value = "DMI_HARDCODED_ABSOLUTE_FILENAME",
+      justification =
+          "Account's Redis ACL credential is read only from this fixed root-protected mount; configuration cannot redirect it or add a fallback.")
+  private static Path protectedCredentialRoot() {
+    return Path.of("/run/secrets/firemud/account-coordination-redis");
+  }
 
   private final ParsedBinding parsed;
   private final FileIdentity bindingIdentity;

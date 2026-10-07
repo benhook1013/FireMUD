@@ -470,12 +470,13 @@ public final class AccountGameplayDelegationRedisClient {
           || !sha1(scriptSource).equals(loadedSha)) {
         throw unavailable();
       }
+      byte[][] issuerProjectionArguments = {issuerProjectionBytes};
       Long issuerResult =
           commands.evalsha(
               loadedSha,
               ScriptOutputType.INTEGER,
               new byte[][] {ascii(issuer.key())},
-              issuerProjectionBytes);
+              issuerProjectionArguments);
       requireProjectionResult(issuerResult);
       String accountSha = commands.scriptLoad(accountScriptSource);
       if (accountSha == null || !sha1(accountScriptSource).equals(accountSha)) throw unavailable();
