@@ -8,7 +8,7 @@ This document collects the Account Service operational behavior, readiness model
 - `liveness` is process-local only.
 - `readiness` is truthful local readiness for the currently implemented authentication/account slice and must fail when the service cannot safely satisfy new authentication traffic with its required local persistence/session infrastructure.
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
-- Expired connect-scope cleanup requires PostgreSQL 16 or later because its deletion predicate uses `pg_input_is_valid`; local Docker Compose uses PostgreSQL 18, while Account integration-test containers retain PostgreSQL 16 coverage. Keep the guarded delete predicate and do not add a pre-16 compatibility query.
+- Expired connect-scope cleanup requires PostgreSQL 16 or later because its deletion predicate uses `pg_input_is_valid`; local Docker Compose uses PostgreSQL 18, and Account's shared Testcontainers fixture selects the digest-pinned PostgreSQL 18 baseline in [Testing Architecture's shared container image references](../../system-architecture-testing.md#shared-container-image-references). Fixture selection does not demonstrate Docker-backed execution of Account integration tests, which remains pending proof. Keep the guarded delete predicate and do not add a pre-16 compatibility query.
 
 ### V26 membership migration preflight
 

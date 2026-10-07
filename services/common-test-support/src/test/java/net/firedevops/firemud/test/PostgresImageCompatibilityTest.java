@@ -4,11 +4,53 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import java.util.Properties;
 import org.junit.jupiter.api.Test;
+import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 
 class PostgresImageCompatibilityTest {
+  @Test
+  void usesSelectedClasspathImageReferencesForContainers() throws Exception {
+    Properties images = new Properties();
+    try (var stream =
+        TestContainerImages.class.getResourceAsStream("container-images.properties")) {
+      images.load(java.util.Objects.requireNonNull(stream));
+    }
+    DockerImageName postgres = TestContainerImages.postgres();
+    DockerImageName redis = TestContainerImages.redis();
+
+    assertEquals(images.getProperty("postgres.image"), postgres.asCanonicalNameString());
+    assertEquals(images.getProperty("redis.image"), redis.asCanonicalNameString());
+    org.junit.jupiter.api.Assertions.assertTrue(
+        postgres.asCanonicalNameString().matches("postgres:[^@]+@sha256:[0-9a-f]{64}"));
+    assertEquals("redis", redis.getRepository());
+    assertDoesNotThrow(() -> new PostgreSQLContainer<>(postgres));
+    assertDoesNotThrow(() -> new GenericContainer<>(redis));
+  }
+
+  @Test
+  void rejectsMissingMalformedOrUnpinnedPostgresSelections() {
+    Properties images = new Properties();
+    assertThrows(
+        IllegalStateException.class,
+        () -> TestContainerImages.selectedReference(images, "postgres", true));
+    for (String invalid :
+        new String[] {
+          "", "postgres:" + "18", "postgres:18@sha256:invalid", "redis:7@sha256:" + "0".repeat(64)
+        }) {
+      images.setProperty("postgres.image", invalid);
+      assertThrows(
+          IllegalStateException.class,
+          () -> TestContainerImages.selectedReference(images, "postgres", true));
+    }
+    images.setProperty("redis.image", "postgres:" + "18");
+    assertThrows(
+        IllegalStateException.class,
+        () -> TestContainerImages.selectedReference(images, "redis", false));
+  }
+
   @Test
   void acceptsCanonicalPostgresTagAndDigestReferencesAsCompatibleSubstitutes() {
     for (String imageReference :

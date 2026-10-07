@@ -37,7 +37,7 @@ import net.firedevops.firemud.automationscripting.service.AutomationAdmissionSta
 import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService.AdmissionStateSummary;
 import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService.SetAdmissionModeCommand;
 import net.firedevops.firemud.automationscripting.service.impl.AutomationAdmissionStateServiceImpl;
-import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -66,8 +66,7 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
 
   @Container
   static PostgreSQLContainer<?> postgres =
-      new PostgreSQLContainer<>(
-          PostgresBackedServiceTestSupport.postgresImage("postgres:16-alpine"));
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   private DSLContext dsl;
   private ScriptEventIngressAuditRepository ingressRepository;

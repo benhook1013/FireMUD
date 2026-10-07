@@ -4,7 +4,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.net.URI;
 import java.util.Properties;
-import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.DockerClientFactory;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -24,9 +24,7 @@ public final class AccountPostgresIntegrationFixture {
       container = null;
     } else {
       externalJdbcUrl = null;
-      container =
-          new PostgreSQLContainer<>(
-              PostgresBackedServiceTestSupport.postgresImage("postgres:16-alpine"));
+      container = new PostgreSQLContainer<>(TestContainerImages.postgres());
     }
   }
 

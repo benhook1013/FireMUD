@@ -1765,7 +1765,7 @@ def main() -> int:
         fail("Renovate does not discover every workflow tool authority exactly once")
     testcontainer_managers = [
         manager for manager in custom_managers
-        if manager.get("description") == "Update literal upstream database images used by Java Testcontainers"
+        if manager.get("description") == "Update shared Testcontainers database image references"
     ]
     if len(testcontainer_managers) != 1:
         fail("Renovate must extract Testcontainers database images exactly once")
@@ -1773,8 +1773,12 @@ def main() -> int:
     if testcontainer_manager.get("datasourceTemplate") != "docker":
         fail("Testcontainers database images must use the Docker datasource")
     testcontainer_pattern = compile_re2_pattern(testcontainer_manager["matchStrings"][0])
-    fixture = 'new PostgreSQLContainer<>("postgres:16-alpine"); new GenericContainer<>("redis:7.2-alpine");'
-    expected_images = Counter((("postgres", "16-alpine"), ("redis", "7.2-alpine")))
+    fixture = (
+        "postgres.image=postgres:18@sha256:"
+        + "b" * 64
+        + "\nredis.image=redis:7.2-alpine\n"
+    )
+    expected_images = Counter((("postgres", "18"), ("redis", "7.2-alpine")))
     if Counter((m.group("depName"), m.group("currentValue")) for m in testcontainer_pattern.finditer(fixture)) != expected_images:
         fail("Testcontainers image extraction loses database version or image suffix")
     if list(testcontainer_pattern.finditer('"ghcr.io/benhook1013/logging-admin-service:latest"')):
@@ -1785,7 +1789,7 @@ def main() -> int:
         next(manager for manager in custom_managers if manager.get("description") == "Update the embedded dev-demo bootstrap Pod runtime image"),
     ]
     old_digest = "sha256:" + "a" * 64
-    for manager, image in zip(digest_image_managers, ('"postgres:16-alpine"', 'postgres:16', 'image: python:3.12-alpine')):
+    for manager, image in zip(digest_image_managers, ("postgres.image=postgres:18", 'postgres:16', 'image: python:3.12-alpine')):
         pattern = compile_re2_pattern(manager["matchStrings"][0])
         pinned_image = image[:-1] + "@" + old_digest + '"' if image.startswith('"') else image + "@" + old_digest
         match = pattern.search(pinned_image)
