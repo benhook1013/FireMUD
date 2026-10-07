@@ -24,6 +24,7 @@ class AccountGameplayDelegationPendingIdentityTest {
             ACCOUNT_ID,
             "x".repeat(256),
             CALLER_CONTEXT_ID,
+            AccountGameplayCredentialRequestBindingFixture.binding(),
             DIGEST,
             TOKEN_JTI,
             10,
@@ -35,6 +36,9 @@ class AccountGameplayDelegationPendingIdentityTest {
     assertEquals(ACCOUNT_ID, identity.accountId());
     assertEquals("x".repeat(256), identity.callerWorkload());
     assertEquals(CALLER_CONTEXT_ID, identity.callerContextId());
+    assertEquals(
+        AccountGameplayCredentialRequestBindingFixture.binding(),
+        identity.credentialRequestBinding());
     assertEquals(DIGEST, identity.requestDigest());
     assertEquals(TOKEN_JTI, identity.tokenJti());
     assertEquals(10, identity.issuedAtEpochSecond());
@@ -53,7 +57,17 @@ class AccountGameplayDelegationPendingIdentityTest {
         NullPointerException.class,
         () ->
             new AccountGameplayDelegationPendingIdentity(
-                OPERATION_ID, REQUEST_ID, ACCOUNT_ID, "game", null, DIGEST, TOKEN_JTI, 10, 11, 12));
+                OPERATION_ID,
+                REQUEST_ID,
+                ACCOUNT_ID,
+                "game",
+                null,
+                AccountGameplayCredentialRequestBindingFixture.binding(),
+                DIGEST,
+                TOKEN_JTI,
+                10,
+                11,
+                12));
     assertThrows(
         NullPointerException.class,
         () ->
@@ -63,6 +77,7 @@ class AccountGameplayDelegationPendingIdentityTest {
                 ACCOUNT_ID,
                 "game",
                 CALLER_CONTEXT_ID,
+                AccountGameplayCredentialRequestBindingFixture.binding(),
                 DIGEST,
                 null,
                 10,
@@ -95,6 +110,7 @@ class AccountGameplayDelegationPendingIdentityTest {
         accountId,
         callerWorkload,
         CALLER_CONTEXT_ID,
+        AccountGameplayCredentialRequestBindingFixture.binding(),
         digest,
         TOKEN_JTI,
         10,

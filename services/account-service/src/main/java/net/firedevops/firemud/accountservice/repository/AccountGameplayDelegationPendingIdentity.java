@@ -13,6 +13,7 @@ public record AccountGameplayDelegationPendingIdentity(
     UUID accountId,
     String callerWorkload,
     UUID callerContextId,
+    AccountGameplayCredentialRequestBinding credentialRequestBinding,
     String requestDigest,
     UUID tokenJti,
     long issuedAtEpochSecond,
@@ -25,6 +26,7 @@ public record AccountGameplayDelegationPendingIdentity(
     Objects.requireNonNull(requestId);
     Objects.requireNonNull(accountId);
     Objects.requireNonNull(callerContextId);
+    Objects.requireNonNull(credentialRequestBinding);
     Objects.requireNonNull(tokenJti);
     if (requestDigest == null || !SHA256.matcher(requestDigest).matches()) {
       throw new IllegalArgumentException("Request digest is malformed");

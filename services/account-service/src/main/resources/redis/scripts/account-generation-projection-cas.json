@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "account.account-generation-projection.v1",
+  "owner": "account-service",
+  "scriptResource": "redis/account_generation_projection_cas.lua",
+  "sourceSha256": "b8cf7abd202786a0b45b59444d1396a6c821e65284092e21a46a995e19e72507",
+  "redisRole": "coordination",
+  "category": "account_generation_projection_cas",
+  "keys": [
+    {
+      "name": "accountGenerationProjection",
+      "allowedPrefix": "session:auth:generation:account:",
+      "requiredHashTag": ""
+    }
+  ],
+  "arguments": ["expectedMode", "expectedBytes", "candidateBytes"],
+  "resetSensitivity": "requires_cluster_reset",
+  "lossOutcomeClass": "session",
+  "tailLossBehavior": "On loss, fail closed and rebuild only from Account's exact current durable source snapshot.",
+  "outcomes": {
+    "1": "applied",
+    "0": "replay",
+    "-1": "stale",
+    "-2": "invalid",
+    "-3": "ttl_present"
+  }
+}

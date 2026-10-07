@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "id": "account-game-session-delegation-activate-committed/v1",
+  "owner": "account-service",
+  "scriptResource": "redis/lua/account-game-session-delegation-activate-committed.lua",
+  "sourceSha256": "cb3c1ddd9ae008fa857427f721c1cabcf3d6b1502259849701baff081bc9a698",
+  "redisRole": "coordination",
+  "category": "account_auth_token_registry",
+  "keys": [
+    {
+      "name": "tokenRecord",
+      "allowedPrefix": "session:auth:token:",
+      "requiredHashTag": ""
+    }
+  ],
+  "arguments": [
+    "exactCanonicalPendingRecordUtf8",
+    "exactCanonicalActiveRecordUtf8",
+    "originalAbsoluteExpiryEpochMillis"
+  ],
+  "resetSensitivity": "requires_cluster_reset",
+  "lossOutcomeClass": "session",
+  "tailLossBehavior": "A missing, stale, or unacknowledged Account registry transition denies token use; only exact durable Account issuance owner evidence can support a retry.",
+  "outcomes": {
+    "1": "committed_pending_activated",
+    "0": "exact_active_retry",
+    "-1": "conflicting_registry_record",
+    "-2": "absolute_expiry_mismatch",
+    "-3": "pending_record_missing",
+    "-4": "invalid_arguments_or_noncanonical_transition",
+    "-5": "conditional_active_store_failed"
+  }
+}

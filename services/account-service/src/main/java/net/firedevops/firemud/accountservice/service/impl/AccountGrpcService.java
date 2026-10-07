@@ -1,10 +1,14 @@
 package net.firedevops.firemud.accountservice.service.impl;
 
+import com.google.protobuf.ByteString;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.net.Inet6Address;
+import java.net.InetAddress;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.UUID;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
@@ -13,6 +17,7 @@ import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.account.v1.CreateAccountRequest;
 import net.firedevops.firemud.account.v1.CreateAccountResponse;
+import net.firedevops.firemud.account.v1.CredentialSourceConnectionMode;
 import net.firedevops.firemud.account.v1.DeleteAccountRequest;
 import net.firedevops.firemud.account.v1.DeleteAccountResponse;
 import net.firedevops.firemud.account.v1.ExportAccountRequest;
@@ -39,12 +44,17 @@ import net.firedevops.firemud.account.v1.UpdateProfileRequest;
 import net.firedevops.firemud.account.v1.UpdateProfileResponse;
 import net.firedevops.firemud.account.v1.VerifyEmailLoginOtpRequest;
 import net.firedevops.firemud.accountservice.AccountUuidText;
+import net.firedevops.firemud.accountservice.dto.CanonicalGameplayLoginRequest;
 import net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.DirectTextCallerContext;
 import net.firedevops.firemud.accountservice.dto.DirectTextJoinTarget;
+import net.firedevops.firemud.accountservice.dto.GameplayCredentialSourceContext;
+import net.firedevops.firemud.accountservice.dto.InitialGameplayLoginResult;
 import net.firedevops.firemud.accountservice.dto.JoinPublicProductionRequest;
 import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
 import net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPolicy;
+import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository;
+import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationResponseEnvelopeRepository;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.accountservice.service.PingService;
 import net.firedevops.firemud.accountservice.service.exception.AccountAlreadyExistsException;
@@ -214,6 +224,12 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     }
   }
 
+  private AuthenticateResponse authenticateError(String code, String message) {
+    return AuthenticateResponse.newBuilder()
+        .setError(appError("Authenticate", code, message))
+        .build();
+  }
+
   private void requireRuntimeEntitlementsPeer() {
     GrpcPeerIdentity peer = GrpcPeerIdentity.current();
     String namespace = workloadNamespace;
@@ -359,45 +375,77 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   @Timed(value = "accountGrpc.authenticate")
   public void authenticate(
       AuthenticateRequest request, StreamObserver<AuthenticateResponse> responseObserver) {
+    AuthenticateResponse response;
     try {
-      net.firedevops.firemud.accountservice.dto.AuthenticationResult result =
-          accountService.authenticateForGameplay(request.getEmail(), request.getPassword());
-      AuthenticateResponse response =
+      requireGameSessionPeer();
+      String verifiedWorkload = GrpcPeerIdentity.current().uri();
+      if (!request.hasCredentialSourceContext()) {
+        throw new InvalidRequestException("Typed credential source context is required", null);
+      }
+      UUID requestId = requireCanonicalV4Uuid(request.getRequestId(), "requestId");
+      UUID callerContextId =
+          requireCanonicalV4Uuid(request.getCallerContextId(), "callerContextId");
+      String credential = request.getPassword();
+      if (credential.isEmpty()) {
+        throw new InvalidRequestException("Credential is required", null);
+      }
+      var source = request.getCredentialSourceContext();
+      GameplayCredentialSourceContext sourceContext =
+          new GameplayCredentialSourceContext(
+              callerContextId,
+              requireCanonicalClientIp(source.getCanonicalClientIp()),
+              transportClass(source.getConnectionMode()));
+      CanonicalGameplayLoginRequest loginRequest =
+          new CanonicalGameplayLoginRequest(
+              requestId, requireEmail(request.getEmail()), credential, sourceContext);
+      InitialGameplayLoginResult result =
+          accountService.authenticateForGameplay(loginRequest, verifiedWorkload);
+      if (!requestId.equals(result.requestId())
+          || !callerContextId.equals(result.callerContextId())) {
+        throw new IllegalStateException("Recovered LOGIN provenance does not match its request");
+      }
+      response =
           AuthenticateResponse.newBuilder()
-              .setAuthToken(result.authToken())
-              .setAccountId(result.accountId())
+              .setAuthToken(new String(result.compactJwtBytes(), StandardCharsets.US_ASCII))
+              .setAccountId(result.accountId().toString())
+              .setCallerContextId(result.callerContextId().toString())
+              .setRequestId(result.requestId().toString())
+              .setTokenJti(result.tokenJti().toString())
+              .setTokenSha256(result.tokenSha256())
+              .setIssuedAtEpochSecond(result.issuedAtEpochSecond())
+              .setExpiresAtEpochSecond(result.expiresAtEpochSecond())
+              .setTokenGeneration(result.tokenGeneration())
+              .setIssuanceFence(result.issuanceFence())
+              .setAuthorityTupleCanonicalJson(
+                  ByteString.copyFrom(result.authorityTupleCanonicalJson()))
+              .setOutboxCheckpointsCanonicalJson(
+                  ByteString.copyFrom(result.outboxCheckpointsCanonicalJson()))
+              .setOutboxSourceEventEvidenceCanonicalJson(
+                  ByteString.copyFrom(result.outboxSourceEventEvidenceCanonicalJson()))
               .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      response =
+          authenticateError(
+              "PERMISSION_DENIED", "Verified Game Session workload identity is required");
+    } catch (
+        AccountGameplayDelegationResponseEnvelopeRepository.ResponseRecoveryExpiredException ex) {
+      response = authenticateError(ex.errorCode(), ex.getMessage());
+    } catch (AccountGameplayDelegationResponseEnvelopeRepository.IdempotencyConflictException
+        | AccountGameplayDelegationIssuanceRepository.IdempotencyConflictException ex) {
+      response = authenticateError("IDEMPOTENCY_CONFLICT", "LOGIN request identity conflicts");
     } catch (InvalidRequestException ex) {
-      AuthenticateResponse response =
-          AuthenticateResponse.newBuilder()
-              .setError(appError("Authenticate", "INVALID_ARGUMENT", ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
+      response = authenticateError("INVALID_ARGUMENT", ex.getMessage());
     } catch (AuthenticationException ex) {
-      AuthenticateResponse response =
-          AuthenticateResponse.newBuilder()
-              .setError(appError("Authenticate", ex.getCode(), ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
+      response = authenticateError(ex.getCode(), ex.getMessage());
     } catch (IllegalArgumentException ex) {
-      AuthenticateResponse response =
-          AuthenticateResponse.newBuilder()
-              .setError(appError("Authenticate", "UNAUTHENTICATED", ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
+      response = authenticateError("INVALID_ARGUMENT", ex.getMessage());
     } catch (IllegalStateException ex) {
-      AuthenticateResponse response =
-          AuthenticateResponse.newBuilder()
-              .setError(appError("Authenticate", "AUTH_UNAVAILABLE", AUTHORITY_UNAVAILABLE_MESSAGE))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
+      response = authenticateError("AUTH_UNAVAILABLE", AUTHORITY_UNAVAILABLE_MESSAGE);
+    } catch (RuntimeException ex) {
+      response = authenticateError("AUTH_UNAVAILABLE", AUTHORITY_UNAVAILABLE_MESSAGE);
     }
+    responseObserver.onNext(response);
+    responseObserver.onCompleted();
   }
 
   @Override
@@ -1175,6 +1223,72 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     } catch (IllegalArgumentException ex) {
       throw new InvalidRequestException(ex.getMessage(), ex);
     }
+  }
+
+  private UUID requireCanonicalV4Uuid(String value, String fieldName) {
+    if (value == null || value.length() != 36) {
+      throw new InvalidRequestException(fieldName + " must be a canonical UUID v4", null);
+    }
+    try {
+      UUID parsed = UUID.fromString(value);
+      if (!parsed.toString().equals(value) || parsed.version() != 4 || parsed.variant() != 2) {
+        throw new InvalidRequestException(fieldName + " must be a canonical UUID v4", null);
+      }
+      return parsed;
+    } catch (IllegalArgumentException ex) {
+      throw new InvalidRequestException(fieldName + " must be a canonical UUID v4", ex);
+    }
+  }
+
+  private String transportClass(CredentialSourceConnectionMode connectionMode) {
+    return switch (connectionMode) {
+      case CREDENTIAL_SOURCE_CONNECTION_MODE_FIRST_PARTY_WEB -> "first_party_web";
+      case CREDENTIAL_SOURCE_CONNECTION_MODE_TRUSTED_TCP_PROXY -> "trusted_tcp_proxy";
+      case CREDENTIAL_SOURCE_CONNECTION_MODE_UNSPECIFIED, UNRECOGNIZED ->
+          throw new InvalidRequestException("Credential source connection mode is required", null);
+    };
+  }
+
+  private String requireCanonicalClientIp(String value) {
+    if (value == null
+        || value.isEmpty()
+        || value.length() > 256
+        || !value.equals(value.trim())
+        || value.indexOf('%') >= 0) {
+      throw new InvalidRequestException("Canonical client IP is malformed", null);
+    }
+    if (value.indexOf(':') >= 0) {
+      if (value.indexOf('[') >= 0 || value.indexOf(']') >= 0) {
+        throw new InvalidRequestException("Canonical client IP is malformed", null);
+      }
+      try {
+        InetAddress parsed = InetAddress.getByName(value);
+        if (parsed instanceof Inet6Address && value.equals(parsed.getHostAddress())) return value;
+      } catch (java.net.UnknownHostException ignored) {
+        // A colon-bearing non-literal is not a valid client IP.
+      }
+      throw new InvalidRequestException("Canonical client IP is malformed", null);
+    }
+    String[] octets = value.split("\\.", -1);
+    if (octets.length != 4) {
+      throw new InvalidRequestException("Canonical client IP is malformed", null);
+    }
+    for (String octet : octets) {
+      if (octet.isEmpty()
+          || (octet.length() > 1 && octet.startsWith("0"))
+          || octet.chars().anyMatch(character -> character < '0' || character > '9')) {
+        throw new InvalidRequestException("Canonical client IP is malformed", null);
+      }
+      try {
+        int parsed = Integer.parseInt(octet);
+        if (parsed < 0 || parsed > 255) {
+          throw new InvalidRequestException("Canonical client IP is malformed", null);
+        }
+      } catch (NumberFormatException ex) {
+        throw new InvalidRequestException("Canonical client IP is malformed", ex);
+      }
+    }
+    return value;
   }
 
   private String requireEmail(String value) {

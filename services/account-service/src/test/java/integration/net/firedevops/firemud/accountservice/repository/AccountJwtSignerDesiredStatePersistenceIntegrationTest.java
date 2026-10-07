@@ -640,10 +640,15 @@ class AccountJwtSignerDesiredStatePersistenceIntegrationTest {
   void changedProtectedTrustBeforeCommitRollsBackGenerationReceipt() throws Exception {
     TestContext context = newTestContext();
     AccountJwtSignerDesiredStateRepository repository = repository(context);
-    inTransaction(context, () -> repository.initialize(PROD_BINDING, enrollmentIdentity()));
     String peerPin = sha256(PEER_SPKI);
     AccountJwtSignerMaterializerTrustBinding.Binding initial =
         materializerTrust(peerPin, TRUST_REVISION);
+    inTransaction(
+        context,
+        () ->
+            repository.initialize(
+                PROD_BINDING,
+                enrollmentIdentity(initial.bindingDigest(), initial.configRevision())));
     TrustFence initialTrust =
         new TrustFence(
             initial.expectedClusterIncarnationUid(),
@@ -834,11 +839,15 @@ class AccountJwtSignerDesiredStatePersistenceIntegrationTest {
   }
 
   private static EnrollmentIdentity enrollmentIdentity() {
+    return enrollmentIdentity(TRUST_DIGEST, TRUST_REVISION);
+  }
+
+  private static EnrollmentIdentity enrollmentIdentity(String trustDigest, String trustRevision) {
     return new EnrollmentIdentity(
         CLUSTER_UID,
         NAMESPACE_UID,
-        TRUST_DIGEST,
-        TRUST_REVISION,
+        trustDigest,
+        trustRevision,
         "d".repeat(64),
         "api-revision-1",
         "44444444-4444-4444-8444-444444444444",

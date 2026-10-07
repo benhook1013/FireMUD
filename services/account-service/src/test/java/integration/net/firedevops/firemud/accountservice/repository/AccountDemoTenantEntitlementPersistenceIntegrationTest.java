@@ -21,6 +21,7 @@ import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
+import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
@@ -107,8 +108,9 @@ class AccountDemoTenantEntitlementPersistenceIntegrationTest {
                               "SET CONSTRAINTS account_tenant_authority_stream_consistency IMMEDIATE");
                       return null;
                     }))
-        .hasRootCauseMessage(
-            "ERROR: Tenant authority outbox head lacks an Account-owned source checkpoint");
+        .rootCause()
+        .hasMessageContaining(
+            "Tenant authority outbox head lacks an Account-owned source checkpoint");
   }
 
   @Test
@@ -263,6 +265,14 @@ class AccountDemoTenantEntitlementPersistenceIntegrationTest {
     assertThat(updated.tenantAuthoritySourceVersion()).isEqualTo(3L);
     assertThat(updated.tenantBillingSequence()).isEqualTo(2L);
     assertThat(updated.tenantAuthorityOutboxSequence()).isEqualTo(2L);
+    var updatedAuthorityReadback =
+        inTransaction(
+            context.transaction(), () -> tenantAuthorityEvents.readCurrentByTenant(tenantId));
+    assertThat(updatedAuthorityReadback.eventId()).isEqualTo(updated.tenantAuthorityEventId());
+    assertThat(updatedAuthorityReadback.eventDigest())
+        .isEqualTo(updated.tenantAuthorityEventDigest());
+    assertThat(updatedAuthorityReadback.outboxSequence())
+        .isEqualTo(updated.tenantAuthorityOutboxSequence());
     assertThat(inTransaction(context.transaction(), () -> entitlements.provision(update, source)))
         .isEqualTo(updated);
     assertThatThrownBy(
@@ -331,24 +341,28 @@ class AccountDemoTenantEntitlementPersistenceIntegrationTest {
         .isInstanceOf(RuntimeException.class);
     assertThat(inTransaction(context.transaction(), () -> entitlements.readCurrent(tenantId)))
         .isEqualTo(updated);
-    inTransaction(
-        context.transaction(),
-        () -> {
-          context
-              .dsl()
-              .execute(
-                  "UPDATE account_demo_tenant_entitlements SET gameplay_available = NOT gameplay_available "
-                      + "WHERE tenant_uuid = ?",
-                  tenantId);
-          return null;
-        });
     assertThatThrownBy(
             () ->
                 inTransaction(
                     context.transaction(),
-                    () -> tenantAuthorityEvents.readCurrentByTenant(tenantId)))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("differs from its exact committed billing event");
+                    () -> {
+                      context
+                          .dsl()
+                          .execute(
+                              "UPDATE account_demo_tenant_entitlements SET gameplay_available = NOT gameplay_available "
+                                  + "WHERE tenant_uuid = ?",
+                              tenantId);
+                      return null;
+                    }))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("Demo entitlement identity is immutable and version advances by one");
+    assertThat(inTransaction(context.transaction(), () -> entitlements.readCurrent(tenantId)))
+        .isEqualTo(updated);
+    assertThat(
+            inTransaction(
+                context.transaction(), () -> tenantAuthorityEvents.readCurrentByTenant(tenantId)))
+        .usingRecursiveComparison()
+        .isEqualTo(updatedAuthorityReadback);
   }
 
   @Test
