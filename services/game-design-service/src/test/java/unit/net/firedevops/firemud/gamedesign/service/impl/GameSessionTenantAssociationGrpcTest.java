@@ -17,6 +17,7 @@ import java.util.Set;
 import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.tenant.GameSessionTenantAssociationEvidence;
+import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepository;
 import net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepository.AssociationReceipt;
@@ -44,7 +45,8 @@ class GameSessionTenantAssociationGrpcTest {
           repository,
           mock(PublishedReleaseBundleService.class),
           "test",
-          new tools.jackson.databind.ObjectMapper());
+          new tools.jackson.databind.ObjectMapper(),
+          mock(GameAuthoredWorldSourceRepository.class));
 
   @Test
   void exactGameSessionPeerPrecedesSyntaxAndOwnerReads() {

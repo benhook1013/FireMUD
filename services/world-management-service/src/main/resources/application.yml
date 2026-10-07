@@ -87,6 +87,9 @@ firemud:
     grpc:
       public-methods:
         - world_management.v1.WorldManagementService/Ping
+        # JWT bypass is exact-method only; the adapter requires the same-namespace Game Design mTLS peer.
+        - world_management.v1.WorldAuthoredSourceIntakeService/IntakeAuthoredWorldSource
+        - world_management.v1.WorldAuthoredSourceIntakeService/ReadAuthoredWorldSourceIntake
   grpc:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}

@@ -34,6 +34,68 @@ service WorldManagementService {
   rpc ApplyRoomAmbientStatePatch(ApplyRoomAmbientStatePatchRequest) returns (ApplyRoomAmbientStatePatchResponse);
 }
 
+// Explicitly unwired authenticated authored-source intake boundary. This service remains separate
+// from the runtime WorldManagementService until its caller and deployment path are authorized.
+service WorldAuthoredSourceIntakeService {
+  rpc IntakeAuthoredWorldSource(IntakeAuthoredWorldSourceRequest)
+      returns (IntakeAuthoredWorldSourceResponse);
+  rpc ReadAuthoredWorldSourceIntake(ReadAuthoredWorldSourceIntakeRequest)
+      returns (ReadAuthoredWorldSourceIntakeResponse);
+}
+
+message IntakeAuthoredWorldSourceRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string intake_request_id = 3;
+  string canonical_tenant_id = 4;
+  string world_slug = 5;
+  string source_operation_id = 6;
+  string expected_source_evidence_digest = 7;
+}
+
+message IntakeAuthoredWorldSourceResponse {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string intake_request_id = 3;
+  string canonical_tenant_id = 4;
+  string world_slug = 5;
+  string source_operation_id = 6;
+  string expected_source_evidence_digest = 7;
+  string operation_id = 8;
+  // Recomputable from the echoed intake binding using the World request digest contract.
+  string request_digest = 9;
+  // Opaque authenticated World attestation; it binds private World state and is not client-recomputable.
+  string receipt_digest = 10;
+}
+
+message ReadAuthoredWorldSourceIntakeRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  // A distinct nonnil identity for this read; intake_request_id remains the stored receipt key.
+  string request_id = 3;
+  string intake_request_id = 4;
+  string canonical_tenant_id = 5;
+  string world_slug = 6;
+  string source_operation_id = 7;
+  string expected_source_evidence_digest = 8;
+}
+
+message ReadAuthoredWorldSourceIntakeResponse {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string request_id = 3;
+  string intake_request_id = 4;
+  string canonical_tenant_id = 5;
+  string world_slug = 6;
+  string source_operation_id = 7;
+  string expected_source_evidence_digest = 8;
+  string operation_id = 9;
+  // Recomputable from the echoed intake binding using the World request digest contract.
+  string request_digest = 10;
+  // Opaque authenticated World attestation; it binds private World state and is not client-recomputable.
+  string receipt_digest = 11;
+}
+
 enum WorldInstanceLifecycleStatus {
   WORLD_INSTANCE_LIFECYCLE_STATUS_UNSPECIFIED = 0;
   WORLD_INSTANCE_LIFECYCLE_STATUS_PREPARING = 1;

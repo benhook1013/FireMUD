@@ -66,6 +66,7 @@ firemud:
         - gamedesign.v1.TenantIdentityService/ResolvePublishedRealmEntryPolicy
         - gamedesign.v1.TenantIdentityService/ListPublishedRealmEntryPolicies
         - gamedesign.v1.TenantIdentityService/ResolveFreshTenantCreation
+        - gamedesign.v1.TenantIdentityService/ResolveAuthoredWorldSource
     http:
       enabled: true
       role-requirement: PRIVILEGED

@@ -34,8 +34,11 @@ import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.common.security.AuthTokenInterceptor;
 import net.firedevops.firemud.common.security.GrpcAuthProperties;
 import net.firedevops.firemud.common.security.JwtUtil;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
+import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository;
@@ -46,6 +49,8 @@ import net.firedevops.firemud.gamedesign.v1.ListPublishedRealmEntryPoliciesReque
 import net.firedevops.firemud.gamedesign.v1.ListPublishedRealmEntryPoliciesResponse;
 import net.firedevops.firemud.gamedesign.v1.PingRequest;
 import net.firedevops.firemud.gamedesign.v1.PingResponse;
+import net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceRequest;
+import net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreationRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreationResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolvePublishedRealmEntryPolicyRequest;
@@ -69,6 +74,192 @@ import org.springframework.core.io.FileSystemResource;
 import tools.jackson.databind.ObjectMapper;
 
 class TenantIdentityGrpcAuthWiringTest {
+  private static final String SOURCE_METHOD =
+      "gamedesign.v1.TenantIdentityService/ResolveAuthoredWorldSource";
+  private static final MethodDescriptor<
+          ResolveAuthoredWorldSourceRequest, ResolveAuthoredWorldSourceResponse>
+      SOURCE_METHOD_DESCRIPTOR =
+          unaryMethod(
+              SOURCE_METHOD,
+              ResolveAuthoredWorldSourceRequest.getDefaultInstance(),
+              ResolveAuthoredWorldSourceResponse.getDefaultInstance());
+
+  @Test
+  void noTokenWithExactWorldOrGameSessionPeerReachesOnlyAuthoredSourceRead() {
+    withConfiguredInterceptor(
+        interceptor -> {
+          GameAuthoredWorldSourceRepository repository =
+              mock(GameAuthoredWorldSourceRepository.class);
+          TenantIdentityGrpcService service =
+              new TenantIdentityGrpcService(
+                  mock(GameTenantCreationRepository.class),
+                  mock(GameRepository.class),
+                  mock(GameSessionTenantAssociationRepository.class),
+                  mock(
+                      net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService
+                          .class),
+                  "test",
+                  new tools.jackson.databind.ObjectMapper(),
+                  repository);
+          AuthoredWorldSourceEvidence evidence = authoredSourceEvidence("test");
+          when(repository.read(
+                  UUID.fromString(REQUEST_UUID), UUID.fromString(TENANT_UUID), "world-one", "test"))
+              .thenReturn(Optional.of(evidence));
+          for (String peer :
+              List.of(GAME_SESSION_URI, "spiffe://firemud/ns/test/sa/world-management-service")) {
+            SourceDispatchResult result = dispatchSourceMethod(interceptor, service, peer);
+            assertThat(result.handlerDispatched()).isTrue();
+            assertThat(result.observer().failure).isFalse();
+            assertThat(result.observer().completed).isTrue();
+            assertThat(result.observer().response.getEvidenceDigest())
+                .isEqualTo(evidence.evidenceDigest());
+          }
+        });
+  }
+
+  @Test
+  void allowlistedAuthoredSourceReadDeniesAbsentWrongServiceAndWrongNamespaceBeforeOwnerAccess() {
+    withConfiguredInterceptor(
+        interceptor -> {
+          GameAuthoredWorldSourceRepository repository =
+              mock(GameAuthoredWorldSourceRepository.class);
+          TenantIdentityGrpcService service =
+              new TenantIdentityGrpcService(
+                  mock(GameTenantCreationRepository.class),
+                  mock(GameRepository.class),
+                  mock(GameSessionTenantAssociationRepository.class),
+                  mock(
+                      net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService
+                          .class),
+                  "test",
+                  new tools.jackson.databind.ObjectMapper(),
+                  repository);
+          for (String peer :
+              new String[] {
+                null,
+                "spiffe://firemud/ns/test/sa/account-service",
+                "spiffe://firemud/ns/other/sa/world-management-service"
+              }) {
+            SourceDispatchResult result = dispatchSourceMethod(interceptor, service, peer);
+            assertThat(result.handlerDispatched()).isTrue();
+            assertThat(result.observer().statusCode).isEqualTo(Status.Code.PERMISSION_DENIED);
+            assertThat(result.observer().response).isNull();
+          }
+          verifyNoInteractions(repository);
+        });
+  }
+
+  private static SourceDispatchResult dispatchSourceMethod(
+      AuthTokenInterceptor interceptor, TenantIdentityGrpcService service, String peerUri) {
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    ServerCall<ResolveAuthoredWorldSourceRequest, ResolveAuthoredWorldSourceResponse> call =
+        mock(ServerCall.class);
+    when(call.getMethodDescriptor()).thenReturn(SOURCE_METHOD_DESCRIPTOR);
+    AtomicBoolean handlerDispatched = new AtomicBoolean();
+    SourceObserver observer = new SourceObserver();
+    ServerCallHandler<ResolveAuthoredWorldSourceRequest, ResolveAuthoredWorldSourceResponse> next =
+        new ServerCallHandler<>() {
+          @Override
+          public ServerCall.Listener<ResolveAuthoredWorldSourceRequest> startCall(
+              ServerCall<ResolveAuthoredWorldSourceRequest, ResolveAuthoredWorldSourceResponse>
+                  serverCall,
+              Metadata headers) {
+            handlerDispatched.set(true);
+            return new ServerCall.Listener<>() {
+              @Override
+              public void onMessage(ResolveAuthoredWorldSourceRequest request) {
+                service.resolveAuthoredWorldSource(request, observer);
+              }
+            };
+          }
+        };
+    ResolveAuthoredWorldSourceRequest request =
+        ResolveAuthoredWorldSourceRequest.newBuilder()
+            .setOperationId(REQUEST_UUID)
+            .setWorldSlug("world-one")
+            .setCanonicalTenantId(TENANT_UUID)
+            .setRequestId(REQUEST_UUID)
+            .build();
+    Runnable dispatch =
+        () -> {
+          ServerCall.Listener<ResolveAuthoredWorldSourceRequest> listener =
+              interceptor.interceptCall(call, new Metadata(), next);
+          listener.onMessage(request);
+        };
+
+    if (peerUri == null) {
+      Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, null).run(dispatch);
+    } else {
+      GrpcPeerIdentity peer = GrpcPeerIdentity.parseUri(peerUri).orElseThrow();
+      Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer).run(dispatch);
+    }
+    return new SourceDispatchResult(observer, handlerDispatched.get());
+  }
+
+  private static AuthoredWorldSourceEvidence authoredSourceEvidence(String namespace) {
+    String requestDigest =
+        AuthoredWorldSourceDigest.requestDigest(
+            namespace,
+            UUID.fromString("22222222-2222-4222-8222-222222222222"),
+            UUID.fromString(TENANT_UUID),
+            "tenant-one",
+            "world-one",
+            "Wörld");
+    String evidenceDigest =
+        AuthoredWorldSourceDigest.evidenceDigest(
+            namespace,
+            UUID.fromString("22222222-2222-4222-8222-222222222222"),
+            UUID.fromString(REQUEST_UUID),
+            requestDigest,
+            UUID.fromString(TENANT_UUID),
+            "tenant-one",
+            "world-one",
+            "Wörld",
+            19L,
+            "source-key",
+            "NEW_GAME_ROW");
+    return new AuthoredWorldSourceEvidence(
+        1,
+        namespace,
+        UUID.fromString("22222222-2222-4222-8222-222222222222"),
+        UUID.fromString(REQUEST_UUID),
+        requestDigest,
+        UUID.fromString(TENANT_UUID),
+        "tenant-one",
+        "world-one",
+        "Wörld",
+        19L,
+        "source-key",
+        "NEW_GAME_ROW",
+        evidenceDigest);
+  }
+
+  private static final class SourceObserver
+      implements StreamObserver<ResolveAuthoredWorldSourceResponse> {
+    private ResolveAuthoredWorldSourceResponse response;
+    private Status.Code statusCode;
+    private boolean failure;
+    private boolean completed;
+
+    @Override
+    public void onNext(ResolveAuthoredWorldSourceResponse value) {
+      response = value;
+    }
+
+    @Override
+    public void onError(Throwable throwable) {
+      failure = true;
+      statusCode = Status.fromThrowable(throwable).getCode();
+    }
+
+    @Override
+    public void onCompleted() {
+      completed = true;
+    }
+  }
+
+  private record SourceDispatchResult(SourceObserver observer, boolean handlerDispatched) {}
+
   private static final String FRESH_CREATION_METHOD =
       "gamedesign.v1.TenantIdentityService/ResolveFreshTenantCreation";
   private static final String TENANT_METHOD =
@@ -128,7 +319,8 @@ class TenantIdentityGrpcAuthWiringTest {
                   mock(GameSessionTenantAssociationRepository.class),
                   mock(PublishedReleaseBundleService.class),
                   "test",
-                  new ObjectMapper());
+                  new ObjectMapper(),
+                  mock(GameAuthoredWorldSourceRepository.class));
 
           DispatchResult result = dispatchTenantMethod(interceptor, service, GAME_SESSION_URI);
 
@@ -179,7 +371,8 @@ class TenantIdentityGrpcAuthWiringTest {
                   mock(GameSessionTenantAssociationRepository.class),
                   publishedReleaseBundleService,
                   "test",
-                  new ObjectMapper());
+                  new ObjectMapper(),
+                  mock(GameAuthoredWorldSourceRepository.class));
 
           PolicyDispatchResult result =
               dispatchRealmPolicyMethod(interceptor, service, GAME_SESSION_URI);
@@ -243,7 +436,8 @@ class TenantIdentityGrpcAuthWiringTest {
                   mock(GameSessionTenantAssociationRepository.class),
                   publishedReleaseBundleService,
                   "test",
-                  new ObjectMapper());
+                  new ObjectMapper(),
+                  mock(GameAuthoredWorldSourceRepository.class));
 
           PolicySetDispatchResult result =
               dispatchRealmPolicySetMethod(interceptor, service, GAME_SESSION_URI);
@@ -272,7 +466,8 @@ class TenantIdentityGrpcAuthWiringTest {
                   mock(GameSessionTenantAssociationRepository.class),
                   publishedReleaseBundleService,
                   "test",
-                  new ObjectMapper());
+                  new ObjectMapper(),
+                  mock(GameAuthoredWorldSourceRepository.class));
 
           PolicyDispatchResult wrong =
               dispatchRealmPolicyMethod(
@@ -298,7 +493,8 @@ class TenantIdentityGrpcAuthWiringTest {
                   mock(GameSessionTenantAssociationRepository.class),
                   publishedReleaseBundleService,
                   "test",
-                  new ObjectMapper());
+                  new ObjectMapper(),
+                  mock(GameAuthoredWorldSourceRepository.class));
 
           PolicySetDispatchResult wrong =
               dispatchRealmPolicySetMethod(
@@ -323,7 +519,8 @@ class TenantIdentityGrpcAuthWiringTest {
                   mock(GameSessionTenantAssociationRepository.class),
                   mock(PublishedReleaseBundleService.class),
                   "test",
-                  new ObjectMapper());
+                  new ObjectMapper(),
+                  mock(GameAuthoredWorldSourceRepository.class));
 
           DispatchResult absent = dispatchTenantMethod(interceptor, service, null);
           DispatchResult wrong =
@@ -541,7 +738,8 @@ class TenantIdentityGrpcAuthWiringTest {
                       ASSOCIATION_METHOD,
                       REALM_POLICY_METHOD,
                       REALM_POLICY_SET_METHOD,
-                      FRESH_CREATION_METHOD);
+                      FRESH_CREATION_METHOD,
+                      SOURCE_METHOD);
               action.accept(context.getBean(AuthTokenInterceptor.class));
             });
   }
@@ -577,7 +775,8 @@ class TenantIdentityGrpcAuthWiringTest {
                         ASSOCIATION_METHOD,
                         REALM_POLICY_METHOD,
                         REALM_POLICY_SET_METHOD,
-                        FRESH_CREATION_METHOD));
+                        FRESH_CREATION_METHOD,
+                        SOURCE_METHOD));
   }
 
   private static <ReqT extends Message, RespT extends Message>
@@ -696,7 +895,8 @@ class TenantIdentityGrpcAuthWiringTest {
                 ASSOCIATION_METHOD,
                 REALM_POLICY_METHOD,
                 REALM_POLICY_SET_METHOD,
-                FRESH_CREATION_METHOD);
+                FRESH_CREATION_METHOD,
+                SOURCE_METHOD);
         assertThat(config.clientAuth()).isEqualTo("REQUIRE");
       }
     }
@@ -713,7 +913,8 @@ class TenantIdentityGrpcAuthWiringTest {
                     mock(GameSessionTenantAssociationRepository.class),
                     mock(PublishedReleaseBundleService.class),
                     "test",
-                    new ObjectMapper());
+                    new ObjectMapper(),
+                    mock(GameAuthoredWorldSourceRepository.class));
             FreshTenantCreationEvidence evidence = evidence("test", REQUEST_DIGEST);
             when(repository.read(REQUEST_ID, "test")).thenReturn(Optional.of(evidence));
 
@@ -734,7 +935,8 @@ class TenantIdentityGrpcAuthWiringTest {
                     mock(GameSessionTenantAssociationRepository.class),
                     mock(PublishedReleaseBundleService.class),
                     "test",
-                    new ObjectMapper());
+                    new ObjectMapper(),
+                    mock(GameAuthoredWorldSourceRepository.class));
             when(gameSessionRepository.read(REQUEST_ID, "test")).thenReturn(Optional.of(evidence));
 
             DispatchResult gameSession =
@@ -755,7 +957,8 @@ class TenantIdentityGrpcAuthWiringTest {
                     mock(GameSessionTenantAssociationRepository.class),
                     mock(PublishedReleaseBundleService.class),
                     "test",
-                    new ObjectMapper());
+                    new ObjectMapper(),
+                    mock(GameAuthoredWorldSourceRepository.class));
             DispatchResult unauthorized =
                 dispatch(
                     interceptor,
@@ -836,7 +1039,8 @@ class TenantIdentityGrpcAuthWiringTest {
                         ASSOCIATION_METHOD,
                         REALM_POLICY_METHOD,
                         REALM_POLICY_SET_METHOD,
-                        FRESH_CREATION_METHOD);
+                        FRESH_CREATION_METHOD,
+                        SOURCE_METHOD);
                 action.accept(context.getBean(AuthTokenInterceptor.class));
               });
     }
