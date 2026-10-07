@@ -206,13 +206,45 @@ run_docker_proof() (
   marker="retained-${run_token}"
   password="firemud-ci-${run_token}"
 
+  # shellcheck disable=SC2329 # The cleanup handler is invoked through the proof's EXIT/INT/TERM traps.
   cleanup() {
     docker rm -f "$source_container" "$target_container" >/dev/null 2>&1 || true
     docker network rm "$network_name" >/dev/null 2>&1 || true
     docker volume rm "$source_volume" "$target_volume" >/dev/null 2>&1 || true
     rm -rf -- "$cleanup_dir"
   }
-  trap cleanup EXIT INT TERM
+  trap 'cleanup' EXIT INT TERM
+
+  report_client_failure() {
+    local operation="$1"
+    local log_path="$2"
+    local summary="unclassified client failure"
+
+    if [[ ! -r "$log_path" ]]; then
+      summary="client log unavailable"
+    elif grep -Eiq 'permission denied' "$log_path"; then
+      summary="permission denied"
+    elif grep -Eiq 'password authentication failed|authentication failed|no password supplied' "$log_path"; then
+      summary="database authentication failed"
+    elif grep -Eiq 'could not connect|connection refused|server closed the connection|timeout expired|timed out|no route to host' "$log_path"; then
+      summary="database connection failed"
+    elif grep -Eiq 'gzip:|gunzip:|not in gzip format|unexpected end of file' "$log_path"; then
+      summary="gzip processing failed"
+    elif grep -Eiq 'pg_dump:' "$log_path"; then
+      summary="pg_dump failed"
+    elif grep -Eiq 'psql: error:|ERROR:|FATAL:' "$log_path"; then
+      summary="PostgreSQL rejected the restore"
+    elif grep -Eiq 'aws:|NoSuchKey|NoSuchBucket|Unable to locate credentials' "$log_path"; then
+      summary="backup selection or download failed"
+    elif [[ -s "$log_path" ]]; then
+      summary="client failed; raw output suppressed"
+    else
+      summary="client failed without captured output"
+    fi
+
+    printf 'PostgreSQL proof diagnostic for %s: %s. Raw output is suppressed to protect SQL, payload, and credentials.\n' \
+      "$operation" "$summary" >&2
+  }
 
   case "${1:-}" in
     --lifecycle-success) exit 0 ;;
@@ -284,7 +316,10 @@ PY
     --env BACKUP_DIR=/backups \
     --entrypoint /bin/bash \
     "$POSTGRES_DUMP_CLIENT_IMAGE" /usr/local/bin/pg-dump-rotate.sh \
-    >"$cleanup_dir/backup.log" 2>&1 || fail "the Compose dump helper did not complete"
+    >"$cleanup_dir/backup.log" 2>&1 || {
+      report_client_failure "Compose PostgreSQL dump" "$cleanup_dir/backup.log"
+      fail "the Compose dump helper did not complete"
+    }
   helper_dump="$(find "$helper_backup_dir/15min" -maxdepth 1 -type f -name 'firemud_*.sql.gz' -print -quit)"
   [[ -n "$helper_dump" && -s "$helper_dump" ]] || fail "the Compose dump helper did not publish a gzip artifact"
   gzip -t "$helper_dump" || fail "the Compose dump helper artifact is not valid gzip"
@@ -302,7 +337,10 @@ PY
     --env "PGPASSWORD=$password" \
     --entrypoint /bin/bash \
     "$POSTGRES18_IMAGE" /scripts/pg-dump.sh \
-    >"$cleanup_dir/k8s-cronjob-backup.log" 2>&1 || fail "the actual Kubernetes PostgreSQL dump ConfigMap script did not complete in its pinned image"
+    >"$cleanup_dir/k8s-cronjob-backup.log" 2>&1 || {
+      report_client_failure "Kubernetes PostgreSQL dump" "$cleanup_dir/k8s-cronjob-backup.log"
+      fail "the actual Kubernetes PostgreSQL dump ConfigMap script did not complete in its pinned image"
+    }
   good_dump="$(find "$backup_dir/15min" -maxdepth 1 -type f -name 'firemud_*.sql.gz' -print -quit)"
   [[ -n "$good_dump" && -s "$good_dump" ]] || fail "the Kubernetes dump script did not publish a gzip artifact"
   gzip -t "$good_dump" || fail "the Kubernetes dump script artifact is not valid gzip"
@@ -361,11 +399,14 @@ AWS
     "$POSTGRES18_IMAGE" --check-layout /var/lib/postgresql \
     >"$cleanup_dir/current-guard.log" 2>&1 || fail "the PostgreSQL 18 guard rejected a complete versioned target cluster"
 
+  bad_restore_log="$cleanup_dir/restore-${bad_key##*/}.log"
   if run_logical_restore "$network_name" "$bad_key" "$aws_stub" "$backup_dir" "$cleanup_dir" "$password"; then
     fail "the deliberately invalid target import unexpectedly succeeded"
   fi
-  grep -Fq "ERROR:  division by zero" "$cleanup_dir/restore-${bad_key##*/}.log" \
-    || fail "the invalid-import proof did not reach its intended PostgreSQL SQL error"
+  if ! grep -Fq "ERROR:  division by zero" "$bad_restore_log"; then
+    report_client_failure "deliberately invalid PostgreSQL import" "$bad_restore_log"
+    fail "the invalid-import proof did not reach its intended PostgreSQL SQL error"
+  fi
   failed_table_missing="$(docker exec "$target_container" psql -Atq -U firemud -d firemud -c "SELECT to_regclass('public.postgres18_failed_import') IS NULL")"
   [[ "$failed_table_missing" == "t" ]] || fail "the failed target import left partial database changes"
 
@@ -375,8 +416,11 @@ AWS
   [[ "$actual_marker" == "$marker" ]] || fail "the original PostgreSQL 16 source no longer contains its seeded data after a failed target import"
   docker stop "$source_container" >/dev/null
 
-  run_logical_restore "$network_name" "$good_key" "$aws_stub" "$backup_dir" "$cleanup_dir" "$password" \
-    || fail "the canonical scheduled logical restore did not import into the separate PostgreSQL 18 target"
+  good_restore_log="$cleanup_dir/restore-${good_key##*/}.log"
+  if ! run_logical_restore "$network_name" "$good_key" "$aws_stub" "$backup_dir" "$cleanup_dir" "$password"; then
+    report_client_failure "canonical scheduled PostgreSQL logical restore" "$good_restore_log"
+    fail "the canonical scheduled logical restore did not import into the separate PostgreSQL 18 target"
+  fi
   actual_marker="$(docker exec "$target_container" psql -Atq -U firemud -d firemud -c 'SELECT marker FROM public.postgres18_upgrade_probe WHERE id = 1')"
   [[ "$actual_marker" == "$marker" ]] || fail "the PostgreSQL 18 target did not retain the logical backup's seeded data"
   [[ "$(docker inspect --format '{{.State.Running}}' "$source_container")" == false ]] \
@@ -390,10 +434,11 @@ assert_proof_cleanup_lifecycle() (
   fake_bin="$fixture_root/bin"
   proof_tmpdir="$fixture_root/proof-tmp"
   docker_log="$fixture_root/docker.log"
+  # shellcheck disable=SC2329 # The fixture cleanup handler is invoked through its EXIT trap.
   cleanup_fixture() {
     rm -rf -- "$fixture_root"
   }
-  trap cleanup_fixture EXIT
+  trap 'cleanup_fixture' EXIT
   mkdir -p "$fake_bin" "$proof_tmpdir"
 
   cat >"$fake_bin/docker" <<'DOCKER'
