@@ -142,9 +142,13 @@ while (( source_listing_attempt < source_listing_read_limit )); do
   if ! source_listing_result="$(jq -cer --argjson limit "${evidence_limit}" --argjson source "${source_run_id}" \
     --argjson workflow_id "${workflow_id}" --arg repository "${GITHUB_REPOSITORY}" --arg head "${head_sha}" '
     def listed_count:
-      if (.workflow_runs | type) == "array" then (.workflow_runs | length) else null end;
+      if type != "object" then null
+      elif (.workflow_runs | type) == "array" then (.workflow_runs | length) else null end;
     def source_present:
-      if (.workflow_runs | type) == "array" then any(.workflow_runs[]; .id == $source) else false end;
+      if type != "object" then false
+      elif (.workflow_runs | type) == "array" then
+        any(.workflow_runs[]; if type == "object" then .id == $source else false end)
+      else false end;
     def outcome($classification): {
       classification: $classification,
       total_count: (if type == "object" then (.total_count // null) else null end),
@@ -159,6 +163,7 @@ while (( source_listing_attempt < source_listing_read_limit )); do
     elif any(.workflow_runs[]; type != "object") then outcome("malformed-row")
     elif any(.workflow_runs[];
       (.id | type) != "number" or .id <= 0 or .id != (.id | floor)) then outcome("malformed-row-id")
+    elif any(.workflow_runs[]; (.repository | type) != "object") then outcome("malformed-row-repository")
     elif any(.workflow_runs[];
       .workflow_id != $workflow_id or .repository.full_name != $repository or
       .head_sha != $head or .event != "pull_request") then outcome("identity-mismatch")
