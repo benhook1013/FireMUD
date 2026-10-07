@@ -55,6 +55,30 @@ PATCH = "c" * 64
 
 
 class RuntimeTest(unittest.TestCase):
+    @staticmethod
+    def stop_audit_anchor(
+        *,
+        pr: int = 42,
+        child_head: str = HEAD,
+        parent_identity: str = "develop",
+        parent_head: str = BASE,
+        pr_base_oid: str = BASE,
+        base_ref: str = "develop",
+        effective_parent_head: str = BASE,
+    ) -> dict[str, Any]:
+        return {
+            "pr": pr,
+            "child_head": child_head,
+            "parent_identity": parent_identity,
+            "parent_head": parent_head,
+            "merge_base": BASE,
+            "patch_id": PATCH,
+            "pr_base_oid": pr_base_oid,
+            "base_ref": base_ref,
+            "effective_parent_head": effective_parent_head,
+            "enforce_parent_identity_ref": True,
+        }
+
     def test_selected_pr_status_shares_one_budget_across_the_complete_dispatch(self) -> None:
         class Clock:
             now = 0.0
@@ -790,6 +814,10 @@ class RuntimeTest(unittest.TestCase):
             "parent_head": BASE,
             "merge_base": BASE,
             "patch_id": PATCH,
+            "pr_base_oid": BASE,
+            "base_ref": "develop",
+            "effective_parent_head": BASE,
+            "enforce_parent_identity_ref": True,
         }
         for audit, arguments in (
             (observer.review_stop_audit, (42, anchor)),
@@ -5004,14 +5032,7 @@ class RuntimeTest(unittest.TestCase):
             cooldown_until=cooldown_until,
             reason="CodeRabbit explicitly rate limited the request",
         )
-        anchor = {
-            "pr": 42,
-            "child_head": HEAD,
-            "parent_identity": "develop",
-            "parent_head": BASE,
-            "merge_base": BASE,
-            "patch_id": PATCH,
-        }
+        anchor = self.stop_audit_anchor()
         generic_audit = {
             "complete": True,
             "active_reservations": ["rate_limited", "review active"],
@@ -5051,6 +5072,7 @@ class RuntimeTest(unittest.TestCase):
         with (
             patch.object(github, "fetch_pull_request", return_value=payload),
             patch.object(live, "pull_request", return_value=snapshot),
+            patch.object(live, "branch_head", return_value=BASE),
             patch.object(observer, "legacy_transition_reauthorization_audit", side_effect=legacy_audit_at_sample),
             patch.object(observer, "_complete_trigger_paths", return_value=[Path("trigger.json")]),
             patch.object(hosted, "current_trigger_record_paths", return_value=[Path("trigger.json")]),
@@ -5090,6 +5112,7 @@ class RuntimeTest(unittest.TestCase):
         with (
             patch.object(github, "fetch_pull_request", return_value=payload),
             patch.object(live, "pull_request", return_value=snapshot),
+            patch.object(live, "branch_head", return_value=BASE),
             patch.object(observer, "legacy_transition_reauthorization_audit", return_value=expired_audit),
             patch.object(observer, "_complete_trigger_paths", return_value=[Path("trigger.json")]),
             patch.object(hosted, "current_trigger_record_paths", return_value=[Path("trigger.json")]),
@@ -5121,6 +5144,7 @@ class RuntimeTest(unittest.TestCase):
                 with (
                     patch.object(github, "fetch_pull_request", return_value=payload),
                     patch.object(live, "pull_request", return_value=snapshot),
+                    patch.object(live, "branch_head", return_value=BASE),
                     patch.object(observer, "legacy_transition_reauthorization_audit", return_value=generic_audit),
                     patch.object(observer, "history", return_value=[]),
                     patch.object(observer, "_complete_trigger_paths", return_value=[Path("trigger.json")]),
@@ -5151,6 +5175,7 @@ class RuntimeTest(unittest.TestCase):
         with (
             patch.object(github, "fetch_pull_request", return_value=payload),
             patch.object(live, "pull_request", return_value=snapshot),
+            patch.object(live, "branch_head", return_value=BASE),
             patch.object(observer, "legacy_transition_reauthorization_audit", return_value=mismatched_audit),
             patch.object(observer, "_complete_trigger_paths", return_value=[Path("trigger.json")]),
             patch.object(hosted, "current_trigger_record_paths", return_value=[Path("trigger.json")]),
@@ -5168,14 +5193,7 @@ class RuntimeTest(unittest.TestCase):
         pull.update({"number": 42, "baseRefName": "develop", "baseRefOid": BASE})
         snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
         observer = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
-        anchor = {
-            "pr": 42,
-            "child_head": HEAD,
-            "parent_identity": "develop",
-            "parent_head": BASE,
-            "merge_base": BASE,
-            "patch_id": PATCH,
-        }
+        anchor = self.stop_audit_anchor()
         active_cli = {
             **anchor,
             "head": HEAD,
@@ -5205,6 +5223,7 @@ class RuntimeTest(unittest.TestCase):
             with (
                 patch.object(github, "fetch_pull_request", return_value=payload),
                 patch.object(observer.live, "pull_request", return_value=snapshot),
+                patch.object(observer.live, "branch_head", return_value=BASE),
                 patch.object(observer, "legacy_transition_reauthorization_audit", return_value=empty_audit),
                 patch.object(observer, "_complete_trigger_paths", return_value=[]),
                 patch.object(
@@ -5226,6 +5245,118 @@ class RuntimeTest(unittest.TestCase):
             pending_audit["unresolved_findings"],
             ["a successful private CLI capture has no public checkpoint and requires adjudication"],
         )
+
+    def test_review_stop_audit_checks_retained_base_and_effective_parent_separately(self) -> None:
+        retained_base = BASE
+        effective_parent = "d" * 40
+        payload = self._payload()
+        pull = payload["data"]["repository"]["pullRequest"]
+        pull.update(
+            {
+                "number": 42,
+                "headRefOid": HEAD,
+                "baseRefName": "develop",
+                "baseRefOid": retained_base,
+            }
+        )
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", retained_base, HEAD, "feature", 1)
+        observer = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+        anchor = self.stop_audit_anchor(
+            parent_head=effective_parent,
+            pr_base_oid=retained_base,
+            effective_parent_head=effective_parent,
+        )
+        def run(
+            *,
+            selected_anchor=anchor,
+            selected_snapshot=snapshot,
+            selected_payload=payload,
+            nested_payload=None,
+            parent_tip=effective_parent,
+            tip_error=None,
+        ):
+            fetch_payloads = [selected_payload, nested_payload if nested_payload is not None else selected_payload]
+            with (
+                patch.object(github, "fetch_pull_request", side_effect=fetch_payloads),
+                patch.object(observer.live, "pull_request", return_value=selected_snapshot),
+                patch.object(
+                    observer.live,
+                    "branch_head",
+                    side_effect=tip_error if tip_error is not None else None,
+                    return_value=None if tip_error is not None else parent_tip,
+                ),
+                patch.object(observer, "_complete_trigger_paths", return_value=[]),
+                patch.object(observer, "history", return_value=[]),
+                patch.object(observer, "_global_blockers", return_value=[]),
+                patch.object(
+                    observer,
+                    "legacy_transition_reauthorization_audit",
+                    wraps=observer.legacy_transition_reauthorization_audit,
+                ) as audit,
+            ):
+                result = observer.review_stop_audit(42, selected_anchor)
+                return result, audit
+
+        result, audit = run()
+        self.assertEqual(result["blockers"], [])
+        self.assertEqual(
+            result["anchor"],
+            {key: anchor[key] for key in ("pr", "child_head", "parent_identity", "parent_head", "merge_base", "patch_id")},
+        )
+        audit.assert_called_once()
+        self.assertEqual(audit.call_args.args[2]["live_base_tip"], retained_base)
+        self.assertNotEqual(anchor["pr_base_oid"], anchor["effective_parent_head"])
+
+        shifted_nested_base = self._payload()
+        shifted_nested_base["data"]["repository"]["pullRequest"]["baseRefOid"] = "e" * 40
+        with self.assertRaisesRegex(ControllerError, "base moved during missing Hosted fingerprint retirement"):
+            run(nested_payload=shifted_nested_base)
+
+        parent_ref = "feature-parent"
+        numeric_pull = self._payload()["data"]["repository"]["pullRequest"]
+        numeric_pull.update(
+            {
+                "number": 42,
+                "headRefOid": HEAD,
+                "baseRefName": parent_ref,
+                "baseRefOid": retained_base,
+            }
+        )
+        numeric_anchor = self.stop_audit_anchor(
+            parent_identity="17",
+            parent_head=effective_parent,
+            pr_base_oid=retained_base,
+            base_ref=parent_ref,
+            effective_parent_head=effective_parent,
+        )
+        numeric_snapshot = PullRequestSnapshot(42, "OPEN", parent_ref, retained_base, HEAD, "feature", 1)
+        numeric_result, _ = run(
+            selected_anchor=numeric_anchor,
+            selected_snapshot=numeric_snapshot,
+            selected_payload={"data": {"repository": {"pullRequest": numeric_pull}}},
+        )
+        self.assertEqual(numeric_result["blockers"], [])
+
+        wrong_head = dataclasses.replace(snapshot, head_sha="e" * 40)
+        wrong_base = dataclasses.replace(snapshot, base_sha="f" * 40)
+        wrong_ref = dataclasses.replace(snapshot, base_ref_name="release")
+        for label, selected_snapshot, parent_tip in (
+            ("head", wrong_head, effective_parent),
+            ("retained base", wrong_base, effective_parent),
+            ("ref", wrong_ref, effective_parent),
+            ("current ref tip", snapshot, "e" * 40),
+        ):
+            with self.subTest(movement=label), self.assertRaises(ControllerError):
+                run(selected_snapshot=selected_snapshot, parent_tip=parent_tip)
+
+        for field in ("pr_base_oid", "base_ref", "effective_parent_head", "enforce_parent_identity_ref"):
+            with self.subTest(missing=field), self.assertRaisesRegex(
+                ControllerError, "complete selected pull-request base identity"
+            ):
+                run(selected_anchor={key: value for key, value in anchor.items() if key != field})
+
+        with self.assertRaisesRegex(ControllerError, "base ref tip is unavailable"):
+            run(tip_error=RuntimeError("ref lookup failed"))
 
     def test_hosted_checkpoint_requires_matching_completed_durable_trigger_and_anchor(self) -> None:
         body = (
@@ -6001,14 +6132,7 @@ class RuntimeTest(unittest.TestCase):
             head_sha=HEAD,
             reason="second finished response has no head-attributed summary",
         )
-        anchor = {
-            "pr": 42,
-            "child_head": HEAD,
-            "parent_identity": "develop",
-            "parent_head": BASE,
-            "merge_base": BASE,
-            "patch_id": PATCH,
-        }
+        anchor = self.stop_audit_anchor()
         expected_audit = {
             "complete": True,
             "active_reservations": ["ambiguous", "ambiguous"],
@@ -6028,6 +6152,7 @@ class RuntimeTest(unittest.TestCase):
             with (
                 patch.object(github, "fetch_pull_request", return_value=payload),
                 patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(live, "branch_head", return_value=BASE),
                 patch.object(observer, "legacy_transition_reauthorization_audit", return_value=selected_audit) as audit,
                 patch.object(
                     observer,

@@ -1987,7 +1987,13 @@ class ControllerTests(unittest.TestCase):
             )
         )
 
-        with patch.object(controller, "_check_stop_evidence", side_effect=ControllerError(stop_error)):
+        observed_anchors = []
+
+        def stop_audit(_pr_number, anchor, **_kwargs):
+            observed_anchors.append(dict(anchor))
+            raise ControllerError(stop_error)
+
+        with patch.object(controller._evidence_provider, "review_stop_audit", side_effect=stop_audit):
             allocation = controller.status()["prs"][0]["allocations"]["cli"]
 
             self.assertEqual(allocation["status"], "CAP_FINDINGS_PENDING")
@@ -2001,6 +2007,19 @@ class ControllerTests(unittest.TestCase):
             ) as refusal:
                 controller.resolve_cli_target()
             self.assertNotIn("accepted findings remain pending", str(refusal.exception))
+
+        self.assertTrue(observed_anchors)
+        self.assertEqual(observed_anchors[-1]["pr_base_oid"], BASE)
+        self.assertEqual(observed_anchors[-1]["base_ref"], "develop")
+        self.assertEqual(observed_anchors[-1]["effective_parent_head"], BASE)
+        self.assertTrue(observed_anchors[-1]["enforce_parent_identity_ref"])
+        state = controller._state()
+        live, reconciliation = controller._reconciliation(state)
+        ordinary_anchor = controller._anchor(1, live[1], reconciliation.links[1])
+        self.assertNotIn("pr_base_oid", ordinary_anchor.as_dict())
+        self.assertNotIn("base_ref", ordinary_anchor.as_dict())
+        self.assertNotIn("effective_parent_head", ordinary_anchor.as_dict())
+        self.assertNotIn("enforce_parent_identity_ref", ordinary_anchor.as_dict())
 
     def test_cli_allocation_hold_without_details_keeps_its_reason(self):
         evidence = {
@@ -2273,6 +2292,7 @@ class ControllerTests(unittest.TestCase):
                     ),
                     patch.object(provider, "_complete_trigger_paths", return_value=[]),
                     patch.object(provider.live, "pull_request", side_effect=runtime_pull_request),
+                    patch.object(provider.live, "branch_head", return_value=controller.git.heads["develop"]),
                     patch("pr_review.runtime.github.fetch_pull_request", side_effect=runtime_payload),
                     patch.object(provider, "review_stop_audit", side_effect=capture_runtime_audit),
                 ):
@@ -5503,6 +5523,91 @@ class ControllerTests(unittest.TestCase):
             "latest terminal response is explicitly non-counting",
         )
         self.assertEqual(evidence.stop_audit_calls[-1][1], (latest_fingerprint,))
+
+    def test_direct_stop_ambiguity_uses_actual_base_tip_when_optional_reconciliation_fails(self):
+        fingerprint = "a" * 64
+        history = {
+            (1, "hosted"): [
+                self.allocation_evidence(checkpoint="latest-hosted"),
+                {
+                    "pr": 1,
+                    "head": HEAD_1,
+                    "checkpoint": "trigger:123",
+                    "held": True,
+                    "terminal_ambiguous": True,
+                    "fingerprint": fingerprint,
+                    "trigger_id": 123,
+                    "response_id": 124,
+                },
+            ]
+        }
+        audit = {
+            "complete": True,
+            "active_reservations": [],
+            "unmatched_responses": [],
+            "ambiguous_responses": [],
+            "unresolved_findings": [],
+            "ambiguous_terminal_responses": [
+                {"fingerprint": fingerprint, "captured_head": HEAD_1, "response_at": "2026-10-01T00:00:00Z"}
+            ],
+            "retained_ambiguous": [{"fingerprint": fingerprint}],
+        }
+        evidence = AuditedEvidence(history, audit=audit)
+        controller = self.make({1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1}, sqlite=True)
+        controller.set_stack([1])
+        observed_anchors = []
+        original_audit = evidence.review_stop_audit
+
+        def capture_audit(pr_number, anchor, **kwargs):
+            observed_anchors.append(dict(anchor))
+            return original_audit(pr_number, anchor, **kwargs)
+
+        with (
+            patch.object(controller, "_reconciliation", side_effect=RuntimeError("optional queue read failed")),
+            patch.object(evidence, "review_stop_audit", side_effect=capture_audit),
+        ):
+            stopped = controller.decide_stop(
+                pr=1,
+                channel="hosted",
+                reason="administratively stop after retaining the exact terminal response",
+                retain_ambiguous_fingerprints=(fingerprint,),
+                ambiguity_reason="the terminal response is explicitly non-counting",
+            )
+
+        self.assertEqual(stopped["stop_basis"], "direct_human")
+        self.assertEqual(observed_anchors[0]["pr_base_oid"], BASE)
+        self.assertEqual(observed_anchors[0]["base_ref"], "develop")
+        self.assertEqual(observed_anchors[0]["effective_parent_head"], BASE)
+        self.assertFalse(observed_anchors[0]["enforce_parent_identity_ref"])
+
+        for unavailable in (None, ControllerError("branch lookup unavailable")):
+            failed_controller = self.make(
+                {1: pr(1, HEAD_1)},
+                AuditedEvidence(history, audit=audit),
+                heads={"feature-1": HEAD_1},
+            )
+            failed_controller.set_stack([1])
+            branch_lookup = (
+                patch.object(failed_controller.git, "branch_head", return_value=unavailable)
+                if unavailable is None
+                else patch.object(failed_controller.git, "branch_head", side_effect=unavailable)
+            )
+            with (
+                patch.object(
+                    failed_controller,
+                    "_reconciliation",
+                    side_effect=RuntimeError("optional queue read failed"),
+                ),
+                branch_lookup,
+                self.assertRaisesRegex(ControllerError, "base ref tip is unavailable for ambiguity audit"),
+            ):
+                failed_controller.decide_stop(
+                    pr=1,
+                    channel="hosted",
+                    reason="require exact ref identity before retaining ambiguity",
+                    retain_ambiguous_fingerprints=(fingerprint,),
+                    ambiguity_reason="the terminal response is explicitly non-counting",
+                )
 
     def test_direct_hosted_stop_preserves_live_and_unknown_ambiguity_obligations(self):
         latest_fingerprint = "0072dfb6e4955aa58064a4181dec69a4daeb2b5757b50c9dd449fc4c997cf29b"
