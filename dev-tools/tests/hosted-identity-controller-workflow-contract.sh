@@ -100,13 +100,136 @@ from pathlib import Path
 
 import yaml
 
-workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+runtime_source = Path(sys.argv[1]).read_text(encoding="utf-8")
+workflow = yaml.safe_load(runtime_source)
 publisher_workflow = yaml.safe_load(Path(sys.argv[2]).read_text(encoding="utf-8"))
 
 
 def assert_immutable_action_pin(step, action):
     uses = step.get("uses", "")
     assert re.fullmatch(rf"{re.escape(action)}@[0-9a-f]{{40}}", uses), uses
+
+
+def mapping_entry_nodes(mapping_node, key):
+    if not isinstance(mapping_node, yaml.MappingNode):
+        return None
+    for key_node, value_node in mapping_node.value:
+        if isinstance(key_node, yaml.ScalarNode) and key_node.value == key:
+            return key_node, value_node
+    return None
+
+
+def mapping_value_node(mapping_node, key):
+    entry = mapping_entry_nodes(mapping_node, key)
+    return entry[1] if entry is not None else None
+
+
+def workflow_action_uses_node(workflow_node, job_name, step_name):
+    jobs_node = mapping_value_node(workflow_node, "jobs")
+    job_node = mapping_value_node(jobs_node, job_name)
+    steps_node = mapping_value_node(job_node, "steps")
+    if not isinstance(steps_node, yaml.SequenceNode):
+        return None
+    selected_entry = None
+    for step_node in steps_node.value:
+        name_node = mapping_value_node(step_node, "name")
+        if isinstance(name_node, yaml.ScalarNode) and name_node.value == step_name:
+            selected_entry = mapping_entry_nodes(step_node, "uses")
+    return selected_entry
+
+
+def has_valid_action_version_annotation(workflow_text, action, uses, uses_entry):
+    match = re.fullmatch(rf"{re.escape(action)}@([0-9a-f]{{40}})", uses)
+    if match is None or uses_entry is None:
+        return False
+    uses_key_node, uses_node = uses_entry
+    if (
+        not isinstance(uses_key_node, yaml.ScalarNode)
+        or uses_key_node.value != "uses"
+        or not isinstance(uses_node, yaml.ScalarNode)
+        or uses_node.value != uses
+        or uses_key_node.start_mark.line != uses_node.start_mark.line
+        or uses_node.start_mark.line != uses_node.end_mark.line
+        or uses_key_node.end_mark.index > uses_node.start_mark.index
+    ):
+        return False
+    line = workflow_text.splitlines()[uses_node.start_mark.line]
+    annotation = line[uses_node.end_mark.column :]
+    return (
+        re.fullmatch(r"[ \t]+#[ \t]*v[0-9]+(?:\.[0-9]+){0,2}[ \t]*", annotation)
+        is not None
+    )
+
+
+def assert_action_pin_and_annotation(step, action, workflow_text, workflow_node, step_name):
+    assert_immutable_action_pin(step, action)
+    uses_entry = workflow_action_uses_node(
+        workflow_node, "pr-controller-smoke", step_name
+    )
+    assert has_valid_action_version_annotation(
+        workflow_text,
+        action,
+        step.get("uses", ""),
+        uses_entry,
+    ), step.get("uses", "")
+
+
+def fixture_has_target_annotation(uses_line, sibling_line=""):
+    fixture = (
+        "jobs:\n"
+        "  contract:\n"
+        "    steps:\n"
+        f"      - name: sibling\n        uses: {sibling_line}\n"
+        "      - name: target\n"
+        f"        uses: {uses_line}\n"
+    )
+    fixture_node = yaml.compose(fixture)
+    target_entry = workflow_action_uses_node(fixture_node, "contract", "target")
+    target_value = target_entry[1].value if target_entry is not None else ""
+    return has_valid_action_version_annotation(
+        fixture, "docker/setup-buildx-action", target_value, target_entry
+    )
+
+
+def fixture_has_last_named_annotation(first_uses_line, last_uses_line):
+    fixture = (
+        "jobs:\n"
+        "  contract:\n"
+        "    steps:\n"
+        f"      - name: target\n        uses: {first_uses_line}\n"
+        f"      - name: target\n        uses: {last_uses_line}\n"
+    )
+    fixture_node = yaml.compose(fixture)
+    selected_entry = workflow_action_uses_node(fixture_node, "contract", "target")
+    selected_value = selected_entry[1].value if selected_entry is not None else ""
+    return has_valid_action_version_annotation(
+        fixture, "docker/setup-buildx-action", selected_value, selected_entry
+    )
+
+
+changed_pin = "docker/setup-buildx-action@" + "a" * 40
+assert fixture_has_target_annotation(f"{changed_pin} # v3.11.0")
+assert fixture_has_target_annotation(f'"{changed_pin}" # v3.11.0')
+for invalid_uses in (
+    "docker/setup-buildx-action@v3",
+    "docker/setup-buildx-action@" + "a" * 39,
+    "docker/other-action@" + "a" * 40,
+):
+    assert not fixture_has_target_annotation(f"{invalid_uses} # v3.11.0"), invalid_uses
+assert not fixture_has_target_annotation(f"{changed_pin} # latest")
+assert not fixture_has_target_annotation(f"{changed_pin}\n        # v3.11.0")
+valid_sibling = f"{changed_pin} # v3.11.0"
+assert not fixture_has_target_annotation(f'"{changed_pin}"', valid_sibling)
+assert not fixture_has_target_annotation(f'"{changed_pin}" # latest', valid_sibling)
+anchored_sibling = f'&pinned "{changed_pin}" # v3.11.0'
+assert not fixture_has_target_annotation("*pinned", anchored_sibling)
+assert not fixture_has_target_annotation("*pinned # latest", anchored_sibling)
+assert not fixture_has_last_named_annotation(
+    f"{changed_pin} # v3.11.0", changed_pin
+)
+assert fixture_has_last_named_annotation(
+    changed_pin, f"{changed_pin} # v3.11.0"
+)
 
 
 for job in workflow["jobs"].values():
@@ -338,11 +461,20 @@ build_step = controller_steps_by_name[
 smoke_step = controller_steps_by_name["Smoke controller image entrypoint and paused health"]
 assert controller_steps.index(buildx_step) < controller_steps.index(base_step)
 assert controller_steps.index(base_step) < controller_steps.index(build_step) < controller_steps.index(smoke_step)
-assert buildx_step["uses"] == (
-    "docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5"
+runtime_node = yaml.compose(runtime_source)
+assert_action_pin_and_annotation(
+    buildx_step,
+    "docker/setup-buildx-action",
+    runtime_source,
+    runtime_node,
+    "Set up Docker Buildx",
 )
-assert base_step["uses"] == (
-    "docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf"
+assert_action_pin_and_annotation(
+    base_step,
+    "docker/build-push-action",
+    runtime_source,
+    runtime_node,
+    "Build exact local runtime base image",
 )
 assert base_step["with"] == {
     "context": ".",
