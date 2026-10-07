@@ -1478,7 +1478,7 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
     UUID requestId = UUID.randomUUID();
     UUID operationId = UUID.randomUUID();
     String sourceTenantKey =
-        "admission-" + UUID.randomUUID().toString().replace("-", "").substring(0, 28);
+        "admission-" + UUID.randomUUID().toString().replace("-", "").substring(0, 26);
     String requestDigest =
         GameTenantCreationDigest.requestDigest(
             GAME_DESIGN_NAMESPACE,
