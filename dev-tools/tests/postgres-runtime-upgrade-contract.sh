@@ -218,37 +218,72 @@ run_docker_proof() (
   report_client_failure() {
     local operation="$1"
     local log_path="$2"
-    local summary="unclassified client failure"
+    printf 'PostgreSQL proof operation failed: %s; bounded log excerpt follows.\n' "$operation" >&2
+    FIREMUD_POSTGRES_PROOF_PASSWORD="$password" python3 - "$log_path" <<'PY'
+from pathlib import Path
+import os
+import sys
 
-    if [[ ! -r "$log_path" ]]; then
-      summary="client log unavailable"
-    elif grep -Eiq 'permission denied' "$log_path"; then
-      summary="permission denied"
-    elif grep -Eiq 'password authentication failed|authentication failed|no password supplied' "$log_path"; then
-      summary="database authentication failed"
-    elif grep -Eiq 'could not connect|connection refused|server closed the connection|timeout expired|timed out|no route to host' "$log_path"; then
-      summary="database connection failed"
-    elif grep -Eiq 'gzip:|gunzip:|not in gzip format|unexpected end of file' "$log_path"; then
-      summary="gzip processing failed"
-    elif grep -Eiq 'pg_dump:' "$log_path"; then
-      summary="pg_dump failed"
-    elif grep -Eiq 'psql: error:|ERROR:|FATAL:' "$log_path"; then
-      summary="PostgreSQL rejected the restore"
-    elif grep -Eiq 'aws:|NoSuchKey|NoSuchBucket|Unable to locate credentials' "$log_path"; then
-      summary="backup selection or download failed"
-    elif [[ -s "$log_path" ]]; then
-      summary="client failed; raw output suppressed"
-    else
-      summary="client failed without captured output"
-    fi
+max_bytes = 16 * 1024
+max_lines = 40
+log_path = Path(sys.argv[1])
+secret = os.environ.get("FIREMUD_POSTGRES_PROOF_PASSWORD", "").encode()
 
-    printf 'PostgreSQL proof diagnostic for %s: %s. Raw output is suppressed to protect SQL, payload, and credentials.\n' \
-      "$operation" "$summary" >&2
+try:
+    with log_path.open("rb") as log_file:
+        log_file.seek(0, os.SEEK_END)
+        log_size = log_file.tell()
+        start = max(0, log_size - max_bytes - len(secret))
+        log_file.seek(start)
+        excerpt = log_file.read(max_bytes + len(secret))
+except OSError:
+    print("[operation log unavailable]", file=sys.stderr)
+    raise SystemExit(0)
+
+truncated = start > 0
+if secret:
+    excerpt = excerpt.replace(secret, b"[REDACTED]")
+if len(excerpt) > max_bytes:
+    excerpt = excerpt[-max_bytes:]
+    truncated = True
+
+lines = excerpt.decode("utf-8", errors="replace").splitlines(keepends=True)
+if len(lines) > max_lines:
+    lines = lines[-max_lines:]
+    truncated = True
+excerpt = "".join(lines).encode("utf-8")
+if len(excerpt) > max_bytes:
+    excerpt = excerpt[-max_bytes:].decode("utf-8", errors="ignore").encode("utf-8")
+    truncated = True
+
+if truncated:
+    print("[log excerpt truncated to at most 16 KiB and 40 lines]", file=sys.stderr)
+sys.stderr.buffer.write(excerpt)
+if excerpt and not excerpt.endswith(b"\n"):
+    sys.stderr.write("\n")
+PY
   }
 
   case "${1:-}" in
     --lifecycle-success) exit 0 ;;
     --lifecycle-failure) exit 23 ;;
+    --lifecycle-diagnostic)
+      mkdir -p "$cleanup_dir"
+      FIREMUD_POSTGRES_PROOF_PASSWORD="$password" python3 - "$cleanup_dir/diagnostic.log" <<'PY'
+from pathlib import Path
+import os
+import sys
+
+with Path(sys.argv[1]).open("w") as log_file:
+    for index in range(1, 81):
+        log_file.write(f"large-line-{index:03d}: {'x' * 500}\n")
+    for index in range(1, 101):
+        suffix = f" password={os.environ['FIREMUD_POSTGRES_PROOF_PASSWORD']}" if index == 100 else ""
+        log_file.write(f"fixture-line-{index:03d}{suffix}\n")
+PY
+      report_client_failure "bounded diagnostic fixture" "$cleanup_dir/diagnostic.log"
+      exit 0
+      ;;
   esac
 
   command -v docker >/dev/null 2>&1 || fail "required PostgreSQL runtime proof needs Docker on the CI runner"
@@ -460,12 +495,10 @@ MKTEMP
     : >"$docker_log"
     expected_status=0
     [[ "$lifecycle_case" == success ]] || expected_status=23
-    if (
-      export PATH="$fake_bin:$PATH"
-      export FIREMUD_TEST_DOCKER_LOG="$docker_log"
-      export FIREMUD_TEST_PROOF_TMPDIR="$proof_tmpdir"
-      run_docker_proof "--lifecycle-$lifecycle_case"
-    ); then
+    if PATH="$fake_bin:$PATH" \
+      FIREMUD_TEST_DOCKER_LOG="$docker_log" \
+      FIREMUD_TEST_PROOF_TMPDIR="$proof_tmpdir" \
+      run_docker_proof "--lifecycle-$lifecycle_case"; then
       actual_status=0
     else
       actual_status=$?
@@ -477,6 +510,21 @@ MKTEMP
     grep -Eq '^volume rm firemud-pg18-source-[^ ]+ firemud-pg18-target-[^ ]+$' "$docker_log" || fail "PostgreSQL proof $lifecycle_case lifecycle did not remove both fixture volumes"
     [[ -z "$(find "$proof_tmpdir" -mindepth 1 -maxdepth 1 -print -quit)" ]] || fail "PostgreSQL proof $lifecycle_case lifecycle leaked its temporary directory"
   done
+
+  diagnostic_output="$(
+    PATH="$fake_bin:$PATH" \
+      FIREMUD_TEST_DOCKER_LOG="$docker_log" \
+      FIREMUD_TEST_PROOF_TMPDIR="$proof_tmpdir" \
+      run_docker_proof --lifecycle-diagnostic 2>&1
+  )"
+  [[ "$diagnostic_output" == *"bounded log excerpt follows"* ]] || fail "PostgreSQL proof diagnostic fixture omitted its operation label"
+  [[ "$diagnostic_output" == *"[log excerpt truncated to at most 16 KiB and 40 lines]"* ]] || fail "PostgreSQL proof diagnostic fixture omitted its truncation marker"
+  [[ "$diagnostic_output" == *"fixture-line-100 password=[REDACTED]"* ]] || fail "PostgreSQL proof diagnostic fixture did not redact its generated password"
+  [[ "$diagnostic_output" != *"firemud-ci-"* ]] || fail "PostgreSQL proof diagnostic fixture exposed its generated password"
+  [[ "$diagnostic_output" == *"fixture-line-061"* && "$diagnostic_output" != *"fixture-line-060"* ]] \
+    || fail "PostgreSQL proof diagnostic fixture did not limit the excerpt to the final 40 lines"
+  [[ "$(printf '%s\n' "$diagnostic_output" | wc -l)" -le 42 ]] || fail "PostgreSQL proof diagnostic fixture exceeded its line bound"
+  [[ "$(printf '%s\n' "$diagnostic_output" | wc -c)" -le 16600 ]] || fail "PostgreSQL proof diagnostic fixture exceeded its byte bound"
 
   echo "PostgreSQL proof cleanup lifecycle passed for success and failure without Docker."
 )
