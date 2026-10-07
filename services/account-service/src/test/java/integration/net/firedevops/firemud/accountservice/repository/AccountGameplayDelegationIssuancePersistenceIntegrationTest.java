@@ -1366,7 +1366,10 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
                                 exactLoginRetry,
                                 CALLER_WORKLOAD,
                                 verifierMustNotRun(credentialVerifierCalls))))
-        .isInstanceOf(StaleAuthorityException.class);
+        // This generic Account mutation has no closed source-event receipt. Reject its unsupported
+        // authority before comparing a current snapshot with the retained issuance snapshot.
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Account source event schema is unsupported");
     assertThat(credentialVerifierCalls).hasValue(0);
 
     int closesBeforeRetry = harness.redis().connectionCloseCount();
