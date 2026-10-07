@@ -154,10 +154,7 @@ public final class GameSessionCanonicalInitialAdmissionOwnerClient
   }
 
   private synchronized void requireHeld(long expectedGeneration, boolean handleOpen) {
-    if (!handleOpen
-        || closed
-        || !initialized
-        || lifecycleGeneration.get() != expectedGeneration) {
+    if (!handleOpen || closed || !initialized || lifecycleGeneration.get() != expectedGeneration) {
       throw denied("Authenticated Game Session owner proof is no longer held");
     }
   }
