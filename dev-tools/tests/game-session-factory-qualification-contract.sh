@@ -11,6 +11,7 @@ import io
 import json
 import os
 import tempfile
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -162,10 +163,17 @@ class FakeOwnerAPI:
     def create_fixture(self, runner, _authority):
         self.create_calls += 1
         runner.resources_may_exist = True
+        authority = dict(
+            line.split("=", 1)
+            for line in (root / "config/workflow-tool-versions.env").read_text().splitlines()
+            if line and not line.startswith("#")
+        )
+        node_version = authority["KIND_NODE_IMAGE_VERSION"]
+        node_digest = authority["KIND_NODE_IMAGE_DIGEST"]
         fixture_receipt = {
             "kubeSystemNamespaceUid": namespace_uid,
-            "kubernetesServerVersion": "v1.35.8",
-            "nodeImage": "kindest/node:v1.35.8@sha256:" + "d" * 64,
+            "kubernetesServerVersion": node_version[1:],
+            "nodeImage": f"kindest/node:{node_version}@{node_digest}",
             "nodeContainers": [{"id": node_id, "name": "kind-control-plane", "role": "control-plane"}],
             "kindNetwork": {"id": network_id},
         }
@@ -218,7 +226,7 @@ assert qualification.validate_factory_inventory(inventory)["namespaces"] == 1
 assert qualification.FACTORY_INVENTORY_MAX_ITEMS_PER_RESOURCE == 512
 assert qualification.FACTORY_INVENTORY_MAX_TOTAL_ITEMS == 4096
 assert qualification.FACTORY_INVENTORY_MAX_SECONDS == 180
-assert qualification.FACTORY_INVENTORY_MAX_OUTPUT_BYTES_PER_RESOURCE == 64 * 1024
+assert qualification.FACTORY_INVENTORY_MAX_OUTPUT_BYTES_PER_RESOURCE == 1024 * 1024
 assert qualification.FACTORY_DISCOVERY_MAX_GROUPS == 128
 assert qualification.FACTORY_DISCOVERY_MAX_GROUP_VERSIONS == 256
 
@@ -328,6 +336,7 @@ except qualification.FixtureDenied as error:
 
 result, owner, runner = run_qualification()
 assert result["outcome"] == "qualified_for_review_only", result
+assert owner.evidence["inventoryBounds"]["maxOutputBytesPerResponse"] == 1024 * 1024
 assert result["qualificationState"] == "review_only_not_an_approved_baseline", result
 assert result["approvedFactoryBaseline"] is False, result
 assert result["cleanup"] == "removed", result
@@ -407,8 +416,8 @@ class TruncatedRunner:
     def __init__(self):
         self.calls = []
 
-    def run(self, argv, _environment, _reason, timeout_seconds):
-        self.calls.append((argv, timeout_seconds))
+    def run(self, argv, _environment, _reason, timeout_seconds, stdout_limit):
+        self.calls.append((argv, timeout_seconds, stdout_limit))
         return SimpleNamespace(stdout=b"{}", truncated=True)
 
 
@@ -423,6 +432,114 @@ try:
 except qualification.FixtureDenied as error:
     assert error.reason == "game_session_kubernetes_inventory_invalid"
 assert len(truncated_runner.calls) == 1
+assert truncated_runner.calls[0][2] == 1024 * 1024
+
+discovery_results = (
+    {"kind": "APIVersions", "apiVersion": "v1", "versions": ["v1"]},
+    {"kind": "APIGroupList", "apiVersion": "v1", "groups": [{
+        "name": "apps", "versions": [{"version": "v1", "groupVersion": "apps/v1"}]
+    }]},
+)
+
+
+class DiscoveryRunner:
+    def __init__(self):
+        self.calls = []
+
+    def run(self, argv, _environment, _reason, timeout_seconds, stdout_limit):
+        self.calls.append((argv, timeout_seconds, stdout_limit))
+        response = discovery_results[0] if argv[-2] == "/api" else discovery_results[1]
+        return SimpleNamespace(stdout=json.dumps(response).encode(), truncated=False)
+
+
+discovery_runner = DiscoveryRunner()
+with patch.object(qualification.fixture, "require_tool", return_value="/mock/kubectl"):
+    discovery_backend = qualification.FactoryInventoryBackend(
+        discovery_runner, backend_identity, Path("/mock/kubeconfig"), {}
+    )
+assert discovery_backend._capture_api_discovery(qualification.time.monotonic() + 10)["groupCount"] == 1
+assert len(discovery_runner.calls) == 2
+assert all(call[2] == 1024 * 1024 for call in discovery_runner.calls)
+
+with tempfile.TemporaryDirectory(prefix="factory-large-inventory-contract-") as temporary_directory:
+    temporary_path = Path(temporary_directory)
+    response_path = temporary_path / "kubectl-response.json"
+    kubectl_path = temporary_path / "mock-kubectl.py"
+    kubectl_path.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os, sys\n"
+        "sys.stdout.buffer.write(open(os.environ['MOCK_KUBECTL_RESPONSE'], 'rb').read())\n"
+    )
+    kubectl_path.chmod(0o755)
+
+    class RecordingCommandRunner:
+        def __init__(self):
+            self.delegate = qualification.fixture.CommandRunner()
+            self.stdout_limits = []
+
+        def run(self, argv, environment, reason, timeout_seconds, stdout_limit):
+            self.stdout_limits.append(stdout_limit)
+            return self.delegate.run(
+                argv,
+                environment,
+                reason,
+                timeout_seconds=timeout_seconds,
+                stdout_limit=stdout_limit,
+            )
+
+    large_role = {
+        "apiVersion": "rbac.authorization.k8s.io/v1",
+        "kind": "ClusterRole",
+        "metadata": {
+            "name": "large-role",
+            "uid": uid,
+            "resourceVersion": "1",
+        },
+        "rules": [{"apiGroups": ["*"], "resources": ["*"], "verbs": ["*"], "reviewPadding": "x" * 71_000}],
+    }
+    role_response = json.dumps(
+        {"apiVersion": "v1", "kind": "List", "items": [large_role]}, separators=(",", ":")
+    ).encode()
+    assert 70_532 < len(role_response) < 1024 * 1024
+    response_path.write_bytes(role_response)
+    environment = os.environ.copy()
+    environment["MOCK_KUBECTL_RESPONSE"] = str(response_path)
+    large_response_runner = RecordingCommandRunner()
+    with patch.object(qualification.fixture, "require_tool", return_value=str(kubectl_path)):
+        large_backend = qualification.FactoryInventoryBackend(
+            large_response_runner, backend_identity, Path("/mock/kubeconfig"), environment
+        )
+        roles = large_backend._get_list("clusterroles.rbac.authorization.k8s.io")
+    assert len(roles) == 1 and roles[0]["metadata"]["name"] == "large-role"
+    assert large_response_runner.stdout_limits == [1024 * 1024]
+
+    oversized_role = dict(large_role)
+    oversized_role["rules"] = [{"reviewPadding": "x" * (1024 * 1024 + 128)}]
+    oversized_response = json.dumps(
+        {"apiVersion": "v1", "kind": "List", "items": [oversized_role]}, separators=(",", ":")
+    ).encode()
+    assert len(oversized_response) > 1024 * 1024
+    response_path.write_bytes(oversized_response)
+    oversized_response_runner = RecordingCommandRunner()
+    with patch.object(qualification.fixture, "require_tool", return_value=str(kubectl_path)):
+        oversized_backend = qualification.FactoryInventoryBackend(
+            oversized_response_runner, backend_identity, Path("/mock/kubeconfig"), environment
+        )
+        try:
+            oversized_backend._get_list("clusterroles.rbac.authorization.k8s.io")
+            raise AssertionError("over-1 MiB Kubernetes response unexpectedly passed")
+        except qualification.FixtureDenied as error:
+            assert error.reason == "game_session_kubernetes_inventory_invalid", error.reason
+    assert oversized_response_runner.stdout_limits == [1024 * 1024]
+
+try:
+    qualification._decode_json_result(
+        SimpleNamespace(stdout=b"{}" + b" " * (1024 * 1024), truncated=False),
+        "factory_response_limit_invalid",
+    )
+    raise AssertionError("over-limit unmarked JSON unexpectedly passed the decoder")
+except qualification.FixtureDenied as error:
+    assert error.reason == "factory_response_limit_invalid", error.reason
 
 class MustNotCreateRunner:
     def __init__(self):

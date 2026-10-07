@@ -31,7 +31,7 @@ FACTORY_INVENTORY_MAX_TOTAL_ITEMS = 4096
 
 FACTORY_INVENTORY_MAX_SECONDS = 180
 
-FACTORY_INVENTORY_MAX_OUTPUT_BYTES_PER_RESOURCE = fixture.MAX_STREAM_BYTES
+FACTORY_INVENTORY_MAX_OUTPUT_BYTES_PER_RESOURCE = fixture.MAX_COMMAND_STDOUT_BYTES
 
 FACTORY_DISCOVERY_MAX_GROUPS = 128
 
@@ -144,7 +144,11 @@ def validate_runner_identity(identity: Any) -> None:
         _deny("trusted_runner_cluster_identity_mismatch")
 
 def _decode_json_result(result: Any, reason: str) -> dict[str, Any]:
-    if result.truncated:
+    if (
+        result.truncated
+        or not isinstance(result.stdout, bytes)
+        or len(result.stdout) > FACTORY_INVENTORY_MAX_OUTPUT_BYTES_PER_RESOURCE
+    ):
         _deny(reason)
     try:
         value = json.loads(result.stdout.decode("utf-8", errors="strict"))
@@ -508,6 +512,7 @@ class FactoryInventoryBackend:
             self.environment,
             reason,
             timeout_seconds=timeout,
+            stdout_limit=FACTORY_INVENTORY_MAX_OUTPUT_BYTES_PER_RESOURCE,
         )
 
     def _get_list(self, resource: str, *, all_namespaces: bool = False,

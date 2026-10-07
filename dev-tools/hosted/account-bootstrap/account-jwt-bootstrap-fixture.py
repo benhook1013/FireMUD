@@ -24,6 +24,8 @@ EXPECTED_REF = "refs/heads/develop"
 ALLOWED_EVENTS = {"push", "workflow_dispatch"}
 NODE_IMAGE_REPOSITORY = "kindest/node"
 MAX_STREAM_BYTES = 64 * 1024
+MAX_COMMAND_STDOUT_BYTES = 1024 * 1024
+PROCESS_TERMINATION_GRACE_SECONDS = 2
 MAX_KIND_BINARY_BYTES = 128 * 1024 * 1024
 DEFAULT_COMMAND_TIMEOUT_SECONDS = 45
 CREATE_TIMEOUT_SECONDS = 300
@@ -150,13 +152,41 @@ class CommandRunner:
         if actual != expected:
             raise FixtureDenied("kind_binary_identity_changed")
 
+    @staticmethod
+    def terminate_process_group(process: subprocess.Popen[bytes]) -> None:
+        process_group = process.pid
+        try:
+            os.killpg(process_group, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            process.wait(timeout=PROCESS_TERMINATION_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            pass
+        try:
+            os.killpg(process_group, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            process.wait(timeout=PROCESS_TERMINATION_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            pass
+
     def run(
         self,
         argv: list[str],
         env: dict[str, str],
         failure: str,
         timeout_seconds: int = DEFAULT_COMMAND_TIMEOUT_SECONDS,
+        stdout_limit: int = MAX_STREAM_BYTES,
     ) -> CommandResult:
+        if (
+            not isinstance(stdout_limit, int)
+            or isinstance(stdout_limit, bool)
+            or stdout_limit < 1
+            or stdout_limit > MAX_COMMAND_STDOUT_BYTES
+        ):
+            raise FixtureDenied("command_stdout_limit_invalid")
         remaining = self.deadline - time.monotonic()
         if remaining <= 0:
             reason = (
@@ -186,6 +216,7 @@ class CommandRunner:
         selector.register(process.stderr, selectors.EVENT_READ, "stderr")
         buffers = {"stdout": bytearray(), "stderr": bytearray()}
         truncated = False
+        termination_attempted = False
         deadline = time.monotonic() + timeout_seconds
         try:
             while selector.get_map():
@@ -200,7 +231,8 @@ class CommandRunner:
                         key.fileobj.close()
                         continue
                     target = buffers[key.data]
-                    capacity = MAX_STREAM_BYTES - len(target)
+                    stream_limit = stdout_limit if key.data == "stdout" else MAX_STREAM_BYTES
+                    capacity = stream_limit - len(target)
                     if capacity > 0:
                         target.extend(chunk[:capacity])
                     if len(chunk) > capacity:
@@ -210,24 +242,15 @@ class CommandRunner:
                 raise TimeoutError
             returncode = process.wait(timeout=left)
         except (TimeoutError, subprocess.TimeoutExpired):
-            try:
-                os.killpg(process.pid, signal.SIGTERM)
-                process.wait(timeout=2)
-            except (ProcessLookupError, subprocess.TimeoutExpired):
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                process.wait()
+            termination_attempted = True
+            self.terminate_process_group(process)
             raise FixtureDenied(failure if self.resources_may_exist else "command_deadline_exceeded") from None
         finally:
             selector.close()
-            if process.poll() is None:
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                process.wait()
+            process.stdout.close()
+            process.stderr.close()
+            if not termination_attempted and process.poll() is None:
+                self.terminate_process_group(process)
         if returncode != 0:
             raise FixtureDenied(failure)
         return CommandResult(returncode, bytes(buffers["stdout"]), bytes(buffers["stderr"]), truncated)

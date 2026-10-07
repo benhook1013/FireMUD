@@ -6,17 +6,26 @@ export ACCOUNT_BOOTSTRAP_REPO_ROOT="$ROOT_DIR"
 
 python3 - <<'PY'
 import hashlib
+import importlib.util
 import json
 import os
 import re
+import signal
 import subprocess
+import sys
 import tempfile
+import time
 from pathlib import Path
 
 
 root = Path(os.environ["ACCOUNT_BOOTSTRAP_REPO_ROOT"]).resolve()
 script = root / "dev-tools/hosted/account-bootstrap/account-jwt-bootstrap-fixture.py"
 head = "a" * 40
+fixture_spec = importlib.util.spec_from_file_location("fixture_command_runner_contract", script)
+assert fixture_spec is not None and fixture_spec.loader is not None
+fixture_command_runner = importlib.util.module_from_spec(fixture_spec)
+sys.modules[fixture_spec.name] = fixture_command_runner
+fixture_spec.loader.exec_module(fixture_command_runner)
 
 fake_tool = r'''#!/usr/bin/env python3
 import hashlib
@@ -456,6 +465,105 @@ for runner_temp, env in ((first_runner_temp, first_env), (second_runner_temp, se
     assert any(call[0] == "kind" and call[1:3] == ["delete", "cluster"] for call in state["calls"]), state["calls"]
 first.cleanup()
 second.cleanup()
+
+with tempfile.TemporaryDirectory(prefix="fixture-command-runner-contract-") as temporary_directory:
+    command_directory = Path(temporary_directory)
+    output_command = command_directory / "output-command.py"
+    output_command.write_text(
+        "import sys\n"
+        "size = int(sys.argv[1])\n"
+        "sys.stdout.buffer.write(b'o' * size)\n"
+        "sys.stdout.flush()\n"
+        "sys.stderr.buffer.write(b'e' * size)\n"
+        "sys.stderr.flush()\n"
+    )
+    result = fixture_command_runner.CommandRunner().run(
+        [sys.executable, str(output_command), str(70 * 1024)],
+        os.environ.copy(),
+        "command_output_contract_failed",
+        timeout_seconds=10,
+    )
+    assert len(result.stdout) == fixture_command_runner.MAX_STREAM_BYTES, len(result.stdout)
+    assert len(result.stderr) == fixture_command_runner.MAX_STREAM_BYTES, len(result.stderr)
+    assert result.truncated
+
+    result = fixture_command_runner.CommandRunner().run(
+        [
+            sys.executable,
+            str(output_command),
+            str(fixture_command_runner.MAX_COMMAND_STDOUT_BYTES + 1),
+        ],
+        os.environ.copy(),
+        "command_output_contract_failed",
+        timeout_seconds=10,
+        stdout_limit=fixture_command_runner.MAX_COMMAND_STDOUT_BYTES,
+    )
+    assert len(result.stdout) == fixture_command_runner.MAX_COMMAND_STDOUT_BYTES, len(result.stdout)
+    assert len(result.stderr) == fixture_command_runner.MAX_STREAM_BYTES, len(result.stderr)
+    assert result.truncated
+
+    for invalid_limit in (0, -1, fixture_command_runner.MAX_COMMAND_STDOUT_BYTES + 1, True, 1.5, "65536"):
+        try:
+            fixture_command_runner.CommandRunner().run(
+                ["/command-must-not-start"],
+                os.environ.copy(),
+                "command_output_contract_failed",
+                stdout_limit=invalid_limit,
+            )
+            raise AssertionError(f"invalid stdout cap unexpectedly passed: {invalid_limit!r}")
+        except fixture_command_runner.FixtureDenied as error:
+            assert error.reason == "command_stdout_limit_invalid", (invalid_limit, error.reason)
+
+    process_tree_command = command_directory / "process-tree-command.py"
+    process_tree_command.write_text(
+        "import os, signal, subprocess, sys, time\n"
+        "from pathlib import Path\n"
+        "pid_file = Path(sys.argv[2])\n"
+        "if sys.argv[1] == 'descendant':\n"
+        "    signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        "    pid_file.write_text(f'{os.getpid()} {os.getpgrp()}')\n"
+        "    while True: time.sleep(1)\n"
+        "signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))\n"
+        "subprocess.Popen([sys.executable, __file__, 'descendant', str(pid_file)])\n"
+        "while not pid_file.exists(): time.sleep(0.01)\n"
+        "while True: time.sleep(1)\n"
+    )
+    process_tree_pids = command_directory / "process-tree-pids.txt"
+    descendant_pid = None
+    process_group = None
+
+    def process_is_running(pid):
+        try:
+            process_stat = Path(f"/proc/{pid}/stat").read_text()
+        except FileNotFoundError:
+            return False
+        process_state = process_stat.rsplit(")", 1)[1].strip().split()[0]
+        return process_state not in ("Z", "X")
+
+    try:
+        try:
+            fixture_command_runner.CommandRunner().run(
+                [sys.executable, str(process_tree_command), "parent", str(process_tree_pids)],
+                os.environ.copy(),
+                "command_timeout_contract_failed",
+                timeout_seconds=2,
+            )
+            raise AssertionError("command timeout unexpectedly passed")
+        except fixture_command_runner.FixtureDenied as error:
+            assert error.reason == "command_deadline_exceeded", error.reason
+        descendant_pid_text, process_group_text = process_tree_pids.read_text().split()
+        descendant_pid = int(descendant_pid_text)
+        process_group = int(process_group_text)
+        wait_deadline = time.monotonic() + 3
+        while process_is_running(descendant_pid) and time.monotonic() < wait_deadline:
+            time.sleep(0.02)
+        assert not process_is_running(descendant_pid), "TERM-ignoring descendant survived command timeout"
+    finally:
+        if process_group is not None and descendant_pid is not None and process_is_running(descendant_pid):
+            try:
+                os.killpg(process_group, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
 print("Account JWT fixture owner API contract: mocked create, ownership, and teardown checks passed")
 PY
