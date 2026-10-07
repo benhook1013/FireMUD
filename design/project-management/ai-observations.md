@@ -49,6 +49,12 @@ Entry format:
   - Current status: continued use of the existing bounded fixture is explicitly approved; additional provisioning is not. Original setup authorization remains unverified, and hosted CI remains required.
   - Reconsideration trigger: revisit when the original provisioning authorization is confirmed or the fixture is retired, and before any additional remote provisioning.
 
+- `2026-10-07`: Validate transferred fixed-vector artifacts before treating them as source evidence
+  - Context: the Account authority storage composition included three JSON resources whose contents were failed shell-read diagnostics, not test vectors; shared codec tests failed during initialization.
+  - Expected pattern: verify successful source reads and parse transferred structured fixtures before integration. Preserve authentic fixed vectors and their source revision instead of replacing expected values with implementation-generated output.
+  - Current status: issuer vectors were recovered from composition history at `8344e6ea1`; reset and logout vectors were recovered from preserved main resources. All three parse as JSON, and all 173 shared-platform unit cases pass after recovery.
+  - Reconsideration trigger: check source-read success and fixture parsing on the next structured-artifact transfer; no new general-purpose tooling is required for this bounded repair.
+
 - `2026-10-07`: Redacted backup failures need trusted phase diagnostics
   - Context: seven public status-page publishing timeouts coincided with failed controller backup and retained-backup restore verification after a compatible runtime promotion.
   - Observation: healthy host/API snapshots and intermittent SSH pre-authentication stalls do not establish a common root cause. The canonical `BackupError` output hid the failing phase; a bounded read-only SFTP check succeeded for the root listing but timed out on the next directory metadata call.
