@@ -1,8 +1,8 @@
 package net.firedevops.firemud.entitymanagement.service;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.Optional;
@@ -33,9 +33,6 @@ class ScopedCharacterResolverTest {
     when(repository.findByIdAndTenantIdAndPlayableStateKey(17L, 23L, "shared-live"))
         .thenReturn(Optional.of(candidate));
 
-    assertThat(repository.findByIdAndTenantIdAndPlayableStateKey(17L, 23L, "shared-live"))
-        .hasValueSatisfying(found -> assertThat(found).isSameAs(candidate));
-
     ScopedCharacterResolver resolver =
         new ScopedCharacterResolver(repository, new PlayableStateKeyResolver());
     assertThatThrownBy(
@@ -44,5 +41,6 @@ class ScopedCharacterResolverTest {
                     23L, 17L, "GI-1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("OWNER_RESOLVED_ACTOR_IDENTITY_REQUIRED");
+    verifyNoInteractions(repository);
   }
 }
