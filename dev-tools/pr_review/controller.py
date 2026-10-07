@@ -4455,11 +4455,13 @@ class ReviewController:
                 )
             if budget is not None:
                 budget.set_phase("target_reconciliation", total=1)
+        selection_remote_heads = self.git.remote_heads()
         live, reconciliation = self._reconciliation(
             state,
             live_identities=live_identities,
             refresh_prs=set() if live_identities is not None else None,
             history_cache=history_cache,
+            remote_head_snapshot=selection_remote_heads,
         )
         for pr in state.ordered_prs:
             problem = self._head_repository_problem(live[pr])
@@ -4576,6 +4578,11 @@ class ReviewController:
             test_merge[0].casefold() != item.base_tip.casefold() or test_merge[1].casefold() != item.head.casefold()
         ):
             test_merge = None
+        selected_base_ref_tip = selection_remote_heads.get(item.base_ref)
+        if not isinstance(selected_base_ref_tip, str) or re.fullmatch(r"[0-9a-fA-F]{40}", selected_base_ref_tip) is None:
+            selected_base_ref_tip = None
+        else:
+            selected_base_ref_tip = selected_base_ref_tip.casefold()
         selected_target = ReviewTarget(
             item.runner_snapshot(),
             EffectiveParent(link.parent_ref, link.parent_head, link.parent_pr),
@@ -4606,6 +4613,7 @@ class ReviewController:
             default_test_merge_head_sha=test_merge[1] if test_merge is not None else "",
             default_test_merge_tree_sha=test_merge[2] if test_merge is not None else "",
             candidate_warnings=candidate_warnings,
+            selected_base_ref_tip=selected_base_ref_tip,
         )
         return Target(
             selected,

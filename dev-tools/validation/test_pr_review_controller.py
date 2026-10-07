@@ -512,6 +512,16 @@ class ControllerTests(unittest.TestCase):
         controller._admit_review(1, "cli", lambda: admitted.append(1), selection_inputs=selected.selection_inputs)
         self.assertEqual(admitted, [1])
 
+    def test_target_selection_freezes_live_base_ref_tip_separately_from_pr_base_identity(self):
+        controller = self.make({1: pr(1, HEAD_1, base_tip=BASE)}, heads={"develop": PARENT})
+        controller.set_stack([1])
+
+        selected = controller._target("hosted", expected_pr=1)
+
+        self.assertEqual(selected.target.snapshot.base_sha, BASE)
+        self.assertEqual(selected.target.selected_base_ref_tip, PARENT)
+        self.assertEqual(selected.target.parent.head_sha, PARENT)
+
     def test_stopped_history_is_not_read_for_requests_but_is_retained_for_status(self):
         controller = self.make(
             {1: pr(1, HEAD_1), 2: pr(2, HEAD_2, "feature-1", HEAD_1)},
