@@ -602,7 +602,7 @@ class LiveEvidence:
         for path in self._complete_trigger_paths(self.repo, pr):
             try:
                 record = hosted.load_trigger_record(path, self.repo, pr)
-                state = hosted.trigger_state(self.repo, pr, payload, record, path)
+                state = hosted.trigger_state(self.repo, pr, payload, record, path, now=audit_now)
             except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
                 raise ControllerError("a Hosted trigger record cannot be completely audited") from error
             observation = self._terminal_ambiguous_hosted_observation(pr, record, state, payload)
@@ -634,6 +634,7 @@ class LiveEvidence:
                         "response_id": response_id,
                         "captured_head": captured_head,
                         "cooldown_until": cooldown_value,
+                        "cooldown_basis": getattr(state, "cooldown_basis", None),
                         "terminal": True,
                         "attributable": True,
                     }
@@ -651,8 +652,8 @@ class LiveEvidence:
         active_reservations = list(audit["active_reservations"])
         unmatched_responses = list(audit["unmatched_responses"])
         ambiguous_responses = list(audit["ambiguous_responses"])
-        # A proven terminal response has ended execution even when its quota
-        # reset is unknown. Hosted admission still owns that cooldown hold.
+        # A proven terminal response has ended execution; its provider reset or
+        # bounded local retry backoff remains a repository admission hold.
         active_terminal_rate_limits = [
             item
             for item in terminal_rate_limits
@@ -972,15 +973,20 @@ class LiveEvidence:
             if trigger_id in records_by_trigger:
                 continue
             public_responses = unrecorded_responses_by_trigger.get(trigger_id, [])
-            events = [
-                (
-                    response_at,
-                    github.immutable_database_id(item) or 0,
-                    self._public_response_state(item, timestamp_field, checkpoint_by_response),
-                    item,
+            events = []
+            rate_limit_responses = []
+            for item, timestamp_field, response_at in public_responses:
+                response_state = self._public_response_state(item, timestamp_field, checkpoint_by_response)
+                if timestamp_field == "createdAt" and response_state == "rate_limited":
+                    rate_limit_responses.append(item)
+                events.append(
+                    (
+                        response_at,
+                        github.immutable_database_id(item) or 0,
+                        response_state,
+                        item,
+                    )
                 )
-                for item, timestamp_field, response_at in public_responses
-            ]
             events = [event for event in events if event[2] is not None]
             if not events:
                 active_reservations.append("a public full-review trigger has no attributable terminal response")
@@ -991,9 +997,12 @@ class LiveEvidence:
             elif response_state == "ambiguous":
                 ambiguous_responses.append("an unrecorded public response does not identify its reviewed head")
             elif response_state == "rate_limited":
-                response_at = hosted.parse_timestamp(response_item.get("createdAt"))
-                cooldown = hosted._rate_limit(response_item.get("body", ""), response_at) if response_at else None
-                if cooldown is None or cooldown > datetime.now(timezone.utc):
+                audit_now = now if now is not None else datetime.now(timezone.utc)
+                cooldown, cooldown_basis = hosted.rate_limit_window_cooldown(
+                    rate_limit_responses,
+                    now=audit_now,
+                )
+                if cooldown_basis in {"unknown", "none"} or cooldown is None or cooldown > audit_now:
                     active_reservations.append("an unrecorded public response has an unresolved rate limit")
             elif response_state == "completed":
                 response_id = github.immutable_database_id(response_item)
@@ -1628,7 +1637,7 @@ class LiveEvidence:
         for path in paths:
             try:
                 record = hosted.load_trigger_reservation(path, self.repo, pr)
-                state = hosted.trigger_state(self.repo, pr, payload, record, path)
+                state = hosted.trigger_state(self.repo, pr, payload, record, path, now=now)
             except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
                 values.append(
                     {
@@ -1644,6 +1653,7 @@ class LiveEvidence:
                 continue
             if state.state == "rate_limited":
                 reset = hosted.parse_timestamp(state.cooldown_until)
+                cooldown_basis = getattr(state, "cooldown_basis", None)
                 history_now = now if now is not None else datetime.now(timezone.utc)
                 if reset is not None and reset <= history_now:
                     continue
@@ -1659,10 +1669,15 @@ class LiveEvidence:
                         "attributable": state.attributed,
                         "held": reset is None,
                         "unstable": reset is None,
-                        "reason": "Hosted cooldown remains active"
-                        if reset
-                        else "Hosted cooldown has no attributable reset time",
+                        "reason": (
+                            f"Hosted one-hour local retry backoff remains active until {state.cooldown_until}"
+                            if cooldown_basis == "local_retry_backoff"
+                            else f"Hosted provider-stated cooldown remains active until {state.cooldown_until}"
+                            if cooldown_basis == "provider_reset"
+                            else "Hosted cooldown has no attributable reset time"
+                        ),
                         "cooldown_until": state.cooldown_until,
+                        "cooldown_basis": cooldown_basis,
                     }
                 )
             elif (
@@ -2616,25 +2631,100 @@ class HostedRunner:
                 finished_at = hosted.parse_timestamp(attempt.get("finished_at"))
                 if terminal_at is None or finished_at is None or terminal_at != finished_at:
                     continue
+                if metadata.get("reason") == hosted.UNKNOWN_RATE_LIMIT_REASON:
+                    raise ControllerError(
+                        f"closed PR #{pr} has a rate-limit response with unresolved creation-time cooldown evidence"
+                    )
+                trigger_at = hosted.strict_provider_timestamp(trigger.get("created_at"))
+                if trigger_at is None:
+                    raise ControllerError(
+                        f"closed PR #{pr} has a rate-limit trigger with no valid creation-time window"
+                    )
+                archived_comments = archived["comments"]
+                captured_triggers = [
+                    item for item in archived_comments
+                    if isinstance(item, dict) and github.immutable_database_id(item) == trigger_id
+                ]
+                if len(captured_triggers) != 1:
+                    raise ControllerError(f"closed PR #{pr} archived rate-limit window has no unique trigger proof")
+                captured_trigger = captured_triggers[0]
+                trigger_author = captured_trigger.get("author")
+                trigger_login = trigger_author.get("login") if isinstance(trigger_author, Mapping) else None
+                if (
+                    not isinstance(trigger_login, str)
+                    or github.is_coderabbit_login(trigger_login)
+                    or hosted.normalize_command(captured_trigger.get("body") or "") != hosted.FULL_COMMAND
+                    or captured_trigger.get("createdAt") != trigger.get("created_at")
+                    or captured_trigger.get("url") != trigger.get("url")
+                ):
+                    raise ControllerError(f"closed PR #{pr} archived rate-limit trigger identity changed")
+
+                later_trigger_times = []
+                for item in archived_comments:
+                    if not isinstance(item, dict) or github.immutable_database_id(item) == trigger_id:
+                        continue
+                    author = item.get("author")
+                    login = author.get("login") if isinstance(author, Mapping) else None
+                    if github.is_coderabbit_login(login) or hosted.normalize_command(item.get("body") or "") != hosted.FULL_COMMAND:
+                        continue
+                    later_trigger_at = hosted.strict_provider_timestamp(item.get("createdAt"))
+                    if later_trigger_at is None:
+                        raise ControllerError(f"closed PR #{pr} has an unbounded archived full-review trigger")
+                    if later_trigger_at >= trigger_at:
+                        later_trigger_times.append(later_trigger_at)
+                next_trigger_at = min(later_trigger_times, default=None)
+
                 responses = [
-                    item
-                    for item in archived["comments"]
-                    if isinstance(item, dict)
-                    and github.immutable_database_id(item) == metadata["response_id"]
+                    item for item in archived_comments
+                    if isinstance(item, dict) and github.immutable_database_id(item) == metadata["response_id"]
                 ]
                 if len(responses) != 1:
                     continue
                 response = responses[0]
                 response_at = hosted.parse_timestamp(response.get("createdAt"))
-                if response_at is None or response_at > terminal_at:
-                    continue
                 author = response.get("author")
                 login = author.get("login") if isinstance(author, Mapping) else None
                 body = response.get("body")
                 if not github.is_coderabbit_login(login) or not isinstance(body, str):
                     continue
-                reset = hosted._rate_limit(body, response_at)
+                response_at = hosted.strict_provider_timestamp(response.get("createdAt"))
+                if response_at is None or response_at > terminal_at:
+                    raise ControllerError(
+                        f"closed PR #{pr} has a rate-limit response with no valid creation-time cooldown basis"
+                    )
+                rate_limit_responses = []
+                for item in archived_comments:
+                    if not isinstance(item, dict):
+                        continue
+                    author = item.get("author")
+                    login = author.get("login") if isinstance(author, Mapping) else None
+                    candidate_body = item.get("body")
+                    if not github.is_coderabbit_login(login) or not hosted.is_rate_limit_reply_body(candidate_body):
+                        continue
+                    candidate_at = hosted.strict_provider_timestamp(item.get("createdAt"))
+                    if candidate_at is None:
+                        raise ControllerError(
+                            f"closed PR #{pr} has an archived rate-limit response with an invalid creation timestamp"
+                        )
+                    if (
+                        candidate_at <= trigger_at
+                        or candidate_at > terminal_at
+                        or (next_trigger_at is not None and candidate_at >= next_trigger_at)
+                    ):
+                        continue
+                    rate_limit_responses.append(item)
+                if metadata["response_id"] not in {
+                    github.immutable_database_id(item) for item in rate_limit_responses
+                }:
+                    raise ControllerError(f"closed PR #{pr} rate-limit response is outside its captured trigger window")
+                reset, cooldown_basis = hosted.rate_limit_window_cooldown(rate_limit_responses, now=now)
+                if cooldown_basis in {"unknown", "none"}:
+                    raise ControllerError(
+                        f"closed PR #{pr} has a rate-limit response with no valid creation-time cooldown basis"
+                    )
             except github.HostedPreflightDeadlineExceeded:
+                raise
+            except ControllerError:
                 raise
             except Exception:  # noqa: BLE001 - missing closed-history proof cannot retain an execution slot
                 if budget is not None:

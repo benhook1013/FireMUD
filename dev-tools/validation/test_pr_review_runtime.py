@@ -627,18 +627,27 @@ class RuntimeTest(unittest.TestCase):
         runner = HostedRunner("owner/repo", LiveGitHub("owner/repo"))
         now = datetime.now(timezone.utc).replace(microsecond=0)
         terminal_at = now.isoformat().replace("+00:00", "Z")
-        reservation = self._trigger_record(created=terminal_at)
+        trigger_at = (now - timedelta(hours=1)).isoformat().replace("+00:00", "Z")
+        reservation = self._trigger_record(created=trigger_at)
         reservation.update({"pr_number": 99, "sqlite_attempt_id": "attempt-99"})
         reservation["anchor"]["pr"] = 99
         path = Path("/unused/pr-99/trigger.json")
+        captured_trigger = {
+            "databaseId": 10,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": reservation["trigger"]["created_at"],
+            "url": reservation["trigger"]["url"],
+        }
 
         cases = (
-            ("mixed-case repository", now - timedelta(minutes=1), terminal_at, "OWNER/REPO", True),
-            ("delayed observation", now - timedelta(minutes=20), terminal_at, "owner/repo", False),
-            ("missing response time", None, terminal_at, "owner/repo", False),
-            ("response after terminal", now + timedelta(minutes=1), terminal_at, "owner/repo", False),
+            ("mixed-case repository", now - timedelta(minutes=1), terminal_at, "OWNER/REPO", True, False),
+            ("delayed observation", now - timedelta(minutes=20), terminal_at, "owner/repo", False, False),
+            ("missing response time", None, terminal_at, "owner/repo", False, True),
+            ("naive response time", (now - timedelta(minutes=1)).replace(tzinfo=None), terminal_at, "owner/repo", False, True),
+            ("response after terminal", now + timedelta(minutes=1), terminal_at, "owner/repo", False, True),
         )
-        for label, response_at, observed_at, repository, should_hold in cases:
+        for label, response_at, observed_at, repository, should_hold, fail_closed in cases:
             with self.subTest(case=label):
                 response = {
                     "databaseId": 11,
@@ -661,7 +670,7 @@ class RuntimeTest(unittest.TestCase):
                             "observed_at": observed_at,
                         }
                     ),
-                    "hosted_comments": json.dumps({"comments": [response]}),
+                    "hosted_comments": json.dumps({"comments": [captured_trigger, response]}),
                 }
                 attempt = {
                     "attempt_id": "attempt-99",
@@ -677,8 +686,30 @@ class RuntimeTest(unittest.TestCase):
                     attempt_artifacts=lambda _attempt_id, artifacts=artifacts: artifacts,
                 )
                 with patch.object(hosted, "load_trigger_reservation", return_value=reservation):
+                    if fail_closed:
+                        with self.assertRaises(ControllerError):
+                            runner._closed_repository_cooldown_until(99, [path])
+                        continue
                     reset = runner._closed_repository_cooldown_until(99, [path])
                 self.assertEqual(reset is not None, should_hold)
+
+        with self.subTest(case="unknown reset uses response creation time"):
+            response_at = now - timedelta(minutes=20)
+            response = {
+                "databaseId": 11,
+                "author": {"login": "coderabbitai[bot]"},
+                "body": hosted.REVIEW_LIMIT_MARKER,
+                "createdAt": response_at.isoformat().replace("+00:00", "Z"),
+                "updatedAt": (now + timedelta(minutes=30)).isoformat().replace("+00:00", "Z"),
+            }
+            artifacts["hosted_comments"] = json.dumps({"comments": [captured_trigger, response]})
+            runner.records = SimpleNamespace(
+                attempt_history=lambda _pr, attempt=attempt: [attempt],
+                attempt_artifacts=lambda _attempt_id, value=artifacts: value,
+            )
+            with patch.object(hosted, "load_trigger_reservation", return_value=reservation):
+                reset = runner._closed_repository_cooldown_until(99, [path])
+            self.assertEqual(reset, response_at + timedelta(hours=1))
 
     def test_closed_pr_cooldown_sqlite_read_rechecks_active_deadline(self) -> None:
         class Clock:
@@ -783,9 +814,9 @@ class RuntimeTest(unittest.TestCase):
     def test_closed_reservation_uses_only_durable_future_cooldown_when_history_is_unavailable(self) -> None:
         runner = HostedRunner("owner/repo", LiveGitHub("owner/repo"))
         now = datetime.now(timezone.utc).replace(microsecond=0)
-        created = now.isoformat().replace("+00:00", "Z")
+        trigger_created = (now - timedelta(hours=1)).isoformat().replace("+00:00", "Z")
         path = Path("/unused/pr-99/trigger.json")
-        record = self._trigger_record(created=created)
+        record = self._trigger_record(created=trigger_created)
         record.update({"pr_number": 99, "sqlite_attempt_id": "attempt-99"})
         record["anchor"]["pr"] = 99
 
@@ -797,7 +828,7 @@ class RuntimeTest(unittest.TestCase):
                 "author": {"login": "coderabbitai"},
                 "body": f"Next reviews available in {abs(minutes)} minutes",
                 "createdAt": (
-                    created
+                    (now - timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
                     if minutes > 0
                     else (now - timedelta(minutes=20)).isoformat().replace("+00:00", "Z")
                 ),
@@ -817,7 +848,16 @@ class RuntimeTest(unittest.TestCase):
                         "observed_at": observed_at,
                     }
                 ),
-                "hosted_comments": json.dumps({"comments": [response]}),
+                "hosted_comments": json.dumps({"comments": [
+                    {
+                        "databaseId": 10,
+                        "author": {"login": "maintainer"},
+                        "body": hosted.FULL_COMMAND,
+                        "createdAt": trigger_created,
+                        "url": record["trigger"]["url"],
+                    },
+                    response,
+                ]}),
             }
             attempt = {
                 "attempt_id": "attempt-99",
@@ -872,14 +912,22 @@ class RuntimeTest(unittest.TestCase):
                 candidate_sha=HEAD,
                 started_at=trigger_record["trigger"]["created_at"],
             )
+            earlier_response_created = now - timedelta(minutes=25)
+            earlier_response = {
+                "databaseId": 12,
+                "author": {"login": "coderabbitai[bot]"},
+                "body": "Review rate limited; next reviews available in: 2 hours.",
+                "createdAt": earlier_response_created.isoformat().replace("+00:00", "Z"),
+                "updatedAt": (now - timedelta(minutes=2)).isoformat().replace("+00:00", "Z"),
+            }
             response = {
                 "databaseId": 11,
                 "author": {"login": "coderabbitai[bot]"},
-                "body": "Review rate limited. Next reviews available in: 10 minutes.",
+                "body": hosted.REVIEW_LIMIT_MARKER,
                 "createdAt": response_created.isoformat().replace("+00:00", "Z"),
                 "updatedAt": response_updated.isoformat().replace("+00:00", "Z"),
             }
-            payload = self._payload(comments=[response])
+            payload = self._payload(comments=[earlier_response, response])
             pull = payload["data"]["repository"]["pullRequest"]
             pull["number"] = 99
             pull["comments"]["nodes"].insert(
@@ -913,16 +961,105 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(metadata["trigger_id"], 10)
             self.assertEqual(metadata["response_id"], 11)
             self.assertEqual(metadata["observed_at"], attempt["finished_at"])
-            self.assertEqual([item["databaseId"] for item in archived_comments], [10, 11])
+            self.assertEqual([item["databaseId"] for item in archived_comments], [10, 12, 11])
 
             runner.records = records
+            reset = runner._closed_repository_cooldown_until(99, [path])
+            self.assertEqual(reset, earlier_response_created + timedelta(hours=2))
             with (
                 patch.object(runner, "_repository_current_trigger_paths", return_value={99: [path]}),
                 patch.object(github, "fetch_api_endpoint", return_value=[]),
                 patch.object(github, "fetch_pull_request", side_effect=RuntimeError("closed history unavailable")) as fetch,
+                self.assertRaisesRegex(ControllerError, "cooldown remains active on closed PR #99"),
             ):
                 runner._assert_no_other_active_reservations(42, common)
             fetch.assert_not_called()
+
+    def test_closed_capture_preserves_unresolved_rate_limit_evidence(self) -> None:
+        runner = HostedRunner("owner/repo", LiveGitHub("owner/repo"))
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        trigger_at = now - timedelta(hours=2)
+        generic_created = now - timedelta(minutes=90)
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            records = self._new_review_records(common / "controller.sqlite3")
+            attempt_id = "closed-pr-unresolved-rate-limit"
+            trigger_record = self._trigger_record(created=trigger_at.isoformat().replace("+00:00", "Z"))
+            trigger_record.update({"pr_number": 99, "sqlite_attempt_id": attempt_id})
+            trigger_record["anchor"]["pr"] = 99
+            path = hosted.default_trigger_record_path("owner/repo", 99, common)
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps(trigger_record), encoding="utf-8")
+            sqlite_hosted_capture.start_hosted_attempt(
+                records,
+                attempt_id=attempt_id,
+                source_pr=99,
+                candidate_sha=HEAD,
+                started_at=trigger_record["trigger"]["created_at"],
+            )
+            malformed_explicit_limit = {
+                "databaseId": 12,
+                "author": {"login": "coderabbitai[bot]"},
+                "body": "Review rate limited; next reviews available in: 20 hours.",
+            }
+            later_generic_limit = {
+                "databaseId": 11,
+                "author": {"login": "coderabbitai[bot]"},
+                "body": hosted.REVIEW_LIMIT_MARKER,
+                "createdAt": generic_created.isoformat().replace("+00:00", "Z"),
+            }
+            payload = self._payload(comments=[malformed_explicit_limit, later_generic_limit])
+            pull = payload["data"]["repository"]["pullRequest"]
+            pull["number"] = 99
+            pull["comments"]["nodes"].insert(
+                0,
+                {
+                    "databaseId": 10,
+                    "author": {"login": "maintainer"},
+                    "body": hosted.FULL_COMMAND,
+                    "createdAt": trigger_record["trigger"]["created_at"],
+                    "url": trigger_record["trigger"]["url"],
+                },
+            )
+            live_state = hosted.trigger_state(
+                "owner/repo",
+                99,
+                payload,
+                trigger_record,
+                now=now,
+            )
+            self.assertEqual(live_state.state, "rate_limited")
+            self.assertEqual(live_state.response_id, 11)
+            self.assertEqual(live_state.cooldown_basis, "unknown")
+            self.assertIsNone(live_state.cooldown_until)
+
+            captured = sqlite_hosted_capture.record_hosted_terminal_result(
+                records,
+                attempt_id=attempt_id,
+                repo="owner/repo",
+                source_pr=99,
+                trigger_record=trigger_record,
+                payload=payload,
+                current_record_path=path,
+            )
+            artifacts = records.attempt_artifacts(attempt_id)
+            metadata = json.loads(artifacts["metadata"])
+            archived_comments = json.loads(artifacts["hosted_comments"])["comments"]
+            self.assertEqual(captured["state"], "rate_limited")
+            self.assertEqual(metadata["reason"], hosted.UNKNOWN_RATE_LIMIT_REASON)
+            self.assertEqual(
+                [item["databaseId"] for item in archived_comments],
+                [10, 12, 11],
+            )
+            self.assertNotIn("createdAt", archived_comments[1])
+            self.assertLess(generic_created + timedelta(hours=1), now)
+
+            runner.records = records
+            with (
+                patch.object(hosted, "load_trigger_reservation", return_value=trigger_record),
+                self.assertRaisesRegex(ControllerError, "unresolved creation-time cooldown evidence"),
+            ):
+                runner._closed_repository_cooldown_until(99, [path])
 
     def test_open_pull_request_listing_failure_remains_fail_closed(self) -> None:
         runner = HostedRunner("owner/repo", LiveGitHub("owner/repo"))
@@ -1443,6 +1580,54 @@ class RuntimeTest(unittest.TestCase):
         self.assertEqual(LiveEvidence._public_response_state(provider_skip, "createdAt", {}), "failed")
         self.assertEqual(LiveEvidence._public_response_state(ambiguous_comment, "createdAt", {}), "ambiguous")
         self.assertIsNone(LiveEvidence._public_response_state({"databaseId": 74, "body": ""}, "createdAt", {}))
+
+    def test_unrecorded_rate_limit_audit_keeps_longer_deadline_from_same_trigger_window(self) -> None:
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        trigger_at = now - timedelta(hours=3)
+        explicit_at = now - timedelta(minutes=62)
+        generic_at = now - timedelta(minutes=61)
+        def stamp(value: datetime) -> str:
+            return value.isoformat().replace("+00:00", "Z")
+
+        trigger = {
+            "databaseId": 10,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": stamp(trigger_at),
+            "url": "https://example.test/comments/10",
+        }
+        earlier_explicit = {
+            "databaseId": 11,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "Review rate limited; next reviews available in 2 hours",
+            "createdAt": stamp(explicit_at),
+        }
+        latest_generic = {
+            "databaseId": 12,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": hosted.REVIEW_LIMIT_MARKER,
+            "createdAt": stamp(generic_at),
+        }
+        payload = self._payload([trigger, earlier_explicit, latest_generic])
+        live = LiveGitHub("owner/repo")
+        observer = LiveEvidence("owner/repo", live)
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(evidence, "git_common_dir", return_value=Path(directory)),
+            patch.object(github, "fetch_pull_request", return_value=payload),
+            patch.object(live, "pull_request", return_value=snapshot),
+            patch.object(observer, "_complete_trigger_paths", return_value=[]),
+            patch.object(observer, "history", return_value=[]),
+        ):
+            audit = observer.legacy_transition_reauthorization_audit(
+                42,
+                (),
+                {"child_head": HEAD, "live_base_ref": "develop", "live_base_tip": BASE},
+                now=now,
+            )
+
+        self.assertIn("an unrecorded public response has an unresolved rate limit", audit["active_reservations"])
 
     def test_auto_generated_summary_is_not_a_response_but_unmatched_review_still_blocks(self) -> None:
         auto_summary = {
@@ -4367,7 +4552,7 @@ class RuntimeTest(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(record), encoding="utf-8")
 
-    def _history(self, common: Path, payload, channel="hosted", *, changed_files=1, current_head=HEAD):
+    def _history(self, common: Path, payload, channel="hosted", *, changed_files=1, current_head=HEAD, now=None):
         pull = payload["data"]["repository"]["pullRequest"]
         snapshot = PullRequestSnapshot(
             42,
@@ -4384,7 +4569,7 @@ class RuntimeTest(unittest.TestCase):
             patch.object(live, "pull_request", return_value=snapshot),
             patch.object(evidence, "git_common_dir", return_value=common),
         ):
-            return list(LiveEvidence("owner/repo", live).history(42, channel))
+            return list(LiveEvidence("owner/repo", live).history(42, channel, now=now))
 
     def test_history_uses_complete_review_snapshot_head_without_extra_metadata_read(self):
         live = LiveGitHub("owner/repo")
@@ -4606,7 +4791,7 @@ class RuntimeTest(unittest.TestCase):
         self.assertFalse(any(item.get("scope_changed") is True for item in history))
         self.assertTrue(any(item.get("scope_timeline_complete") is True for item in history))
 
-    def test_rate_limit_cooldown_holds_until_deadline_and_unknown_fails_closed(self) -> None:
+    def test_rate_limit_cooldown_holds_until_explicit_or_local_deadline(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             common = Path(directory)
             path = hosted.default_trigger_record_path("owner/repo", 42, common)
@@ -4641,8 +4826,27 @@ class RuntimeTest(unittest.TestCase):
             self.assertFalse(any(item.get("rate_limited") for item in released))
 
             unknown_reply = {**future_reply, "body": hosted.REVIEW_LIMIT_MARKER}
-            unknown = self._history(common, self._payload([trigger, unknown_reply]))
-            self.assertTrue(any(item.get("rate_limited") and item.get("unstable") for item in unknown))
+            unknown_payload = self._payload([trigger, unknown_reply])
+            unknown = self._history(common, unknown_payload, now=now)
+            hold = next(item for item in unknown if item.get("rate_limited"))
+            local_deadline = datetime.fromisoformat(unknown_reply["createdAt"].replace("Z", "+00:00")) + timedelta(
+                seconds=3600
+            )
+            self.assertEqual(hold["cooldown_basis"], "local_retry_backoff")
+            self.assertEqual(hosted.parse_timestamp(hold["cooldown_until"]), local_deadline)
+            self.assertFalse(hold["unstable"])
+            self.assertIn("local retry backoff", hold["reason"])
+
+            edited_reply = {**unknown_reply, "updatedAt": (local_deadline + timedelta(minutes=30)).isoformat()}
+            refreshed = self._history(common, self._payload([trigger, edited_reply]), now=now)
+            self.assertEqual(next(item for item in refreshed if item.get("rate_limited"))["cooldown_until"], hold["cooldown_until"])
+
+            expired = self._history(common, unknown_payload, now=local_deadline)
+            self.assertFalse(any(item.get("rate_limited") for item in expired))
+
+            future_reply = {**unknown_reply, "createdAt": (now + timedelta(seconds=1)).isoformat()}
+            future = self._history(common, self._payload([trigger, future_reply]), now=now)
+            self.assertTrue(any(item.get("rate_limited") and item.get("unstable") for item in future))
 
     def test_review_stop_audit_excludes_only_proven_terminal_rate_limit_reservations(self) -> None:
         now = datetime.now(timezone.utc).replace(microsecond=0)
@@ -4758,6 +4962,7 @@ class RuntimeTest(unittest.TestCase):
                     "response_id": 11,
                     "captured_head": old_head,
                     "cooldown_until": cooldown_until,
+                    "cooldown_basis": None,
                     "terminal": True,
                     "attributable": True,
                 }
@@ -5719,7 +5924,7 @@ class RuntimeTest(unittest.TestCase):
                 patch.object(
                     hosted,
                     "trigger_state",
-                    side_effect=lambda _repo, _pr, _payload, selected_record, _path: state_by_trigger[
+                    side_effect=lambda _repo, _pr, _payload, selected_record, _path, **_kwargs: state_by_trigger[
                         selected_record["trigger"]["id"]
                     ],
                 ),

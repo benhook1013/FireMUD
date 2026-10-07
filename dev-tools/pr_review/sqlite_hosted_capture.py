@@ -177,6 +177,9 @@ def record_hosted_terminal_result(
         finished_at=finish_time,
         response_id=result.response_id,
         checkpoint_id=checkpoint_id,
+        preserve_unresolved_rate_limits=(
+            result.state == "rate_limited" and result.cooldown_basis == "unknown"
+        ),
     )
     capture_metadata = {
         "state": result.state,
@@ -1042,6 +1045,7 @@ def archive_window(
     finished_at: str,
     response_id: int | None = None,
     checkpoint_id: str | None = None,
+    preserve_unresolved_rate_limits: bool = False,
 ) -> dict[str, list[dict[str, Any]]]:
     """Retain complete review evidence in this request window, not old PR history."""
 
@@ -1063,7 +1067,13 @@ def archive_window(
         body = item.get("body")
         author = item.get("author")
         login = author.get("login") if isinstance(author, dict) else None
-        if github.immutable_database_id(item) in preserved_ids or (
+        unresolved_rate_limit = (
+            preserve_unresolved_rate_limits
+            and github.is_coderabbit_login(login)
+            and hosted.is_rate_limit_reply_body(body)
+            and hosted.strict_provider_timestamp(item.get("createdAt")) is None
+        )
+        if github.immutable_database_id(item) in preserved_ids or unresolved_rate_limit or (
             in_window(item.get("createdAt"))
             and (
                 github.is_coderabbit_login(login)
