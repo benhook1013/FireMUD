@@ -116,6 +116,7 @@ class ControllerCliTest(unittest.TestCase):
                                  str(self.contexts[alias]), "jobs", "--json", *args],
                                 capture_output=True, text=True, env=env, timeout=10, check=False)
         self.assertEqual(result.returncode, 0 if success else 2, result.stderr)
+        self.last_output_bytes = len(result.stdout.encode("utf-8"))
         return json.loads(result.stdout) if success and result.stdout.strip() else result
 
     def test_file_and_real_piped_stdin_preserve_utf8_and_exact_line_endings(self):
@@ -124,10 +125,13 @@ class ControllerCliTest(unittest.TestCase):
         body_file.write_bytes(original.encode("utf-8"))
         job = self.run_cli("alpha", "create", "file-lines", "--worker", "General", "--title", "Exact",
                            "--body-file", str(body_file))
-        self.assertEqual(job["brief"], original)
+        self.assertNotIn("brief", job)
+        self.assertIn("id", job)
+        self.assertNotIn("history", job)
         revised = self.run_cli("alpha", "revise", job["id"], "--expect-revision", str(job["revision"]),
                                "--body-file", str(body_file))
-        self.assertEqual(revised["brief"], original)
+        self.assertNotIn("brief", revised)
+        self.assertEqual(self.run_cli("alpha", "read", job["id"])["brief"], original)
         note = self.run_cli("alpha", "note", "--worker", "General", "--body-file", str(body_file))
         self.assertEqual(note["body"], original)
         updated = self.run_cli("alpha", "update", job["id"], "--body-file", str(body_file))
@@ -137,7 +141,8 @@ class ControllerCliTest(unittest.TestCase):
                    "--body-file", "-"]
         piped = subprocess.run(command, input=original.encode("utf-8"), capture_output=True, timeout=10, check=False)
         self.assertEqual(piped.returncode, 0, piped.stderr.decode())
-        self.assertEqual(json.loads(piped.stdout)["brief"], original)
+        piped_job = json.loads(piped.stdout)
+        self.assertEqual(self.run_cli("alpha", "read", piped_job["id"])["brief"], original)
         from fire_controller.inbox import InboxStore
         selected = ProjectContext.load(self.contexts["alpha"])
         InboxStore(selected.database).bootstrap()
@@ -203,6 +208,68 @@ class ControllerCliTest(unittest.TestCase):
         self.assertNotIn("brief", export[0])
         self.assertEqual(export[0]["summary"], "Revised alpha")
 
+    def test_job_cli_compact_read_and_mutation_receipts_preserve_full_store_api(self):
+        large_brief = "# Current instructions\n\n" + ("Keep the current proof bounded. " * 100)
+        job = self.run_cli("alpha", "create", "compact-read", "--worker", "General", "--title", "Compact read",
+                           "--body", large_brief)
+        create_bytes = self.last_output_bytes
+        self.assertEqual(
+            set(job),
+            {"id", "name", "worker", "title", "status", "revision", "brief_revision",
+             "created_at", "updated_at", "last_activity_at"},
+        )
+        self.assertLess(create_bytes, 1024)
+
+        revised = self.run_cli("alpha", "revise", job["id"], "--expect-revision", str(job["revision"]),
+                               "--body", "# Revised instructions\n\n" + ("Keep the next step clear. " * 100))
+        revise_bytes = self.last_output_bytes
+        self.assertEqual(revised["revision"], 2)
+        self.assertEqual(revised["brief_revision"], 2)
+        self.assertNotIn("brief", revised)
+        self.assertNotIn("history", revised)
+        self.assertLess(revise_bytes, 1024)
+
+        # Repeating the same guarded state is idempotent: it returns the same revision.
+        no_op = self.run_cli("alpha", "revise", job["id"], "--expect-revision", str(revised["revision"]),
+                             "--body", "# Revised instructions\n\n" + ("Keep the next step clear. " * 100))
+        self.assertEqual(no_op["revision"], revised["revision"])
+        self.assertEqual(no_op["updated_at"], revised["updated_at"])
+        self.run_cli("alpha", "revise", job["id"], "--expect-revision", str(job["revision"]),
+                     "--summary", "Stale write", success=False)
+
+        first_update = self.run_cli("alpha", "update", job["id"], "--body", "A compact receipt must retain this update.")
+        update_receipt = self.run_cli("alpha", "update", job["id"], "--body", "Second useful update")
+        update_bytes = self.last_output_bytes
+        self.assertIn("sequence", first_update)
+        self.assertIn("sequence", update_receipt)
+        self.assertEqual(update_receipt["body"], "Second useful update")
+        self.assertLess(update_bytes, 1024)
+        checkpoint = self.run_cli("alpha", "checkpoint", job["id"], "--done", "Read compactly",
+                                  "--next", "Continue the proof")
+        checkpoint_bytes = self.last_output_bytes
+        self.assertIn("sequence", checkpoint)
+        self.assertEqual(checkpoint["next_steps"], "Continue the proof")
+        self.assertLess(checkpoint_bytes, 1024)
+
+        compact = self.run_cli("alpha", "read", job["id"])
+        compact_bytes = self.last_output_bytes
+        self.assertEqual(compact["brief"], "# Revised instructions\n\n" + ("Keep the next step clear. " * 100))
+        self.assertEqual(compact["history"], [])
+        self.assertEqual(len(compact["updates"]), 2)
+        self.assertEqual(compact["latest_checkpoint"]["next_steps"], "Continue the proof")
+        full = self.run_cli("alpha", "read", job["id"], "--full-history")
+        full_bytes = self.last_output_bytes
+        self.assertEqual({entry["revision"] for entry in full["history"]}, {1, 2})
+        self.assertIn(large_brief, {entry["brief"] for entry in full["history"]})
+        self.assertGreater(full_bytes, compact_bytes)
+        self.assertEqual(len(self.run_cli("alpha", "history", job["id"])), 2)
+
+        from fire_controller.jobs import JobStore
+        store = JobStore(ProjectContext.load(self.contexts["alpha"]).database)
+        api_result = store.get(job["id"])
+        self.assertEqual(len(api_result["history"]), 2)
+        self.assertEqual(api_result["brief"], compact["brief"])
+
     def test_note_job_selectors_and_failed_correction_preserve_state(self):
         job = self.run_cli("alpha", "create", "note-target", "--worker", "General", "--title", "Target")
         notes = [self.run_cli("alpha", "note", "--job", selector, "--body", "Original text")
@@ -229,8 +296,11 @@ class ControllerCliTest(unittest.TestCase):
         self.assertEqual(read["brief"], body.read_text())
         revised = self.run_cli("alpha", "checklist", job["id"], "add", "--expect-revision",
                                str(read["revision"]), "--text", "Public proof")
-        self.run_cli("alpha", "checklist", job["id"], "done", "--expect-revision", str(revised["revision"]),
-                     "--item-id", revised["checklist"][0]["id"])
+        self.assertTrue(revised["item_id"])
+        self.assertLess(self.last_output_bytes, 1024)
+        completed = self.run_cli("alpha", "checklist", job["id"], "done", "--expect-revision",
+                                 str(revised["revision"]), "--item-id", revised["item_id"])
+        self.assertEqual(completed["item_id"], revised["item_id"])
 
     def test_backup_preserves_jobs_and_old_review_writes(self):
         context = ProjectContext.load(self.contexts["alpha"])
