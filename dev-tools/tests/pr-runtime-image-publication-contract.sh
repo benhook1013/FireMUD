@@ -155,7 +155,7 @@ runtime_path.write_text(
 )
 PY
 
-node - "$resolver_script" "$dispatch_script" "$RUNTIME_WORKFLOW" <<'JS'
+node - "$resolver_script" "$dispatch_script" "$RUNTIME_WORKFLOW" "$WORKFLOW" "$fixture_dir/download-inputs.json" <<'JS'
 const fs = require("fs");
 const assert = require("assert/strict");
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
@@ -175,6 +175,7 @@ async function resolve({ context = baseContext, runs = [source], workflow = { id
   } } };
   await resolver(github, context, {setOutput: (key, value) => {output[key] = value;}}, {now: () => {clock += 60000; return clock;}}, fn => fn());
   assert.equal(output.title, title);
+  assert.equal(output.artifact_name, `pr-runtime-images-pr-merge-${sha("c")}`);
   assert.equal(JSON.parse(output.source).status, "completed");
   return {reads, output};
 }
@@ -204,7 +205,27 @@ assert.equal(admits(trigger, success, true), false);
   const pending = {...source, status: "in_progress", conclusion: null};
   assert.equal((await resolve({runs: [pending, source]})).reads, 2);
   const callbackContext = {...baseContext, eventName: "workflow_run", payload: {repository, workflow_run: source}};
-  assert.equal((await resolve({context: callbackContext})).output.title, direct.output.title);
+  const callback = await resolve({context: callbackContext});
+  assert.equal(callback.output.title, direct.output.title);
+  assert.equal(callback.output.artifact_name, direct.output.artifact_name);
+  const prSource = {...source, event: "pull_request", head_sha: sha("a"), head_branch: "feature/ci"};
+  const prCallback = {...callbackContext, payload: {repository, workflow_run: prSource}};
+  assert.equal((await resolve({runs: [prSource]})).output.artifact_name, direct.output.artifact_name);
+  assert.equal((await resolve({runs: [prSource], context: prCallback})).output.artifact_name, direct.output.artifact_name);
+  const publisherWorkflow = fs.readFileSync(process.argv[5], "utf8");
+  const download = publisherWorkflow.split("      - name: Download successful PR image artifacts\n")[1]
+    .split("      - name: Validate exact PR source and artifact before registry login\n")[0];
+  const inputs = Object.fromEntries([...download.matchAll(/^          (name|path|run-id): (.+)$/gm)]
+    .map(match => [match[1], match[2]]));
+  assert.equal(inputs.name, "${{ needs.source.outputs.artifact_name }}");
+  assert.equal(inputs.path, "/tmp/pr-runtime-artifacts/${{ needs.source.outputs.artifact_name }}");
+  assert.equal(inputs["run-id"], "${{ fromJSON(needs.source.outputs.source).id }}");
+  assert.ok(publisherWorkflow.includes("artifact_name: ${{ steps.resolve.outputs.artifact_name }}"));
+  const upload = runtimeWorkflow.split("      - name: Upload preview image artifact\n")[1]
+    .split("      - name: Summarize secure PR runtime artifact\n")[0];
+  assert.ok(upload.includes("actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"));
+  assert.equal(upload.includes("overwrite: true"), false);
+  fs.writeFileSync(process.argv[6], JSON.stringify({inputs, output: direct.output}));
   for (const suffix of ["refs/heads/develop", "refs/pull/42/merge", sha("b")]) {
     const suffixed = {...source, path: `${source.path}@${suffix}`};
     assert.equal((await resolve({runs: [suffixed]})).output.title, direct.output.title);
@@ -235,7 +256,7 @@ JS
 
 artifact_root="$fixture_dir/artifacts"
 fake_bin="$fixture_dir/bin"
-mkdir -p "$artifact_root/pr-runtime-images-pr-merge-cccccccccccccccccccccccccccccccccccccccc" "$fake_bin"
+mkdir -p "$fake_bin"
 
 repository='benhook1013/FireMUD'
 source_run_id='4242'
@@ -245,7 +266,21 @@ base_sha='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
 head_sha='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 merge_sha='cccccccccccccccccccccccccccccccccccccccc'
 source_title="Build Runtime Images secure-pr-artifact pr-${pr_number} base-${base_sha} head-${head_sha} merge-${merge_sha} mode-required"
-artifact_dir="$artifact_root/pr-runtime-images-pr-merge-$merge_sha"
+artifact_dir="$(python3 - "$fixture_dir/download-inputs.json" "$artifact_root" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+fixture = json.loads(Path(sys.argv[1]).read_text())
+name = fixture["output"]["artifact_name"]
+destination = fixture["inputs"]["path"].replace("${{ needs.source.outputs.artifact_name }}", name)
+destination = Path(sys.argv[2]) / Path(destination).relative_to("/tmp/pr-runtime-artifacts")
+# download-artifact@9000827 extracts a single selected artifact directly into path,
+# without adding a directory for its name. Populate that actual destination below.
+destination.mkdir(parents=True)
+print(destination)
+PY
+)"
 
 cat > "$artifact_dir/pr-runtime-services.txt" <<'EOF'
 account-service
@@ -425,6 +460,28 @@ done
 run_validation
 grep -Fxq "IMAGE_TAG=pr-merge-$merge_sha" "$fixture_dir/github-env"
 grep -Fxq "PR_RUNTIME_ARTIFACT_DIR=$artifact_dir" "$fixture_dir/github-env"
+artifact_name="${artifact_dir##*/}"
+mv "$artifact_dir" "$artifact_root/pr-runtime-images-pr-merge-dddddddddddddddddddddddddddddddddddddddd"
+if run_validation; then
+  echo "wrong merge artifact directory was accepted" >&2
+  exit 1
+fi
+mv "$artifact_root/pr-runtime-images-pr-merge-dddddddddddddddddddddddddddddddddddddddd" "$artifact_dir"
+mkdir "$artifact_root/nested"
+mv "$artifact_dir" "$artifact_root/nested/$artifact_name"
+if run_validation; then
+  echo "nested artifact directory was accepted" >&2
+  exit 1
+fi
+mv "$artifact_root/nested/$artifact_name" "$artifact_dir"
+mv "$artifact_dir"/* "$artifact_root/"
+rmdir "$artifact_dir"
+if run_validation; then
+  echo "flat download root was accepted" >&2
+  exit 1
+fi
+mkdir "$artifact_dir"
+mv "$artifact_root/pr-runtime-services.txt" "$artifact_root/pr-runtime-provenance.json" "$artifact_root/pr-runtime-images.tar.gz" "$artifact_dir/"
 if [[ -e "$fixture_dir/registry-marker" ]]; then
   echo "valid source validation reached a registry operation" >&2
   exit 1
