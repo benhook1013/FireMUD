@@ -1700,8 +1700,13 @@ class ReviewController:
             if current is None:
                 try:
                     anchor_started = time.perf_counter() if phase_timings is not None else 0.0
+                    budget = github.active_hosted_preflight_budget()
+                    if budget is not None:
+                        budget.set_phase(f"target_anchor_pr_{pr}", total=1)
                     try:
                         current = self._anchor(pr, live[pr], link)
+                        if budget is not None:
+                            budget.set_completed(1)
                     finally:
                         if phase_timings is not None:
                             phase_timings["local_anchors_ms"] = (

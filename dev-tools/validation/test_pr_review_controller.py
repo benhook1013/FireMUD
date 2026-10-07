@@ -7863,6 +7863,40 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(controller.git.patch_identity_calls, [(BASE, values[1].head)])
         self.assertEqual(controller.git.is_ancestor_calls, [(BASE, values[1].head)])
 
+    def test_moved_parent_fallback_anchor_deadline_names_the_pr_phase(self):
+        values, heads = _stacked_prs(2)
+        moved_parent_head = "9" * 40
+        values[1] = dataclasses.replace(values[1], head=moved_parent_head)
+        heads["feature-1"] = moved_parent_head
+        controller = self.make(values, heads=heads)
+        controller.set_stack([1, 2])
+        original_anchor = controller._anchor
+        anchor_calls = []
+
+        def expire_moved_parent_anchor(pr_number, item, link):
+            anchor_calls.append(pr_number)
+            if pr_number == 2:
+                self.assertEqual(item.base_tip, values[2].base_tip)
+                self.assertEqual(link.parent_head, moved_parent_head)
+                budget = github.active_hosted_preflight_budget()
+                self.assertIsNotNone(budget)
+                budget.deadline = time.monotonic() - 1
+                budget.remaining_seconds()
+            return original_anchor(pr_number, item, link)
+
+        controller._anchor = expire_moved_parent_anchor
+        with (
+            github.cli_preflight_budget(timeout_seconds=120),
+            self.assertRaises(github.HostedPreflightDeadlineExceeded) as raised,
+        ):
+            controller._target("cli")
+
+        self.assertEqual(anchor_calls, [1, 2])
+        self.assertEqual(
+            (raised.exception.phase, raised.exception.completed, raised.exception.total),
+            ("target_anchor_pr_2", 0, 1),
+        )
+
     def test_budgeted_cli_expected_target_reads_complete_history_only_through_expected_pr(self):
         values, heads = _stacked_prs(3)
         evidence = CountingEvidence()
