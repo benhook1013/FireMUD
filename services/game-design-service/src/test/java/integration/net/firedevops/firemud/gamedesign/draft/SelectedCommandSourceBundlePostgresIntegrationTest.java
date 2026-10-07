@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
@@ -18,6 +19,7 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.config.PostgresProperties;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
+import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.Revision;
 import net.firedevops.firemud.gamedesign.entity.Version;
@@ -122,27 +124,47 @@ class SelectedCommandSourceBundlePostgresIntegrationTest {
         .write()
         .executeWithoutResult(
             status -> {
-              service.createFullVersionBundle(
-                  version,
-                  operation.workflowId(),
-                  manifest,
-                  "ISOLATED-generation-revision",
-                  participants,
-                  evidence);
+              IsolatedPublicationOwnerSetup.commitStorage(
+                  fixture.dsl(),
+                  fixture.versions(),
+                  operation,
+                  () -> {
+                    service.createFullVersionBundle(
+                        version,
+                        operation.workflowId(),
+                        manifest,
+                        "ISOLATED-generation-revision",
+                        participants,
+                        evidence);
+                    return bundles
+                        .findByTenantIdAndVersionId(version.tenantId(), version.id())
+                        .orElseThrow();
+                  });
               status.setRollbackOnly();
             });
     assertThat(bundleCount(fixture)).isZero();
 
-    var firstBundle =
-        fixture.tx(
-            () ->
-                service.createFullVersionBundle(
-                    version,
-                    operation.workflowId(),
-                    manifest,
-                    "ISOLATED-generation-revision",
-                    participants,
-                    evidence));
+    var firstBundleResponse = new AtomicReference<PublishedReleaseBundleDto>();
+    fixture.tx(
+        () ->
+            IsolatedPublicationOwnerSetup.commitStorage(
+                fixture.dsl(),
+                fixture.versions(),
+                operation,
+                () -> {
+                  firstBundleResponse.set(
+                      service.createFullVersionBundle(
+                          version,
+                          operation.workflowId(),
+                          manifest,
+                          "ISOLATED-generation-revision",
+                          participants,
+                          evidence));
+                  return bundles
+                      .findByTenantIdAndVersionId(version.tenantId(), version.id())
+                      .orElseThrow();
+                }));
+    var firstBundle = firstBundleResponse.get();
     assertThat(firstBundle.commandDefinitions()).containsExactlyElementsOf(capturedDefinitions);
     assertThat(firstBundle.id()).isNotNull();
     assertThat(firstBundle.publishedReleaseBundleRef()).isNotBlank();

@@ -3,6 +3,8 @@ package net.firedevops.firemud.gamedesign.draft;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.math.BigInteger;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -13,6 +15,7 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.config.PostgresProperties;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
+import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.PublishAttempt;
 import net.firedevops.firemud.gamedesign.entity.Version;
@@ -31,6 +34,7 @@ import net.firedevops.firemud.gamedesign.publication.RealmPolicySourceRepository
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
+import net.firedevops.firemud.gamedesign.service.impl.PublishedWorldSelectorFixtures;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -188,8 +192,12 @@ class CommandSourcePostgresIntegrationTest {
     // The reviewed command diff remains based on the last commit that changed commands, not the
     // newer disjoint policy commit; its unchanged command epoch is the freshness boundary.
     DraftCommitBinding delete =
-        commandDeleteBinding(fixture.target(), "1", mixed.commitId().toString());
+        PublishedWorldSelectorFixtures.withIsolatedFreshWorldGraph(
+            commandDeleteBinding(fixture.target(), "1", mixed.commitId().toString()));
     assertThat(delete.baseCommitId()).isEqualTo(mixed.commitId().toString());
+    assertThat(delete.requiredOwners())
+        .contains(Owner.GAME_DESIGN_CONTROL_PLANE, Owner.WORLD_MANAGEMENT);
+    assertThat(delete.affectedUnits(Owner.WORLD_MANAGEMENT)).hasSize(6);
     start(fixture, delete);
     GameDesignSourceRepository.Application deleteApplication =
         fixture.tx(() -> fixture.sources().apply(delete));
@@ -266,7 +274,8 @@ class CommandSourcePostgresIntegrationTest {
 
   private static GameDesignPublicationOperation retainPendingPublication(
       Fixture fixture, DraftCommitBinding selected) throws Exception {
-    var seed = IsolatedPublicationOperationFixtures.fresh(fixture.target());
+    // Account and World inputs are explicitly isolated, but bind the exact selected mixed commit.
+    var seed = PublishedWorldSelectorFixtures.evidence(fixture.target(), selected);
     return fixture.tx(
         () -> {
           String publishRequestId = "command-source-freeze-" + UUID.randomUUID();
@@ -287,7 +296,7 @@ class CommandSourcePostgresIntegrationTest {
               IsolatedPublicationOperationFixtures.forSelection(
                   AuthoredDraftPublishSelectionBinding.fromStored(
                       selection.canonicalJson(), selection.digest()),
-                  seed.world());
+                  seed);
           var attempt = new PublishAttempt();
           attempt.setTenantId(fixture.target().gameDesignVersionTenantKey());
           attempt.setPublishWorkflowId(operation.workflowId());
@@ -313,19 +322,55 @@ class CommandSourcePostgresIntegrationTest {
   private static void synchronizeSources(
       Fixture fixture,
       DraftCommitBinding binding,
-      GameDesignSourceRepository.Application application) {
+      GameDesignSourceRepository.Application application)
+      throws Exception {
+    DraftCommitCoordinatorRepository.OwnerOutcome worldOutcome = null;
+    if (binding.requiredOwners().contains(Owner.WORLD_MANAGEMENT)) {
+      var worldEvidence = PublishedWorldSelectorFixtures.evidence(fixture.target(), binding);
+      worldOutcome = isolatedWorldOutcome(binding, worldEvidence);
+    }
+    var isolatedWorldOutcome = worldOutcome;
     fixture.tx(
         () -> {
+          var outcomes = new ArrayList<>(List.of(application.ownerOutcome()));
+          if (isolatedWorldOutcome != null) {
+            fixture.coordinator().recordOwnerOutcome(binding, isolatedWorldOutcome);
+            outcomes.add(isolatedWorldOutcome);
+          }
           fixture
               .coordinator()
               .advanceVisibilityFence(
                   binding,
-                  new DraftCommitCoordinatorRepository.CoordinatorProof(
-                      binding, List.of(application.ownerOutcome())));
+                  new DraftCommitCoordinatorRepository.CoordinatorProof(binding, outcomes));
           fixture.sources().captureSynchronized(binding);
           fixture.coordinator().releaseApplicationSlot(binding);
           return null;
         });
+  }
+
+  /** Fixture-only World result; it does not establish a live World owner application. */
+  private static DraftCommitCoordinatorRepository.OwnerOutcome isolatedWorldOutcome(
+      DraftCommitBinding binding, WorldPublishedStartLocationEvidence evidence) {
+    var appliedEpochs =
+        binding.affectedUnits(Owner.WORLD_MANAGEMENT).stream()
+            .map(
+                unit ->
+                    new DraftCommitCoordinatorRepository.AppliedEpoch(
+                        unit.aggregateType(),
+                        unit.aggregateId(),
+                        unit.scopeType(),
+                        unit.scopeId(),
+                        unit.expectedEpoch(),
+                        new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString()))
+            .toList();
+    return new DraftCommitCoordinatorRepository.OwnerOutcome(
+        Owner.WORLD_MANAGEMENT,
+        DraftCommitCoordinatorRepository.OwnerStatus.APPLIED,
+        binding.commitId(),
+        binding.digest(),
+        "ISOLATED-world-applied",
+        evidence.appliedResultBytes(),
+        appliedEpochs);
   }
 
   private static void start(Fixture fixture, DraftCommitBinding binding) {
@@ -342,6 +387,9 @@ class CommandSourcePostgresIntegrationTest {
                           binding.baseCommitId())));
           fixture.coordinator().claimApplicationSlot(binding);
           fixture.coordinator().markOwnerInProgress(binding, Owner.GAME_DESIGN_CONTROL_PLANE);
+          if (binding.requiredOwners().contains(Owner.WORLD_MANAGEMENT)) {
+            fixture.coordinator().markOwnerInProgress(binding, Owner.WORLD_MANAGEMENT);
+          }
           return null;
         });
   }
