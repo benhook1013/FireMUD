@@ -535,6 +535,21 @@ class LiveEvidence:
             raise ControllerError("review stop anchor belongs to another pull request")
         if any(not isinstance(expected_anchor.get(name), str) or not expected_anchor[name] for name in required_anchor):
             raise ControllerError("review stop requires a complete current stack anchor")
+        selected_pr_base_oid = expected_anchor.get("pr_base_oid")
+        selected_base_ref = expected_anchor.get("base_ref")
+        effective_parent_head = expected_anchor.get("effective_parent_head")
+        enforce_parent_identity_ref = expected_anchor.get("enforce_parent_identity_ref")
+        if (
+            not isinstance(selected_pr_base_oid, str)
+            or re.fullmatch(r"[0-9a-fA-F]{40}", selected_pr_base_oid) is None
+            or not isinstance(selected_base_ref, str)
+            or not selected_base_ref.strip()
+            or any(character in selected_base_ref for character in "\r\n")
+            or not isinstance(effective_parent_head, str)
+            or re.fullmatch(r"[0-9a-fA-F]{40}", effective_parent_head) is None
+            or not isinstance(enforce_parent_identity_ref, bool)
+        ):
+            raise ControllerError("review stop requires complete selected pull-request base identity")
         pins = tuple(retained_ambiguous_fingerprints)
         if any(not isinstance(pin, str) or re.fullmatch(r"[0-9a-f]{64}", pin) is None for pin in pins):
             raise ControllerError("retained Hosted ambiguity requires an exact immutable fingerprint")
@@ -558,7 +573,6 @@ class LiveEvidence:
             raise ControllerError("complete paginated GitHub review evidence is unavailable") from error
         current = self.live.pull_request(pr)
         child_head = expected_anchor["child_head"]
-        parent_head = expected_anchor["parent_head"]
         parent_identity = expected_anchor["parent_identity"]
         if (
             pull_number != pr
@@ -568,12 +582,29 @@ class LiveEvidence:
             or not isinstance(payload_base_head, str)
             or current.head_sha.casefold() != child_head.casefold()
             or payload_head.casefold() != child_head.casefold()
-            or current.base_sha.casefold() != parent_head.casefold()
-            or payload_base_head.casefold() != parent_head.casefold()
+            or current.base_sha.casefold() != selected_pr_base_oid.casefold()
+            or payload_base_head.casefold() != selected_pr_base_oid.casefold()
+            or current.base_ref_name != selected_base_ref
+            or payload_base_ref != selected_base_ref
             or current.base_ref_name != payload_base_ref
-            or (not parent_identity.isdecimal() and current.base_ref_name != parent_identity)
+            or (
+                enforce_parent_identity_ref
+                and not parent_identity.isdecimal()
+                and current.base_ref_name != parent_identity
+            )
         ):
             raise ControllerError("pull-request head or parent moved from the review stop anchor")
+
+        try:
+            actual_parent_head = self.live.branch_head(selected_base_ref)
+        except (OSError, RuntimeError, ValueError) as error:
+            raise ControllerError("current pull-request base ref tip is unavailable for review stop") from error
+        if (
+            not isinstance(actual_parent_head, str)
+            or re.fullmatch(r"[0-9a-fA-F]{40}", actual_parent_head) is None
+            or actual_parent_head.casefold() != effective_parent_head.casefold()
+        ):
+            raise ControllerError("pull-request base ref moved from the review stop anchor")
 
         # The established audit validates paginated identities, trigger to
         # response linkage, public checkpoints, pending captures, and unresolved
@@ -587,7 +618,7 @@ class LiveEvidence:
             {
                 "child_head": child_head,
                 "live_base_ref": current.base_ref_name,
-                "live_base_tip": parent_head,
+                "live_base_tip": selected_pr_base_oid,
             },
             allow_historical_unmatched=True,
             now=audit_now,
@@ -702,7 +733,11 @@ class LiveEvidence:
         return {
             "complete": True,
             "head": current.head_sha,
-            "anchor": dict(expected_anchor),
+            "anchor": {
+                name: expected_anchor[name]
+                for name in ("pr", "child_head", "parent_identity", "parent_head", "merge_base", "patch_id")
+                if name in expected_anchor
+            },
             "blockers": blockers,
             "active_reservations": active_reservations,
             "unmatched_responses": unmatched_responses,

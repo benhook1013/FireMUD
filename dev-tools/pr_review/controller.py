@@ -317,12 +317,42 @@ class AnchorFacts:
     parent_head: str
     merge_base: str | None
     patch_id: str | None
+    stop_audit_pr_base_oid: str | None = dataclasses.field(default=None, compare=False, repr=False)
+    stop_audit_base_ref: str | None = dataclasses.field(default=None, compare=False, repr=False)
+    stop_audit_effective_parent_head: str | None = dataclasses.field(default=None, compare=False, repr=False)
+    stop_audit_enforce_parent_identity_ref: bool = dataclasses.field(default=True, compare=False, repr=False)
 
     def as_dict(self) -> dict[str, Any]:
-        return dataclasses.asdict(self)
+        # Persisted review anchors describe the stack identity. The retained PR
+        # base and selected branch ref are transient stop-audit inputs, not part
+        # of reconciliation, taper, or review-credit identity.
+        return {
+            "pr": self.pr,
+            "child_head": self.child_head,
+            "parent_identity": self.parent_identity,
+            "parent_head": self.parent_head,
+            "merge_base": self.merge_base,
+            "patch_id": self.patch_id,
+        }
+
+    def as_stop_audit_dict(self) -> dict[str, Any]:
+        return {
+            **self.as_dict(),
+            "pr_base_oid": self.stop_audit_pr_base_oid,
+            "base_ref": self.stop_audit_base_ref,
+            "effective_parent_head": self.stop_audit_effective_parent_head,
+            "enforce_parent_identity_ref": self.stop_audit_enforce_parent_identity_ref,
+        }
 
     def as_anchor(self) -> stack.ReviewAnchor:
-        return stack.ReviewAnchor(**self.as_dict())
+        return stack.ReviewAnchor(
+            self.pr,
+            self.child_head,
+            self.parent_identity,
+            self.parent_head,
+            self.merge_base,
+            self.patch_id,
+        )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1214,7 +1244,17 @@ class ReviewController:
             or not patch_id
         ):
             return None
-        return AnchorFacts(pr, live.head, link.identity, link.parent_head, merge_base, patch_id)
+        return AnchorFacts(
+            pr,
+            live.head,
+            link.identity,
+            link.parent_head,
+            merge_base,
+            patch_id,
+            stop_audit_pr_base_oid=live.base_tip,
+            stop_audit_base_ref=live.base_ref,
+            stop_audit_effective_parent_head=link.parent_head,
+        )
 
     def prepare_stack_update(
         self,
@@ -1870,7 +1910,17 @@ class ReviewController:
         patch_id = self.git.patch_identity(merge_base, item.head)
         if not isinstance(patch_id, str) or not patch_id:
             raise ControllerError("Git provider returned an empty patch identity")
-        return AnchorFacts(pr, item.head, link.identity, link.parent_head, merge_base, patch_id)
+        return AnchorFacts(
+            pr,
+            item.head,
+            link.identity,
+            link.parent_head,
+            merge_base,
+            patch_id,
+            stop_audit_pr_base_oid=item.base_tip,
+            stop_audit_base_ref=item.base_ref,
+            stop_audit_effective_parent_head=link.parent_head,
+        )
 
     def _test_merge_tree(self, base: str, head: str) -> str:
         verifier = getattr(self.git, "test_merge_tree", None)
@@ -2466,7 +2516,7 @@ class ReviewController:
             try:
                 audit = review_audit(
                     pr,
-                    current.as_dict(),
+                    current.as_stop_audit_dict(),
                     retained_ambiguous_fingerprints=retained_ambiguous_fingerprints,
                 )
             except (OSError, ValueError, TypeError, KeyError) as exc:
@@ -2493,7 +2543,11 @@ class ReviewController:
             raise ControllerError("review stop requires complete paginated evidence for both review channels")
         if audit.get("head") is not None and str(audit.get("head")).casefold() != current.child_head.casefold():
             raise ControllerError("review-stop evidence audit observed a stale pull-request head")
-        if audit.get("anchor") is not None and audit.get("anchor") != current.as_dict():
+        audit_anchor = audit.get("anchor")
+        if audit_anchor is not None and (
+            not isinstance(audit_anchor, Mapping)
+            or {name: audit_anchor.get(name) for name in current.as_dict()} != current.as_dict()
+        ):
             raise ControllerError("review-stop evidence audit observed a stale stack identity")
 
         terminal_ambiguities = audit.get("ambiguous_terminal_responses", [])
@@ -6473,6 +6527,8 @@ class ReviewController:
             item.base_tip,
             merge_base,
             patch_id,
+            stop_audit_pr_base_oid=item.base_tip,
+            stop_audit_base_ref=item.base_ref,
         )
         basis = previous.stop_basis if previous is not None and previous.stop_basis is not None else "direct_human"
         if acknowledge_over_ceiling and basis != "direct_human":
@@ -6492,6 +6548,17 @@ class ReviewController:
             latest = None
         retained_fingerprints, retained_reason = (), None
         if retained_fingerprint_values:
+            try:
+                selected_base_ref_tip = _sha(
+                    self.git.branch_head(item.base_ref), "selected pull-request base ref tip"
+                )
+            except (ControllerError, OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+                raise ControllerError("selected pull-request base ref tip is unavailable for ambiguity audit") from error
+            current = dataclasses.replace(
+                current,
+                stop_audit_effective_parent_head=selected_base_ref_tip,
+                stop_audit_enforce_parent_identity_ref=False,
+            )
             audit = self._stop_audit(
                 pr,
                 current,
