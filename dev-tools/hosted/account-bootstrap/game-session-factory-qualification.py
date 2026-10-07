@@ -128,7 +128,7 @@ def validate_runner_identity(identity: Any) -> None:
         getattr(identity, "repository", None) != fixture.EXPECTED_REPOSITORY
         or getattr(identity, "ref", None) != fixture.EXPECTED_REF
         or getattr(identity, "event", None) is not None
-        and getattr(identity, "event") not in fixture.ALLOWED_EVENTS
+        and identity.event not in fixture.ALLOWED_EVENTS
         or not SHA_PATTERN.fullmatch(str(getattr(identity, "sha", "")))
         or not str(getattr(identity, "run_id", "")).isascii()
         or not str(getattr(identity, "run_id", "")).isdigit()
@@ -606,7 +606,7 @@ def run_factory_qualification(authority_path: Path, *, command_runner: Any = Non
         evidence_path = run_directory / FACTORY_INVENTORY_ARTIFACT
         try:
             api.write_exclusive_json(evidence_path, evidence)
-        except Exception:
+        except Exception:  # noqa: BLE001 -- fail closed and retain resources after an uncertain evidence write
             _deny("game_session_factory_inventory_evidence_write_failed_resources_retained")
         api.teardown_fixture(runner, run_identity, kubeconfig, environment)
         return {
@@ -627,7 +627,7 @@ def run_factory_qualification(authority_path: Path, *, command_runner: Any = Non
             "cleanup": "resources_retained" if getattr(runner, "resources_may_exist", False) else "not_created_or_not_claimed",
             "approvedFactoryBaseline": False,
         }
-    except Exception:
+    except Exception:  # noqa: BLE001 -- return a sanitized denial and preserve uncertain cleanup state
         return {
             "outcome": "denied",
             "reason": "unexpected_factory_qualification_error",
@@ -656,7 +656,7 @@ def main(argv: list[str]) -> int:
             "cleanup": "not_created_or_not_claimed",
             "approvedFactoryBaseline": False,
         }
-    except Exception:
+    except Exception:  # noqa: BLE001 -- expose only the bounded public denial contract
         result = {
             "outcome": "denied",
             "reason": "unexpected_factory_qualification_error",
