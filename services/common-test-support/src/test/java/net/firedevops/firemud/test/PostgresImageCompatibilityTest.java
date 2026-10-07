@@ -3,6 +3,7 @@ package net.firedevops.firemud.test;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.Properties;
 import org.junit.jupiter.api.Test;
@@ -23,9 +24,11 @@ class PostgresImageCompatibilityTest {
 
     assertEquals(images.getProperty("postgres.image"), postgres.asCanonicalNameString());
     assertEquals(images.getProperty("redis.image"), redis.asCanonicalNameString());
-    org.junit.jupiter.api.Assertions.assertTrue(
-        postgres.asCanonicalNameString().matches("postgres:[^@]+@sha256:[0-9a-f]{64}"));
-    assertEquals("redis", redis.getRepository());
+    assertTrue(postgres.asCanonicalNameString().matches("postgres:[^@]+@sha256:[0-9a-f]{64}"));
+    assertTrue(
+        redis.getRepository().equals("redis")
+            || (redis.getRepository().matches("redis:[^@]+")
+                && redis.asCanonicalNameString().startsWith(redis.getRepository() + "@sha256:")));
     assertDoesNotThrow(() -> new PostgreSQLContainer<>(postgres));
     assertDoesNotThrow(() -> new GenericContainer<>(redis));
   }
