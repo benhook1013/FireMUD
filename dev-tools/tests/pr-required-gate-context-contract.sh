@@ -2089,6 +2089,8 @@ def resolver_run(run_id):
             created = "2026-07-30T03:00:00Z"
         if run_id == 9001 and current_id == 9000:
             status = "pending" if scenario.startswith("pending-") else "queued"
+    if scenario == "chronology-before-target":
+        created = "2026-07-30T01:30:00Z" if run_id == 9000 else "2026-07-30T03:00:00Z"
     attempt = state.get("resolver_attempt", 1) if run_id == current_id else 1
     if scenario in {"prior-rerun-skipped", "pending-callback-attempt"} and run_id == 9001:
         attempt = 2
@@ -2321,7 +2323,13 @@ elif endpoint.endswith(f"/actions/runs/{target_id}") or (admission_scenario and 
     requested_target = int(endpoint.rsplit("/", 1)[1])
     state["target_reads"] = state.get("target_reads", 0) + 1
     result = run(requested_target)
-    if scenario == "consumed":
+    if scenario == "chronology-missing-created":
+        result.pop("created_at")
+    elif scenario == "chronology-invalid-created":
+        result["created_at"] = "not-a-timestamp"
+    elif scenario == "chronology-fresh-created" and state["target_reads"] >= 2:
+        result["created_at"] = "2026-07-30T03:01:00Z"
+    elif scenario == "consumed":
         result["run_attempt"] = 2
     elif scenario == "fresh-changed" and state["target_reads"] >= 2:
         result["status"] = "queued"
@@ -2459,6 +2467,24 @@ for target_coverage_case in truncated missing-total malformed-total overcount in
       ;;
   esac
 done
+
+# A queued resolver cannot admit a target created after its own callback.
+# The target's later callback remains eligible; no external receipt is needed.
+for chronology_case in before-target missing-created invalid-created fresh-created; do
+  chronology_scenario="chronology-$chronology_case"
+  printf '{"scenario":"%s"}\n' "$chronology_scenario" >"$tmp_dir/resolver-state-$chronology_scenario"
+  run_resolver "$chronology_scenario"
+  [[ "$(resolver_posts "$chronology_scenario")" == 0 && "$(<"$tmp_dir/resolver-output-$chronology_scenario")" == 'accepted_job_ids=[]' ]] || {
+    echo "unproved target creation chronology admitted a POST: $chronology_case" >&2; exit 1;
+  }
+done
+[[ "$(jq '.target_reads' "$tmp_dir/resolver-state-chronology-fresh-created")" == 2 ]] || {
+  echo "target chronology was not rechecked immediately before admission" >&2; exit 1;
+}
+run_resolver chronology-before-target 200 no-local-workflow-file admit 9001
+[[ "$(resolver_posts chronology-before-target)" == 1 ]] || {
+  echo "target's later callback did not resolve a target refused by the earlier queued resolver" >&2; exit 1;
+}
 
 # A passive deployment must not even invoke the CLI.
 REQUIRED_GATE_PROOF_ALLOWLIST='[]' PATH="$tmp_dir/resolver-bin:$PATH" bash "$RESOLVER"
