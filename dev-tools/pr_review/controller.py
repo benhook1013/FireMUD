@@ -14,6 +14,7 @@ checkpoint observations remain provider data and are never copied into state.
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import re
 import subprocess
@@ -2565,10 +2566,14 @@ class ReviewController:
         allow_cli_hosted_overlap: bool = False,
         allow_hosted_cli_overlap: bool = False,
         acknowledged_over_ceiling_checkpoints: Sequence[str] = (),
+        audit_snapshot: dict[str, Any] | None = None,
+        audit_override: Mapping[str, Any] | None = None,
     ) -> Mapping[str, Any]:
         provider = self._evidence_provider
         review_audit = getattr(provider, "review_stop_audit", None)
-        if callable(review_audit):
+        if audit_override is not None:
+            audit = audit_override
+        elif callable(review_audit):
             try:
                 audit = review_audit(
                     pr,
@@ -2595,6 +2600,8 @@ class ReviewController:
                 raise ControllerError(f"complete review-stop evidence is unavailable: {exc}") from exc
         else:
             raise ControllerError("review stop requires complete paginated evidence for both review channels")
+        if audit_snapshot is not None and isinstance(audit, Mapping):
+            audit_snapshot.update(copy.deepcopy(dict(audit)))
         if not isinstance(audit, Mapping) or audit.get("complete") is not True:
             raise ControllerError("review stop requires complete paginated evidence for both review channels")
         if "request_preparation_only" in audit and type(audit["request_preparation_only"]) is not bool:
@@ -2882,6 +2889,7 @@ class ReviewController:
         allow_hosted_cli_overlap: bool = False,
         stop_audit_cache: dict[tuple[Any, ...], Mapping[str, Any]] | None = None,
         history_cache: dict[tuple[int, str], list[Any]] | None = None,
+        audit_override: Mapping[str, Any] | None = None,
     ) -> tuple[Any, tuple[tuple[str, ...], str] | None, dict[policy.Channel, list[Any]]]:
         allow_exact_hosted_overlap = allow_cli_hosted_overlap and channel == policy.Channel.CLI
         allow_exact_cli_overlap = allow_hosted_cli_overlap and channel == policy.Channel.HOSTED
@@ -2941,21 +2949,42 @@ class ReviewController:
             allow_exact_hosted_overlap,
             allow_exact_cli_overlap,
         )
-        if stop_audit_cache is not None and cache_key in stop_audit_cache:
+        if audit_override is None and stop_audit_cache is not None and cache_key in stop_audit_cache:
             audit = stop_audit_cache[cache_key]
+            snapshot = stop_audit_cache.get(("snapshot", cache_key), {"evidence": audit, "error": None})
+            latest_snapshot = stop_audit_cache.get(("latest", pr), snapshot)
+            if snapshot["evidence"] != latest_snapshot["evidence"]:
+                raise ControllerError("review safety evidence changed during audit; refresh status before clearance")
         else:
-            audit = self._stop_audit(
-                pr,
-                current,
-                retained_ambiguous_fingerprints,
-                allow_historical_unmatched=allow_historical_unmatched,
-                allow_historical_terminal_ambiguity=allow_historical_terminal_ambiguity,
-                allow_cli_hosted_overlap=allow_exact_hosted_overlap,
-                allow_hosted_cli_overlap=allow_exact_cli_overlap,
-                acknowledged_over_ceiling_checkpoints=acknowledged_over_ceiling_checkpoints,
-            )
+            raw_snapshot: dict[str, Any] = {}
+            audit_error = None
+            try:
+                audit = self._stop_audit(
+                    pr,
+                    current,
+                    retained_ambiguous_fingerprints,
+                    allow_historical_unmatched=allow_historical_unmatched,
+                    allow_historical_terminal_ambiguity=allow_historical_terminal_ambiguity,
+                    allow_cli_hosted_overlap=allow_exact_hosted_overlap,
+                    allow_hosted_cli_overlap=allow_exact_cli_overlap,
+                    acknowledged_over_ceiling_checkpoints=acknowledged_over_ceiling_checkpoints,
+                    audit_snapshot=raw_snapshot,
+                    audit_override=audit_override,
+                )
+            except (ControllerError, OSError, subprocess.SubprocessError, ValueError) as error:
+                audit = raw_snapshot
+                audit_error = str(error)
+            snapshot = {
+                "evidence": raw_snapshot, "error": audit_error,
+                "overlap": {"allow_cli_hosted_overlap": allow_exact_hosted_overlap,
+                            "allow_hosted_cli_overlap": allow_exact_cli_overlap},
+            }
             if stop_audit_cache is not None:
                 stop_audit_cache[cache_key] = audit
+                stop_audit_cache[("snapshot", cache_key)] = snapshot
+                stop_audit_cache[("latest", pr)] = snapshot
+        if stop_audit_cache is not None:
+            stop_audit_cache[("clearance", pr, channel.value)] = snapshot
         # Authorization consumes the history snapshot refreshed by the audit,
         # rather than lists captured before the provider invalidated its caches.
         refreshed = audit.get("channel_histories")
@@ -2965,13 +2994,18 @@ class ReviewController:
                    or isinstance(refreshed.get(selected.value), (str, bytes))
                    for selected in (policy.Channel.HOSTED, policy.Channel.CLI))
         ):
-            raise ControllerError("review-stop audit has incomplete refreshed channel histories")
+            snapshot["error"] = "review-stop audit has incomplete refreshed channel histories"
+            raise ControllerError(snapshot["error"])
         refreshed_cache = history_cache if history_cache is not None else {}
         for selected in (policy.Channel.HOSTED, policy.Channel.CLI):
+            if refreshed is None and snapshot["error"] is not None:
+                continue
             refreshed_cache[(pr, selected.value)] = list(
                 refreshed[selected.value] if refreshed is not None
                 else _history(self._evidence_provider, pr, selected)
             )
+        if snapshot["error"] is not None:
+            raise ControllerError(snapshot["error"])
         histories = {
             selected: self._policy_history(state, pr, selected, reconciliation, history_cache=refreshed_cache)
             for selected in (policy.Channel.HOSTED, policy.Channel.CLI)
@@ -4818,17 +4852,57 @@ class ReviewController:
                 if live[pr].merged:
                     continue
                 view = final_allocations.get(pr, {})
+                consumed = stop_audit_cache.get(("clearance", pr, channel.value))
+                latest = stop_audit_cache.get(("latest", pr))
+                clearance_changed = (
+                    consumed is not None and latest is not None
+                    and consumed["evidence"] != latest["evidence"]
+                    and view.get("status") not in {
+                        "STOPPED", "CAP_AUDITED_STOP", "CAP_EXHAUSTED_PENDING", "HANDED_OFF"
+                    }
+                )
+                clearance_error = None
+                if clearance_changed:
+                    try:
+                        current = self._reconciled_anchor(pr, live[pr], reconciliation)
+                        if current is None:
+                            current = self._anchor(pr, live[pr], reconciliation.links[pr])
+                        final_audit = dict(latest["evidence"])
+                        final_audit.setdefault("channel_histories", {
+                            selected.value: history_cache.get((pr, selected.value), [])
+                            for selected in (policy.Channel.HOSTED, policy.Channel.CLI)
+                        })
+                        self._check_stop_evidence(
+                            state, pr, channel, current, reconciliation,
+                            checkpoint_pin=None, require_checkpoint_ancestry=False,
+                            history_cache=history_cache, audit_override=final_audit,
+                            **consumed.get("overlap", {}),
+                        )
+                    except (_FindingOnlyStopEvidence, _RequestPreparationError):
+                        pass
+                    except (ControllerError, OSError, subprocess.SubprocessError, ValueError) as error:
+                        clearance_error = str(error)
+                clearance_changed = clearance_error is not None
                 active = any(
                     _field(value, "active_review") is True or _field(value, "active_reservation") is True
                     for value in final_histories[channel][pr]
                 )
-                if not active and view.get("history_projection_current") is not False:
+                if not clearance_changed and not active and view.get("history_projection_current") is not False:
                     continue
                 target = result[channel.value].get("pr")
                 if target is not None and candidate_prs.index(target) < candidate_prs.index(pr):
                     break
-                reason = (f"{pr} has an active review or reservation in a review channel"
-                          if active else view["reason"])
+                reason = (
+                    clearance_error
+                    if clearance_changed else
+                    f"{pr} has an active review or reservation in a review channel" if active else view["reason"]
+                )
+                if clearance_changed and pr in allocations[channel]:
+                    allocations[channel][pr] = dict(
+                        allocations[channel][pr], status="INVALID", reason=reason, details=reason,
+                        finding_only_pending=False, request_preparation_only=False,
+                        selection_control="unresolved_work",
+                    )
                 held = policy.ChannelDecision(channel, pr, policy.ReviewStatus.HELD, reason).to_dict()
                 held["pr"] = held.pop("target")
                 held["is_draft"] = live[pr].is_draft
@@ -5812,7 +5886,8 @@ class ReviewController:
                                 or str(_field(value, "checkpoint") or "").startswith("pending-capture:")
                                 or index in pending_by_channel[channel]
                             )
-                        ]
+                        ] + ([stop_audit_cache[("latest", pr)]["error"]]
+                             if stop_audit_cache.get(("latest", pr), {}).get("error") else [])
                         for channel in (policy.Channel.HOSTED, policy.Channel.CLI)
                     },
                     "review_activity": {

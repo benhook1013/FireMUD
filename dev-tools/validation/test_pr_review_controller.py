@@ -7759,6 +7759,98 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(controller._review_credit_projection(evidence[(1, "hosted")]), credit)
         self.assertEqual(controller.store.load().allocations["1:hosted"].to_dict(), saved)
 
+    def test_later_cli_audit_invalidates_earlier_hosted_clearance_for_changed_safety_only(self):
+        for change in ("provisional", "unknown_source", "reservation", "unchanged", "audit_note",
+                       "audit_only_reservation", "audit_only_unknown"):
+            with self.subTest(change=change):
+                values, heads = _stacked_prs(2)
+                evidence = CountingEvidence()
+                evidence[(1, "hosted")] = [self.allocation_evidence(
+                    head=values[1].head, checkpoint="hosted-baseline", channel="hosted")]
+                evidence[(1, "cli")] = [self.allocation_evidence(
+                    head=values[1].head, checkpoint="cli-accepted", channel="cli",
+                    raw=1, accepted=1, source_resolution_status="finding_pending")]
+                evidence[(1, "cli")].extend(self.allocation_evidence(
+                    head=values[1].head, checkpoint=f"cli-dry-{index}", channel="cli")
+                    for index in (1, 2, 3))
+                evidence[(1, "cli")].append({
+                    "pr": 1, "head": values[1].head, "checkpoint": "review-threads:1:0",
+                    "held": True, "finding_only_hold": True})
+                controller = self.grant_bounded_allocation(
+                    channel="hosted", checkpoint="hosted-baseline", cap=4, minimum=1,
+                    evidence=evidence, values=values, heads=heads, sqlite=True)
+                evidence[(1, "hosted")].append(self.allocation_evidence(
+                    head=values[1].head, checkpoint="hosted-dry", channel="hosted"))
+                evidence.audit.update(unresolved_findings=["known finding"],
+                                      finding_only_findings=["known finding"], unknown_review_evidence=[])
+                audit_count = 0
+
+                def discover_later_safety(change=change, evidence=evidence, values=values):
+                    nonlocal audit_count
+                    audit_count += 1
+                    if audit_count != 2:
+                        return
+                    if change == "provisional":
+                        evidence[(1, "cli")].append({
+                            "pr": 1, "head": values[1].head, "checkpoint": "fresh-provisional",
+                            "provisional": True, "completed": False, "attributable": False,
+                            "anchored": False, "accepted": 0, "raw": 0})
+                    elif change == "unknown_source":
+                        evidence[(1, "cli")][0]["source_resolution_status"] = "unavailable"
+                        evidence.audit["unknown_review_evidence"] = ["uncertain accepted-source proof"]
+                        evidence.audit["unresolved_findings"].append("uncertain accepted-source proof")
+                    elif change == "reservation":
+                        evidence.audit["active_reservations"] = ["unknown reservation"]
+                        evidence[(1, "cli")].append({
+                            "pr": 1, "head": values[1].head, "checkpoint": "fresh-unknown-safety",
+                            "held": True, "completed": False, "attributable": False})
+                    elif change == "audit_note":
+                        evidence[(1, "cli")].append({
+                            "pr": 1, "head": values[1].head, "checkpoint": "fresh-audit-note",
+                            "completed": False, "attributable": False})
+                    elif change == "audit_only_reservation":
+                        evidence.audit["active_reservations"] = ["unknown reservation"]
+                    elif change == "audit_only_unknown":
+                        evidence.audit["unknown_review_evidence"] = ["unknown audit-only proof"]
+                        evidence.audit["unresolved_findings"].append("unknown audit-only proof")
+
+                evidence.on_audit = discover_later_safety
+                self._enable_batch_status(controller, values)
+                saved = controller.store.load().allocations["1:hosted"].to_dict()
+                credit = {channel: controller._review_credit_projection(evidence[(1, channel)])
+                          for channel in ("hosted", "cli")}
+                histories_before = {channel: [dict(item) for item in evidence[(1, channel)]]
+                                    for channel in ("hosted", "cli")}
+
+                report = controller.status_overview()
+
+                self.assertEqual(audit_count, 2)
+                row = report["prs"][0]
+                for channel in ("hosted", "cli"):
+                    self.assertEqual(report["review_fronts"][channel]["pr"],
+                                     2 if change in ("unchanged", "audit_note") else 1)
+                    self.assertEqual(controller._review_credit_projection(evidence[(1, channel)]), credit[channel])
+                    if change in ("audit_only_reservation", "audit_only_unknown"):
+                        self.assertEqual(evidence[(1, channel)], histories_before[channel])
+                self.assertEqual(row["allocations"]["hosted"]["completed_count"], 1)
+                self.assertTrue(row["allocations"]["hosted"]["taper_complete"])
+                if change in ("unchanged", "audit_note"):
+                    self.assertTrue(row["allocations"]["hosted"]["finding_only_pending"])
+                else:
+                    self.assertEqual(report["review_fronts"]["hosted"]["status"], "HELD")
+                    self.assertEqual(row["allocations"]["hosted"]["status"], "INVALID")
+                    self.assertFalse(row["allocations"]["hosted"]["finding_only_pending"])
+                if change == "provisional":
+                    self.assertIn("fresh-provisional", row["review_obligations"]["cli"])
+                elif change in ("unknown_source", "reservation", "audit_only_reservation", "audit_only_unknown"):
+                    self.assertTrue(any("review stop is blocked" in reason
+                                        for reason in row["review_obligations"]["hosted"]))
+                    self.assertTrue(any("review stop is blocked" in reason
+                                        for reason in row["review_obligations"]["cli"]))
+                    if change == "reservation":
+                        self.assertIn("fresh-unknown-safety", row["review_obligations"]["cli"])
+                self.assertEqual(controller.store.load().allocations["1:hosted"].to_dict(), saved)
+
     def test_safety_classification_uses_histories_refreshed_during_audit(self):
         for movement in (False, True):
             for fresh_blocker in ("provisional", "held"):
