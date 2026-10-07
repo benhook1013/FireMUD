@@ -235,7 +235,7 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
 
     byte[] noncanonicalSourceFence = replaceCommitProofSourceFence(validProof, sourceFence, "01");
     assertCommitProofRejected(
-        harness, noncanonicalSourceFence, "account_gameplay_delegation_commit_shape");
+        harness, noncanonicalSourceFence, "account_gameplay_delegation_commit_evidence_match");
 
     assertPendingWithoutCommitProof(harness);
     assertThat(tokenFenceCount(harness)).isZero();
@@ -1277,7 +1277,7 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
                                 CALLER_WORKLOAD,
                                 verifierMustNotRun(credentialVerifierCalls))))
         .isInstanceOf(
-            AccountGameplayDelegationIssuanceRepository.IdempotencyConflictException.class);
+            AccountGameplayDelegationResponseEnvelopeRepository.IdempotencyConflictException.class);
     assertThat(credentialVerifierCalls).hasValue(0);
 
     AccountGameplayDelegationIssuanceRepository expiredReader =
