@@ -17,9 +17,8 @@ concurrency:
 jobs:
   resolve:
     name: Resolve deferred metadata gate
-    # Isolated hosted proof only; the script also requires the exact PR/ref
-    # allowlist below. General activation remains blocked on native proof.
-    if: ${{ github.event.workflow_run.head_branch == 'codex/required-gate-native-rehearsal-v2' && github.event.workflow_run.event == 'pull_request' }}
+    # Admit only attributable pull-request sources through the shared resolver.
+    if: ${{ github.event.workflow_run.event == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -27,9 +26,6 @@ jobs:
       checks: read
       pull-requests: read
       actions: write # Only rerun an attributable completed deferred gate job.
-    env:
-      # Temporary exact proof source identity; no ordinary PR is admitted.
-      REQUIRED_GATE_PROOF_ALLOWLIST: '[{"pr":3081,"head_branch":"codex/required-gate-native-rehearsal-v2"}]'
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
