@@ -60,10 +60,17 @@ WHERE activity.datname = current_database()
 ORDER BY activity.xact_start NULLS LAST, activity.query_start NULLS LAST;
 ```
 
-An invalid index may be removed only after confirming it is one of these exact V3 indexes, is unattached to a constraint, and its definition matches the expected V3 object. Use the deployed schema explicitly; run each statement outside a transaction:
+An invalid index may be removed only after confirming it is one of these exact V3 indexes, is unattached to a constraint, and its definition matches the expected V3 object. Use the deployed schema explicitly. Run only the statement for the specific index confirmed invalid and unattached; each statement must run outside a transaction.
+
+Only if inspection confirms `ux_characters_character_uuid_idx` is invalid, unattached, and matches the expected V3 definition:
 
 ```sql
 DROP INDEX CONCURRENTLY IF EXISTS :"service_schema".ux_characters_character_uuid_idx;
+```
+
+Only if inspection independently confirms `idx_characters_owner_resolved_roster` is invalid, unattached, and matches the expected V3 definition:
+
+```sql
 DROP INDEX CONCURRENTLY IF EXISTS :"service_schema".idx_characters_owner_resolved_roster;
 ```
 
