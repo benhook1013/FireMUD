@@ -33,6 +33,7 @@ done
 
 python3 - "$WORKFLOW" <<'PY'
 import pathlib
+import re
 import sys
 
 import yaml
@@ -53,11 +54,11 @@ if effective_permissions != expected_permissions:
 
 expected_steps = {
     "Harden runner": {
-        "uses": "step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5",
+        "action_repository": "step-security/harden-runner",
         "with": {"egress-policy": "audit"},
     },
     "⬇️ Checkout Code": {
-        "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+        "action_repository": "actions/checkout",
         "with": {"fetch-depth": 0},
     },
     "Set up canonical Python dependencies": {
@@ -66,10 +67,10 @@ expected_steps = {
     },
     "🧰 Set up kubectl": {"uses": "./.github/actions/setup-kubectl"},
     "🐳 Set up Docker": {
-        "uses": "docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069",
+        "action_repository": "docker/setup-buildx-action",
     },
     "🔐 Login to GHCR": {
-        "uses": "docker/login-action@dbcb813823bdd20940b903addbd779551569679f",
+        "action_repository": "docker/login-action",
         "with": {
             "registry": "ghcr.io",
             "username": "${{ github.actor }}",
@@ -95,7 +96,16 @@ for name, expected in expected_steps.items():
         )
     actual = matching_steps[0]
     for field, expected_value in expected.items():
-        if actual.get(field) != expected_value:
+        if field == "action_repository":
+            uses = actual.get("uses", "")
+            if re.fullmatch(
+                rf"{re.escape(expected_value)}@[0-9a-f]{{40}}", uses
+            ) is None:
+                raise SystemExit(
+                    f"Overlay validation {name!r} step must use an immutable pin for "
+                    f"{expected_value!r}, got {uses!r}"
+                )
+        elif actual.get(field) != expected_value:
             raise SystemExit(
                 f"Overlay validation {name!r} step changed its {field} contract: "
                 f"expected {expected_value!r}, got {actual.get(field)!r}"
