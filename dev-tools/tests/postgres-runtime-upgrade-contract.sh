@@ -103,7 +103,7 @@ assert_layout() {
     *) fail "unknown PostgreSQL data layout fixture: $fixture" ;;
   esac
 
-  if sh "$POSTGRES_LAYOUT_ENTRYPOINT" --check-layout "$fixture_dir" >"$output_file" 2>&1; then
+  if "$POSTGRES_LAYOUT_ENTRYPOINT" --check-layout "$fixture_dir" >"$output_file" 2>&1; then
     status=0
   else
     status=$?
