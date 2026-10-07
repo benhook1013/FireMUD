@@ -762,8 +762,13 @@ class ReviewController:
         key = (pr, channel.value)
         if key not in history_cache:
             started = time.perf_counter() if phase_timings is not None else 0.0
+            budget = github.active_hosted_preflight_budget()
+            if budget is not None:
+                budget.set_phase(f"target_history_pr_{pr}_{channel.value}", total=1)
             try:
                 history_cache[key] = _history(self._evidence_provider, pr, channel)
+                if budget is not None:
+                    budget.set_completed(1)
             finally:
                 if phase_timings is not None:
                     phase_timings["deep_evidence_history_ms"] = (
@@ -1395,15 +1400,26 @@ class ReviewController:
         )
         selected_evidence_prs = set(state.ordered_prs if evidence_prs is None else evidence_prs)
         ancestry_errors: set[tuple[str, str]] = set()
+        ancestry_cache: dict[tuple[str, str], bool] = {}
 
         def is_ancestor(parent: str, child: str) -> bool:
+            key = (parent.casefold(), child.casefold())
+            if key in ancestry_cache:
+                return ancestry_cache[key]
+            budget = github.active_hosted_preflight_budget()
+            if budget is not None:
+                budget.set_phase(f"target_ancestry_{parent[:8]}_{child[:8]}", total=1)
             try:
-                return self.git.is_ancestor(parent, child)
+                result = self.git.is_ancestor(parent, child)
             except github.HostedPreflightDeadlineExceeded:
                 raise
             except (ControllerError, OSError, subprocess.SubprocessError, ValueError):
-                ancestry_errors.add((parent.casefold(), child.casefold()))
-                return False
+                ancestry_errors.add(key)
+                result = False
+            ancestry_cache[key] = result
+            if budget is not None:
+                budget.set_completed(1)
+            return result
 
         baseline = stack.reconcile_stack(
             state.ordered_prs,
@@ -1431,7 +1447,12 @@ class ReviewController:
             ):
                 continue
             try:
+                budget = github.active_hosted_preflight_budget()
+                if budget is not None:
+                    budget.set_phase(f"target_test_merge_pr_{pr}", total=1)
                 merge_tree = self._test_merge_tree(item.base_tip, item.head)
+                if budget is not None:
+                    budget.set_completed(1)
             except github.HostedPreflightDeadlineExceeded:
                 raise
             except (ControllerError, OSError, subprocess.SubprocessError, ValueError) as error:
@@ -1498,8 +1519,13 @@ class ReviewController:
                 continue
             try:
                 anchor_started = time.perf_counter() if phase_timings is not None else 0.0
+                budget = github.active_hosted_preflight_budget()
+                if budget is not None:
+                    budget.set_phase(f"target_anchor_pr_{pr}", total=1)
                 try:
                     current = self._anchor(pr, live[pr], link)
+                    if budget is not None:
+                        budget.set_completed(1)
                 finally:
                     if phase_timings is not None:
                         phase_timings["local_anchors_ms"] = (
@@ -1858,9 +1884,23 @@ class ReviewController:
         return True
 
     def _checkpoint_for_reconciliation(
-        self, pr: int, channel: policy.Channel, checkpoint: str, prior_head: str, current: AnchorFacts
+        self,
+        pr: int,
+        channel: policy.Channel,
+        checkpoint: str,
+        prior_head: str,
+        current: AnchorFacts,
     ) -> Any:
-        for item in _history(self._evidence_provider, pr, channel):
+        # This proof requires complete historical evidence. Admission may have
+        # preloaded request-only history for a stopped allocation, which cannot
+        # establish that an older moved-parent checkpoint exists.
+        budget = github.active_hosted_preflight_budget()
+        if budget is not None:
+            budget.set_phase(f"target_checkpoint_history_pr_{pr}_{channel.value}", total=1)
+        history = _history(self._evidence_provider, pr, channel)
+        if budget is not None:
+            budget.set_completed(1)
+        for item in history:
             if (
                 _field(item, "checkpoint", "checkpoint_id") != checkpoint
                 or _field(item, "head", "reviewed_head") != prior_head
@@ -1887,7 +1927,10 @@ class ReviewController:
         raise ControllerError("checkpoint must be attributable evidence anchored to a moved parent")
 
     def _active_stack_reconciliation(
-        self, state: ReviewState, pr: int, current: AnchorFacts
+        self,
+        state: ReviewState,
+        pr: int,
+        current: AnchorFacts,
     ) -> StackReconciliationDecision | None:
         for decision in reversed(state.reconciliations):
             if not decision.matches(pr, current.as_dict()):
@@ -4061,10 +4104,12 @@ class ReviewController:
                 bounded_snapshot = self._bounded_allocation_evidence(allocation, histories[pr])
                 if bounded_evidence_cache is not None:
                     bounded_evidence_cache[cache_key] = bounded_snapshot
-            try:
-                current = self._anchor(pr, live[pr], reconciliation.links[pr])
-            except (ControllerError, OSError, subprocess.SubprocessError, ValueError):
-                current = None
+            current = self._reconciled_anchor(pr, live[pr], reconciliation)
+            if current is None:
+                try:
+                    current = self._anchor(pr, live[pr], reconciliation.links[pr])
+                except (ControllerError, OSError, subprocess.SubprocessError, ValueError):
+                    current = None
             view = self._allocation_progress(
                 allocation,
                 histories[pr],
@@ -4446,12 +4491,34 @@ class ReviewController:
         channel: policy.Channel | str,
         expected_pr: int | None = None,
         *,
+        allow_cli_prefix_optimization: bool = True,
         allow_completed_allocation: bool = False,
     ) -> Target:
         selected = policy.Channel(channel)
         state = self._state()
         if not state.ordered_prs:
             raise ControllerError("review stack is empty")
+        budget = github.active_hosted_preflight_budget()
+        use_current_batch = (
+            budget is not None
+            and callable(getattr(self._require_github(), "batch_pull_requests", None))
+        )
+        scoped_expected_cli = (
+            allow_cli_prefix_optimization
+            and use_current_batch
+            and selected == policy.Channel.CLI
+            and expected_pr in state.ordered_prs
+            and callable(getattr(self._evidence_provider, "active_review_targets", None))
+            and callable(getattr(self._evidence_provider, "repository_cli_lock_status", None))
+            and callable(getattr(self._evidence_provider, "request_history", None))
+        )
+        selection_prs = state.ordered_prs
+        selection_state = state
+        expected_index: int | None = None
+        if scoped_expected_cli:
+            expected_index = state.ordered_prs.index(expected_pr)
+            selection_prs = state.ordered_prs[: expected_index + 1]
+            selection_state = dataclasses.replace(state, ordered_prs=selection_prs)
         history_cache: dict[tuple[int, str], list[Any]] = {}
         stop_audit_cache: dict[tuple[Any, ...], Mapping[str, Any]] = {}
         bounded_evidence_cache: dict[tuple[int, str], Mapping[str, Any]] = {}
@@ -4459,6 +4526,8 @@ class ReviewController:
         def cache_request_history(pr: int, channel: str) -> None:
             if (pr, channel) in history_cache:
                 return
+            if budget is not None:
+                budget.set_phase(f"target_request_history_pr_{pr}_{channel}", total=1)
             request_history = getattr(self._evidence_provider, "request_history", None)
             if callable(request_history):
                 values = list(request_history(pr, channel))
@@ -4475,17 +4544,14 @@ class ReviewController:
                     )
                 ]
             history_cache[(pr, channel)] = values
+            if budget is not None:
+                budget.set_completed(1)
 
         for allocation in state.allocations.values():
-            if allocation.pr in state.ordered_prs and allocation.stop_basis is not None:
+            if allocation.pr in selection_prs and allocation.stop_basis is not None:
                 cache_request_history(allocation.pr, allocation.channel)
         live_identities = None
-        use_current_batch = (
-            github.active_hosted_preflight_budget() is not None
-            and callable(getattr(self._require_github(), "batch_pull_requests", None))
-        )
         if use_current_batch:
-            budget = github.active_hosted_preflight_budget()
             identity_batch_count = (len(state.ordered_prs) + 24) // 25
             if budget is not None:
                 budget.set_phase("target_identity_batch", total=identity_batch_count)
@@ -4507,17 +4573,137 @@ class ReviewController:
                 raise ControllerError(
                     f"fresh live identity is incomplete for the configured {selected.value.upper()} review stack"
                 )
-            if budget is not None:
-                budget.set_phase("target_reconciliation", total=1)
+            if scoped_expected_cli:
+                validated_identities: dict[int, LivePullRequest] = {}
+                for pr in state.ordered_prs:
+                    identity = live_identities[pr]
+                    if (
+                        type(identity.get("isDraft")) is not bool
+                        or any(
+                            not isinstance(identity.get(field), str) or not identity[field]
+                            for field in (
+                                "state",
+                                "baseRefName",
+                                "baseRefOid",
+                                "headRefName",
+                                "headRefOid",
+                                "mergeable",
+                            )
+                        )
+                    ):
+                        raise ControllerError(f"fresh live identity is malformed for PR #{pr}")
+                    item = _live(identity, pr)
+                    if item.state not in {"OPEN", "CLOSED", "MERGED"} or item.mergeable not in {
+                        "MERGEABLE",
+                        "CONFLICTING",
+                        "UNKNOWN",
+                    }:
+                        raise ControllerError(f"fresh live identity has an unknown lifecycle for PR #{pr}")
+                    validated_identities[pr] = item
+                for pr, item in validated_identities.items():
+                    problem = self._head_repository_problem(item)
+                    if problem:
+                        raise ControllerError(f"PR #{pr} {problem}")
+                active_candidates = tuple(
+                    pr
+                    for pr, item in validated_identities.items()
+                    if not item.merged and item.state == "OPEN"
+                )
+                if budget is not None:
+                    budget.set_phase("target_repository_cli_lock", total=1)
+                try:
+                    lock_status = self._evidence_provider.repository_cli_lock_status()
+                except github.HostedPreflightDeadlineExceeded:
+                    raise
+                except Exception as error:
+                    raise ControllerError("repository-wide CLI review activity cannot be verified") from error
+                if lock_status != "clear":
+                    detail = "active" if lock_status == "held" else "unknown or ambiguous"
+                    raise ControllerError(f"repository-wide CLI review activity is {detail}")
+                if budget is not None:
+                    budget.set_completed(1)
+                discover_active = getattr(self._evidence_provider, "active_review_targets", None)
+                if budget is not None:
+                    budget.set_phase("target_active_candidate_scan", total=1)
+                if scoped_expected_cli:
+                    try:
+                        found_candidates = discover_active(active_candidates, live_identities)
+                    except github.HostedPreflightDeadlineExceeded:
+                        raise
+                    except (ControllerError, OSError, RuntimeError, TypeError, ValueError, KeyError):
+                        # Candidate discovery can fail because of Hosted or
+                        # historical evidence. Keep the former full-stack path
+                        # instead of treating that uncertainty as CLI activity.
+                        scoped_expected_cli = False
+                    else:
+                        if not isinstance(found_candidates, (set, frozenset)) or any(
+                            isinstance(pr, bool) or not isinstance(pr, int) or pr not in active_candidates
+                            for pr in found_candidates
+                        ):
+                            scoped_expected_cli = False
+                        else:
+                            for pr in sorted(found_candidates):
+                                key = (pr, policy.Channel.CLI.value)
+                                if key in history_cache:
+                                    current_cli = history_cache[key]
+                                else:
+                                    if budget is not None:
+                                        budget.set_phase(f"target_cli_activity_pr_{pr}", total=1)
+                                    try:
+                                        current_cli = list(self._evidence_provider.request_history(pr, "cli"))
+                                    except github.HostedPreflightDeadlineExceeded:
+                                        raise
+                                    except Exception as error:
+                                        raise ControllerError(
+                                            f"current CLI activity for PR #{pr} cannot be verified"
+                                        ) from error
+                                    if budget is not None:
+                                        budget.set_completed(1)
+                                if not isinstance(current_cli, Sequence) or isinstance(current_cli, (str, bytes)):
+                                    raise ControllerError(
+                                        f"current CLI activity for PR #{pr} is ambiguous"
+                                    )
+                                for item in current_cli:
+                                    if not isinstance(item, Mapping):
+                                        raise ControllerError(
+                                            f"current CLI activity for PR #{pr} is ambiguous"
+                                        )
+                                    for field in ("active_review", "active_reservation"):
+                                        flag = _field(item, field)
+                                        if flag is not None and type(flag) is not bool:
+                                            raise ControllerError(
+                                                f"current CLI activity for PR #{pr} is ambiguous"
+                                            )
+                                    if _field(item, "active_review") is True or _field(
+                                        item, "active_reservation"
+                                    ) is True:
+                                        raise ControllerError(
+                                            f"repository-wide CLI review activity is active or ambiguous on PR #{pr}"
+                                        )
+                    if budget is not None:
+                        budget.set_phase("target_active_candidate_scan_complete", total=1)
+                        budget.set_completed(1)
+                if not scoped_expected_cli:
+                    selection_prs = state.ordered_prs
+                    selection_state = state
+                    expected_index = None
+        if budget is not None:
+            budget.set_phase("target_remote_heads", total=1)
         selection_remote_heads = self.git.remote_heads()
+        if budget is not None:
+            budget.set_completed(1)
+            budget.set_phase("target_stack_reconciliation", total=1)
         live, reconciliation = self._reconciliation(
-            state,
+            selection_state,
             live_identities=live_identities,
             refresh_prs=set() if live_identities is not None else None,
             history_cache=history_cache,
             remote_head_snapshot=selection_remote_heads,
         )
-        for pr in state.ordered_prs:
+        if budget is not None:
+            budget.set_phase("target_stack_reconciliation_complete", total=1)
+            budget.set_completed(1)
+        for pr in selection_prs:
             problem = self._head_repository_problem(live[pr])
             if problem:
                 raise ControllerError(f"PR #{pr} {problem}")
@@ -4526,15 +4712,25 @@ class ReviewController:
                 # and repository cooldowns still belong to request admission.
                 for channel_name in ("hosted", "cli"):
                     cache_request_history(pr, channel_name)
-        history = {
-            pr: self._policy_history(state, pr, selected, reconciliation, history_cache=history_cache)
-            for pr in state.ordered_prs
-        }
         other = policy.Channel.CLI if selected == policy.Channel.HOSTED else policy.Channel.HOSTED
-        other_history = {
-            pr: self._policy_history(state, pr, other, reconciliation, history_cache=history_cache)
-            for pr in state.ordered_prs
-        }
+        policy_histories: dict[policy.Channel, dict[int, list[Any]]] = {selected: {}, other: {}}
+        if budget is not None:
+            budget.set_phase("target_policy_history_projection", total=2 * len(selection_prs))
+        completed_history_items = 0
+        for pr in selection_prs:
+            for channel_name in (selected, other):
+                policy_histories[channel_name][pr] = self._policy_history(
+                    selection_state,
+                    pr,
+                    channel_name,
+                    reconciliation,
+                    history_cache=history_cache,
+                )
+                completed_history_items += 1
+                if budget is not None:
+                    budget.set_completed(completed_history_items)
+        history = policy_histories[selected]
+        other_history = policy_histories[other]
         cli_history = history if selected == policy.Channel.CLI else other_history
         hosted_history = other_history if selected == policy.Channel.CLI else history
         projected_cli_history = {
@@ -4547,17 +4743,17 @@ class ReviewController:
                     self._reconciled_anchor(pr, live[pr], reconciliation),
                 ),
                 pr,
-                state,
+                selection_state,
                 self._reconciled_anchor(pr, live[pr], reconciliation),
             )
-            for pr in state.ordered_prs
+            for pr in selection_prs
         }
         if selected == policy.Channel.CLI:
             history = projected_cli_history
         else:
             other_history = projected_cli_history
         allocations = self._allocation_views(
-            state,
+            selection_state,
             live,
             reconciliation,
             selected,
@@ -4567,19 +4763,23 @@ class ReviewController:
             bounded_evidence_cache=bounded_evidence_cache,
         )
         candidate_histories = {selected: history, other: other_history}
+        if budget is not None:
+            budget.set_phase("target_policy_selection", total=1)
         decision = self._select_review_decision(
-            state,
+            selection_state,
             selected,
             live,
             reconciliation,
             candidate_histories,
             allocations,
-            state.ordered_prs,
+            selection_prs,
             allocation_reopen_prs=((expected_pr,) if allow_completed_allocation and expected_pr is not None else ()),
             bounded_evidence_cache=bounded_evidence_cache,
         )
+        if budget is not None:
+            budget.set_completed(1)
         decision = self._reopen_hosted_cross_channel_judgment(
-            state,
+            selection_state,
             selected,
             decision,
             live,
@@ -6111,7 +6311,12 @@ class ReviewController:
                         if not selected.target.default_base_front or attempt == MAX_BASE_RESELECTIONS:
                             raise ControllerError(str(error)) from error
                         selected = preflight_phase(
-                            "target_reselection", lambda selected=selected: self._target(policy.Channel.CLI, selected.pr)
+                            "target_reselection",
+                            lambda selected=selected: self._target(
+                                policy.Channel.CLI,
+                                selected.pr,
+                                allow_cli_prefix_optimization=expected_pr is not None,
+                            ),
                         )
             except github.HostedPreflightDeadlineExceeded as error:
                 raise ControllerError(str(error)) from error
