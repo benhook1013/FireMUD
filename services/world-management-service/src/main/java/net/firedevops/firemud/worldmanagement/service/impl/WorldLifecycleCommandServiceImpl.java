@@ -35,6 +35,7 @@ import net.firedevops.firemud.worldmanagement.repository.WorldInstanceRepository
 import net.firedevops.firemud.worldmanagement.repository.ZoneInstanceRepository;
 import net.firedevops.firemud.worldmanagement.repository.ZoneRepository;
 import net.firedevops.firemud.worldmanagement.service.WorldLifecycleCommandService;
+import org.jooq.DSLContext;
 import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -72,6 +73,7 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
   private final EntityManagementClient entityManagementClient;
   private final MeterRegistry meterRegistry;
   private final TransactionOperations transactionOperations;
+  private final DSLContext dsl;
 
   private Counter prepareCounter;
   private Counter activateCounter;
@@ -92,7 +94,8 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
       GameDesignClient gameDesignClient,
       EntityManagementClient entityManagementClient,
       MeterRegistry meterRegistry,
-      PlatformTransactionManager transactionManager) {
+      PlatformTransactionManager transactionManager,
+      DSLContext dsl) {
     this(
         worldInstanceRepository,
         regionInstanceRepository,
@@ -107,7 +110,8 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
         gameDesignClient,
         entityManagementClient,
         meterRegistry,
-        transactionTemplate(transactionManager));
+        transactionTemplate(transactionManager),
+        dsl);
   }
 
   WorldLifecycleCommandServiceImpl(
@@ -124,7 +128,8 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
       GameDesignClient gameDesignClient,
       EntityManagementClient entityManagementClient,
       MeterRegistry meterRegistry,
-      TransactionOperations transactionOperations) {
+      TransactionOperations transactionOperations,
+      DSLContext dsl) {
     this.worldInstanceRepository = worldInstanceRepository;
     this.regionInstanceRepository = regionInstanceRepository;
     this.zoneRepository = zoneRepository;
@@ -139,36 +144,7 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
     this.entityManagementClient = entityManagementClient;
     this.meterRegistry = meterRegistry;
     this.transactionOperations = transactionOperations;
-  }
-
-  WorldLifecycleCommandServiceImpl(
-      WorldInstanceRepository worldInstanceRepository,
-      RegionInstanceRepository regionInstanceRepository,
-      ZoneRepository zoneRepository,
-      ZoneInstanceRepository zoneInstanceRepository,
-      RoomRepository roomRepository,
-      RoomExitRepository roomExitRepository,
-      RoomInstanceRepository roomInstanceRepository,
-      RoomInstanceExitRepository roomInstanceExitRepository,
-      WorldEventRepository worldEventRepository,
-      WorldProperties worldProperties,
-      GameDesignClient gameDesignClient,
-      MeterRegistry meterRegistry) {
-    this(
-        worldInstanceRepository,
-        regionInstanceRepository,
-        zoneRepository,
-        zoneInstanceRepository,
-        roomRepository,
-        roomExitRepository,
-        roomInstanceRepository,
-        roomInstanceExitRepository,
-        worldEventRepository,
-        worldProperties,
-        gameDesignClient,
-        null,
-        meterRegistry,
-        (TransactionOperations) null);
+    this.dsl = dsl;
   }
 
   private static TransactionTemplate transactionTemplate(
@@ -255,6 +231,7 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
   public WorldInstanceLifecycleSnapshotDto activatePreparedWorldInstance(
       long tenantId, long gameInstanceId, long expectedLifecycleEpoch) {
     WorldInstance worldInstance = requireWorldInstance(tenantId, gameInstanceId);
+    requireLegacyCanonicalActivationDenied(worldInstance);
     requireLifecycleEpoch(worldInstance, expectedLifecycleEpoch);
     if (STATUS_ACTIVE.equals(worldInstance.getStatus())) {
       return snapshot(worldInstance);
@@ -289,6 +266,20 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
         gameInstanceId,
         saved.getLifecycleEpoch());
     return snapshot(saved);
+  }
+
+  private void requireLegacyCanonicalActivationDenied(WorldInstance worldInstance) {
+    org.jooq.Record associationRow =
+        dsl.fetchOne(
+            "SELECT canonical_game_instance_id FROM world_canonical_instance_association "
+                + "WHERE world_instance_id=?",
+            worldInstance.getId());
+    java.util.UUID canonicalGameInstanceId =
+        associationRow == null ? null : associationRow.get(0, java.util.UUID.class);
+    if (canonicalGameInstanceId != null) {
+      throw new IllegalArgumentException(
+          "CANONICAL_LIFECYCLE_OPERATION_REQUIRED: canonical World rows require the exact owner activation operation");
+    }
   }
 
   @Override

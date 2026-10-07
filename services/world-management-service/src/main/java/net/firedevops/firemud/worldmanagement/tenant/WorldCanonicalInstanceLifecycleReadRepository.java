@@ -84,38 +84,57 @@ public final class WorldCanonicalInstanceLifecycleReadRepository {
         transaction.execute(
             status -> {
               requireReadOnlyRepeatableReadOwnerTransaction();
-              try {
-                Optional<WorldCanonicalInstanceAssociation> maybeAssociation =
-                    associationRepository.readOwnerAssociationInOwnerTransaction(
-                        request.canonicalGameInstanceId());
-                if (maybeAssociation.isEmpty()) return null;
-                WorldCanonicalInstanceAssociation association = maybeAssociation.orElseThrow();
-                if (!matchesRequest(request, association)) return null;
-
-                Record preparation =
-                    dsl.fetchOne(
-                        "SELECT canonical_game_instance_id, capture_id, graph_sha256, input_digest, input_json, "
-                            + "graph_bytes, world_instance_id, private_game_instance_key, region_count, zone_count, "
-                            + "room_count, exit_count, storage_status "
-                            + "FROM world_canonical_instance_preparation WHERE canonical_game_instance_id = ?",
-                        request.canonicalGameInstanceId());
-                if (preparation == null) return null;
-                return readMaterialized(request, association, preparation);
-              } catch (TransientDataAccessException | DataAccessException unavailable) {
-                throw unavailable;
-              } catch (
-                  WorldCanonicalInstanceAssociationRepository.InvalidAssociationEvidenceException
-                      inconsistent) {
-                throw new InvalidLifecycleEvidenceException(
-                    "Canonical World association source evidence is inconsistent", inconsistent);
-              }
+              return readInCurrentOwnerTransaction(request, false);
             }));
+  }
+
+  /**
+   * Reconstructs the same exact owner evidence while a writable activation transaction holds it.
+   */
+  Optional<WorldCanonicalInstanceLifecycleEvidence> readForActivationInOwnerTransaction(
+      WorldCanonicalInstanceLifecycleEvidence.Request request) {
+    Objects.requireNonNull(request, "request");
+    requireWritableOwnerTransaction();
+    return Optional.ofNullable(readInCurrentOwnerTransaction(request, true));
+  }
+
+  private WorldCanonicalInstanceLifecycleEvidence readInCurrentOwnerTransaction(
+      WorldCanonicalInstanceLifecycleEvidence.Request request, boolean lockLifecycleRow) {
+    try {
+      Optional<WorldCanonicalInstanceAssociation> maybeAssociation =
+          lockLifecycleRow
+              ? associationRepository.readOwnerAssociationInActivationTransaction(
+                  request.canonicalGameInstanceId())
+              : associationRepository.readOwnerAssociationInOwnerTransaction(
+                  request.canonicalGameInstanceId());
+      if (maybeAssociation.isEmpty()) return null;
+      WorldCanonicalInstanceAssociation association = maybeAssociation.orElseThrow();
+      if (!matchesRequest(request, association)) return null;
+
+      Record preparation =
+          dsl.fetchOne(
+              "SELECT canonical_game_instance_id, capture_id, graph_sha256, input_digest, input_json, "
+                  + "graph_bytes, world_instance_id, private_game_instance_key, region_count, zone_count, "
+                  + "room_count, exit_count, storage_status "
+                  + "FROM world_canonical_instance_preparation WHERE canonical_game_instance_id = ?",
+              request.canonicalGameInstanceId());
+      if (preparation == null) return null;
+      return readMaterialized(request, association, preparation, lockLifecycleRow);
+    } catch (TransientDataAccessException | DataAccessException unavailable) {
+      throw unavailable;
+    } catch (
+        WorldCanonicalInstanceAssociationRepository.InvalidAssociationEvidenceException
+            inconsistent) {
+      throw new InvalidLifecycleEvidenceException(
+          "Canonical World association source evidence is inconsistent", inconsistent);
+    }
   }
 
   private WorldCanonicalInstanceLifecycleEvidence readMaterialized(
       WorldCanonicalInstanceLifecycleEvidence.Request request,
       WorldCanonicalInstanceAssociation association,
-      Record preparation) {
+      Record preparation,
+      boolean lockLifecycleRow) {
     try {
       UUID canonicalGameInstanceId = request.canonicalGameInstanceId();
       UUID captureId = required(preparation, "capture_id", UUID.class);
@@ -168,7 +187,7 @@ public final class WorldCanonicalInstanceLifecycleReadRepository {
       }
       requireOriginalSelector(selector, receipt, graphBytes);
       RoomMapping mapping = requireMappedRoom(association, startLocation, selectorBytes);
-      Record lifecycle = readLifecycleRow(association, request);
+      Record lifecycle = readLifecycleRow(association, request, lockLifecycleRow);
 
       return new WorldCanonicalInstanceLifecycleEvidence(
           request,
@@ -422,9 +441,12 @@ public final class WorldCanonicalInstanceLifecycleReadRepository {
 
   private Record readLifecycleRow(
       WorldCanonicalInstanceAssociation association,
-      WorldCanonicalInstanceLifecycleEvidence.Request request) {
+      WorldCanonicalInstanceLifecycleEvidence.Request request,
+      boolean lockLifecycleRow) {
     Record row =
-        dsl.fetchOne("SELECT * FROM world_instance WHERE id=?", association.worldInstanceId());
+        dsl.fetchOne(
+            "SELECT * FROM world_instance WHERE id=?" + (lockLifecycleRow ? " FOR UPDATE" : ""),
+            association.worldInstanceId());
     if (row == null
         || required(row, "id", Long.class) != association.worldInstanceId()
         || !request
@@ -632,6 +654,28 @@ public final class WorldCanonicalInstanceLifecycleReadRepository {
         || !"on".equals(state.get("read_only", String.class))) {
       throw new IllegalStateException(
           "World lifecycle read requires a read-only REPEATABLE READ owner transaction");
+    }
+  }
+
+  private void requireWritableOwnerTransaction() {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isCurrentTransactionReadOnly()
+        || !Integer.valueOf(Connection.TRANSACTION_READ_COMMITTED)
+            .equals(TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())) {
+      throw new IllegalStateException(
+          "World activation evidence requires a writable READ COMMITTED owner transaction");
+    }
+    Record state =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT current_setting('transaction_isolation') AS isolation, "
+                    + "current_setting('transaction_read_only') AS read_only"),
+            "World transaction state query returned no row");
+    String actualIsolation = required(state, "isolation", String.class);
+    if (!"read committed".equals(actualIsolation)
+        || !"off".equals(required(state, "read_only", String.class))) {
+      throw new IllegalStateException(
+          "World activation evidence requires a writable READ COMMITTED owner transaction");
     }
   }
 

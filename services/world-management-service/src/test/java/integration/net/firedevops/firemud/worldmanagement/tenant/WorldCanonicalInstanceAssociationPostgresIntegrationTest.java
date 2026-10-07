@@ -7,12 +7,16 @@ import static org.mockito.Mockito.when;
 
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.util.JsonFormat;
+import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -23,6 +27,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
@@ -30,8 +35,16 @@ import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvi
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateEvidence;
 import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
+import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
+import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence.Outcome;
+import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence.Participant;
+import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence.ReleaseContent;
+import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
+import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
+import net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.v1.WorldDesignMutationRevision;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
@@ -46,9 +59,12 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFence
 import net.firedevops.firemud.worldmanagement.v1.RegionDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.RoomDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.RoomExitDesignMutation;
+import net.firedevops.firemud.worldmanagement.v1.RoomTemplateRef;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignAggregateType;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationOperation;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeType;
+import net.firedevops.firemud.worldmanagement.v1.WorldFreshGraphDeclaration;
+import net.firedevops.firemud.worldmanagement.v1.WorldFreshGraphFamilyCount;
 import net.firedevops.firemud.worldmanagement.v1.ZoneDesignMutation;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
@@ -76,12 +92,13 @@ import tools.jackson.databind.ObjectMapper;
  * Focused PostgreSQL proof for guarded, immutable, non-authorizing canonical materialization and
  * World canonical-instance association.
  *
- * <p>Upstream Game Design, Game Session, publication checkpoint, and held-authority evidence here
- * is explicitly synthetic fixture evidence. World source intake, complete launch pair, Version
- * identity, frozen graph, guarded V35 runtime materialization, association, migration, constraints,
- * and independent committed readback use actual migrated PostgreSQL repositories and tables. This
- * fixture does not claim authenticated producer/delivery evidence, Account commit authority,
- * lifecycle transition success, actor authority, or gameplay admission.
+ * <p>Upstream Game Design and Game Session results, Account ordering, and held preparation
+ * authority remain explicitly isolated fixture evidence. World source intake, Version identity,
+ * APPLIED graph, frozen selector, PUBLISHED terminal storage, guarded runtime materialization,
+ * association, migration, constraints, and independent committed readback use actual migrated
+ * PostgreSQL repositories and tables. This fixture does not claim authenticated producer/delivery
+ * evidence, Account commit authority, lifecycle transition success, actor authority, or gameplay
+ * admission.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -587,7 +604,9 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
             fixture.versionIdentity().canonicalVersionId(),
             VERSION_EPOCH,
             "substituted-descriptor",
-            "synthetic-alternate-descriptor");
+            fixture.binding().evidence().releaseAttestation().commitId(),
+            Objects.requireNonNull(
+                fixture.binding().evidence().releaseAttestation().worldStartLocationEvidence()));
     UUID changedDescriptorReadId = UUID.randomUUID();
     assertThatThrownBy(
             () ->
@@ -610,7 +629,10 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
             fixture.binding().descriptor(),
             fixture.source().source(),
             fixture.versionIdentity().canonicalVersionId(),
-            "synthetic-alternate-attestation");
+            fixture.binding().evidence().releaseAttestation().commitId(),
+            Objects.requireNonNull(
+                fixture.binding().evidence().releaseAttestation().worldStartLocationEvidence()),
+            'e');
     CompleteLaunchBindingEvidence changedPair =
         new CompleteLaunchBindingEvidence(fixture.binding().descriptor(), changedAttestation);
     UUID changedAttestationReadId = UUID.randomUUID();
@@ -1160,7 +1182,12 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
     WorldAuthoredVersionIdentityReceipt identity =
         seedVersionIdentity(source, canonicalVersionId, gameDesignVersionId, VERSION_EPOCH);
     SeededPair pair = seedPair(source, identity, controlRequest(), "synthetic-launch-descriptor");
-    return new Fixture(source, pair.binding(), pair.versionIdentity());
+    Fixture fixture = new Fixture(source, pair.binding(), pair.versionIdentity());
+    // Build and retain the original v2 publication terminal through World owner storage. Upstream
+    // Account and Game Design authority in this component fixture remains explicitly stipulated;
+    // STARTING is only the canonical storage-only Game Session observation carried by this input.
+    preparationInput(fixture, UUID.randomUUID(), UUID.randomUUID(), "STARTING", 1L);
+    return fixture;
   }
 
   private SourceFixture sourceFixture() {
@@ -1197,10 +1224,19 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
         identity == null
             ? seedVersionIdentity(source, canonicalVersionId, gameDesignVersionId, VERSION_EPOCH)
             : identity;
-    // The source and Draft authority remain synthetic, but this release's World checkpoint is
-    // taken from actual stored/frozen content rather than an unrelated fixture token or digest.
-    var frozen = frozenPlan(new Fixture(source, null, resolvedIdentity));
+    // The source and Account authority remain synthetic, but the graph, frozen selector and
+    // immutable PUBLISHED terminal are written/read through the actual World owner stores.
+    Fixture sourceFixture = new Fixture(source, null, resolvedIdentity);
+    var frozen = frozenPlan(sourceFixture);
     var checkpoint = frozen.sourceBinding().freeze();
+    var selector =
+        publishedEvidence(
+            publishedSelectors()
+                .readCommitted(checkpoint)
+                .orElseThrow(
+                    () ->
+                        new IllegalStateException(
+                            "Synthetic APPLIED-v2 selector was not retained")));
     CompleteLaunchBindingEvidence evidence =
         completeEvidence(
             source.source(),
@@ -1209,7 +1245,8 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
             canonicalVersionId,
             VERSION_EPOCH,
             launchDescriptorId,
-            checkpoint.appliedCommitId());
+            checkpoint.appliedCommitId(),
+            selector);
     evidence =
         new CompleteLaunchBindingEvidence(
             evidence.descriptor(),
@@ -1302,8 +1339,11 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
             request.readRequestId(),
             observedGameSessionStatus,
             observedGameSessionRowVersion);
-    return new WorldCanonicalInstancePreparation.Input(
-        request, response, fixture.binding(), fixture.versionIdentity(), frozenPlan(fixture));
+    WorldCanonicalInstancePreparation.Input input =
+        new WorldCanonicalInstancePreparation.Input(
+            request, response, fixture.binding(), fixture.versionIdentity(), frozenPlan(fixture));
+    completeIsolatedPublicationTerminal(input);
+    return input;
   }
 
   private WorldCanonicalInstancePreparationService preparationService(Runnable heldCheck) {
@@ -1337,15 +1377,18 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
         fixture.versionIdentity().operationId(),
         ignored -> {
           WorldDraftTopologyCommitPlan draft = topologyPlan(fixture);
-          new WorldDraftTopologyCommitService(
-                  new WorldDraftTopologyCommitRepository(dsl, publicationFence, objectMapper),
-                  transactionManager,
-                  plan -> {
-                    // Synthetic local storage permission only; no Account or Entity proof.
-                  })
-              .store(draft);
+          appliedComponent().apply(draftApplication(draft));
           var owner = draft.ownerBinding();
           String publicationRequest = "preparation-capture-" + UUID.randomUUID();
+          // V27/release evidence retains the post-publication epoch; the original Draft freeze
+          // selection is exactly the preceding epoch.
+          long freezeEpoch =
+              Math.subtractExact(
+                  fixture.versionIdentity().versionStateEvidence().versionStateEpoch(), 1L);
+          String requestDigest =
+              publicationSelection(draft, publicationRequest, freezeEpoch)
+                  .digest()
+                  .substring("sha256:".length());
           WorldDesignPublicationFenceEvidence evidence =
               new WorldDesignPublicationFenceEvidence(
                   owner.targetNamespace(),
@@ -1360,8 +1403,8 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
                   owner.sourceEvidenceDigest(),
                   owner.intakeReceiptDigest(),
                   publicationRequest,
-                  "a".repeat(64),
-                  fixture.versionIdentity().versionStateEvidence().versionStateEpoch(),
+                  requestDigest,
+                  freezeEpoch,
                   "publish:"
                       + owner.canonicalTenantId()
                       + ":publish-request:"
@@ -1414,16 +1457,249 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
                   attempt.checkpoint().digestSchemaVersion(),
                   tuples);
           WorldCanonicalFrozenTopology frozen =
-              new WorldCanonicalFrozenTopologyService(
-                      new WorldCanonicalFrozenTopologyRepository(
-                          dsl,
-                          graphSnapshots,
-                          new WorldDraftTopologyCommitRepository(
-                              dsl, publicationFence, objectMapper),
-                          digestService),
-                      transactionManager)
+              new WorldCanonicalFrozenTopologyService(frozenRepository(), transactionManager)
                   .capture(new WorldCanonicalFrozenTopology.Request(draft, captureRequest));
           return WorldCanonicalInstanceTopologyPlan.create(frozen);
+        });
+  }
+
+  private WorldDraftGraphApplicationRepository appliedRepository() {
+    return new WorldDraftGraphApplicationRepository(dsl, publicationFence, objectMapper);
+  }
+
+  private WorldDraftGraphApplicationService appliedComponent() {
+    return new WorldDraftGraphApplicationService(
+        appliedRepository(),
+        transactionManager,
+        operation -> {
+          // Explicitly isolated Account COMMIT_ORDER authority; this is not producer proof.
+          return new WorldDraftGraphApplicationService.CommitOrderProof(operation);
+        });
+  }
+
+  private WorldDraftGraphApplication draftApplication(WorldDraftTopologyCommitPlan plan) {
+    var binding = plan.binding();
+    var account =
+        new DraftAuthorizationFenceBinding(
+            UUID.randomUUID(),
+            binding.requestId(),
+            binding.commitId(),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            binding.target().canonicalTenantId(),
+            binding.target().canonicalVersionId(),
+            binding.baseCommitId(),
+            "0",
+            binding.canonicalBytes(),
+            binding.canonicalBytes(),
+            binding.digest(),
+            List.of(
+                new DraftAuthorizationFenceBinding.SourceEvidence(
+                    DraftAuthorizationFenceBinding.SourceKind.TENANT,
+                    binding.target().canonicalTenantId().toString(),
+                    null,
+                    "1",
+                    null,
+                    null,
+                    new byte[] {1, 2, 3})));
+    var operation =
+        new WorldDraftTerminalOperation(
+            account.operationId(),
+            account.requestId(),
+            account.commitId(),
+            account.fenceId(),
+            account.tenantId(),
+            account.versionId(),
+            binding,
+            plan.ownerBinding(),
+            account.canonicalBytes());
+    return new WorldDraftGraphApplication(operation, plan);
+  }
+
+  private WorldCanonicalFrozenTopologyRepository frozenRepository() {
+    return new WorldCanonicalFrozenTopologyRepository(
+        dsl,
+        graphSnapshots,
+        new WorldDraftTopologyCommitRepository(dsl, publicationFence, objectMapper),
+        digestService);
+  }
+
+  private WorldPublishedStartLocationRepository publishedSelectors() {
+    return new WorldPublishedStartLocationRepository(dsl, frozenRepository(), appliedRepository());
+  }
+
+  private WorldPublishedStartLocationEvidence publishedEvidence(
+      WorldPublishedStartLocationSource source) {
+    var freeze = source.frozenTopology().request().freeze();
+    return new WorldPublishedStartLocationEvidence(
+        new WorldPublishedStartLocationEvidence.Request(
+            freeze.targetNamespace(),
+            freeze.canonicalTenantId(),
+            freeze.canonicalVersionId(),
+            freeze.intakeRequestId(),
+            freeze.publicationFence(),
+            freeze.publicationRequestId(),
+            freeze.requestDigest(),
+            freeze.versionStateEpoch(),
+            freeze.publishWorkflowId(),
+            freeze.appliedCommitId(),
+            freeze.contentDigest(),
+            freeze.digestSchemaVersion(),
+            freeze.suppliedOwnedAffectedTuples().stream()
+                .map(
+                    tuple ->
+                        new WorldPublishedStartLocationEvidence.OwnedAffectedTuple(
+                            tuple.owner(),
+                            tuple.aggregateType(),
+                            tuple.aggregateId(),
+                            tuple.scopeType(),
+                            tuple.scopeId(),
+                            tuple.expectedEpoch()))
+                .toList()),
+        source.selectorReceipt().canonicalBytes(),
+        source.appliedResult().application().operation().accountBindingBytes(),
+        source.appliedResult().canonicalBytes());
+  }
+
+  private AuthoredDraftPublishSelectionBinding publicationSelection(
+      WorldDraftTopologyCommitPlan plan, String publicationRequest, long freezeEpoch) {
+    var binding = plan.binding();
+    var intent =
+        new AuthoredDraftPublishSelectionBinding.PublishIntent(
+            binding.target().canonicalTenantId(),
+            binding.target().canonicalVersionId(),
+            publicationRequest,
+            Long.toString(freezeEpoch),
+            "isolated-association-publication-fixture",
+            binding.requestId(),
+            binding.commitId(),
+            binding.digest());
+    return AuthoredDraftPublishSelectionBinding.capture(
+        intent,
+        binding.target(),
+        binding,
+        new AuthoredDraftPublishSelectionBinding.VisibilityFence(
+            binding.target(),
+            binding.requestId(),
+            binding.commitId(),
+            binding.digest(),
+            "[]",
+            OffsetDateTime.parse("2026-01-01T00:00:00Z")));
+  }
+
+  private GameDesignPublicationTerminalEvidence isolatedTerminalEvidence(
+      WorldCanonicalInstancePreparation.Input input) {
+    var release = input.completeLaunchBinding().evidence().releaseAttestation();
+    var world = Objects.requireNonNull(release.worldStartLocationEvidence());
+    if (release.versionStateEpoch() != Math.addExact(world.request().versionStateEpoch(), 1L)) {
+      throw new IllegalStateException(
+          "Isolated PUBLISHED terminal must retain the next publication epoch after its World freeze");
+    }
+    var originalAccount =
+        DraftAuthorizationFenceBinding.fromStored(world.originalAccountBindingBytes());
+    var selection =
+        publicationSelection(
+            input.topologyPlan().sourceBinding().plan(),
+            world.request().publicationRequestId(),
+            world.request().versionStateEpoch());
+    if (!selection.digest().equals("sha256:" + world.request().requestDigest())) {
+      throw new IllegalStateException(
+          "Isolated publication selection differs from the retained World request digest");
+    }
+    var account =
+        new AccountPublicationAuthorizationBinding(
+            UUID.nameUUIDFromBytes(
+                (world.request().publicationFence() + "/account-operation")
+                    .getBytes(StandardCharsets.UTF_8)),
+            UUID.nameUUIDFromBytes(
+                (world.request().publicationFence() + "/account-fence")
+                    .getBytes(StandardCharsets.UTF_8)),
+            new AccountPublicationAuthorizationBinding.PreallocationInput(
+                originalAccount.actorAccountId(), selection),
+            List.of(
+                new DraftAuthorizationFenceBinding.SourceEvidence(
+                    DraftAuthorizationFenceBinding.SourceKind.ACCOUNT,
+                    originalAccount.actorAccountId().toString(),
+                    "1",
+                    "1",
+                    null,
+                    null,
+                    new byte[] {1})));
+    var operation = new GameDesignPublicationOperationBinding(account, world);
+    return new GameDesignPublicationTerminalEvidence(
+        operation.canonicalBytes(),
+        Outcome.PUBLISHED,
+        isolatedReleaseContent(input),
+        release.versionStateEpoch());
+  }
+
+  private ReleaseContent isolatedReleaseContent(WorldCanonicalInstancePreparation.Input input) {
+    var release = input.completeLaunchBinding().evidence().releaseAttestation();
+    var world = Objects.requireNonNull(release.worldStartLocationEvidence());
+    var participants =
+        release.participantDigests().stream()
+            .map(
+                participant ->
+                    new Participant(
+                        participant.participantKey(),
+                        participant.scopeValue(),
+                        participant.baseVersionIdPresent() ? participant.baseVersionId() : null,
+                        participant.appliedCommitId(),
+                        participant.contentDigest(),
+                        participant.digestSchemaVersion(),
+                        participant.abilitySchemaDigestPresent()
+                            ? participant.abilitySchemaDigest()
+                            : null,
+                        null,
+                        null))
+            .toList();
+    return new ReleaseContent(
+        release.canonicalTenantId(),
+        release.canonicalVersionId(),
+        release.publishedReleaseBundleRef(),
+        1,
+        "v2",
+        release.publishWorkflowId(),
+        release.manifestHash(),
+        release.manifestSchemaVersion(),
+        release.artifactDigests(),
+        release.requiredManifestAssetKeys(),
+        participants,
+        release.commandDefinitions(),
+        release.generationConfigRevision(),
+        world);
+  }
+
+  private void completeIsolatedPublicationTerminal(WorldCanonicalInstancePreparation.Input input) {
+    var evidence = isolatedTerminalEvidence(input);
+    GameDesignPublicationTerminalEvidence retained =
+        publicationTerminalComponent(evidence)
+            .complete(evidence.operationBytes(), evidence.canonicalBytes());
+    if (!Arrays.equals(evidence.canonicalBytes(), retained.canonicalBytes())) {
+      throw new IllegalStateException(
+          "Isolated World terminal readback differs from original PUBLISHED v2 evidence");
+    }
+  }
+
+  private WorldPublicationTerminalService publicationTerminalComponent(
+      GameDesignPublicationTerminalEvidence evidence) {
+    byte[] operationBytes = evidence.operationBytes();
+    return new WorldPublicationTerminalService(
+        new WorldPublicationTerminalRepository(dsl, transactionManager),
+        (suppliedOperation, terminalBytes) -> {
+          GameDesignPublicationTerminalEvidence upstream =
+              GameDesignPublicationTerminalEvidence.fromStored(terminalBytes);
+          if (!Arrays.equals(operationBytes, suppliedOperation)
+              || !Arrays.equals(upstream.operationBytes(), suppliedOperation)) {
+            throw new IllegalArgumentException("isolated terminal operation mismatch");
+          }
+          return new WorldPublicationTerminalService.VerifiedTerminal(
+              WorldPublicationTerminal.Request.fromStored(terminalBytes),
+              new WorldPublicationTerminalService.HeldTerminalAuthority() {
+                public void requireHeld() {}
+
+                public void close() {}
+              });
         });
   }
 
@@ -1433,68 +1709,125 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
     UUID zoneId = UUID.randomUUID();
     UUID roomId = UUID.randomUUID();
     UUID destinationRoomId = UUID.randomUUID();
+    UUID entityId = UUID.randomUUID();
     List<WorldDesignMutationRevision> mutations =
-        List.of(
-            mutation(
-                    commitId,
-                    regionId,
-                    WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION,
-                    regionId)
-                .setRegion(
-                    RegionDesignMutation.newBuilder()
-                        .setName("synthetic region")
-                        .setWeather("rain")
-                        .setShardId(7)
-                        .setGenerationSeed(9001)
-                        .setGeneratorType("synthetic")
-                        .setGeneratorParams("{}"))
-                .build(),
-            mutation(
-                    commitId,
-                    zoneId,
-                    WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ZONE,
-                    regionId)
-                .setZone(
-                    ZoneDesignMutation.newBuilder()
-                        .setName("synthetic zone")
-                        .setRegionId(regionId.toString()))
-                .build(),
-            mutation(
-                    commitId,
-                    destinationRoomId,
-                    WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM,
-                    regionId)
-                .setRoom(
-                    RoomDesignMutation.newBuilder()
-                        .setName("synthetic destination")
-                        .setZoneId(zoneId.toString())
-                        .setDescription("synthetic destination room"))
-                .build(),
-            mutation(
-                    commitId,
-                    roomId,
-                    WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM,
-                    regionId)
-                .setRoom(
-                    RoomDesignMutation.newBuilder()
-                        .setName("synthetic room")
-                        .setZoneId(zoneId.toString())
-                        .setDescription("synthetic materialization proof"))
-                .build(),
-            mutation(
-                    commitId,
-                    UUID.randomUUID(),
-                    WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM_EXIT,
-                    regionId)
-                .setRoomExit(
-                    RoomExitDesignMutation.newBuilder()
-                        .setFromRoomId(roomId.toString())
-                        .setToRoomId(destinationRoomId.toString())
-                        .setDirection("EAST")
-                        .setCost(3))
-                .build());
+        new ArrayList<>(
+            List.of(
+                mutation(
+                        commitId,
+                        regionId,
+                        WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION,
+                        regionId)
+                    .setRegion(
+                        RegionDesignMutation.newBuilder()
+                            .setName("synthetic region")
+                            .setWeather("rain")
+                            .setShardId(7)
+                            .setGenerationSeed(9001)
+                            .setGeneratorType("synthetic")
+                            .setGeneratorParams("{}"))
+                    .build(),
+                mutation(
+                        commitId,
+                        zoneId,
+                        WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ZONE,
+                        regionId)
+                    .setZone(
+                        ZoneDesignMutation.newBuilder()
+                            .setName("synthetic zone")
+                            .setRegionId(regionId.toString()))
+                    .build(),
+                mutation(
+                        commitId,
+                        destinationRoomId,
+                        WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM,
+                        regionId)
+                    .setRoom(
+                        RoomDesignMutation.newBuilder()
+                            .setName("synthetic destination")
+                            .setZoneId(zoneId.toString())
+                            .setDescription("synthetic destination room"))
+                    .build(),
+                mutation(
+                        commitId,
+                        roomId,
+                        WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM,
+                        regionId)
+                    .setRoom(
+                        RoomDesignMutation.newBuilder()
+                            .setName("synthetic room")
+                            .setZoneId(zoneId.toString())
+                            .setDescription("synthetic materialization proof"))
+                    .build(),
+                mutation(
+                        commitId,
+                        UUID.randomUUID(),
+                        WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM_EXIT,
+                        regionId)
+                    .setRoomExit(
+                        RoomExitDesignMutation.newBuilder()
+                            .setFromRoomId(roomId.toString())
+                            .setToRoomId(destinationRoomId.toString())
+                            .setDirection("EAST")
+                            .setCost(3))
+                    .build()));
+    WorldFreshGraphDeclaration declaration =
+        WorldFreshGraphDeclaration.newBuilder()
+            .setTenantId(fixture.versionIdentity().canonicalTenantId().toString())
+            .setVersionId(fixture.versionIdentity().canonicalVersionId().toString())
+            .setStartLocation(
+                RoomTemplateRef.newBuilder()
+                    .setTenantId(fixture.versionIdentity().canonicalTenantId().toString())
+                    .setVersionId(fixture.versionIdentity().canonicalVersionId().toString())
+                    .setRoomTemplateId(roomId.toString()))
+            .addFamilyCounts(
+                familyCount(mutations, WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION))
+            .addFamilyCounts(
+                familyCount(mutations, WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ZONE))
+            .addFamilyCounts(
+                familyCount(mutations, WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM))
+            .addFamilyCounts(
+                familyCount(
+                    mutations, WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM_EXIT))
+            .addFamilyCounts(
+                familyCount(
+                    mutations,
+                    WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_GENERATION_RULE))
+            .addFamilyCounts(
+                familyCount(
+                    mutations,
+                    WorldDesignAggregateType
+                        .WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING))
+            .build();
+    mutations.set(
+        0, mutations.getFirst().toBuilder().setFreshGraphDeclaration(declaration).build());
     List<DraftCommitBinding.RevisionPayload> revisions = new java.util.ArrayList<>();
     List<AffectedUnit> units = new java.util.ArrayList<>();
+    revisions.add(
+        new DraftCommitBinding.RevisionPayload(
+            "0", UUID.randomUUID(), Owner.ENTITY_MANAGEMENT, "isolated Entity fixture evidence"));
+    units.add(
+        new AffectedUnit(
+            Owner.ENTITY_MANAGEMENT,
+            "NPC",
+            entityId.toString(),
+            "AGGREGATE",
+            entityId.toString(),
+            "0"));
+    revisions.add(
+        new DraftCommitBinding.RevisionPayload(
+            "1",
+            UUID.randomUUID(),
+            Owner.GAME_DESIGN_CONTROL_PLANE,
+            "isolated Game Design control-plane fixture evidence"));
+    units.add(
+        new AffectedUnit(
+            Owner.GAME_DESIGN_CONTROL_PLANE,
+            "VERSION",
+            fixture.versionIdentity().canonicalVersionId().toString(),
+            "AGGREGATE",
+            fixture.versionIdentity().canonicalVersionId().toString(),
+            "0"));
     for (WorldDesignMutationRevision mutation : mutations) {
       revisions.add(
           new DraftCommitBinding.RevisionPayload(
@@ -1548,6 +1881,13 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
         DraftCommitBinding.create(
             target, UUID.randomUUID(), commitId, "synthetic-base-commit", revisions, units),
         owner);
+  }
+
+  private static WorldFreshGraphFamilyCount familyCount(
+      List<WorldDesignMutationRevision> mutations, WorldDesignAggregateType family) {
+    int count =
+        (int) mutations.stream().filter(mutation -> mutation.getAggregateType() == family).count();
+    return WorldFreshGraphFamilyCount.newBuilder().setFamily(family).setCount(count).build();
   }
 
   private static WorldDesignMutationRevision.Builder mutation(
@@ -1754,6 +2094,26 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
       long epoch,
       String launchDescriptorId,
       String attestationCommit) {
+    return completeEvidence(
+        source,
+        controlPlaneRequestId,
+        gameDesignVersionId,
+        canonicalVersionId,
+        epoch,
+        launchDescriptorId,
+        attestationCommit,
+        null);
+  }
+
+  private static CompleteLaunchBindingEvidence completeEvidence(
+      AuthoredWorldSourceEvidence source,
+      String controlPlaneRequestId,
+      long gameDesignVersionId,
+      UUID canonicalVersionId,
+      long epoch,
+      String launchDescriptorId,
+      String attestationCommit,
+      WorldPublishedStartLocationEvidence selector) {
     AuthoredWorldLaunchDescriptorEvidence.Request request =
         new AuthoredWorldLaunchDescriptorEvidence.Request(
             NAMESPACE,
@@ -1786,22 +2146,69 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
             false,
             null);
     return new CompleteLaunchBindingEvidence(
-        descriptor, attestation(descriptor, source, canonicalVersionId, attestationCommit));
+        descriptor,
+        attestation(descriptor, source, canonicalVersionId, attestationCommit, selector));
   }
 
   private static AuthoredWorldReleaseAttestationEvidence attestation(
       AuthoredWorldLaunchDescriptorEvidence descriptor,
       AuthoredWorldSourceEvidence source,
       UUID canonicalVersionId,
-      String commit) {
+      String commit,
+      WorldPublishedStartLocationEvidence selector) {
+    return attestation(descriptor, source, canonicalVersionId, commit, selector, 'f');
+  }
+
+  private static AuthoredWorldReleaseAttestationEvidence attestation(
+      AuthoredWorldLaunchDescriptorEvidence descriptor,
+      AuthoredWorldSourceEvidence source,
+      UUID canonicalVersionId,
+      String commit,
+      WorldPublishedStartLocationEvidence selector,
+      char manifestHashDigit) {
+    AuthoredWorldReleaseAttestationEvidence.Participant worldParticipant =
+        selector == null
+            ? participant("WORLD_MANAGEMENT", 3, "a", false, descriptor.versionId(), commit)
+            : new AuthoredWorldReleaseAttestationEvidence.Participant(
+                "WORLD_MANAGEMENT",
+                Long.toString(descriptor.versionId()),
+                false,
+                null,
+                selector.request().appliedCommitId(),
+                selector.request().contentDigest(),
+                selector.request().digestSchemaVersion(),
+                false,
+                null);
     List<AuthoredWorldReleaseAttestationEvidence.Participant> participants =
         List.of(
-            participant("WORLD_MANAGEMENT", 3, "a", false, descriptor.versionId(), commit),
+            worldParticipant,
             participant("ENTITY_MANAGEMENT", 2, "b", false, descriptor.versionId(), commit),
             participant("GAME_LOGIC", 1, "c", true, descriptor.versionId(), commit),
             participant("AUTOMATION_SCRIPTING", 5, "d", false, descriptor.versionId(), commit),
             participant(
                 "GAME_DESIGN_CONTROL_PLANE", 1, "e", false, descriptor.versionId(), commit));
+    if (selector == null) {
+      return AuthoredWorldReleaseAttestationEvidence.create(
+          NAMESPACE,
+          descriptor.resultDigest(),
+          source.canonicalTenantId(),
+          canonicalVersionId,
+          source.worldSlug(),
+          source.operationId(),
+          source.evidenceDigest(),
+          descriptor.launchDescriptorId(),
+          descriptor.publishedReleaseBundleRef(),
+          descriptor.versionStateEpoch(),
+          "publish:synthetic:association-fixture",
+          commit,
+          participants,
+          digest(manifestHashDigit),
+          1,
+          List.of(),
+          List.of(),
+          List.of("look"),
+          descriptor.generationConfigRevision());
+    }
     return AuthoredWorldReleaseAttestationEvidence.create(
         NAMESPACE,
         descriptor.resultDigest(),
@@ -1813,15 +2220,16 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
         descriptor.launchDescriptorId(),
         descriptor.publishedReleaseBundleRef(),
         descriptor.versionStateEpoch(),
-        "publish:synthetic:association-fixture",
-        commit,
+        selector.request().publishWorkflowId(),
+        selector.request().appliedCommitId(),
         participants,
-        digest('f'),
+        digest(manifestHashDigit),
         1,
         List.of(),
         List.of(),
         List.of("look"),
-        descriptor.generationConfigRevision());
+        descriptor.generationConfigRevision(),
+        selector);
   }
 
   private static AuthoredWorldReleaseAttestationEvidence releaseWithWorldCheckpoint(
@@ -1845,6 +2253,28 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
                         participant.abilitySchemaDigestPresent(),
                         participant.abilitySchemaDigest()))
             .toList();
+    if (release.worldStartLocationEvidence() == null) {
+      return AuthoredWorldReleaseAttestationEvidence.create(
+          release.targetNamespace(),
+          release.descriptorResultDigest(),
+          release.canonicalTenantId(),
+          release.canonicalVersionId(),
+          release.worldSlug(),
+          release.authoredWorldSourceOperationId(),
+          release.authoredWorldSourceEvidenceDigest(),
+          release.launchDescriptorId(),
+          release.publishedReleaseBundleRef(),
+          release.versionStateEpoch(),
+          checkpoint.publishWorkflowId(),
+          checkpoint.appliedCommitId(),
+          participants,
+          release.manifestHash(),
+          release.manifestSchemaVersion(),
+          release.requiredManifestAssetKeys(),
+          release.artifactDigests(),
+          release.commandDefinitions(),
+          release.generationConfigRevision());
+    }
     return AuthoredWorldReleaseAttestationEvidence.create(
         release.targetNamespace(),
         release.descriptorResultDigest(),
@@ -1864,7 +2294,8 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
         release.requiredManifestAssetKeys(),
         release.artifactDigests(),
         release.commandDefinitions(),
-        release.generationConfigRevision());
+        release.generationConfigRevision(),
+        release.worldStartLocationEvidence());
   }
 
   private static AuthoredWorldReleaseAttestationEvidence.Participant participant(

@@ -379,17 +379,30 @@ public final class WorldCanonicalInstanceAssociationRepository {
     return readOwnerAssociation(canonicalGameInstanceId, true);
   }
 
+  /** Reuses the exact immutable source reconstruction inside a writable activation transaction. */
+  Optional<WorldCanonicalInstanceAssociation> readOwnerAssociationInActivationTransaction(
+      UUID canonicalGameInstanceId) {
+    requireWritableActivationTransaction();
+    return readOwnerAssociation(canonicalGameInstanceId, true, true);
+  }
+
   private Optional<WorldCanonicalInstanceAssociation> readOwnerAssociation(
       UUID canonicalGameInstanceId, boolean inOwnerSnapshot) {
+    return readOwnerAssociation(canonicalGameInstanceId, inOwnerSnapshot, false);
+  }
+
+  private Optional<WorldCanonicalInstanceAssociation> readOwnerAssociation(
+      UUID canonicalGameInstanceId, boolean inOwnerSnapshot, boolean inActivationTransaction) {
     requireNonNil(canonicalGameInstanceId, "canonicalGameInstanceId");
     Record row = findByCanonicalGameInstance(canonicalGameInstanceId);
     if (row == null) {
       return Optional.empty();
     }
-    return Optional.of(toAssociation(row, inOwnerSnapshot));
+    return Optional.of(toAssociation(row, inOwnerSnapshot, inActivationTransaction));
   }
 
-  private WorldCanonicalInstanceAssociation toAssociation(Record row, boolean inOwnerSnapshot) {
+  private WorldCanonicalInstanceAssociation toAssociation(
+      Record row, boolean inOwnerSnapshot, boolean inActivationTransaction) {
     try {
       short schemaVersion = required(row, SCHEMA_VERSION);
       if (schemaVersion != 1) {
@@ -403,10 +416,13 @@ public final class WorldCanonicalInstanceAssociationRepository {
       UUID bindingOperationId = required(row, LAUNCH_BINDING_OPERATION_ID);
       UUID intakeRequestId = required(row, INTAKE_REQUEST_ID);
       WorldCompleteLaunchBindingRepository.StoredBinding storedBinding =
-          (inOwnerSnapshot
-                  ? launchBindingRepository.readInOwnerReadOnlyRepeatableRead(
+          (inActivationTransaction
+                  ? launchBindingRepository.readInOwnerActivationTransaction(
                       namespace, tenantId, controlRequestId)
-                  : launchBindingRepository.read(namespace, tenantId, controlRequestId))
+                  : inOwnerSnapshot
+                      ? launchBindingRepository.readInOwnerReadOnlyRepeatableRead(
+                          namespace, tenantId, controlRequestId)
+                      : launchBindingRepository.read(namespace, tenantId, controlRequestId))
               .orElseThrow(
                   () ->
                       new InvalidAssociationEvidenceException(
@@ -416,10 +432,13 @@ public final class WorldCanonicalInstanceAssociationRepository {
             "World canonical association substituted its complete launch binding");
       }
       WorldAuthoredSourceIntakeReceipt sourceReceipt =
-          (inOwnerSnapshot
-                  ? sourceIntakeRepository.readInOwnerReadOnlyRepeatableRead(
+          (inActivationTransaction
+                  ? sourceIntakeRepository.readInOwnerActivationTransaction(
                       namespace, intakeRequestId)
-                  : sourceIntakeRepository.read(namespace, intakeRequestId))
+                  : inOwnerSnapshot
+                      ? sourceIntakeRepository.readInOwnerReadOnlyRepeatableRead(
+                          namespace, intakeRequestId)
+                      : sourceIntakeRepository.read(namespace, intakeRequestId))
               .orElseThrow(
                   () ->
                       new InvalidAssociationEvidenceException(
@@ -428,11 +447,15 @@ public final class WorldCanonicalInstanceAssociationRepository {
           launchBindingRepository.toReceipt(storedBinding, sourceReceipt);
       UUID canonicalVersionId = required(row, CANONICAL_VERSION_ID);
       WorldAuthoredVersionIdentityReceipt versionIdentity =
-          (inOwnerSnapshot
-                  ? versionIdentityRepository.readByCanonicalVersionInOwnerReadOnlyRepeatableRead(
+          (inActivationTransaction
+                  ? versionIdentityRepository.readByCanonicalVersionInOwnerActivationTransaction(
                       namespace, tenantId, worldSlug, canonicalVersionId)
-                  : versionIdentityRepository.readByCanonicalVersion(
-                      namespace, tenantId, worldSlug, canonicalVersionId))
+                  : inOwnerSnapshot
+                      ? versionIdentityRepository
+                          .readByCanonicalVersionInOwnerReadOnlyRepeatableRead(
+                              namespace, tenantId, worldSlug, canonicalVersionId)
+                      : versionIdentityRepository.readByCanonicalVersion(
+                          namespace, tenantId, worldSlug, canonicalVersionId))
               .orElseThrow(
                   () ->
                       new InvalidAssociationEvidenceException(
@@ -850,6 +873,27 @@ public final class WorldCanonicalInstanceAssociationRepository {
         || !"on".equals(state.get("read_only", String.class))) {
       throw new IllegalStateException(
           "World canonical association snapshot read requires a read-only REPEATABLE READ owner transaction");
+    }
+  }
+
+  private void requireWritableActivationTransaction() {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isCurrentTransactionReadOnly()
+        || !Integer.valueOf(Connection.TRANSACTION_READ_COMMITTED)
+            .equals(TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())) {
+      throw new IllegalStateException(
+          "World canonical association activation read requires a writable READ COMMITTED owner transaction");
+    }
+    Record state =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT current_setting('transaction_isolation') AS isolation, "
+                    + "current_setting('transaction_read_only') AS read_only"),
+            "World transaction state query returned no row");
+    if (!"read committed".equals(state.get("isolation", String.class))
+        || !"off".equals(state.get("read_only", String.class))) {
+      throw new IllegalStateException(
+          "World canonical association activation read requires a writable READ COMMITTED owner transaction");
     }
   }
 

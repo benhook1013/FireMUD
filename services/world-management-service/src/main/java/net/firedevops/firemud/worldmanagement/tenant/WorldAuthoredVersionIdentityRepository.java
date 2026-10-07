@@ -93,6 +93,17 @@ public class WorldAuthoredVersionIdentityRepository {
         namespace, canonicalTenantId, worldSlug, canonicalVersionId);
   }
 
+  /**
+   * Reconstructs the same immutable Version receipt inside canonical activation's owner
+   * transaction.
+   */
+  Optional<WorldAuthoredVersionIdentityReceipt> readByCanonicalVersionInOwnerActivationTransaction(
+      String namespace, UUID canonicalTenantId, String worldSlug, UUID canonicalVersionId) {
+    requireWritableActivationTransaction();
+    return readByCanonicalVersionValidated(
+        namespace, canonicalTenantId, worldSlug, canonicalVersionId);
+  }
+
   private Optional<WorldAuthoredVersionIdentityReceipt> readByCanonicalVersionValidated(
       String namespace, UUID canonicalTenantId, String worldSlug, UUID canonicalVersionId) {
     validateIdentityKey(namespace, canonicalTenantId, worldSlug);
@@ -383,6 +394,27 @@ public class WorldAuthoredVersionIdentityRepository {
         || !"on".equals(state.get("read_only", String.class))) {
       throw new IllegalStateException(
           "World authored-Version snapshot read requires a read-only REPEATABLE READ owner transaction");
+    }
+  }
+
+  private void requireWritableActivationTransaction() {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isCurrentTransactionReadOnly()
+        || !Integer.valueOf(Connection.TRANSACTION_READ_COMMITTED)
+            .equals(TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())) {
+      throw new IllegalStateException(
+          "World authored-Version activation read requires a writable READ COMMITTED owner transaction");
+    }
+    Record state =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT current_setting('transaction_isolation') AS isolation, "
+                    + "current_setting('transaction_read_only') AS read_only"),
+            "World transaction state query returned no row");
+    if (!"read committed".equals(state.get("isolation", String.class))
+        || !"off".equals(state.get("read_only", String.class))) {
+      throw new IllegalStateException(
+          "World authored-Version activation read requires a writable READ COMMITTED owner transaction");
     }
   }
 

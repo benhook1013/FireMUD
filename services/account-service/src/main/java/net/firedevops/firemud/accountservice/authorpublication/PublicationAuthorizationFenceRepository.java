@@ -11,8 +11,11 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
+import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
+import net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -23,8 +26,9 @@ import tools.jackson.databind.ObjectMapper;
  * authenticate, lock and revalidate the real authority sources in their writable owner transaction
  * before reserving or ordering; this component neither captures nor authenticates them. Never
  * retain this transaction across RPC. Reservation grants no permission. Draft/creation results
- * cannot settle publication; every ordered operation remains unresolved until its own authenticated
- * terminal contract and producer exist.
+ * cannot settle publication; only exact owner terminal evidence supplied by the separate concrete
+ * authenticated clients can be retained. SQL guards establish structural consistency, not peer
+ * authentication.
  */
 public final class PublicationAuthorizationFenceRepository {
   private final DSLContext dsl;
@@ -42,6 +46,17 @@ public final class PublicationAuthorizationFenceRepository {
     REVOKE_ORDER
   }
 
+  public enum Owner {
+    GAME_DESIGN,
+    WORLD
+  }
+
+  public enum Settlement {
+    PENDING,
+    PUBLISHED,
+    NO_PUBLICATION
+  }
+
   public record Snapshot(
       Ordering ordering, byte[] binding, OffsetDateTime reservedAt, OffsetDateTime orderedAt) {
     public Snapshot {
@@ -51,6 +66,40 @@ public final class PublicationAuthorizationFenceRepository {
     @Override
     public byte[] binding() {
       return binding.clone();
+    }
+  }
+
+  public record OwnerResultSnapshot(
+      GameDesignPublicationTerminalEvidence.Outcome outcome,
+      byte[] operationBytes,
+      byte[] terminalBytes,
+      OffsetDateTime recordedAt) {
+    public OwnerResultSnapshot {
+      operationBytes = operationBytes.clone();
+      terminalBytes = terminalBytes.clone();
+    }
+
+    @Override
+    public byte[] operationBytes() {
+      return operationBytes.clone();
+    }
+
+    @Override
+    public byte[] terminalBytes() {
+      return terminalBytes.clone();
+    }
+  }
+
+  public record TerminalSnapshot(
+      Ordering ordering,
+      Settlement settlement,
+      Optional<OwnerResultSnapshot> gameDesignResult,
+      Optional<OwnerResultSnapshot> worldResult) {
+    public TerminalSnapshot {
+      Objects.requireNonNull(ordering);
+      Objects.requireNonNull(settlement);
+      gameDesignResult = Objects.requireNonNull(gameDesignResult);
+      worldResult = Objects.requireNonNull(worldResult);
     }
   }
 
@@ -123,20 +172,135 @@ public final class PublicationAuthorizationFenceRepository {
 
   public Snapshot read(AccountPublicationAuthorizationBinding binding) {
     requireTransaction();
+    lockSources(binding.sources());
     return snapshot(requireExact(operation(binding.operationId()), binding));
   }
 
   /** Exact original evidence only. Absence is UNKNOWN, never definitive no-publication evidence. */
   public Optional<AccountPublicationAuthorizationBinding> readOriginalBinding(UUID operationId) {
     requireTransaction();
-    Record row = operation(operationId);
-    if (row == null) {
+    Record unlocked = unlockedOperation(operationId);
+    if (unlocked == null) {
       return Optional.empty();
     }
-    var binding =
-        AccountPublicationAuthorizationBinding.fromStored(row.get("binding", byte[].class));
+    AccountPublicationAuthorizationBinding binding = originalBinding(unlocked);
+    lockSources(binding.sources());
+    Record row = operation(operationId);
     requireExact(row, binding);
     return Optional.of(binding);
+  }
+
+  /**
+   * Reads the full post-allocation operation after learning the immutable Account source vector
+   * without a row lock. Shared source locks are always held before the operation row is locked.
+   */
+  public Optional<TerminalSnapshot> readOriginalOperation(
+      GameDesignPublicationOperationBinding candidate) {
+    requireTransaction();
+    Objects.requireNonNull(candidate);
+    Record unlocked = unlockedOperation(candidate.account().operationId());
+    if (unlocked == null) {
+      return Optional.empty();
+    }
+    AccountPublicationAuthorizationBinding original = originalBinding(unlocked);
+    requireCandidateAccount(candidate, original);
+    lockSources(original.sources());
+    Record row = operation(original.operationId());
+    requireExact(row, original);
+    requireCandidateAccount(candidate, original);
+    Ordering ordering = Ordering.valueOf(row.get("ordering", String.class));
+    Optional<OwnerResultSnapshot> gameDesign = readOwnerResultLocked(candidate, Owner.GAME_DESIGN);
+    Optional<OwnerResultSnapshot> world = readOwnerResultLocked(candidate, Owner.WORLD);
+    return Optional.of(
+        new TerminalSnapshot(ordering, settlement(ordering, gameDesign, world), gameDesign, world));
+  }
+
+  /**
+   * Stores a result returned through the explicitly authenticated owner client. SQL itself proves
+   * only structural consistency; it cannot prove that a caller authenticated either owner.
+   */
+  public OwnerResultSnapshot recordOwnerResult(
+      GameDesignPublicationOperationBinding originalBinding,
+      Owner owner,
+      GameDesignPublicationTerminalEvidence terminal) {
+    requireTransaction();
+    Objects.requireNonNull(originalBinding);
+    Objects.requireNonNull(owner);
+    Objects.requireNonNull(terminal);
+    GameDesignPublicationOperationBinding operationBinding =
+        GameDesignPublicationOperationBinding.fromStored(originalBinding.canonicalBytes());
+    GameDesignPublicationTerminalEvidence terminalEvidence =
+        GameDesignPublicationTerminalEvidence.fromStored(terminal.canonicalBytes());
+    if (!Arrays.equals(operationBinding.canonicalBytes(), terminalEvidence.operationBytes())) {
+      throw new IllegalArgumentException(
+          "Owner terminal result differs from exact original operation");
+    }
+
+    AccountPublicationAuthorizationBinding account = operationBinding.account();
+    lockSources(account.sources());
+    Record row = operation(account.operationId());
+    requireExact(row, account);
+    Ordering ordering = Ordering.valueOf(row.get("ordering", String.class));
+    if (ordering == Ordering.RESERVED) {
+      throw new IllegalStateException(
+          "Reservation alone cannot record publication terminal evidence");
+    }
+    if (ordering == Ordering.REVOKE_ORDER
+        && terminalEvidence.outcome()
+            != GameDesignPublicationTerminalEvidence.Outcome.NO_PUBLICATION) {
+      throw new IllegalStateException("Revocation order permits only no-publication evidence");
+    }
+
+    Optional<OwnerResultSnapshot> current = readOwnerResultLocked(operationBinding, owner);
+    if (current.isPresent()) {
+      OwnerResultSnapshot stored = current.orElseThrow();
+      requireSameResult(stored, operationBinding, terminalEvidence);
+      return stored;
+    }
+    Owner otherOwner = owner == Owner.GAME_DESIGN ? Owner.WORLD : Owner.GAME_DESIGN;
+    Optional<OwnerResultSnapshot> counterpart = readOwnerResultLocked(operationBinding, otherOwner);
+    if (counterpart.isPresent()) {
+      requireSameResult(counterpart.orElseThrow(), operationBinding, terminalEvidence);
+    }
+    dsl.execute(
+        "INSERT INTO account_publication_authorization_owner_results"
+            + " (operation_id, owner, outcome, operation_bytes, terminal_bytes)"
+            + " VALUES (?, ?, ?, ?, ?)",
+        account.operationId(),
+        owner.name(),
+        terminalEvidence.outcome().name(),
+        operationBinding.canonicalBytes(),
+        terminalEvidence.canonicalBytes());
+    return readOwnerResultLocked(operationBinding, owner)
+        .orElseThrow(() -> new IllegalStateException("Publication owner result did not read back"));
+  }
+
+  /** Absence means UNKNOWN; retained bytes are structural storage, not authentication evidence. */
+  public Optional<OwnerResultSnapshot> readOwnerResult(
+      GameDesignPublicationOperationBinding originalBinding, Owner owner) {
+    requireTransaction();
+    Objects.requireNonNull(originalBinding);
+    Objects.requireNonNull(owner);
+    AccountPublicationAuthorizationBinding account = originalBinding.account();
+    lockSources(account.sources());
+    Record row = operation(account.operationId());
+    requireExact(row, account);
+    return readOwnerResultLocked(originalBinding, owner);
+  }
+
+  /** Settlement is derived only from immutable order and two byte-identical owner results. */
+  public Settlement readSettlement(GameDesignPublicationOperationBinding originalBinding) {
+    requireTransaction();
+    Objects.requireNonNull(originalBinding);
+    AccountPublicationAuthorizationBinding account = originalBinding.account();
+    lockSources(account.sources());
+    Record row = operation(account.operationId());
+    requireExact(row, account);
+    Ordering ordering = Ordering.valueOf(row.get("ordering", String.class));
+    Optional<OwnerResultSnapshot> gameDesign =
+        readOwnerResultLocked(originalBinding, Owner.GAME_DESIGN);
+    Optional<OwnerResultSnapshot> world = readOwnerResultLocked(originalBinding, Owner.WORLD);
+    return settlement(ordering, gameDesign, world);
   }
 
   /** Called by the existing source-change writer under its shared source locks. */
@@ -156,16 +320,32 @@ public final class PublicationAuthorizationFenceRepository {
   }
 
   /**
-   * No terminal shortcut exists: neither expiry, FAILED, nor Draft readback releases this order.
+   * Every related publication must have its two matching owner results under the original source
+   * order. Expiry, FAILED, and Draft readback are never terminal publication evidence.
    */
   public boolean allAffectedSettled(List<SourceEvidence> sources) {
     requireTransaction();
     lockSources(sources);
     List<UUID> affected = affectedOperations(sources);
+    Map<UUID, AccountPublicationAuthorizationBinding> originals = new java.util.LinkedHashMap<>();
     for (UUID id : affected) {
-      operation(id);
+      Record unlocked = unlockedOperation(id);
+      AccountPublicationAuthorizationBinding original = originalBinding(unlocked);
+      originals.put(id, original);
     }
-    return affected.isEmpty();
+    for (UUID id : affected) {
+      AccountPublicationAuthorizationBinding original = originals.get(id);
+      Record row = operation(id);
+      requireExact(row, original);
+      Ordering ordering = Ordering.valueOf(row.get("ordering", String.class));
+      Optional<OwnerResultSnapshot> gameDesign =
+          readStoredOwnerResultLocked(original, Owner.GAME_DESIGN);
+      Optional<OwnerResultSnapshot> world = readStoredOwnerResultLocked(original, Owner.WORLD);
+      if (settlement(ordering, gameDesign, world) == Settlement.PENDING) {
+        return false;
+      }
+    }
+    return true;
   }
 
   private List<UUID> affectedOperations(List<SourceEvidence> sources) {
@@ -183,8 +363,146 @@ public final class PublicationAuthorizationFenceRepository {
         .toList();
   }
 
+  private AccountPublicationAuthorizationBinding originalBinding(Record row) {
+    if (row == null) {
+      throw new IllegalStateException("Affected publication operation disappeared");
+    }
+    return AccountPublicationAuthorizationBinding.fromStored(row.get("binding", byte[].class));
+  }
+
+  private Optional<OwnerResultSnapshot> readOwnerResultLocked(
+      GameDesignPublicationOperationBinding candidate, Owner owner) {
+    return readOwnerResultLocked(candidate.account(), candidate, owner);
+  }
+
+  private Optional<OwnerResultSnapshot> readStoredOwnerResultLocked(
+      AccountPublicationAuthorizationBinding original, Owner owner) {
+    return readOwnerResultLocked(original, null, owner);
+  }
+
+  private Optional<OwnerResultSnapshot> readOwnerResultLocked(
+      AccountPublicationAuthorizationBinding original,
+      GameDesignPublicationOperationBinding candidate,
+      Owner owner) {
+    Record result = ownerResultRow(original, owner);
+    if (result == null) return Optional.empty();
+    OwnerResultSnapshot decoded = structuralOwnerResult(result, original);
+    GameDesignPublicationOperationBinding storedOperation =
+        GameDesignPublicationOperationBinding.fromStored(decoded.operationBytes());
+    requireCandidateAccount(storedOperation, original);
+    GameDesignPublicationTerminalEvidence.fromStored(decoded.terminalBytes());
+    if (candidate != null) {
+      if (!Arrays.equals(candidate.canonicalBytes(), decoded.operationBytes())) {
+        throw new IllegalArgumentException(
+            "Stored owner result differs from the exact candidate operation");
+      }
+    }
+    return Optional.of(decoded);
+  }
+
+  private Record ownerResultRow(AccountPublicationAuthorizationBinding original, Owner owner) {
+    return dsl.fetchOne(
+        "SELECT outcome, operation_bytes, terminal_bytes, recorded_at"
+            + " FROM account_publication_authorization_owner_results"
+            + " WHERE operation_id = ? AND owner = ?",
+        original.operationId(),
+        owner.name());
+  }
+
+  private static OwnerResultSnapshot structuralOwnerResult(
+      Record row, AccountPublicationAuthorizationBinding original) {
+    byte[] operationBytes = row.get("operation_bytes", byte[].class);
+    byte[] terminalBytes = row.get("terminal_bytes", byte[].class);
+    var operationReader = new DraftAuthorizationFenceBinding.FrameReader(operationBytes);
+    operationReader.expect(GameDesignPublicationOperationBinding.SCHEMA);
+    if (!Arrays.equals(operationReader.bytes(), original.canonicalBytes())) {
+      throw new IllegalStateException(
+          "Stored publication owner operation changed its Account binding");
+    }
+    if (operationReader.bytes().length == 0) {
+      throw new IllegalStateException(
+          "Stored publication owner operation omits the World checkpoint");
+    }
+    operationReader.requireEnd();
+
+    var terminalReader = new DraftAuthorizationFenceBinding.FrameReader(terminalBytes);
+    terminalReader.expect(GameDesignPublicationTerminalEvidence.SCHEMA);
+    if (!Arrays.equals(terminalReader.bytes(), operationBytes)) {
+      throw new IllegalStateException(
+          "Stored publication terminal changed its complete operation bytes");
+    }
+    GameDesignPublicationTerminalEvidence.Outcome outcome =
+        GameDesignPublicationTerminalEvidence.Outcome.valueOf(terminalReader.text());
+    if (outcome == GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED) {
+      if (terminalReader.bytes().length == 0) {
+        throw new IllegalStateException("Published terminal omits release evidence bytes");
+      }
+      String epoch = terminalReader.text();
+      DraftAuthorizationFenceBinding.decimal(epoch, false);
+      try {
+        Long.parseLong(epoch);
+      } catch (NumberFormatException invalid) {
+        throw new IllegalStateException("Published terminal epoch exceeds owner range", invalid);
+      }
+    }
+    terminalReader.requireEnd();
+    if (!outcome.name().equals(row.get("outcome", String.class))) {
+      throw new IllegalStateException(
+          "Stored publication owner outcome differs from terminal bytes");
+    }
+    return new OwnerResultSnapshot(
+        outcome, operationBytes, terminalBytes, row.get("recorded_at", OffsetDateTime.class));
+  }
+
+  private static void requireCandidateAccount(
+      GameDesignPublicationOperationBinding candidate,
+      AccountPublicationAuthorizationBinding original) {
+    if (!Arrays.equals(candidate.account().canonicalBytes(), original.canonicalBytes())) {
+      throw new IllegalArgumentException(
+          "Game Design operation changed the original Account binding");
+    }
+  }
+
+  private static void requireSameResult(
+      OwnerResultSnapshot existing,
+      GameDesignPublicationOperationBinding operation,
+      GameDesignPublicationTerminalEvidence terminal) {
+    if (existing.outcome() != terminal.outcome()
+        || !Arrays.equals(existing.operationBytes(), operation.canonicalBytes())
+        || !Arrays.equals(existing.terminalBytes(), terminal.canonicalBytes())) {
+      throw new IllegalArgumentException("Changed or contradictory publication terminal evidence");
+    }
+  }
+
+  private static Settlement settlement(
+      Ordering ordering,
+      Optional<OwnerResultSnapshot> gameDesign,
+      Optional<OwnerResultSnapshot> world) {
+    if (ordering == Ordering.RESERVED || gameDesign.isEmpty() || world.isEmpty()) {
+      return Settlement.PENDING;
+    }
+    OwnerResultSnapshot design = gameDesign.orElseThrow();
+    OwnerResultSnapshot worldResult = world.orElseThrow();
+    if (design.outcome() != worldResult.outcome()
+        || !Arrays.equals(design.operationBytes(), worldResult.operationBytes())
+        || !Arrays.equals(design.terminalBytes(), worldResult.terminalBytes())) {
+      return Settlement.PENDING;
+    }
+    if (ordering == Ordering.REVOKE_ORDER
+        && design.outcome() != GameDesignPublicationTerminalEvidence.Outcome.NO_PUBLICATION) {
+      return Settlement.PENDING;
+    }
+    return design.outcome() == GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED
+        ? Settlement.PUBLISHED
+        : Settlement.NO_PUBLICATION;
+  }
+
   private void lockSources(List<SourceEvidence> sources) {
-    for (String key : sources.stream().map(SourceEvidence::key).distinct().sorted().toList()) {
+    lockSourceKeys(sources.stream().map(SourceEvidence::key).toList());
+  }
+
+  private void lockSourceKeys(List<String> sourceKeys) {
+    for (String key : sourceKeys.stream().distinct().sorted().toList()) {
       dsl.execute(
           "INSERT INTO account_draft_authorization_source_locks (source_key)"
               + " VALUES (?) ON CONFLICT DO NOTHING",
@@ -213,6 +531,11 @@ public final class PublicationAuthorizationFenceRepository {
         "SELECT * FROM account_publication_authorization_fences"
             + " WHERE operation_id = ? FOR UPDATE",
         id);
+  }
+
+  private Record unlockedOperation(UUID id) {
+    return dsl.fetchOne(
+        "SELECT * FROM account_publication_authorization_fences WHERE operation_id = ?", id);
   }
 
   private Record requireExact(Record row, AccountPublicationAuthorizationBinding binding) {

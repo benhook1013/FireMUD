@@ -6,6 +6,7 @@ import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
+import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -60,7 +61,7 @@ public final class GameDesignPublicationOperationRepository {
     GameDesignPublicationOperation operation = requirePending(tenant, workflow, version, digest);
     Record release =
         dsl.fetchOne(
-            "SELECT to_jsonb(r)::TEXT AS evidence FROM published_release_bundle r WHERE tenant_id = ? AND version_id = ?",
+            "SELECT r.*, to_jsonb(r)::TEXT AS evidence FROM published_release_bundle r WHERE tenant_id = ? AND version_id = ?",
             tenant,
             version);
     String evidence = release == null ? null : release.get("evidence", String.class);
@@ -68,12 +69,35 @@ public final class GameDesignPublicationOperationRepository {
       throw new IllegalStateException("PUBLICATION_READBACK_UNRESOLVED");
     String outcome = published ? "PUBLISHED" : "NO_PUBLICATION";
     byte[] result = receipt(operation, outcome, evidence);
+    Long publicationEpoch = null;
+    if (published) {
+      Record committedVersion =
+          dsl.fetchOne(
+              "SELECT version_state, version_state_epoch FROM version WHERE tenant_id = ? AND id = ? FOR UPDATE",
+              tenant,
+              version);
+      if (committedVersion == null
+          || !"PUBLISHED".equals(committedVersion.get("version_state", String.class))) {
+        throw new IllegalStateException("PUBLICATION_VERSION_NOT_COMMITTED");
+      }
+      publicationEpoch = committedVersion.get("version_state_epoch", Long.class);
+    }
+    var terminal =
+        new GameDesignPublicationTerminalEvidence(
+            operation.canonicalBytes(),
+            GameDesignPublicationTerminalEvidence.Outcome.valueOf(outcome),
+            published ? PublicationReleaseContent.fromRow(release) : null,
+            publicationEpoch);
     int changed =
         dsl.execute(
-            "UPDATE game_design_publication_operation SET outcome = ?, result_bytes = ?, release_row_json = ?, revision = revision + 1 WHERE publish_workflow_id = ? AND outcome = 'PENDING' AND revision = 1",
+            "UPDATE game_design_publication_operation SET outcome = ?, result_bytes = ?, release_row_json = ?, terminal_evidence_bytes = ?, publication_version_state_epoch = ?, release_content_bytes = ?, published_release_bundle_digest = ?, revision = revision + 1 WHERE publish_workflow_id = ? AND outcome = 'PENDING' AND revision = 1",
             outcome,
             result,
             evidence,
+            terminal.canonicalBytes(),
+            publicationEpoch,
+            published ? terminal.releaseContent().canonicalBytes() : null,
+            published ? terminal.publishedReleaseBundleDigest() : null,
             workflow);
     if (changed != 1) throw new IllegalStateException("PUBLICATION_OPERATION_CAS_CONFLICT");
   }
@@ -89,6 +113,7 @@ public final class GameDesignPublicationOperationRepository {
     String outcome = row.get("outcome", String.class);
     byte[] bytes = row.get("result_bytes", byte[].class);
     String evidence = row.get("release_row_json", String.class);
+    byte[] terminalBytes = row.get("terminal_evidence_bytes", byte[].class);
     if (!operation.workflowId().equals(workflow)
         || !operation.tenantKey().equals(row.get("tenant_id", String.class))
         || operation.versionId() != row.get("version_id", Long.class)
@@ -107,6 +132,35 @@ public final class GameDesignPublicationOperationRepository {
       if (!Objects.equals(actual, evidence) || ("PUBLISHED".equals(outcome) != (actual != null))) {
         throw new IllegalStateException("PUBLICATION_RECEIPT_BACKING_CONFLICT");
       }
+      // V50 history remains readable but never acquires unverifiable forward evidence.
+      if (terminalBytes != null) {
+        var terminal = GameDesignPublicationTerminalEvidence.fromStored(terminalBytes);
+        if (!Arrays.equals(terminal.operationBytes(), operation.canonicalBytes())
+            || !terminal.outcome().name().equals(outcome)) {
+          throw new IllegalStateException("PUBLICATION_TERMINAL_IDENTITY_CONFLICT");
+        }
+        if (terminal.outcome() == GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED) {
+          Record immutableRelease =
+              dsl.fetchOne(
+                  "SELECT * FROM published_release_bundle WHERE tenant_id = ? AND version_id = ?",
+                  operation.tenantKey(),
+                  operation.versionId());
+          if (!Arrays.equals(
+                  terminal.releaseContent().canonicalBytes(),
+                  PublicationReleaseContent.fromRow(immutableRelease).canonicalBytes())
+              || !Arrays.equals(
+                  terminal.releaseContent().canonicalBytes(),
+                  row.get("release_content_bytes", byte[].class))
+              || !Objects.equals(
+                  terminal.publicationVersionStateEpoch(),
+                  row.get("publication_version_state_epoch", Long.class))
+              || !terminal
+                  .publishedReleaseBundleDigest()
+                  .equals(row.get("published_release_bundle_digest", String.class))) {
+            throw new IllegalStateException("PUBLICATION_TERMINAL_BACKING_CONFLICT");
+          }
+        }
+      }
       Record attempt =
           dsl.fetchOne(
               "SELECT status FROM publish_attempt WHERE publish_workflow_id = ?", workflow);
@@ -118,7 +172,7 @@ public final class GameDesignPublicationOperationRepository {
         throw new IllegalStateException("PUBLICATION_RECEIPT_ATTEMPT_CONFLICT");
       }
     }
-    return Optional.of(new Readback(operation, outcome, bytes));
+    return Optional.of(new Readback(operation, outcome, bytes, terminalBytes));
   }
 
   private void lock(String tenant, String workflow, long version) {
@@ -162,9 +216,22 @@ public final class GameDesignPublicationOperationRepository {
   }
 
   public record Readback(
-      GameDesignPublicationOperation operation, String outcome, byte[] receiptBytes) {
+      GameDesignPublicationOperation operation,
+      String outcome,
+      byte[] receiptBytes,
+      byte[] terminalEvidenceBytes) {
     public Readback {
       receiptBytes = receiptBytes == null ? null : receiptBytes.clone();
+      terminalEvidenceBytes = terminalEvidenceBytes == null ? null : terminalEvidenceBytes.clone();
+    }
+
+    public Readback(GameDesignPublicationOperation operation, String outcome, byte[] receiptBytes) {
+      this(operation, outcome, receiptBytes, null);
+    }
+
+    @Override
+    public byte[] terminalEvidenceBytes() {
+      return terminalEvidenceBytes == null ? null : terminalEvidenceBytes.clone();
     }
 
     @Override

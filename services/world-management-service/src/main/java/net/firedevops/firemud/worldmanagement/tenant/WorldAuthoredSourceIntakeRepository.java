@@ -203,6 +203,15 @@ public class WorldAuthoredSourceIntakeRepository {
     return readValidated(namespace, intakeRequestId);
   }
 
+  /**
+   * Reconstructs the same immutable intake inside the writable canonical activation transaction.
+   */
+  Optional<WorldAuthoredSourceIntakeReceipt> readInOwnerActivationTransaction(
+      String namespace, UUID intakeRequestId) {
+    requireWritableActivationTransaction();
+    return readValidated(namespace, intakeRequestId);
+  }
+
   private Optional<WorldAuthoredSourceIntakeReceipt> readValidated(
       String namespace, UUID intakeRequestId) {
     validateReadKey(namespace, intakeRequestId);
@@ -515,6 +524,27 @@ public class WorldAuthoredSourceIntakeRepository {
         || !"on".equals(state.get("read_only", String.class))) {
       throw new IllegalStateException(
           "World authored-source snapshot read requires a read-only REPEATABLE READ owner transaction");
+    }
+  }
+
+  private void requireWritableActivationTransaction() {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isCurrentTransactionReadOnly()
+        || !Integer.valueOf(Connection.TRANSACTION_READ_COMMITTED)
+            .equals(TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())) {
+      throw new IllegalStateException(
+          "World authored-source activation read requires a writable READ COMMITTED owner transaction");
+    }
+    Record state =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT current_setting('transaction_isolation') AS isolation, "
+                    + "current_setting('transaction_read_only') AS read_only"),
+            "World transaction state query returned no row");
+    if (!"read committed".equals(state.get("isolation", String.class))
+        || !"off".equals(state.get("read_only", String.class))) {
+      throw new IllegalStateException(
+          "World authored-source activation read requires a writable READ COMMITTED owner transaction");
     }
   }
 

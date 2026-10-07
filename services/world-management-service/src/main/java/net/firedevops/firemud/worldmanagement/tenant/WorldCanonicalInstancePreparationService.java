@@ -9,10 +9,11 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * Unregistered, default-denied owner operation for a canonical generation-free world instance.
  *
  * <p>No production verifier is supplied in this slice. A future authenticated integration must
- * verify the same-namespace Game Session producer, current Game Design release and source, applied
- * participant state, and Account commit authority before the World transaction begins. Its held
- * authority must stay valid until the transaction manager has committed. This class is deliberately
- * not a Spring component and adds no RPC or public activation path.
+ * verify the same-namespace Game Session producer and exact current Game Design release/terminal
+ * source before the World transaction begins. The original Account-authorized APPLIED result is
+ * immutable input evidence; preparation must not reauthorize the creator or reuse Draft/publication
+ * permission. Its held producer evidence must remain valid through commit. This class is
+ * deliberately not a Spring component and adds no RPC or public activation path.
  */
 public final class WorldCanonicalInstancePreparationService {
   private final WorldCanonicalInstancePreparationRepository repository;
@@ -55,22 +56,22 @@ public final class WorldCanonicalInstancePreparationService {
 
   private static HeldCommitAuthority denyByDefault(Input input) {
     throw new PreparationDeniedException(
-        "Canonical World preparation has no authenticated source/release and Account commit verifier");
+        "Canonical World preparation has no authenticated source/release terminal verifier");
   }
 
-  /** Performs remote/current-state checks before returning a continuously held local fence. */
+  /** Performs authenticated producer checks before returning a continuously held local fence. */
   @FunctionalInterface
   public interface CommitAuthorityVerifier {
     HeldCommitAuthority verifyAndHold(Input input);
   }
 
   /**
-   * A verifier-owned, continuously held authority/fence handle. It stays open throughout the World
-   * transaction and its commit; implementations must fail closed from {@link #requireHeld()} if
-   * current authority has been lost or is no longer effective. Remote/current-state checks happen
-   * before the World transaction; {@code requireHeld()} is a local fence/effective-state assertion
-   * and must never perform RPC while World holds database locks. It is not a time lease and cannot
-   * extend authority beyond its effective period.
+   * A verifier-owned, continuously held producer-evidence handle. It stays open throughout the
+   * World transaction and its commit; implementations must fail closed from {@link #requireHeld()}
+   * if the evidence they verified is no longer effective. Remote/current-state checks happen before
+   * the World transaction; {@code requireHeld()} is a local fence/effective-state assertion and
+   * must never perform RPC while World holds database locks. It is not a new Account creator
+   * permission.
    */
   public interface HeldCommitAuthority extends AutoCloseable {
     void requireHeld();

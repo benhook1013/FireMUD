@@ -2222,7 +2222,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: account-publication-participation-postgresql-proof-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: services/account-service/build/test-results/integrationTest/TEST-*PublicationAuthorizationFencePostgresIntegrationTest.xml
+          path: |
+            services/account-service/build/test-results/integrationTest/TEST-*PublicationAuthorizationFencePostgresIntegrationTest.xml
+            services/account-service/build/test-results/integrationTest/TEST-*AccountPublicationTerminalReconciliationServiceTest.xml
           if-no-files-found: error
           retention-days: 7
 
@@ -2244,6 +2246,18 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFencePostgresIntegrationTest#rawSqlCannotReserveIncompleteSourceParticipationOrSubstituteRequestIdentity()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFencePostgresIntegrationTest#sqlPreservesJavaSourceLockOrderingForSupplementaryUnicodeScopes()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFencePostgresIntegrationTest#missingCurrentSchemaFailsClosedAndUpgradePreservesOriginalDraftEvidence()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFencePostgresIntegrationTest#exactIdenticalOwnerReadbacksSettleOnlyAfterBothOwnersAndPreserveRetryIdentity()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFencePostgresIntegrationTest#publishedOwnerPairSettlesPublicationOrderAndAllowsSourceTransition()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFencePostgresIntegrationTest#revokeOrderRequiresExactNoPublicationPairBeforeDefinitiveSourceAbort()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFencePostgresIntegrationTest#lateRuntimeRollbackRetainsValidOwnerPairAndWaitingSourceIntent()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFencePostgresIntegrationTest#directSqlSourceTransitionNeedsTwoMatchingPublicationOwnerRowsAndImmutableRetries()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFencePostgresIntegrationTest#revokeOrderAcceptsOnlyTwoMatchingNoPublicationRowsForDefinitiveAbort()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFencePostgresIntegrationTest#lateSourceTransitionRollbackRetainsWaitingChangeAndOwnerRows()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authorpublication.PublicationAuthorizationFencePostgresIntegrationTest#v79PublicationOrderAndWaitingSourceChangeSurviveV80WithoutInventedOwnerResults()' \
+            --require-suite integration.net.firedevops.firemud.accountservice.authorpublication.AccountPublicationTerminalReconciliationServiceTest \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authorpublication.AccountPublicationTerminalReconciliationServiceTest#concreteOwnerClientsRunOutsideReadCommittedAccountTransactionsAndExactPairIsRetained()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authorpublication.AccountPublicationTerminalReconciliationServiceTest#gameDesignUnknownNeverFabricatesWorldRequestOrOwnerResult()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.authorpublication.AccountPublicationTerminalReconciliationServiceTest#ambientOwnerTransactionRejectsRecoveryBeforeRepositoryOrClientUse()' \
             account-service
 
       - name: Capture World Account-bound graph application PostgreSQL raw XML
@@ -2261,7 +2275,15 @@ jobs:
           bash dev-tools/validation/inspect-test-results.sh \
             --strict \
             --require-suite net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#canonicalPreparationKeepsOriginalPublicationEpochForLaterReleaseResolution()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#publishedTerminalUsesExactOwnerEvidenceRetriesAndRejectsChangedReleaseContent()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#rawTerminalReceiptCannotCommitWithoutMatchingOwnerPhaseCas()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#onlyPositiveNoPublicationEvidenceCanSealWorldAsAbortedAndCannotPrepare()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#lifecycleReadPreservesPreparingStateAndDeniesLegacyNumericFailureWithExactCanonicalServiceEcho()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#canonicalActivationCommitsOneOwnerCasAndReplaysWhileLegacyTerminationIsDenied()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#canonicalActivationStoresStaleFailedOutcomeAndFreshLifecycleReadRemainsCurrent()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#canonicalActivationRejectsSelfConsistentForgedOwnerBindingsBeforeActiveCas()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#lostHeldAuthorityAfterOperationInsertRollsBackActivationAndLedger()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#releaseSelectorMaterializesItsOriginalRoomAndExactlyRetriesWithSeparateRuntimeMapping()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#releaseSelectorRejectsChangedFrozenRequestAndSqlSubstitutionWithoutRuntimeWrites()' \
             --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationPostgresIntegrationTest#inertV1PreparationRetainsOriginalBytesAndCannotGainSelectorOnRetry()' \
@@ -2331,7 +2353,15 @@ jobs:
             --strict \
             --root services/game-design-service/build/publication-operation-proof \
             --require-suite integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#authenticatedTerminalReadDispatchesActualStoredPublishedAndNoPublicationEvidence()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#physicalMtlsTerminalReadRecoversActualPublishedAndNoPublicationOwnerSealsAndRejectsWrongPeers(Path)' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#authenticatedTerminalReadReturnsUnknownOnlyForAbsentOrPendingOperation()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#retainedV50TerminalReadFailsPreconditionWithoutBackfillingEvidenceOrEpoch()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#noPublicationReceiptReplaysAfterLostResponseAndExcludesDelayedFinalizerAndRawInsert()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#terminalEvidenceKeepsOriginalCommittedEpochAfterLaterVersionTransition()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#terminalExtensionRefusesRawEpochDigestBytesAndReleaseContentSubstitution()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#originalSealRejectsForgedCommittedEpochAndPreservesPendingOwnerRows()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#publicationSealEpochMustRemainTheActualVersionEpochThroughCommit()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#publishedReceiptCannotBeDemotedByStaleFailureAndRetainsOriginalFreezeEpoch()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#failedAtomicCommitLeavesAttemptOperationVersionAndReleasePendingForExactRetry()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationPostgresIntegrationTest#noPublicationSerializesAgainstAnAlreadyScheduledLatePublisher()' \

@@ -9,17 +9,25 @@ import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
@@ -27,12 +35,24 @@ import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvi
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateEvidence;
 import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
+import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalClient;
+import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
+import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence.Outcome;
+import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence.Participant;
+import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence.ReleaseContent;
+import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalReadEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
+import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
+import net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleGrpcCodec;
 import net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence;
+import net.firedevops.firemud.common.world.WorldPublicationTerminalCompletionGrpcCodec;
+import net.firedevops.firemud.common.world.WorldPublicationTerminalReadEvidence;
+import net.firedevops.firemud.common.world.WorldPublicationTerminalReadGrpcCodec;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.v1.WorldDesignMutationRevision;
@@ -46,6 +66,8 @@ import net.firedevops.firemud.worldmanagement.service.WorldLifecycleCommandServi
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceEvidence.OwnerBinding;
 import net.firedevops.firemud.worldmanagement.v1.EntityTemplateReferenceType;
 import net.firedevops.firemud.worldmanagement.v1.GenerationRuleDesignMutation;
+import net.firedevops.firemud.worldmanagement.v1.ReadWorldPublicationTerminalRequest;
+import net.firedevops.firemud.worldmanagement.v1.ReadWorldPublicationTerminalResponse;
 import net.firedevops.firemud.worldmanagement.v1.RegionDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.RoomDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.RoomExitDesignMutation;
@@ -201,6 +223,588 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
                     input.canonicalGameInstanceId()))
         .hasMessageContaining("immutable and retained");
     assertOrigin();
+  }
+
+  @Test
+  void canonicalPreparationKeepsOriginalPublicationEpochForLaterReleaseResolution() {
+    Fixture f = fixture();
+    var original = application(generationFreePlan(f));
+    var selectedRoom =
+        original.plan().graph().nodes().stream()
+            .filter(
+                node ->
+                    node.mutation().getAggregateType()
+                        == WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM)
+            .map(node -> node.templateId())
+            .toList()
+            .getLast();
+    var applied = withStartRoom(original, selectedRoom);
+    appliedComponent().apply(applied);
+    var frozen = capture(applied.plan());
+    var selector =
+        publishedEvidence(
+            publishedSelectors().readCommitted(frozen.request().freeze()).orElseThrow());
+
+    long publicationEpoch = 2L;
+    var publicationInput = preparationInput(f, frozen, selector, publicationEpoch);
+    var originalTerminal = isolatedTerminalEvidence(publicationInput);
+    byte[] originalTerminalBytes = originalTerminal.canonicalBytes();
+    assertThat(originalTerminal.publicationVersionStateEpoch()).isEqualTo(publicationEpoch);
+    assertThat(originalTerminal.worldEvidence().request().versionStateEpoch())
+        .isEqualTo(selector.request().versionStateEpoch());
+    publicationTerminalComponent(originalTerminal)
+        .complete(originalTerminal.operationBytes(), originalTerminalBytes);
+    UUID fence = selector.request().publicationFence();
+    assertThat(publicationOwnerPhase(fence)).isEqualTo("PUBLISHED");
+    assertThat(publicationTerminalBytes(fence)).containsExactly(originalTerminalBytes);
+
+    var staleInput = preparationInput(f, frozen, selector, publicationEpoch - 1);
+    // These later descriptor epochs are isolated GD-resolution inputs: this proves World owner
+    // storage and binding only, not a live GD lifecycle/currentness or authorization producer.
+    var laterInput = preparationInput(f, frozen, selector, publicationEpoch + 1);
+    var changedReleaseInput =
+        preparationInput(f, frozen, selector, publicationEpoch + 1, List.of("LOOK", "CHANGED"));
+    var laterRelease = laterInput.completeLaunchBinding().evidence().releaseAttestation();
+    assertThat(laterRelease.versionStateEpoch()).isEqualTo(publicationEpoch + 1);
+    // Compare the later descriptor's immutable content directly. Its later resolution epoch
+    // cannot be wrapped in a new publication terminal because the terminal keeps the original
+    // publication operation epoch.
+    assertThat(isolatedReleaseContent(laterInput).canonicalBytes())
+        .containsExactly(originalTerminal.releaseContent().canonicalBytes());
+    assertThat(isolatedReleaseContent(changedReleaseInput).canonicalBytes())
+        .isNotEqualTo(originalTerminal.releaseContent().canonicalBytes());
+
+    var repository = preparationRepository();
+    var service = preparationComponentWithRetainedTerminal(repository, originalTerminal);
+    assertThatThrownBy(() -> service.prepare(staleInput))
+        .isInstanceOf(
+            WorldCanonicalInstancePreparationRepository.InvalidPreparationEvidenceException.class)
+        .hasMessageContaining("ReleaseContent differs");
+    assertThatThrownBy(() -> service.prepare(changedReleaseInput))
+        .isInstanceOf(
+            WorldCanonicalInstancePreparationRepository.InvalidPreparationEvidenceException.class)
+        .hasMessageContaining("ReleaseContent differs");
+    assertThat(count(f, "world_instance")).isZero();
+
+    var prepared = service.prepare(laterInput);
+    assertThat(prepared.startLocation().roomTemplateId()).isEqualTo(selectedRoom);
+    assertThat(repository.readOwnerPreparation(laterInput)).contains(prepared);
+    assertThat(publicationOwnerPhase(fence)).isEqualTo("PUBLISHED");
+    assertThat(publicationTerminalBytes(fence)).containsExactly(originalTerminalBytes);
+    assertThat(
+            WorldPublicationTerminal.request(publicationTerminalBytes(fence))
+                .publicationVersionStateEpoch())
+        .isEqualTo(publicationEpoch);
+    assertOrigin();
+  }
+
+  @Test
+  void publishedTerminalUsesExactOwnerEvidenceRetriesAndRejectsChangedReleaseContent() {
+    Fixture f = fixture();
+    var original = application(generationFreePlan(f));
+    var selectedRoom =
+        original.plan().graph().nodes().stream()
+            .filter(
+                node ->
+                    node.mutation().getAggregateType()
+                        == WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM)
+            .map(node -> node.templateId())
+            .toList()
+            .getLast();
+    var applied = withStartRoom(original, selectedRoom);
+    appliedComponent().apply(applied);
+    var frozen = capture(applied.plan());
+    var selector =
+        publishedEvidence(
+            publishedSelectors().readCommitted(frozen.request().freeze()).orElseThrow());
+    var input = preparationInput(f, frozen, selector);
+    var terminal = isolatedTerminalEvidence(input);
+    UUID fence = selector.request().publicationFence();
+    assertThat(publicationOwnerPhase(fence)).isEqualTo("FROZEN");
+
+    byte[] originalTerminal = terminal.canonicalBytes();
+    var terminalRepository = new WorldPublicationTerminalRepository(dsl, manager);
+    var terminalReader = new WorldPublicationTerminalReadGrpcService(terminalRepository, NAMESPACE);
+    var readRequest =
+        WorldPublicationTerminalReadEvidence.Request.create(NAMESPACE, originalTerminal);
+    var wireReadRequest = WorldPublicationTerminalReadGrpcCodec.toRequest(readRequest);
+
+    // Absence is an explicit UNKNOWN response; it is not evidence of abort or publication.
+    var unknown = readPublicationTerminalAs(terminalReader, wireReadRequest, NAMESPACE);
+    assertThat(unknown.error).isNull();
+    assertThat(unknown.completed).isTrue();
+    var unknownResult =
+        WorldPublicationTerminalReadGrpcCodec.fromResponse(readRequest, unknown.value);
+    assertThat(unknownResult.status())
+        .isEqualTo(WorldPublicationTerminalReadEvidence.Status.UNKNOWN);
+    assertThat(unknownResult.terminalEvidence()).isEmpty();
+    assertThat(unknownResult.request().canonicalBytes())
+        .containsExactly(readRequest.canonicalBytes());
+
+    var missingOwnerTerminal = terminalWithWorldBinding(terminal, UUID.randomUUID(), null);
+    var missingOwnerRequest =
+        WorldPublicationTerminalReadEvidence.Request.create(
+            NAMESPACE, missingOwnerTerminal.canonicalBytes());
+    var missingOwner =
+        readPublicationTerminalAs(
+            terminalReader,
+            WorldPublicationTerminalReadGrpcCodec.toRequest(missingOwnerRequest),
+            NAMESPACE);
+    assertThat(missingOwner.error).isEqualTo(Status.Code.FAILED_PRECONDITION);
+
+    String substitutedContentDigest =
+        selector.request().contentDigest().startsWith("f") ? "e".repeat(64) : "f".repeat(64);
+    var substitutedPendingTerminal =
+        terminalWithWorldBinding(terminal, null, substitutedContentDigest);
+    var substitutedPendingRequest =
+        WorldPublicationTerminalReadEvidence.Request.create(
+            NAMESPACE, substitutedPendingTerminal.canonicalBytes());
+    var substitutedPending =
+        readPublicationTerminalAs(
+            terminalReader,
+            WorldPublicationTerminalReadGrpcCodec.toRequest(substitutedPendingRequest),
+            NAMESPACE);
+    assertThat(substitutedPending.error).isEqualTo(Status.Code.FAILED_PRECONDITION);
+
+    // Deliberately model an impossible retained state to ensure a missing receipt cannot disguise
+    // a contradictory terminal owner phase as pending UNKNOWN.
+    dsl.execute(
+        "ALTER TABLE world_design_publication_fence_owner "
+            + "DISABLE TRIGGER trg_world_publication_owner_protect");
+    try {
+      assertThat(
+              dsl.execute(
+                  "UPDATE world_design_publication_fence_owner SET owner_freeze_phase='PUBLISHED' "
+                      + "WHERE current_publication_fence=?",
+                  fence))
+          .isEqualTo(1);
+      var contradictoryPhase =
+          readPublicationTerminalAs(terminalReader, wireReadRequest, NAMESPACE);
+      assertThat(contradictoryPhase.error).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    } finally {
+      dsl.execute(
+          "UPDATE world_design_publication_fence_owner SET owner_freeze_phase='FROZEN' "
+              + "WHERE current_publication_fence=?",
+          fence);
+      dsl.execute(
+          "ALTER TABLE world_design_publication_fence_owner "
+              + "ENABLE TRIGGER trg_world_publication_owner_protect");
+    }
+    assertThat(publicationOwnerPhase(fence)).isEqualTo("FROZEN");
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT count(*) FROM world_design_publication_terminal "
+                            + "WHERE publication_fence=?",
+                        fence))
+                .get(0, Long.class))
+        .isZero();
+
+    var wrongPeer =
+        readPublicationTerminalAs(
+            terminalReader, wireReadRequest, "game-design-service", NAMESPACE);
+    var wrongNamespacePeer =
+        readPublicationTerminalAs(terminalReader, wireReadRequest, "account-service", "other");
+    assertThat(wrongPeer.error).isEqualTo(Status.Code.PERMISSION_DENIED);
+    assertThat(wrongNamespacePeer.error).isEqualTo(Status.Code.PERMISSION_DENIED);
+
+    new TransactionTemplate(manager)
+        .execute(
+            status -> {
+              assertThatThrownBy(
+                      () ->
+                          terminalRepository.readCommitted(
+                              WorldPublicationTerminal.request(originalTerminal)))
+                  .isInstanceOf(IllegalStateException.class)
+                  .hasMessageContaining("requires no caller transaction");
+              return null;
+            });
+
+    // The GD client double supplies isolated authenticated-owner evidence; this exercises the
+    // actual World owner transition, not the live GD producer or cross-service mTLS composition.
+    var completionRequest =
+        new WorldPublicationTerminalCompletionGrpcCodec.Request(
+            1, NAMESPACE, terminal.operationBytes(), originalTerminal);
+    var completionService =
+        new WorldPublicationTerminalCompletionGrpcService(
+            terminalRepository, terminalReadClient(terminal), NAMESPACE);
+    var completionWireRequest =
+        WorldPublicationTerminalCompletionGrpcCodec.toRequest(completionRequest);
+
+    var pendingClient = org.mockito.Mockito.mock(GameDesignPublicationTerminalClient.class);
+    org.mockito.Mockito.when(pendingClient.read(org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            invocation ->
+                new GameDesignPublicationTerminalReadEvidence.ReadResult(
+                    invocation.getArgument(
+                        0, GameDesignPublicationTerminalReadEvidence.ReadRequest.class),
+                    GameDesignPublicationTerminalReadEvidence.Status.UNKNOWN,
+                    Optional.empty()));
+    var pendingService =
+        new WorldPublicationTerminalCompletionGrpcService(
+            terminalRepository, pendingClient, NAMESPACE);
+    var pending = completePublicationTerminalAs(pendingService, completionWireRequest, NAMESPACE);
+    assertThat(pending.error).isEqualTo(Status.Code.UNAVAILABLE);
+    assertThat(publicationOwnerPhase(fence)).isEqualTo("FROZEN");
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT count(*) FROM world_design_publication_terminal "
+                            + "WHERE publication_fence=?",
+                        fence))
+                .get(0, Long.class))
+        .isZero();
+
+    var unavailableClient = org.mockito.Mockito.mock(GameDesignPublicationTerminalClient.class);
+    org.mockito.Mockito.when(unavailableClient.read(org.mockito.ArgumentMatchers.any()))
+        .thenThrow(Status.UNAVAILABLE.asRuntimeException());
+    var unavailableService =
+        new WorldPublicationTerminalCompletionGrpcService(
+            terminalRepository, unavailableClient, NAMESPACE);
+    var unavailable =
+        completePublicationTerminalAs(unavailableService, completionWireRequest, NAMESPACE);
+    assertThat(unavailable.error).isEqualTo(Status.Code.UNAVAILABLE);
+    assertThat(publicationOwnerPhase(fence)).isEqualTo("FROZEN");
+
+    for (Status permanentFailure :
+        List.of(Status.FAILED_PRECONDITION, Status.UNAUTHENTICATED, Status.PERMISSION_DENIED)) {
+      var permanentClient = org.mockito.Mockito.mock(GameDesignPublicationTerminalClient.class);
+      org.mockito.Mockito.when(permanentClient.read(org.mockito.ArgumentMatchers.any()))
+          .thenThrow(permanentFailure.asRuntimeException());
+      var permanentService =
+          new WorldPublicationTerminalCompletionGrpcService(
+              terminalRepository, permanentClient, NAMESPACE);
+      var permanent =
+          completePublicationTerminalAs(permanentService, completionWireRequest, NAMESPACE);
+      assertThat(permanent.error).isEqualTo(Status.Code.FAILED_PRECONDITION);
+      assertThat(publicationOwnerPhase(fence)).isEqualTo("FROZEN");
+      assertThat(
+              Objects.requireNonNull(
+                      dsl.fetchOne(
+                          "SELECT count(*) FROM world_design_publication_terminal "
+                              + "WHERE publication_fence=?",
+                          fence))
+                  .get(0, Long.class))
+          .isZero();
+    }
+
+    var invalidEvidenceClient = org.mockito.Mockito.mock(GameDesignPublicationTerminalClient.class);
+    org.mockito.Mockito.when(invalidEvidenceClient.read(org.mockito.ArgumentMatchers.any()))
+        .thenThrow(new IllegalStateException("invalid authenticated response"));
+    var invalidEvidenceService =
+        new WorldPublicationTerminalCompletionGrpcService(
+            terminalRepository, invalidEvidenceClient, NAMESPACE);
+    var invalidEvidence =
+        completePublicationTerminalAs(invalidEvidenceService, completionWireRequest, NAMESPACE);
+    assertThat(invalidEvidence.error).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    assertThat(publicationOwnerPhase(fence)).isEqualTo("FROZEN");
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT count(*) FROM world_design_publication_terminal "
+                            + "WHERE publication_fence=?",
+                        fence))
+                .get(0, Long.class))
+        .isZero();
+
+    var missingResponseClient = org.mockito.Mockito.mock(GameDesignPublicationTerminalClient.class);
+    org.mockito.Mockito.when(missingResponseClient.read(org.mockito.ArgumentMatchers.any()))
+        .thenReturn(null);
+    var missingResponseService =
+        new WorldPublicationTerminalCompletionGrpcService(
+            terminalRepository, missingResponseClient, NAMESPACE);
+    var missingResponse =
+        completePublicationTerminalAs(missingResponseService, completionWireRequest, NAMESPACE);
+    assertThat(missingResponse.error).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    assertThat(publicationOwnerPhase(fence)).isEqualTo("FROZEN");
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT count(*) FROM world_design_publication_terminal "
+                            + "WHERE publication_fence=?",
+                        fence))
+                .get(0, Long.class))
+        .isZero();
+
+    var completion =
+        completePublicationTerminalAs(completionService, completionWireRequest, NAMESPACE);
+    assertThat(completion.error).isNull();
+    assertThat(completion.completed).isTrue();
+    var completionResult =
+        WorldPublicationTerminalCompletionGrpcCodec.fromResponse(
+            completionRequest, completion.value);
+    assertThat(completionResult.request().canonicalBytes())
+        .containsExactly(completionRequest.canonicalBytes());
+    assertThat(completionResult.terminalEvidence().canonicalBytes())
+        .containsExactly(originalTerminal);
+    assertThat(publicationOwnerPhase(fence)).isEqualTo("PUBLISHED");
+    assertThat(publicationTerminalBytes(fence)).containsExactly(originalTerminal);
+
+    // The handler returns only the exact terminal bytes atomically retained with World PUBLISHED.
+    var committedRead = readPublicationTerminalAs(terminalReader, wireReadRequest, NAMESPACE);
+    assertThat(committedRead.error).isNull();
+    assertThat(committedRead.completed).isTrue();
+    var committedResult =
+        WorldPublicationTerminalReadGrpcCodec.fromResponse(readRequest, committedRead.value);
+    assertThat(committedResult.status())
+        .isEqualTo(WorldPublicationTerminalReadEvidence.Status.PUBLISHED);
+    assertThat(committedResult.terminalEvidence()).isPresent();
+    assertThat(committedResult.terminalEvidence().orElseThrow().canonicalBytes())
+        .containsExactly(originalTerminal);
+    assertThat(committedResult.request().canonicalBytes())
+        .containsExactly(readRequest.canonicalBytes());
+
+    var retriedCompletion =
+        completePublicationTerminalAs(completionService, completionWireRequest, NAMESPACE);
+    assertThat(retriedCompletion.error).isNull();
+    assertThat(
+            WorldPublicationTerminalCompletionGrpcCodec.fromResponse(
+                    completionRequest, retriedCompletion.value)
+                .canonicalBytes())
+        .containsExactly(completionResult.canonicalBytes());
+    var retryRead = readPublicationTerminalAs(terminalReader, wireReadRequest, NAMESPACE);
+    assertThat(
+            WorldPublicationTerminalReadGrpcCodec.fromResponse(readRequest, retryRead.value)
+                .canonicalBytes())
+        .containsExactly(committedResult.canonicalBytes());
+
+    var bundle = terminal.releaseContent();
+    var changedBundle =
+        new ReleaseContent(
+            bundle.canonicalTenantId(),
+            bundle.canonicalVersionId(),
+            bundle.publishedReleaseBundleRef(),
+            bundle.versionNumber(),
+            bundle.attestationSchemaVersion(),
+            bundle.publishWorkflowId(),
+            bundle.manifestHash(),
+            bundle.manifestSchemaVersion(),
+            bundle.artifactDigests(),
+            bundle.requiredManifestAssetKeys(),
+            bundle.participantDigests(),
+            List.of("LOOK", "CHANGED"),
+            bundle.generationConfigRevision(),
+            bundle.worldStartLocationEvidence());
+    var changedTerminal =
+        new GameDesignPublicationTerminalEvidence(
+            terminal.operationBytes(),
+            Outcome.PUBLISHED,
+            changedBundle,
+            terminal.publicationVersionStateEpoch());
+    var changedCompletionRequest =
+        new WorldPublicationTerminalCompletionGrpcCodec.Request(
+            1, NAMESPACE, changedTerminal.operationBytes(), changedTerminal.canonicalBytes());
+    var changedCompletionService =
+        new WorldPublicationTerminalCompletionGrpcService(
+            terminalRepository, terminalReadClient(terminal), NAMESPACE);
+    var changedCompletion =
+        completePublicationTerminalAs(
+            changedCompletionService,
+            WorldPublicationTerminalCompletionGrpcCodec.toRequest(changedCompletionRequest),
+            NAMESPACE);
+    assertThat(changedCompletion.error).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    var service = publicationTerminalComponent(terminal);
+    var changedReadRequest =
+        WorldPublicationTerminalReadEvidence.Request.create(
+            NAMESPACE, changedTerminal.canonicalBytes());
+    var changedRead =
+        readPublicationTerminalAs(
+            terminalReader,
+            WorldPublicationTerminalReadGrpcCodec.toRequest(changedReadRequest),
+            NAMESPACE);
+    assertThat(changedRead.error).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    assertThatThrownBy(
+            () ->
+                service.complete(
+                    changedTerminal.operationBytes(), changedTerminal.canonicalBytes()))
+        .isInstanceOf(WorldPublicationTerminalRepository.PublicationTerminalConflictException.class)
+        .hasMessageContaining("changed complete terminal evidence");
+    assertThat(publicationTerminalBytes(fence)).containsExactly(originalTerminal);
+    assertThat(publicationOwnerPhase(fence)).isEqualTo("PUBLISHED");
+
+    var materialized = preparationComponent(preparationRepository()).prepare(input);
+    assertThat(materialized.startLocation().roomTemplateId()).isEqualTo(selectedRoom);
+    assertThat(publicationOwnerPhase(fence)).isEqualTo("PUBLISHED");
+    assertOrigin();
+  }
+
+  @Test
+  void rawTerminalReceiptCannotCommitWithoutMatchingOwnerPhaseCas() {
+    Fixture f = fixture();
+    var original = application(generationFreePlan(f));
+    var selectedRoom =
+        original.plan().graph().nodes().stream()
+            .filter(
+                node ->
+                    node.mutation().getAggregateType()
+                        == WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM)
+            .map(node -> node.templateId())
+            .toList()
+            .getLast();
+    var applied = withStartRoom(original, selectedRoom);
+    appliedComponent().apply(applied);
+    var frozen = capture(applied.plan());
+    var selector =
+        publishedEvidence(
+            publishedSelectors().readCommitted(frozen.request().freeze()).orElseThrow());
+    var input = preparationInput(f, frozen, selector);
+    // This isolated producer fixture exercises the actual retained World rows and SQL guards.
+    var request =
+        WorldPublicationTerminal.Request.fromStored(
+            isolatedTerminalEvidence(input).canonicalBytes());
+    UUID fence = selector.request().publicationFence();
+
+    assertThat(publicationOwnerPhase(fence)).isEqualTo("FROZEN");
+    assertThatThrownBy(
+            () ->
+                ownerTransaction()
+                    .execute(
+                        status -> {
+                          insertPublicationTerminal(request);
+                          return null;
+                        }))
+        .hasMessageContaining("World terminal receipt must commit with its exact owner phase");
+    assertThat(publicationOwnerPhase(fence)).isEqualTo("FROZEN");
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT count(*) FROM world_design_publication_terminal WHERE publication_fence=?",
+                        fence))
+                .get(0, Long.class))
+        .isZero();
+    assertOrigin();
+  }
+
+  @Test
+  void onlyPositiveNoPublicationEvidenceCanSealWorldAsAbortedAndCannotPrepare() {
+    Fixture f = fixture();
+    var base = application(generationFreePlan(f));
+    // Use an authored ROOM from this exact graph rather than an unbound external identifier.
+    var authoredRoom =
+        base.plan().graph().nodes().stream()
+            .filter(
+                node ->
+                    node.mutation().getAggregateType()
+                        == WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM)
+            .map(node -> node.templateId())
+            .toList()
+            .getFirst();
+    var applied = withStartRoom(base, authoredRoom);
+    appliedComponent().apply(applied);
+    var frozen = capture(applied.plan());
+    var selector =
+        publishedEvidence(
+            publishedSelectors().readCommitted(frozen.request().freeze()).orElseThrow());
+    var input = preparationInput(f, frozen, selector);
+    var published = isolatedTerminalEvidence(input);
+    var noPublication =
+        new GameDesignPublicationTerminalEvidence(
+            published.operationBytes(), Outcome.NO_PUBLICATION, null, null);
+    UUID fence = selector.request().publicationFence();
+    var terminalRepository = new WorldPublicationTerminalRepository(dsl, manager);
+    var completionRequest =
+        new WorldPublicationTerminalCompletionGrpcCodec.Request(
+            1, NAMESPACE, noPublication.operationBytes(), noPublication.canonicalBytes());
+    var completionService =
+        new WorldPublicationTerminalCompletionGrpcService(
+            terminalRepository, terminalReadClient(noPublication), NAMESPACE);
+    var wireCompletionRequest =
+        WorldPublicationTerminalCompletionGrpcCodec.toRequest(completionRequest);
+    var completion =
+        completePublicationTerminalAs(completionService, wireCompletionRequest, NAMESPACE);
+    assertThat(completion.error).isNull();
+    assertThat(completion.completed).isTrue();
+    var completionResult =
+        WorldPublicationTerminalCompletionGrpcCodec.fromResponse(
+            completionRequest, completion.value);
+    byte[] result = completionResult.terminalEvidence().canonicalBytes();
+    assertThat(result).containsExactly(noPublication.canonicalBytes());
+    assertThat(publicationOwnerPhase(fence)).isEqualTo("ABORTED");
+    var retry = completePublicationTerminalAs(completionService, wireCompletionRequest, NAMESPACE);
+    assertThat(retry.error).isNull();
+    assertThat(
+            WorldPublicationTerminalCompletionGrpcCodec.fromResponse(completionRequest, retry.value)
+                .canonicalBytes())
+        .containsExactly(completionResult.canonicalBytes());
+    assertThat(publicationTerminalBytes(fence)).containsExactly(result);
+
+    var abortReadRequest = WorldPublicationTerminalReadEvidence.Request.create(NAMESPACE, result);
+    var abortRead =
+        readPublicationTerminalAs(
+            new WorldPublicationTerminalReadGrpcService(
+                new WorldPublicationTerminalRepository(dsl, manager), NAMESPACE),
+            WorldPublicationTerminalReadGrpcCodec.toRequest(abortReadRequest),
+            NAMESPACE);
+    assertThat(abortRead.error).isNull();
+    var abortReadResult =
+        WorldPublicationTerminalReadGrpcCodec.fromResponse(abortReadRequest, abortRead.value);
+    assertThat(abortReadResult.status())
+        .isEqualTo(WorldPublicationTerminalReadEvidence.Status.ABORTED);
+    assertThat(abortReadResult.terminalEvidence()).isPresent();
+    assertThat(abortReadResult.terminalEvidence().orElseThrow().canonicalBytes())
+        .containsExactly(result);
+
+    assertThatThrownBy(() -> preparationComponent(preparationRepository()).prepare(input))
+        .isInstanceOf(
+            WorldPublicationTerminalRepository.PublicationTerminalConflictException.class);
+    assertThat(publicationOwnerPhase(fence)).isEqualTo("ABORTED");
+    assertThat(count(f, "world_instance")).isZero();
+    assertOrigin();
+  }
+
+  private String publicationOwnerPhase(UUID fence) {
+    return Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT owner_freeze_phase FROM world_design_publication_fence_owner "
+                    + "WHERE current_publication_fence=?",
+                fence))
+        .get("owner_freeze_phase", String.class);
+  }
+
+  private byte[] publicationTerminalBytes(UUID fence) {
+    return Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT terminal_evidence_bytes FROM world_design_publication_terminal "
+                    + "WHERE publication_fence=?",
+                fence))
+        .get("terminal_evidence_bytes", byte[].class);
+  }
+
+  private void insertPublicationTerminal(WorldPublicationTerminal.Request request) {
+    var world = request.worldEvidence().request();
+    dsl.execute(
+        "INSERT INTO world_design_publication_terminal (publication_fence,target_namespace,"
+            + "canonical_tenant_id,canonical_version_id,publication_request_id,request_digest,"
+            + "publish_workflow_id,freeze_version_state_epoch,applied_commit_id,content_digest,"
+            + "digest_schema_version,outcome,publication_version_state_epoch,"
+            + "published_release_bundle_ref,published_release_bundle_digest,operation_bytes,"
+            + "terminal_evidence_bytes,terminal_evidence_digest,world_evidence_bytes,world_request_json,"
+            + "selector_receipt_bytes,original_account_binding_bytes,applied_result_bytes,release_content_bytes) "
+            + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        world.publicationFence(),
+        world.targetNamespace(),
+        world.canonicalTenantId(),
+        world.canonicalVersionId(),
+        world.publicationRequestId(),
+        world.requestDigest(),
+        world.publishWorkflowId(),
+        world.versionStateEpoch(),
+        world.appliedCommitId(),
+        world.contentDigest(),
+        world.digestSchemaVersion(),
+        request.evidence().outcome().name(),
+        request.publicationVersionStateEpoch(),
+        request.releaseBundleRef(),
+        request.releaseBundleDigest(),
+        request.operationBytes(),
+        request.terminalBytes(),
+        sha256Digest(request.terminalBytes()).substring("sha256:".length()),
+        request.worldEvidenceBytes(),
+        request.worldRequestJson(),
+        request.selectorReceiptBytes(),
+        request.originalAccountBindingBytes(),
+        request.appliedResultBytes(),
+        request.releaseContentBytes());
   }
 
   @Test
@@ -366,11 +970,10 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
         .isTrue();
 
     var prepareFields = materialized.association().worldPrepareFields();
-    // Successful ACTIVE epoch movement and historical retry after a later lifecycle move belong
-    // to the canonical activation proof, including
-    // canonicalActivationCommitsOneOwnerCasAndReplaysItsImmutableResultAfterLaterLifecycleMove.
-    // This front owns preparation storage and lifecycle read only; its legacy numeric writer must
-    // remain denied for the reserved canonical tenant.
+    // Successful ACTIVE epoch movement and replay while ACTIVE belong to
+    // canonicalActivationCommitsOneOwnerCasAndReplaysWhileLegacyTerminationIsDenied. Replay after
+    // canonical termination remains unavailable until this slice has a canonical termination
+    // owner operation. This front's legacy numeric writer remains denied for reserved tenants.
     assertThatThrownBy(
             () ->
                 lifecycleCommandService.failPreparedWorldInstance(
@@ -410,6 +1013,423 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     assertThat(response.completed).isTrue();
     assertThat(WorldCanonicalInstanceLifecycleGrpcCodec.fromResponse(request, response.value))
         .isEqualTo(afterRetry);
+    assertOrigin();
+  }
+
+  @Test
+  void canonicalActivationCommitsOneOwnerCasAndReplaysWhileLegacyTerminationIsDenied()
+      throws Exception {
+    PreparedLifecycleFixture fixture = materializedLifecycleFixture();
+    var retainedEpochs =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT v.version_state_state AS source_version_state, "
+                    + "p.input_json::JSONB->'versionIdentity'->>'versionState' AS input_version_state, "
+                    + "v.version_state_epoch AS source_version_state_epoch, "
+                    + "p.input_json::JSONB->'versionIdentity'->>'versionStateEpoch' AS input_version_state_epoch, "
+                    + "b.descriptor_json::JSONB->>'versionStateEpoch' AS descriptor_version_state_epoch, "
+                    + "b.release_attestation_json::JSONB->>'versionStateEpoch' AS release_version_state_epoch, "
+                    + "a.version_state_epoch AS association_version_state_epoch "
+                    + "FROM world_canonical_instance_association a "
+                    + "JOIN world_authored_version_identity v ON v.operation_id=a.version_identity_operation_id "
+                    + "JOIN world_complete_launch_binding b ON b.binding_operation_id=a.canonical_launch_binding_operation_id "
+                    + "JOIN world_canonical_instance_preparation p ON p.canonical_game_instance_id=a.canonical_game_instance_id "
+                    + "WHERE a.canonical_game_instance_id=?",
+                fixture.input().canonicalGameInstanceId()));
+    assertThat(retainedEpochs.get("source_version_state", String.class)).isEqualTo("DRAFT");
+    assertThat(retainedEpochs.get("input_version_state", String.class))
+        .isEqualTo("VERSION_LIFECYCLE_STATE_DRAFT");
+    assertThat(retainedEpochs.get("source_version_state_epoch", Long.class)).isEqualTo(1L);
+    assertThat(retainedEpochs.get("input_version_state_epoch", String.class)).isEqualTo("1");
+    assertThat(retainedEpochs.get("descriptor_version_state_epoch", String.class)).isEqualTo("2");
+    assertThat(retainedEpochs.get("release_version_state_epoch", String.class)).isEqualTo("2");
+    assertThat(retainedEpochs.get("association_version_state_epoch", Long.class)).isEqualTo(2L);
+    byte[] preparationBefore = preparationRows(fixture.input().canonicalGameInstanceId());
+    var rawCommitProof = rawCommittedActivationProof(fixture);
+    assertThatThrownBy(
+            () ->
+                ownerTransaction()
+                    .execute(
+                        status -> {
+                          insertRawActivationOperation(
+                              rawCommitProof,
+                              fixture.materialized().association().worldInstanceId());
+                          return null;
+                        }))
+        .hasMessageContaining("must include its exact ACTIVE lifecycle CAS before commit");
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT count(*) FROM world_canonical_instance_activation_operation WHERE activation_request_id=?",
+                        rawCommitProof.request().activationRequestId()))
+                .get(0, Long.class))
+        .isZero();
+    assertThat(activationManifestCountForRequest(rawCommitProof.request().activationRequestId()))
+        .isZero();
+
+    var first =
+        new WorldCanonicalInstanceActivation.Request(UUID.randomUUID(), fixture.preparing());
+    var second =
+        new WorldCanonicalInstanceActivation.Request(UUID.randomUUID(), fixture.preparing());
+    CountDownLatch bothAuthoritiesChecked = new CountDownLatch(2);
+    AtomicInteger verifierCalls = new AtomicInteger();
+    var service =
+        canonicalActivationService(
+            fixture,
+            request -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              verifierCalls.incrementAndGet();
+              bothAuthoritiesChecked.countDown();
+              await(bothAuthoritiesChecked);
+              return stipulatedActivationAuthority();
+            });
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    WorldCanonicalInstanceActivation.Result firstResult;
+    WorldCanonicalInstanceActivation.Result secondResult;
+    try {
+      Future<WorldCanonicalInstanceActivation.Result> firstFuture =
+          executor.submit(() -> service.activate(first));
+      Future<WorldCanonicalInstanceActivation.Result> secondFuture =
+          executor.submit(() -> service.activate(second));
+      firstResult = firstFuture.get(45, TimeUnit.SECONDS);
+      secondResult = secondFuture.get(45, TimeUnit.SECONDS);
+    } finally {
+      executor.shutdownNow();
+    }
+
+    assertThat(verifierCalls).hasValue(2);
+    assertThat(List.of(firstResult.outcome(), secondResult.outcome()))
+        .containsExactlyInAnyOrder(
+            WorldCanonicalInstanceActivation.Outcome.COMMITTED,
+            WorldCanonicalInstanceActivation.Outcome.ABORTED);
+    var committed =
+        firstResult.outcome() == WorldCanonicalInstanceActivation.Outcome.COMMITTED
+            ? firstResult
+            : secondResult;
+    var aborted = committed == firstResult ? secondResult : firstResult;
+    assertThat(committed.lifecycleEvidence().lifecycleStatus()).isEqualTo("ACTIVE");
+    assertThat(committed.lifecycleEvidence().lifecycleEpoch())
+        .isEqualTo(fixture.preparing().lifecycleEpoch() + 1L);
+    assertThat(committed.lifecycleEvidence().rowVersion())
+        .isEqualTo(fixture.preparing().rowVersion() + 1L);
+    assertThat(aborted.terminalCode()).isEqualTo("PRECONDITION_FAILED");
+    var active = fixture.lifecycleRepository().read(fixture.readRequest()).orElseThrow();
+    assertThat(active.lifecycleStatus()).isEqualTo("ACTIVE");
+    assertThat(active.lifecycleEpoch()).isEqualTo(committed.lifecycleEvidence().lifecycleEpoch());
+    assertThat(active.rowVersion()).isEqualTo(committed.lifecycleEvidence().rowVersion());
+    assertThat(activationManifestCount(fixture.input().canonicalGameInstanceId())).isZero();
+
+    var repository =
+        new WorldCanonicalInstanceActivationRepository(dsl, manager, fixture.lifecycleRepository());
+    assertThat(repository.readResult(committed.request()).orElseThrow().canonicalBytes())
+        .containsExactly(committed.canonicalBytes());
+    int callsAfterFirstAttempt = verifierCalls.get();
+    assertThat(service.activate(committed.request()).canonicalBytes())
+        .containsExactly(committed.canonicalBytes());
+    assertThat(verifierCalls).hasValue(callsAfterFirstAttempt);
+    var changedExpectedVersion =
+        new WorldCanonicalInstanceLifecycleEvidence(
+            fixture.preparing().request(),
+            fixture.preparing().launchBinding(),
+            fixture.preparing().startLocation(),
+            fixture.preparing().runtimeRoomInstanceId(),
+            "PREPARING",
+            fixture.preparing().lifecycleEpoch(),
+            fixture.preparing().rowVersion() + 1L,
+            fixture.preparing().captureId(),
+            fixture.preparing().graphSha256(),
+            fixture.preparing().preparationInputDigest());
+    var changedRetry =
+        new WorldCanonicalInstanceActivation.Request(
+            committed.request().activationRequestId(), changedExpectedVersion);
+    assertThatThrownBy(() -> service.activate(changedRetry))
+        .isInstanceOf(WorldCanonicalInstanceActivationRepository.ActivationConflictException.class)
+        .hasMessageContaining("reused with changed immutable bindings");
+    assertThat(verifierCalls).hasValue(callsAfterFirstAttempt);
+
+    // The single-use activation capability was consumed; its retained ledger cannot authorize a
+    // second raw lifecycle update.
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE world_instance SET status='ACTIVE',lifecycle_epoch=lifecycle_epoch+1,"
+                        + "row_version=row_version+1 WHERE id=?",
+                    fixture.materialized().association().worldInstanceId()))
+        .hasMessageContaining("no exact transaction execution manifest");
+    assertThat(activationManifestCount(fixture.input().canonicalGameInstanceId())).isZero();
+
+    var privateKeys = fixture.materialized().association().worldPrepareFields();
+    assertThatThrownBy(
+            () ->
+                lifecycleCommandService.terminateWorldInstance(
+                    privateKeys.privateTenantKey(),
+                    privateKeys.privateGameInstanceKey(),
+                    active.lifecycleEpoch(),
+                    "activation-replay-terminal-move",
+                    "integration lifecycle movement"))
+        .hasMessageContaining("no exact transaction execution manifest");
+    assertThat(fixture.lifecycleRepository().read(fixture.readRequest()).orElseThrow())
+        .isEqualTo(active);
+    assertThat(service.activate(committed.request()).canonicalBytes())
+        .containsExactly(committed.canonicalBytes());
+    assertThat(verifierCalls).hasValue(callsAfterFirstAttempt);
+    assertThat(preparationRows(fixture.input().canonicalGameInstanceId()))
+        .containsExactly(preparationBefore);
+    assertOrigin();
+  }
+
+  @Test
+  void canonicalActivationStoresStaleFailedOutcomeAndFreshLifecycleReadRemainsCurrent() {
+    PreparedLifecycleFixture fixture = materializedLifecycleFixture();
+    var service = canonicalActivationService(fixture, ignored -> stipulatedActivationAuthority());
+    var firstRequest =
+        new WorldCanonicalInstanceActivation.Request(UUID.randomUUID(), fixture.preparing());
+    var current = service.activate(firstRequest);
+    assertThat(current.outcome()).isEqualTo(WorldCanonicalInstanceActivation.Outcome.COMMITTED);
+    assertThat(current.lifecycleEvidence().lifecycleStatus()).isEqualTo("ACTIVE");
+    var staleRequest =
+        new WorldCanonicalInstanceActivation.Request(UUID.randomUUID(), fixture.preparing());
+
+    var aborted = service.activate(staleRequest);
+
+    assertThat(aborted.outcome()).isEqualTo(WorldCanonicalInstanceActivation.Outcome.ABORTED);
+    assertThat(aborted.terminalCode()).isEqualTo("PRECONDITION_FAILED");
+    assertThat(aborted.lifecycleEvidence().canonicalBytes())
+        .containsExactly(current.lifecycleEvidence().canonicalBytes());
+    assertThat(fixture.lifecycleRepository().read(fixture.readRequest()).orElseThrow())
+        .isEqualTo(current.lifecycleEvidence());
+    assertThat(service.activate(staleRequest).canonicalBytes())
+        .containsExactly(aborted.canonicalBytes());
+    assertThat(activationOperationCountForRequest(staleRequest.activationRequestId()))
+        .isEqualTo(1L);
+    assertThat(activationManifestCountForRequest(staleRequest.activationRequestId())).isZero();
+    assertOrigin();
+  }
+
+  @Test
+  void canonicalActivationRejectsSelfConsistentForgedOwnerBindingsBeforeActiveCas()
+      throws Exception {
+    PreparedLifecycleFixture fixture = materializedLifecycleFixture();
+    var activationRequest =
+        new WorldCanonicalInstanceActivation.Request(UUID.randomUUID(), fixture.preparing());
+
+    var forgedPreparing =
+        (tools.jackson.databind.node.ObjectNode)
+            mapper.readTree(fixture.preparing().canonicalBytes());
+    ((tools.jackson.databind.node.ObjectNode) forgedPreparing.get("request"))
+        .put("targetNamespace", "forged-world-namespace");
+    byte[] forgedPreparingBytes =
+        net.firedevops.firemud.common.json.Rfc8785CanonicalJson.canonicalizeUtf8(
+            mapper.writeValueAsString(forgedPreparing));
+
+    var normalizedRequest =
+        (tools.jackson.databind.node.ObjectNode)
+            mapper.readTree(activationRequest.canonicalRequestBytes());
+    var normalizedPreparing =
+        (tools.jackson.databind.node.ObjectNode) mapper.readTree(forgedPreparingBytes);
+    ((tools.jackson.databind.node.ObjectNode) normalizedPreparing.get("request"))
+        .remove("readRequestId");
+    normalizedRequest.set("preparingEvidence", normalizedPreparing);
+    byte[] forgedRequestBytes =
+        net.firedevops.firemud.common.json.Rfc8785CanonicalJson.canonicalizeUtf8(
+            mapper.writeValueAsString(normalizedRequest));
+    String forgedRequestDigest = sha256Digest(forgedRequestBytes);
+
+    var forgedActive =
+        (tools.jackson.databind.node.ObjectNode) mapper.readTree(forgedPreparingBytes);
+    forgedActive.put("lifecycleStatus", "ACTIVE");
+    forgedActive.put("lifecycleEpoch", Long.toString(fixture.preparing().lifecycleEpoch() + 1L));
+    forgedActive.put("rowVersion", Long.toString(fixture.preparing().rowVersion() + 1L));
+    byte[] forgedActiveBytes =
+        net.firedevops.firemud.common.json.Rfc8785CanonicalJson.canonicalizeUtf8(
+            mapper.writeValueAsString(forgedActive));
+
+    Map<String, Object> forgedResult = new LinkedHashMap<>();
+    forgedResult.put("schema", "world-canonical-instance-activation-result/v1");
+    forgedResult.put("activationRequestId", activationRequest.activationRequestId().toString());
+    forgedResult.put("requestDigest", forgedRequestDigest);
+    forgedResult.put(
+        "requestBytesBase64", java.util.Base64.getEncoder().encodeToString(forgedRequestBytes));
+    forgedResult.put(
+        "preparingEvidenceBytesBase64",
+        java.util.Base64.getEncoder().encodeToString(forgedPreparingBytes));
+    forgedResult.put("outcome", "COMMITTED");
+    forgedResult.put("terminalCode", null);
+    forgedResult.put(
+        "lifecycleEvidenceBytesBase64",
+        java.util.Base64.getEncoder().encodeToString(forgedActiveBytes));
+    byte[] forgedResultBytes =
+        net.firedevops.firemud.common.json.Rfc8785CanonicalJson.canonicalizeUtf8(
+            mapper.writeValueAsString(forgedResult));
+
+    ownerTransaction()
+        .execute(
+            status -> {
+              dsl.execute("SAVEPOINT forged_world_activation");
+              assertThatThrownBy(
+                      () ->
+                          dsl.execute(
+                              "INSERT INTO world_canonical_instance_activation_operation "
+                                  + "(activation_request_id,request_digest,request_bytes,preparing_evidence_bytes,"
+                                  + "canonical_game_instance_id,world_instance_id,expected_lifecycle_epoch,expected_row_version,"
+                                  + "outcome,terminal_code,result_lifecycle_epoch,result_row_version,result_bytes,result_digest) "
+                                  + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                              activationRequest.activationRequestId(),
+                              forgedRequestDigest,
+                              forgedRequestBytes,
+                              forgedPreparingBytes,
+                              activationRequest.canonicalGameInstanceId(),
+                              fixture.materialized().association().worldInstanceId(),
+                              activationRequest.expectedLifecycleEpoch(),
+                              activationRequest.expectedRowVersion(),
+                              "COMMITTED",
+                              null,
+                              activationRequest.expectedLifecycleEpoch() + 1L,
+                              activationRequest.expectedRowVersion() + 1L,
+                              forgedResultBytes,
+                              sha256Digest(forgedResultBytes)))
+                  .hasMessageContaining("differs from immutable World association");
+              dsl.execute("ROLLBACK TO SAVEPOINT forged_world_activation");
+              // V35's reserved-tenant guard denies a raw write without an activation manifest.
+              dsl.execute("SAVEPOINT forged_active_cas");
+              assertThatThrownBy(
+                      () ->
+                          dsl.execute(
+                              "UPDATE world_instance SET status='ACTIVE',lifecycle_epoch=lifecycle_epoch+1,"
+                                  + "row_version=row_version+1 WHERE id=?",
+                              fixture.materialized().association().worldInstanceId()))
+                  .hasMessageContaining("no exact transaction execution manifest");
+              dsl.execute("ROLLBACK TO SAVEPOINT forged_active_cas");
+              return null;
+            });
+
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT count(*) FROM world_canonical_instance_activation_operation WHERE activation_request_id=?",
+                        activationRequest.activationRequestId()))
+                .get(0, Long.class))
+        .isZero();
+    assertThat(activationManifestCountForRequest(activationRequest.activationRequestId())).isZero();
+    var lifecycle = fixture.lifecycleRepository().read(fixture.readRequest()).orElseThrow();
+    assertThat(lifecycle.lifecycleStatus()).isEqualTo("PREPARING");
+    assertThat(lifecycle.lifecycleEpoch()).isEqualTo(activationRequest.expectedLifecycleEpoch());
+    assertThat(lifecycle.rowVersion()).isEqualTo(activationRequest.expectedRowVersion());
+    assertOrigin();
+  }
+
+  @Test
+  void lostHeldAuthorityAfterOperationInsertRollsBackActivationAndLedger() {
+    PreparedLifecycleFixture fixture = materializedLifecycleFixture();
+    var request =
+        new WorldCanonicalInstanceActivation.Request(UUID.randomUUID(), fixture.preparing());
+    AtomicBoolean lossInjectedAfterOperationInsert = new AtomicBoolean();
+    var service =
+        canonicalActivationService(
+            fixture,
+            ignored -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              return new WorldCanonicalInstanceActivationService.HeldActivationAuthority() {
+                public void requireHeld() {
+                  if (!TransactionSynchronizationManager.isActualTransactionActive()) return;
+                  long operationCount =
+                      Objects.requireNonNull(
+                              dsl.fetchOne(
+                                  "SELECT count(*) FROM world_canonical_instance_activation_operation WHERE activation_request_id=?",
+                                  request.activationRequestId()))
+                          .get(0, Long.class);
+                  long manifestCount =
+                      activationManifestCountForRequest(request.activationRequestId());
+                  if (operationCount != 1L || manifestCount != 1L) return;
+
+                  assertThat(TransactionSynchronizationManager.isActualTransactionActive())
+                      .isTrue();
+                  var lifecycleRow =
+                      dsl.fetchOne(
+                          "SELECT status, lifecycle_epoch, row_version FROM world_instance WHERE id=?",
+                          fixture.materialized().association().worldInstanceId());
+                  assertThat(lifecycleRow).isNotNull();
+                  assertThat(lifecycleRow.get("status", String.class)).isEqualTo("PREPARING");
+                  assertThat(lifecycleRow.get("lifecycle_epoch", Long.class))
+                      .isEqualTo(request.expectedLifecycleEpoch());
+                  assertThat(lifecycleRow.get("row_version", Long.class))
+                      .isEqualTo(request.expectedRowVersion());
+                  assertThat(operationCount).isEqualTo(1L);
+                  assertThat(manifestCount).isEqualTo(1L);
+                  lossInjectedAfterOperationInsert.set(true);
+                  throw new IllegalStateException("stipulated activation authority loss");
+                }
+
+                public void close() {}
+              };
+            });
+
+    assertThatThrownBy(() -> service.activate(request))
+        .hasMessageContaining("stipulated activation authority loss");
+    assertThat(lossInjectedAfterOperationInsert).isTrue();
+    var current = fixture.lifecycleRepository().read(fixture.readRequest()).orElseThrow();
+    assertThat(current.lifecycleStatus()).isEqualTo("PREPARING");
+    assertThat(current.lifecycleEpoch()).isEqualTo(fixture.preparing().lifecycleEpoch());
+    assertThat(current.rowVersion()).isEqualTo(fixture.preparing().rowVersion());
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT count(*) FROM world_canonical_instance_activation_operation WHERE activation_request_id=?",
+                        request.activationRequestId()))
+                .get(0, Long.class))
+        .isZero();
+    assertThat(activationManifestCountForRequest(request.activationRequestId())).isZero();
+    assertThat(activationManifestCount(fixture.input().canonicalGameInstanceId())).isZero();
+    assertOrigin();
+  }
+
+  @Test
+  void activationExecutionManifestRequiresExactTransactionInstanceAndRowSnapshots() {
+    PreparedLifecycleFixture fixture = materializedLifecycleFixture();
+    String exactUpdate =
+        "UPDATE world_instance SET status='ACTIVE',lifecycle_epoch=lifecycle_epoch+1,"
+            + "row_version=row_version+1,updated_at=CURRENT_TIMESTAMP WHERE id=?";
+
+    assertActivationManifestMismatch(
+        fixture,
+        "activation_manifest_wrong_tx",
+        "UPDATE world_canonical_activation_execution_manifest SET transaction_id=transaction_id+1 "
+            + "WHERE activation_request_id=?",
+        exactUpdate);
+    assertActivationManifestMismatch(
+        fixture,
+        "activation_manifest_wrong_instance",
+        "UPDATE world_canonical_activation_execution_manifest SET world_instance_id=world_instance_id+1 "
+            + "WHERE activation_request_id=?",
+        exactUpdate);
+    assertActivationManifestMismatch(
+        fixture,
+        "activation_manifest_extra_old_field",
+        "UPDATE world_canonical_activation_execution_manifest SET expected_old=expected_old || '{\"extra\":true}'::JSONB "
+            + "WHERE activation_request_id=?",
+        exactUpdate);
+    assertActivationManifestMismatch(
+        fixture,
+        "activation_manifest_extra_new_field",
+        "UPDATE world_canonical_activation_execution_manifest SET expected_new=expected_new || '{\"extra\":true}'::JSONB "
+            + "WHERE activation_request_id=?",
+        exactUpdate);
+    assertActivationManifestMismatch(
+        fixture,
+        "activation_manifest_wrong_next_epoch",
+        null,
+        "UPDATE world_instance SET status='ACTIVE',lifecycle_epoch=lifecycle_epoch+2,"
+            + "row_version=row_version+1,updated_at=CURRENT_TIMESTAMP WHERE id=?");
+    assertActivationManifestMismatch(
+        fixture,
+        "activation_manifest_wrong_next_version",
+        null,
+        "UPDATE world_instance SET status='ACTIVE',lifecycle_epoch=lifecycle_epoch+1,"
+            + "row_version=row_version+2,updated_at=CURRENT_TIMESTAMP WHERE id=?");
+
+    var current = fixture.lifecycleRepository().read(fixture.readRequest()).orElseThrow();
+    assertThat(current).isEqualTo(fixture.preparing());
+    assertThat(activationManifestCount(fixture.input().canonicalGameInstanceId())).isZero();
     assertOrigin();
   }
 
@@ -513,51 +1533,61 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   }
 
   @Test
-  void inertV1PreparationRetainsOriginalBytesAndCannotGainSelectorOnRetry() {
-    Fixture f = fixture();
-    var application = application(generationFreePlan(f));
-    appliedComponent().apply(application);
-    var frozen = capture(application.plan());
-    var input = preparationInput(f, frozen, null);
-    var repository = preparationRepository();
-    var first = preparationComponent(repository).prepare(input);
+  void inertV1PreparationRetainsOriginalBytesAndCannotGainSelectorOnRetry() throws Exception {
+    HistoricalSchemaFixture schema = historicalSchemaAt("world_v42_inert_v1", "42");
+    WorldDraftGraphApplicationPostgresIntegrationTest historical = schema.database();
+    Fixture f = historical.fixture();
+    var application = historical.application(historical.generationFreePlan(f));
+    historical.appliedComponent().apply(application);
+    var frozen = historical.capture(application.plan());
+    var input = historical.preparationInput(f, frozen, null);
+    var first = historical.prepareV1ThroughOwnerFunction(input);
     assertThat(first.startLocation()).isNull();
     assertThat(first.runtimeRoomInstanceId()).isNull();
-    byte[] before = preparationRows(input.canonicalGameInstanceId());
-    assertThat(preparationComponent(preparationRepository()).prepare(input)).isEqualTo(first);
-    assertThat(preparationRows(input.canonicalGameInstanceId())).containsExactly(before);
-    assertThat(WorldCanonicalInstancePreparationRepository.inputJson(input))
-        .doesNotContain("worldStartLocationEvidence");
+    byte[] before = historical.preparationRows(input.canonicalGameInstanceId());
+    assertThat(historical.prepareV1ThroughOwnerFunction(input)).isEqualTo(first);
+    assertThat(historical.preparationRows(input.canonicalGameInstanceId())).containsExactly(before);
+    String originalInputJson = WorldCanonicalInstancePreparationRepository.inputJson(input);
+    assertThat(originalInputJson).doesNotContain("worldStartLocationEvidence");
     assertThat(
             Objects.requireNonNull(
-                    dsl.fetchOne(
+                    historical.dsl.fetchOne(
                         "SELECT count(*) FROM world_canonical_preparation_start_location WHERE canonical_game_instance_id=?",
                         input.canonicalGameInstanceId()))
                 .get(0, Long.class))
         .isZero();
-    // A new direct selector write cannot reinterpret the existing V1 preparation.
-    var receipt =
-        appliedRepository()
-            .readCommitted(application)
-            .orElseThrow()
-            .startLocationReceipt()
-            .orElseThrow();
+    // V42 cannot reinterpret the immutable selector-null V1 preparation as a V2 materialization.
+    var selector =
+        historical.publishedEvidence(
+            historical.publishedSelectors().readCommitted(frozen.request().freeze()).orElseThrow());
+    var promotedInput =
+        (tools.jackson.databind.node.ObjectNode) historical.mapper.readTree(originalInputJson);
+    promotedInput.put("schemaVersion", 2);
+    promotedInput.put(
+        "worldStartLocationEvidenceBase64",
+        java.util.Base64.getEncoder().encodeToString(selector.canonicalBytes()));
+    String promotedInputJson = historical.mapper.writeValueAsString(promotedInput);
+    byte[] promotedInputBytes = promotedInputJson.getBytes(StandardCharsets.UTF_8);
     assertThatThrownBy(
             () ->
-                dsl.execute(
-                    "INSERT INTO world_canonical_preparation_start_location (canonical_game_instance_id,world_instance_id,canonical_tenant_id,canonical_version_id,room_template_id,"
-                        + "runtime_room_instance_id,receipt_digest,graph_digest,evidence_bytes) VALUES (?,?,?,?,?,1,?,?,?)",
-                    input.canonicalGameInstanceId(),
-                    first.association().worldInstanceId(),
-                    receipt.startLocation().tenantId(),
-                    receipt.startLocation().versionId(),
-                    receipt.startLocation().roomTemplateId(),
-                    receipt.receiptDigest(),
-                    receipt.graphDigest(),
-                    receipt.canonicalBytes()))
-        .isInstanceOf(RuntimeException.class);
-    assertThat(preparationRows(input.canonicalGameInstanceId())).containsExactly(before);
-    assertOrigin();
+                historical
+                    .ownerTransaction()
+                    .execute(
+                        status ->
+                            historical.dsl.fetchOne(
+                                "SELECT * FROM world_prepare_canonical_instance(?,?)",
+                                promotedInputJson,
+                                sha256Digest(promotedInputBytes))))
+        .hasMessageContaining("V2 preparation requires original complete World selector evidence");
+    assertThat(historical.preparationRows(input.canonicalGameInstanceId())).containsExactly(before);
+    assertThat(
+            Objects.requireNonNull(
+                    historical.dsl.fetchOne(
+                        "SELECT count(*) FROM world_canonical_preparation_start_location WHERE canonical_game_instance_id=?",
+                        input.canonicalGameInstanceId()))
+                .get(0, Long.class))
+        .isZero();
+    historical.assertOrigin();
   }
 
   @Test
@@ -570,6 +1600,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
         publishedEvidence(
             publishedSelectors().readCommitted(frozen.request().freeze()).orElseThrow());
     var input = preparationInput(f, frozen, selector);
+    completeIsolatedPublicationTerminal(input);
     var component =
         new WorldCanonicalInstancePreparationService(
             preparationRepository(),
@@ -682,23 +1713,46 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
 
   @Test
   void v41MaterializedV1HistoryRemainsByteExactAndRetryableAfterV42WithoutSelectorPromotion() {
-    String schema = "world_v41_preparation_" + UUID.randomUUID().toString().replace("-", "");
-    Flyway.configure()
-        .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
-        .schemas(schema)
-        .defaultSchema(schema)
-        .table("flyway_schema_history_world_management_service")
-        .placeholders(Map.of("serviceSchema", schema))
-        .locations("classpath:db/migration")
-        .target(MigrationVersion.fromVersion("41"))
-        .load()
-        .migrate();
+    HistoricalSchemaFixture schema = historicalSchemaAt("world_v41_preparation", "41");
+    WorldDraftGraphApplicationPostgresIntegrationTest historical = schema.database();
+    Fixture f = historical.fixture();
+    var application = historical.application(historical.generationFreePlan(f));
+    var applied = historical.appliedComponent().apply(application);
+    var frozen = historical.capture(application.plan());
+    var input = historical.preparationInput(f, frozen, null);
+    var first = historical.prepareV1ThroughOwnerFunction(input);
+    Map<String, String> before = historical.preparationHistoryRows();
+    byte[] originalApplied = applied.canonicalBytes();
+    historical.migrateHistoricalSchema(schema.schema(), "42");
+    assertThat(historical.preparationHistoryRows()).isEqualTo(before);
+    assertThat(historical.prepareV1ThroughOwnerFunction(input)).isEqualTo(first);
+    assertThat(historical.preparationHistoryRows()).isEqualTo(before);
+    assertThat(
+            historical
+                .appliedRepository()
+                .readCommitted(application)
+                .orElseThrow()
+                .canonicalBytes())
+        .containsExactly(originalApplied);
+    assertThat(first.startLocation()).isNull();
+    assertThat(first.runtimeRoomInstanceId()).isNull();
+    assertThat(
+            Objects.requireNonNull(
+                    historical.dsl.fetchOne(
+                        "SELECT count(*) FROM world_canonical_preparation_start_location"))
+                .get(0, Long.class))
+        .isZero();
+    historical.assertOrigin();
+  }
+
+  private HistoricalSchemaFixture historicalSchemaAt(String schemaPrefix, String version) {
+    String schema = schemaPrefix + "_" + UUID.randomUUID().toString().replace("-", "");
+    migrateHistoricalSchema(schema, version);
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
     dataSource.setUrl(postgres.getJdbcUrl());
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
     dataSource.setSchema(schema);
-    // Reuse exactly the same actual producer/preparation fixture against the historical schema.
     var historical = new WorldDraftGraphApplicationPostgresIntegrationTest();
     historical.dsl =
         DSL.using(
@@ -723,14 +1777,10 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             new net.firedevops.firemud.worldmanagement.repository.WorldEntitySpawnBindingRepository(
                 historical.dsl),
             mapper);
-    Fixture f = historical.fixture();
-    var application = historical.application(historical.generationFreePlan(f));
-    var applied = historical.appliedComponent().apply(application);
-    var frozen = historical.capture(application.plan());
-    var input = historical.preparationInput(f, frozen, null);
-    var first = historical.preparationComponent(historical.preparationRepository()).prepare(input);
-    Map<String, String> before = historical.preparationHistoryRows();
-    byte[] originalApplied = applied.canonicalBytes();
+    return new HistoricalSchemaFixture(schema, historical);
+  }
+
+  private void migrateHistoricalSchema(String schema, String version) {
     Flyway.configure()
         .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
         .schemas(schema)
@@ -738,28 +1788,52 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
         .table("flyway_schema_history_world_management_service")
         .placeholders(Map.of("serviceSchema", schema))
         .locations("classpath:db/migration")
+        .target(MigrationVersion.fromVersion(version))
         .load()
         .migrate();
-    assertThat(historical.preparationHistoryRows()).isEqualTo(before);
-    assertThat(historical.preparationComponent(historical.preparationRepository()).prepare(input))
-        .isEqualTo(first);
-    assertThat(historical.preparationHistoryRows()).isEqualTo(before);
-    assertThat(
-            historical
-                .appliedRepository()
-                .readCommitted(application)
-                .orElseThrow()
-                .canonicalBytes())
-        .containsExactly(originalApplied);
-    assertThat(first.startLocation()).isNull();
-    assertThat(first.runtimeRoomInstanceId()).isNull();
-    assertThat(
-            Objects.requireNonNull(
-                    historical.dsl.fetchOne(
-                        "SELECT count(*) FROM world_canonical_preparation_start_location"))
-                .get(0, Long.class))
-        .isZero();
-    historical.assertOrigin();
+  }
+
+  /** Executes the real V35/V42 owner SQL path for selector-null V1 migration history. */
+  private WorldCanonicalInstancePreparation.Result prepareV1ThroughOwnerFunction(
+      WorldCanonicalInstancePreparation.Input input) {
+    String inputJson = WorldCanonicalInstancePreparationRepository.inputJson(input);
+    byte[] inputBytes = inputJson.getBytes(StandardCharsets.UTF_8);
+    Long worldInstanceId =
+        Objects.requireNonNull(
+            ownerTransaction()
+                .execute(
+                    status -> {
+                      var row =
+                          Objects.requireNonNull(
+                              dsl.fetchOne(
+                                  "SELECT * FROM world_prepare_canonical_instance(?, ?)",
+                                  inputJson,
+                                  sha256Digest(inputBytes)),
+                              "V35/V42 owner preparation function returned no row");
+                      Long allocatedWorldInstanceId =
+                          Objects.requireNonNull(
+                              row.get("world_instance_id", Long.class),
+                              "V35/V42 owner preparation result omitted world_instance_id");
+                      var claim =
+                          new WorldCanonicalInstanceAssociation.Claim(
+                              input.gameSessionReadRequest(),
+                              input.gameSessionReadEvidence(),
+                              allocatedWorldInstanceId.longValue(),
+                              input.completeLaunchBinding(),
+                              input.versionIdentity());
+                      associationRepository().retainClaimInOwnerTransaction(claim);
+                      return allocatedWorldInstanceId;
+                    }),
+            "V35/V42 owner transaction returned no allocated world_instance_id");
+    var result =
+        preparationRepository()
+            .readOwnerPreparation(input)
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "V35/V42 owner preparation has no exact committed readback"));
+    assertThat(result.association().worldInstanceId()).isEqualTo(worldInstanceId.longValue());
+    return result;
   }
 
   private Map<String, String> preparationHistoryRows() {
@@ -831,6 +1905,23 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
       Fixture f,
       WorldCanonicalFrozenTopology frozen,
       WorldPublishedStartLocationEvidence selector) {
+    return preparationInput(f, frozen, selector, 2L, List.of("LOOK"));
+  }
+
+  private WorldCanonicalInstancePreparation.Input preparationInput(
+      Fixture f,
+      WorldCanonicalFrozenTopology frozen,
+      WorldPublishedStartLocationEvidence selector,
+      long descriptorVersionStateEpoch) {
+    return preparationInput(f, frozen, selector, descriptorVersionStateEpoch, List.of("LOOK"));
+  }
+
+  private WorldCanonicalInstancePreparation.Input preparationInput(
+      Fixture f,
+      WorldCanonicalFrozenTopology frozen,
+      WorldPublishedStartLocationEvidence selector,
+      long descriptorVersionStateEpoch,
+      List<String> commandDefinitions) {
     var source = f.intake().source();
     String control = "prepare-" + UUID.randomUUID();
     var descriptor =
@@ -857,9 +1948,9 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             null,
             "{}",
             "generation-free",
-            2L,
+            descriptorVersionStateEpoch,
             97L,
-            "release-" + UUID.randomUUID(),
+            "release-" + frozen.request().freeze().publicationRequestId(),
             false,
             null);
     var freeze = frozen.request().freeze();
@@ -899,7 +1990,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
                 1,
                 List.of(),
                 List.of(),
-                List.of("LOOK"),
+                commandDefinitions,
                 descriptor.generationConfigRevision())
             : AuthoredWorldReleaseAttestationEvidence.create(
                 NAMESPACE,
@@ -919,7 +2010,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
                 1,
                 List.of(),
                 List.of(),
-                List.of("LOOK"),
+                commandDefinitions,
                 descriptor.generationConfigRevision(),
                 selector);
     var evidence = new CompleteLaunchBindingEvidence(descriptor, release);
@@ -1040,22 +2131,451 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
 
   private WorldCanonicalInstancePreparationService preparationComponent(
       WorldCanonicalInstancePreparationRepository repository) {
-    // Stipulated local verifier only: no production producer, currentness, lifecycle or admission
-    // claim.
+    // Isolated GD-terminal fixture proves the actual World V44 transaction and released gate only.
+    // It does not prove authenticated GD production or cross-service transport/currentness.
     return new WorldCanonicalInstancePreparationService(
         repository,
-        input ->
-            new WorldCanonicalInstancePreparationService.HeldCommitAuthority() {
-              private boolean open = true;
+        input -> {
+          completeIsolatedPublicationTerminal(input);
+          return new WorldCanonicalInstancePreparationService.HeldCommitAuthority() {
+            private boolean open = true;
 
-              public void requireHeld() {
-                if (!open) throw new IllegalStateException("closed fixture authority");
-              }
+            public void requireHeld() {
+              if (!open) throw new IllegalStateException("closed fixture authority");
+            }
 
-              public void close() {
-                open = false;
-              }
+            public void close() {
+              open = false;
+            }
+          };
+        });
+  }
+
+  /**
+   * Isolated fixture verifier that preserves and independently reads an already committed V44
+   * terminal instead of trying to reseal it from a later descriptor resolution.
+   */
+  private WorldCanonicalInstancePreparationService preparationComponentWithRetainedTerminal(
+      WorldCanonicalInstancePreparationRepository repository,
+      GameDesignPublicationTerminalEvidence originalTerminal) {
+    byte[] expectedTerminal = originalTerminal.canonicalBytes();
+    return new WorldCanonicalInstancePreparationService(
+        repository,
+        input -> {
+          var retained =
+              new WorldPublicationTerminalRepository(dsl, manager)
+                  .readCommitted(WorldPublicationTerminal.request(expectedTerminal))
+                  .orElseThrow(
+                      () ->
+                          new IllegalStateException(
+                              "isolated fixture lost its previously committed World terminal"));
+          if (!java.util.Arrays.equals(expectedTerminal, retained.canonicalBytes())) {
+            throw new IllegalStateException(
+                "isolated fixture World terminal differs from original publication result");
+          }
+          return new WorldCanonicalInstancePreparationService.HeldCommitAuthority() {
+            private boolean open = true;
+
+            public void requireHeld() {
+              if (!open) throw new IllegalStateException("closed fixture authority");
+            }
+
+            public void close() {
+              open = false;
+            }
+          };
+        });
+  }
+
+  private GameDesignPublicationTerminalEvidence isolatedTerminalEvidence(
+      WorldCanonicalInstancePreparation.Input input) {
+    var release = input.completeLaunchBinding().evidence().releaseAttestation();
+    var world = Objects.requireNonNull(release.worldStartLocationEvidence());
+    var originalAccount =
+        DraftAuthorizationFenceBinding.fromStored(world.originalAccountBindingBytes());
+    var selection =
+        publicationSelection(
+            input.topologyPlan().sourceBinding().plan(),
+            world.request().publicationRequestId(),
+            world.request().versionStateEpoch());
+    if (!selection.digest().equals("sha256:" + world.request().requestDigest())) {
+      throw new IllegalStateException(
+          "Isolated publication selection differs from the retained World request digest");
+    }
+    var account =
+        new AccountPublicationAuthorizationBinding(
+            UUID.nameUUIDFromBytes(
+                (world.request().publicationFence() + "/account-operation")
+                    .getBytes(StandardCharsets.UTF_8)),
+            UUID.nameUUIDFromBytes(
+                (world.request().publicationFence() + "/account-fence")
+                    .getBytes(StandardCharsets.UTF_8)),
+            new AccountPublicationAuthorizationBinding.PreallocationInput(
+                originalAccount.actorAccountId(), selection),
+            List.of(
+                new DraftAuthorizationFenceBinding.SourceEvidence(
+                    DraftAuthorizationFenceBinding.SourceKind.ACCOUNT,
+                    originalAccount.actorAccountId().toString(),
+                    "1",
+                    "1",
+                    null,
+                    null,
+                    new byte[] {1})));
+    var operation = new GameDesignPublicationOperationBinding(account, world);
+    return new GameDesignPublicationTerminalEvidence(
+        operation.canonicalBytes(),
+        Outcome.PUBLISHED,
+        isolatedReleaseContent(input),
+        release.versionStateEpoch());
+  }
+
+  private ReleaseContent isolatedReleaseContent(WorldCanonicalInstancePreparation.Input input) {
+    var release = input.completeLaunchBinding().evidence().releaseAttestation();
+    var world = Objects.requireNonNull(release.worldStartLocationEvidence());
+    var participants =
+        release.participantDigests().stream()
+            .map(
+                participant ->
+                    new Participant(
+                        participant.participantKey(),
+                        participant.scopeValue(),
+                        participant.baseVersionIdPresent() ? participant.baseVersionId() : null,
+                        participant.appliedCommitId(),
+                        participant.contentDigest(),
+                        participant.digestSchemaVersion(),
+                        participant.abilitySchemaDigestPresent()
+                            ? participant.abilitySchemaDigest()
+                            : null,
+                        null,
+                        null))
+            .toList();
+    return new ReleaseContent(
+        release.canonicalTenantId(),
+        release.canonicalVersionId(),
+        release.publishedReleaseBundleRef(),
+        1,
+        "v2",
+        release.publishWorkflowId(),
+        release.manifestHash(),
+        release.manifestSchemaVersion(),
+        release.artifactDigests(),
+        release.requiredManifestAssetKeys(),
+        participants,
+        release.commandDefinitions(),
+        release.generationConfigRevision(),
+        world);
+  }
+
+  private static GameDesignPublicationTerminalEvidence terminalWithWorldBinding(
+      GameDesignPublicationTerminalEvidence terminal, UUID publicationFence, String contentDigest) {
+    if (terminal.outcome() != Outcome.PUBLISHED) {
+      throw new IllegalArgumentException("Published terminal fixture required");
+    }
+    var originalWorld = terminal.worldEvidence();
+    var originalRequest = originalWorld.request();
+    var request =
+        new WorldPublishedStartLocationEvidence.Request(
+            originalRequest.targetNamespace(),
+            originalRequest.canonicalTenantId(),
+            originalRequest.canonicalVersionId(),
+            originalRequest.intakeRequestId(),
+            publicationFence == null ? originalRequest.publicationFence() : publicationFence,
+            originalRequest.publicationRequestId(),
+            originalRequest.requestDigest(),
+            originalRequest.versionStateEpoch(),
+            originalRequest.publishWorkflowId(),
+            originalRequest.appliedCommitId(),
+            contentDigest == null ? originalRequest.contentDigest() : contentDigest,
+            originalRequest.digestSchemaVersion(),
+            originalRequest.worldAffectedTuples());
+    var world =
+        new WorldPublishedStartLocationEvidence(
+            request,
+            originalWorld.selectorReceiptBytes(),
+            originalWorld.originalAccountBindingBytes(),
+            originalWorld.appliedResultBytes());
+    var originalOperation =
+        GameDesignPublicationOperationBinding.fromStored(terminal.operationBytes());
+    var operation = new GameDesignPublicationOperationBinding(originalOperation.account(), world);
+    ReleaseContent originalContent = terminal.releaseContent();
+    var participants =
+        originalContent.participantDigests().stream()
+            .map(
+                participant ->
+                    "WORLD_MANAGEMENT".equals(participant.participantKey())
+                        ? new Participant(
+                            participant.participantKey(),
+                            participant.scopeValue(),
+                            participant.baseVersionId(),
+                            participant.appliedCommitId(),
+                            request.contentDigest(),
+                            participant.digestSchemaVersion(),
+                            participant.abilitySchemaDigest(),
+                            participant.errorCode(),
+                            participant.errorMessage())
+                        : participant)
+            .toList();
+    var content =
+        new ReleaseContent(
+            originalContent.canonicalTenantId(),
+            originalContent.canonicalVersionId(),
+            originalContent.publishedReleaseBundleRef(),
+            originalContent.versionNumber(),
+            originalContent.attestationSchemaVersion(),
+            originalContent.publishWorkflowId(),
+            originalContent.manifestHash(),
+            originalContent.manifestSchemaVersion(),
+            originalContent.artifactDigests(),
+            originalContent.requiredManifestAssetKeys(),
+            participants,
+            originalContent.commandDefinitions(),
+            originalContent.generationConfigRevision(),
+            world);
+    return new GameDesignPublicationTerminalEvidence(
+        operation.canonicalBytes(),
+        Outcome.PUBLISHED,
+        content,
+        terminal.publicationVersionStateEpoch());
+  }
+
+  private void completeIsolatedPublicationTerminal(WorldCanonicalInstancePreparation.Input input) {
+    var evidence = isolatedTerminalEvidence(input);
+    publicationTerminalComponent(evidence)
+        .complete(evidence.operationBytes(), evidence.canonicalBytes());
+  }
+
+  private WorldPublicationTerminalService publicationTerminalComponent(
+      GameDesignPublicationTerminalEvidence evidence) {
+    byte[] operationBytes = evidence.operationBytes();
+    return new WorldPublicationTerminalService(
+        new WorldPublicationTerminalRepository(dsl, manager),
+        (suppliedOperation, terminalBytes) -> {
+          var upstream = GameDesignPublicationTerminalEvidence.fromStored(terminalBytes);
+          if (!java.util.Arrays.equals(operationBytes, suppliedOperation)
+              || !java.util.Arrays.equals(upstream.operationBytes(), suppliedOperation)) {
+            throw new IllegalArgumentException("isolated terminal operation mismatch");
+          }
+          return new WorldPublicationTerminalService.VerifiedTerminal(
+              WorldPublicationTerminal.Request.fromStored(terminalBytes),
+              new WorldPublicationTerminalService.HeldTerminalAuthority() {
+                public void requireHeld() {}
+
+                public void close() {}
+              });
+        });
+  }
+
+  private GameDesignPublicationTerminalClient terminalReadClient(
+      GameDesignPublicationTerminalEvidence evidence) {
+    var client = org.mockito.Mockito.mock(GameDesignPublicationTerminalClient.class);
+    org.mockito.Mockito.when(client.read(org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            invocation -> {
+              var request =
+                  invocation.getArgument(
+                      0, GameDesignPublicationTerminalReadEvidence.ReadRequest.class);
+              var status =
+                  evidence.outcome() == Outcome.PUBLISHED
+                      ? GameDesignPublicationTerminalReadEvidence.Status.PUBLISHED
+                      : GameDesignPublicationTerminalReadEvidence.Status.NO_PUBLICATION;
+              return new GameDesignPublicationTerminalReadEvidence.ReadResult(
+                  request, status, Optional.of(evidence));
             });
+    return client;
+  }
+
+  private AuthoredDraftPublishSelectionBinding publicationSelection(
+      WorldDraftTopologyCommitPlan plan, String publicationRequest, long freezeEpoch) {
+    var binding = plan.binding();
+    var intent =
+        new AuthoredDraftPublishSelectionBinding.PublishIntent(
+            binding.target().canonicalTenantId(),
+            binding.target().canonicalVersionId(),
+            publicationRequest,
+            Long.toString(freezeEpoch),
+            "isolated-world-terminal-fixture",
+            binding.requestId(),
+            binding.commitId(),
+            binding.digest());
+    return AuthoredDraftPublishSelectionBinding.capture(
+        intent,
+        binding.target(),
+        binding,
+        new AuthoredDraftPublishSelectionBinding.VisibilityFence(
+            binding.target(),
+            binding.requestId(),
+            binding.commitId(),
+            binding.digest(),
+            "[]",
+            OffsetDateTime.parse("2026-01-01T00:00:00Z")));
+  }
+
+  private PreparedLifecycleFixture materializedLifecycleFixture() {
+    Fixture f = fixture();
+    var original = application(generationFreePlan(f));
+    var selectedRoom =
+        original.plan().graph().nodes().stream()
+            .filter(
+                node ->
+                    node.mutation().getAggregateType()
+                        == WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM)
+            .map(node -> node.templateId())
+            .toList()
+            .getLast();
+    var applied = withStartRoom(original, selectedRoom);
+    appliedComponent().apply(applied);
+    var frozen = capture(applied.plan());
+    var selector =
+        publishedEvidence(
+            publishedSelectors().readCommitted(frozen.request().freeze()).orElseThrow());
+    var input = preparationInput(f, frozen, selector);
+    var materialized = preparationComponent(preparationRepository()).prepare(input);
+    var lifecycleRepository =
+        new WorldCanonicalInstanceLifecycleReadRepository(dsl, manager, associationRepository());
+    var readRequest = lifecycleReadRequest(input);
+    var preparing = lifecycleRepository.read(readRequest).orElseThrow();
+    assertThat(preparing.lifecycleStatus()).isEqualTo("PREPARING");
+    assertThat(preparing.startLocation().roomTemplateId()).isEqualTo(selectedRoom);
+    assertThat(preparing.runtimeRoomInstanceId()).isEqualTo(materialized.runtimeRoomInstanceId());
+    return new PreparedLifecycleFixture(
+        input, materialized, lifecycleRepository, readRequest, preparing);
+  }
+
+  private WorldCanonicalInstanceActivationService canonicalActivationService(
+      PreparedLifecycleFixture fixture,
+      WorldCanonicalInstanceActivationService.ActivationAuthorityVerifier verifier) {
+    return new WorldCanonicalInstanceActivationService(
+        new WorldCanonicalInstanceActivationRepository(dsl, manager, fixture.lifecycleRepository()),
+        verifier);
+  }
+
+  private void assertActivationManifestMismatch(
+      PreparedLifecycleFixture fixture,
+      String savepoint,
+      String manifestTamperSql,
+      String attemptedUpdateSql) {
+    ownerTransaction()
+        .execute(
+            status -> {
+              dsl.execute("SAVEPOINT " + savepoint);
+              var proof = rawCommittedActivationProof(fixture);
+              insertRawActivationOperation(
+                  proof, fixture.materialized().association().worldInstanceId());
+              if (manifestTamperSql != null) {
+                dsl.execute(manifestTamperSql, proof.request().activationRequestId());
+              }
+              assertThatThrownBy(
+                      () ->
+                          dsl.execute(
+                              attemptedUpdateSql,
+                              fixture.materialized().association().worldInstanceId()))
+                  .hasMessageContaining("no exact transaction execution manifest");
+              dsl.execute("ROLLBACK TO SAVEPOINT " + savepoint);
+              assertThat(activationOperationCountForRequest(proof.request().activationRequestId()))
+                  .isZero();
+              assertThat(activationManifestCountForRequest(proof.request().activationRequestId()))
+                  .isZero();
+              return null;
+            });
+  }
+
+  private ActivationProof rawCommittedActivationProof(PreparedLifecycleFixture fixture) {
+    var request =
+        new WorldCanonicalInstanceActivation.Request(UUID.randomUUID(), fixture.preparing());
+    var predictedActive =
+        new WorldCanonicalInstanceLifecycleEvidence(
+            fixture.preparing().request(),
+            fixture.preparing().launchBinding(),
+            fixture.preparing().startLocation(),
+            fixture.preparing().runtimeRoomInstanceId(),
+            "ACTIVE",
+            fixture.preparing().lifecycleEpoch() + 1L,
+            fixture.preparing().rowVersion() + 1L,
+            fixture.preparing().captureId(),
+            fixture.preparing().graphSha256(),
+            fixture.preparing().preparationInputDigest());
+    return new ActivationProof(
+        request,
+        new WorldCanonicalInstanceActivation.Result(
+            request, WorldCanonicalInstanceActivation.Outcome.COMMITTED, null, predictedActive));
+  }
+
+  private void insertRawActivationOperation(ActivationProof proof, long worldInstanceId) {
+    var request = proof.request();
+    var result = proof.result();
+    byte[] requestBytes = request.canonicalRequestBytes();
+    byte[] resultBytes = result.canonicalBytes();
+    dsl.execute(
+        "INSERT INTO world_canonical_instance_activation_operation "
+            + "(activation_request_id,request_digest,request_bytes,preparing_evidence_bytes,"
+            + "canonical_game_instance_id,world_instance_id,expected_lifecycle_epoch,expected_row_version,"
+            + "outcome,terminal_code,result_lifecycle_epoch,result_row_version,result_bytes,result_digest) "
+            + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        request.activationRequestId(),
+        request.requestDigest(),
+        requestBytes,
+        request.preparingEvidenceBytes(),
+        request.canonicalGameInstanceId(),
+        worldInstanceId,
+        request.expectedLifecycleEpoch(),
+        request.expectedRowVersion(),
+        "COMMITTED",
+        null,
+        result.lifecycleEvidence().lifecycleEpoch(),
+        result.lifecycleEvidence().rowVersion(),
+        resultBytes,
+        sha256Digest(resultBytes));
+  }
+
+  private long activationOperationCountForRequest(UUID requestId) {
+    return Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT count(*) FROM world_canonical_instance_activation_operation WHERE activation_request_id=?",
+                requestId))
+        .get(0, Long.class);
+  }
+
+  private long activationManifestCount(UUID canonicalGameInstanceId) {
+    return Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT count(*) FROM world_canonical_activation_execution_manifest WHERE canonical_game_instance_id=?",
+                canonicalGameInstanceId))
+        .get(0, Long.class);
+  }
+
+  private long activationManifestCountForRequest(UUID requestId) {
+    return Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT count(*) FROM world_canonical_activation_execution_manifest WHERE activation_request_id=?",
+                requestId))
+        .get(0, Long.class);
+  }
+
+  /**
+   * Synthetic fixture fence only; it does not authenticate live source, release, or Account state.
+   */
+  private static WorldCanonicalInstanceActivationService.HeldActivationAuthority
+      stipulatedActivationAuthority() {
+    return new WorldCanonicalInstanceActivationService.HeldActivationAuthority() {
+      private boolean open = true;
+
+      public void requireHeld() {
+        assertThat(open).isTrue();
+      }
+
+      public void close() {
+        open = false;
+      }
+    };
+  }
+
+  private static String sha256Digest(byte[] bytes) {
+    try {
+      return "sha256:"
+          + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+    } catch (NoSuchAlgorithmException unavailable) {
+      throw new AssertionError(unavailable);
+    }
   }
 
   private byte[] preparationRows(UUID instance) {
@@ -1192,6 +2712,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   private WorldCanonicalFrozenTopology capture(WorldDraftTopologyCommitPlan plan) {
     var owner = plan.ownerBinding();
     String publicationRequest = "selector-" + UUID.randomUUID();
+    var selection = publicationSelection(plan, publicationRequest, 1L);
     var evidence =
         new WorldDesignPublicationFenceEvidence(
             owner.targetNamespace(),
@@ -1206,7 +2727,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             owner.sourceEvidenceDigest(),
             owner.intakeReceiptDigest(),
             publicationRequest,
-            "a".repeat(64),
+            selection.digest().substring("sha256:".length()),
             1,
             "publish:" + owner.canonicalTenantId() + ":publish-request:" + publicationRequest);
     var attempt =
@@ -2847,6 +4368,106 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     }
   }
 
+  private static TerminalReadCollector readPublicationTerminalAs(
+      WorldPublicationTerminalReadGrpcService service,
+      ReadWorldPublicationTerminalRequest request,
+      String peerNamespace) {
+    return readPublicationTerminalAs(service, request, "account-service", peerNamespace);
+  }
+
+  private static TerminalReadCollector readPublicationTerminalAs(
+      WorldPublicationTerminalReadGrpcService service,
+      ReadWorldPublicationTerminalRequest request,
+      String peerService,
+      String peerNamespace) {
+    TerminalReadCollector response = new TerminalReadCollector();
+    Context context =
+        Context.current()
+            .withValue(
+                GrpcPeerIdentity.CONTEXT_KEY,
+                new GrpcPeerIdentity(
+                    "spiffe://firemud/ns/" + peerNamespace + "/sa/" + peerService,
+                    peerNamespace,
+                    peerService));
+    Context previous = context.attach();
+    try {
+      service.readWorldPublicationTerminal(request, response);
+    } finally {
+      context.detach(previous);
+    }
+    return response;
+  }
+
+  private static TerminalCompletionCollector completePublicationTerminalAs(
+      WorldPublicationTerminalCompletionGrpcService service,
+      net.firedevops.firemud.worldmanagement.v1.CompleteWorldPublicationTerminalRequest request,
+      String peerNamespace) {
+    TerminalCompletionCollector response = new TerminalCompletionCollector();
+    Context context =
+        Context.current()
+            .withValue(
+                GrpcPeerIdentity.CONTEXT_KEY,
+                new GrpcPeerIdentity(
+                    "spiffe://firemud/ns/" + peerNamespace + "/sa/game-design-service",
+                    peerNamespace,
+                    "game-design-service"));
+    Context previous = context.attach();
+    try {
+      service.completeWorldPublicationTerminal(request, response);
+    } finally {
+      context.detach(previous);
+    }
+    return response;
+  }
+
+  private static final class TerminalReadCollector
+      implements StreamObserver<ReadWorldPublicationTerminalResponse> {
+    private ReadWorldPublicationTerminalResponse value;
+    private Status.Code error;
+    private boolean completed;
+
+    @Override
+    public void onNext(ReadWorldPublicationTerminalResponse response) {
+      value = response;
+    }
+
+    @Override
+    public void onError(Throwable failure) {
+      error = Status.fromThrowable(failure).getCode();
+    }
+
+    @Override
+    public void onCompleted() {
+      completed = true;
+    }
+  }
+
+  private static final class TerminalCompletionCollector
+      implements StreamObserver<
+          net.firedevops.firemud.worldmanagement.v1.CompleteWorldPublicationTerminalResponse> {
+    private net.firedevops.firemud.worldmanagement.v1.CompleteWorldPublicationTerminalResponse
+        value;
+    private Status.Code error;
+    private boolean completed;
+
+    @Override
+    public void onNext(
+        net.firedevops.firemud.worldmanagement.v1.CompleteWorldPublicationTerminalResponse
+            response) {
+      value = response;
+    }
+
+    @Override
+    public void onError(Throwable failure) {
+      error = Status.fromThrowable(failure).getCode();
+    }
+
+    @Override
+    public void onCompleted() {
+      completed = true;
+    }
+  }
+
   private static final class LifecycleReadCollector
       implements StreamObserver<
           net.firedevops.firemud.worldmanagement.v1.ReadWorldCanonicalInstanceLifecycleResponse> {
@@ -2877,4 +4498,18 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
       WorldAuthoredSourceIntakeReceipt intake,
       WorldAuthoredVersionIdentityReceipt version,
       OwnerBinding owner) {}
+
+  private record HistoricalSchemaFixture(
+      String schema, WorldDraftGraphApplicationPostgresIntegrationTest database) {}
+
+  private record ActivationProof(
+      WorldCanonicalInstanceActivation.Request request,
+      WorldCanonicalInstanceActivation.Result result) {}
+
+  private record PreparedLifecycleFixture(
+      WorldCanonicalInstancePreparation.Input input,
+      WorldCanonicalInstancePreparation.Result materialized,
+      WorldCanonicalInstanceLifecycleReadRepository lifecycleRepository,
+      WorldCanonicalInstanceLifecycleEvidence.Request readRequest,
+      WorldCanonicalInstanceLifecycleEvidence preparing) {}
 }

@@ -86,6 +86,15 @@ public class WorldCompleteLaunchBindingRepository {
     return readValidated(namespace, canonicalTenantId, controlPlaneRequestId);
   }
 
+  /**
+   * Reconstructs the same immutable binding inside the writable canonical activation transaction.
+   */
+  Optional<StoredBinding> readInOwnerActivationTransaction(
+      String namespace, UUID canonicalTenantId, String controlPlaneRequestId) {
+    requireWritableActivationTransaction();
+    return readValidated(namespace, canonicalTenantId, controlPlaneRequestId);
+  }
+
   private Optional<StoredBinding> readValidated(
       String namespace, UUID canonicalTenantId, String controlPlaneRequestId) {
     validateKey(namespace, canonicalTenantId, controlPlaneRequestId);
@@ -405,6 +414,27 @@ public class WorldCompleteLaunchBindingRepository {
         || !"on".equals(state.get("read_only", String.class))) {
       throw new IllegalStateException(
           "World complete launch binding snapshot read requires a read-only REPEATABLE READ owner transaction");
+    }
+  }
+
+  private void requireWritableActivationTransaction() {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isCurrentTransactionReadOnly()
+        || !Integer.valueOf(Connection.TRANSACTION_READ_COMMITTED)
+            .equals(TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())) {
+      throw new IllegalStateException(
+          "World complete launch binding activation read requires a writable READ COMMITTED owner transaction");
+    }
+    Record state =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT current_setting('transaction_isolation') AS isolation, "
+                    + "current_setting('transaction_read_only') AS read_only"),
+            "World transaction state query returned no row");
+    if (!"read committed".equals(state.get("isolation", String.class))
+        || !"off".equals(state.get("read_only", String.class))) {
+      throw new IllegalStateException(
+          "World complete launch binding activation read requires a writable READ COMMITTED owner transaction");
     }
   }
 
