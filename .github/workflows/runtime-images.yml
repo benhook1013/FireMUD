@@ -625,42 +625,108 @@ jobs:
             };
 
             const loadExistingRuntimeRuns = async () => {
-              const inventory = [];
+              const readInventory = async (createdSince) => {
+                const inventory = [];
+                let complete = true;
+                let incompleteReason = null;
+                for (const event of runtimeRunEvents) {
+                  const response = await github.rest.actions.listWorkflowRuns({
+                    ...context.repo,
+                    workflow_id: "runtime-images.yml",
+                    event,
+                    created: `${createdSince}..*`,
+                    per_page: runtimeRunPageSize,
+                    page: 1,
+                  });
+                  const payload = response?.data;
+                  if (!payload || !Number.isInteger(payload.total_count) ||
+                    payload.total_count < 0 || !Array.isArray(payload.workflow_runs)) {
+                    throw new Error(`runtime-images ${event} recent run inventory is malformed`);
+                  }
+                  if (payload.total_count > runtimeRunPageSize) {
+                    complete = false;
+                    incompleteReason ??= `runtime-images ${event} has more than ${runtimeRunPageSize} runs since ${createdSince}`;
+                  }
+                  const expectedPageLength = Math.min(payload.total_count, runtimeRunPageSize);
+                  if (payload.workflow_runs.length !== expectedPageLength) {
+                    throw new Error(`runtime-images ${event} recent run inventory is incomplete`);
+                  }
+                  inventory.push(...payload.workflow_runs);
+                }
+                return {complete, runs: inventory, reason: incompleteReason};
+              };
+
               const createdSince = new Date(Date.now() - runtimeRunLookbackMilliseconds).toISOString();
-              let complete = true;
-              let incompleteReason = null;
-              for (const event of runtimeRunEvents) {
-                const response = await github.rest.actions.listWorkflowRuns({
-                  ...context.repo,
-                  workflow_id: "runtime-images.yml",
-                  event,
-                  created: `${createdSince}..*`,
-                  per_page: runtimeRunPageSize,
-                  page: 1,
-                });
-                const payload = response?.data;
-                if (!payload || !Number.isInteger(payload.total_count) ||
-                  payload.total_count < 0 || !Array.isArray(payload.workflow_runs)) {
-                  throw new Error(`runtime-images ${event} recent run inventory is malformed`);
-                }
-                if (payload.total_count > runtimeRunPageSize) {
-                  complete = false;
-                  incompleteReason ??= `runtime-images ${event} has more than ${runtimeRunPageSize} recent runs`;
-                }
-                const expectedPageLength = Math.min(payload.total_count, runtimeRunPageSize);
-                if (payload.workflow_runs.length !== expectedPageLength) {
-                  throw new Error(`runtime-images ${event} recent run inventory is incomplete`);
-                }
-                inventory.push(...payload.workflow_runs);
+              const initial = await readInventory(createdSince);
+              if (initial.complete) {
+                return initial;
               }
-              return {complete, runs: inventory, reason: incompleteReason};
+
+              const inFlightStatuses = ["queued", "waiting", "requested", "pending", "in_progress"];
+              const inFlightRuns = initial.runs.filter((run) => inFlightStatuses.includes(run?.status));
+              if (inFlightRuns.length === 0) {
+                return initial;
+              }
+
+              const validTimestamp = (value) => typeof value === "string" &&
+                /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(value) &&
+                Number.isFinite(Date.parse(value));
+              if (inFlightRuns.some((run) => !runtimeRunEvents.includes(run.event) ||
+                !Number.isSafeInteger(run.id) || run.id <= 0 || !validTimestamp(run.created_at))) {
+                return {
+                  ...initial,
+                  reason: "truncated recent inventory contains an in-flight run without a valid event, id, or creation timestamp",
+                };
+              }
+
+              const refinementSince = inFlightRuns
+                .map((run) => run.created_at)
+                .sort()[0];
+              // The inclusive created lower bound makes the refined pages a complete candidate set without relying on API ordering.
+              const refined = await readInventory(refinementSince);
+              if (!refined.complete) {
+                return {
+                  ...refined,
+                  reason: refined.reason || "refined runtime run inventory is incomplete",
+                };
+              }
+              const refinedIds = new Set(refined.runs.map((run) => `${run?.event}:${run?.id}`));
+              if (inFlightRuns.some((run) => !refinedIds.has(`${run.event}:${run.id}`))) {
+                return {
+                  ...refined,
+                  complete: false,
+                  reason: "refined inventory did not retain every initially observed in-flight run",
+                };
+              }
+              return refined;
             };
 
             const findExactExistingProducer = (tuple, inventory) => {
+              const expectedWorkflowPath = ".github/workflows/runtime-images.yml";
+              const workflowPathMatches = (path) => {
+                if (path === expectedWorkflowPath) {
+                  return true;
+                }
+                const prefix = `${expectedWorkflowPath}@`;
+                if (typeof path !== "string" || !path.startsWith(prefix)) {
+                  return false;
+                }
+                const ref = path.slice(prefix.length);
+                if (ref.length === 0 || /[\u0000-\u0020\u007f]/.test(ref) ||
+                  ["~", "^", ":", "?", "*", "[", "]", "\\"].some((character) => ref.includes(character)) ||
+                  ref.includes("..") || ref.includes("@{")) {
+                  return false;
+                }
+                return ref.split("/").every((part) =>
+                  part.length > 0 && part !== "." && part !== ".." && part !== "@" &&
+                  !part.startsWith(".") &&
+                  !part.endsWith(".") && !part.endsWith(".lock")
+                );
+              };
               const expectedTitle =
                 `Build Runtime Images secure-pr-artifact pr-${tuple.prNumber} ` +
                 `base-${tuple.baseSha} head-${tuple.headSha} merge-${tuple.mergeSha} mode-required`;
-              const matching = inventory.filter((run) =>
+              const matching = inventory.runs.filter((run) =>
                 run?.display_title === expectedTitle
               );
               const ordered = [];
@@ -671,7 +737,7 @@ jobs:
                   typeof run.created_at !== "string" ||
                   !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(run.created_at) ||
                   !Number.isFinite(Date.parse(run.created_at)) ||
-                  run.path !== ".github/workflows/runtime-images.yml" ||
+                  !workflowPathMatches(run.path) ||
                   !["Build Runtime Images", expectedTitle].includes(run.name) ||
                   run.repository?.full_name !== context.payload.repository.full_name ||
                   run.head_repository?.full_name !== context.payload.repository.full_name) {
@@ -706,20 +772,8 @@ jobs:
                 }
                 return [newest];
               }
-              if (newest.status === "completed" && newest.conclusion === "success") {
-                return [newest];
-              }
-              if (newest.status === "completed" && [
-                "failure",
-                "cancelled",
-                "timed_out",
-                "action_required",
-                "neutral",
-                "skipped",
-                "stale",
-                "startup_failure",
-              ].includes(newest.conclusion)) {
-                // The newest known non-success is retryable; older success cannot stand in for it.
+              if (newest.status === "completed") {
+                // Completed source success does not prove publication remains usable; preserve recovery dispatch.
                 return [];
               }
               throw new Error(`run ${newest.id} has an unknown status and cannot be classified`);
@@ -779,8 +833,10 @@ jobs:
                 }
                 if (!fallbackReason) {
                   try {
-                    existingProducers = findExactExistingProducer(tuple, inventory.runs);
-                    if (existingProducers.length === 0 && !inventory.complete) {
+                    existingProducers = findExactExistingProducer(tuple, inventory);
+                    if (!inventory.complete) {
+                      // The REST contract does not specify a sort order, so a truncated page cannot prove omitted runs are older.
+                      existingProducers = [];
                       fallbackReason = inventory.reason || "recent run inventory is incomplete";
                     }
                   } catch (error) {
@@ -795,10 +851,10 @@ jobs:
                 if (existingProducers.length > 0) {
                   const producer = existingProducers[0];
                   core.info(
-                    `Skipping duplicate PR runtime refresh for #${tuple.prNumber}: exact tuple producer ${producer.id} is ${producer.status === "completed" ? "already successful" : producer.status}.`
+                    `Skipping duplicate PR runtime refresh for #${tuple.prNumber}: exact tuple producer ${producer.id} remains ${producer.status}.`
                   );
                 } else {
-                  core.info(`No exact producer was found in the bounded recent inventory; dispatching required PR runtime refresh for #${tuple.prNumber} (${tuple.baseSha} / ${tuple.headSha} / ${tuple.mergeSha}).`);
+                  core.info(`No reusable in-flight exact producer was verified in the bounded recent inventory; dispatching required PR runtime refresh for #${tuple.prNumber} (${tuple.baseSha} / ${tuple.headSha} / ${tuple.mergeSha}).`);
                   await github.rest.repos.createDispatchEvent({
                     ...context.repo,
                     event_type: "pr-runtime-base-refresh",
