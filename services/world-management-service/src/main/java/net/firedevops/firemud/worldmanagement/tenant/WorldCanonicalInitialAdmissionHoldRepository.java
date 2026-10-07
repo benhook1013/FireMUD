@@ -5,7 +5,6 @@ import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
-import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.HoldIdentity;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.InitialAdmissionOrigin;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.Request;
@@ -95,8 +94,7 @@ public final class WorldCanonicalInitialAdmissionHoldRepository {
 
           WorldCanonicalInstanceAssociation association =
               associationRepository
-                  .readOwnerAssociationInActivationTransaction(
-                      request.canonicalGameInstanceId())
+                  .readOwnerAssociationInActivationTransaction(request.canonicalGameInstanceId())
                   .orElseThrow(
                       () ->
                           new HoldConflictException(
@@ -110,8 +108,7 @@ public final class WorldCanonicalInitialAdmissionHoldRepository {
             return verifyStoredIdentity(existing, request, association);
           }
 
-          HoldIdentity allocated =
-              new HoldIdentity(request, UUID.randomUUID(), UUID.randomUUID());
+          HoldIdentity allocated = new HoldIdentity(request, UUID.randomUUID(), UUID.randomUUID());
           int inserted = insert(request, privateKeys, allocated);
 
           Record stored = readByOwnerRequest(privateKeys.privateTenantKey(), request);
@@ -130,8 +127,8 @@ public final class WorldCanonicalInitialAdmissionHoldRepository {
   }
 
   /**
-   * Reads immutable acquisition identity from an independent read-only owner snapshot.
-   * A present result is historical identity only, not current lifecycle or admission proof.
+   * Reads immutable acquisition identity from an independent read-only owner snapshot. A present
+   * result is historical identity only, not current lifecycle or admission proof.
    */
   public Optional<HoldIdentity> readIdentity(Request request) {
     Objects.requireNonNull(request, "request");
@@ -147,8 +144,7 @@ public final class WorldCanonicalInitialAdmissionHoldRepository {
               WorldCanonicalInstanceAssociation association = maybeAssociation.orElseThrow();
               requireAssociationMatchesRequest(request, association);
               Record row =
-                  readByOwnerRequest(
-                      association.worldPrepareFields().privateTenantKey(), request);
+                  readByOwnerRequest(association.worldPrepareFields().privateTenantKey(), request);
               return row == null ? null : verifyStoredIdentity(row, request, association);
             }));
   }
@@ -231,16 +227,14 @@ public final class WorldCanonicalInitialAdmissionHoldRepository {
 
       var privateKeys = association.worldPrepareFields();
       if (required(row, "tenant_id", Long.class) != privateKeys.privateTenantKey()
-          || required(row, "game_instance_id", Long.class)
-              != privateKeys.privateGameInstanceKey()
+          || required(row, "game_instance_id", Long.class) != privateKeys.privateGameInstanceKey()
           || required(row, "version_id", Long.class) != privateKeys.localVersionKey()
           || !required(row, "realm_uuid", UUID.class).equals(expected.realmId())
           || !required(row, "playable_state_namespace_uuid", UUID.class)
               .equals(expected.playableStateNamespaceId())
           || !required(row, "playable_state_scope", String.class)
               .equals(expected.playableStateScope())
-          || required(row, "active_lifecycle_epoch", Long.class)
-              != expected.activeLifecycleEpoch()
+          || required(row, "active_lifecycle_epoch", Long.class) != expected.activeLifecycleEpoch()
           || !required(row, "initial_admission_request_id", String.class)
               .equals(expected.initialAdmissionRequestId())
           || !required(row, "request_digest", String.class)
@@ -251,8 +245,7 @@ public final class WorldCanonicalInitialAdmissionHoldRepository {
               != expected.expectedCatalogRevision()
           || !required(row, "canonical_target_namespace", String.class)
               .equals(expected.targetNamespace())
-          || !required(row, "canonical_tenant_id", UUID.class)
-              .equals(expected.canonicalTenantId())
+          || !required(row, "canonical_tenant_id", UUID.class).equals(expected.canonicalTenantId())
           || !required(row, "canonical_world_slug", String.class).equals(expected.worldSlug())
           || !required(row, "canonical_game_instance_id", UUID.class)
               .equals(expected.canonicalGameInstanceId())

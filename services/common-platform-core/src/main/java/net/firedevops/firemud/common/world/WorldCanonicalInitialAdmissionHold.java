@@ -93,8 +93,7 @@ public final class WorldCanonicalInitialAdmissionHold {
         throw new IllegalArgumentException("targetNamespace must be a valid workload namespace");
       }
       requireNonNil(canonicalTenantId, "canonicalTenantId");
-      AuthoredWorldSourceDigest.validateReadSelector(
-          targetNamespace, canonicalTenantId, worldSlug);
+      AuthoredWorldSourceDigest.validateReadSelector(targetNamespace, canonicalTenantId, worldSlug);
       requireNonNil(realmId, "realmId");
       requireNonNil(playableStateNamespaceId, "playableStateNamespaceId");
       if (!"SHARED".equals(playableStateScope)) {
@@ -113,7 +112,8 @@ public final class WorldCanonicalInitialAdmissionHold {
         throw new IllegalArgumentException("expectedCatalogRevision must be positive");
       }
       if (expectedPriorPointerVersion != null && expectedPriorPointerVersion <= 0) {
-        throw new IllegalArgumentException("expectedPriorPointerVersion must be positive when present");
+        throw new IllegalArgumentException(
+            "expectedPriorPointerVersion must be positive when present");
       }
       if (initialAdmissionOrigin == InitialAdmissionOrigin.NO_PRIOR_POINTER
           && expectedPriorPointerVersion != null) {
@@ -122,8 +122,7 @@ public final class WorldCanonicalInitialAdmissionHold {
       }
       if (initialAdmissionOrigin == InitialAdmissionOrigin.EXPECT_CLOSED
           && expectedPriorPointerVersion == null) {
-        throw new IllegalArgumentException(
-            "EXPECT_CLOSED requires expectedPriorPointerVersion");
+        throw new IllegalArgumentException("EXPECT_CLOSED requires expectedPriorPointerVersion");
       }
     }
 
@@ -135,7 +134,8 @@ public final class WorldCanonicalInitialAdmissionHold {
       try {
         return Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(envelope));
       } catch (IOException impossible) {
-        throw new IllegalStateException("Canonical initial-admission request cannot be encoded", impossible);
+        throw new IllegalStateException(
+            "Canonical initial-admission request cannot be encoded", impossible);
       }
     }
 
@@ -172,11 +172,13 @@ public final class WorldCanonicalInitialAdmissionHold {
                 positiveLong(text(value, "expectedCatalogRevision"), "expectedCatalogRevision"),
                 optionalPositiveLong(value, "expectedPriorPointerVersion"));
         if (!Arrays.equals(stored, request.canonicalRequestBytes())) {
-          throw new IllegalArgumentException("Canonical initial-admission request is not canonical");
+          throw new IllegalArgumentException(
+              "Canonical initial-admission request is not canonical");
         }
         return request;
       } catch (tools.jackson.core.JacksonException invalid) {
-        throw new IllegalArgumentException("Canonical initial-admission request is invalid", invalid);
+        throw new IllegalArgumentException(
+            "Canonical initial-admission request is invalid", invalid);
       }
     }
   }
@@ -211,7 +213,8 @@ public final class WorldCanonicalInitialAdmissionHold {
       try {
         return Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(value));
       } catch (IOException impossible) {
-        throw new IllegalStateException("Canonical initial-admission hold identity cannot be encoded", impossible);
+        throw new IllegalStateException(
+            "Canonical initial-admission hold identity cannot be encoded", impossible);
       }
     }
 
@@ -227,7 +230,8 @@ public final class WorldCanonicalInitialAdmissionHold {
         Request request = Request.fromStored(decodeBase64(root, "requestBytesBase64"));
         String storedDigest = text(root, "holdBindingDigest");
         if (!request.holdBindingDigest().equals(storedDigest)) {
-          throw new IllegalArgumentException("Initial-admission hold binding digest differs from request");
+          throw new IllegalArgumentException(
+              "Initial-admission hold binding digest differs from request");
         }
         HoldIdentity identity =
             new HoldIdentity(
@@ -235,11 +239,13 @@ public final class WorldCanonicalInitialAdmissionHold {
                 parseUuid(text(root, "holdId"), "holdId"),
                 parseUuid(text(root, "holdFence"), "holdFence"));
         if (!Arrays.equals(stored, identity.canonicalBytes())) {
-          throw new IllegalArgumentException("Canonical initial-admission hold identity is not canonical");
+          throw new IllegalArgumentException(
+              "Canonical initial-admission hold identity is not canonical");
         }
         return identity;
       } catch (tools.jackson.core.JacksonException invalid) {
-        throw new IllegalArgumentException("Canonical initial-admission hold identity is invalid", invalid);
+        throw new IllegalArgumentException(
+            "Canonical initial-admission hold identity is invalid", invalid);
       }
     }
   }
@@ -284,7 +290,8 @@ public final class WorldCanonicalInitialAdmissionHold {
       return null;
     }
     if (!value.isTextual()) {
-      throw new IllegalArgumentException(field + " must be canonical positive decimal text or null");
+      throw new IllegalArgumentException(
+          field + " must be canonical positive decimal text or null");
     }
     return positiveLong(value.textValue(), field);
   }
@@ -320,7 +327,9 @@ public final class WorldCanonicalInitialAdmissionHold {
   }
 
   private static void requireBoundedText(String value, String field, int maximumCodePoints) {
-    if (value == null || value.isBlank() || value.codePointCount(0, value.length()) > maximumCodePoints) {
+    if (value == null
+        || value.isBlank()
+        || value.codePointCount(0, value.length()) > maximumCodePoints) {
       throw new IllegalArgumentException(field + " must be nonempty and bounded");
     }
   }
@@ -373,7 +382,8 @@ public final class WorldCanonicalInitialAdmissionHold {
 
   private static String sha256(byte[] bytes) {
     try {
-      return "sha256:" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+      return "sha256:"
+          + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
     } catch (NoSuchAlgorithmException unavailable) {
       throw new IllegalStateException("SHA-256 is unavailable", unavailable);
     }

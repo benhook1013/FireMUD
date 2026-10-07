@@ -1,9 +1,10 @@
-package unit.net.firedevops.firemud.worldmanagement.tenant;
+package net.firedevops.firemud.worldmanagement.tenant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -55,13 +56,15 @@ class WorldCanonicalInitialAdmissionHoldRepositoryTest {
     Fixture fixture = fixture(noPriorRequest(), activeLifecycle("ACTIVE", 7L), null);
     TransactionSynchronizationManager.setActualTransactionActive(true);
 
-    assertThatThrownBy(() -> fixture.repository.acquire(noPriorRequest(), selector(noPriorRequest())))
+    assertThatThrownBy(
+            () -> fixture.repository.acquire(noPriorRequest(), selector(noPriorRequest())))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("must not join an ambient transaction");
     TransactionSynchronizationManager.setActualTransactionActive(false);
 
     TransactionSynchronizationManager.initSynchronization();
-    assertThatThrownBy(() -> fixture.repository.acquire(noPriorRequest(), selector(noPriorRequest())))
+    assertThatThrownBy(
+            () -> fixture.repository.acquire(noPriorRequest(), selector(noPriorRequest())))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("must not join an ambient transaction");
 
@@ -83,10 +86,8 @@ class WorldCanonicalInitialAdmissionHoldRepositoryTest {
     assertThat(result.canonicalRequestBytes()).containsExactly(request.canonicalRequestBytes());
     assertThat(result.holdBindingDigest()).isEqualTo(request.holdBindingDigest());
     verify(fixture.dsl, never()).execute(anyString(), any(Object[].class));
-    verify(fixture.lifecycle)
-        .readForActivationInOwnerTransaction(selector(request));
-    verify(fixture.associations)
-        .readOwnerAssociationInActivationTransaction(CANONICAL_INSTANCE);
+    verify(fixture.lifecycle).readForActivationInOwnerTransaction(selector(request));
+    verify(fixture.associations).readOwnerAssociationInActivationTransaction(CANONICAL_INSTANCE);
   }
 
   @Test
@@ -103,7 +104,8 @@ class WorldCanonicalInitialAdmissionHoldRepositoryTest {
     Fixture legacyFixture =
         fixture(original, activeLifecycle("ACTIVE", 7L), legacyStoredRow(original));
     assertThatThrownBy(() -> legacyFixture.repository.acquire(original, selector(original)))
-        .isInstanceOf(WorldCanonicalInitialAdmissionHoldRepository.InvalidHoldIdentityException.class);
+        .isInstanceOf(
+            WorldCanonicalInitialAdmissionHoldRepository.InvalidHoldIdentityException.class);
     verify(legacyFixture.dsl, never()).execute(anyString(), any(Object[].class));
   }
 
@@ -150,7 +152,7 @@ class WorldCanonicalInitialAdmissionHoldRepositoryTest {
     fixture.holdRow.set(null);
     doAnswer(
             invocation -> {
-              Object[] bindings = invocation.getArgument(1);
+              Object[] bindings = (Object[]) invocation.getRawArguments()[1];
               insertedRow.set(
                   storedRow(
                       request,
@@ -198,7 +200,7 @@ class WorldCanonicalInitialAdmissionHoldRepositoryTest {
     AtomicReference<Object[]> candidateBindings = new AtomicReference<>();
     doAnswer(
             invocation -> {
-              candidateBindings.set(invocation.getArgument(1));
+              candidateBindings.set((Object[]) invocation.getRawArguments()[1]);
               fixture.holdRow.set(storedRow(request, HOLD_ID, HOLD_FENCE));
               return 0;
             })
@@ -217,15 +219,17 @@ class WorldCanonicalInitialAdmissionHoldRepositoryTest {
   @Test
   void identityReadReturnsHistoricalAcquisitionWithoutUsingCurrentLifecycleRead() {
     Request request = noPriorRequest();
-    Fixture fixture = fixture(request, activeLifecycle("TERMINATED", 20L), storedRow(request, HOLD_ID, HOLD_FENCE));
+    Fixture fixture =
+        fixture(
+            request, activeLifecycle("TERMINATED", 20L), storedRow(request, HOLD_ID, HOLD_FENCE));
 
     Optional<HoldIdentity> result = fixture.repository.readIdentity(request);
 
     assertThat(result).contains(new HoldIdentity(request, HOLD_ID, HOLD_FENCE));
     verify(fixture.lifecycle, never())
-        .readForActivationInOwnerTransaction(any(WorldCanonicalInstanceLifecycleEvidence.Request.class));
-    verify(fixture.associations)
-        .readOwnerAssociationInOwnerTransaction(CANONICAL_INSTANCE);
+        .readForActivationInOwnerTransaction(
+            any(WorldCanonicalInstanceLifecycleEvidence.Request.class));
+    verify(fixture.associations).readOwnerAssociationInOwnerTransaction(CANONICAL_INSTANCE);
   }
 
   private static void assertStoredRowDenied(Request request, Record storedRow) {
@@ -254,13 +258,11 @@ class WorldCanonicalInitialAdmissionHoldRepositoryTest {
         .thenReturn(Optional.of(association));
     when(associations.readOwnerAssociationInOwnerTransaction(CANONICAL_INSTANCE))
         .thenReturn(Optional.of(association));
+    when(dsl.fetchOne(contains("current_setting"))).thenAnswer(invocation -> transactionState());
     when(dsl.fetchOne(anyString(), any(Object[].class)))
         .thenAnswer(
             invocation -> {
               String sql = invocation.getArgument(0);
-              if (sql.contains("current_setting")) {
-                return transactionState();
-              }
               if (sql.contains("FROM initial_admission_bind_hold")) {
                 return holdRow.get();
               }
@@ -268,8 +270,7 @@ class WorldCanonicalInitialAdmissionHoldRepositoryTest {
             });
 
     return new Fixture(
-        new WorldCanonicalInitialAdmissionHoldRepository(
-            dsl, manager, associations, lifecycle),
+        new WorldCanonicalInitialAdmissionHoldRepository(dsl, manager, associations, lifecycle),
         dsl,
         manager,
         associations,
@@ -349,7 +350,8 @@ class WorldCanonicalInitialAdmissionHoldRepositoryTest {
     return request(REQUEST_DIGEST, InitialAdmissionOrigin.EXPECT_CLOSED, pointerVersion);
   }
 
-  private static Request request(String digest, InitialAdmissionOrigin origin, Long priorPointerVersion) {
+  private static Request request(
+      String digest, InitialAdmissionOrigin origin, Long priorPointerVersion) {
     return new Request(
         "prod",
         TENANT,

@@ -1,7 +1,12 @@
 -- Canonical first-open holds retain their complete owner request alongside the legacy numeric
 -- termination-blocking record. Retained V23 rows intentionally remain unmapped.
+-- PostgreSQL auto-names V23's CHECK; H2 metadata simulator has a different name.
+-- [jooq ignore start]
 ALTER TABLE initial_admission_bind_hold
-    DROP CONSTRAINT initial_admission_bind_hold_expected_no_prior_pointer_check,
+    DROP CONSTRAINT initial_admission_bind_hold_expected_no_prior_pointer_check;
+-- [jooq ignore stop]
+
+ALTER TABLE initial_admission_bind_hold
     ADD COLUMN canonical_target_namespace VARCHAR(63),
     ADD COLUMN canonical_tenant_id UUID,
     ADD COLUMN canonical_world_slug VARCHAR(120),

@@ -72,10 +72,10 @@ import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.world.CanonicalWorldInstancePreparationClient;
 import net.firedevops.firemud.common.world.CanonicalWorldInstancePreparationGrpcCodec;
 import net.firedevops.firemud.common.world.RoomTemplateRef;
+import net.firedevops.firemud.common.world.WorldCanonicalInitialPlayerLocation;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceActivation;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleGrpcCodec;
-import net.firedevops.firemud.common.world.WorldCanonicalInitialPlayerLocation;
 import net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence;
 import net.firedevops.firemud.common.world.WorldPublicationTerminalCompletionGrpcCodec;
 import net.firedevops.firemud.common.world.WorldPublicationTerminalReadEvidence;
@@ -2084,9 +2084,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     assertThat(current.runtimeRoomInstanceId())
         .isEqualTo(fixture.activeEvidence().runtimeRoomInstanceId());
     assertThat(current.worldRegionInstanceId()).isPositive();
-    assertThat(current.canonicalRegionInstanceId())
-        .isNotNull()
-        .isNotEqualTo(new UUID(0L, 0L));
+    assertThat(current.canonicalRegionInstanceId()).isNotNull().isNotEqualTo(new UUID(0L, 0L));
     assertThat(current.operationalRegionId()).isNotEqualTo(new UUID(0L, 0L));
     assertThat(current.canonicalRegionInstanceId()).isNotEqualTo(current.operationalRegionId());
     assertThat(current.placementResult().canonicalBytes()).containsExactly(placed.canonicalBytes());

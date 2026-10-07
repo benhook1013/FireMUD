@@ -94,10 +94,16 @@ public final class WorldCanonicalInitialAdmissionHoldGrpcService
           "Canonical World initial-admission hold storage is temporarily unavailable");
       return;
     } catch (DataAccessException storageFailure) {
-      fail(responseObserver, Status.INTERNAL, "Canonical World initial-admission hold storage failed");
+      fail(
+          responseObserver,
+          Status.INTERNAL,
+          "Canonical World initial-admission hold storage failed");
       return;
     } catch (RuntimeException failure) {
-      fail(responseObserver, Status.INTERNAL, "Canonical World initial-admission hold acquisition failed");
+      fail(
+          responseObserver,
+          Status.INTERNAL,
+          "Canonical World initial-admission hold acquisition failed");
       return;
     }
 
@@ -166,7 +172,10 @@ public final class WorldCanonicalInitialAdmissionHoldGrpcService
           "Canonical World initial-admission hold storage is temporarily unavailable");
       return;
     } catch (DataAccessException storageFailure) {
-      fail(responseObserver, Status.INTERNAL, "Canonical World initial-admission hold storage failed");
+      fail(
+          responseObserver,
+          Status.INTERNAL,
+          "Canonical World initial-admission hold storage failed");
       return;
     } catch (RuntimeException failure) {
       fail(responseObserver, Status.INTERNAL, "Canonical World initial-admission hold read failed");
@@ -244,7 +253,9 @@ public final class WorldCanonicalInitialAdmissionHoldGrpcService
       Request holdRequest, WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequest) {
     return holdRequest.canonicalTenantId().equals(lifecycleRequest.canonicalTenantId())
         && holdRequest.worldSlug().equals(lifecycleRequest.worldSlug())
-        && holdRequest.playableStateNamespaceId().equals(lifecycleRequest.playableStateNamespaceId())
+        && holdRequest
+            .playableStateNamespaceId()
+            .equals(lifecycleRequest.playableStateNamespaceId())
         && holdRequest.playableStateScope().equals(lifecycleRequest.playableStateScope())
         && holdRequest.canonicalGameInstanceId().equals(lifecycleRequest.canonicalGameInstanceId())
         && holdRequest.canonicalVersionId().equals(lifecycleRequest.canonicalVersionId())

@@ -131,7 +131,7 @@ class WorldCanonicalInitialAdmissionHoldMigrationPostgresIntegrationTest {
   void forgedCompleteTypedHoldWithoutAnActualWorldAssociationIsRejected() throws Exception {
     String schema = newSchema("initial_hold_forged_assoc_");
     try {
-      migrate(schema, null);
+      migrate(schema, "47");
       try (Connection connection = connection()) {
         DSLContext dsl = schemaContext(connection, schema);
         WorldFixture world = worldFixture();
@@ -191,7 +191,8 @@ class WorldCanonicalInitialAdmissionHoldMigrationPostgresIntegrationTest {
                         requestBytes,
                         bindingDigest))
             .isInstanceOf(DataAccessException.class)
-            .hasMessageContaining("Canonical initial-admission hold lacks its actual World association");
+            .hasMessageContaining(
+                "Canonical initial-admission hold lacks its actual World association");
       }
     } finally {
       dropSchema(schema);
@@ -199,7 +200,8 @@ class WorldCanonicalInitialAdmissionHoldMigrationPostgresIntegrationTest {
   }
 
   @Test
-  void legacyReconciliationAndTerminalProofRemainAvailableAndNonterminalRowsBlockRealm() throws Exception {
+  void legacyReconciliationAndTerminalProofRemainAvailableAndNonterminalRowsBlockRealm()
+      throws Exception {
     String schema = newSchema("initial_hold_legacy_path_");
     try {
       migrate(schema, "47");
@@ -208,8 +210,7 @@ class WorldCanonicalInitialAdmissionHoldMigrationPostgresIntegrationTest {
         WorldFixture world = worldFixture();
         insertLegacyWorld(dsl, world);
         LegacySnapshot snapshot = insertLegacyHold(dsl, world, "PENDING");
-        InitialAdmissionBindHoldRepository repository =
-            new InitialAdmissionBindHoldRepository(dsl);
+        InitialAdmissionBindHoldRepository repository = new InitialAdmissionBindHoldRepository(dsl);
 
         var pending =
             repository
@@ -342,7 +343,8 @@ class WorldCanonicalInitialAdmissionHoldMigrationPostgresIntegrationTest {
 
   private void dropSchema(String schema) throws Exception {
     try (Connection connection = connection()) {
-      DSL.using(connection, SQLDialect.POSTGRES).execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
+      DSL.using(connection, SQLDialect.POSTGRES)
+          .execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
     }
   }
 

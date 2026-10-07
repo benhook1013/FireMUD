@@ -230,7 +230,8 @@ public final class WorldCanonicalInitialPlayerLocation {
                 InitialAdmissionOrigin.valueOf(text(root, "initialAdmissionOrigin")),
                 lifecycleEvidence);
         if (!Arrays.equals(completeCanonicalRequestBytes, request.canonicalRequestBytes())) {
-          throw invalid("retained initial-location request is not canonical or differs from evidence");
+          throw invalid(
+              "retained initial-location request is not canonical or differs from evidence");
         }
         return request;
       } catch (tools.jackson.core.JacksonException | IllegalArgumentException invalid) {

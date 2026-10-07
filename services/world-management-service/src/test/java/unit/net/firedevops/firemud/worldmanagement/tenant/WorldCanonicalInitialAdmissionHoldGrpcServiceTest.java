@@ -39,8 +39,7 @@ class WorldCanonicalInitialAdmissionHoldGrpcServiceTest {
   private static final UUID TENANT = uuid("11111111-1111-4111-8111-111111111111");
   private static final UUID REALM = uuid("22222222-2222-4222-8222-222222222222");
   private static final UUID PLAYABLE_NAMESPACE = uuid("33333333-3333-4333-8333-333333333333");
-  private static final UUID OTHER_PLAYABLE_NAMESPACE =
-      uuid("34343434-3434-4434-8434-343434343434");
+  private static final UUID OTHER_PLAYABLE_NAMESPACE = uuid("34343434-3434-4434-8434-343434343434");
   private static final UUID GAME_INSTANCE = uuid("44444444-4444-4444-8444-444444444444");
   private static final UUID VERSION = uuid("55555555-5555-4555-8555-555555555555");
   private static final UUID LIFECYCLE_READ_ID = uuid("66666666-6666-4666-8666-666666666666");
@@ -76,7 +75,9 @@ class WorldCanonicalInitialAdmissionHoldGrpcServiceTest {
     SessionContext.setContext("11111111-1111-4111-8111-111111111111", List.of(), Map.of());
     Collector<AcquireCanonicalInitialAdmissionHoldResponse> result;
     try {
-      result = callAcquire(grpc, acquire(new byte[] {1}, new byte[] {1}), peer("game-session-service", "test"));
+      result =
+          callAcquire(
+              grpc, acquire(new byte[] {1}, new byte[] {1}), peer("game-session-service", "test"));
     } finally {
       SessionContext.clear();
     }
@@ -133,8 +134,7 @@ class WorldCanonicalInitialAdmissionHoldGrpcServiceTest {
     assertThat(
             callAcquire(
                     grpc,
-                    acquire(
-                        "not-json".getBytes(StandardCharsets.UTF_8), fixture.lifecycleBytes),
+                    acquire("not-json".getBytes(StandardCharsets.UTF_8), fixture.lifecycleBytes),
                     peer("game-session-service", "test"))
                 .error)
         .isEqualTo(Status.Code.INVALID_ARGUMENT);
@@ -146,11 +146,17 @@ class WorldCanonicalInitialAdmissionHoldGrpcServiceTest {
                 .error)
         .isEqualTo(Status.Code.INVALID_ARGUMENT);
     assertThat(
-            callRead(grpc, read(HOLD_READ_ID.toString().toUpperCase(), fixture.holdBytes), peer("game-session-service", "test"))
+            callRead(
+                    grpc,
+                    read(HOLD_READ_ID.toString().toUpperCase(), fixture.holdBytes),
+                    peer("game-session-service", "test"))
                 .error)
         .isEqualTo(Status.Code.INVALID_ARGUMENT);
     assertThat(
-            callRead(grpc, read("00000000-0000-0000-0000-000000000000", fixture.holdBytes), peer("game-session-service", "test"))
+            callRead(
+                    grpc,
+                    read("00000000-0000-0000-0000-000000000000", fixture.holdBytes),
+                    peer("game-session-service", "test"))
                 .error)
         .isEqualTo(Status.Code.INVALID_ARGUMENT);
     verifyNoInteractions(repository);
@@ -165,16 +171,16 @@ class WorldCanonicalInitialAdmissionHoldGrpcServiceTest {
     Fixture mismatchedScope = fixture("test", "test", OTHER_PLAYABLE_NAMESPACE);
 
     assertThat(
-            callAcquire(grpc, acquire(wrongHoldNamespace), peer("game-session-service", "test")).error)
+            callAcquire(grpc, acquire(wrongHoldNamespace), peer("game-session-service", "test"))
+                .error)
         .isEqualTo(Status.Code.PERMISSION_DENIED);
     assertThat(
             callAcquire(
-                    grpc,
-                    acquire(wrongLifecycleNamespace),
-                    peer("game-session-service", "test"))
+                    grpc, acquire(wrongLifecycleNamespace), peer("game-session-service", "test"))
                 .error)
         .isEqualTo(Status.Code.PERMISSION_DENIED);
-    assertThat(callAcquire(grpc, acquire(mismatchedScope), peer("game-session-service", "test")).error)
+    assertThat(
+            callAcquire(grpc, acquire(mismatchedScope), peer("game-session-service", "test")).error)
         .isEqualTo(Status.Code.FAILED_PRECONDITION);
     verifyNoInteractions(repository);
   }
@@ -183,7 +189,8 @@ class WorldCanonicalInitialAdmissionHoldGrpcServiceTest {
   void acquireReturnsExactCanonicalIdentityAfterRepositoryValidation() {
     Fixture fixture = fixture("test", "test", PLAYABLE_NAMESPACE);
     var repository = mock(WorldCanonicalInitialAdmissionHoldRepository.class);
-    when(repository.acquire(any(Request.class), any(WorldCanonicalInstanceLifecycleEvidence.Request.class)))
+    when(repository.acquire(
+            any(Request.class), any(WorldCanonicalInstanceLifecycleEvidence.Request.class)))
         .thenReturn(fixture.identity);
     var grpc = service(repository);
 
@@ -242,13 +249,17 @@ class WorldCanonicalInitialAdmissionHoldGrpcServiceTest {
   void mapsOwnerConflictsAndInconsistentIdentitiesToTheirExactStatuses() {
     Fixture fixture = fixture("test", "test", PLAYABLE_NAMESPACE);
     var conflictRepository = mock(WorldCanonicalInitialAdmissionHoldRepository.class);
-    when(conflictRepository.acquire(any(Request.class), any(WorldCanonicalInstanceLifecycleEvidence.Request.class)))
-        .thenThrow(new WorldCanonicalInitialAdmissionHoldRepository.HoldConflictException("conflict"));
+    when(conflictRepository.acquire(
+            any(Request.class), any(WorldCanonicalInstanceLifecycleEvidence.Request.class)))
+        .thenThrow(
+            new WorldCanonicalInitialAdmissionHoldRepository.HoldConflictException("conflict"));
     when(conflictRepository.readIdentity(any(Request.class)))
-        .thenThrow(new WorldCanonicalInitialAdmissionHoldRepository.HoldConflictException("conflict"));
+        .thenThrow(
+            new WorldCanonicalInitialAdmissionHoldRepository.HoldConflictException("conflict"));
     var conflictService = service(conflictRepository);
     assertThat(
-            callAcquire(conflictService, acquire(fixture), peer("game-session-service", "test")).error)
+            callAcquire(conflictService, acquire(fixture), peer("game-session-service", "test"))
+                .error)
         .isEqualTo(Status.Code.ALREADY_EXISTS);
     assertThat(
             callRead(
@@ -259,7 +270,8 @@ class WorldCanonicalInitialAdmissionHoldGrpcServiceTest {
         .isEqualTo(Status.Code.ALREADY_EXISTS);
 
     var invalidRepository = mock(WorldCanonicalInitialAdmissionHoldRepository.class);
-    when(invalidRepository.acquire(any(Request.class), any(WorldCanonicalInstanceLifecycleEvidence.Request.class)))
+    when(invalidRepository.acquire(
+            any(Request.class), any(WorldCanonicalInstanceLifecycleEvidence.Request.class)))
         .thenThrow(
             new WorldCanonicalInitialAdmissionHoldRepository.InvalidHoldIdentityException(
                 "invalid identity"));
@@ -269,7 +281,8 @@ class WorldCanonicalInitialAdmissionHoldGrpcServiceTest {
                 "invalid identity"));
     var invalidService = service(invalidRepository);
     assertThat(
-            callAcquire(invalidService, acquire(fixture), peer("game-session-service", "test")).error)
+            callAcquire(invalidService, acquire(fixture), peer("game-session-service", "test"))
+                .error)
         .isEqualTo(Status.Code.FAILED_PRECONDITION);
     assertThat(
             callRead(
@@ -284,7 +297,8 @@ class WorldCanonicalInitialAdmissionHoldGrpcServiceTest {
   void rejectsNullOrSubstitutedOwnerIdentityAsFailedPrecondition() {
     Fixture fixture = fixture("test", "test", PLAYABLE_NAMESPACE);
     var nullRepository = mock(WorldCanonicalInitialAdmissionHoldRepository.class);
-    when(nullRepository.acquire(any(Request.class), any(WorldCanonicalInstanceLifecycleEvidence.Request.class)))
+    when(nullRepository.acquire(
+            any(Request.class), any(WorldCanonicalInstanceLifecycleEvidence.Request.class)))
         .thenReturn(null);
     var nullResult =
         callAcquire(
@@ -308,7 +322,8 @@ class WorldCanonicalInitialAdmissionHoldGrpcServiceTest {
   void mapsTransientStorageToUnavailableAndOtherStorageOrUnknownFailuresToInternal() {
     Fixture fixture = fixture("test", "test", PLAYABLE_NAMESPACE);
     var transientRepository = mock(WorldCanonicalInitialAdmissionHoldRepository.class);
-    when(transientRepository.acquire(any(Request.class), any(WorldCanonicalInstanceLifecycleEvidence.Request.class)))
+    when(transientRepository.acquire(
+            any(Request.class), any(WorldCanonicalInstanceLifecycleEvidence.Request.class)))
         .thenThrow(new TransientDataAccessException("temporary storage issue") {});
     var transientResult =
         callAcquire(

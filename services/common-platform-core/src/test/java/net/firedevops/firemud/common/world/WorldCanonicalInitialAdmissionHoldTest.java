@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
-import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.HoldIdentity;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.InitialAdmissionOrigin;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.Request;
@@ -66,84 +65,322 @@ class WorldCanonicalInitialAdmissionHoldTest {
   @Test
   void everySupportedRequestFieldChangesTheCanonicalHoldBinding() {
     Request base = noPriorRequest();
-    assertBindingDiffers(base, request("staging", TENANT, "green-hollow", REALM, PLAYABLE_NAMESPACE,
-        GAME_INSTANCE, VERSION, 7L, "gs-initial-admission-17", REQUEST_DIGEST,
-        InitialAdmissionOrigin.NO_PRIOR_POINTER, 12L, null));
-    assertBindingDiffers(base, request("prod", OTHER_UUID, "green-hollow", REALM, PLAYABLE_NAMESPACE,
-        GAME_INSTANCE, VERSION, 7L, "gs-initial-admission-17", REQUEST_DIGEST,
-        InitialAdmissionOrigin.NO_PRIOR_POINTER, 12L, null));
-    assertBindingDiffers(base, request("prod", TENANT, "blue-hollow", REALM, PLAYABLE_NAMESPACE,
-        GAME_INSTANCE, VERSION, 7L, "gs-initial-admission-17", REQUEST_DIGEST,
-        InitialAdmissionOrigin.NO_PRIOR_POINTER, 12L, null));
-    assertBindingDiffers(base, request("prod", TENANT, "green-hollow", OTHER_UUID, PLAYABLE_NAMESPACE,
-        GAME_INSTANCE, VERSION, 7L, "gs-initial-admission-17", REQUEST_DIGEST,
-        InitialAdmissionOrigin.NO_PRIOR_POINTER, 12L, null));
-    assertBindingDiffers(base, request("prod", TENANT, "green-hollow", REALM, OTHER_UUID,
-        GAME_INSTANCE, VERSION, 7L, "gs-initial-admission-17", REQUEST_DIGEST,
-        InitialAdmissionOrigin.NO_PRIOR_POINTER, 12L, null));
-    assertBindingDiffers(base, request("prod", TENANT, "green-hollow", REALM, PLAYABLE_NAMESPACE,
-        OTHER_UUID, VERSION, 7L, "gs-initial-admission-17", REQUEST_DIGEST,
-        InitialAdmissionOrigin.NO_PRIOR_POINTER, 12L, null));
-    assertBindingDiffers(base, request("prod", TENANT, "green-hollow", REALM, PLAYABLE_NAMESPACE,
-        GAME_INSTANCE, OTHER_UUID, 7L, "gs-initial-admission-17", REQUEST_DIGEST,
-        InitialAdmissionOrigin.NO_PRIOR_POINTER, 12L, null));
-    assertBindingDiffers(base, request("prod", TENANT, "green-hollow", REALM, PLAYABLE_NAMESPACE,
-        GAME_INSTANCE, VERSION, 8L, "gs-initial-admission-17", REQUEST_DIGEST,
-        InitialAdmissionOrigin.NO_PRIOR_POINTER, 12L, null));
-    assertBindingDiffers(base, request("prod", TENANT, "green-hollow", REALM, PLAYABLE_NAMESPACE,
-        GAME_INSTANCE, VERSION, 7L, "gs-initial-admission-18", REQUEST_DIGEST,
-        InitialAdmissionOrigin.NO_PRIOR_POINTER, 12L, null));
-    assertBindingDiffers(base, request("prod", TENANT, "green-hollow", REALM, PLAYABLE_NAMESPACE,
-        GAME_INSTANCE, VERSION, 7L, "gs-initial-admission-17", OTHER_REQUEST_DIGEST,
-        InitialAdmissionOrigin.NO_PRIOR_POINTER, 12L, null));
+    assertBindingDiffers(
+        base,
+        request(
+            "staging",
+            TENANT,
+            "green-hollow",
+            REALM,
+            PLAYABLE_NAMESPACE,
+            GAME_INSTANCE,
+            VERSION,
+            7L,
+            "gs-initial-admission-17",
+            REQUEST_DIGEST,
+            InitialAdmissionOrigin.NO_PRIOR_POINTER,
+            12L,
+            null));
+    assertBindingDiffers(
+        base,
+        request(
+            "prod",
+            OTHER_UUID,
+            "green-hollow",
+            REALM,
+            PLAYABLE_NAMESPACE,
+            GAME_INSTANCE,
+            VERSION,
+            7L,
+            "gs-initial-admission-17",
+            REQUEST_DIGEST,
+            InitialAdmissionOrigin.NO_PRIOR_POINTER,
+            12L,
+            null));
+    assertBindingDiffers(
+        base,
+        request(
+            "prod",
+            TENANT,
+            "blue-hollow",
+            REALM,
+            PLAYABLE_NAMESPACE,
+            GAME_INSTANCE,
+            VERSION,
+            7L,
+            "gs-initial-admission-17",
+            REQUEST_DIGEST,
+            InitialAdmissionOrigin.NO_PRIOR_POINTER,
+            12L,
+            null));
+    assertBindingDiffers(
+        base,
+        request(
+            "prod",
+            TENANT,
+            "green-hollow",
+            OTHER_UUID,
+            PLAYABLE_NAMESPACE,
+            GAME_INSTANCE,
+            VERSION,
+            7L,
+            "gs-initial-admission-17",
+            REQUEST_DIGEST,
+            InitialAdmissionOrigin.NO_PRIOR_POINTER,
+            12L,
+            null));
+    assertBindingDiffers(
+        base,
+        request(
+            "prod",
+            TENANT,
+            "green-hollow",
+            REALM,
+            OTHER_UUID,
+            GAME_INSTANCE,
+            VERSION,
+            7L,
+            "gs-initial-admission-17",
+            REQUEST_DIGEST,
+            InitialAdmissionOrigin.NO_PRIOR_POINTER,
+            12L,
+            null));
+    assertBindingDiffers(
+        base,
+        request(
+            "prod",
+            TENANT,
+            "green-hollow",
+            REALM,
+            PLAYABLE_NAMESPACE,
+            OTHER_UUID,
+            VERSION,
+            7L,
+            "gs-initial-admission-17",
+            REQUEST_DIGEST,
+            InitialAdmissionOrigin.NO_PRIOR_POINTER,
+            12L,
+            null));
+    assertBindingDiffers(
+        base,
+        request(
+            "prod",
+            TENANT,
+            "green-hollow",
+            REALM,
+            PLAYABLE_NAMESPACE,
+            GAME_INSTANCE,
+            OTHER_UUID,
+            7L,
+            "gs-initial-admission-17",
+            REQUEST_DIGEST,
+            InitialAdmissionOrigin.NO_PRIOR_POINTER,
+            12L,
+            null));
+    assertBindingDiffers(
+        base,
+        request(
+            "prod",
+            TENANT,
+            "green-hollow",
+            REALM,
+            PLAYABLE_NAMESPACE,
+            GAME_INSTANCE,
+            VERSION,
+            8L,
+            "gs-initial-admission-17",
+            REQUEST_DIGEST,
+            InitialAdmissionOrigin.NO_PRIOR_POINTER,
+            12L,
+            null));
+    assertBindingDiffers(
+        base,
+        request(
+            "prod",
+            TENANT,
+            "green-hollow",
+            REALM,
+            PLAYABLE_NAMESPACE,
+            GAME_INSTANCE,
+            VERSION,
+            7L,
+            "gs-initial-admission-18",
+            REQUEST_DIGEST,
+            InitialAdmissionOrigin.NO_PRIOR_POINTER,
+            12L,
+            null));
+    assertBindingDiffers(
+        base,
+        request(
+            "prod",
+            TENANT,
+            "green-hollow",
+            REALM,
+            PLAYABLE_NAMESPACE,
+            GAME_INSTANCE,
+            VERSION,
+            7L,
+            "gs-initial-admission-17",
+            OTHER_REQUEST_DIGEST,
+            InitialAdmissionOrigin.NO_PRIOR_POINTER,
+            12L,
+            null));
     assertBindingDiffers(base, expectClosedRequest(13L));
     assertBindingDiffers(expectClosedRequest(13L), expectClosedRequest(14L));
-    assertBindingDiffers(base, request("prod", TENANT, "green-hollow", REALM, PLAYABLE_NAMESPACE,
-        GAME_INSTANCE, VERSION, 7L, "gs-initial-admission-17", REQUEST_DIGEST,
-        InitialAdmissionOrigin.NO_PRIOR_POINTER, 14L, null));
+    assertBindingDiffers(
+        base,
+        request(
+            "prod",
+            TENANT,
+            "green-hollow",
+            REALM,
+            PLAYABLE_NAMESPACE,
+            GAME_INSTANCE,
+            VERSION,
+            7L,
+            "gs-initial-admission-17",
+            REQUEST_DIGEST,
+            InitialAdmissionOrigin.NO_PRIOR_POINTER,
+            14L,
+            null));
   }
 
   @Test
   void rejectsNilNoncanonicalAndInvalidScopeOrOriginInputs() {
-    assertThatThrownBy(() -> request("prod", NIL_UUID, "green-hollow", REALM, PLAYABLE_NAMESPACE,
-        GAME_INSTANCE, VERSION, 7L, "gs-initial-admission-17", REQUEST_DIGEST,
-        InitialAdmissionOrigin.NO_PRIOR_POINTER, 12L, null))
+    assertThatThrownBy(
+            () ->
+                request(
+                    "prod",
+                    NIL_UUID,
+                    "green-hollow",
+                    REALM,
+                    PLAYABLE_NAMESPACE,
+                    GAME_INSTANCE,
+                    VERSION,
+                    7L,
+                    "gs-initial-admission-17",
+                    REQUEST_DIGEST,
+                    InitialAdmissionOrigin.NO_PRIOR_POINTER,
+                    12L,
+                    null))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(() -> request("prod", TENANT, "green-hollow", REALM, PLAYABLE_NAMESPACE,
-        GAME_INSTANCE, VERSION, 7L, "gs-initial-admission-17", REQUEST_DIGEST,
-        InitialAdmissionOrigin.NO_PRIOR_POINTER, 12L, null, "PRIVATE"))
+    assertThatThrownBy(
+            () ->
+                request(
+                    "prod",
+                    TENANT,
+                    "green-hollow",
+                    REALM,
+                    PLAYABLE_NAMESPACE,
+                    GAME_INSTANCE,
+                    VERSION,
+                    7L,
+                    "gs-initial-admission-17",
+                    REQUEST_DIGEST,
+                    InitialAdmissionOrigin.NO_PRIOR_POINTER,
+                    12L,
+                    null,
+                    "PRIVATE"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("SHARED");
-    assertThatThrownBy(() -> Request.fromStored(utf8Bytes(NO_PRIOR_VECTOR.replace("SHARED", "ISOLATED"))))
+    assertThatThrownBy(
+            () -> Request.fromStored(utf8Bytes(NO_PRIOR_VECTOR.replace("SHARED", "ISOLATED"))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("SHARED");
-    assertThatThrownBy(() -> Request.fromStored(utf8Bytes(NO_PRIOR_VECTOR.replace(
-            "NO_PRIOR_POINTER", "FIRST_OPEN"))))
+    assertThatThrownBy(
+            () ->
+                Request.fromStored(
+                    utf8Bytes(NO_PRIOR_VECTOR.replace("NO_PRIOR_POINTER", "FIRST_OPEN"))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("initialAdmissionOrigin");
-    assertThatThrownBy(() -> request("prod", TENANT, "green-hollow", REALM, PLAYABLE_NAMESPACE,
-        GAME_INSTANCE, VERSION, 7L, "gs-initial-admission-17", REQUEST_DIGEST,
-        InitialAdmissionOrigin.NO_PRIOR_POINTER, 12L, 1L))
+    assertThatThrownBy(
+            () ->
+                request(
+                    "prod",
+                    TENANT,
+                    "green-hollow",
+                    REALM,
+                    PLAYABLE_NAMESPACE,
+                    GAME_INSTANCE,
+                    VERSION,
+                    7L,
+                    "gs-initial-admission-17",
+                    REQUEST_DIGEST,
+                    InitialAdmissionOrigin.NO_PRIOR_POINTER,
+                    12L,
+                    1L))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("NO_PRIOR_POINTER");
-    assertThatThrownBy(() -> request("prod", TENANT, "green-hollow", REALM, PLAYABLE_NAMESPACE,
-        GAME_INSTANCE, VERSION, 7L, "gs-initial-admission-17", REQUEST_DIGEST,
-        InitialAdmissionOrigin.EXPECT_CLOSED, 12L, null))
+    assertThatThrownBy(
+            () ->
+                request(
+                    "prod",
+                    TENANT,
+                    "green-hollow",
+                    REALM,
+                    PLAYABLE_NAMESPACE,
+                    GAME_INSTANCE,
+                    VERSION,
+                    7L,
+                    "gs-initial-admission-17",
+                    REQUEST_DIGEST,
+                    InitialAdmissionOrigin.EXPECT_CLOSED,
+                    12L,
+                    null))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("requires");
-    assertThatThrownBy(() -> request("prod", TENANT, "green-hollow", REALM, PLAYABLE_NAMESPACE,
-        GAME_INSTANCE, VERSION, 7L, "gs-initial-admission-17", "A".repeat(64),
-        InitialAdmissionOrigin.NO_PRIOR_POINTER, 12L, null))
+    assertThatThrownBy(
+            () ->
+                request(
+                    "prod",
+                    TENANT,
+                    "green-hollow",
+                    REALM,
+                    PLAYABLE_NAMESPACE,
+                    GAME_INSTANCE,
+                    VERSION,
+                    7L,
+                    "gs-initial-admission-17",
+                    "A".repeat(64),
+                    InitialAdmissionOrigin.NO_PRIOR_POINTER,
+                    12L,
+                    null))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("lowercase");
-    assertThatThrownBy(() -> request("prod", TENANT, "green-hollow", REALM, PLAYABLE_NAMESPACE,
-        GAME_INSTANCE, VERSION, 7L, " ", REQUEST_DIGEST,
-        InitialAdmissionOrigin.NO_PRIOR_POINTER, 12L, null))
+    assertThatThrownBy(
+            () ->
+                request(
+                    "prod",
+                    TENANT,
+                    "green-hollow",
+                    REALM,
+                    PLAYABLE_NAMESPACE,
+                    GAME_INSTANCE,
+                    VERSION,
+                    7L,
+                    " ",
+                    REQUEST_DIGEST,
+                    InitialAdmissionOrigin.NO_PRIOR_POINTER,
+                    12L,
+                    null))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("nonempty");
-    assertThatThrownBy(() -> request("prod", TENANT, "green-hollow", REALM, PLAYABLE_NAMESPACE,
-        GAME_INSTANCE, VERSION, 7L, "r".repeat(129), REQUEST_DIGEST,
-        InitialAdmissionOrigin.NO_PRIOR_POINTER, 12L, null))
+    assertThatThrownBy(
+            () ->
+                request(
+                    "prod",
+                    TENANT,
+                    "green-hollow",
+                    REALM,
+                    PLAYABLE_NAMESPACE,
+                    GAME_INSTANCE,
+                    VERSION,
+                    7L,
+                    "r".repeat(129),
+                    REQUEST_DIGEST,
+                    InitialAdmissionOrigin.NO_PRIOR_POINTER,
+                    12L,
+                    null))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("bounded");
     assertThatThrownBy(() -> new HoldIdentity(noPriorRequest(), NIL_UUID, HOLD_FENCE))
@@ -161,50 +398,113 @@ class WorldCanonicalInitialAdmissionHoldTest {
     String alphaTenantVector = utf8(noPriorRequestWithTenant(alphaTenant).canonicalRequestBytes());
     assertInvalidRequest(
         alphaTenantVector.replace(alphaTenant.toString(), alphaTenant.toString().toUpperCase()));
-    assertInvalidRequest(NO_PRIOR_VECTOR.replace("\"expectedPriorPointerVersion\":null", "\"expectedPriorPointerVersion\":\"1\""));
-    assertInvalidRequest(NO_PRIOR_VECTOR.replace("\"initialAdmissionOrigin\":\"NO_PRIOR_POINTER\"", "\"initialAdmissionOrigin\":\"EXPECT_CLOSED\""));
-    assertInvalidRequest(NO_PRIOR_VECTOR.replace("\"expectedPriorPointerVersion\":null", "\"expectedPriorPointerVersion\":1"));
+    assertInvalidRequest(
+        NO_PRIOR_VECTOR.replace(
+            "\"expectedPriorPointerVersion\":null", "\"expectedPriorPointerVersion\":\"1\""));
+    assertInvalidRequest(
+        NO_PRIOR_VECTOR.replace(
+            "\"initialAdmissionOrigin\":\"NO_PRIOR_POINTER\"",
+            "\"initialAdmissionOrigin\":\"EXPECT_CLOSED\""));
+    assertInvalidRequest(
+        NO_PRIOR_VECTOR.replace(
+            "\"expectedPriorPointerVersion\":null", "\"expectedPriorPointerVersion\":1"));
     assertInvalidRequest(NO_PRIOR_VECTOR.replace(",\"expectedPriorPointerVersion\":null", ""));
-    assertInvalidRequest(NO_PRIOR_VECTOR.replace("\"canonicalGameInstanceId\"", "\"gameInstanceId\""));
-    assertInvalidRequest(NO_PRIOR_VECTOR.replace("\"worldSlug\":", "\"worldSlug\":\"green-hollow\",\"worldSlugAlias\":"));
+    assertInvalidRequest(
+        NO_PRIOR_VECTOR.replace("\"canonicalGameInstanceId\"", "\"gameInstanceId\""));
+    assertInvalidRequest(
+        NO_PRIOR_VECTOR.replace(
+            "\"worldSlug\":", "\"worldSlug\":\"green-hollow\",\"worldSlugAlias\":"));
     assertInvalidRequest(NO_PRIOR_VECTOR + "{}");
-    assertInvalidRequest(NO_PRIOR_VECTOR.replace(",\"worldSlug\":", ",\"targetNamespace\":\"prod\",\"worldSlug\":"));
+    assertInvalidRequest(
+        NO_PRIOR_VECTOR.replace(",\"worldSlug\":", ",\"targetNamespace\":\"prod\",\"worldSlug\":"));
 
     for (String value : new String[] {"0", "-1", "01", "9223372036854775808"}) {
-      assertInvalidRequest(NO_PRIOR_VECTOR.replace("\"activeLifecycleEpoch\":\"7\"", "\"activeLifecycleEpoch\":\"" + value + "\""));
-      assertInvalidRequest(NO_PRIOR_VECTOR.replace("\"expectedCatalogRevision\":\"12\"", "\"expectedCatalogRevision\":\"" + value + "\""));
-      assertInvalidRequest(EXPECT_CLOSED_VECTOR.replace("\"expectedPriorPointerVersion\":\"13\"", "\"expectedPriorPointerVersion\":\"" + value + "\""));
+      assertInvalidRequest(
+          NO_PRIOR_VECTOR.replace(
+              "\"activeLifecycleEpoch\":\"7\"", "\"activeLifecycleEpoch\":\"" + value + "\""));
+      assertInvalidRequest(
+          NO_PRIOR_VECTOR.replace(
+              "\"expectedCatalogRevision\":\"12\"",
+              "\"expectedCatalogRevision\":\"" + value + "\""));
+      assertInvalidRequest(
+          EXPECT_CLOSED_VECTOR.replace(
+              "\"expectedPriorPointerVersion\":\"13\"",
+              "\"expectedPriorPointerVersion\":\"" + value + "\""));
     }
-    assertInvalidRequest(NO_PRIOR_VECTOR.replace("\"activeLifecycleEpoch\":\"7\"", "\"activeLifecycleEpoch\":7"));
+    assertInvalidRequest(
+        NO_PRIOR_VECTOR.replace("\"activeLifecycleEpoch\":\"7\"", "\"activeLifecycleEpoch\":7"));
 
-    String identity = utf8(new HoldIdentity(noPriorRequest(), HOLD_ID, HOLD_FENCE).canonicalBytes());
-    assertThatThrownBy(() -> HoldIdentity.fromStored(utf8Bytes(identity.replace(
-            "\"holdBindingDigest\":\"" + noPriorRequest().holdBindingDigest(),
-            "\"holdBindingDigest\":\"sha256:" + "0".repeat(64)))))
+    String identity =
+        utf8(new HoldIdentity(noPriorRequest(), HOLD_ID, HOLD_FENCE).canonicalBytes());
+    assertThatThrownBy(
+            () ->
+                HoldIdentity.fromStored(
+                    utf8Bytes(
+                        identity.replace(
+                            "\"holdBindingDigest\":\"" + noPriorRequest().holdBindingDigest(),
+                            "\"holdBindingDigest\":\"sha256:" + "0".repeat(64)))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("digest");
-    assertThatThrownBy(() -> HoldIdentity.fromStored(utf8Bytes(identity.replace(
-            "\"holdId\":", "\"legacyHoldId\":\"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\",\"holdId\":"))))
+    assertThatThrownBy(
+            () ->
+                HoldIdentity.fromStored(
+                    utf8Bytes(
+                        identity.replace(
+                            "\"holdId\":",
+                            "\"legacyHoldId\":\"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\",\"holdId\":"))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("closed object shape");
   }
 
   private static Request noPriorRequest() {
-    return request("prod", TENANT, "green-hollow", REALM, PLAYABLE_NAMESPACE, GAME_INSTANCE,
-        VERSION, 7L, "gs-initial-admission-17", REQUEST_DIGEST,
-        InitialAdmissionOrigin.NO_PRIOR_POINTER, 12L, null);
+    return request(
+        "prod",
+        TENANT,
+        "green-hollow",
+        REALM,
+        PLAYABLE_NAMESPACE,
+        GAME_INSTANCE,
+        VERSION,
+        7L,
+        "gs-initial-admission-17",
+        REQUEST_DIGEST,
+        InitialAdmissionOrigin.NO_PRIOR_POINTER,
+        12L,
+        null);
   }
 
   private static Request expectClosedRequest(long expectedPriorPointerVersion) {
-    return request("prod", TENANT, "green-hollow", REALM, PLAYABLE_NAMESPACE, GAME_INSTANCE,
-        VERSION, 7L, "gs-initial-admission-17", REQUEST_DIGEST,
-        InitialAdmissionOrigin.EXPECT_CLOSED, 12L, expectedPriorPointerVersion);
+    return request(
+        "prod",
+        TENANT,
+        "green-hollow",
+        REALM,
+        PLAYABLE_NAMESPACE,
+        GAME_INSTANCE,
+        VERSION,
+        7L,
+        "gs-initial-admission-17",
+        REQUEST_DIGEST,
+        InitialAdmissionOrigin.EXPECT_CLOSED,
+        12L,
+        expectedPriorPointerVersion);
   }
 
   private static Request noPriorRequestWithTenant(UUID tenant) {
-    return request("prod", tenant, "green-hollow", REALM, PLAYABLE_NAMESPACE, GAME_INSTANCE,
-        VERSION, 7L, "gs-initial-admission-17", REQUEST_DIGEST,
-        InitialAdmissionOrigin.NO_PRIOR_POINTER, 12L, null);
+    return request(
+        "prod",
+        tenant,
+        "green-hollow",
+        REALM,
+        PLAYABLE_NAMESPACE,
+        GAME_INSTANCE,
+        VERSION,
+        7L,
+        "gs-initial-admission-17",
+        REQUEST_DIGEST,
+        InitialAdmissionOrigin.NO_PRIOR_POINTER,
+        12L,
+        null);
   }
 
   private static Request request(
@@ -221,8 +521,21 @@ class WorldCanonicalInitialAdmissionHoldTest {
       InitialAdmissionOrigin origin,
       long catalogRevision,
       Long priorPointerVersion) {
-    return request(namespace, tenant, slug, realm, playableNamespace, gameInstance, version, epoch,
-        requestId, requestDigest, origin, catalogRevision, priorPointerVersion, "SHARED");
+    return request(
+        namespace,
+        tenant,
+        slug,
+        realm,
+        playableNamespace,
+        gameInstance,
+        version,
+        epoch,
+        requestId,
+        requestDigest,
+        origin,
+        catalogRevision,
+        priorPointerVersion,
+        "SHARED");
   }
 
   private static Request request(
@@ -240,8 +553,21 @@ class WorldCanonicalInitialAdmissionHoldTest {
       long catalogRevision,
       Long priorPointerVersion,
       String scope) {
-    return new Request(namespace, tenant, slug, realm, playableNamespace, scope, gameInstance, version,
-        epoch, requestId, requestDigest, origin, catalogRevision, priorPointerVersion);
+    return new Request(
+        namespace,
+        tenant,
+        slug,
+        realm,
+        playableNamespace,
+        scope,
+        gameInstance,
+        version,
+        epoch,
+        requestId,
+        requestDigest,
+        origin,
+        catalogRevision,
+        priorPointerVersion);
   }
 
   private static void assertBindingDiffers(Request original, Request changed) {

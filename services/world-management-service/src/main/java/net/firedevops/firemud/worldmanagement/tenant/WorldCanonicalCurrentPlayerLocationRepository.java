@@ -6,8 +6,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.world.RoomTemplateRef;
-import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialPlayerLocation;
+import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.worldmanagement.entity.InitialAdmissionBindHold;
 import net.firedevops.firemud.worldmanagement.repository.InitialAdmissionBindHoldRepository;
 import org.jooq.DSLContext;
@@ -256,13 +256,10 @@ public final class WorldCanonicalCurrentPlayerLocationRepository {
         || operationalRegionId == null
         || new UUID(0L, 0L).equals(operationalRegionId)
         || operationalRegionId.equals(canonicalRegionId)) {
-      throw denied(
-          "current World region has invalid V35 identity or V45 operational assignment");
+      throw denied("current World region has invalid V35 identity or V45 operational assignment");
     }
     return new RegionBinding(
-        region.get("world_region_instance_id", Long.class),
-        canonicalRegionId,
-        operationalRegionId);
+        region.get("world_region_instance_id", Long.class), canonicalRegionId, operationalRegionId);
   }
 
   private void requireReadOnlyRepeatableReadTransaction() {

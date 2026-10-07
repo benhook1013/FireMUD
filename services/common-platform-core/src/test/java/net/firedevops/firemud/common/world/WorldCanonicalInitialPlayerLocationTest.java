@@ -5,8 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import java.util.UUID;
 import java.util.List;
+import java.util.UUID;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
@@ -195,7 +195,8 @@ class WorldCanonicalInitialPlayerLocationTest {
     var request = requestWithLifecycle(lifecycle);
     byte[] canonical = request.canonicalRequestBytes();
     String json = new String(canonical, java.nio.charset.StandardCharsets.UTF_8);
-    var changedEvidence = copyLifecycle(lifecycle, lifecycle.request(), lifecycle.lifecycleEpoch() + 1);
+    var changedEvidence =
+        copyLifecycle(lifecycle, lifecycle.request(), lifecycle.lifecycleEpoch() + 1);
 
     assertThatThrownBy(
             () ->
