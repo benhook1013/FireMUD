@@ -394,13 +394,22 @@ for attempt in $(seq 1 "${active_max_attempts}"); do
 
   set +e
   jq -e '
-    type == "array"
-    and all(.[]; type == "object" and (.check_runs | type) == "array")
+    if type != "array" or length == 0 then false
+    elif any(.[]; type != "object" or (.check_runs | type) != "array") then false
+    else
+      .[0].total_count as $total
+      | all(.[]; (.total_count | type) == "number" and .total_count >= 0 and
+          .total_count == (.total_count | floor) and .total_count == $total)
+        and ([.[].check_runs[]] | length) == $total
+        and all(.[].check_runs[]; type == "object" and (.id | type) == "number" and
+          .id > 0 and .id == (.id | floor))
+        and ([.[].check_runs[].id] | unique | length) == $total
+    end
   ' <<<"${check_runs_json}" >/dev/null 2>>"${api_error_file}"
   check_runs_shape_status=$?
   set -e
   if [[ "${check_runs_shape_status}" -ne 0 ]]; then
-    echo "GitHub API returned malformed check-run data for the prior ${REQUIRED_GATE_NAME}; refusing to preserve." >&2
+    echo "GitHub API returned malformed or incomplete check-run data for the prior ${REQUIRED_GATE_NAME}; refusing to preserve." >&2
     exit 1
   fi
 
