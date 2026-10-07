@@ -100,7 +100,7 @@ public final class GameSessionCanonicalInitialAdmissionOwnerGrpcCodec {
               terminalAt);
       return GameSessionCanonicalInitialAdmissionOwnerProofCodec.fromStored(
           GameSessionCanonicalInitialAdmissionOwnerProofCodec.canonicalBytes(proof));
-    } catch (IllegalArgumentException | NullPointerException malformed) {
+    } catch (IllegalArgumentException malformed) {
       throw new IllegalArgumentException(
           "Game Session owner proof terminal fields are invalid", malformed);
     }
