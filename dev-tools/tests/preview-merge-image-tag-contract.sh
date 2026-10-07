@@ -73,14 +73,22 @@ case "${GH_FIXTURE:-}" in
     ;;
   success_runs)
     if [[ "$*" == *publish-pr-runtime-images.yml* ]]; then
-      printf '[{"workflow_runs":[{"id":102,"status":"completed","conclusion":"success","display_title":"Publish PR Runtime Images Build Runtime Images secure-pr-artifact pr-7 base-%s head-%s merge-%s mode-required","created_at":"2026-09-21T00:01:00Z"}]}]' "$base_sha" "$head_sha" "$merge_sha"
+      if [[ "$*" == *event=repository_dispatch* ]]; then
+        printf '%s' '{"total_count":0,"workflow_runs":[]}'
+        exit 0
+      fi
+      printf '{"total_count":1,"workflow_runs":[{"id":102,"event":"workflow_run","status":"completed","conclusion":"success","display_title":"Publish PR Runtime Images Build Runtime Images secure-pr-artifact pr-7 base-%s head-%s merge-%s mode-required","created_at":"2026-09-21T00:01:00Z"}]}' "$base_sha" "$head_sha" "$merge_sha"
     else
     printf '[{"workflow_runs":[{"id":101,"status":"completed","conclusion":"success","event":"pull_request","head_sha":"%s","html_url":"https://example.test/runtime/101","display_title":"Build Runtime Images secure-pr-artifact pr-7 base-%s head-%s merge-%s mode-required","created_at":"2026-09-21T00:00:00Z"}]}]' "$head_sha" "$base_sha" "$head_sha" "$merge_sha"
     fi
     ;;
   wrong_runs)
     if [[ "$*" == *publish-pr-runtime-images.yml* ]]; then
-      printf '[{"workflow_runs":[{"id":102,"status":"completed","conclusion":"success","display_title":"Publish PR Runtime Images Build Runtime Images secure-pr-artifact pr-7 base-%s head-%s merge-dddddddddddddddddddddddddddddddddddddddd mode-required","created_at":"2026-09-21T00:01:00Z"}]}]' "$base_sha" "$head_sha"
+      if [[ "$*" == *event=repository_dispatch* ]]; then
+        printf '%s' '{"total_count":0,"workflow_runs":[]}'
+        exit 0
+      fi
+      printf '{"total_count":1,"workflow_runs":[{"id":102,"event":"workflow_run","status":"completed","conclusion":"success","display_title":"Publish PR Runtime Images Build Runtime Images secure-pr-artifact pr-7 base-%s head-%s merge-dddddddddddddddddddddddddddddddddddddddd mode-required","created_at":"2026-09-21T00:01:00Z"}]}' "$base_sha" "$head_sha"
     else
       printf '[{"workflow_runs":[{"id":101,"status":"completed","conclusion":"success","event":"pull_request","head_sha":"%s","html_url":"https://example.test/runtime/101","display_title":"Build Runtime Images secure-pr-artifact pr-7 base-%s head-%s merge-%s mode-required","created_at":"2026-09-21T00:00:00Z"}]}]' "$head_sha" "$base_sha" "$head_sha" "$merge_sha"
     fi
