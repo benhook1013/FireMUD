@@ -1,4 +1,4 @@
-package unit.net.firedevops.firemud.worldmanagement.tenant;
+package unit.net.firedevops.firemud.common.world;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -7,8 +7,8 @@ import static org.mockito.Mockito.when;
 
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
+import net.firedevops.firemud.common.world.WorldCanonicalInstanceActivation;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
-import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceActivation;
 import org.junit.jupiter.api.Test;
 
 class WorldCanonicalInstanceActivationTest {

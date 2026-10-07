@@ -1,11 +1,12 @@
 package net.firedevops.firemud.worldmanagement.tenant;
 
 import java.util.Objects;
+import net.firedevops.firemud.common.world.WorldCanonicalInstanceActivation;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
- * Default-denied, unregistered canonical World lifecycle operation. No transport or production
- * source/current-Account verifier is installed by this component slice.
+ * Default-denied, unregistered canonical World lifecycle operation. A standalone transport adapter
+ * does not register this operation or supply its production source/current-Account verifier.
  */
 public final class WorldCanonicalInstanceActivationService {
   private final WorldCanonicalInstanceActivationRepository repository;

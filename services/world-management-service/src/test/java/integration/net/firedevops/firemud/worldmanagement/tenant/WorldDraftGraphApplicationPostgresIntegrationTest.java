@@ -3,9 +3,11 @@ package net.firedevops.firemud.worldmanagement.tenant;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.util.JsonFormat;
 import io.grpc.Context;
+import io.grpc.ManagedChannel;
 import io.grpc.Server;
 import io.grpc.ServerInterceptors;
 import io.grpc.Status;
@@ -22,6 +24,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -57,6 +60,8 @@ import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
+import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
+import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
 import net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding;
@@ -67,6 +72,7 @@ import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.world.CanonicalWorldInstancePreparationClient;
 import net.firedevops.firemud.common.world.CanonicalWorldInstancePreparationGrpcCodec;
 import net.firedevops.firemud.common.world.RoomTemplateRef;
+import net.firedevops.firemud.common.world.WorldCanonicalInstanceActivation;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleGrpcCodec;
 import net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence;
@@ -89,6 +95,8 @@ import net.firedevops.firemud.worldmanagement.repository.InitialAdmissionBindHol
 import net.firedevops.firemud.worldmanagement.service.InitialAdmissionBindHoldService;
 import net.firedevops.firemud.worldmanagement.service.WorldLifecycleCommandService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceEvidence.OwnerBinding;
+import net.firedevops.firemud.worldmanagement.v1.ActivateCanonicalWorldInstanceRequest;
+import net.firedevops.firemud.worldmanagement.v1.ActivateCanonicalWorldInstanceResponse;
 import net.firedevops.firemud.worldmanagement.v1.EntityTemplateReferenceType;
 import net.firedevops.firemud.worldmanagement.v1.GenerationRuleDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.PrepareCanonicalWorldInstanceResponse;
@@ -97,6 +105,7 @@ import net.firedevops.firemud.worldmanagement.v1.ReadWorldPublicationTerminalRes
 import net.firedevops.firemud.worldmanagement.v1.RegionDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.RoomDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.RoomExitDesignMutation;
+import net.firedevops.firemud.worldmanagement.v1.WorldCanonicalInstanceActivationServiceGrpc;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignAggregateType;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationOperation;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeType;
@@ -149,6 +158,8 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
       "spiffe://firemud/ns/firemud/sa/game-session-service";
   private static final String WRONG_WORKLOAD_URI =
       "spiffe://firemud/ns/firemud/sa/game-design-service";
+  private static final String WORLD_SERVER_WORKLOAD_URI =
+      "spiffe://firemud/ns/firemud/sa/world-management-service";
   private static final long GAME_DESIGN_VERSION = 9_000_000_000_000_001L;
 
   @TempDir Path temporaryDirectory;
@@ -1537,6 +1548,172 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     assertThat(service.activate(committed.request()).canonicalBytes())
         .containsExactly(committed.canonicalBytes());
     assertThat(verifierCalls).hasValue(callsAfterFirstAttempt);
+    assertThat(preparationRows(fixture.input().canonicalGameInstanceId()))
+        .containsExactly(preparationBefore);
+    assertOrigin();
+  }
+
+  @Test
+  void canonicalActivationTransportRequiresGameSessionAndReplaysImmutableOwnerResult()
+      throws Exception {
+    PreparedLifecycleFixture fixture = materializedLifecycleFixture();
+    var alternatePreparing =
+        fixture
+            .lifecycleRepository()
+            .read(lifecycleRequestWithFreshReadId(fixture.preparing().request()))
+            .orElseThrow();
+    assertThat(alternatePreparing.lifecycleStatus()).isEqualTo("PREPARING");
+    assertThat(alternatePreparing.request().readRequestId())
+        .isNotEqualTo(fixture.preparing().request().readRequestId());
+
+    UUID activationRequestId = UUID.randomUUID();
+    var originalRequest =
+        new WorldCanonicalInstanceActivation.Request(activationRequestId, fixture.preparing());
+    var equivalentRetry =
+        new WorldCanonicalInstanceActivation.Request(activationRequestId, alternatePreparing);
+    assertThat(equivalentRetry.canonicalRequestBytes())
+        .containsExactly(originalRequest.canonicalRequestBytes());
+    assertThat(
+            Arrays.equals(
+                equivalentRetry.preparingEvidenceBytes(), originalRequest.preparingEvidenceBytes()))
+        .isFalse();
+
+    // This isolated fixture stipulates upstream held source/release/Account authority only; it is
+    // not live Account authorization. The socket independently proves Game Session mTLS identity,
+    // while World performs the actual lifecycle CAS and immutable operation write.
+    AtomicInteger authorityChecks = new AtomicInteger();
+    var activationService =
+        canonicalActivationService(
+            fixture,
+            ignored -> {
+              authorityChecks.incrementAndGet();
+              return stipulatedActivationAuthority();
+            });
+    var adapter = new WorldCanonicalInstanceActivationGrpcService(activationService, NAMESPACE);
+    WorldPreparationTestWorkloadPki pki =
+        WorldPreparationTestWorkloadPki.create(temporaryDirectory);
+    Server transport = startActivationTransport(adapter, pki);
+    byte[] preparationBefore = preparationRows(fixture.input().canonicalGameInstanceId());
+    var wireRequest = activationTransportRequest(originalRequest);
+    try {
+      try (var wrongPeer =
+          activationTransportClient(transport, pki.clientProperties(WRONG_WORKLOAD_URI))) {
+        assertThatThrownBy(() -> wrongPeer.activate(wireRequest))
+            .isInstanceOf(StatusRuntimeException.class)
+            .satisfies(
+                error ->
+                    assertThat(((StatusRuntimeException) error).getStatus().getCode())
+                        .isEqualTo(Status.Code.PERMISSION_DENIED));
+      }
+      assertThat(authorityChecks).hasValue(0);
+      assertThat(activationOperationCountForRequest(activationRequestId)).isZero();
+      assertThat(activationManifestCountForRequest(activationRequestId)).isZero();
+      assertThat(activationManifestCount(fixture.input().canonicalGameInstanceId())).isZero();
+      assertThat(fixture.lifecycleRepository().read(fixture.readRequest()).orElseThrow())
+          .isEqualTo(fixture.preparing());
+      assertThat(preparationRows(fixture.input().canonicalGameInstanceId()))
+          .containsExactly(preparationBefore);
+
+      try (var gameSession =
+          activationTransportClient(transport, pki.clientProperties(GAME_SESSION_WORKLOAD_URI))) {
+        var firstResponse = gameSession.activate(wireRequest);
+        assertThat(firstResponse.getActivationRequestId())
+            .isEqualTo(activationRequestId.toString());
+        byte[] immutableResultBytes = firstResponse.getCanonicalResultBytes().toByteArray();
+        var firstResult = WorldCanonicalInstanceActivation.Result.fromStored(immutableResultBytes);
+        assertThat(firstResult.outcome())
+            .isEqualTo(WorldCanonicalInstanceActivation.Outcome.COMMITTED);
+        assertThat(firstResult.request().canonicalRequestBytes())
+            .containsExactly(originalRequest.canonicalRequestBytes());
+        assertThat(firstResult.request().preparingEvidenceBytes())
+            .containsExactly(originalRequest.preparingEvidenceBytes());
+        assertThat(firstResult.lifecycleEvidence().lifecycleStatus()).isEqualTo("ACTIVE");
+        assertThat(firstResult.lifecycleEvidence().lifecycleEpoch())
+            .isEqualTo(fixture.preparing().lifecycleEpoch() + 1L);
+        assertThat(firstResult.lifecycleEvidence().rowVersion())
+            .isEqualTo(fixture.preparing().rowVersion() + 1L);
+        assertThat(authorityChecks).hasValue(1);
+        assertThat(activationOperationCountForRequest(activationRequestId)).isEqualTo(1L);
+        assertThat(activationManifestCountForRequest(activationRequestId)).isZero();
+        assertThat(activationManifestCount(fixture.input().canonicalGameInstanceId())).isZero();
+        var storedResult =
+            new WorldCanonicalInstanceActivationRepository(
+                    dsl, manager, fixture.lifecycleRepository())
+                .readResult(originalRequest)
+                .orElseThrow();
+        assertThat(storedResult.canonicalBytes()).containsExactly(immutableResultBytes);
+
+        // A separate owner read with fresh correlation establishes current ACTIVE state; the
+        // immutable activation result remains the historical operation result.
+        var current =
+            fixture
+                .lifecycleRepository()
+                .read(lifecycleRequestWithFreshReadId(fixture.readRequest()))
+                .orElseThrow();
+        assertThat(current.lifecycleStatus()).isEqualTo("ACTIVE");
+        assertThat(current.lifecycleEpoch())
+            .isEqualTo(firstResult.lifecycleEvidence().lifecycleEpoch());
+        assertThat(current.rowVersion()).isEqualTo(firstResult.lifecycleEvidence().rowVersion());
+        assertThat(current.request().readRequestId())
+            .isNotEqualTo(firstResult.lifecycleEvidence().request().readRequestId());
+
+        var exactRetry = gameSession.activate(wireRequest);
+        assertThat(exactRetry.getCanonicalResultBytes().toByteArray())
+            .containsExactly(immutableResultBytes);
+        var alternateCorrelationRetry =
+            gameSession.activate(activationTransportRequest(equivalentRetry));
+        assertThat(alternateCorrelationRetry.getCanonicalResultBytes().toByteArray())
+            .containsExactly(immutableResultBytes);
+        assertThat(authorityChecks).hasValue(1);
+        assertThat(
+                WorldCanonicalInstanceActivation.Result.fromStored(
+                        alternateCorrelationRetry.getCanonicalResultBytes().toByteArray())
+                    .request()
+                    .preparingEvidenceBytes())
+            .containsExactly(originalRequest.preparingEvidenceBytes());
+
+        var changedExpectedVersion =
+            new WorldCanonicalInstanceLifecycleEvidence(
+                fixture.preparing().request(),
+                fixture.preparing().launchBinding(),
+                fixture.preparing().startLocation(),
+                fixture.preparing().runtimeRoomInstanceId(),
+                "PREPARING",
+                fixture.preparing().lifecycleEpoch(),
+                fixture.preparing().rowVersion() + 1L,
+                fixture.preparing().captureId(),
+                fixture.preparing().graphSha256(),
+                fixture.preparing().preparationInputDigest());
+        // Reusing the same operation ID with a changed normalized expected version is a conflict
+        // probe, not evidence that the persisted PREPARING row had that version.
+        var changedRequest =
+            new WorldCanonicalInstanceActivation.Request(
+                activationRequestId, changedExpectedVersion);
+        assertThatThrownBy(() -> gameSession.activate(activationTransportRequest(changedRequest)))
+            .isInstanceOf(StatusRuntimeException.class)
+            .satisfies(
+                error ->
+                    assertThat(((StatusRuntimeException) error).getStatus().getCode())
+                        .isEqualTo(Status.Code.ALREADY_EXISTS));
+        assertThat(authorityChecks).hasValue(1);
+        assertThat(activationOperationCountForRequest(activationRequestId)).isEqualTo(1L);
+        assertThat(activationManifestCountForRequest(activationRequestId)).isZero();
+        assertThat(activationManifestCount(fixture.input().canonicalGameInstanceId())).isZero();
+        var afterConflict =
+            fixture
+                .lifecycleRepository()
+                .read(lifecycleRequestWithFreshReadId(fixture.readRequest()))
+                .orElseThrow();
+        assertThat(afterConflict.lifecycleStatus()).isEqualTo(current.lifecycleStatus());
+        assertThat(afterConflict.lifecycleEpoch()).isEqualTo(current.lifecycleEpoch());
+        assertThat(afterConflict.rowVersion()).isEqualTo(current.rowVersion());
+        assertThat(afterConflict.request().canonicalGameInstanceId())
+            .isEqualTo(current.request().canonicalGameInstanceId());
+      }
+    } finally {
+      transport.shutdownNow();
+      assertThat(transport.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+    }
     assertThat(preparationRows(fixture.input().canonicalGameInstanceId()))
         .containsExactly(preparationBefore);
     assertOrigin();
@@ -3289,6 +3466,45 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
         .addService(ServerInterceptors.intercept(adapter, new GrpcPeerIdentityInterceptor()))
         .build()
         .start();
+  }
+
+  private static Server startActivationTransport(
+      WorldCanonicalInstanceActivationGrpcService adapter, WorldPreparationTestWorkloadPki pki)
+      throws Exception {
+    return NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
+        .sslContext(
+            GrpcSslContexts.configure(
+                    SslContextBuilder.forServer(
+                        pki.worldServerCertificate().toFile(),
+                        pki.worldServerPrivateKey().toFile()))
+                .trustManager(pki.caCertificate().toFile())
+                .clientAuth(ClientAuth.REQUIRE)
+                .build())
+        .addService(ServerInterceptors.intercept(adapter, new GrpcPeerIdentityInterceptor()))
+        .build()
+        .start();
+  }
+
+  private static ActivateCanonicalWorldInstanceRequest activationTransportRequest(
+      WorldCanonicalInstanceActivation.Request request) {
+    return ActivateCanonicalWorldInstanceRequest.newBuilder()
+        .setActivationRequestId(request.activationRequestId().toString())
+        .setPreparingLifecycleEvidenceBytes(ByteString.copyFrom(request.preparingEvidenceBytes()))
+        .build();
+  }
+
+  private static CanonicalActivationTransportClient activationTransportClient(
+      Server server, CommonGrpcClientProperties tlsProperties) throws Exception {
+    ManagedChannel channel =
+        new GrpcChannelFactory()
+            .buildChannel("127.0.0.1:" + server.getPort(), server.getPort(), tlsProperties, false);
+    var stub =
+        WorldCanonicalInstanceActivationServiceGrpc.newBlockingStub(channel)
+            .withCallCredentials(
+                new GrpcServerPeerIdentityCallCredentials(WORLD_SERVER_WORKLOAD_URI))
+            .withInterceptors(
+                new GrpcServerPeerIdentityClientInterceptor(WORLD_SERVER_WORKLOAD_URI));
+    return new CanonicalActivationTransportClient(channel, stub);
   }
 
   private static CanonicalWorldInstancePreparationClient preparationClient(
@@ -6056,6 +6272,35 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   private record ActivationProof(
       WorldCanonicalInstanceActivation.Request request,
       WorldCanonicalInstanceActivation.Result result) {}
+
+  private static final class CanonicalActivationTransportClient implements AutoCloseable {
+    private final ManagedChannel channel;
+    private final WorldCanonicalInstanceActivationServiceGrpc
+            .WorldCanonicalInstanceActivationServiceBlockingStub
+        stub;
+
+    private CanonicalActivationTransportClient(
+        ManagedChannel channel,
+        WorldCanonicalInstanceActivationServiceGrpc
+                .WorldCanonicalInstanceActivationServiceBlockingStub
+            stub) {
+      this.channel = channel;
+      this.stub = stub;
+    }
+
+    private ActivateCanonicalWorldInstanceResponse activate(
+        ActivateCanonicalWorldInstanceRequest request) {
+      return stub.withDeadlineAfter(5, TimeUnit.SECONDS).activateCanonicalWorldInstance(request);
+    }
+
+    @Override
+    public void close() throws InterruptedException {
+      channel.shutdownNow();
+      if (!channel.awaitTermination(5, TimeUnit.SECONDS)) {
+        throw new AssertionError("Canonical activation test client did not terminate");
+      }
+    }
+  }
 
   private record PreparedLifecycleFixture(
       WorldCanonicalInstancePreparation.Input input,

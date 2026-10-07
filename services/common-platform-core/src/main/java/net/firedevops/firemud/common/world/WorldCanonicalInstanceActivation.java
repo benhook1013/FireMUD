@@ -1,4 +1,4 @@
-package net.firedevops.firemud.worldmanagement.tenant;
+package net.firedevops.firemud.common.world;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -14,7 +14,6 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
-import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import tools.jackson.core.StreamReadFeature;
 import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.JsonNode;
