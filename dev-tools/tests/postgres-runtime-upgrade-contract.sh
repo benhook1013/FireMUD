@@ -51,9 +51,19 @@ cronjob = next(
     for document in yaml.safe_load_all((root / "k8s/postgres/pg-dump-cronjob.yaml").read_text())
     if document.get("kind") == "CronJob"
 )
-cron_image = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]["image"]
+cronjob_container = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]
+cron_image = cronjob_container["image"]
 if cron_image != expected_image:
     raise SystemExit("scheduled PostgreSQL dump client does not use the pinned PostgreSQL 18 proposal")
+if cronjob_container.get("command") != ["/bin/bash", "/scripts/pg-dump.sh"]:
+    raise SystemExit("scheduled PostgreSQL dump client must invoke its mounted ConfigMap script with bash")
+dump_script = next(
+    document
+    for document in yaml.safe_load_all((root / "k8s/postgres/pg-dump-cronjob.yaml").read_text())
+    if document.get("kind") == "ConfigMap" and document.get("metadata", {}).get("name") == "pg-dump-script"
+)["data"]["pg-dump.sh"]
+if "pg_dump -h \"$FIREMUD_POSTGRES_HOST\"" not in dump_script or "| gzip > \"$DUMP\"" not in dump_script:
+    raise SystemExit("scheduled PostgreSQL dump ConfigMap must retain its plain-SQL gzip pipeline")
 
 dump_dockerfile = (root / "docker/pg-dump-cron.Dockerfile").read_text()
 if "FROM postgres:18@sha256:" not in dump_dockerfile:
@@ -88,7 +98,7 @@ assert_layout() {
       printf '16\n' >"$fixture_dir/pgdata/PG_VERSION"
       ;;
     unknown) mkdir -p "$fixture_dir/lost-data" ;;
-    wrong-major|incomplete-postgres18|postgres18|postgres18-with-sibling)
+    wrong-major|incomplete-postgres18|postgres18|postgres18-with-sibling|postgres18-with-global-symlink)
       mkdir -p "$fixture_dir/18/docker"
       printf '%s\n' "$([[ "$fixture" == wrong-major ]] && printf '16' || printf '18')" \
         >"$fixture_dir/18/docker/PG_VERSION"
@@ -98,6 +108,12 @@ assert_layout() {
       fi
       if [[ "$fixture" == postgres18-with-sibling ]]; then
         touch "$fixture_dir/unexpected"
+      fi
+      if [[ "$fixture" == postgres18-with-global-symlink ]]; then
+        mkdir -p "$fixture_dir/18/docker/other-global"
+        printf 'control\n' >"$fixture_dir/18/docker/other-global/pg_control"
+        rm -rf -- "$fixture_dir/18/docker/global"
+        ln -s other-global "$fixture_dir/18/docker/global"
       fi
       ;;
     *) fail "unknown PostgreSQL data layout fixture: $fixture" ;;
@@ -126,6 +142,7 @@ assert_layout "unknown nonempty layout" 1 unknown "unrecognized nonempty data la
 assert_layout "wrong-major versioned child" 1 wrong-major "expected PostgreSQL major 18"
 assert_layout "incomplete PostgreSQL 18 child" 1 incomplete-postgres18 "is incomplete"
 assert_layout "PostgreSQL 18 child with unknown sibling" 1 postgres18-with-sibling "unrecognized nonempty data layout"
+assert_layout "PostgreSQL 18 child with symlinked global directory" 1 postgres18-with-global-symlink "unsafe cluster markers"
 assert_layout "valid PostgreSQL 18 child" 0 postgres18 ""
 
 run_docker_proof() {
@@ -151,6 +168,11 @@ run_docker_proof() {
   local actual_marker
   local failed_table_missing
   local cleanup_dir
+  local helper_backup_dir
+  local helper_dump
+  local helper_sql
+  local cronjob_script
+  local cronjob_sql
 
   run_token="${GITHUB_RUN_ID:-local}-a${GITHUB_RUN_ATTEMPT:-0}-$(date -u +%Y%m%d%H%M%S)-$$-${RANDOM:-0}"
   run_token="$(printf '%s' "$run_token" | tr -cd 'A-Za-z0-9_.-')"
@@ -161,6 +183,9 @@ run_docker_proof() {
   target_container="firemud-pg18-target-${run_token}"
   cleanup_dir="$(mktemp -d)"
   backup_dir="$cleanup_dir/backups"
+  helper_backup_dir="$cleanup_dir/helper-backups"
+  helper_sql="$cleanup_dir/helper.sql"
+  cronjob_sql="$cleanup_dir/k8s-cronjob.sql"
   bad_dump="$backup_dir/15min/firemud_99999999999999.sql.gz"
   bad_key="15min/firemud_99999999999999.sql.gz"
   aws_stub="$cleanup_dir/aws"
@@ -175,7 +200,25 @@ run_docker_proof() {
   }
   trap cleanup EXIT INT TERM
 
-  mkdir -p "$backup_dir" "$backup_dir/15min"
+  mkdir -p "$backup_dir/15min" "$helper_backup_dir"
+  chmod 0777 "$backup_dir" "$backup_dir/15min" "$helper_backup_dir"
+  cronjob_script="$cleanup_dir/k8s-pg-dump.sh"
+  python3 - "$ROOT_DIR/k8s/postgres/pg-dump-cronjob.yaml" "$cronjob_script" <<'PY'
+from pathlib import Path
+import sys
+
+import yaml
+
+source = Path(sys.argv[1])
+destination = Path(sys.argv[2])
+script = next(
+    document
+    for document in yaml.safe_load_all(source.read_text())
+    if document.get("kind") == "ConfigMap" and document.get("metadata", {}).get("name") == "pg-dump-script"
+)["data"]["pg-dump.sh"]
+destination.write_text(script)
+PY
+  chmod 0444 "$cronjob_script"
   docker network create "$network_name" >/dev/null
   docker volume create "$source_volume" >/dev/null
   docker volume create "$target_volume" >/dev/null
@@ -189,7 +232,7 @@ run_docker_proof() {
     --env POSTGRES_USER=firemud \
     --env "POSTGRES_PASSWORD=$password" \
     "$POSTGRES16_IMAGE" >/dev/null
-  wait_for_postgres "$source_container"
+  wait_for_postgres "$source_container" "$password"
   docker exec "$source_container" psql -v ON_ERROR_STOP=1 -U firemud -d firemud \
     -c 'CREATE TABLE public.postgres18_upgrade_probe (id integer PRIMARY KEY, marker text NOT NULL)' \
     -c "INSERT INTO public.postgres18_upgrade_probe (id, marker) VALUES (1, '$marker')" \
@@ -208,7 +251,7 @@ run_docker_proof() {
   docker run --rm \
     --network "$network_name" \
     --volume "$ROOT_DIR/dev-tools/backups/pg-dump-rotate.sh:/usr/local/bin/pg-dump-rotate.sh:ro" \
-    --volume "$backup_dir:/backups" \
+    --volume "$helper_backup_dir:/backups" \
     --env FIREMUD_POSTGRES_HOST=postgres-source \
     --env FIREMUD_POSTGRES_USER=firemud \
     --env FIREMUD_POSTGRES_DB=firemud \
@@ -216,10 +259,29 @@ run_docker_proof() {
     --env BACKUP_DIR=/backups \
     --entrypoint /bin/bash \
     "$POSTGRES_DUMP_CLIENT_IMAGE" /usr/local/bin/pg-dump-rotate.sh \
-    >"$cleanup_dir/backup.log" 2>&1 || fail "the canonical scheduled logical dump did not complete"
+    >"$cleanup_dir/backup.log" 2>&1 || fail "the Compose dump helper did not complete"
+  helper_dump="$(find "$helper_backup_dir/15min" -maxdepth 1 -type f -name 'firemud_*.sql.gz' -print -quit)"
+  [[ -n "$helper_dump" && -s "$helper_dump" ]] || fail "the Compose dump helper did not publish a gzip artifact"
+  gzip -t "$helper_dump" || fail "the Compose dump helper artifact is not valid gzip"
+  gzip -cd "$helper_dump" >"$helper_sql"
+  grep -Fq -- "$marker" "$helper_sql" || fail "the Compose dump helper artifact omitted the seeded PostgreSQL 16 row"
+
+  docker run --rm \
+    --network "$network_name" \
+    --volume "$cronjob_script:/scripts/pg-dump.sh:ro" \
+    --volume "$backup_dir:/backups" \
+    --env FIREMUD_POSTGRES_HOST=postgres-source \
+    --env FIREMUD_POSTGRES_USER=firemud \
+    --env FIREMUD_POSTGRES_DB=firemud \
+    --env "PGPASSWORD=$password" \
+    --entrypoint /bin/bash \
+    "$POSTGRES18_IMAGE" /scripts/pg-dump.sh \
+    >"$cleanup_dir/k8s-cronjob-backup.log" 2>&1 || fail "the actual Kubernetes PostgreSQL dump ConfigMap script did not complete in its pinned image"
   good_dump="$(find "$backup_dir/15min" -maxdepth 1 -type f -name 'firemud_*.sql.gz' -print -quit)"
-  [[ -n "$good_dump" && -s "$good_dump" ]] || fail "the canonical scheduled logical dump did not publish a gzip artifact"
-  gzip -t "$good_dump" || fail "the canonical scheduled logical dump artifact is not valid gzip"
+  [[ -n "$good_dump" && -s "$good_dump" ]] || fail "the Kubernetes dump script did not publish a gzip artifact"
+  gzip -t "$good_dump" || fail "the Kubernetes dump script artifact is not valid gzip"
+  gzip -cd "$good_dump" >"$cronjob_sql"
+  grep -Fq -- "$marker" "$cronjob_sql" || fail "the Kubernetes dump script artifact omitted the seeded PostgreSQL 16 row"
   good_key="15min/${good_dump##*/}"
 
   docker stop "$source_container" >/dev/null
@@ -262,7 +324,7 @@ AWS
     --env POSTGRES_USER=firemud \
     --env "POSTGRES_PASSWORD=$password" \
     "$POSTGRES18_IMAGE" postgres -c max_connections=200 >/dev/null
-  wait_for_postgres "$target_container"
+  wait_for_postgres "$target_container" "$password"
   target_data_directory="$(docker exec "$target_container" psql -Atq -U firemud -d firemud -c 'SHOW data_directory')"
   [[ "$target_data_directory" == "/var/lib/postgresql/18/docker" ]] || fail "the PostgreSQL 18 target did not use its versioned data directory"
 
@@ -276,11 +338,13 @@ AWS
   if run_logical_restore "$network_name" "$bad_key" "$aws_stub" "$backup_dir" "$cleanup_dir" "$password"; then
     fail "the deliberately invalid target import unexpectedly succeeded"
   fi
+  grep -Fq "ERROR:  division by zero" "$cleanup_dir/restore-${bad_key##*/}.log" \
+    || fail "the invalid-import proof did not reach its intended PostgreSQL SQL error"
   failed_table_missing="$(docker exec "$target_container" psql -Atq -U firemud -d firemud -c "SELECT to_regclass('public.postgres18_failed_import') IS NULL")"
   [[ "$failed_table_missing" == "t" ]] || fail "the failed target import left partial database changes"
 
   docker start "$source_container" >/dev/null
-  wait_for_postgres "$source_container"
+  wait_for_postgres "$source_container" "$password"
   actual_marker="$(docker exec "$source_container" psql -Atq -U firemud -d firemud -c 'SELECT marker FROM public.postgres18_upgrade_probe WHERE id = 1')"
   [[ "$actual_marker" == "$marker" ]] || fail "the original PostgreSQL 16 source no longer contains its seeded data after a failed target import"
   docker stop "$source_container" >/dev/null
@@ -292,15 +356,21 @@ AWS
   [[ "$(docker inspect --format '{{.State.Running}}' "$source_container")" == false ]] \
     || fail "the PostgreSQL 16 source should remain stopped while the PostgreSQL 18 target is validated"
 
-  echo "PostgreSQL runtime proof passed: PostgreSQL 16 source preserved; separate PostgreSQL 18 target started and restored from the canonical gzip/plain-SQL path."
+  echo "PostgreSQL runtime proof passed: Compose and Kubernetes PostgreSQL 18 dump clients produced seeded gzip/plain-SQL backups; the original PostgreSQL 16 source stayed intact while the separate PostgreSQL 18 target was restored."
 }
 
 wait_for_postgres() {
   local container="$1"
+  local password="$2"
   local attempt
+  local query_result
   for ((attempt = 0; attempt < 60; attempt++)); do
-    if docker exec "$container" pg_isready -U firemud -d firemud >/dev/null 2>&1; then
-      return 0
+    if docker exec --env "PGPASSWORD=$password" "$container" pg_isready -h 127.0.0.1 -U firemud -d firemud >/dev/null 2>&1; then
+      if query_result="$(docker exec --env "PGPASSWORD=$password" "$container" \
+        psql -h 127.0.0.1 -v ON_ERROR_STOP=1 -Atq -U firemud -d firemud -c 'SELECT 1' 2>/dev/null)" \
+        && [[ "$query_result" == "1" ]]; then
+        return 0
+      fi
     fi
     sleep 1
   done

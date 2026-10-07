@@ -241,6 +241,7 @@ if (
     or '"${data_root}/PG_VERSION"' not in guard_script
     or '"${data_root}/pgdata/PG_VERSION"' not in guard_script
     or '"${data_directory}/global/pg_control"' not in guard_script
+    or '"${data_directory}/global"' not in guard_script
 ):
     raise SystemExit("PostgreSQL data-layout guard did not inspect retained and PostgreSQL 18 layout markers")
 for layout, expected_returncode in (
@@ -248,6 +249,7 @@ for layout, expected_returncode in (
     ("legacy-preview", 1),
     ("fresh", 0),
     ("postgres18", 0),
+    ("postgres18-global-symlink", 1),
     ("unknown", 1),
     ("wrong-major", 1),
     ("incomplete-postgres18", 1),
@@ -271,6 +273,15 @@ for layout, expected_returncode in (
                 global_path = current_path / "global"
                 global_path.mkdir()
                 (global_path / "pg_control").write_text("control")
+        elif layout == "postgres18-global-symlink":
+            current_path = data_root_path / "18" / "docker"
+            current_path.mkdir(parents=True)
+            (current_path / "PG_VERSION").write_text("18\n")
+            (current_path / "base").mkdir()
+            actual_global_path = current_path / "actual-global"
+            actual_global_path.mkdir()
+            (actual_global_path / "pg_control").write_text("control")
+            (current_path / "global").symlink_to(actual_global_path.name)
         elif layout == "unknown":
             (data_root_path / "unknown.txt").write_text("unrecognized")
         rendered_guard_script = guard_script.replace(

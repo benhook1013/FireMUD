@@ -220,33 +220,70 @@ async function classifyGithubChangeScope(github, context) {
       return { ...scope, postgresRuntimeProofChanged: false };
     }
 
-    const commits = payload.commits;
-    const pushRangeComplete =
-      typeof payload.before === "string" &&
-      payload.before.length > 0 &&
-      typeof payload.after === "string" &&
-      payload.after.length > 0;
-    const commitFileListsComplete =
-      pushRangeComplete &&
-      Array.isArray(commits) &&
-      commits.every(
-        (commit) =>
-          commit &&
-          Array.isArray(commit.added) &&
-          Array.isArray(commit.modified) &&
-          Array.isArray(commit.removed) &&
-          [...commit.added, ...commit.modified, ...commit.removed].every(
-            (file) => typeof file === "string" && file.length > 0,
-          ),
-      ) &&
-      (commits.length > 0 || payload.before === payload.after);
-    const files = commitFileListsComplete
-      ? commits.flatMap((commit) => [...commit.added, ...commit.modified, ...commit.removed])
-      : [];
+    const before = payload.before;
+    const after = payload.after;
+    const validSha = (sha) => typeof sha === "string" && /^[0-9a-f]{40}$/i.test(sha);
+    const pushRangeUsable =
+      payload.forced === false &&
+      validSha(before) &&
+      validSha(after) &&
+      !/^0{40}$/i.test(before) &&
+      !/^0{40}$/i.test(after);
+    let files = [];
+    let fileListComplete = false;
+
+    if (pushRangeUsable) {
+      try {
+        const response = await github.rest.repos.compareCommitsWithBasehead({
+          ...context.repo,
+          basehead: `${before}...${after}`,
+          per_page: 100,
+        });
+        const comparison = response?.data;
+        const entries = comparison?.files;
+        const statusUsable =
+          comparison?.status === "ahead" || comparison?.status === "identical";
+        const exactRange =
+          comparison?.base_commit?.sha?.toLowerCase() === before.toLowerCase() &&
+          comparison?.merge_base_commit?.sha?.toLowerCase() === before.toLowerCase();
+        const entriesValid =
+          Array.isArray(entries) &&
+          entries.length < 300 &&
+          entries.every((entry) => {
+            if (
+              !entry ||
+              typeof entry !== "object" ||
+              typeof entry.filename !== "string" ||
+              entry.filename.length === 0 ||
+              !["added", "removed", "modified", "renamed"].includes(entry.status)
+            ) {
+              return false;
+            }
+            if (entry.status === "renamed") {
+              return typeof entry.previous_filename === "string" && entry.previous_filename.length > 0;
+            }
+            return (
+              entry.previous_filename === undefined ||
+              (typeof entry.previous_filename === "string" && entry.previous_filename.length > 0)
+            );
+          });
+
+        fileListComplete = statusUsable && exactRange && entriesValid;
+        if (fileListComplete) {
+          files = entries.flatMap((entry) =>
+            entry.previous_filename === undefined
+              ? [entry.filename]
+              : [entry.filename, entry.previous_filename],
+          );
+        }
+      } catch {
+        // Missing, unavailable, or malformed comparison evidence requires the physical proof.
+      }
+    }
+
     return {
       ...scope,
-      postgresRuntimeProofChanged:
-        !commitFileListsComplete || files.some(isPostgresRuntimeProofRelevant),
+      postgresRuntimeProofChanged: !fileListComplete || files.some(isPostgresRuntimeProofRelevant),
     };
   }
 

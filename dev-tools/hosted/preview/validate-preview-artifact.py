@@ -449,8 +449,8 @@ if [ -e "$major_root" ] || [ -L "$major_root" ]; then
   [ -f "${data_directory}/PG_VERSION" ] && [ ! -L "${data_directory}/PG_VERSION" ] || refuse "PostgreSQL 18 data directory ${data_directory} has no regular PG_VERSION file"
   version=$(cat "${data_directory}/PG_VERSION") || refuse "cannot read ${data_directory}/PG_VERSION"
   [ "$version" = "18" ] || refuse "expected PostgreSQL major 18 at ${data_directory}/PG_VERSION"
-  [ -d "${data_directory}/base" ] && [ -f "${data_directory}/global/pg_control" ] || refuse "PostgreSQL 18 data directory ${data_directory} is incomplete"
-  [ ! -L "${data_directory}/base" ] && [ ! -L "${data_directory}/global/pg_control" ] || refuse "PostgreSQL 18 data directory ${data_directory} has unsafe cluster markers"
+  [ -d "${data_directory}/base" ] && [ -d "${data_directory}/global" ] && [ -f "${data_directory}/global/pg_control" ] || refuse "PostgreSQL 18 data directory ${data_directory} is incomplete"
+  [ ! -L "${data_directory}/base" ] && [ ! -L "${data_directory}/global" ] && [ ! -L "${data_directory}/global/pg_control" ] || refuse "PostgreSQL 18 data directory ${data_directory} has unsafe cluster markers"
   require_only_entry "$data_root" "$major_root"
   require_only_entry "$major_root" "$data_directory"
 elif has_entries "$data_root"; then
