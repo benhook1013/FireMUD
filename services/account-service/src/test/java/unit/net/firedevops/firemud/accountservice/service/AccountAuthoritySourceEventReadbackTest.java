@@ -31,6 +31,7 @@ import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperatio
 import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperationRepository.LogoutAllReceipt;
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository.PasswordResetReceipt;
+import net.firedevops.firemud.accountservice.repository.AccountSecurityStateOperationRepository;
 import net.firedevops.firemud.accountservice.service.AccountAuthoritySourceEventReadback;
 import net.firedevops.firemud.accountservice.service.AccountAuthoritySourceReader.AccountSourceEventReadback;
 import net.firedevops.firemud.accountservice.service.AccountAuthoritySourceReader.AccountSourceSnapshot;
@@ -506,14 +507,10 @@ class AccountAuthoritySourceEventReadbackTest {
     AccountPasswordResetOperationRepository resets =
         mock(AccountPasswordResetOperationRepository.class);
     AccountLogoutAllOperationRepository logouts = mock(AccountLogoutAllOperationRepository.class);
+    AccountSecurityStateOperationRepository securityStates =
+        mock(AccountSecurityStateOperationRepository.class);
     AccountAuthoritySourceEventReadback readback =
-        new AccountAuthoritySourceEventReadback(
-            outbox,
-            resets,
-            logouts,
-            org.mockito.Mockito.mock(
-                net.firedevops.firemud.accountservice.repository
-                    .AccountSecurityStateOperationRepository.class));
+        new AccountAuthoritySourceEventReadback(outbox, resets, logouts, securityStates);
     Event event = securityStateEvent(ACCOUNT_UUID, 1L, "2", "2");
     assertThat(structuralSnapshot(event, 2L, 2L).latestEvent()).contains(event);
     when(outbox.readCheckpoint(event.outboxStreamKey()))
@@ -530,6 +527,9 @@ class AccountAuthoritySourceEventReadbackTest {
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("no immutable operation receipt");
     verifyNoInteractions(resets, logouts);
+    verify(securityStates, org.mockito.Mockito.times(2))
+        .findCommittedByRequestIdShared(UUID.fromString(event.requestId()));
+    verify(securityStates, never()).findByRequestId(UUID.fromString(event.requestId()));
   }
 
   private AccountSourceSnapshot structuralSnapshot(

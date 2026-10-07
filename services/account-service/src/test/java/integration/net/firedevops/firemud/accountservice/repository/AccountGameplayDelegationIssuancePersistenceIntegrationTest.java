@@ -2170,7 +2170,7 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
               anyString(), eq(ScriptOutputType.INTEGER), any(byte[][].class), any(byte[][].class)))
           .thenAnswer(
               invocation -> {
-                byte[][] arguments = invocation.getArgument(3);
+                byte[][] arguments = (byte[][]) invocation.getRawArguments()[3];
                 pendingRecord.set(arguments[0].clone());
                 absoluteExpiryMillis.set(
                     Long.parseLong(new String(arguments[1], StandardCharsets.US_ASCII)));

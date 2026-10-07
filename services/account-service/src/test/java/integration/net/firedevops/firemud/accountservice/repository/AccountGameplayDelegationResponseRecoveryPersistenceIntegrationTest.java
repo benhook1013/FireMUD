@@ -437,7 +437,7 @@ class AccountGameplayDelegationResponseRecoveryPersistenceIntegrationTest {
           .thenAnswer(
               invocation -> {
                 byte[][] keys = invocation.getArgument(2);
-                byte[][] arguments = invocation.getArgument(3);
+                byte[][] arguments = (byte[][]) invocation.getRawArguments()[3];
                 String key = new String(keys[0], StandardCharsets.US_ASCII);
                 if (!key.startsWith(AccountGameplayDelegationRedisClient.TOKEN_KEY_PREFIX)) {
                   return 0L;
