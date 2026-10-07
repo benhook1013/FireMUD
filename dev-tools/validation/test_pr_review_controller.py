@@ -8529,6 +8529,37 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(evidence.active_target_scans, [(tuple(values), set(values))])
         self.assertEqual(set(evidence.history_reads), {(1, "hosted"), (1, "cli")})
 
+    def test_budgeted_cli_prefix_advancement_requires_audited_accepted_source_proof(self):
+        for status in ("finding_pending", "pending", "unavailable"):
+            with self.subTest(source_status=status):
+                values, heads = _stacked_prs(3)
+                evidence = CountingEvidence()
+                evidence[(1, "cli")] = [self.allocation_evidence(
+                    head=values[1].head, checkpoint="accepted", channel="cli",
+                    accepted=1, raw=1, source_resolution_status=status)]
+                evidence[(1, "cli")].extend(self.allocation_evidence(
+                    head=values[1].head, checkpoint=f"dry-{index}", channel="cli")
+                    for index in (1, 2, 3))
+                evidence.audit.update(
+                    unresolved_findings=[], finding_only_findings=[], unknown_review_evidence=[])
+                controller = self.make(values, evidence, heads=heads)
+                controller.set_stack(list(values))
+                batch_calls = self._enable_batch_status(controller, values)
+                before = [dict(item) for item in evidence[(1, "cli")]]
+
+                with github.cli_preflight_budget(timeout_seconds=30):
+                    if status == "finding_pending":
+                        self.assertEqual(controller._target("cli", expected_pr=2).pr, 2)
+                    else:
+                        with self.assertRaisesRegex(WrongStackTarget, "selected PR #1"):
+                            controller._target("cli", expected_pr=2)
+
+                self.assertEqual(batch_calls, [tuple(values)])
+                self.assertEqual(set(evidence.history_reads),
+                                 {(number, channel) for number in (1, 2) for channel in ("hosted", "cli")})
+                self.assertTrue(evidence.stop_audit_calls)
+                self.assertEqual(evidence[(1, "cli")], before)
+
     def test_budgeted_cli_expected_target_keeps_earlier_front_assertion(self):
         values, heads = _stacked_prs(3)
         evidence = CountingEvidence(active_targets={1})
