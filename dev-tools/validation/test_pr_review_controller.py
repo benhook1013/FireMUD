@@ -8050,6 +8050,39 @@ class ControllerTests(unittest.TestCase):
                     {(number, channel) for number in values for channel in ("hosted", "cli")},
                 )
 
+    def test_budgeted_cli_expected_target_fallback_preloads_stopped_tail_request_history(self):
+        for probe in ("failed", "malformed"):
+            with self.subTest(probe=probe):
+                values, heads = _stacked_prs(3)
+                evidence = CountingEvidence()
+                controller = self.make(values, evidence, heads=heads, sqlite=True)
+                controller.set_stack(list(values))
+                controller.decide_stop(pr=3, channel="hosted", reason="stop tail Hosted discovery")
+                historical_reads = []
+
+                def full_history(pr_number, channel, historical_reads=historical_reads):
+                    historical_reads.append((pr_number, channel))
+                    if (pr_number, channel) == (3, "hosted"):
+                        raise ControllerError("stopped tail archive is unavailable")
+                    return []
+
+                evidence.history = full_history
+                if probe == "failed":
+                    evidence.active_review_targets = lambda *_args: (_ for _ in ()).throw(
+                        RuntimeError("candidate probe unavailable")
+                    )
+                else:
+                    evidence.active_review_targets = lambda *_args: {999}
+                batch_calls = self._enable_batch_status(controller, values)
+
+                with github.cli_preflight_budget(timeout_seconds=30):
+                    target = controller._target("cli", expected_pr=1)
+
+                self.assertEqual(target.pr, 1)
+                self.assertEqual(batch_calls, [tuple(values)])
+                self.assertIn((3, "hosted"), evidence.request_history_reads)
+                self.assertNotIn((3, "hosted"), historical_reads)
+
     def test_budgeted_cli_expected_target_keeps_expected_pr_allocation_policy(self):
         values = {1: pr(1, HEAD_1)}
         heads = {"develop": BASE, "feature-1": HEAD_1}

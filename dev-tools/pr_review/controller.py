@@ -4687,6 +4687,9 @@ class ReviewController:
                     selection_prs = state.ordered_prs
                     selection_state = state
                     expected_index = None
+                    for allocation in state.allocations.values():
+                        if allocation.pr in selection_prs and allocation.stop_basis is not None:
+                            cache_request_history(allocation.pr, allocation.channel)
         if budget is not None:
             budget.set_phase("target_remote_heads", total=1)
         selection_remote_heads = self.git.remote_heads()
