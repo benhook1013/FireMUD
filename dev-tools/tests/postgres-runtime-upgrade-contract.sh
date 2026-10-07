@@ -3,7 +3,6 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 POSTGRES_LAYOUT_ENTRYPOINT="$ROOT_DIR/docker/postgres-data-layout-entrypoint.sh"
-POSTGRES18_IMAGE='postgres:18@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336'
 POSTGRES16_IMAGE='postgres:16@sha256:65b16a8b326e0cfbdf33fa7e783f2a0cb352a61448616ccccfd616ef42aa0f65'
 POSTGRES_DUMP_DOCKERFILE="$ROOT_DIR/docker/pg-dump-cron.Dockerfile"
 
@@ -17,7 +16,7 @@ POSTGRES_DUMP_CLIENT_IMAGE="$(awk '$1 == "FROM" { print $2 }' "$POSTGRES_DUMP_DO
 
 [[ -x "$POSTGRES_LAYOUT_ENTRYPOINT" ]] || fail "PostgreSQL layout entrypoint must be executable"
 
-python3 - "$ROOT_DIR" "$POSTGRES18_IMAGE" "$POSTGRES_DUMP_CLIENT_IMAGE" <<'PY'
+POSTGRES18_IMAGE="$(python3 - "$ROOT_DIR" "$POSTGRES_DUMP_CLIENT_IMAGE" <<'PY'
 from pathlib import Path
 import re
 import sys
@@ -25,13 +24,13 @@ import sys
 import yaml
 
 root = Path(sys.argv[1])
-expected_image = sys.argv[2]
-expected_dump_image = sys.argv[3]
+expected_dump_image = sys.argv[2]
 
 compose = yaml.safe_load((root / "docker/docker-compose.yml").read_text())
 postgres = compose["services"]["postgres"]
-if postgres.get("image") != expected_image:
-    raise SystemExit("local Compose PostgreSQL image does not use the pinned PostgreSQL 18 proposal")
+expected_image = postgres.get("image")
+if not isinstance(expected_image, str) or not re.fullmatch(r"postgres:18@sha256:[0-9a-f]{64}", expected_image):
+    raise SystemExit("local Compose PostgreSQL image must be an exact digest-pinned PostgreSQL 18 reference")
 if postgres.get("entrypoint") != ["/usr/local/bin/firemud-postgres-data-layout-entrypoint.sh"]:
     raise SystemExit("local Compose PostgreSQL must run its pre-entrypoint data-layout guard")
 if postgres.get("environment", {}).get("PGDATA") != "/var/lib/postgresql/18/docker":
@@ -91,7 +90,10 @@ for path in (
     content = (root / path).read_text()
     if "postgres:16@sha256:" in content:
         raise SystemExit(f"{path} retains a PostgreSQL 16 image ref in the converged local/preview slice")
+
+print(expected_image)
 PY
+)"
 
 assert_layout() {
   local name="$1"
