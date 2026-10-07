@@ -162,7 +162,8 @@ class AccountGameplayDelegationResponseRecoveryPersistenceIntegrationTest {
     RedisHarness redis = new RedisHarness(snapshot, getClass().getClassLoader());
     AccountGameplayDelegationTokenRegistry registry =
         new AccountGameplayDelegationTokenRegistry(
-            issuance,
+            AccountGameplayDelegationCommitSignerFixture.transactionalPendingRegistryReads(
+                issuance, context.manager()),
             redis.client(),
             Clock.systemUTC(),
             GameSessionAccountDelegationProfile.MAX_REGISTRY_RECORD_BYTES,

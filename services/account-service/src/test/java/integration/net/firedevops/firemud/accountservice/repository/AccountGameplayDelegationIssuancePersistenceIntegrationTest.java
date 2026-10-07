@@ -1386,10 +1386,11 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
     AccountGameplayDelegationResponseEnvelopeService responseService =
         new AccountGameplayDelegationResponseEnvelopeService(responseRepository);
 
-    TransactionHookManager transactionManager = new TransactionHookManager(context.manager(), 5);
+    // Only the commit service uses this manager: its transaction is the final commit boundary.
+    TransactionHookManager transactionManager = new TransactionHookManager(context.manager());
     AccountGameplayDelegationCommitSignerFixture signerFixture =
         AccountGameplayDelegationCommitSignerFixture.create(
-            temporaryDirectory, issuance, responseService, transactionManager, Clock.systemUTC());
+            temporaryDirectory, issuance, responseService, context.manager(), Clock.systemUTC());
     signerFixture.observeDatabaseFailures(dsl);
     transactionManager.setBeforeTargetTransaction(
         switch (hook) {
@@ -1404,14 +1405,15 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
         new RedisHarness(accountId, snapshot, mismatchRedisReadback, getClass().getClassLoader());
     AccountGameplayDelegationTokenRegistry tokenRegistry =
         new AccountGameplayDelegationTokenRegistry(
-            issuance,
+            AccountGameplayDelegationCommitSignerFixture.transactionalPendingRegistryReads(
+                issuance, context.manager()),
             redis.client(),
             Clock.systemUTC(),
             GameSessionAccountDelegationProfile.MAX_REGISTRY_RECORD_BYTES,
             30_000L);
     AccountGameplayDelegationAuthorityProjection authorityProjection =
         new AccountGameplayDelegationAuthorityProjection(
-            sources, transactionManager, redis.client());
+            sources, context.manager(), redis.client());
     AccountGameplayDelegationIssuanceCommitService service =
         new AccountGameplayDelegationIssuanceCommitService(
             signerFixture.signer(),
@@ -1422,10 +1424,10 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
             Clock.systemUTC());
     AccountGameplayDelegationCommittedIssuanceOwner committedOwner =
         new AccountGameplayDelegationCommittedIssuanceOwner(
-            issuance, signerFixture.signer(), tokenRegistry, transactionManager, Clock.systemUTC());
+            issuance, signerFixture.signer(), tokenRegistry, context.manager(), Clock.systemUTC());
     AccountGameplayDelegationResponseRecoveryOwner responseOwner =
         new AccountGameplayDelegationResponseRecoveryOwner(
-            responseRepository, committedOwner, transactionManager);
+            responseRepository, committedOwner, context.manager());
     AccountGameplayCanonicalLoginOwner loginOwner =
         new AccountGameplayCanonicalLoginOwner(
             new AccountRepository(dsl, sources),
@@ -1433,7 +1435,7 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
             integrationDigestKeySource(),
             service,
             responseOwner,
-            transactionManager,
+            context.manager(),
             Clock.systemUTC());
     return new CommitHarness(
         context,
@@ -2100,25 +2102,21 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
 
   private static final class TransactionHookManager implements PlatformTransactionManager {
     private final PlatformTransactionManager delegate;
-    private final int targetTransaction;
-    private final AtomicInteger transactionCount = new AtomicInteger();
-    private volatile Runnable beforeTargetTransaction = () -> {};
+    private final AtomicReference<Runnable> beforeTargetTransaction =
+        new AtomicReference<>(() -> {});
 
-    private TransactionHookManager(PlatformTransactionManager delegate, int targetTransaction) {
+    private TransactionHookManager(PlatformTransactionManager delegate) {
       this.delegate = delegate;
-      this.targetTransaction = targetTransaction;
     }
 
     private void setBeforeTargetTransaction(Runnable operation) {
-      beforeTargetTransaction = operation;
+      beforeTargetTransaction.set(operation);
     }
 
     @Override
     public org.springframework.transaction.TransactionStatus getTransaction(
         org.springframework.transaction.TransactionDefinition definition) {
-      if (transactionCount.incrementAndGet() == targetTransaction) {
-        beforeTargetTransaction.run();
-      }
+      beforeTargetTransaction.getAndSet(() -> {}).run();
       return delegate.getTransaction(definition);
     }
 

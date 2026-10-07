@@ -40,12 +40,15 @@ import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredS
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.TrustFence;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.PublicJwksSnapshot;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceIdentity;
+import org.aopalliance.intercept.MethodInterceptor;
 import org.jooq.DSLContext;
 import org.jooq.ExecuteListener;
 import org.jooq.impl.DefaultExecuteListenerProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.aop.framework.ProxyFactory;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Integration-source-set-only signer harness. Cryptographic signing and verification are real;
@@ -239,6 +242,26 @@ public final class AccountGameplayDelegationCommitSignerFixture {
         .setAppending(
             new DefaultExecuteListenerProvider(
                 ExecuteListener.onException(context -> reportSafeFailure(context.sqlException()))));
+  }
+
+  /** Applies the pending-read transaction boundary to manually assembled repository fixtures. */
+  public static AccountGameplayDelegationIssuanceRepository transactionalPendingRegistryReads(
+      AccountGameplayDelegationIssuanceRepository issuance,
+      PlatformTransactionManager transactionManager) {
+    TransactionTemplate transaction = new TransactionTemplate(transactionManager);
+    ProxyFactory proxy = new ProxyFactory(issuance);
+    proxy.setProxyTargetClass(true);
+    proxy.addAdvice(
+        (MethodInterceptor)
+            invocation -> {
+              if (!invocation.getMethod().getName().equals("readPendingRegistryCandidate")) {
+                return invocation.proceed();
+              }
+              UUID requestId = (UUID) invocation.getArguments()[0];
+              return transaction.execute(
+                  status -> issuance.readPendingRegistryCandidate(requestId));
+            });
+    return (AccountGameplayDelegationIssuanceRepository) proxy.getProxy();
   }
 
   private void reportSafeFailure(Throwable failure) {

@@ -607,6 +607,22 @@ class AccountJwtReadinessProbePersistenceIntegrationTest {
     assertThat(count(context, "account_jwt_readiness_probe_plans")).isEqualTo(1L);
     assertThat(count(context, "account_jwt_readiness_probe_entries")).isEqualTo(4L);
     assertThat(count(context, "account_jwt_readiness_delivery_claims")).isEqualTo(1L);
+    ReadinessProbePlan cleanedPlan =
+        inTransaction(
+            context, () -> readiness.readCurrentPlan(BINDING, trust, result.operationId()));
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    context,
+                    () ->
+                        readiness.claimSingleDelivery(
+                            BINDING,
+                            trust,
+                            cleanedPlan,
+                            validator.caller().binding(),
+                            validator.caller().peer(),
+                            Instant.ofEpochSecond(now))))
+        .isInstanceOf(AccountJwtReadinessProbeRepository.DeliveryAlreadyClaimedException.class);
     assertThatThrownBy(
             () ->
                 inTransaction(
@@ -619,7 +635,7 @@ class AccountJwtReadinessProbePersistenceIntegrationTest {
                             validator.caller().binding(),
                             validator.caller().peer(),
                             Instant.ofEpochSecond(now))))
-        .isInstanceOf(AccountJwtReadinessProbeRepository.DeliveryAlreadyClaimedException.class);
+        .isInstanceOf(AccountJwtReadinessProbeRepository.StaleOperationException.class);
     assertThat(columnNames(context, "account_jwt_readiness_probe_entries"))
         .contains("compact_token_sha256")
         .contains("verification_receipt_sha256", "validator_peer_spki_sha256")
